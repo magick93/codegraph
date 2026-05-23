@@ -1,0 +1,158 @@
+import { test, expect } from '../../e2e/fixtures/personas';
+import { createEntityAsAcme, createEntityViaApi, deleteEntityViaApi, expectToast } from '../../e2e/helpers';
+import type { OrgContext } from '../../e2e/fixtures/personas';
+
+{% if parent %}
+{% if parent.grandparent %}
+const GRANDPARENT_API_PATH = '/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}';
+let PARENT_API_PATH: string;
+{% else %}
+const PARENT_API_PATH = '/{{ parent.domain }}/{{ parent.path_segment }}';
+{% endif %}
+let BASE_PATH: string;
+{% if parent.grandparent %}
+let UI_PATH: string;
+{% endif %}
+{% else %}
+const BASE_PATH = '/{{ domain }}/{{ path_segment }}';
+{% endif %}
+
+// Entity reference dependency IDs — populated in beforeAll when FK deps exist
+{% raw %}
+const depIds: Record<string, string> = {};
+{% endraw %}
+
+function testData(): Record<string, unknown> {
+  return {
+{%- for field in create_fields %}
+{%- if field.input_type == "number" %}
+    '{{ field.name }}': 42,
+{%- elif field.input_type == "checkbox" %}
+    '{{ field.name }}': true,
+{%- elif field.input_type == "date" %}
+    '{{ field.name }}': '2025-01-15',
+{%- elif field.input_type == "datetime-local" %}
+    '{{ field.name }}': '2025-01-15T10:30:00Z',
+{%- elif field.is_codelist and field.codelist_values | length > 0 and field.is_array %}
+    '{{ field.name }}': [{ code: '{{ field.codelist_values | first }}' }],
+{%- elif field.is_codelist and field.codelist_values | length > 0 %}
+    '{{ field.name }}': '{{ field.codelist_values | first }}',
+{%- elif field.is_range %}
+    '{{ field.name }}': '[2025-01-01T00:00:00Z,2025-12-31T23:59:59Z]',
+{%- elif field.is_entity_ref %}
+    ...(depIds['{{ field.name }}'] ? { '{{ field.name }}': depIds['{{ field.name }}'] } : {}),
+{%- elif field.structured_sub_fields | length > 0 and field.is_array %}
+    '{{ field.name }}': [{ value: 'Test {{ field.label }}' }],
+{%- elif field.structured_sub_fields | length > 0 %}
+    '{{ field.name }}': { value: 'Test {{ field.label }}' },
+{%- elif field.is_array %}
+    '{{ field.name }}': ['Test {{ field.label }}'],
+{%- elif field.pg_type is containing("GEOMETRY") %}
+    // geometry field omitted — plain WKT strings are not accepted by the API without ST_GeomFromText
+{%- elif field.input_type == "geometry" %}
+    '{{ field.name }}': '{"type":"Point","coordinates":[0,0]}',
+{%- else %}
+    '{{ field.name }}': 'Test {{ field.label }}',
+{%- endif %}
+{%- endfor %}
+  };
+}
+
+test.describe.serial('{{ entity_name }} Employee View', () => {
+  let createdId: string;
+  const data = testData();
+
+  test.beforeAll(async ({ orgContext }) => {
+{% if parent %}
+{% if parent.grandparent %}
+    const gpEntity = await createEntityAsAcme(orgContext, GRANDPARENT_API_PATH, { {{ grandparent_test_data_json }} });
+    const gpId = gpEntity['id'] as string;
+    PARENT_API_PATH = `${GRANDPARENT_API_PATH}/${gpId}/{{ parent.path_segment }}`;
+{% endif %}
+    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { {{ parent_test_data_json }} });
+    const parentId = parentEntity['id'] as string;
+    BASE_PATH = `${PARENT_API_PATH}/${parentId}/{{ path_segment }}`;
+{% if parent.grandparent %}
+    // UI routes include grandparent — full depth-2 path in SvelteKit route
+    UI_PATH = `/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}/${gpId}/{{ parent.path_segment }}/${parentId}/{{ path_segment }}`;
+{% endif %}
+{% endif %}
+{% for dep in entity_ref_deps %}
+    try {
+      const dep_{{ loop.index }} = await createEntityAsAcme(orgContext, '{{ dep.api_path }}', { {{ dep.test_data_json }} });
+      depIds['{{ dep.field_name }}'] = dep_{{ loop.index }}['id'] as string;
+    } catch (_e) {
+      // Dependency entity may already exist or have its own required fields
+    }
+{% endfor %}
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    createdId = entity.id as string;
+  });
+
+{% if has_entity_ref_deps %}
+  test.afterAll(async ({ orgContext }) => {
+    const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
+{% for dep in entity_ref_deps %}
+    if (depIds['{{ dep.field_name }}']) {
+      try {
+        await fetch(`${baseUrl}/api{{ dep.api_path }}/${depIds['{{ dep.field_name }}']}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
+        });
+      } catch { /* best effort */ }
+    }
+{% endfor %}
+  });
+{% endif %}
+
+{% if has_list %}
+  test('employee can see {{ entity_name }} list', async ({ employeePage }) => {
+    await employeePage.goto({% if parent and parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %});
+    const table = employeePage.locator('[data-testid="{{ module_name }}-table"]');
+    const empty = employeePage.locator('[data-testid="{{ module_name }}-empty"]');
+    await expect(table.or(empty)).toBeVisible();
+  });
+{% endif %}
+
+{% if has_read %}
+  test('employee can view {{ entity_name }} detail', async ({ employeePage }) => {
+{% if parent and parent.grandparent %}
+    await employeePage.goto(`${UI_PATH}/${createdId}`);
+{% else %}
+    await employeePage.goto(`${BASE_PATH}/${createdId}`);
+{% endif %}
+{%- for field in fields %}
+    await expect(employeePage.locator('[data-testid="{{ module_name }}-field-{{ field.name }}"]')).toBeVisible();
+{%- endfor %}
+  });
+{% endif %}
+
+{% if has_create %}
+  test('employee cannot access create form', async ({ employeePage }) => {
+    await employeePage.goto({% if parent and parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %});
+    await expect(employeePage.locator('[data-testid="{{ module_name }}-create-btn"]')).toBeHidden();
+  });
+{% endif %}
+
+{% if has_update %}
+  test('employee cannot access edit form', async ({ employeePage }) => {
+{% if parent and parent.grandparent %}
+    await employeePage.goto(`${UI_PATH}/${createdId}`);
+{% else %}
+    await employeePage.goto(`${BASE_PATH}/${createdId}`);
+{% endif %}
+    await expect(employeePage.locator('[data-testid="{{ module_name }}-edit-btn"]')).toBeHidden();
+  });
+{% endif %}
+
+{% if has_delete %}
+  test('employee cannot delete {{ entity_name }}', async ({ employeePage }) => {
+{% if parent and parent.grandparent %}
+    await employeePage.goto(`${UI_PATH}/${createdId}`);
+{% else %}
+    await employeePage.goto(`${BASE_PATH}/${createdId}`);
+{% endif %}
+    await expect(employeePage.locator('[data-testid="{{ module_name }}-delete-btn"]')).toBeHidden();
+  });
+{% endif %}
+});

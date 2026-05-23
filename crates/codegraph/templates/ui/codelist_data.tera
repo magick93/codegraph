@@ -1,0 +1,13 @@
+// Generated from HR Open Standards — {{ title }}
+// {{ description }}
+import type { CodelistData } from '@crewbase/common';
+
+export const {{ title }}: CodelistData = {
+  title: '{{ title }}',
+  description: '{{ description | replace(from="'", to="\\'") }}',
+  options: [
+{% for option in options %}
+    { value: '{{ option.value | replace(from="'", to="\\'") }}', label: '{{ option.label | replace(from="'", to="\\'") }}' },
+{% endfor %}
+  ],
+};

@@ -1,0 +1,16 @@
+{
+  "$id": "ApplicationType.json",
+  "title": "ApplicationType",
+  "description": "A job application linked to a candidate",
+  "type": "object",
+  "properties": {
+    "applicationId": { "type": "string" },
+    "candidate": { "$ref": "CandidateType.json" },
+    "appliedDate": { "type": "string", "format": "date" },
+    "status": {
+      "type": "string",
+      "enum": ["Applied", "Screening", "Interviewing", "Offered", "Hired", "Rejected"]
+    }
+  },
+  "required": ["applicationId"]
+}

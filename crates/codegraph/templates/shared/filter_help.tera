@@ -1,0 +1,1 @@
+{% macro filter_field_names(filter_fields, nested_filter_fields) %}{% for ff in filter_fields %}{{ ff.field_name }}{% if not loop.last or nested_filter_fields | length > 0 %}, {% endif %}{% endfor %}{% for nf in nested_filter_fields %}{{ nf.filter_key }}{% if not loop.last %}, {% endif %}{% endfor %}{% endmacro filter_field_names %}

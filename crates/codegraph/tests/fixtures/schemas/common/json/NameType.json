@@ -1,0 +1,11 @@
+{
+  "$id": "NameType.json",
+  "title": "NameType",
+  "description": "A person's name",
+  "type": "object",
+  "properties": {
+    "givenName": { "type": "string" },
+    "familyName": { "type": "string" },
+    "formattedName": { "type": "string" }
+  }
+}

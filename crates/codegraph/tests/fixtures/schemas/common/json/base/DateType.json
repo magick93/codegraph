@@ -1,0 +1,7 @@
+{
+  "$id": "DateType.json",
+  "title": "DateType",
+  "description": "A date value.",
+  "type": "string",
+  "format": "date"
+}

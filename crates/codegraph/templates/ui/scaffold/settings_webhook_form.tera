@@ -1,0 +1,104 @@
+{% raw %}
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
+  import { Textarea } from '$lib/components/ui/textarea';
+  import { apiGet, apiPost, apiPut } from '$lib/api/client';
+
+  const isEdit = $derived(!!$page.params.id);
+  const endpointId = $derived($page.params.id);
+
+  let url = $state('');
+  let description = $state('');
+  let headersJson = $state('{}');
+  let saving = $state(false);
+  let error = $state<string | null>(null);
+
+  onMount(() => {
+    if (isEdit) {
+      loadEndpoint();
+    }
+  });
+
+  async function loadEndpoint() {
+    try {
+      const ep = await apiGet<any>(`/webhooks/webhook-endpoints/${endpointId}`);
+      url = ep.url;
+      description = ep.description ?? '';
+      headersJson = JSON.stringify(ep.headers, null, 2);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to load endpoint';
+    }
+  }
+
+  async function handleSubmit(e: Event) {
+    e.preventDefault();
+    saving = true;
+    error = null;
+    try {
+      let headers: Record<string, string> = {};
+      try {
+        headers = JSON.parse(headersJson);
+      } catch {
+        throw new Error('Invalid JSON in headers');
+      }
+
+      const body = { url, description: description || null, headers };
+      const result = isEdit
+        ? await apiPut<any>(`/webhooks/webhook-endpoints/${endpointId}`, body)
+        : await apiPost<any>('/webhooks/webhook-endpoints', body);
+
+      if (!result?.id) {
+        throw new Error('Server returned invalid response');
+      }
+
+      await goto(`/settings/webhooks/${result.id}`);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to save';
+    } finally {
+      saving = false;
+    }
+  }
+</script>
+
+<div class="space-y-6 p-6 max-w-2xl">
+  <div>
+    <h2 class="text-2xl font-bold tracking-tight">{isEdit ? 'Edit Webhook' : 'New Webhook'}</h2>
+    <p class="text-muted-foreground">
+      {isEdit ? 'Update the webhook endpoint configuration.' : 'Create a new webhook endpoint to receive event notifications.'}
+    </p>
+  </div>
+
+  {#if error}
+    <div class="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
+  {/if}
+
+  <form class="space-y-4">
+    <div class="space-y-2">
+      <Label for="url">URL</Label>
+      <Input id="url" type="url" bind:value={url} placeholder="https://example.com/webhooks" required />
+    </div>
+
+    <div class="space-y-2">
+      <Label for="description">Description (optional)</Label>
+      <Input id="description" bind:value={description} placeholder="My webhook endpoint" />
+    </div>
+
+    <div class="space-y-2">
+      <Label for="headers">Custom Headers (JSON, optional)</Label>
+      <Textarea id="headers" bind:value={headersJson} rows={4} class="font-mono text-xs" />
+    </div>
+
+    <div class="flex gap-3">
+      <Button disabled={!url || saving} onclick={handleSubmit} data-testid="webhook-endpoint-submit-btn">
+        {saving ? 'Saving...' : isEdit ? 'Update' : 'Create'}
+      </Button>
+      <Button variant="outline" href="/settings/webhooks">Cancel</Button>
+    </div>
+  </form>
+</div>
+{% endraw %}

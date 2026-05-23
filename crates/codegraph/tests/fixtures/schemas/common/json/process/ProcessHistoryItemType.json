@@ -1,0 +1,20 @@
+{
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "ProcessHistoryItemType",
+    "description": "Describes a single workflow process history step.",
+    "type": "object",
+    "properties": {
+        "id": {
+            "description": "The identifier for the history item.",
+            "$ref": "../base/CodeType.json#"
+        },
+        "actionDate": {
+            "description": "The date the action was executed.",
+            "$ref": "../base/FormattedDateTimeType.json#"
+        },
+        "descriptions": {
+            "description": "Additional details about the history item.",
+            "$ref": "../base/StringTypeArray.json#"
+        }
+    }
+}

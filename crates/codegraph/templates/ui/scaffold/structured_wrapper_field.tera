@@ -1,0 +1,220 @@
+{% raw %}
+<script lang="ts">
+	import { Input } from '$lib/components/ui/input/index.js';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Field from '$lib/components/ui/field/index.js';
+
+	interface SubFieldDef {
+		name: string;
+		label: string;
+		required: boolean;
+		showByDefault: boolean;
+		description: string;
+	}
+
+	interface Props {
+		label: string;
+		required?: boolean;
+		subFields: SubFieldDef[];
+		isArray?: boolean;
+		value?: Record<string, unknown> | Record<string, unknown>[];
+		onchange?: (v: Record<string, unknown> | Record<string, unknown>[]) => void;
+		disabled?: boolean;
+		fieldName?: string;
+	}
+
+	let {
+		label,
+		required = false,
+		subFields,
+		isArray = false,
+		value = $bindable(isArray ? [] : {}),
+		onchange,
+		disabled = false,
+		fieldName = '',
+	}: Props = $props();
+
+	let expanded = $state(false);
+	let items = $state<Record<string, unknown>[]>(
+		isArray ? (Array.isArray(value) ? (value as Record<string, unknown>[]) : [{}]) : []
+	);
+	let expandedItems = $state<Set<number>>(new Set());
+	let scalarValue = $state<Record<string, unknown>>(
+		!isArray && value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+	);
+
+	const visibleByDefault = $derived(subFields.filter((f: SubFieldDef) => f.showByDefault));
+	const hiddenFields = $derived(subFields.filter((f: SubFieldDef) => !f.showByDefault));
+
+	function handleScalarChange(name: string, val: string) {
+		scalarValue = { ...scalarValue, [name]: val };
+		value = scalarValue;
+		onchange?.(scalarValue);
+	}
+
+	function handleArrayItemChange(idx: number, name: string, val: string) {
+		items = items.map((item, i) => (i === idx ? { ...item, [name]: val } : item));
+		value = items;
+		onchange?.(items);
+	}
+
+	function addItem() {
+		items = [...items, {}];
+		value = items;
+		onchange?.(items);
+	}
+
+	function removeItem(idx: number) {
+		items = items.filter((_, i) => i !== idx);
+		expandedItems = new Set(
+			[...expandedItems].filter((i) => i !== idx).map((i) => (i > idx ? i - 1 : i))
+		);
+		value = items;
+		onchange?.(items);
+	}
+
+	function toggleItemExpand(idx: number) {
+		const next = new Set(expandedItems);
+		if (next.has(idx)) next.delete(idx);
+		else next.add(idx);
+		expandedItems = next;
+	}
+</script>
+
+{#if !isArray}
+	<div class="space-y-3">
+		<div class="text-sm font-medium">
+			{label}{#if required} <span class="text-destructive">*</span>{/if}
+		</div>
+
+		{#each visibleByDefault as sf (sf.name)}
+			<Field.Field>
+				<Field.Label for="{fieldName}-{sf.name}">
+					{sf.label}{#if sf.required} <span class="text-destructive">*</span>{/if}
+				</Field.Label>
+				<Input
+					id="{fieldName}-{sf.name}"
+					data-testid="{fieldName}-{sf.name}"
+					value={scalarValue[sf.name] ?? ''}
+					oninput={(e) => handleScalarChange(sf.name, (e.target as HTMLInputElement).value)}
+					{disabled}
+				/>
+			</Field.Field>
+		{/each}
+
+		{#if hiddenFields.length > 0}
+			{#if expanded}
+				<div class="space-y-3 border-l-2 border-border pl-3">
+					{#each hiddenFields as sf (sf.name)}
+						<Field.Field>
+							<Field.Label for="{fieldName}-{sf.name}" class="text-muted-foreground">
+								{sf.label}
+							</Field.Label>
+							<Input
+								id="{fieldName}-{sf.name}"
+								value={scalarValue[sf.name] ?? ''}
+								oninput={(e) =>
+									handleScalarChange(sf.name, (e.target as HTMLInputElement).value)}
+								{disabled}
+								class="bg-muted/50"
+							/>
+						</Field.Field>
+					{/each}
+				</div>
+				<Button
+					variant="ghost"
+					size="sm"
+					type="button"
+					onclick={() => (expanded = false)}
+					class="text-muted-foreground"
+				>
+					− Hide scheme details
+				</Button>
+			{:else}
+				<Button variant="outline" size="sm" type="button" onclick={() => (expanded = true)}>
+					+ Show scheme details ({hiddenFields.length} more {hiddenFields.length === 1
+						? 'field'
+						: 'fields'})
+				</Button>
+			{/if}
+		{/if}
+	</div>
+{:else}
+	<div class="space-y-2">
+		<div class="text-sm font-medium">
+			{label}{#if required} <span class="text-destructive">*</span>{/if}
+		</div>
+
+		{#each items as item, idx (idx)}
+			<div
+				class="rounded-md border p-3 space-y-2 {expandedItems.has(idx)
+					? 'border-primary'
+					: 'border-border'}"
+			>
+				<div class="flex gap-2 items-end">
+					{#each visibleByDefault as sf (sf.name)}
+						<div class="flex-1 space-y-1">
+							<label class="text-xs text-muted-foreground uppercase tracking-wide">
+								{sf.label}{#if sf.required} *{/if}
+							</label>
+							<Input
+								data-testid="{fieldName}-{idx}-{sf.name}"
+								value={item[sf.name] ?? ''}
+								oninput={(e) =>
+									handleArrayItemChange(idx, sf.name, (e.target as HTMLInputElement).value)}
+								{disabled}
+							/>
+						</div>
+					{/each}
+					{#if hiddenFields.length > 0}
+						<Button
+							variant={expandedItems.has(idx) ? 'default' : 'outline'}
+							size="sm"
+							type="button"
+							onclick={() => toggleItemExpand(idx)}
+						>
+							⋯
+						</Button>
+					{/if}
+					<Button
+						variant="outline"
+						size="sm"
+						type="button"
+						onclick={() => removeItem(idx)}
+						class="border-destructive/30 text-destructive"
+					>
+						✕
+					</Button>
+				</div>
+
+				{#if expandedItems.has(idx) && hiddenFields.length > 0}
+					<div class="grid grid-cols-2 gap-2 border-t pt-2">
+						{#each hiddenFields as sf (sf.name)}
+							<div class="space-y-1">
+								<label class="text-xs text-muted-foreground uppercase tracking-wide"
+									>{sf.label}</label
+								>
+								<Input
+									value={item[sf.name] ?? ''}
+									oninput={(e) =>
+										handleArrayItemChange(
+											idx,
+											sf.name,
+											(e.target as HTMLInputElement).value
+										)}
+									{disabled}
+									class="bg-muted/50"
+								/>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		{/each}
+
+		<Button variant="outline" size="sm" type="button" onclick={addItem} {disabled}>
+			+ Add another
+		</Button>
+	</div>
+{/if}
+{% endraw %}

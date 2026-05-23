@@ -1,0 +1,76 @@
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = []
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting"
+postgres_schema = "recruiting"
+depends_on = ["common"]
+entities = ["CandidateType", "ApplicationType"]
+
+[domains.recruiting.entity_config.CandidateType]
+operations = ["create", "read", "update", "list"]
+role = "root"
+
+[domains.recruiting.entity_config.CandidateType.workflow]
+status_field = "candidate_status_code"
+states = ["new", "screening", "interviewing", "offer", "hired", "rejected", "withdrawn"]
+initial_state = "new"
+terminal_states = ["hired", "rejected", "withdrawn"]
+generate_action_endpoints = true
+
+[domains.recruiting.entity_config.CandidateType.workflow.transitions]
+new = ["screening", "rejected", "withdrawn"]
+screening = ["interviewing", "rejected", "withdrawn"]
+interviewing = ["offer", "rejected", "withdrawn"]
+offer = ["hired", "rejected", "withdrawn"]
+
+[domains.recruiting.entity_config.CandidateType.dto]
+immutable_fields = ["ssn"]
+list_include = ["candidate_id", "uri", "status"]
+
+[domains.recruiting.entity_config.ApplicationType]
+role = "root"
+path_segment = "applications"
+tag = "Applications"
+
+[domains.compensation]
+label = "Compensation"
+schema_dir = "compensation"
+postgres_schema = "compensation"
+depends_on = ["common"]
+entities = ["PayRunType", "CompensationType", "RewardType"]
+
+[domains.compensation.entity_config.PayRunType]
+role = "root"
+path_segment = "pay-runs"
+tag = "Pay Runs"
+
+[domains.compensation.entity_config.CompensationType]
+role = "root"
+path_segment = "compensation"
+tag = "Compensation"
+
+[domains.compensation.entity_config.RewardType]
+role = "child"
+parent = "CompensationType"
+parent_ref = "compensation_type_id"
+path_segment = "reward"
+tag = "Compensation"
+
+[domains.compensation.entity_config.RewardType.workflow]
+status_field = "reward_status_code"
+states = ["draft", "active", "archived"]
+initial_state = "draft"
+terminal_states = ["archived"]
+generate_action_endpoints = true
+
+[domains.compensation.entity_config.RewardType.workflow.transitions]
+draft = ["active"]
+active = ["archived"]

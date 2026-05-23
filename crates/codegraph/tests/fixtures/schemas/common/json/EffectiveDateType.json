@@ -1,0 +1,9 @@
+{
+  "$id": "EffectiveDateType.json",
+  "title": "EffectiveDateType",
+  "type": "object",
+  "properties": {
+    "validFrom": { "type": "string", "format": "date" },
+    "validTo": { "type": "string", "format": "date" }
+  }
+}

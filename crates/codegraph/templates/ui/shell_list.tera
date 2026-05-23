@@ -1,0 +1,9 @@
+<script lang="ts">
+	import { EntityList, createEntityApi } from '@crewbase/entities';
+	import { {{ entity_name }}Descriptor } from './descriptor';
+	import { apiClient } from '$lib/api/client';
+
+	const api = createEntityApi({{ entity_name }}Descriptor, { fetch, baseUrl: apiClient.baseUrl });
+</script>
+
+<EntityList descriptor={{ "{" }}{{ entity_name }}Descriptor{{ "}" }} {api} />

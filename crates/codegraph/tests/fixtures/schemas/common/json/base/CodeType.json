@@ -1,0 +1,6 @@
+{
+  "$id": "CodeType.json",
+  "title": "CodeType",
+  "description": "A code value.",
+  "type": "string"
+}

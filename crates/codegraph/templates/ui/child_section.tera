@@ -1,0 +1,81 @@
+<!-- Child section accordion for {{ section.label }} ({{ section.entity_name }}) -->
+<!-- Included from detail_page.tera inside the child_sections loop -->
+{% raw %}
+<div class="border rounded-lg overflow-hidden">
+	<!-- Collapsible header -->
+	<button
+		class="flex w-full items-center justify-between px-4 py-3 text-sm font-medium bg-muted/50 hover:bg-muted transition-colors"
+		onclick={() => toggleSection('{% endraw %}{{ section.module_name }}{% raw %}')}
+		data-testid="child-section-{% endraw %}{{ section.module_name }}{% raw %}"
+		type="button"
+	>
+		<span class="flex items-center gap-2">
+			<span>{% endraw %}{{ section.label }}{% raw %}</span>
+			<span class="text-xs text-muted-foreground font-normal">
+				({{% endraw %}{{ section.module_name }}{% raw %}Items.length})
+			</span>
+		</span>
+		<span class="text-muted-foreground">
+			{expandedSections.has('{% endraw %}{{ section.module_name }}{% raw %}') ? '▼' : '▶'}
+		</span>
+	</button>
+
+	<!-- Expanded content -->
+	{#if expandedSections.has('{% endraw %}{{ section.module_name }}{% raw %}')}
+		<div class="p-4 space-y-3">
+			<!-- Add button -->
+			<div class="flex justify-end">
+				<button
+					class="inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent transition-colors"
+					onclick={() => startAddChild('{% endraw %}{{ section.domain }}{% raw %}', '{% endraw %}{{ section.path_segment }}{% raw %}')}
+					data-testid="child-section-{% endraw %}{{ section.module_name }}{% raw %}-add-btn"
+					type="button"
+				>
+					+ Add
+				</button>
+			</div>
+
+			<!-- Items list -->
+			{#if {% endraw %}{{ section.module_name }}{% raw %}Items.length === 0}
+				<p class="text-sm text-muted-foreground text-center py-4">No items yet.</p>
+			{:else}
+				<ul class="divide-y divide-border rounded-md border">
+					{#each {% endraw %}{{ section.module_name }}{% raw %}Items as child (child.id)}
+						<li class="flex items-center justify-between px-3 py-2 text-sm">
+							<span class="truncate text-foreground">
+								{child.id}
+							</span>
+							<div class="flex shrink-0 items-center gap-1 ml-2">
+								<button
+									class="rounded px-2 py-1 text-xs hover:bg-accent transition-colors"
+									onclick={() => editChild('{% endraw %}{{ section.domain }}{% raw %}', '{% endraw %}{{ section.path_segment }}{% raw %}', child.id)}
+									type="button"
+								>
+									Edit
+								</button>
+								<button
+									class="rounded px-2 py-1 text-xs text-destructive hover:bg-destructive/10 transition-colors"
+									onclick={() => deleteChild('{% endraw %}{{ section.domain }}{% raw %}', '{% endraw %}{{ section.path_segment }}{% raw %}', child.id)}
+									type="button"
+								>
+									Delete
+								</button>
+								{% endraw %}{% if section.has_children %}{% raw %}
+								<button
+									class="rounded px-2 py-1 text-xs hover:bg-accent transition-colors"
+									onclick={() => manageChild('{% endraw %}{{ section.domain }}{% raw %}', '{% endraw %}{{ section.path_segment }}{% raw %}', child.id)}
+									data-testid="manage-{% endraw %}{{ section.module_name }}{% raw %}-btn"
+									type="button"
+								>
+									Manage →
+								</button>
+								{% endraw %}{% endif %}{% raw %}
+							</div>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</div>
+	{/if}
+</div>
+{% endraw %}

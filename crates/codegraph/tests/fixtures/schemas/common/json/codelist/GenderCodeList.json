@@ -1,0 +1,6 @@
+{
+  "$id": "codelist/GenderCodeList.json",
+  "title": "GenderCodeList",
+  "type": "string",
+  "enum": ["Male", "Female", "NotSpecified", "Other"]
+}

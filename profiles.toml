@@ -1,0 +1,248 @@
+# hr-graph Profile Configuration
+#
+# Each profile declares one or more project output sections ([api], [ui],
+# [cli]) with generator names and optional post-generation scripts.
+#
+# Profiles:
+#   default    — all artifacts (backward-compatible with pre-profile pipeline)
+#   api        — API-only: server, OpenAPI, DB, domain types
+#   ui         — UI-only: SvelteKit routes, forms, stores, scaffold
+#   cli        — CLI-only: command scaffolding
+#   fullstack  — API + UI combined
+#   ci         — compile-gate: everything, compile-check only
+
+# ─── default (all artifacts) ─────────────────────────────────────────────────
+[profiles.default.meta]
+name = "default"
+version = "1.0.0"
+description = "All artifacts — mirrors the pre-profile pipeline"
+authors = ["hr-graph team"]
+since = "2026-05-08"
+
+[profiles.default.features]
+auth = true
+pagination = true
+validation_level = "strict"
+offline_mode = false
+
+[profiles.default.api]
+generators = [
+    # Entity
+    "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
+    "query", "event", "handler", "workflow_action", "media_route", "test",
+    "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
+    # Domain
+    "router", "links",
+    # Global
+    "openapi", "scaffold", "basejump_setup", "pgmq_setup",
+    "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "report_views",
+    "webhook_dispatch", "webhook_endpoint_api",
+]
+output = "review/generated-candidate/"
+scripts.post_gen = ["cargo check -p hr-domain-types -p hr-hooks-api 2>&1"]
+
+[profiles.default.ui]
+generators = [
+    # Entity
+    "ui_page", "ui_form", "ui_store", "ui_e2e_test",
+    "playwright-entity", "ui_descriptor", "ui-shell",
+    # Domain
+    "ui-domain-layout",
+    # Global
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+]
+output = "review/generated-candidate/"
+scripts.post_gen = []
+
+[profiles.default.cli]
+generators = ["cli_command", "cli_domain", "cli_scaffold"]
+output = "review/generated-candidate/"
+scripts.post_gen = []
+
+
+# ─── api (server + database only) ────────────────────────────────────────────
+[profiles.api.meta]
+name = "api"
+version = "1.0.0"
+description = "API-only — server scaffolding, OpenAPI spec, DB migrations, domain types"
+tags = ["backend", "server"]
+since = "2026-05-08"
+
+[profiles.api.features]
+auth = true
+pagination = true
+validation_level = "strict"
+
+[profiles.api.api]
+generators = [
+    "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
+    "query", "event", "handler", "workflow_action", "media_route", "test",
+    "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
+    "router", "links",
+    "openapi", "scaffold", "basejump_setup", "pgmq_setup",
+    "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "report_views",
+    "webhook_dispatch", "webhook_endpoint_api",
+]
+output = "review/generated-candidate/"
+scripts.post_gen = ["cargo check -p hr-domain-types -p hr-hooks-api 2>&1"]
+
+[profiles.api.variants.lite]
+[profiles.api.variants.lite.api]
+generators = [
+    "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
+    "query", "event", "handler", "router", "links",
+    "openapi", "scaffold", "basejump_setup", "pgmq_setup",
+    "platform_schema", "workflow_seed",
+]
+scripts.post_gen = ["cargo check -p hr-domain-types -p hr-hooks-api 2>&1"]
+[profiles.api.variants.lite.features]
+auth = false
+validation_level = "balanced"
+
+
+# ─── ui (frontend only) ──────────────────────────────────────────────────────
+[profiles.ui.meta]
+name = "ui"
+version = "1.0.0"
+description = "UI-only — SvelteKit routes, forms, stores, scaffold, E2E tests"
+tags = ["frontend", "sveltekit"]
+since = "2026-05-08"
+
+[profiles.ui.features]
+auth = true
+pagination = true
+validation_level = "strict"
+
+[profiles.ui.ui]
+generators = [
+    "ui_page", "ui_form", "ui_store", "ui_e2e_test",
+    "playwright-entity", "ui_descriptor", "ui-shell",
+    "ui-domain-layout",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+]
+output = "review/generated-candidate/"
+scripts.post_gen = []
+
+
+# ─── cli (command-line interface only) ───────────────────────────────────────
+[profiles.cli.meta]
+name = "cli"
+version = "1.0.0"
+description = "CLI-only — command scaffolding, argument parsing, output formatting"
+tags = ["cli", "devtools"]
+since = "2026-05-08"
+
+[profiles.cli.cli]
+generators = ["cli_command", "cli_domain", "cli_scaffold"]
+output = "review/generated-candidate/"
+scripts.post_gen = []
+
+
+# ─── fullstack (api + ui) ────────────────────────────────────────────────────
+[profiles.fullstack.meta]
+name = "fullstack"
+version = "1.0.0"
+description = "Full-stack — API server, DB migrations, OpenAPI, SvelteKit UI"
+tags = ["fullstack", "web"]
+since = "2026-05-08"
+
+[profiles.fullstack.features]
+auth = true
+pagination = true
+validation_level = "strict"
+
+[profiles.fullstack.api]
+generators = [
+    "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
+    "query", "event", "handler", "workflow_action", "media_route", "test",
+    "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
+    "router", "links",
+    "openapi", "scaffold", "basejump_setup", "pgmq_setup",
+    "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "report_views",
+    "webhook_dispatch", "webhook_endpoint_api",
+]
+output = "review/generated-candidate/"
+scripts.post_gen = ["cargo check -p hr-domain-types -p hr-hooks-api 2>&1"]
+
+[profiles.fullstack.ui]
+generators = [
+    "ui_page", "ui_form", "ui_store", "ui_e2e_test",
+    "playwright-entity", "ui_descriptor", "ui-shell",
+    "ui-domain-layout",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+]
+output = "review/generated-candidate/"
+scripts.post_gen = []
+
+[profiles.fullstack.variants.enterprise]
+[profiles.fullstack.variants.enterprise.api]
+generators = [
+    "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
+    "query", "event", "handler", "workflow_action", "media_route", "test",
+    "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
+    "router", "links",
+    "openapi", "scaffold", "basejump_setup", "pgmq_setup",
+    "platform_schema", "workflow_seed", "hook_registry",
+    "domain_types_scaffold",
+    "report_views",
+    "webhook_dispatch", "webhook_endpoint_api",
+]
+scripts.post_gen = ["cargo check -p hr-domain-types -p hr-hooks-api 2>&1"]
+[profiles.fullstack.variants.enterprise.ui]
+generators = [
+    "ui_page", "ui_form", "ui_store", "ui_e2e_test",
+    "playwright-entity", "ui_descriptor", "ui-shell",
+    "ui-domain-layout",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+]
+[profiles.fullstack.variants.enterprise.features]
+audit_trail = true
+multitenancy = true
+row_level_security = true
+
+[profiles.fullstack.variants.lite]
+[profiles.fullstack.variants.lite.api]
+generators = ["ddl", "dto", "handler", "router", "scaffold", "openapi"]
+[profiles.fullstack.variants.lite.ui]
+generators = ["ui_page", "ui_form", "ui_scaffold"]
+[profiles.fullstack.variants.lite.features]
+auth = false
+validation_level = "balanced"
+
+
+# ─── ci (compile-gate only, fastest path) ────────────────────────────────────
+[profiles.ci.meta]
+name = "ci"
+version = "1.0.0"
+description = "CI compile-gate — generate everything, check it compiles, no tests"
+tags = ["ci", "lint"]
+since = "2026-05-08"
+
+[profiles.ci.api]
+generators = [
+    "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
+    "query", "event", "handler", "workflow_action", "media_route", "test",
+    "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
+    "router", "links",
+    "openapi", "scaffold", "basejump_setup", "pgmq_setup",
+    "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "report_views",
+    "webhook_dispatch", "webhook_endpoint_api",
+]
+scripts.post_gen = ["cargo check -p hr-domain-types -p hr-hooks-api 2>&1"]
+
+[profiles.ci.ui]
+generators = [
+    "ui_page", "ui_form", "ui_store", "ui_e2e_test",
+    "playwright-entity", "ui_descriptor", "ui-shell",
+    "ui-domain-layout",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+]
+scripts.post_gen = []
+
+[profiles.ci.cli]
+generators = ["cli_command", "cli_domain", "cli_scaffold"]
+scripts.post_gen = []

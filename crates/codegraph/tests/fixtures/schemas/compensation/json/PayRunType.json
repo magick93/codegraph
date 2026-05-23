@@ -1,0 +1,12 @@
+{
+  "$id": "PayRunType.json",
+  "title": "PayRunType",
+  "description": "A payroll run",
+  "type": "object",
+  "properties": {
+    "payRunId": { "type": "string" },
+    "runDate": { "type": "string", "format": "date" },
+    "totalAmount": { "$ref": "../../common/json/AmountType.json" }
+  },
+  "required": ["payRunId"]
+}

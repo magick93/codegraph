@@ -1,0 +1,132 @@
+import type { EntityDescriptor } from '@crewbase/entities';
+
+export const {{ entity_name }}Descriptor: EntityDescriptor = {
+  name: '{{ entity_name }}',
+  domain: '{{ domain }}',
+  pathSegment: '{{ path_segment }}',
+  operations: [{% for op in operations %}'{{ op }}'{% if not loop.last %}, {% endif %}{% endfor %}],
+{% if has_fts %}
+  search: { enabled: true, placeholder: 'Search {{ entity_name | lower }}s...' },
+{% endif %}
+  fields: [
+{% for field in fields %}
+    {
+      name: '{{ field.name }}',
+      label: '{{ field.label }}',
+      type: '{{ field.input_type }}',
+      tsType: '{{ field.ts_type }}',
+{% if field.is_required %}
+      required: true,
+{% endif %}
+{% if field.group %}
+      group: '{{ field.group }}',
+{% endif %}
+{% if field.is_immutable %}
+      immutable: true,
+{% endif %}
+{% if field.description %}
+      description: '{{ field.description | replace(from="'", to="\\'") }}',
+{% endif %}
+{% if field.has_validation %}
+      validation: {
+{% if field.validation_max_length %}
+        maxLength: {{ field.validation_max_length }},
+{% endif %}
+{% if field.validation_min_length %}
+        minLength: {{ field.validation_min_length }},
+{% endif %}
+{% if field.validation_pattern %}
+        pattern: '{{ field.validation_pattern | replace(from="'", to="\\'") }}',
+{% endif %}
+{% if field.validation_minimum %}
+        minimum: {{ field.validation_minimum }},
+{% endif %}
+{% if field.validation_maximum %}
+        maximum: {{ field.validation_maximum }},
+{% endif %}
+{% if field.validation_format %}
+        format: '{{ field.validation_format }}',
+{% endif %}
+      },
+{% endif %}
+{% if field.has_list %}
+      list: { visible: true{% if field.is_sortable %}, sortable: true{% endif %}{% if field.is_badge %}, badge: true{% endif %} },
+{% endif %}
+{% if field.is_entity_ref %}
+      ref: { entity: '{{ field.ref_entity }}', domain: '{{ field.ref_domain }}', displayField: 'display_name' },
+{% endif %}
+{% if field.is_codelist %}
+      options: {
+        source: '{{ field.codelist_source }}',
+{% if field.codelist_name %}
+        codelist: '{{ field.codelist_name }}',
+{% endif %}
+{% if field.codelist_values | length > 0 %}
+        values: [
+{% for val in field.codelist_values %}
+          { value: '{{ val }}', label: '{{ val }}' },
+{% endfor %}
+        ],
+{% endif %}
+      },
+{% endif %}
+{% if field.has_overrides %}
+      overrides: {
+{% if field.override_detail %}
+        detail: '{{ field.override_detail }}',
+{% endif %}
+{% if field.override_list_cell %}
+        'list-cell': '{{ field.override_list_cell }}',
+{% endif %}
+{% if field.override_form %}
+        form: '{{ field.override_form }}',
+{% endif %}
+{% if field.override_inline %}
+        inline: '{{ field.override_inline }}',
+{% endif %}
+      },
+{% endif %}
+    },
+{% endfor %}
+  ],
+{% if groups | length > 0 %}
+  groups: [
+{% for group in groups %}
+    { name: '{{ group.name }}', label: '{{ group.label }}'{% if group.collapsible %}, collapsible: true{% endif %} },
+{% endfor %}
+  ],
+{% endif %}
+{% if children | length > 0 %}
+  children: [
+{% for child in children %}
+    {
+      name: '{{ child.name }}',
+      label: '{{ child.label }}',
+      entity: '{{ child.entity_name }}',
+      relationship: '{{ child.relationship }}',
+      inline: {{ child.inline }},
+    },
+{% endfor %}
+  ],
+{% endif %}
+{% if has_workflow %}
+  workflow: {
+    field: '{{ workflow_field }}',
+    transitions: [
+{% for t in workflow_transitions %}
+      { from: '{{ t.from }}', to: '{{ t.to }}', label: '{{ t.label }}'{% if t.confirm %}, confirm: true{% endif %} },
+{% endfor %}
+    ],
+  },
+{% endif %}
+{% if wizard %}
+  wizard: {
+    enabled: true,
+    steps: [
+{% for step in wizard.steps %}
+      { key: '{{ step.key }}', label: '{{ step.label }}', source: '{{ step.source }}'{% if step.groups %}, groups: [{% for g in step.groups %}'{{ g }}'{% if not loop.last %}, {% endif %}{% endfor %}]{% endif %}{% if step.child %}, child: '{{ step.child }}'{% endif %}{% if step.cardinality %}, cardinality: '{{ step.cardinality }}'{% endif %} },
+{% endfor %}
+    ],
+  },
+{% endif %}
+};

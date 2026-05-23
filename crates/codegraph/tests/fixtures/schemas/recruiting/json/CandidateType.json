@@ -1,0 +1,91 @@
+{
+  "$id": "CandidateType.json",
+  "title": "CandidateType",
+  "description": "A candidate in the recruiting process",
+  "type": "object",
+  "allOf": [
+    { "$ref": "../../common/json/PersonBaseType.json" },
+    {
+      "type": "object",
+      "properties": {
+        "candidateId": {
+          "type": "string",
+          "description": "Unique candidate identifier"
+        },
+        "uri": {
+          "type": "string",
+          "format": "uri",
+          "description": "Public profile URL"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "inactive", "withdrawn"],
+          "description": "Current candidate status"
+        },
+        "personName": {
+          "$ref": "../../common/json/NameType.json",
+          "description": "Candidate name (value object)"
+        },
+        "gender": {
+          "$ref": "../../common/json/codelist/GenderCodeList.json",
+          "description": "Gender codelist reference"
+        },
+        "referredByApplication": {
+          "$ref": "ApplicationType.json",
+          "description": "Source application (entity reference)"
+        },
+        "compensationExpectation": {
+          "$ref": "../../common/json/AmountType.json",
+          "description": "Expected compensation (composite wrapper)"
+        },
+        "qualifications": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/QualificationType" },
+          "description": "Array of value-object qualifications"
+        },
+        "applicationProcessHistory": {
+          "$ref": "../../common/json/process/ProcessHistoryType.json",
+          "description": "Application process history (array-type schema)"
+        },
+        "positionTitles": {
+          "$ref": "../../common/json/base/StringTypeArray.json",
+          "description": "Preferred position titles (array_wrapper)"
+        },
+        "positionScheduleTypeCodes": {
+          "type": "array",
+          "items": { "$ref": "../../common/json/codelist/PositionScheduleTypeCodeList.json" },
+          "description": "Schedule type preferences (array of codelist)"
+        },
+        "distributionGuidelines": {
+          "$ref": "#/$defs/DistributionGuidelinesType",
+          "description": "Distribution guidelines (inline def with allOf)"
+        }
+      },
+      "required": ["candidateId"]
+    }
+  ],
+  "$defs": {
+    "QualificationType": {
+      "title": "QualificationType",
+      "type": "object",
+      "properties": {
+        "qualificationName": { "type": "string" },
+        "issuer": { "type": "string" },
+        "dateAwarded": { "type": "string", "format": "date" }
+      },
+      "required": ["qualificationName"]
+    },
+    "DistributionGuidelinesType": {
+      "title": "DistributionGuidelinesType",
+      "description": "Inline def that composes via allOf $ref",
+      "type": "object",
+      "allOf": [
+        { "$ref": "../../common/json/DistributionBaseType.json" }
+      ],
+      "properties": {
+        "doNotRedistributeIndicator": { "type": "boolean", "description": "Do not redistribute flag" },
+        "scope": { "type": "string", "description": "Distribution scope" }
+      }
+    }
+  }
+}

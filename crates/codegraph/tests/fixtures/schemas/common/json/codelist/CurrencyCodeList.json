@@ -1,0 +1,6 @@
+{
+  "$id": "codelist/CurrencyCodeList.json",
+  "title": "CurrencyCodeList",
+  "type": "string",
+  "enum": ["USD", "EUR", "GBP", "JPY", "AUD"]
+}

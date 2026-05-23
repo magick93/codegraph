@@ -1,0 +1,9 @@
+{
+  "$id": "AmountType.json",
+  "title": "AmountType",
+  "type": "object",
+  "properties": {
+    "value": { "type": "number" },
+    "currency": { "$ref": "codelist/CurrencyCodeList.json" }
+  }
+}

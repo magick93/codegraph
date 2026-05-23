@@ -1,0 +1,6 @@
+{
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "PositionScheduleTypeCodeList",
+    "description": "Values that classify the working schedule of a position.",
+    "enum": ["FullTime", "PartTime", "FlexTime", "SharedTime"]
+}

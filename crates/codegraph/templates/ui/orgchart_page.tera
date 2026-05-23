@@ -1,0 +1,40 @@
+<script lang="ts">
+	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
+	import { OrgChart } from '@crewbase/ui';
+	type OrgChartViewMode = 'units' | 'people';
+
+	let { data } = $props();
+
+	const view = $derived<OrgChartViewMode>(data.viewMode as OrgChartViewMode);
+	const tree = $derived(view === 'units' ? data.orgTree : data.positionTree);
+
+	function handleViewChange(newView: OrgChartViewMode) {
+		const url = new URL($page.url);
+		url.searchParams.set('view', newView);
+		goto(url.toString(), { replaceState: true });
+	}
+</script>
+
+<svelte:head>
+	<title>Org Chart</title>
+</svelte:head>
+
+<div class="org-chart-page">
+	<OrgChart
+		{view}
+		{tree}
+		error={data.error}
+		onViewChange={handleViewChange}
+	/>
+</div>
+
+<style>
+	.org-chart-page {
+		display: flex;
+		flex-direction: column;
+		width: 100%;
+		min-height: calc(100vh - 8rem);
+		height: 100%;
+	}
+</style>

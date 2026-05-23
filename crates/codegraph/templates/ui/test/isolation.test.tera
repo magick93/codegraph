@@ -1,0 +1,155 @@
+import { test, expect } from '../../e2e/fixtures/personas';
+import { createEntityAsAcme, createEntityViaApi, deleteEntityViaApi } from '../../e2e/helpers';
+import type { OrgContext } from '../../e2e/fixtures/personas';
+
+{% if parent %}
+{% if parent.grandparent %}
+const GRANDPARENT_API_PATH = '/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}';
+let PARENT_API_PATH: string;
+{% else %}
+const PARENT_API_PATH = '/{{ parent.domain }}/{{ parent.path_segment }}';
+{% endif %}
+let BASE_PATH: string;
+{% if parent.grandparent %}
+let UI_PATH: string;
+{% endif %}
+{% else %}
+const BASE_PATH = '/{{ domain }}/{{ path_segment }}';
+{% endif %}
+
+// Entity reference dependency IDs — populated in beforeAll when FK deps exist
+{% raw %}
+const depIds: Record<string, string> = {};
+{% endraw %}
+
+function testData(): Record<string, unknown> {
+  return {
+{%- for field in create_fields %}
+{%- if field.input_type == "date-range" %}
+    '{{ field.name }}': '[2025-03-10T00:00:00Z,2025-09-30T23:59:59Z)',
+{%- elif field.input_type == "number" %}
+    '{{ field.name }}': 77,
+{%- elif field.input_type == "checkbox" %}
+    '{{ field.name }}': true,
+{%- elif field.input_type == "date" %}
+    '{{ field.name }}': '2025-03-10',
+{%- elif field.input_type == "datetime-local" %}
+    '{{ field.name }}': '2025-03-10T09:00:00Z',
+{%- elif field.is_codelist and field.codelist_values | length > 0 and field.is_array %}
+    '{{ field.name }}': [{ code: '{{ field.codelist_values | first }}' }],
+{%- elif field.is_codelist and field.codelist_values | length > 0 %}
+    '{{ field.name }}': '{{ field.codelist_values | first }}',
+{%- elif field.structured_sub_fields | length > 0 and field.is_array %}
+    '{{ field.name }}': [{ value: 'ACME Isolation {{ field.label }}' }],
+{%- elif field.structured_sub_fields | length > 0 %}
+    '{{ field.name }}': { value: 'ACME Isolation {{ field.label }}' },
+{%- elif field.input_type == "array" %}
+    '{{ field.name }}': ['ACME Isolation {{ field.label }}'],
+{%- elif field.is_range %}
+    '{{ field.name }}': '[2025-03-01T00:00:00Z,2025-12-31T23:59:59Z]',
+{%- elif field.is_entity_ref %}
+    ...(depIds['{{ field.name }}'] ? { '{{ field.name }}': depIds['{{ field.name }}'] } : {}),
+{%- elif field.is_array %}
+    '{{ field.name }}': ['ACME Isolation {{ field.label }}'],
+{%- elif field.pg_type is containing("GEOMETRY") %}
+    // geometry field omitted — plain WKT strings are not accepted by the API without ST_GeomFromText
+{%- elif field.input_type == "geometry" %}
+    '{{ field.name }}': '{"type":"Point","coordinates":[0,0]}',
+{%- else %}
+    '{{ field.name }}': 'ACME Isolation {{ field.label }}',
+{%- endif %}
+{%- endfor %}
+  };
+}
+
+test.describe.serial('{{ entity_name }} Cross-Org Isolation', () => {
+  let acmeEntityId: string;
+  const data = testData();
+
+  test.beforeAll(async ({ orgContext }) => {
+{% if parent %}
+{% if parent.grandparent %}
+    const gpEntity = await createEntityAsAcme(orgContext, GRANDPARENT_API_PATH, { {{ grandparent_test_data_json }} });
+    const gpId = gpEntity['id'] as string;
+    PARENT_API_PATH = `${GRANDPARENT_API_PATH}/${gpId}/{{ parent.path_segment }}`;
+{% endif %}
+    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { {{ parent_test_data_json }} });
+    const parentId = parentEntity['id'] as string;
+    BASE_PATH = `${PARENT_API_PATH}/${parentId}/{{ path_segment }}`;
+{% if parent.grandparent %}
+    // UI routes include grandparent — full depth-2 path in SvelteKit route
+    UI_PATH = `/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}/${gpId}/{{ parent.path_segment }}/${parentId}/{{ path_segment }}`;
+{% endif %}
+{% endif %}
+{% for dep in entity_ref_deps %}
+    try {
+      const dep_{{ loop.index }} = await createEntityAsAcme(orgContext, '{{ dep.api_path }}', { {{ dep.test_data_json }} });
+      depIds['{{ dep.field_name }}'] = dep_{{ loop.index }}['id'] as string;
+    } catch (_e) {
+      // Dependency entity may already exist or have its own required fields
+    }
+{% endfor %}
+    // Create entity as ACME owner
+    const entity = await createEntityAsAcme(
+      orgContext,
+      BASE_PATH,
+      testData(),
+    );
+    acmeEntityId = entity.id as string;
+  });
+
+{% if has_entity_ref_deps %}
+  test.afterAll(async ({ orgContext }) => {
+    const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
+{% for dep in entity_ref_deps %}
+    if (depIds['{{ dep.field_name }}']) {
+      try {
+        await fetch(`${baseUrl}/api{{ dep.api_path }}/${depIds['{{ dep.field_name }}']}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
+        });
+      } catch { /* best effort */ }
+    }
+{% endfor %}
+  });
+{% endif %}
+
+{% if has_list %}
+  test('HighFive owner cannot see ACME {{ entity_name }} in list', async ({ highfiveOwnerPage }) => {
+    await highfiveOwnerPage.goto({% if parent and parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %});
+    // HighFive owner should see the list page but ACME's data must not appear
+    const table = highfiveOwnerPage.locator('[data-testid="{{ module_name }}-table"]');
+    const empty = highfiveOwnerPage.locator('[data-testid="{{ module_name }}-empty"]');
+    // Either the table is visible (without ACME data) or empty state is shown
+    const tableVisible = await table.isVisible().catch(() => false);
+    if (tableVisible) {
+{%- if first_list_column and first_list_column != "" %}
+      await expect(table).not.toContainText(String(data['{{ first_list_column }}'] ?? ''));
+{%- elif create_fields | length > 0 %}
+      const firstField = Object.values(data)[0];
+      if (typeof firstField !== 'boolean') {
+        await expect(table).not.toContainText(String(firstField));
+      }
+{%- endif %}
+    } else {
+      await expect(empty).toBeVisible();
+    }
+  });
+{% endif %}
+
+{% if has_read %}
+  test('HighFive owner cannot access ACME {{ entity_name }} by direct URL', async ({ highfiveOwnerPage }) => {
+{% if parent and parent.grandparent %}
+    const response = await highfiveOwnerPage.goto(`${UI_PATH}/${acmeEntityId}`);
+{% else %}
+    const response = await highfiveOwnerPage.goto(`${BASE_PATH}/${acmeEntityId}`);
+{% endif %}
+    // Should get 404, error page, or redirect — not the ACME entity data
+    const content = await highfiveOwnerPage.textContent('body');
+    const notFound = response?.status() === 404
+      || content?.includes('Not found')
+      || content?.includes('Error');
+    expect(notFound).toBe(true);
+  });
+{% endif %}
+});

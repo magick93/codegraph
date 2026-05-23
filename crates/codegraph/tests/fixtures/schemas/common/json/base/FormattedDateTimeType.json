@@ -1,0 +1,8 @@
+{
+  "$id": "FormattedDateTimeType.json",
+  "title": "FormattedDateTimeType",
+  "description": "A formatted date-time value.",
+  "anyOf": [
+    { "$ref": "DateType.json#" }
+  ]
+}

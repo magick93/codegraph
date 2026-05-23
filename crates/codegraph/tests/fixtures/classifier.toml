@@ -1,0 +1,44 @@
+inline_enum_threshold = 20
+required_extensions = []
+
+[primitive_wrappers]
+[primitive_wrappers.CodeType]
+postgres = "TEXT"
+rust = "String"
+sea_orm = "Text"
+
+[primitive_wrappers.FormattedDateTimeType]
+postgres = "TIMESTAMPTZ"
+rust = "chrono::DateTime<chrono::Utc>"
+sea_orm = "TimestampWithTimeZone"
+
+[primitive_wrappers.DateType]
+postgres = "DATE"
+rust = "chrono::NaiveDate"
+sea_orm = "Date"
+
+[array_wrappers]
+[array_wrappers.StringTypeArray]
+postgres = "TEXT[]"
+rust = "Vec<String>"
+sea_orm = "Array(RcColumnType::Text)"
+
+[range_wrappers]
+
+[[composite_wrappers]]
+schema = "AmountType"
+columns = [
+  { suffix = "", postgres = "NUMERIC(19,4)", rust = "rust_decimal::Decimal", sea_orm = "Decimal", fk_table = "" },
+  { suffix = "_currency", postgres = "TEXT", rust = "String", sea_orm = "Text", fk_table = "", dto_rust_type = "CurrencyCodeList" },
+]
+
+[[composite_ranges]]
+schema = "EffectiveDateType"
+start = "validFrom"
+end = "validTo"
+column = "effective_period"
+postgres = "DATERANGE"
+rust = "DateRange"
+
+[codelist_as_check]
+schemas = []

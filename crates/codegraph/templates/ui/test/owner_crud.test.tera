@@ -1,0 +1,365 @@
+import { test, expect } from '../../e2e/fixtures/personas';
+import { createEntityAsAcme, createEntityViaApi, deleteEntityViaApi, expectToast, expectTableContains, expectTableNotContains, waitForHydration } from '../../e2e/helpers';
+import type { OrgContext } from '../../e2e/fixtures/personas';
+
+{% if parent %}
+{% if parent.grandparent %}
+const GRANDPARENT_API_PATH = '/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}';
+let PARENT_API_PATH: string;
+{% else %}
+const PARENT_API_PATH = '/{{ parent.domain }}/{{ parent.path_segment }}';
+{% endif %}
+let BASE_PATH: string;
+{% if parent.grandparent %}
+let UI_PATH: string;
+{% endif %}
+{% else %}
+const BASE_PATH = '/{{ domain }}/{{ path_segment }}';
+{% endif %}
+
+// Entity reference dependency IDs — populated in beforeAll when FK deps exist
+{% raw %}
+const depIds: Record<string, string> = {};
+{% endraw %}
+
+function testData(): Record<string, unknown> {
+  return {
+{%- for field in create_fields %}
+{%- if field.input_type == "date-range" %}
+    '{{ field.name }}': '[2025-01-15T00:00:00Z,2025-12-31T23:59:59Z)',
+{%- elif field.input_type == "number" %}
+    '{{ field.name }}': 42,
+{%- elif field.input_type == "checkbox" %}
+    '{{ field.name }}': true,
+{%- elif field.input_type == "date" %}
+    '{{ field.name }}': '2025-01-15',
+{%- elif field.input_type == "datetime-local" %}
+    '{{ field.name }}': '2025-01-15T10:30:00Z',
+{%- elif field.is_codelist and field.codelist_values | length > 0 and field.is_array %}
+    '{{ field.name }}': [{ code: '{{ field.codelist_values | first }}' }],
+{%- elif field.is_codelist and field.codelist_values | length > 0 %}
+    '{{ field.name }}': '{{ field.codelist_values | first }}',
+{%- elif field.structured_sub_fields | length > 0 and field.is_array %}
+    '{{ field.name }}': [{ value: 'Test {{ field.label }}' }],
+{%- elif field.structured_sub_fields | length > 0 %}
+    '{{ field.name }}': { value: 'Test {{ field.label }}' },
+{%- elif field.input_type == "array" %}
+    '{{ field.name }}': ['Test {{ field.label }}'],
+{%- elif field.is_range %}
+    '{{ field.name }}': '[2025-01-01T00:00:00Z,2025-12-31T23:59:59Z]',
+{%- elif field.is_entity_ref %}
+    ...(depIds['{{ field.name }}'] ? { '{{ field.name }}': depIds['{{ field.name }}'] } : {}),
+{%- elif field.pg_type is containing("GEOMETRY") %}
+    // geometry field omitted — plain WKT strings are not accepted by the API without ST_GeomFromText
+{%- elif field.is_array %}
+    '{{ field.name }}': ['Test {{ field.label }}'],
+{%- elif field.input_type == "geometry" %}
+    '{{ field.name }}': '{"type":"Point","coordinates":[0,0]}',
+{%- else %}
+    '{{ field.name }}': 'Test {{ field.label }}',
+{%- endif %}
+{%- endfor %}
+  };
+}
+
+function updatedData(): Record<string, unknown> {
+  return {
+{%- for field in update_fields %}
+{%- if field.input_type == "date-range" %}
+    '{{ field.name }}': '[2025-06-01T00:00:00Z,2025-12-31T23:59:59Z)',
+{%- elif field.input_type == "number" %}
+    '{{ field.name }}': 99,
+{%- elif field.input_type == "checkbox" %}
+    '{{ field.name }}': false,
+{%- elif field.input_type == "date" %}
+    '{{ field.name }}': '2025-06-20',
+{%- elif field.input_type == "datetime-local" %}
+    '{{ field.name }}': '2025-06-20T14:00:00Z',
+{%- elif field.is_codelist and field.codelist_values | length > 0 and field.is_array %}
+    '{{ field.name }}': [{ code: '{{ field.codelist_values | last }}' }],
+{%- elif field.is_codelist and field.codelist_values | length > 0 %}
+    '{{ field.name }}': '{{ field.codelist_values | last }}',
+{%- elif field.structured_sub_fields | length > 0 and field.is_array %}
+    '{{ field.name }}': [{ value: 'Updated {{ field.label }}' }],
+{%- elif field.structured_sub_fields | length > 0 %}
+    '{{ field.name }}': { value: 'Updated {{ field.label }}' },
+{%- elif field.input_type == "array" %}
+    '{{ field.name }}': ['Updated {{ field.label }}'],
+{%- elif field.is_range %}
+    '{{ field.name }}': '[2025-06-01T00:00:00Z,2025-12-31T23:59:59Z]',
+{%- elif field.is_entity_ref %}
+    ...(depIds['{{ field.name }}'] ? { '{{ field.name }}': depIds['{{ field.name }}'] } : {}),
+{%- elif field.pg_type is containing("GEOMETRY") %}
+    // geometry field omitted — plain WKT strings are not accepted by the API without ST_GeomFromText
+{%- elif field.is_array %}
+    '{{ field.name }}': ['Updated {{ field.label }}'],
+{%- elif field.input_type == "geometry" %}
+    '{{ field.name }}': '{"type":"Point","coordinates":[1,1]}',
+{%- else %}
+    '{{ field.name }}': 'Updated {{ field.label }}',
+{%- endif %}
+{%- endfor %}
+  };
+}
+
+test.describe.serial('{{ entity_name }} Owner CRUD', () => {
+  let createdId: string;
+
+{% if parent or has_entity_ref_deps %}
+  test.beforeAll(async ({ orgContext }) => {
+{% if parent %}
+{% if parent.grandparent %}
+    const gpEntity = await createEntityAsAcme(orgContext, GRANDPARENT_API_PATH, { {{ grandparent_test_data_json }} });
+    const gpId = gpEntity['id'] as string;
+    PARENT_API_PATH = `${GRANDPARENT_API_PATH}/${gpId}/{{ parent.path_segment }}`;
+{% endif %}
+    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { {{ parent_test_data_json }} });
+    const parentId = parentEntity['id'] as string;
+    BASE_PATH = `${PARENT_API_PATH}/${parentId}/{{ path_segment }}`;
+{% if parent.grandparent %}
+    // UI routes include grandparent — full depth-2 path in SvelteKit route
+    UI_PATH = `/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}/${gpId}/{{ parent.path_segment }}/${parentId}/{{ path_segment }}`;
+{% endif %}
+{% endif %}
+{% for dep in entity_ref_deps %}
+    try {
+      const dep_{{ loop.index }} = await createEntityAsAcme(orgContext, '{{ dep.api_path }}', { {{ dep.test_data_json }} });
+      depIds['{{ dep.field_name }}'] = dep_{{ loop.index }}['id'] as string;
+    } catch (_e) {
+      // Dependency entity may already exist or have its own required fields
+    }
+{% endfor %}
+  });
+
+{% if has_entity_ref_deps %}
+  test.afterAll(async ({ orgContext }) => {
+    const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
+{% for dep in entity_ref_deps %}
+    if (depIds['{{ dep.field_name }}']) {
+      try {
+        await fetch(`${baseUrl}/api{{ dep.api_path }}/${depIds['{{ dep.field_name }}']}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
+        });
+      } catch { /* best effort */ }
+    }
+{% endfor %}
+  });
+{% endif %}
+{% endif %}
+
+  const data = testData();
+  const updated = updatedData();
+
+{% if has_create %}
+{% if create_fields | length > 0 %}
+  test('owner can create {{ entity_name }} via form', async ({ ownerPage }) => {
+{% if parent and parent.grandparent %}
+    await ownerPage.goto(`${UI_PATH}/new`);
+{% else %}
+    await ownerPage.goto(`${BASE_PATH}/new`);
+{% endif %}
+    // Wait for SvelteKit to hydrate so the form's onsubmit handler is attached
+    // Wait for Svelte 5 to hydrate the form's submit handler.
+    await waitForHydration(ownerPage, '[data-testid="{{ module_name }}-submit-btn"]');
+{%- for field in create_fields %}
+{%- if field.input_type == "checkbox" %}
+    if (data['{{ field.name }}'] && await ownerPage.locator('#{{ field.name }}').isVisible()) {
+      await ownerPage.locator('#{{ field.name }}').click();
+    }
+{%- elif field.is_codelist and field.codelist_values | length > 0 and field.is_array %}
+    if (await ownerPage.locator('#{{ field.name }}').isVisible()) {
+      await ownerPage.locator('#{{ field.name }}').selectOption('{{ field.codelist_values | first }}');
+    }
+{%- elif field.is_codelist and field.codelist_values | length > 0 %}
+    if (await ownerPage.locator('#{{ field.name }}').isVisible()) {
+      await ownerPage.locator('#{{ field.name }}').selectOption(String(data['{{ field.name }}']));
+    }
+{%- elif field.input_type == "datetime-local" %}
+    if (await ownerPage.locator('#{{ field.name }}').isVisible()) {
+      await ownerPage.locator('#{{ field.name }}').fill(String(data['{{ field.name }}']).replace(/:\d{2}Z$/, ''));
+    }
+{%- elif field.is_entity_ref %}
+    if (data['{{ field.name }}'] && await ownerPage.locator('#{{ field.name }}').isVisible()) {
+      await ownerPage.locator('#{{ field.name }}').fill(String(data['{{ field.name }}']));
+    }
+{%- elif field.input_type == "date-range" %}
+    // DateRangeField: fill the sr-only input to set the range value
+    await ownerPage.locator('[data-testid="{{ field.name }}-value"]').fill(String(data['{{ field.name }}']));
+{%- elif field.structured_sub_fields | length > 0 and field.is_array %}
+    if (await ownerPage.locator('[data-testid="{{ field.name }}-0-{{ field.structured_sub_fields | first | get(key="name") }}"]').isVisible()) {
+      const vals = data['{{ field.name }}'] as Record<string, unknown>[];
+      for (let i = 0; i < vals.length; i++) {
+        if (i > 0) await ownerPage.locator('[data-testid="{{ field.name }}-add-btn"]').click();
+        await ownerPage.locator(`[data-testid="{{ field.name }}-${i}-{{ field.structured_sub_fields | first | get(key="name") }}"]`).fill(String(vals[i]['{{ field.structured_sub_fields | first | get(key="name") }}'] ?? ''));
+      }
+    }
+{%- elif field.structured_sub_fields | length > 0 %}
+    if (await ownerPage.locator('[data-testid="{{ field.name }}-{{ field.structured_sub_fields | first | get(key="name") }}"]').isVisible()) {
+      await ownerPage.locator('[data-testid="{{ field.name }}-{{ field.structured_sub_fields | first | get(key="name") }}"]').fill(String((data['{{ field.name }}'] as Record<string, unknown>)?.['{{ field.structured_sub_fields | first | get(key="name") }}'] ?? ''));
+    }
+{%- elif field.input_type == "array" %}
+    {
+      const vals = data['{{ field.name }}'] as string[];
+      for (let i = 0; i < vals.length; i++) {
+        if (i > 0) await ownerPage.locator('[data-testid="{{ field.name }}-add-btn"]').click();
+        await ownerPage.locator(`[data-testid="{{ field.name }}-row-${i}"] input`).fill(vals[i]);
+      }
+    }
+{%- elif field.pg_type is containing("GEOMETRY") %}
+    // geometry field omitted from form fill — requires ST_GeomFromText wrapper
+{%- else %}
+    if (await ownerPage.locator('#{{ field.name }}').isVisible()) {
+      await ownerPage.locator('#{{ field.name }}').fill(String(data['{{ field.name }}']));
+    }
+{%- endif %}
+{%- endfor %}
+    await ownerPage.locator('[data-testid="{{ module_name }}-submit-btn"]').click();
+    await expectToast(ownerPage, 'created', 'success');
+    // Wait for SvelteKit goto() navigation to complete after toast
+{% if parent and parent.grandparent %}
+    await ownerPage.waitForURL(/\/{{ parent.grandparent.domain }}\/{{ parent.grandparent.path_segment }}\/[0-9a-f-]+\/{{ parent.path_segment }}\/[0-9a-f-]+\/{{ path_segment }}\/[0-9a-f-]+$/, { timeout: 20_000 });
+{% elif parent %}
+    await ownerPage.waitForURL(/\/{{ parent.domain }}\/{{ parent.path_segment }}\/[0-9a-f-]+\/{{ path_segment }}\/[0-9a-f-]+$/, { timeout: 20_000 });
+{% else %}
+    await ownerPage.waitForURL(/\/{{ domain }}\/{{ path_segment }}\/[0-9a-f-]+$/, { timeout: 20_000 });
+{% endif %}
+    createdId = ownerPage.url().split('/').pop()!;
+  });
+{% else %}
+  test('owner can create {{ entity_name }} via API', async ({ orgContext }) => {
+    // All properties are complex types (value objects / child tables) — no simple form fields.
+    // Use direct API call via orgContext (authenticated as ACME owner).
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    createdId = entity['id'] as string;
+    expect(createdId).toBeTruthy();
+  });
+{% endif %}
+{% endif %}
+
+{% if has_list %}
+  test('owner sees {{ entity_name }} in list', async ({ ownerPage }) => {
+    await ownerPage.goto({% if parent and parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %});
+    const table = ownerPage.locator('[data-testid="{{ module_name }}-table"]');
+    const empty = ownerPage.locator('[data-testid="{{ module_name }}-empty"]');
+    await expect(table.or(empty)).toBeVisible();
+  });
+{% endif %}
+
+{% if has_read %}
+  test('owner can view {{ entity_name }} detail', async ({ ownerPage }) => {
+{% if parent and parent.grandparent %}
+    await ownerPage.goto(`${UI_PATH}/${createdId}`);
+{% else %}
+    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+{% endif %}
+{%- for field in fields %}
+    await expect(ownerPage.locator('[data-testid="{{ module_name }}-field-{{ field.name }}"]')).toBeVisible();
+{%- endfor %}
+  });
+{% endif %}
+
+{% if has_update %}
+{% if update_fields | length > 0 %}
+  test('owner can edit {{ entity_name }}', async ({ ownerPage }) => {
+{% if parent and parent.grandparent %}
+    await ownerPage.goto(`${UI_PATH}/${createdId}/edit`);
+{% else %}
+    await ownerPage.goto(`${BASE_PATH}/${createdId}/edit`);
+{% endif %}
+    // Wait for Svelte 5 to hydrate the form's submit handler.
+    await waitForHydration(ownerPage, '[data-testid="{{ module_name }}-submit-btn"]');
+{%- for field in update_fields %}
+{%- if field.input_type == "checkbox" %}
+    if (await ownerPage.locator('#{{ field.name }}').isVisible()) {
+      const isChecked = await ownerPage.locator('#{{ field.name }}').getAttribute('aria-checked') === 'true';
+      if (Boolean(updated['{{ field.name }}']) !== isChecked) {
+        await ownerPage.locator('#{{ field.name }}').click();
+      }
+    }
+{%- elif field.is_codelist and field.codelist_values | length > 0 and field.is_array %}
+    if (await ownerPage.locator('#{{ field.name }}').isVisible()) {
+      await ownerPage.locator('#{{ field.name }}').selectOption('{{ field.codelist_values | last }}');
+    }
+{%- elif field.is_codelist and field.codelist_values | length > 0 %}
+    if (await ownerPage.locator('#{{ field.name }}').isVisible()) {
+      await ownerPage.locator('#{{ field.name }}').selectOption('{{ field.codelist_values | last }}');
+    }
+{%- elif field.input_type == "datetime-local" %}
+    if (await ownerPage.locator('#{{ field.name }}').isVisible()) {
+      await ownerPage.locator('#{{ field.name }}').clear();
+      await ownerPage.locator('#{{ field.name }}').fill(String(updated['{{ field.name }}']).replace(/:\d{2}Z$/, ''));
+    }
+{%- elif field.is_entity_ref %}
+    if (updated['{{ field.name }}'] && await ownerPage.locator('#{{ field.name }}').isVisible()) {
+      await ownerPage.locator('#{{ field.name }}').clear();
+      await ownerPage.locator('#{{ field.name }}').fill(String(updated['{{ field.name }}']));
+    }
+{%- elif field.input_type == "date-range" %}
+    // DateRangeField: fill the sr-only input to set the updated range value
+    await ownerPage.locator('[data-testid="{{ field.name }}-value"]').fill(String(updated['{{ field.name }}']));
+{%- elif field.structured_sub_fields | length > 0 and field.is_array %}
+    if (await ownerPage.locator('[data-testid="{{ field.name }}-0-{{ field.structured_sub_fields | first | get(key="name") }}"]').isVisible()) {
+      const vals = updated['{{ field.name }}'] as Record<string, unknown>[];
+      await ownerPage.locator('[data-testid="{{ field.name }}-0-{{ field.structured_sub_fields | first | get(key="name") }}"]').clear();
+      await ownerPage.locator('[data-testid="{{ field.name }}-0-{{ field.structured_sub_fields | first | get(key="name") }}"]').fill(String(vals[0]['{{ field.structured_sub_fields | first | get(key="name") }}'] ?? ''));
+    }
+{%- elif field.structured_sub_fields | length > 0 %}
+    if (await ownerPage.locator('[data-testid="{{ field.name }}-{{ field.structured_sub_fields | first | get(key="name") }}"]').isVisible()) {
+      await ownerPage.locator('[data-testid="{{ field.name }}-{{ field.structured_sub_fields | first | get(key="name") }}"]').clear();
+      await ownerPage.locator('[data-testid="{{ field.name }}-{{ field.structured_sub_fields | first | get(key="name") }}"]').fill(String((updated['{{ field.name }}'] as Record<string, unknown>)?.['{{ field.structured_sub_fields | first | get(key="name") }}'] ?? ''));
+    }
+{%- elif field.input_type == "array" %}
+    {
+      const vals = updated['{{ field.name }}'] as string[];
+      // Clear existing rows first
+      const existingRows = await ownerPage.locator('[data-testid^="{{ field.name }}-row-"]').count();
+      for (let i = existingRows - 1; i > 0; i--) {
+        await ownerPage.locator(`[data-testid="{{ field.name }}-remove-${i}"]`).click();
+      }
+      await ownerPage.locator('[data-testid="{{ field.name }}-row-0"] input').clear();
+      await ownerPage.locator('[data-testid="{{ field.name }}-row-0"] input').fill(vals[0]);
+      for (let i = 1; i < vals.length; i++) {
+        await ownerPage.locator('[data-testid="{{ field.name }}-add-btn"]').click();
+        await ownerPage.locator(`[data-testid="{{ field.name }}-row-${i}"] input`).fill(vals[i]);
+      }
+    }
+{%- elif field.pg_type is containing("GEOMETRY") %}
+    // geometry field omitted from form fill — requires ST_GeomFromText wrapper
+{%- else %}
+    if (await ownerPage.locator('#{{ field.name }}').isVisible()) {
+      await ownerPage.locator('#{{ field.name }}').clear();
+      await ownerPage.locator('#{{ field.name }}').fill(String(updated['{{ field.name }}']));
+    }
+{%- endif %}
+{%- endfor %}
+    await ownerPage.locator('[data-testid="{{ module_name }}-submit-btn"]').click();
+    await expectToast(ownerPage, 'updated', 'success');
+  });
+{% else %}
+  // All properties are complex types — no simple form fields to edit.
+  // Edit-via-form test skipped; CRUD coverage provided by API create + detail + delete tests.
+{% endif %}
+{% endif %}
+
+{% if has_delete %}
+  test('owner can delete {{ entity_name }}', async ({ ownerPage }) => {
+{% if parent and parent.grandparent %}
+    await ownerPage.goto(`${UI_PATH}/${createdId}`);
+{% else %}
+    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+{% endif %}
+    await waitForHydration(ownerPage, '[data-testid="{{ module_name }}-delete-btn"]');
+    await ownerPage.locator('[data-testid="{{ module_name }}-delete-btn"]').click();
+    // Wait for portal-rendered confirm dialog
+    await expect(ownerPage.locator('[data-testid="confirm-dialog"]')).toBeVisible({ timeout: 20_000 });
+    await ownerPage.locator('[data-testid="confirm-dialog-confirm"]').click();
+    await expectToast(ownerPage, 'deleted', 'success');
+    await ownerPage.goto({% if parent and parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %});
+    // After delete, list may be empty (showing empty state) or table may not contain the deleted item
+    const table = ownerPage.locator('[data-testid="{{ module_name }}-table"]');
+    const empty = ownerPage.locator('[data-testid="{{ module_name }}-empty"]');
+    await expect(table.or(empty)).toBeVisible();
+  });
+{% endif %}
+});

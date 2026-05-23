@@ -1,0 +1,12 @@
+{
+  "$id": "PersonBaseType.json",
+  "title": "PersonBaseType",
+  "description": "Base type for person-related entities",
+  "type": "object",
+  "properties": {
+    "givenName": { "type": "string", "description": "First name" },
+    "familyName": { "type": "string", "description": "Last name" },
+    "birthDate": { "type": "string", "format": "date" }
+  },
+  "required": ["givenName", "familyName"]
+}

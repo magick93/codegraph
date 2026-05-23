@@ -1,0 +1,9 @@
+{
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "ProcessHistoryType",
+    "description": "Describes a workflow process history.",
+    "type": "array",
+    "items": {
+        "$ref": "ProcessHistoryItemType.json#"
+    }
+}

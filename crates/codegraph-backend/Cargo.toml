@@ -1,0 +1,14 @@
+[package]
+name = "codegraph-backend"
+version = "0.1.0"
+edition = "2021"
+description = "Backend selector and factory for graph database adapters"
+
+[dependencies]
+codegraph-core = { path = "../codegraph-core" }
+codegraph-grafeo = { path = "../codegraph-grafeo" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+codegraph-core = { path = "../codegraph-core", features = ["test-fixtures"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

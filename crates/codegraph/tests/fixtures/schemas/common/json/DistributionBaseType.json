@@ -1,0 +1,12 @@
+{
+  "$id": "DistributionBaseType.json",
+  "title": "DistributionBaseType",
+  "description": "Base type for distribution-related types",
+  "type": "object",
+  "properties": {
+    "startDate": { "type": "string", "format": "date", "description": "Distribution start date" },
+    "endDate": { "type": "string", "format": "date", "description": "Distribution end date" },
+    "description": { "type": "string", "description": "Distribution description" }
+  },
+  "required": ["startDate"]
+}
