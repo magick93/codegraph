@@ -16,6 +16,24 @@ pub enum EdgeType {
     RequiresExtension,
     InDomain,
     DomainDepends,
+
+    // IFML edge types
+    ContainsViewContainer,
+    ContainsViewComponent,
+    HasEvent,
+    NavigationFlow,
+    DataFlow,
+    HasParameter,
+    ParameterBindingGroup,
+    ParameterBinding,
+    HasDataBinding,
+    BindsToEntity,
+    BindsToProperty,
+    TriggersAction,
+    ActionEvent,
+    HasModuleDefinition,
+    HasViewComponentPart,
+    HasConditionalExpr,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -28,4 +46,11 @@ pub struct EdgeProperties {
     pub render_as: Option<String>,
     pub role: Option<String>,
     pub def_name: Option<String>,
+    pub target_param_binding: Option<String>,
+    pub source_param: Option<String>,
+    pub event_type: Option<String>,
+    pub outcome: Option<String>,
+    pub component_type: Option<String>,
+    pub direction: Option<String>,
+    pub expression: Option<String>,
 }

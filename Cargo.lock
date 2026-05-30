@@ -524,6 +524,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "codegraph-ifml-dsl"
+version = "0.1.0"
+dependencies = [
+ "pest",
+ "pest_derive",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "codegraph-naming"
 version = "0.1.0"
 dependencies = [
@@ -1831,6 +1842,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0848c601009d37dfa3430c4666e147e49cdcf1b92ecd3e63657d8a5f19da662"
 dependencies = [
  "memchr",
+ "serde",
+ "serde_json",
  "ucd-trie",
 ]
 

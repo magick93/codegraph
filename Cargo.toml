@@ -11,6 +11,7 @@ members = [
     "crates/codegraph-naming",
     "crates/codegraph-type-contracts",
     "crates/codegraph-workflow",
+    "crates/codegraph-ifml-dsl",
 ]
 
 [workspace.package]

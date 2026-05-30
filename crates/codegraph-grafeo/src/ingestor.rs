@@ -69,6 +69,27 @@ fn build_edge_props_string(props: Option<&EdgeProperties>) -> String {
     if let Some(v) = &p.def_name {
         fields.push(format!("def_name: '{}'", escape_gql(v)));
     }
+    if let Some(v) = &p.target_param_binding {
+        fields.push(format!("target_param_binding: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.source_param {
+        fields.push(format!("source_param: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.event_type {
+        fields.push(format!("event_type: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.outcome {
+        fields.push(format!("outcome: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.component_type {
+        fields.push(format!("component_type: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.direction {
+        fields.push(format!("direction: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.expression {
+        fields.push(format!("expression: '{}'", escape_gql(v)));
+    }
     if fields.is_empty() {
         String::new()
     } else {
@@ -323,6 +344,22 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::RequiresExtension => "RequiresExtension",
             EdgeType::InDomain => "InDomain",
             EdgeType::DomainDepends => "DomainDepends",
+            EdgeType::ContainsViewContainer => "ContainsViewContainer",
+            EdgeType::ContainsViewComponent => "ContainsViewComponent",
+            EdgeType::HasEvent => "HasEvent",
+            EdgeType::NavigationFlow => "NavigationFlow",
+            EdgeType::DataFlow => "DataFlow",
+            EdgeType::HasParameter => "HasParameter",
+            EdgeType::ParameterBindingGroup => "ParameterBindingGroup",
+            EdgeType::ParameterBinding => "ParameterBinding",
+            EdgeType::HasDataBinding => "HasDataBinding",
+            EdgeType::BindsToEntity => "BindsToEntity",
+            EdgeType::BindsToProperty => "BindsToProperty",
+            EdgeType::TriggersAction => "TriggersAction",
+            EdgeType::ActionEvent => "ActionEvent",
+            EdgeType::HasModuleDefinition => "HasModuleDefinition",
+            EdgeType::HasViewComponentPart => "HasViewComponentPart",
+            EdgeType::HasConditionalExpr => "HasConditionalExpr",
         };
 
         let match_clause = match &edge_type {
@@ -430,6 +467,120 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::DomainDepends => {
                 format!(
                     "MATCH (a:Domain {{name: '{}'}}), (b:Domain {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+
+            // IFML edge types — simple MATCH on node label + name
+            EdgeType::ContainsViewContainer => {
+                format!(
+                    "MATCH (a:ViewContainer {{name: '{}'}}), (b:ViewContainer {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::ContainsViewComponent => {
+                format!(
+                    "MATCH (a:ViewContainer {{name: '{}'}}), (b:ViewComponent {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasEvent => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b:Event {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::NavigationFlow => {
+                format!(
+                    "MATCH (a:Event {{name: '{}'}}), (b:ViewContainer {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::DataFlow => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasParameter => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b:ParameterDefinition {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::ParameterBindingGroup => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::ParameterBinding => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasDataBinding => {
+                format!(
+                    "MATCH (a:ViewComponent {{name: '{}'}}), (b:DataBinding {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::BindsToEntity => {
+                format!(
+                    "MATCH (a:DataBinding {{name: '{}'}}), (b:Schema {{title: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::BindsToProperty => {
+                format!(
+                    "MATCH (a:ViewComponent {{name: '{}'}}), (b:Property {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::TriggersAction => {
+                format!(
+                    "MATCH (a:Event {{name: '{}'}}), (b:ActionNode {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::ActionEvent => {
+                format!(
+                    "MATCH (a:ActionNode {{name: '{}'}}), (b:Event {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasModuleDefinition => {
+                format!(
+                    "MATCH (a:ViewContainer {{name: '{}'}}), (b:ModuleDefinition {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasViewComponentPart => {
+                format!(
+                    "MATCH (a:ViewComponent {{name: '{}'}}), (b:ViewComponent {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasConditionalExpr => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
                     escape_gql(from_id),
                     escape_gql(to_id),
                 )
