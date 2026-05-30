@@ -20,13 +20,13 @@
 		</tr>
 	</thead>
 	<tbody>
-		{#each data.items as item}
+{% raw %}		{#each data.items as item}{% endraw %}
 			<tr>
 			{% for field in comp.fields %}
-				<td>{item.{{ field }}}</td>
+				<td>{item.{{ field }}</td>
 			{% endfor %}
 			</tr>
-		{/each}
+{% raw %}		{/each}{% endraw %}
 	</tbody>
 </table>
 
@@ -45,7 +45,7 @@
 <dl>
 	{% for field in comp.fields %}
 	<dt>{{ field }}</dt>
-	<dd>{data.{{ field }}}</dd>
+	<dd>{data.{{ field }}</dd>
 	{% endfor %}
 </dl>
 

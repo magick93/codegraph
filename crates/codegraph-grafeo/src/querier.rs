@@ -2,9 +2,10 @@ use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
-    CodeList, ColumnInfo, CompositeColumn, CompositeRange, CompositionNode, CompositionTree,
-    DetectionSource, EnumValue, Extension, FkDirection, FkTarget, ParentCandidate, PropertyNode,
-    SchemaClassificationData, SchemaNode, StructuredSubField,
+    ActionNode, CodeList, ColumnInfo, CompositeColumn, CompositeRange, CompositionNode,
+    CompositionTree, DetectionSource, EnumValue, EventNode, Extension,
+    FkDirection, FkTarget, ParentCandidate, ParameterDefinitionNode, PropertyNode,
+    SchemaClassificationData, SchemaNode, StructuredSubField, ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -810,6 +811,151 @@ impl GraphQuerier for GrafeoEngine {
             map.entry(schema_title).or_default().push(prop);
         }
         Ok(map)
+    }
+
+    // ── IFML query methods ─────────────────────────────────────────────
+
+    async fn get_ifml_view_containers(&self) -> Result<Vec<ViewContainerNode>, GraphError> {
+        let gql = "MATCH (vc:ViewContainer) RETURN \
+            vc.name, vc.label, vc.is_xor, vc.is_default, \
+            vc.is_landmark, vc.is_modal, vc.domain \
+            ORDER BY vc.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(ViewContainerNode {
+                name: reader.get_string(row, "vc.name")?,
+                label: reader.get_opt_string(row, "vc.label")?,
+                is_xor: reader.get_bool(row, "vc.is_xor")?,
+                is_default: reader.get_bool(row, "vc.is_default")?,
+                is_landmark: reader.get_bool(row, "vc.is_landmark")?,
+                is_modal: reader.get_bool(row, "vc.is_modal")?,
+                domain: reader.get_opt_string(row, "vc.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_ifml_view_components(
+        &self,
+        container_name: &str,
+    ) -> Result<Vec<ViewComponentNode>, GraphError> {
+        let escaped = container_name.replace('\'', "\\'");
+        let gql = format!(
+            "MATCH (vc:ViewContainer {{name: '{escaped}'}})-[:ContainsViewComponent]->(comp:ViewComponent) \
+             RETURN comp.name, comp.component_type, comp.mode, comp.entity, \
+             comp.fields, comp.filter, comp.domain ORDER BY comp.name"
+        );
+        let result = query_gql(self, &gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            let fields_str: Option<String> = reader.get_opt_string(row, "comp.fields")?;
+            let fields: Option<Vec<String>> = fields_str
+                .and_then(|s| serde_json::from_str(&s).ok());
+            nodes.push(ViewComponentNode {
+                name: reader.get_string(row, "comp.name")?,
+                component_type: reader.get_string(row, "comp.component_type")?,
+                mode: reader.get_opt_string(row, "comp.mode")?,
+                entity: reader.get_opt_string(row, "comp.entity")?,
+                fields,
+                filter: reader.get_opt_string(row, "comp.filter")?,
+                domain: reader.get_opt_string(row, "comp.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_ifml_events(&self, parent_id: &str) -> Result<Vec<EventNode>, GraphError> {
+        let escaped = parent_id.replace('\'', "\\'");
+        let gql = format!(
+            "MATCH (parent)-[:HasEvent]->(evt:Event) \
+             WHERE parent.name = '{escaped}' \
+             RETURN evt.name, evt.event_type, evt.params, evt.domain ORDER BY evt.name"
+        );
+        let result = query_gql(self, &gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            let params_str: Option<String> = reader.get_opt_string(row, "evt.params")?;
+            let params: Option<Vec<String>> = params_str
+                .and_then(|s| serde_json::from_str(&s).ok());
+            nodes.push(EventNode {
+                name: reader.get_string(row, "evt.name")?,
+                event_type: reader.get_string(row, "evt.event_type")?,
+                params,
+                domain: reader.get_opt_string(row, "evt.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_ifml_navigation_flows(
+        &self,
+    ) -> Result<Vec<(String, String, String)>, GraphError> {
+        let gql = "MATCH (source)-[:HasEvent]->(evt:Event)-[flow:NavigationFlow]->(target:ViewContainer) \
+                   RETURN source.name, evt.name, target.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut flows = Vec::new();
+        for row in &result.rows {
+            flows.push((
+                reader.get_string(row, "source.name")?,
+                reader.get_string(row, "evt.name")?,
+                reader.get_string(row, "target.name")?,
+            ));
+        }
+        Ok(flows)
+    }
+
+    async fn get_ifml_data_flows(
+        &self,
+    ) -> Result<Vec<(String, String, Option<String>, Option<String>)>, GraphError> {
+        let gql = "MATCH (source)-[flow:DataFlow]->(target) \
+                   RETURN source.name, target.name, flow.source_param, flow.target_param";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut flows = Vec::new();
+        for row in &result.rows {
+            flows.push((
+                reader.get_string(row, "source.name")?,
+                reader.get_string(row, "target.name")?,
+                reader.get_opt_string(row, "flow.source_param")?,
+                reader.get_opt_string(row, "flow.target_param")?,
+            ));
+        }
+        Ok(flows)
+    }
+
+    async fn get_ifml_actions(&self) -> Result<Vec<ActionNode>, GraphError> {
+        let gql = "MATCH (a:ActionNode) RETURN a.name, a.domain ORDER BY a.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(ActionNode {
+                name: reader.get_string(row, "a.name")?,
+                domain: reader.get_opt_string(row, "a.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
+        let gql = "MATCH (p:ParameterDefinition) RETURN p.name, p.direction, p.type_ref, p.domain ORDER BY p.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(ParameterDefinitionNode {
+                name: reader.get_string(row, "p.name")?,
+                direction: reader.get_string(row, "p.direction")?,
+                type_ref: reader.get_string(row, "p.type_ref")?,
+                domain: reader.get_opt_string(row, "p.domain")?,
+            });
+        }
+        Ok(nodes)
     }
 }
 

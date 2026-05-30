@@ -5,31 +5,60 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 
 use super::context::*;
+use super::dependency_graph;
 
 /// Trait for querying the IFML model from the graph
 #[async_trait]
 pub trait IfmlQuerier: Send + Sync {
-    /// Get the full IFML model with all resolved dependencies
     async fn get_ifml_model(&self) -> Result<IfmlModel, GraphError>;
-
-    /// Get all view containers
     async fn get_view_containers(&self) -> Result<Vec<IfmlViewContainer>, GraphError>;
-
-    /// Get a specific view container by name
     async fn get_view_container(&self, name: &str) -> Result<Option<IfmlViewContainer>, GraphError>;
-
-    /// Get all navigation edges between containers
     async fn get_navigation_edges(&self) -> Result<Vec<NavigationEdge>, GraphError>;
-
-    /// Get all data flow edges between elements
     async fn get_data_flows(&self) -> Result<Vec<DataFlowEdge>, GraphError>;
-
-    /// Get all action definitions
     async fn get_actions(&self) -> Result<Vec<IfmlActionDef>, GraphError>;
-
-    /// Compute topological generation order (Kahn's algorithm)
-    /// Targets before sources (so routes exist before they're referenced)
     async fn compute_generation_order(&self) -> Result<Vec<String>, GraphError>;
+}
+
+impl<'a> IfmlGraphQuerier<'a> {
+    async fn get_components_for(&self, container_name: &str) -> Result<Vec<IfmlComponent>, GraphError> {
+        let raw = self.db.get_ifml_view_components(container_name).await?;
+        let mut components = Vec::new();
+        for comp in &raw {
+            let comp_id = format!("comp:{}", comp.name);
+            let events = self.get_events_for(&comp_id).await?;
+
+            let mut properties = HashMap::new();
+            properties.insert("type".to_string(), comp.component_type.clone());
+            if let Some(ref mode) = comp.mode {
+                properties.insert("mode".to_string(), mode.clone());
+            }
+
+            components.push(IfmlComponent {
+                name: comp.name.clone(),
+                component_type: comp.component_type.clone(),
+                mode: comp.mode.clone(),
+                entity: comp.entity.clone(),
+                fields: comp.fields.clone().unwrap_or_default(),
+                filter: comp.filter.clone(),
+                properties,
+                events,
+                parts: Vec::new(),
+            });
+        }
+        Ok(components)
+    }
+
+    async fn get_events_for(&self, parent_id: &str) -> Result<Vec<IfmlEvent>, GraphError> {
+        let raw = self.db.get_ifml_events(parent_id).await?;
+        Ok(raw.into_iter().map(|evt| {
+            IfmlEvent {
+                name: evt.name,
+                event_type: evt.event_type,
+                params: evt.params.unwrap_or_default(),
+                action: IfmlAction::Stay,
+            }
+        }).collect())
+    }
 }
 
 /// Implementation that queries the Grafeo graph
@@ -62,33 +91,23 @@ impl<'a> IfmlQuerier for IfmlGraphQuerier<'a> {
     }
 
     async fn get_view_containers(&self) -> Result<Vec<IfmlViewContainer>, GraphError> {
-        // TODO: When GraphQuerier has IFML-specific methods, replace this with:
-        //   self.db.get_view_containers().await?
-        // For now, query via the generic mechanism: list schemas that have an IFML
-        // view container link in the graph metadata.
-        let schemas = self
-            .db
-            .list_schemas(None)
-            .await
-            .map_err(|e| GraphError::Query(e.to_string()))?;
-
+        let raw_containers = self.db.get_ifml_view_containers().await?;
         let mut containers = Vec::new();
-        for schema in &schemas {
-            // TODO: Check if schema has an associated ViewContainer node in the graph.
-            // When IFML is ingested, each ViewContainer node will reference the schema
-            // it renders. Use self.db.get_schema() to find linked view definitions.
-            //
-            // For now, emit a minimal container placeholder:
+
+        for vc in &raw_containers {
+            let components = self.get_components_for(&vc.name).await?;
+            let events = self.get_events_for(&format!("vc:{}", &vc.name)).await?;
+
             containers.push(IfmlViewContainer {
-                name: schema.title.clone(),
-                label: None,
-                is_xor: false,
-                is_default: false,
-                is_landmark: false,
-                is_modal: false,
+                name: vc.name.clone(),
+                label: vc.label.clone(),
+                is_xor: vc.is_xor,
+                is_default: vc.is_default,
+                is_landmark: vc.is_landmark,
+                is_modal: vc.is_modal,
                 params: Vec::new(),
-                components: Vec::new(),
-                events: Vec::new(),
+                components,
+                events,
                 containers: Vec::new(),
             });
         }
@@ -97,90 +116,58 @@ impl<'a> IfmlQuerier for IfmlGraphQuerier<'a> {
     }
 
     async fn get_view_container(&self, name: &str) -> Result<Option<IfmlViewContainer>, GraphError> {
-        // TODO: When GraphQuerier has IFML-specific methods, replace this with:
-        //   self.db.get_view_container(name).await?
-        // For now, look up via the schema list.
-        let schema = self.db.get_schema(name).await?;
-        match schema {
-            Some(s) => Ok(Some(IfmlViewContainer {
-                name: s.title.clone(),
-                label: None,
-                is_xor: false,
-                is_default: false,
-                is_landmark: false,
-                is_modal: false,
-                params: Vec::new(),
-                components: Vec::new(),
-                events: Vec::new(),
-                containers: Vec::new(),
-            })),
-            None => Ok(None),
-        }
+        let containers = self.get_view_containers().await?;
+        Ok(containers.into_iter().find(|c| c.name == name))
     }
 
     async fn get_navigation_edges(&self) -> Result<Vec<NavigationEdge>, GraphError> {
-        // TODO: When GraphQuerier has IFML-specific methods, replace this with:
-        //   self.db.get_navigation_edges().await?
-        // For now, derive navigation from entity relationships.
-        // Query parent-child relationships between schemas as a proxy.
-        let all_refs = self
-            .db
-            .list_all_schema_references()
-            .await
-            .map_err(|e| GraphError::Query(e.to_string()))?;
-
-        let mut edges = Vec::new();
-        for (source, target) in &all_refs {
-            edges.push(NavigationEdge {
-                source_container: source.clone(),
-                source_event: String::new(),
-                target_container: target.clone(),
+        let raw = self.db.get_ifml_navigation_flows().await?;
+        Ok(raw.into_iter().map(|(source, event, target)| {
+            NavigationEdge {
+                source_container: source,
+                source_event: event,
+                target_container: target,
                 parameter_binding: HashMap::new(),
                 conditional_expression: None,
-            });
-        }
-
-        Ok(edges)
+            }
+        }).collect())
     }
 
     async fn get_data_flows(&self) -> Result<Vec<DataFlowEdge>, GraphError> {
-        // TODO: When GraphQuerier has IFML-specific methods, replace this with:
-        //   self.db.get_data_flows().await?
-        // For now, derive from schema reference edges.
-        let all_refs = self
-            .db
-            .list_all_schema_references()
-            .await
-            .map_err(|e| GraphError::Query(e.to_string()))?;
-
-        let mut edges = Vec::new();
-        for (source, target) in &all_refs {
-            edges.push(DataFlowEdge {
-                source_element: source.clone(),
-                target_element: target.clone(),
-                source_param: None,
-                target_param: None,
-            });
-        }
-
-        Ok(edges)
+        let raw = self.db.get_ifml_data_flows().await?;
+        Ok(raw.into_iter().map(|(source, target, source_param, target_param)| {
+            DataFlowEdge {
+                source_element: source,
+                target_element: target,
+                source_param,
+                target_param,
+            }
+        }).collect())
     }
 
     async fn get_actions(&self) -> Result<Vec<IfmlActionDef>, GraphError> {
-        // TODO: When GraphQuerier has IFML-specific methods, replace this with:
-        //   self.db.get_actions().await?
-        // For now, return empty — actions are pure IFML concepts not yet in the graph.
-        Ok(Vec::new())
+        let raw = self.db.get_ifml_actions().await?;
+        Ok(raw.into_iter().map(|a| {
+            IfmlActionDef {
+                name: a.name,
+                properties: HashMap::new(),
+                events: Vec::new(),
+            }
+        }).collect())
     }
 
     async fn compute_generation_order(&self) -> Result<Vec<String>, GraphError> {
-        let navigation_edges = self.get_navigation_edges().await?;
+        let nav = self.get_navigation_edges().await?;
+        if !nav.is_empty() {
+            let pairs: Vec<(String, String)> = nav.iter()
+                .map(|e| (e.source_container.clone(), e.target_container.clone()))
+                .collect();
+            return Ok(dependency_graph::compute_view_generation_order(&pairs));
+        }
 
-        let edge_pairs: Vec<(String, String)> = navigation_edges
-            .into_iter()
-            .map(|e| (e.source_container, e.target_container))
-            .collect();
-
-        Ok(super::dependency_graph::compute_view_generation_order(&edge_pairs))
+        let containers = self.get_view_containers().await?;
+        let mut names: Vec<String> = containers.into_iter().map(|c| c.name).collect();
+        names.sort();
+        Ok(names)
     }
 }

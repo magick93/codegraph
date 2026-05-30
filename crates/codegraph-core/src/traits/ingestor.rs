@@ -1,7 +1,8 @@
 use crate::error::GraphError;
 use crate::types::{
-    CodeList, CompositeColumn, CompositeRange, EdgeProperties, EdgeType, EnumValue, IngestStats,
-    PropertyNode, SchemaNode,
+    ActionNode, CodeList, CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties,
+    EdgeType, EnumValue, EventNode, IngestStats, ParameterDefinitionNode, PropertyNode,
+    SchemaNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -48,6 +49,21 @@ pub trait GraphIngestor: Send + Sync {
     async fn finalize(&self) -> Result<IngestStats, GraphError>;
 
     /// Update the is_entity flag on an already-ingested schema node.
+    async fn ingest_view_container(&self, node: &ViewContainerNode) -> Result<String, GraphError>;
+
+    async fn ingest_view_component(&self, node: &ViewComponentNode) -> Result<String, GraphError>;
+
+    async fn ingest_event(&self, node: &EventNode) -> Result<String, GraphError>;
+
+    async fn ingest_action_node(&self, node: &ActionNode) -> Result<String, GraphError>;
+
+    async fn ingest_parameter_definition(
+        &self,
+        node: &ParameterDefinitionNode,
+    ) -> Result<String, GraphError>;
+
+    async fn ingest_data_binding(&self, node: &DataBindingNode) -> Result<String, GraphError>;
+
     async fn update_entity_flag(&self, title: &str, is_entity: bool) -> Result<(), GraphError>;
 
     /// Update the classification kind on an already-ingested property node.

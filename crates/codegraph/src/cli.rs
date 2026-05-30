@@ -73,5 +73,22 @@ pub enum Commands {
         /// Skip post-generation scripts even if the profile declares them
         #[arg(long)]
         no_post_gen: bool,
+        /// Paths to IFML DSL (.ifml) files
+        #[arg(long)]
+        ifml_files: Vec<PathBuf>,
+    },
+    /// Start the IFML Language Server Protocol server
+    Lsp {
+        /// Paths to JSON schema directories
+        #[arg(long)]
+        schemas: Vec<PathBuf>,
+
+        /// Path to classifier.toml
+        #[arg(long)]
+        classifier: Option<PathBuf>,
+
+        /// Path to domains.toml
+        #[arg(long)]
+        config: Option<PathBuf>,
     },
 }

@@ -24,6 +24,7 @@ auth = true
 pagination = true
 validation_level = "strict"
 offline_mode = false
+ifml_backend = true
 
 [profiles.default.api]
 generators = [
@@ -51,6 +52,8 @@ generators = [
     "ui-domain-layout",
     # Global
     "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+    # IFML
+    "ifml_route", "ifml_navigation",
 ]
 output = "review/generated-candidate/"
 scripts.post_gen = []

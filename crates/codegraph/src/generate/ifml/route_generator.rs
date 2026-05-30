@@ -6,7 +6,8 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::generate::render_template;
-use crate::generate::traits::{EntityGenerator, GeneratedFile};
+use crate::generate::traits::{GeneratedFile, GlobalGenerator};
+use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
 use super::querier::*;
@@ -24,7 +25,7 @@ impl IfmlRouteGenerator {
 }
 
 #[async_trait]
-impl EntityGenerator for IfmlRouteGenerator {
+impl GlobalGenerator for IfmlRouteGenerator {
     fn name(&self) -> &str {
         "ifml-route"
     }
@@ -32,39 +33,37 @@ impl EntityGenerator for IfmlRouteGenerator {
     async fn generate(
         &self,
         db: &dyn GraphQuerier,
-        schema_title: &str,
-        _domain: &str,
         _config: &DomainConfig,
-        tera: &tera::Tera,
+        _generation_order: &[GenerationEntry],
+        _tera: &tera::Tera,
     ) -> Result<Vec<GeneratedFile>> {
         let querier = IfmlGraphQuerier::new(db);
+        let model = querier.get_ifml_model().await.map_err(|e| {
+            crate::error::Error::Graph(e)
+        })?;
 
-        // Get the view container for this schema.
-        // Schema title might not match view name, so we need the graph to link them.
-        let view_container = match querier.get_view_container(schema_title).await {
-            Ok(Some(vc)) => vc,
-            _ => return Ok(vec![]), // No IFML view for this schema
-        };
+        if model.view_containers.is_empty() {
+            return Ok(vec![]);
+        }
 
         let mut files = vec![];
 
-        // Generate SvelteKit route: +page.svelte and +page.ts
-        let route_name = view_container.name.to_lowercase();
+        for vc in &model.view_containers {
+            let route_name = vc.name.to_lowercase();
 
-        // +page.svelte
-        if let Ok(content) = render_page_svelte(tera, &view_container) {
-            files.push(GeneratedFile {
-                path: PathBuf::from(format!("src/routes/{route_name}/+page.svelte")),
-                content,
-            });
-        }
+            if let Ok(content) = render_page_svelte(&vc) {
+                files.push(GeneratedFile {
+                    path: self.output_dir.join(format!("src/routes/{route_name}/+page.svelte")),
+                    content,
+                });
+            }
 
-        // +page.ts (load function)
-        if let Ok(content) = render_page_load(tera, &view_container) {
-            files.push(GeneratedFile {
-                path: PathBuf::from(format!("src/routes/{route_name}/+page.ts")),
-                content,
-            });
+            if let Ok(content) = render_page_load(&vc) {
+                files.push(GeneratedFile {
+                    path: self.output_dir.join(format!("src/routes/{route_name}/+page.ts")),
+                    content,
+                });
+            }
         }
 
         Ok(files)
@@ -101,56 +100,12 @@ struct PageLoadComponentContext {
     route_name: String,
 }
 
-fn render_page_svelte(tera: &tera::Tera, vc: &super::context::IfmlViewContainer) -> Result<String> {
-    let ctx = PageSvelteContext {
-        name: vc.name.clone(),
-        label: vc
-            .label
-            .clone()
-            .unwrap_or_else(|| vc.name.clone()),
-        components: vc
-            .components
-            .iter()
-            .map(|c| PageComponentContext {
-                name: c.name.clone(),
-                component_type: c.component_type.clone(),
-                entity: c.entity.clone().unwrap_or_default(),
-                fields: c.fields.clone(),
-                filter: c.filter.clone().unwrap_or_default(),
-            })
-            .collect(),
-        params: vc.params.clone(),
-    };
-
-    if tera.get_template("ifml/page_svelte.tera").is_ok() {
-        render_template(tera, "ifml/page_svelte.tera", &ctx)
-    } else {
-        // Fallback: generate inline without template
-        Ok(generate_page_svelte_inline(vc))
-    }
+fn render_page_svelte(vc: &super::context::IfmlViewContainer) -> Result<String> {
+    Ok(generate_page_svelte_inline(vc))
 }
 
-fn render_page_load(tera: &tera::Tera, vc: &super::context::IfmlViewContainer) -> Result<String> {
-    let ctx = PageLoadContext {
-        name: vc.name.clone(),
-        components: vc
-            .components
-            .iter()
-            .filter(|c| c.entity.is_some())
-            .map(|c| PageLoadComponentContext {
-                component_type: c.component_type.clone(),
-                entity: c.entity.clone().unwrap_or_default(),
-                route_name: c.entity.clone().unwrap_or_default().to_lowercase(),
-            })
-            .collect(),
-    };
-
-    if tera.get_template("ifml/page_load.tera").is_ok() {
-        render_template(tera, "ifml/page_load.tera", &ctx)
-    } else {
-        // Fallback: generate inline without template
-        Ok(generate_page_load_inline(vc))
-    }
+fn render_page_load(vc: &super::context::IfmlViewContainer) -> Result<String> {
+    Ok(generate_page_load_inline(vc))
 }
 
 fn generate_page_svelte_inline(vc: &super::context::IfmlViewContainer) -> String {

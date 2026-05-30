@@ -12,7 +12,7 @@ pub fn ifml_capabilities() -> Vec<GeneratorCapability> {
     vec![
         GeneratorCapability {
             name: "ifml_route".to_string(),
-            kind: GeneratorKind::Entity,
+            kind: GeneratorKind::Global,
             target: GeneratorTarget::Ui,
             features_required: vec!["ifml_backend".to_string()],
             features_optional: vec![],

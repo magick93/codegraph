@@ -17,6 +17,7 @@ struct RunArgs<'a> {
     variant: Option<&'a str>,
     profiles_config_path: Option<PathBuf>,
     no_post_gen: bool,
+    ifml_files: &'a [PathBuf],
 }
 
 #[tokio::main]
@@ -46,6 +47,7 @@ async fn main() -> codegraph::error::Result<()> {
             variant,
             profiles_config,
             no_post_gen,
+            ifml_files,
         } => {
             cmd_run(RunArgs {
                 schemas: &schemas,
@@ -57,8 +59,12 @@ async fn main() -> codegraph::error::Result<()> {
                 variant: variant.as_deref(),
                 profiles_config_path: profiles_config,
                 no_post_gen,
+                ifml_files: &ifml_files,
             })
             .await
+        }
+        cli::Commands::Lsp { schemas, classifier, config } => {
+            cmd_lsp(&schemas, classifier.as_deref(), config.as_deref()).await
         }
     }
 }
@@ -194,6 +200,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         variant,
         profiles_config_path,
         no_post_gen,
+        ifml_files,
     } = args;
 
     let backend_config = BackendConfig::default();
@@ -250,6 +257,26 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         "Pass 1 complete: {} schemas ingested",
         ingest_result.schemas_created
     );
+
+    // Pass 1b: Ingest IFML DSL files (if provided)
+    if !ifml_files.is_empty() {
+        println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
+        let mut total_stats = codegraph::ingest::ifml_ingest::IfmlIngestStats::default();
+        for ifml_path in ifml_files {
+            let model = codegraph_ifml_dsl::parse_ifml_file(ifml_path)
+                .map_err(|e| codegraph::error::Error::Config(format!(
+                    "Failed to parse IFML file '{}': {}", ifml_path.display(), e
+                )))?;
+            let stats = codegraph::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+            total_stats.view_containers += stats.view_containers;
+            total_stats.containers += stats.containers;
+            total_stats.components += stats.components;
+            total_stats.events += stats.events;
+            total_stats.parameters += stats.parameters;
+            total_stats.actions += stats.actions;
+        }
+        println!("Pass 1b complete: {total_stats}");
+    }
 
     // Auto-classify
     let classifier_types: HashSet<String> = classifier_config
@@ -449,6 +476,58 @@ async fn cmd_classify(
         }
         cli::ClassifyFormat::Json => codegraph::classify::output::format_json(&results),
     }
+
+    Ok(())
+}
+
+async fn cmd_lsp(
+    schema_dirs: &[PathBuf],
+    classifier: Option<&Path>,
+    config: Option<&Path>,
+) -> codegraph::error::Result<()> {
+    use codegraph_backend::{create_backend, BackendConfig};
+
+    let backend_config = BackendConfig::default();
+    let be = create_backend(&backend_config)
+        .await
+        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
+
+    // Load JSON Schema files
+    for dir in schema_dirs {
+        if dir.exists() {
+            let empty_entities = std::collections::HashSet::new();
+            let default_ui = codegraph_config::UiOverrideConfig::default();
+            let default_suffix = "Type".to_string();
+            let classifier_config = if let Some(classifier_path) = classifier {
+                codegraph_classifier::config::parse_classifier_config(classifier_path)
+                    .map_err(|e| codegraph::error::Error::Config(e.to_string()))?
+            } else {
+                codegraph_classifier::config::parse_classifier_config_str("{}")
+                    .map_err(|e| codegraph::error::Error::Config(e.to_string()))?
+            };
+
+            codegraph::ingest::async_ingest::ingest_schemas(
+                be.ingestor(),
+                dir,
+                &classifier_config,
+                &empty_entities,
+                &default_ui,
+                &default_suffix,
+            )
+            .await?;
+        }
+    }
+
+    // TODO: Full LSP server implementation
+    // For now, print a message and exit
+    println!("LSP server mode — ready to accept connections");
+    println!("Schema dirs: {:?}", schema_dirs);
+    println!("Classifier: {:?}", classifier);
+    println!("Config: {:?}", config);
+
+    // Block until Ctrl+C
+    tokio::signal::ctrl_c().await
+        .map_err(|e| codegraph::error::Error::Config(format!("Ctrl+C failed: {e}")))?;
 
     Ok(())
 }

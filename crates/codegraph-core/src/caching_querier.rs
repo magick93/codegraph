@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
-    CodeList, CompositeColumn, CompositeRange, CompositionTree, EnumValue, Extension,
-    ParentCandidate, PropertyNode, SchemaClassificationData, SchemaNode, StructuredSubField,
+    ActionNode, CodeList, CompositeColumn, CompositeRange, CompositionTree, EnumValue, EventNode,
+    Extension, ParentCandidate, ParameterDefinitionNode, PropertyNode, SchemaClassificationData,
+    SchemaNode, StructuredSubField, ViewComponentNode, ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -402,5 +403,42 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn list_all_properties(&self) -> Result<HashMap<String, Vec<PropertyNode>>, GraphError> {
         self.inner.list_all_properties().await
+    }
+
+    // ── IFML query delegation ──────────────────────────────────────────
+
+    async fn get_ifml_view_containers(&self) -> Result<Vec<ViewContainerNode>, GraphError> {
+        self.inner.get_ifml_view_containers().await
+    }
+
+    async fn get_ifml_view_components(
+        &self,
+        container_name: &str,
+    ) -> Result<Vec<ViewComponentNode>, GraphError> {
+        self.inner.get_ifml_view_components(container_name).await
+    }
+
+    async fn get_ifml_events(&self, parent_id: &str) -> Result<Vec<EventNode>, GraphError> {
+        self.inner.get_ifml_events(parent_id).await
+    }
+
+    async fn get_ifml_navigation_flows(
+        &self,
+    ) -> Result<Vec<(String, String, String)>, GraphError> {
+        self.inner.get_ifml_navigation_flows().await
+    }
+
+    async fn get_ifml_data_flows(
+        &self,
+    ) -> Result<Vec<(String, String, Option<String>, Option<String>)>, GraphError> {
+        self.inner.get_ifml_data_flows().await
+    }
+
+    async fn get_ifml_actions(&self) -> Result<Vec<ActionNode>, GraphError> {
+        self.inner.get_ifml_actions().await
+    }
+
+    async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
+        self.inner.get_ifml_parameters().await
     }
 }

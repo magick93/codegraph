@@ -98,6 +98,24 @@ pub enum EventType {
     Custom(String),
 }
 
+impl EventType {
+    pub fn to_string(&self) -> String {
+        match self {
+            EventType::Select => "select".to_string(),
+            EventType::Submit => "submit".to_string(),
+            EventType::Click => "click".to_string(),
+            EventType::Change => "change".to_string(),
+            EventType::Load => "load".to_string(),
+            EventType::Save => "save".to_string(),
+            EventType::Cancel => "cancel".to_string(),
+            EventType::Delete => "delete".to_string(),
+            EventType::Confirm => "confirm".to_string(),
+            EventType::Back => "back".to_string(),
+            EventType::Custom(s) => s.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EventAction {
     Navigate {

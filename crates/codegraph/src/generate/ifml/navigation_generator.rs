@@ -56,7 +56,7 @@ impl GlobalGenerator for IfmlNavigationGenerator {
         // Navigation route map
         if let Ok(content) = render_navigation_map(tera, &route_map) {
             files.push(GeneratedFile {
-                path: PathBuf::from("src/lib/routes.ts"),
+                path: self.output_dir.join("src/lib/routes.ts"),
                 content,
             });
         }
@@ -64,7 +64,7 @@ impl GlobalGenerator for IfmlNavigationGenerator {
         // Type-safe route helpers
         let type_helpers = generate_type_helpers(&route_map);
         files.push(GeneratedFile {
-            path: PathBuf::from("src/lib/route-helpers.ts"),
+            path: self.output_dir.join("src/lib/route-helpers.ts"),
             content: type_helpers,
         });
 

@@ -433,6 +433,7 @@ dependencies = [
  "codegraph-core",
  "codegraph-ext-points",
  "codegraph-grafeo",
+ "codegraph-ifml-dsl",
  "codegraph-naming",
  "codegraph-type-contracts",
  "futures",
@@ -496,6 +497,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -520,7 +522,9 @@ dependencies = [
  "grafeo-core",
  "grafeo-engine",
  "rust_decimal",
+ "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

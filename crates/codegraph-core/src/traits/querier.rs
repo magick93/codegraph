@@ -1,7 +1,8 @@
 use crate::error::GraphError;
 use crate::types::{
-    CodeList, CompositeColumn, CompositeRange, CompositionTree, EnumValue, Extension,
-    ParentCandidate, PropertyNode, SchemaClassificationData, SchemaNode, StructuredSubField,
+    ActionNode, CodeList, CompositeColumn, CompositeRange, CompositionTree, EventNode, EnumValue,
+    Extension, ParentCandidate, ParameterDefinitionNode, PropertyNode, SchemaClassificationData,
+    SchemaNode, StructuredSubField, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -113,5 +114,52 @@ pub trait GraphQuerier: Send + Sync {
             }
         }
         Ok(map)
+    }
+
+    // ── IFML query methods (default: no IFML data) ─────────────────────
+
+    /// Get all IFML ViewContainer nodes.
+    async fn get_ifml_view_containers(&self) -> Result<Vec<ViewContainerNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get all ViewComponent nodes inside a container.
+    async fn get_ifml_view_components(
+        &self,
+        _container_name: &str,
+    ) -> Result<Vec<ViewComponentNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get all Event nodes for a given parent element.
+    async fn get_ifml_events(
+        &self,
+        _parent_id: &str,
+    ) -> Result<Vec<EventNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get NavigationFlow edges: (source_element, source_event, target_container).
+    async fn get_ifml_navigation_flows(
+        &self,
+    ) -> Result<Vec<(String, String, String)>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get DataFlow edges: (source, target, source_param, target_param).
+    async fn get_ifml_data_flows(
+        &self,
+    ) -> Result<Vec<(String, String, Option<String>, Option<String>)>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get all ActionNode definitions.
+    async fn get_ifml_actions(&self) -> Result<Vec<ActionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get all ParameterDefinition nodes.
+    async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
+        Ok(Vec::new())
     }
 }
