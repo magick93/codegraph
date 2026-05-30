@@ -1,0 +1,102 @@
+{
+  "name": "codegraph-ifml",
+  "displayName": "IFML for codegraph",
+  "description": "IFML DSL support — editing, validation, diagram preview, and code generation",
+  "version": "0.1.0",
+  "icon": "media/icon.png",
+  "publisher": "codegraph",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages", "Linters", "Visualization"],
+  "activationEvents": [
+    "onLanguage:ifml",
+    "onCommand:ifml.openDiagram",
+    "onCommand:ifml.validate",
+    "onCommand:ifml.generate"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [{
+      "id": "ifml",
+      "aliases": ["IFML", "ifml"],
+      "extensions": [".ifml"],
+      "configuration": "./syntaxes/ifml.language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "ifml",
+      "scopeName": "source.ifml",
+      "path": "./syntaxes/ifml.tmLanguage.json"
+    }],
+    "commands": [
+      {
+        "command": "ifml.openDiagram",
+        "title": "IFML: Open Diagram Preview"
+      },
+      {
+        "command": "ifml.validate",
+        "title": "IFML: Validate Current File"
+      },
+      {
+        "command": "ifml.generate",
+        "title": "IFML: Generate Code from Project"
+      },
+      {
+        "command": "ifml.refreshLsp",
+        "title": "IFML: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "IFML",
+      "properties": {
+        "ifml.codegraphPath": {
+          "type": "string",
+          "default": "codegraph",
+          "description": "Path to the codegraph binary"
+        },
+        "ifml.schemaDirs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["schemas"],
+          "description": "Directories containing JSON Schema files"
+        },
+        "ifml.classifierConfig": {
+          "type": "string",
+          "default": "classifier.toml",
+          "description": "Path to classifier.toml"
+        },
+        "ifml.domainConfig": {
+          "type": "string",
+          "default": "domains.toml",
+          "description": "Path to domains.toml"
+        },
+        "ifml.enableDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable real-time validation diagnostics"
+        }
+      }
+    },
+    "keybindings": [{
+      "command": "ifml.openDiagram",
+      "key": "ctrl+shift+i",
+      "when": "editorLangId == ifml"
+    }]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/run.js",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "@vscode/test-electron": "^2.3.0",
+    "typescript": "^5.3.0",
+    "vscode-languageclient": "^9.0.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}

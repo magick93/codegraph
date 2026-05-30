@@ -1,0 +1,38 @@
+<script lang="ts">
+	import type { PageData } from './$types';
+	import { enhance } from '$app/forms';
+
+	let { data, form }: { data: PageData; form: import('$types').ActionData } = $props();
+
+	let values = $state(data.formData ?? {});
+
+	function handleCancel() {
+		history.back();
+	}
+</script>
+
+<svelte:head>
+	<title>{{ label }}</title>
+</svelte:head>
+
+<form method="POST" use:enhance>
+	{% for field in fields %}
+	<label>
+		{{ field.label }}
+		<input
+			name="{{ field.name }}"
+			bind:value={values.{{ field.name }}}
+			type="{{ field.input_type }}"
+		/>
+	</label>
+	{% endfor %}
+
+	<div class="actions">
+		<button type="submit">Save</button>
+		<button type="button" onclick={handleCancel}>Cancel</button>
+	</div>
+</form>
+
+{% if form?.error %}
+<p class="error">{form.error}</p>
+{% endif %}

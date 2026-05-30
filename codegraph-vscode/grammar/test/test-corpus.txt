@@ -1,0 +1,553 @@
+==================
+Minimal view
+==================
+
+view "Hello" {
+    component "hi" {
+        type: list;
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))))))
+
+==================
+Domain declaration
+==================
+
+domain "sales" {
+    schema "sales";
+}
+
+---
+
+(source_file
+  (domain_declaration
+    (string)
+    (string)))
+
+==================
+View with params
+==================
+
+view "CustomerDetail" {
+    params { customerId: Uuid };
+
+    component "info" {
+        type: details;
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (params_block
+        (parameter_block
+          (parameter_decl
+            name: (identifier)
+            type: (type_ref))))
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier)))))))))
+
+==================
+Event with navigate action and binding
+==================
+
+view "Test" {
+    component "btn" {
+        type: list;
+
+        on select(row) -> navigate("Detail", {
+            id: row.id
+        });
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (event_handler
+            type: (event_type)
+            (event_param
+              (identifier))
+            action: (navigate_action
+              (string)
+              (parameter_binding
+                (binding_pair
+                  key: (identifier)
+                  value: (expression
+                    (field_expr
+                      (identifier)
+                      (identifier))))))))))))
+
+==================
+Event with action invocation and nested handlers
+==================
+
+view "MyView" {
+    component "form" {
+        type: form;
+
+        on save(values) -> action("UpdateCustomer", {
+            on success -> navigate("CustomerDetail");
+            on error -> stay;
+        });
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (event_handler
+            type: (event_type)
+            (event_param
+              (identifier))
+            action: (action_invocation
+              (string)
+              (action_body
+                (event_handler
+                  type: (event_type)
+                  action: (navigate_action
+                    (string)))
+                (event_handler
+                  type: (event_type)
+                  action: (stay_statement))))))))))
+
+==================
+C-like expression with comparison and field access
+==================
+
+view "SearchPage" {
+    component "results" {
+        type: list;
+        filter: name ~= params.query;
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier)
+                (field_expr
+                  (identifier)
+                  (identifier))))))))))
+
+==================
+Comments and string escapes
+==================
+
+// top-level comment
+view "Special\tChars" {
+    // inline comment
+    component "info" {
+        type: details;
+        title: "Hello \"World\"\nLine2";
+    }
+}
+
+---
+
+(source_file
+  (comment)
+  (view_declaration
+    (string)
+    (view_body
+      (comment)
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (string)))))))))
+
+==================
+Array property values
+==================
+
+view "Grid" {
+    component "tbl" {
+        type: list;
+        fields: [name, email, phone];
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (array_literal
+                (expression
+                  (identifier))
+                (expression
+                  (identifier))
+                (expression
+                  (identifier))))))))))
+
+==================
+Container nesting
+==================
+
+view "Wizard" {
+    xor: true;
+
+    container "Step1" {
+        default: true;
+
+        component "form" {
+            type: form;
+        }
+    }
+
+    container "Step2" {
+        component "display" {
+            type: details;
+        }
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (property_assignment
+        key: (identifier)
+        value: (value_expression
+          (expression
+            (boolean))))
+      (container_declaration
+        (string)
+        (view_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (boolean))))
+          (component_declaration
+            (string)
+            (component_body
+              (property_assignment
+                key: (identifier)
+                value: (value_expression
+                  (expression
+                    (identifier))))))))
+      (container_declaration
+        (string)
+        (view_body
+          (component_declaration
+            (string)
+            (component_body
+              (property_assignment
+                key: (identifier)
+                value: (value_expression
+                  (expression
+                    (identifier)))))))))))
+
+==================
+Label declaration
+==================
+
+view "CustomerList" {
+    label "Customer Management";
+
+    component "grid" {
+        type: list;
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (label_declaration
+        (string))
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier)))))))))
+
+==================
+Action declaration
+==================
+
+action "CreateCustomer" {
+    on success -> navigate("CustomerList");
+    on error -> stay;
+}
+
+---
+
+(source_file
+  (action_declaration
+    (string)
+    (action_body
+      (event_handler
+        type: (event_type)
+        action: (navigate_action
+          (string)))
+      (event_handler
+        type: (event_type)
+        action: (stay_statement)))))
+
+==================
+Module declaration
+==================
+
+module "SearchWidget" {
+    input { query: String };
+    output { result: Uuid };
+    component "searchBar" {
+        type: form;
+    }
+}
+
+---
+
+(source_file
+  (module_declaration
+    (string)
+    (parameter_block
+      (parameter_decl
+        name: (identifier)
+        type: (type_ref)))
+    (parameter_block
+      (parameter_decl
+        name: (identifier)
+        type: (type_ref)))
+    (component_declaration
+      (string)
+      (component_body
+        (property_assignment
+          key: (identifier)
+          value: (value_expression
+            (expression
+              (identifier))))))))
+
+==================
+Landmark and boolean properties
+==================
+
+view "Dashboard" {
+    landmark: true;
+
+    component "chart" {
+        type: list;
+        data: Order;
+    }
+
+    on load -> refresh("chart");
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (property_assignment
+        key: (identifier)
+        value: (value_expression
+          (expression
+            (boolean))))
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))))
+      (event_handler
+        type: (event_type)
+        action: (refresh_action
+          (string))))))
+
+==================
+Nested action body with properties
+==================
+
+view "EditView" {
+    component "form" {
+        mode: edit;
+
+        on save(values) -> action("UpdateOrder", {
+            body: values;
+            on success -> navigate("Detail");
+        });
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (event_handler
+            type: (event_type)
+            (event_param
+              (identifier))
+            action: (action_invocation
+              (string)
+              (action_body
+                (property_assignment
+                  key: (identifier)
+                  value: (value_expression
+                    (expression
+                      (identifier))))
+                (event_handler
+                  type: (event_type)
+                  action: (navigate_action
+                    (string)))))))))))
+
+==================
+Stay statement
+==================
+
+view "Detail" {
+    component "view" {
+        on cancel -> stay;
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (component_declaration
+        (string)
+        (component_body
+          (event_handler
+            type: (event_type)
+            action: (stay_statement)))))))
+
+==================
+View-level event handler
+==================
+
+view "Dashboard" {
+    on load -> refresh("recentOrders");
+
+    component "recentOrders" {
+        type: list;
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (event_handler
+        type: (event_type)
+        action: (refresh_action
+          (string)))
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier)))))))))

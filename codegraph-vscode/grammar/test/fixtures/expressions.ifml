@@ -1,0 +1,38 @@
+view "Dashboard" {
+    component "recentOrders" {
+        type: list;
+        data: Order;
+        fields: [id, customerName, total, date];
+        filter: date == today();
+    }
+
+    component "topProducts" {
+        type: list;
+        data: Product;
+        fields: [name, salesCount];
+        filter: salesCount > 1000;
+        sort: salesCount;
+    }
+}
+
+view "SearchPage" {
+    component "searchForm" {
+        type: form;
+        data: ProductSearchQuery;
+
+        on submit(values) -> navigate("SearchPage", {
+            query: values.term
+        });
+    }
+
+    component "results" {
+        type: list;
+        data: Product;
+        fields: [name, sku, price];
+        filter: name ~= params.query;
+
+        on select(row) -> navigate("ProductDetail", {
+            productId: row.id
+        });
+    }
+}

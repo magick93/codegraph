@@ -213,6 +213,16 @@ impl BuildPlan {
 /// This is the single source of truth for which generators exist and what
 /// they require. When adding a new generator, add its entry here.
 fn capabilities() -> HashMap<String, GeneratorCapability> {
+    let mut map = base_capabilities();
+    // Merge IFML generator capabilities
+    for cap in crate::generate::ifml::profiles::ifml_capabilities() {
+        map.insert(cap.name.clone(), cap);
+    }
+    map
+}
+
+/// Base capabilities without IFML generators.
+fn base_capabilities() -> HashMap<String, GeneratorCapability> {
     use GeneratorKind::{Domain, Entity, Global};
     use GeneratorTarget::*;
 

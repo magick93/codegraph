@@ -1,0 +1,23 @@
+<script lang="ts">
+	import type { PageData } from './$types';
+
+	let { data }: { data: PageData } = $props();
+</script>
+
+<svelte:head>
+	<title>{{ label }}</title>
+</svelte:head>
+
+<h1>{{ label }}</h1>
+
+<dl>
+{% for field in fields %}
+	<dt>{{ field.label }}</dt>
+	<dd>{data.item.{{ field.name }}}</dd>
+{% endfor %}
+</dl>
+
+<div class="actions">
+	<a href="./edit">Edit</a>
+	<a href="..">Back</a>
+</div>

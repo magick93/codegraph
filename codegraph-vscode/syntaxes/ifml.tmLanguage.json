@@ -1,0 +1,84 @@
+{
+    "scopeName": "source.ifml",
+    "name": "IFML",
+    "fileTypes": ["ifml"],
+    "patterns": [
+        { "include": "#comments" },
+        { "include": "#keywords" },
+        { "include": "#eventKeywords" },
+        { "include": "#controlKeywords" },
+        { "include": "#propertyKeys" },
+        { "include": "#booleanLiterals" },
+        { "include": "#typeRefs" },
+        { "include": "#strings" },
+        { "include": "#numbers" },
+        { "include": "#operators" },
+        { "include": "#punctuation" },
+        { "include": "#identifiers" }
+    ],
+    "repository": {
+        "comments": {
+            "patterns": [
+                { "match": "//.*", "name": "comment.line.double-slash.ifml" }
+            ]
+        },
+        "keywords": {
+            "patterns": [
+                { "match": "\\b(view|container|component|action|module|domain|schema|params|input|output|xor|default|modal|landmark)\\b", "name": "keyword.control.ifml" }
+            ]
+        },
+        "eventKeywords": {
+            "patterns": [
+                { "match": "\\b(on|select|submit|click|change|load|save|cancel|delete|confirm|back)\\b", "name": "keyword.function.ifml" }
+            ]
+        },
+        "controlKeywords": {
+            "patterns": [
+                { "match": "\\b(navigate|refresh|stay)\\b", "name": "keyword.control.ifml" }
+            ]
+        },
+        "propertyKeys": {
+            "patterns": [
+                { "match": "\\b(type|data|fields|mode|filter|sort|label)\\b\\s*:", "name": "support.type.property-name.ifml" },
+                { "match": "\\b(edit|create|view|list|form|details|search|tree|chart)\\b", "name": "support.constant.component-type.ifml" }
+            ]
+        },
+        "booleanLiterals": {
+            "patterns": [
+                { "match": "\\b(true|false)\\b", "name": "constant.language.boolean.ifml" }
+            ]
+        },
+        "typeRefs": {
+            "patterns": [
+                { "match": "\\b(Uuid|String|Int|Float|Boolean|DateTime)\\b", "name": "support.type.ifml" }
+            ]
+        },
+        "strings": {
+            "patterns": [
+                { "begin": "\"", "end": "\"", "name": "string.quoted.double.ifml", "patterns": [
+                    { "match": "\\\\.", "name": "constant.character.escape.ifml" }
+                ]}
+            ]
+        },
+        "numbers": {
+            "patterns": [
+                { "match": "\\b-?[0-9]+(\\.[0-9]+)?\\b", "name": "constant.numeric.ifml" }
+            ]
+        },
+        "operators": {
+            "patterns": [
+                { "match": "(==|!=|<=|>=|~=|!~|&&|\\|\\||[+\\-*/%!<>])", "name": "keyword.operator.ifml" }
+            ]
+        },
+        "punctuation": {
+            "patterns": [
+                { "match": "[\\{\\}\\[\\]\\(\\)\\,;\\.]", "name": "punctuation.ifml" }
+            ]
+        },
+        "identifiers": {
+            "patterns": [
+                { "match": "[a-zA-Z_][a-zA-Z0-9_]*", "name": "variable.other.ifml" }
+            ]
+        }
+    }
+}

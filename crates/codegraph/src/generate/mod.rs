@@ -1,5 +1,6 @@
 pub mod codelist;
 pub mod filter_fields;
+pub mod ifml;
 pub mod report;
 pub mod template_engine;
 pub mod traits;
@@ -437,6 +438,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             ))
         },
         Box::new(cli::command::CliCommandGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
+        Box::new(ifml::route_generator::IfmlRouteGenerator::new(output_dir))
+            as Box<dyn EntityGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_entity(gen.name()))
@@ -513,6 +516,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(webhook::dispatch::WebhookDispatchGenerator::new(output_dir))
             as Box<dyn GlobalGenerator>,
         Box::new(webhook::endpoint_api::WebhookEndpointApiGenerator::new(
+            output_dir,
+        )) as Box<dyn GlobalGenerator>,
+        Box::new(ifml::navigation_generator::IfmlNavigationGenerator::new(
             output_dir,
         )) as Box<dyn GlobalGenerator>,
     ]

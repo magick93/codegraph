@@ -1,0 +1,42 @@
+<script lang="ts">
+	import type { PageData } from './$types';
+
+	let { data }: { data: PageData } = $props();
+
+	function viewDetail(id: string) {
+		goto(`./${id}`);
+	}
+</script>
+
+<svelte:head>
+	<title>{{ label }}</title>
+</svelte:head>
+
+<h1>{{ label }}</h1>
+
+<div class="table-container">
+	<table>
+		<thead>
+			<tr>
+			{% for field in fields %}
+				<th>{{ field }}</th>
+			{% endfor %}
+				<th>Actions</th>
+			</tr>
+		</thead>
+		<tbody>
+			{#each data.items as item}
+				<tr>
+				{% for field in fields %}
+					<td>{item.{{ field }}}</td>
+				{% endfor %}
+					<td>
+						<button onclick={() => viewDetail(item.id)}>
+							View
+						</button>
+					</td>
+				</tr>
+			{/each}
+		</tbody>
+	</table>
+</div>
