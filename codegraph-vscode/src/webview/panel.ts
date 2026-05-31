@@ -32,20 +32,21 @@ export function openDiagramPanel(context: vscode.ExtensionContext, uri: vscode.U
     vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview', 'ifml-diagram.css')
   );
 
-  panel.webview.html = getWebviewHtml(scriptUri, styleUri, panel);
+  const nonce = getNonce();
+  const cspSource = panel.webview.cspSource;
+
+  panel.webview.html = getWebviewHtml(nonce, cspSource, styleUri, scriptUri);
 
   const sync = new SyncEngine(panel, uri);
 
-  // Wait for WebView to signal ready, then send the parsed model
-  let webviewReady = false;
+  // Wait for WebView to signal ready
   panel.webview.onDidReceiveMessage((msg) => {
     if (msg.command === 'sync/ready') {
-      webviewReady = true;
       sendModelFromDocument(uri, sync);
     }
   });
 
-  // Also send on document changes (panel is already open, so WebView is ready)
+  // Re-send on document changes
   const watcher = vscode.workspace.onDidChangeTextDocument((e) => {
     if (e.document.uri.toString() === uri.toString()) {
       sendModelFromDocument(e.document.uri, sync);
@@ -64,7 +65,8 @@ function sendModelFromDocument(uri: vscode.Uri, sync: SyncEngine): void {
   try {
     const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === uri.toString());
     if (doc) {
-      const model = parseIfmlForDiagram(doc.getText());
+      const text = doc.getText();
+      const model = parseIfmlForDiagram(text);
       sync.sendModel(model);
     }
   } catch (err) {
@@ -82,30 +84,29 @@ function getNonce(): string {
 }
 
 function getWebviewHtml(
-  scriptUri: vscode.Uri,
+  nonce: string,
+  cspSource: string,
   styleUri: vscode.Uri,
-  panel: vscode.WebviewPanel,
+  scriptUri: vscode.Uri,
 ): string {
-  const nonce = getNonce();
-  const cspSource = panel.webview.cspSource;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="
-        default-src 'none';
-        style-src ${cspSource} 'unsafe-inline';
-        script-src 'nonce-${nonce}' 'unsafe-eval';
-        img-src ${cspSource} data:;
-        font-src ${cspSource};
-        connect-src 'self' ${cspSource} ws:;
-    " />
-    <link rel="stylesheet" href="${styleUri}" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'none';
+    style-src ${cspSource} 'unsafe-inline';
+    script-src 'nonce-${nonce}' 'unsafe-eval';
+    img-src ${cspSource} data:;
+    font-src ${cspSource};
+    connect-src 'self' ${cspSource} ws:;
+  " />
+  <link rel="stylesheet" href="${styleUri}" />
 </head>
 <body>
-    <div id="root"></div>
-    <script nonce="${nonce}" src="${scriptUri}"></script>
+  <div id="root"></div>
+  <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
 }

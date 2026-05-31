@@ -94,7 +94,7 @@
     for (const nav of model.navigationEdges) {
       edges.push({
         id: `nav-${nav.sourceContainer}-${nav.targetContainer}`,
-        source: `evt-${nav.sourceContainer}-${nav.sourceEvent}`,
+        source: `vc-${nav.sourceContainer}`,
         target: `vc-${nav.targetContainer}`,
         type: 'navigation-flow',
         data: {
@@ -120,9 +120,10 @@
 
   let debug = $state('Initializing...');
 
-  // Signal to VS Code that the WebView is ready to receive models
+  // Signal ready to VS Code
   sync.postMessage({ command: 'sync/ready' } as any);
 
+  // Listen for model updates
   sync.onMessage((msg) => {
     if (msg.command === 'sync/modelUpdate') {
       debug = `Model received: ${msg.model.viewContainers.length} views`;
@@ -137,8 +138,8 @@
 
 <div class="diagram-container">
   <SvelteFlow
-    {nodes}
-    {edges}
+    bind:nodes={nodes}
+    bind:edges={edges}
     {nodeTypes}
     {edgeTypes}
     fitView
@@ -164,6 +165,7 @@
 </div>
 
 <style>
+  :global(body) { margin: 0; padding: 0; }
   .diagram-container {
     width: 100%;
     height: 100vh;
