@@ -118,16 +118,21 @@
     selectedNodeId = null;
   }
 
+  let debug = $state('Initializing...');
+
+  // Signal to VS Code that the WebView is ready to receive models
+  sync.postMessage({ command: 'sync/ready' } as any);
+
   sync.onMessage((msg) => {
     if (msg.command === 'sync/modelUpdate') {
+      debug = `Model received: ${msg.model.viewContainers.length} views`;
       currentModel = msg.model;
       const flow = modelToFlow(msg.model);
       nodes = flow.nodes;
       edges = flow.edges;
+      debug = `Rendered: ${flow.nodes.length} nodes, ${flow.edges.length} edges`;
     }
   });
-
-  sync.postMessage({ command: 'sync/diagramChanged', model: { viewContainers: [], actions: [], navigationEdges: [], dataFlows: [], generationOrder: [] } });
 </script>
 
 <div class="diagram-container">
@@ -147,6 +152,7 @@
   </SvelteFlow>
 
   <div class="sidebar">
+    <div class="debug">{debug}</div>
     <Palette />
     <PropertySheet
       nodeId={selectedNodeId}
@@ -172,5 +178,13 @@
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+  }
+  .debug {
+    padding: 8px;
+    font-size: 11px;
+    color: var(--vscode-editorInfo-foreground, #888);
+    font-family: monospace;
+    background: var(--vscode-editor-background, #1e1e1e);
+    border-bottom: 1px solid var(--vscode-panel-border, #ccc);
   }
 </style>

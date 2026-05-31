@@ -36,10 +36,16 @@ export function openDiagramPanel(context: vscode.ExtensionContext, uri: vscode.U
 
   const sync = new SyncEngine(panel, uri);
 
-  // Send the initial model from the document text
-  sendModelFromDocument(uri, sync);
+  // Wait for WebView to signal ready, then send the parsed model
+  let webviewReady = false;
+  panel.webview.onDidReceiveMessage((msg) => {
+    if (msg.command === 'sync/ready') {
+      webviewReady = true;
+      sendModelFromDocument(uri, sync);
+    }
+  });
 
-  // Re-send on document changes
+  // Also send on document changes (panel is already open, so WebView is ready)
   const watcher = vscode.workspace.onDidChangeTextDocument((e) => {
     if (e.document.uri.toString() === uri.toString()) {
       sendModelFromDocument(e.document.uri, sync);
@@ -90,10 +96,10 @@ function getWebviewHtml(
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'none';
         style-src ${cspSource} 'unsafe-inline';
-        script-src 'nonce-${nonce}';
+        script-src 'nonce-${nonce}' 'unsafe-eval';
         img-src ${cspSource} data:;
         font-src ${cspSource};
-        connect-src 'self';
+        connect-src 'self' ${cspSource} ws:;
     " />
     <link rel="stylesheet" href="${styleUri}" />
 </head>

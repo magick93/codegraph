@@ -4,22 +4,41 @@ import type {
 } from './sync';
 
 /// Lightweight IFML text extractor for diagram rendering.
-/// Uses regex to extract views, components, events, and navigation flows.
-/// This is not a full parser — it only extracts the structures needed for
-/// the visual diagram. Structural validation is done by the Rust parser.
+/// Uses a simple brace-depth parser to handle nested blocks.
+
+function extractBlock(text: string, start: number): { content: string; end: number } | null {
+  if (text[start] !== '{') return null;
+  let depth = 0;
+  let i = start;
+  while (i < text.length) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}') {
+      depth--;
+      if (depth === 0) return { content: text.slice(start + 1, i), end: i + 1 };
+    }
+    i++;
+  }
+  return null;
+}
+
+function* scanBlocks(text: string, keyword: string): Generator<{ name: string; body: string }> {
+  const re = new RegExp(`${keyword}\\s+"([^"]+)"\\s*\\{`, 'gs');
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    const name = match[1];
+    const block = extractBlock(text, match.index + match[0].length - 1);
+    if (block) {
+      yield { name, body: block.content };
+      re.lastIndex = block.end;
+    }
+  }
+}
 
 export function parseIfmlForDiagram(text: string): IfmlModel {
   const viewContainers: ViewContainerData[] = [];
 
-  // Match: view "Name" { ... } — simple non-nested brace matching
-  const viewRegex = /view\s+"([^"]+)"\s*\{([^}]*)\}/gs;
-  let viewMatch: RegExpExecArray | null;
-
-  while ((viewMatch = viewRegex.exec(text)) !== null) {
-    const viewName = viewMatch[1];
-    const viewBody = viewMatch[2];
-    const container = extractViewContainer(viewName, viewBody);
-    viewContainers.push(container);
+  for (const v of scanBlocks(text, 'view')) {
+    viewContainers.push(extractViewContainer(v.name, v.body));
   }
 
   const navigationEdges = extractNavigationEdges(viewContainers);
@@ -34,39 +53,30 @@ export function parseIfmlForDiagram(text: string): IfmlModel {
 }
 
 function extractViewContainer(name: string, body: string): ViewContainerData {
-  const isLandmark = /landmark\s*:\s*true/i.test(body);
-  const isModal = /modal\s*:\s*true/i.test(body);
-  const labelMatch = /label\s*:\s*"([^"]+)"/.exec(body);
-  const params = extractParams(body);
   const components: ViewComponentData[] = [];
   const events: EventData[] = [];
 
-  // Extract component blocks
-  // Match: component "Name" { ... }
-  const compRegex = /component\s+"([^"]+)"\s*\{([^}]*)\}/gs;
-  let compMatch: RegExpExecArray | null;
-
-  while ((compMatch = compRegex.exec(body)) !== null) {
-    components.push(extractComponent(compMatch[1], compMatch[2]));
+  for (const c of scanBlocks(body, 'component')) {
+    components.push(extractComponent(c.name, c.body));
   }
 
   // View-level events (on load, etc.)
-  const viewEventRegex = /on\s+(\w+)\s*\(?([^)]*)\)?\s*->\s*(\w+)\s*\(\s*"([^"]*)"\s*(?:,\s*\{[^}]*\})?\s*\)/g;
-  let evtMatch: RegExpExecArray | null;
-  while ((evtMatch = viewEventRegex.exec(body)) !== null) {
-    if (!evtMatch[1] || evtMatch[1] === 'select' || evtMatch[1] === 'submit' ||
-        evtMatch[1] === 'save' || evtMatch[1] === 'edit') continue; // skip component events
-    events.push(makeEvent(evtMatch, name, 'view'));
+  const viewEventRe = /on\s+(\w+)\s*\(([^)]*)\)?\s*->\s*(\w+)\s*\(\s*"([^"]*)"\s*(?:,\s*\{[^}]*\})?\s*\)/g;
+  for (const m of body.matchAll(viewEventRe)) {
+    if (m[1] === 'select' || m[1] === 'submit' || m[1] === 'save' || m[1] === 'edit') continue;
+    events.push(makeEvent(m, name, 'view'));
   }
+
+  const labelMatch = /label\s*:\s*"([^"]+)"/.exec(body);
 
   return {
     name,
-    label: labelMatch ? labelMatch[1] : undefined,
+    label: labelMatch?.[1],
     isXor: /xor\s*:\s*true/i.test(body),
     isDefault: /default\s*:\s*true/i.test(body),
-    isLandmark,
-    isModal,
-    params,
+    isLandmark: /landmark\s*:\s*true/i.test(body),
+    isModal: /modal\s*:\s*true/i.test(body),
+    params: extractParams(body),
     components,
     events,
     containers: [],
@@ -84,46 +94,36 @@ function extractComponent(name: string, body: string): ViewComponentData {
     ? fieldsMatch[1].split(',').map(f => f.trim()).filter(Boolean)
     : [];
 
-  const properties: Record<string, string> = {};
-  if (typeMatch) properties.type = typeMatch[1];
-  if (modeMatch) properties.mode = modeMatch[1];
-
   const events: EventData[] = [];
-  const eventRegex = /on\s+(\w+)\s*\(?([^)]*)\)?\s*->\s*(\w+)\s*\(\s*"([^"]*)"\s*(?:,\s*\{[^}]*\})?\s*\)/g;
-  let evtMatch: RegExpExecArray | null;
-  while ((evtMatch = eventRegex.exec(body)) !== null) {
-    events.push(makeEvent(evtMatch, name, 'comp'));
+  const eventRe = /on\s+(\w+)\s*\(([^)]*)\)?\s*->\s*(\w+)\s*\(\s*"([^"]*)"\s*(?:,\s*\{[^}]*\})?\s*\)/g;
+  for (const m of body.matchAll(eventRe)) {
+    events.push(makeEvent(m, name, 'comp'));
   }
 
   return {
     name,
-    componentType: typeMatch ? typeMatch[1] : 'unknown',
-    mode: modeMatch ? modeMatch[1] : undefined,
-    entity: dataMatch ? dataMatch[1] : undefined,
+    componentType: typeMatch?.[1] ?? 'unknown',
+    mode: modeMatch?.[1],
+    entity: dataMatch?.[1],
     fields,
-    filter: filterMatch ? filterMatch[1].trim() : undefined,
-    properties,
+    filter: filterMatch?.[1]?.trim(),
+    properties: { ...(typeMatch && { type: typeMatch[1] }), ...(modeMatch && { mode: modeMatch[1] }) },
     events,
     parts: [],
   };
 }
 
-function makeEvent(m: RegExpExecArray, parent: string, kind: string): EventData {
+function makeEvent(m: RegExpExecArray | string[], parent: string, kind: string): EventData {
   const eventType = m[1];
   const params = m[2] ? m[2].split(',').map(p => p.trim()).filter(Boolean) : [];
   const actionType = m[3];
   const actionTarget = m[4];
 
   let action: ActionData;
-  if (actionType === 'navigate') {
-    action = { type: 'navigate', target: actionTarget };
-  } else if (actionType === 'refresh') {
-    action = { type: 'refresh', target: actionTarget };
-  } else if (actionType === 'action') {
-    action = { type: 'action', name: actionTarget };
-  } else {
-    action = { type: 'stay' };
-  }
+  if (actionType === 'navigate') action = { type: 'navigate', target: actionTarget };
+  else if (actionType === 'refresh') action = { type: 'refresh', target: actionTarget };
+  else if (actionType === 'action') action = { type: 'action', name: actionTarget };
+  else action = { type: 'stay' };
 
   return {
     name: `${kind}_${parent}_${eventType}`,
@@ -134,16 +134,15 @@ function makeEvent(m: RegExpExecArray, parent: string, kind: string): EventData 
 }
 
 function extractParams(body: string): ParameterDef[] {
-  const params: ParameterDef[] = [];
-  const paramRegex = /params\s*\{([^}]*)\}/.exec(body);
-  if (paramRegex) {
-    const pairs = paramRegex[1].split(',').map(p => p.trim()).filter(Boolean);
-    for (const pair of pairs) {
+  const result: ParameterDef[] = [];
+  const m = /params\s*\{([^}]*)\}/.exec(body);
+  if (m) {
+    for (const pair of m[1].split(',').map(s => s.trim()).filter(Boolean)) {
       const [name, typeRef] = pair.split(':').map(s => s.trim());
-      if (name && typeRef) params.push({ name, typeRef });
+      if (name && typeRef) result.push({ name, typeRef });
     }
   }
-  return params;
+  return result;
 }
 
 function extractNavigationEdges(containers: ViewContainerData[]): NavigationEdgeData[] {
@@ -152,21 +151,13 @@ function extractNavigationEdges(containers: ViewContainerData[]): NavigationEdge
     for (const comp of vc.components) {
       for (const evt of comp.events) {
         if (evt.action.type === 'navigate' && evt.action.target) {
-          edges.push({
-            sourceContainer: vc.name,
-            sourceEvent: evt.eventType,
-            targetContainer: evt.action.target,
-          });
+          edges.push({ sourceContainer: vc.name, sourceEvent: evt.eventType, targetContainer: evt.action.target });
         }
       }
     }
     for (const evt of vc.events) {
       if (evt.action.type === 'navigate' && evt.action.target) {
-        edges.push({
-          sourceContainer: vc.name,
-          sourceEvent: evt.eventType,
-          targetContainer: evt.action.target,
-        });
+        edges.push({ sourceContainer: vc.name, sourceEvent: evt.eventType, targetContainer: evt.action.target });
       }
     }
   }
