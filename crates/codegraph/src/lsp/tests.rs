@@ -1,7 +1,11 @@
+use std::sync::Mutex;
 use auto_lsp::lsp_server::{Connection, Message, Notification, Request, RequestId};
 use auto_lsp::lsp_types::*;
 
 use super::{run_lsp_server, GrafeoState, SchemaInfo};
+
+/// Serialize LSP tests that use the shared GRAFE global
+static LSP_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn make_init_params() -> serde_json::Value {
     serde_json::json!({
@@ -122,6 +126,7 @@ fn recv_diagnostics(
 
 #[test]
 fn test_lsp_initialize_returns_capabilities() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();
 
     std::thread::spawn(move || {
@@ -136,6 +141,7 @@ fn test_lsp_initialize_returns_capabilities() {
 
 #[test]
 fn test_lsp_diagnostic_for_valid_ifml() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();
 
     std::thread::spawn(move || {
@@ -168,6 +174,7 @@ fn test_lsp_diagnostic_for_valid_ifml() {
 
 #[test]
 fn test_lsp_diagnostic_for_invalid_ifml() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();
 
     std::thread::spawn(move || {
@@ -200,6 +207,7 @@ fn test_lsp_diagnostic_for_invalid_ifml() {
 
 #[test]
 fn test_lsp_diagnostic_for_missing_entity() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();
 
     let state = GrafeoState {
@@ -239,6 +247,7 @@ fn test_lsp_diagnostic_for_missing_entity() {
 
 #[test]
 fn test_lsp_completion_with_entity_data() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();
 
     let mut schema_infos = std::collections::HashMap::new();
@@ -313,6 +322,7 @@ fn test_lsp_completion_with_entity_data() {
 
 #[test]
 fn test_lsp_goto_definition_view() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();
 
     std::thread::spawn(move || {
@@ -365,6 +375,7 @@ view "CustomerDetail" { component "d" { type: details; data: Customer; } }"#,
 
 #[test]
 fn test_lsp_goto_definition_entity_no_file() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();
 
     let mut schema_infos = std::collections::HashMap::new();

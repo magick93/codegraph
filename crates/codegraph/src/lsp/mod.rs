@@ -6,8 +6,8 @@ use auto_lsp::lsp_server::Connection;
 use auto_lsp::lsp_types::*;
 use auto_lsp::lsp_types::{
     notification::{
-        Cancel, DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Initialized,
-        PublishDiagnostics, SetTrace,
+        Cancel, DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
+        Initialized, PublishDiagnostics, SetTrace,
     },
     request::{Completion, DocumentDiagnosticRequest, GotoDefinition, HoverRequest},
 };
@@ -63,6 +63,7 @@ pub fn run_lsp_server(
         .on::<Initialized, _>(|_db, _params| Ok(()))
         .on::<SetTrace, _>(|_db, _params| Ok(()))
         .on::<Cancel, _>(|_db, _params| Ok(()))
+        .on::<DidSaveTextDocument, _>(|_db, _params| Ok(()))
         .on_mut::<DidOpenTextDocument, _>(|session, params| {
             let uri = params.text_document.uri.clone();
             open_text_document(session, params)?;

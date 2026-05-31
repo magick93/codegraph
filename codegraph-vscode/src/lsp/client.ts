@@ -120,7 +120,8 @@ export class LspClient {
       const found = findBinaryPath(configuredPath, this.context.extensionUri.fsPath);
       const binary = found.binary;
       const binaryArgs = found.args;
-      const cwd = found.cwd;
+      // Default cwd to workspace root so relative --schemas paths resolve
+      const cwd = found.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       // Only add 'lsp' subcommand if not already in binaryArgs (e.g. cargo run -- lsp)
       const args = binaryArgs.includes('lsp') ? [...binaryArgs] : [...binaryArgs, 'lsp'];
       for (const dir of schemaDirs) {
