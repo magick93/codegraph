@@ -553,48 +553,49 @@ async fn cmd_lsp(
     let auto_classifier =
         codegraph::classify::AutoClassifier::new(classifier_types, naming_rules);
 
-    // The classifier returns raw schema titles like "CustomerType".
-    // IFML references them without the suffix ("Customer"), so we strip it.
+    // Build entity names by stripping the "Type" suffix from raw schema titles.
+    // IFML references entities without the suffix (e.g. "Customer" not "CustomerType").
+    // We ALSO try the AutoClassifier for more precise entity/VO classification,
+    // but always include suffix-stripped names as a reliable fallback.
     let default_suffix = "Type";
-
     let mut entity_names_set: HashSet<String> = HashSet::new();
 
-    if let Some(config_path) = config {
-        let domain_config = codegraph_config::config::parse_domain_config(config_path)
-            .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
+    // Always include suffix-stripped names for every loaded schema (reliable fallback)
+    let schemas = be.querier().list_schemas(None).await?;
+    for schema in &schemas {
+        entity_names_set.insert(
+            schema
+                .title
+                .strip_suffix(default_suffix)
+                .unwrap_or(&schema.title)
+                .to_string(),
+        );
+    }
 
-        for (domain_name, domain_entry) in &domain_config.domains {
-            let domain_schemas: Vec<_> = all_data
-                .iter()
-                .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
-                .cloned()
-                .collect();
-            let result =
-                auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
-            for score in &result.entities {
-                let name = score
-                    .title
-                    .strip_suffix(default_suffix)
-                    .unwrap_or(&score.title)
-                    .to_string();
-                entity_names_set.insert(name);
+    // Also try AutoClassifier if domain config is provided (more precise)
+    if let Some(config_path) = config {
+        if let Ok(domain_config) = codegraph_config::config::parse_domain_config(config_path) {
+            for (domain_name, domain_entry) in &domain_config.domains {
+                let domain_schemas: Vec<_> = all_data
+                    .iter()
+                    .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
+                    .cloned()
+                    .collect();
+                let result =
+                    auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
+                for score in &result.entities {
+                    let name = score
+                        .title
+                        .strip_suffix(default_suffix)
+                        .unwrap_or(&score.title)
+                        .to_string();
+                    entity_names_set.insert(name);
+                }
+                // Also include legacy explicit entities from domains.toml
+                for entity in &domain_entry.entities {
+                    entity_names_set.insert(entity.clone());
+                }
             }
-            // Also include legacy explicit entities from domains.toml
-            for entity in &domain_entry.entities {
-                entity_names_set.insert(entity.clone());
-            }
-        }
-    } else {
-        // No domain config — fall back to suffix stripping
-        let schemas = be.querier().list_schemas(None).await?;
-        for schema in &schemas {
-            entity_names_set.insert(
-                schema
-                    .title
-                    .strip_suffix(default_suffix)
-                    .unwrap_or(&schema.title)
-                    .to_string(),
-            );
         }
     }
 

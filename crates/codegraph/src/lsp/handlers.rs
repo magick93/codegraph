@@ -665,19 +665,13 @@ pub fn compute_diagnostics(
     let document = file.document(db);
     let source = document.as_str();
     let source_bytes = source.as_bytes();
-
     let mut diagnostics = Vec::new();
 
     let root = document.tree.root_node();
-    if root.has_error() {
-        diagnostics.push(Diagnostic {
-            range: Range::new(Position::new(0, 0), Position::new(0, 1)),
-            severity: Some(DiagnosticSeverity::ERROR),
-            message: "Parse error in IFML document".to_string(),
-            source: Some("codegraph".to_string()),
-            ..Default::default()
-        });
-    }
+    // Walk the Tree-sitter tree for ERROR/MISSING nodes and report each
+    // with its specific location, so the editor shows red underlines
+    // exactly where the syntax error occurs.
+    collect_errors(&root, source_bytes, &mut diagnostics);
 
     let data_refs = extract_data_refs(source_bytes, &root);
     with_grafe(|grafe| {
@@ -913,6 +907,40 @@ pub fn handle_document_diagnostic(
             },
         }),
     ))
+}
+
+/// Walk the Tree-sitter tree and collect all ERROR/MISSING nodes.
+/// Each error node gets a diagnostic with its specific location, so the
+/// editor shows red underlines exactly where the syntax error occurs.
+fn collect_errors(node: &tree_sitter::Node, source: &[u8], diagnostics: &mut Vec<Diagnostic>) {
+    if node.is_error() || node.is_missing() {
+        let range = node.range();
+        let text = node.utf8_text(source).unwrap_or("<binary>");
+        let message = if node.is_missing() {
+            format!("Missing syntax element (expected something before '{}')", text)
+        } else {
+            format!("Unexpected syntax: '{}'", text)
+        };
+        diagnostics.push(Diagnostic {
+            range: Range::new(
+                Position::new(range.start_point.row as u32, range.start_point.column as u32),
+                Position::new(range.end_point.row as u32, range.end_point.column as u32),
+            ),
+            severity: Some(DiagnosticSeverity::ERROR),
+            message,
+            source: Some("codegraph".to_string()),
+            ..Default::default()
+        });
+    }
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            collect_errors(&cursor.node(), source, diagnostics);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
 }
 
 fn find_line_with_text(text: &str, needle: &str) -> Option<u32> {
