@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
@@ -485,16 +485,16 @@ async fn cmd_lsp(
     classifier: Option<&Path>,
     config: Option<&Path>,
 ) -> codegraph::error::Result<()> {
-    use codegraph::lsp::{run_lsp_server, LspBackend};
+    use codegraph::lsp::{run_lsp_server, LspBackend, SchemaInfo};
     use codegraph_backend::{create_backend, BackendConfig};
     use lsp_server::Connection;
 
-    let _backend_config = BackendConfig::default();
-    let _be = create_backend(&_backend_config)
+    let backend_config = BackendConfig::default();
+    let be = create_backend(&backend_config)
         .await
         .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
 
-    // Load JSON Schema files into the graph (future: pass to LspBackend)
+    // Load JSON Schema files into the graph
     for dir in schema_dirs {
         if dir.exists() {
             let empty_entities = std::collections::HashSet::new();
@@ -509,7 +509,7 @@ async fn cmd_lsp(
             };
 
             codegraph::ingest::async_ingest::ingest_schemas(
-                _be.ingestor(),
+                be.ingestor(),
                 dir,
                 &classifier_config,
                 &empty_entities,
@@ -520,9 +520,32 @@ async fn cmd_lsp(
         }
     }
 
+    // Pre-fetch all schema names and properties for synchronous LSP access
+    let schemas = be.querier().list_schemas(None).await?;
+    let entity_names: Vec<String> = schemas.iter().map(|s| s.title.clone()).collect();
+
+    let mut schema_infos = HashMap::new();
+    for schema in &schemas {
+        if let Ok(props) = be.querier().get_properties(&schema.title).await {
+            schema_infos.insert(
+                schema.title.clone(),
+                SchemaInfo {
+                    title: schema.title.clone(),
+                    description: schema.description.clone(),
+                    properties: props.iter().map(|p| p.name.clone()).collect(),
+                    rel_path: schema.rel_path.clone(),
+                },
+            );
+        }
+    }
+
     eprintln!("codegraph LSP server starting (IFML language)...");
     let (connection, io_threads) = Connection::stdio();
-    let backend = LspBackend::new();
+
+    let backend = LspBackend::new()
+        .with_entity_names(entity_names)
+        .with_schema_infos(schema_infos)
+        .with_schema_dirs(schema_dirs.to_vec());
 
     run_lsp_server(connection, backend)?;
 

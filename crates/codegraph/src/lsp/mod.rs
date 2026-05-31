@@ -8,7 +8,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub use state::LspBackend;
+pub use state::{LspBackend, SchemaInfo};
 
 /// Run the LSP server loop with the given connection and backend state.
 pub fn run_lsp_server(connection: Connection, backend: LspBackend) -> Result<()> {
@@ -123,6 +123,22 @@ fn handle_request(
             let response = Response {
                 id: req.id,
                 result: Some(serde_json::json!([])),
+                error: None,
+            };
+            connection
+                .sender
+                .send(Message::Response(response))
+                .map_err(|e| Error::Config(format!("Send failed: {e}")))?;
+        }
+        "textDocument/definition" => {
+            let params: GotoDefinitionParams = serde_json::from_value(req.params)
+                .map_err(|e| Error::Config(format!("Bad goto def params: {e}")))?;
+            let result = handlers::handle_goto_definition(backend, &params);
+            let response = Response {
+                id: req.id,
+                result: result
+                    .as_ref()
+                    .map(|r| serde_json::to_value(r).unwrap()),
                 error: None,
             };
             connection
