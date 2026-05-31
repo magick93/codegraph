@@ -3,8 +3,8 @@
     "module": "commonjs",
     "target": "ES2021",
     "lib": ["ES2021"],
-    "outDir": "out",
-    "rootDir": "src",
+    "outDir": "out/test",
+    "rootDir": "test",
     "sourceMap": true,
     "strict": true,
     "esModuleInterop": true,
@@ -12,6 +12,6 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "out", "test", "webview", "grammar"]
+  "include": ["test/**/*"],
+  "exclude": ["node_modules"]
 }
