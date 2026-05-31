@@ -10,11 +10,10 @@ export function activate(context: vscode.ExtensionContext): void {
     const statusBar = new StatusBar();
     context.subscriptions.push(statusBar);
 
-    lspClient = new LspClient(context, statusBar);
-    lspClient.start();
-
+    // Register commands FIRST so they exist even if LSP fails to start
     registerCommands(context, lspClient);
 
+    // Completion provider
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
             { language: 'ifml' },
@@ -24,6 +23,16 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     statusBar.show();
+
+    // Start LSP client in background (may fail if codegraph binary not found)
+    try {
+        lspClient = new LspClient(context, statusBar);
+        lspClient.start();
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        statusBar.setLspState('disconnected');
+        console.warn(`IFML LSP client failed to start: ${msg}`);
+    }
 }
 
 export function deactivate(): void {
