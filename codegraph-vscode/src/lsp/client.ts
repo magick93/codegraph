@@ -15,8 +15,9 @@ async function getLanguageClientModule() {
 /// Find the codegraph binary by checking multiple locations in order:
 /// 1. User-configured path
 /// 2. target/debug/codegraph or target/release/codegraph in workspace
-/// 3. cargo run as last resort (slow)
-function findBinaryPath(configured: string): { binary: string; args: string[] } {
+/// 3. Same dirs but relative to extension install path (works in monorepo)
+/// 4. cargo run as last resort (slow)
+function findBinaryPath(configured: string, extensionPath?: string): { binary: string; args: string[] } {
   // If the configured path exists as specified, use it
   if (fs.existsSync(configured)) {
     return { binary: configured, args: [] };
@@ -34,15 +35,36 @@ function findBinaryPath(configured: string): { binary: string; args: string[] } 
     }
   }
 
-  // Try target/debug/codegraph in workspace folders
+  // Collect all candidate directories to search
+  const searchDirs: string[] = [];
+
+  // From workspace folders
   const workspaces = vscode.workspace.workspaceFolders;
   if (workspaces) {
     for (const ws of workspaces) {
-      for (const dir of ['target/debug/codegraph', 'target/release/codegraph']) {
-        const candidate = path.join(ws.uri.fsPath, dir);
-        if (fs.existsSync(candidate)) {
-          return { binary: candidate, args: [] };
-        }
+      searchDirs.push(ws.uri.fsPath);
+      // Also check parent (for monorepo setup: workspace is codegraph-vscode/)
+      const parent = path.dirname(ws.uri.fsPath);
+      if (parent !== ws.uri.fsPath) searchDirs.push(parent);
+    }
+  }
+
+  // From extension install path (e.g. .../codegraph.codegraph-ifml-0.1.0/)
+  if (extensionPath) {
+    searchDirs.push(extensionPath);
+    const extParent = path.dirname(extensionPath);
+    if (extParent !== extensionPath) searchDirs.push(extParent);
+    // Grandparent (monorepo: ext at .../codegraph/codegraph-vscode/extensions/name)
+    const grandparent = path.dirname(extParent);
+    if (grandparent !== extParent) searchDirs.push(grandparent);
+  }
+
+  // Search all candidates
+  for (const dir of searchDirs) {
+    for (const sub of ['target/debug/codegraph', 'target/release/codegraph']) {
+      const candidate = path.join(dir, sub);
+      if (fs.existsSync(candidate)) {
+        return { binary: candidate, args: [] };
       }
     }
   }
@@ -74,7 +96,7 @@ export class LspClient {
       const classifierPath = config.get<string>('classifierConfig', 'classifier.toml');
       const domainConfig = config.get<string>('domainConfig', 'domains.toml');
 
-      const { binary, args: binaryArgs } = findBinaryPath(configuredPath);
+      const { binary, args: binaryArgs } = findBinaryPath(configuredPath, this.context.extensionUri.fsPath);
       const args = [...binaryArgs, 'lsp'];
       for (const dir of schemaDirs) {
         args.push('--schemas', dir);
