@@ -14,67 +14,60 @@ async function getLanguageClientModule() {
 
 /// Find the codegraph binary by checking multiple locations in order:
 /// 1. User-configured path
-/// 2. target/debug/codegraph or target/release/codegraph in workspace
-/// 3. Same dirs but relative to extension install path (works in monorepo)
-/// 4. cargo run as last resort (slow)
-function findBinaryPath(configured: string, extensionPath?: string): { binary: string; args: string[] } {
-  // If the configured path exists as specified, use it
+/// 2. target/debug/codegraph or target/release/codegraph in workspace folders
+///    (walks up parent chain to find project root with Cargo.toml)
+/// 3. Same but from extension install path
+/// 4. Same but walking up from cwd
+/// 5. cargo run as last resort — uses extension parent dir as cwd
+function findBinaryPath(configured: string, extensionPath?: string): { binary: string; args: string[]; cwd?: string } {
   if (fs.existsSync(configured)) {
     return { binary: configured, args: [] };
   }
-
-  // Check if it's a simple name (like "codegraph") and it's in PATH
+  // PATH check for simple name
   if (!configured.includes('/') && !configured.includes('\\')) {
-    // which-like check
     const paths = process.env.PATH?.split(':') || [];
     for (const p of paths) {
       const full = path.join(p, configured);
-      if (fs.existsSync(full)) {
-        return { binary: full, args: [] };
-      }
+      if (fs.existsSync(full)) return { binary: full, args: [] };
     }
   }
 
-  // Collect all candidate directories to search
-  const searchDirs: string[] = [];
+  // Collect directories to search for target/debug/codegraph
+  const searchDirs = new Set<string>();
+  const addWithParents = (p: string) => { for (let d = p; d !== path.dirname(d); d = path.dirname(d)) { searchDirs.add(d); } };
 
-  // From workspace folders
+  if (extensionPath) addWithParents(extensionPath);
   const workspaces = vscode.workspace.workspaceFolders;
-  if (workspaces) {
-    for (const ws of workspaces) {
-      searchDirs.push(ws.uri.fsPath);
-      // Also check parent (for monorepo setup: workspace is codegraph-vscode/)
-      const parent = path.dirname(ws.uri.fsPath);
-      if (parent !== ws.uri.fsPath) searchDirs.push(parent);
-    }
-  }
+  if (workspaces) { for (const ws of workspaces) addWithParents(ws.uri.fsPath); }
+  addWithParents(process.cwd());
 
-  // From extension install path (e.g. .../codegraph.codegraph-ifml-0.1.0/)
-  if (extensionPath) {
-    searchDirs.push(extensionPath);
-    const extParent = path.dirname(extensionPath);
-    if (extParent !== extensionPath) searchDirs.push(extParent);
-    // Grandparent (monorepo: ext at .../codegraph/codegraph-vscode/extensions/name)
-    const grandparent = path.dirname(extParent);
-    if (grandparent !== extParent) searchDirs.push(grandparent);
-  }
-
-  // Search all candidates
   for (const dir of searchDirs) {
-    for (const sub of ['target/debug/codegraph', 'target/release/codegraph']) {
+    for (const sub of ['target/release/codegraph', 'target/debug/codegraph']) {
       const candidate = path.join(dir, sub);
-      if (fs.existsSync(candidate)) {
-        return { binary: candidate, args: [] };
-      }
+      if (fs.existsSync(candidate)) return { binary: candidate, args: [] };
     }
   }
 
-  // Fallback: use cargo run (triggers build — slow first time)
-  if (workspaces && workspaces.length > 0) {
-    return { binary: 'cargo', args: ['run', '--', 'lsp'] };
+  // Fallback: try cargo from the extension path (walk up to find project root)
+  const cargoRoot = findCargoRoot(extensionPath || (workspaces?.[0]?.uri.fsPath ?? process.cwd()));
+  if (cargoRoot) {
+    return { binary: 'cargo', args: ['run', '--manifest-path', path.join(cargoRoot, 'Cargo.toml'), '--', 'lsp'], cwd: cargoRoot };
   }
-
   return { binary: configured, args: [] };
+}
+
+/// Walk up from startDir to find a Cargo.toml that contains workspace members
+function findCargoRoot(startDir: string): string | null {
+  for (let d = startDir; d !== path.dirname(d); d = path.dirname(d)) {
+    const cargoPath = path.join(d, 'Cargo.toml');
+    if (fs.existsSync(cargoPath)) {
+      try {
+        const content = fs.readFileSync(cargoPath, 'utf8');
+        if (content.includes('codegraph') || content.includes('codegraph-core')) return d;
+      } catch { return d; }
+    }
+  }
+  return null;
 }
 
 export class LspClient {
@@ -96,8 +89,12 @@ export class LspClient {
       const classifierPath = config.get<string>('classifierConfig', 'classifier.toml');
       const domainConfig = config.get<string>('domainConfig', 'domains.toml');
 
-      const { binary, args: binaryArgs } = findBinaryPath(configuredPath, this.context.extensionUri.fsPath);
-      const args = [...binaryArgs, 'lsp'];
+      const found = findBinaryPath(configuredPath, this.context.extensionUri.fsPath);
+      const binary = found.binary;
+      const binaryArgs = found.args;
+      const cwd = found.cwd;
+      // Only add 'lsp' subcommand if not already in binaryArgs (e.g. cargo run -- lsp)
+      const args = binaryArgs.includes('lsp') ? [...binaryArgs] : [...binaryArgs, 'lsp'];
       for (const dir of schemaDirs) {
         args.push('--schemas', dir);
       }
@@ -111,7 +108,7 @@ export class LspClient {
         return new Promise<{ reader: NodeJS.ReadableStream; writer: NodeJS.WritableStream }>((resolve, reject) => {
           const child: ChildProcess = spawn(binary, args, {
             stdio: ['pipe', 'pipe', 'pipe'],
-            cwd: binary === 'cargo' ? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath : undefined,
+            cwd: cwd,
           });
 
           if (!child.stdout || !child.stdin) {
