@@ -90,7 +90,9 @@
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/run.js",
     "package": "vsce package",
-    "build:webview": "cd webview && npm install && npm run build"
+    "build:webview": "cd webview && npm install && npm run build",
+    "build:all": "npm run build:webview && npm run compile",
+    "rebuild": "rm -rf out && npm run build:all"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",
