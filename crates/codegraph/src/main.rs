@@ -553,6 +553,10 @@ async fn cmd_lsp(
     let auto_classifier =
         codegraph::classify::AutoClassifier::new(classifier_types, naming_rules);
 
+    // The classifier returns raw schema titles like "CustomerType".
+    // IFML references them without the suffix ("Customer"), so we strip it.
+    let default_suffix = "Type";
+
     let mut entity_names_set: HashSet<String> = HashSet::new();
 
     if let Some(config_path) = config {
@@ -568,7 +572,12 @@ async fn cmd_lsp(
             let result =
                 auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
             for score in &result.entities {
-                entity_names_set.insert(score.title.clone());
+                let name = score
+                    .title
+                    .strip_suffix(default_suffix)
+                    .unwrap_or(&score.title)
+                    .to_string();
+                entity_names_set.insert(name);
             }
             // Also include legacy explicit entities from domains.toml
             for entity in &domain_entry.entities {
@@ -577,7 +586,6 @@ async fn cmd_lsp(
         }
     } else {
         // No domain config — fall back to suffix stripping
-        let default_suffix = "Type";
         let schemas = be.querier().list_schemas(None).await?;
         for schema in &schemas {
             entity_names_set.insert(
@@ -596,7 +604,11 @@ async fn cmd_lsp(
     let schemas = be.querier().list_schemas(None).await?;
     let mut schema_infos = HashMap::new();
     for schema in &schemas {
-        let entity_name = schema.title.clone();
+        let entity_name = schema
+            .title
+            .strip_suffix(default_suffix)
+            .unwrap_or(&schema.title)
+            .to_string();
         if let Ok(props) = be.querier().get_properties(&schema.title).await {
             schema_infos.insert(
                 entity_name,

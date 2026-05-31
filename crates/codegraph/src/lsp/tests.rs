@@ -207,6 +207,71 @@ fn test_lsp_diagnostic_for_invalid_ifml() {
 }
 
 #[test]
+/// Regression test: entity names have the "Type" suffix stripped
+/// (CustomerType → Customer). Verifies that data: Customer passes
+/// when entity_names contains "Customer", while data: Nonexistent fails.
+#[test]
+fn test_lsp_diagnostic_entity_suffix_stripped() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    // Simulate what the server builds: schema is CustomerType but entity_names
+    // has the stripped name "Customer" after AutoClassifier + suffix strip
+    let mut schema_infos = std::collections::HashMap::new();
+    schema_infos.insert(
+        "Customer".to_string(),
+        SchemaInfo {
+            title: "CustomerType".to_string(),
+            description: Some("A customer".to_string()),
+            properties: vec!["name".to_string(), "email".to_string()],
+            rel_path: "customer.json".to_string(),
+        },
+    );
+
+    let state = GrafeoState {
+        entity_names: vec!["Customer".to_string()],
+        schema_infos,
+        schema_dirs: vec![],
+    };
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, state).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // data: Customer — Customer IS in entity_names (stripped from CustomerType).
+    // Should NOT produce any entity-not-found error.
+    open_document(
+        &client_conn,
+        "file:///valid.ifml",
+        r#"view "Test" { component "c" { type: list; data: Customer; fields: [name, email]; } }"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///valid.ifml");
+    assert!(
+        !params.diagnostics.iter().any(|d| d.message.contains("Entity")),
+        "data: Customer should NOT produce entity error. Got: {:?}",
+        params.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    // Now open a second document with data: Nonexistent — should error
+    open_document(
+        &client_conn,
+        "file:///invalid.ifml",
+        r#"view "Test" { component "c" { type: list; data: Nonexistent; } }"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///invalid.ifml");
+    assert!(
+        params.diagnostics.iter().any(|d| d.message.contains("Entity") && d.message.contains("Nonexistent")),
+        "data: Nonexistent SHOULD produce entity error"
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
 fn test_lsp_diagnostic_for_missing_entity() {
     let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();
