@@ -1,69 +1,41 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
-use lsp_types::Uri;
+pub static GRAFE: OnceLock<Mutex<Option<GrafeoState>>> = OnceLock::new();
 
-#[derive(Debug, Clone)]
-pub struct SchemaInfo {
-    pub title: String,
-    pub description: Option<String>,
-    pub properties: Vec<String>,
-    pub rel_path: String,
+pub fn init_grafe(state: GrafeoState) {
+    let lock = GRAFE.get_or_init(|| Mutex::new(None));
+    *lock.lock().unwrap() = Some(state);
 }
 
-pub struct LspBackend {
-    pub documents: HashMap<String, String>,
+pub fn with_grafe<F, R>(f: F) -> R
+where
+    F: FnOnce(&GrafeoState) -> R,
+{
+    let lock = GRAFE.get().expect("GRAFE not initialized");
+    let guard = lock.lock().unwrap();
+    f(guard.as_ref().expect("GRAFE not initialized"))
+}
+
+pub struct GrafeoState {
     pub entity_names: Vec<String>,
     pub schema_infos: HashMap<String, SchemaInfo>,
-    pub schema_dirs: Vec<PathBuf>,
+    pub schema_dirs: Vec<std::path::PathBuf>,
 }
 
-impl LspBackend {
-    pub fn new() -> Self {
+impl Default for GrafeoState {
+    fn default() -> Self {
         Self {
-            documents: HashMap::new(),
             entity_names: Vec::new(),
             schema_infos: HashMap::new(),
             schema_dirs: Vec::new(),
         }
     }
-
-    pub fn with_entity_names(mut self, names: Vec<String>) -> Self {
-        self.entity_names = names;
-        self
-    }
-
-    pub fn with_schema_infos(mut self, infos: HashMap<String, SchemaInfo>) -> Self {
-        self.schema_infos = infos;
-        self
-    }
-
-    pub fn with_schema_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
-        self.schema_dirs = dirs;
-        self
-    }
-
-    pub fn open_document(&mut self, uri: Uri, text: &str) {
-        self.documents
-            .insert(uri.as_str().to_string(), text.to_string());
-    }
-
-    pub fn update_document(&mut self, uri: Uri, text: &str) {
-        self.documents
-            .insert(uri.as_str().to_string(), text.to_string());
-    }
-
-    pub fn close_document(&mut self, uri: Uri) {
-        self.documents.remove(uri.as_str());
-    }
-
-    pub fn get_document(&self, uri: &Uri) -> Option<&str> {
-        self.documents.get(uri.as_str()).map(|s| s.as_str())
-    }
 }
 
-impl Default for LspBackend {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct SchemaInfo {
+    pub title: String,
+    pub description: Option<String>,
+    pub properties: Vec<String>,
+    pub rel_path: String,
 }

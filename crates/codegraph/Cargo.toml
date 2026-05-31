@@ -31,8 +31,9 @@ tracing = "0.1"
 rust_decimal = { version = "1", features = ["serde-with-str"] }
 uuid = { version = "1", features = ["v5"] }
 pathdiff = "0.2"
-lsp-server = "0.7"
-lsp-types = { workspace = true }
+ast-ifml = { path = "../ast-ifml" }
+tree-sitter-ifml = { path = "../tree-sitter-ifml" }
+auto-lsp = { version = "0.6", features = ["lsp_server"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

@@ -12,6 +12,7 @@ members = [
     "crates/codegraph-type-contracts",
     "crates/codegraph-workflow",
     "crates/codegraph-ifml-dsl",
+    "crates/ast-ifml",
 ]
 
 [workspace.package]
@@ -43,3 +44,6 @@ sea-orm = { version = "1", features = ["sqlx-postgres", "runtime-tokio-rustls", 
 axum = "0.8"
 bytes = "1"
 lsp-types = "0.97"
+tree-sitter = "0.25"
+tree-sitter-language = "0.1"
+salsa = "0.22"

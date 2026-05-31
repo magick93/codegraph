@@ -485,9 +485,8 @@ async fn cmd_lsp(
     classifier: Option<&Path>,
     config: Option<&Path>,
 ) -> codegraph::error::Result<()> {
-    use codegraph::lsp::{run_lsp_server, LspBackend, SchemaInfo};
+    use codegraph::lsp::{run_lsp_server, GrafeoState, SchemaInfo};
     use codegraph_backend::{create_backend, BackendConfig};
-    use lsp_server::Connection;
 
     let backend_config = BackendConfig::default();
     let be = create_backend(&backend_config)
@@ -539,19 +538,16 @@ async fn cmd_lsp(
         }
     }
 
+    let grafeo_state = GrafeoState {
+        entity_names,
+        schema_infos,
+        schema_dirs: schema_dirs.to_vec(),
+    };
+
     eprintln!("codegraph LSP server starting (IFML language)...");
-    let (connection, io_threads) = Connection::stdio();
-
-    let backend = LspBackend::new()
-        .with_entity_names(entity_names)
-        .with_schema_infos(schema_infos)
-        .with_schema_dirs(schema_dirs.to_vec());
-
-    run_lsp_server(connection, backend)?;
-
-    io_threads
-        .join()
-        .map_err(|e| codegraph::error::Error::Config(format!("IO thread error: {e}")))?;
+    let (connection, _io_threads) = auto_lsp::lsp_server::Connection::stdio();
+    run_lsp_server(connection, grafeo_state)
+        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
 
     Ok(())
 }

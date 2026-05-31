@@ -354,6 +354,12 @@ export const CandidateDescriptor: EntityDescriptor = {
     field: 'candidate_status_code',
     transitions: [
 
+      { from: 'interviewing', to: 'offer', label: 'Offer', confirm: true },
+
+      { from: 'interviewing', to: 'rejected', label: 'Rejected', confirm: true },
+
+      { from: 'interviewing', to: 'withdrawn', label: 'Withdrawn', confirm: true },
+
       { from: 'offer', to: 'hired', label: 'Hired', confirm: true },
 
       { from: 'offer', to: 'rejected', label: 'Rejected', confirm: true },
@@ -371,12 +377,6 @@ export const CandidateDescriptor: EntityDescriptor = {
       { from: 'new', to: 'rejected', label: 'Rejected', confirm: true },
 
       { from: 'new', to: 'withdrawn', label: 'Withdrawn', confirm: true },
-
-      { from: 'interviewing', to: 'offer', label: 'Offer', confirm: true },
-
-      { from: 'interviewing', to: 'rejected', label: 'Rejected', confirm: true },
-
-      { from: 'interviewing', to: 'withdrawn', label: 'Withdrawn', confirm: true },
 
     ],
   },

@@ -1,27 +1,94 @@
-use lsp_server::{Connection, Message, Notification, Request, Response};
-use lsp_types::*;
+use ast_ifml::db::IFML_PARSERS;
+use auto_lsp::default::db::{BaseDb, FileManager};
+use auto_lsp::default::server::file_events::open_text_document;
+use auto_lsp::default::server::workspace_init::WorkspaceInit;
+use auto_lsp::lsp_server::Connection;
+use auto_lsp::lsp_types::*;
+use auto_lsp::lsp_types::{
+    notification::{
+        DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Initialized,
+        PublishDiagnostics,
+    },
+    request::{Completion, GotoDefinition, HoverRequest},
+};
+use auto_lsp::server::notification_registry::NotificationRegistry;
+use auto_lsp::server::options::InitOptions;
+use auto_lsp::server::request_registry::RequestRegistry;
+use auto_lsp::server::Session;
 
-use crate::error::{Error, Result};
+pub use state::*;
 
 mod handlers;
 mod state;
 #[cfg(test)]
 mod tests;
 
-pub use state::{LspBackend, SchemaInfo};
+pub fn run_lsp_server(
+    connection: Connection,
+    grafeo_state: GrafeoState,
+) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
+    init_grafe(grafeo_state);
 
-/// Run the LSP server loop with the given connection and backend state.
-pub fn run_lsp_server(connection: Connection, backend: LspBackend) -> Result<()> {
-    let capabilities = serde_json::to_value(server_capabilities())
-        .map_err(|e| Error::Config(format!("Failed to serialize capabilities: {e}")))?;
+    let db = BaseDb::default();
+    let (mut session, init_params) = Session::create(
+        InitOptions {
+            parsers: &*IFML_PARSERS,
+            capabilities: server_capabilities(),
+            server_info: None,
+        },
+        connection,
+        db,
+    )?;
 
-    let _init_params = connection
-        .initialize(capabilities)
-        .map_err(|e| Error::Config(format!("Initialize failed: {e}")))?;
+    let mut request_registry = RequestRegistry::<BaseDb>::default();
+    let mut notification_registry = NotificationRegistry::<BaseDb>::default();
 
-    main_loop(&connection, backend)?;
+    request_registry
+        .on::<Completion, _>(handlers::handle_completion)
+        .on::<HoverRequest, _>(handlers::handle_hover)
+        .on::<GotoDefinition, _>(handlers::handle_goto_definition);
+
+    notification_registry
+        .on::<Initialized, _>(|_db, _params| Ok(()))
+        .on_mut::<DidOpenTextDocument, _>(|session, params| {
+            let uri = params.text_document.uri.clone();
+            open_text_document(session, params)?;
+            push_diagnostics(session, &uri);
+            Ok(())
+        })
+        .on_mut::<DidChangeTextDocument, _>(|session, params| {
+            let uri = params.text_document.uri.clone();
+            let _ = session.db.update(&uri, &params.content_changes);
+            push_diagnostics(session, &uri);
+            Ok(())
+        })
+        .on_mut::<DidCloseTextDocument, _>(|session, params| {
+            let _ = session.db.remove_file(&params.text_document.uri);
+            let params = PublishDiagnosticsParams {
+                uri: params.text_document.uri,
+                diagnostics: vec![],
+                version: None,
+            };
+            let _ = session.send_notification::<PublishDiagnostics>(params);
+            Ok(())
+        });
+
+    session.init_workspace(init_params)?;
+    session.main_loop(&request_registry, &notification_registry)?;
 
     Ok(())
+}
+
+fn push_diagnostics(session: &mut Session<BaseDb>, uri: &Url) {
+    let diagnostics = handlers::compute_diagnostics(&session.db, uri);
+    let params = PublishDiagnosticsParams {
+        uri: uri.clone(),
+        diagnostics,
+        version: None,
+    };
+    if let Err(e) = session.send_notification::<PublishDiagnostics>(params) {
+        eprintln!("Failed to send diagnostics: {e}");
+    }
 }
 
 fn server_capabilities() -> ServerCapabilities {
@@ -32,139 +99,8 @@ fn server_capabilities() -> ServerCapabilities {
             ..Default::default()
         }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
-        diagnostic_provider: Some(DiagnosticServerCapabilities::Options(DiagnosticOptions {
-            identifier: None,
-            inter_file_dependencies: true,
-            workspace_diagnostics: false,
-            work_done_progress_options: WorkDoneProgressOptions {
-                work_done_progress: None,
-            },
-        })),
-        document_symbol_provider: Some(OneOf::Left(true)),
         definition_provider: Some(OneOf::Left(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
         ..Default::default()
     }
-}
-
-fn main_loop(connection: &Connection, mut backend: LspBackend) -> Result<()> {
-    for msg in &connection.receiver {
-        match msg {
-            Message::Request(req) => {
-                if connection
-                    .handle_shutdown(&req)
-                    .map_err(|e| Error::Config(format!("Shutdown error: {e}")))?
-                {
-                    return Ok(());
-                }
-                handle_request(connection, &mut backend, req)?;
-            }
-            Message::Notification(not) => {
-                handle_notification(&mut backend, not)?;
-            }
-            Message::Response(_) => {}
-        }
-    }
-    Ok(())
-}
-
-fn handle_request(
-    connection: &Connection,
-    backend: &mut LspBackend,
-    req: Request,
-) -> Result<()> {
-    match req.method.as_str() {
-        "textDocument/completion" => {
-            let params: CompletionParams = serde_json::from_value(req.params)
-                .map_err(|e| Error::Config(format!("Bad completion params: {e}")))?;
-            let result = handlers::handle_completion(backend, &params);
-            let response = Response {
-                id: req.id,
-                result: Some(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
-                error: None,
-            };
-            connection
-                .sender
-                .send(Message::Response(response))
-                .map_err(|e| Error::Config(format!("Send failed: {e}")))?;
-        }
-        "textDocument/hover" => {
-            let params: HoverParams = serde_json::from_value(req.params)
-                .map_err(|e| Error::Config(format!("Bad hover params: {e}")))?;
-            let result = handlers::handle_hover(backend, &params);
-            let response = Response {
-                id: req.id,
-                result: Some(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
-                error: None,
-            };
-            connection
-                .sender
-                .send(Message::Response(response))
-                .map_err(|e| Error::Config(format!("Send failed: {e}")))?;
-        }
-        "textDocument/diagnostic" => {
-            let params: DocumentDiagnosticParams = serde_json::from_value(req.params)
-                .map_err(|e| Error::Config(format!("Bad diagnostic params: {e}")))?;
-            let result = handlers::handle_diagnostic(backend, &params);
-            let response = Response {
-                id: req.id,
-                result: Some(serde_json::to_value(result).unwrap()),
-                error: None,
-            };
-            connection
-                .sender
-                .send(Message::Response(response))
-                .map_err(|e| Error::Config(format!("Send failed: {e}")))?;
-        }
-        "textDocument/documentSymbol" => {
-            let response = Response {
-                id: req.id,
-                result: Some(serde_json::json!([])),
-                error: None,
-            };
-            connection
-                .sender
-                .send(Message::Response(response))
-                .map_err(|e| Error::Config(format!("Send failed: {e}")))?;
-        }
-        "textDocument/definition" => {
-            let params: GotoDefinitionParams = serde_json::from_value(req.params)
-                .map_err(|e| Error::Config(format!("Bad goto def params: {e}")))?;
-            let result = handlers::handle_goto_definition(backend, &params);
-            let response = Response {
-                id: req.id,
-                result: Some(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
-                error: None,
-            };
-            connection
-                .sender
-                .send(Message::Response(response))
-                .map_err(|e| Error::Config(format!("Send failed: {e}")))?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn handle_notification(_backend: &mut LspBackend, not: Notification) -> Result<()> {
-    match not.method.as_str() {
-        "textDocument/didOpen" => {
-            let params: DidOpenTextDocumentParams = serde_json::from_value(not.params)
-                .map_err(|e| Error::Config(format!("Bad didOpen params: {e}")))?;
-            _backend.open_document(params.text_document.uri, &params.text_document.text);
-        }
-        "textDocument/didChange" => {
-            let params: DidChangeTextDocumentParams = serde_json::from_value(not.params)
-                .map_err(|e| Error::Config(format!("Bad didChange params: {e}")))?;
-            if let Some(change) = params.content_changes.into_iter().last() {
-                _backend.update_document(params.text_document.uri, &change.text);
-            }
-        }
-        "textDocument/didClose" => {
-            let params: DidCloseTextDocumentParams = serde_json::from_value(not.params)
-                .map_err(|e| Error::Config(format!("Bad didClose params: {e}")))?;
-            _backend.close_document(params.text_document.uri);
-        }
-        _ => {}
-    }
-    Ok(())
 }

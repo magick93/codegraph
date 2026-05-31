@@ -1,8 +1,7 @@
-use std::collections::HashMap;
+use auto_lsp::lsp_server::{Connection, Message, Notification, Request, RequestId};
+use auto_lsp::lsp_types::*;
 
-use super::{run_lsp_server, LspBackend, SchemaInfo};
-use lsp_server::{Connection, Message, Notification, Request, RequestId};
-use lsp_types::*;
+use super::{run_lsp_server, GrafeoState, SchemaInfo};
 
 fn make_init_params() -> serde_json::Value {
     serde_json::json!({
@@ -16,10 +15,12 @@ fn make_init_params() -> serde_json::Value {
                 },
                 "hover": {
                     "contentFormat": ["markdown"]
-                },
-                "diagnostic": {
-                    "relatedDocumentSupport": false
                 }
+            }
+        },
+        "initializationOptions": {
+            "perFileParser": {
+                "ifml": "ifml"
             }
         },
         "workspaceFolders": null
@@ -80,16 +81,54 @@ fn do_shutdown(client: &Connection) {
         .unwrap();
 }
 
+fn open_document(client: &Connection, uri: &str, text: &str) {
+    client
+        .sender
+        .send(Message::Notification(Notification {
+            method: "textDocument/didOpen".to_string(),
+            params: serde_json::json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "ifml",
+                    "version": 1,
+                    "text": text
+                }
+            }),
+        }))
+        .unwrap();
+}
+
+fn recv_diagnostics(
+    client: &Connection,
+    expected_uri: &str,
+) -> PublishDiagnosticsParams {
+    loop {
+        let msg = client.receiver.recv().unwrap();
+        match msg {
+            Message::Notification(not) if not.method == "textDocument/publishDiagnostics" => {
+                let params: PublishDiagnosticsParams =
+                    serde_json::from_value(not.params).unwrap();
+                assert_eq!(params.uri.as_str(), expected_uri);
+                return params;
+            }
+            Message::Notification(_) => {
+                // skip other notifications (e.g. window/showMessage)
+                continue;
+            }
+            other => panic!("Expected publishDiagnostics notification, got {:?}", other),
+        }
+    }
+}
+
 #[test]
 fn test_lsp_initialize_returns_capabilities() {
     let (server_conn, client_conn) = Connection::memory();
 
     std::thread::spawn(move || {
-        run_lsp_server(server_conn, LspBackend::new()).unwrap();
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
     });
 
     do_init_handshake(&client_conn);
-
     assert!(true, "Server initialized successfully");
 
     do_shutdown(&client_conn);
@@ -100,63 +139,29 @@ fn test_lsp_diagnostic_for_valid_ifml() {
     let (server_conn, client_conn) = Connection::memory();
 
     std::thread::spawn(move || {
-        run_lsp_server(server_conn, LspBackend::new()).unwrap();
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
     });
 
     do_init_handshake(&client_conn);
 
-    client_conn
-        .sender
-        .send(Message::Notification(Notification {
-            method: "textDocument/didOpen".to_string(),
-            params: serde_json::json!({
-                "textDocument": {
-                    "uri": "file:///test.ifml",
-                    "languageId": "ifml",
-                    "version": 1,
-                    "text": r#"view "Hello" {
-                        component "greeting" {
-                            type: list;
-                            data: Person;
-                            fields: [name, email];
-                        }
-                    }"#
-                }
-            }),
-        }))
-        .unwrap();
-
-    client_conn
-        .sender
-        .send(Message::Request(Request {
-            id: RequestId::from(2i32),
-            method: "textDocument/diagnostic".to_string(),
-            params: serde_json::json!({
-                "textDocument": { "uri": "file:///test.ifml" }
-            }),
-        }))
-        .unwrap();
-
-    let msg = client_conn.receiver.recv().unwrap();
-    match msg {
-        Message::Response(resp) => {
-            let diag: DocumentDiagnosticReport =
-                serde_json::from_value(resp.result.unwrap()).unwrap();
-            match diag {
-                DocumentDiagnosticReport::Full(report) => {
-                    let items = &report.full_document_diagnostic_report.items;
-                    assert!(
-                        items.iter().all(|d| d.severity != Some(DiagnosticSeverity::ERROR)),
-                        "valid IFML should have zero errors"
-                    );
-                }
-                DocumentDiagnosticReport::Unchanged(_) => {
-                    // Unchanged report has no items — nothing to assert
-                }
+    open_document(
+        &client_conn,
+        "file:///test.ifml",
+        r#"view "Hello" {
+            component "greeting" {
+                type: list;
+                data: Person;
+                fields: [name, email];
             }
-        }
-        _ => panic!("Expected diagnostic response"),
-    }
+        }"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///test.ifml");
+    assert!(
+        params.diagnostics.is_empty(),
+        "valid IFML should have zero diagnostics, got: {:?}",
+        params.diagnostics
+    );
 
     do_shutdown(&client_conn);
 }
@@ -166,92 +171,71 @@ fn test_lsp_diagnostic_for_invalid_ifml() {
     let (server_conn, client_conn) = Connection::memory();
 
     std::thread::spawn(move || {
-        run_lsp_server(server_conn, LspBackend::new()).unwrap();
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
     });
 
     do_init_handshake(&client_conn);
 
-    client_conn
-        .sender
-        .send(Message::Notification(Notification {
-            method: "textDocument/didOpen".to_string(),
-            params: serde_json::json!({
-                "textDocument": {
-                    "uri": "file:///bad.ifml",
-                    "languageId": "ifml",
-                    "version": 1,
-                    "text": "view \"Bad\" { invalid syntax here }"
-                }
-            }),
-        }))
-        .unwrap();
+    open_document(
+        &client_conn,
+        "file:///bad.ifml",
+        r#"view "Bad" { invalid syntax here }"#,
+    );
 
-    client_conn
-        .sender
-        .send(Message::Request(Request {
-            id: RequestId::from(2i32),
-            method: "textDocument/diagnostic".to_string(),
-            params: serde_json::json!({
-                "textDocument": { "uri": "file:///bad.ifml" }
-            }),
-        }))
-        .unwrap();
-
-    let msg = client_conn.receiver.recv().unwrap();
-    match msg {
-        Message::Response(resp) => {
-            let diag: DocumentDiagnosticReport =
-                serde_json::from_value(resp.result.unwrap()).unwrap();
-            match diag {
-                DocumentDiagnosticReport::Full(report) => {
-                    let items = &report.full_document_diagnostic_report.items;
-                    assert!(!items.is_empty(), "invalid IFML should have diagnostics");
-                    assert!(
-                        items.iter().any(|d| d.severity == Some(DiagnosticSeverity::ERROR)),
-                        "should have at least one error"
-                    );
-                }
-                DocumentDiagnosticReport::Unchanged(_) => {
-                    // Unchanged report has no items — shouldn't happen for invalid IFML
-                }
-            }
-        }
-        _ => panic!("Expected diagnostic response"),
-    }
+    let params = recv_diagnostics(&client_conn, "file:///bad.ifml");
+    assert!(
+        !params.diagnostics.is_empty(),
+        "invalid IFML should have diagnostics"
+    );
+    assert!(
+        params
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == Some(DiagnosticSeverity::ERROR)),
+        "should have at least one error"
+    );
 
     do_shutdown(&client_conn);
 }
 
 #[test]
-fn test_lsp_completion_at_data_field() {
+fn test_lsp_completion_with_entity_data() {
     let (server_conn, client_conn) = Connection::memory();
 
+    let mut schema_infos = std::collections::HashMap::new();
+    schema_infos.insert(
+        "Customer".to_string(),
+        SchemaInfo {
+            title: "Customer".to_string(),
+            description: Some("A customer entity".to_string()),
+            properties: vec!["name".to_string(), "email".to_string()],
+            rel_path: "customer.json".to_string(),
+        },
+    );
+    let state = GrafeoState {
+        entity_names: vec!["Customer".to_string()],
+        schema_infos,
+        schema_dirs: vec![],
+    };
+
     std::thread::spawn(move || {
-        run_lsp_server(server_conn, LspBackend::new()).unwrap();
+        run_lsp_server(server_conn, state).unwrap();
     });
 
     do_init_handshake(&client_conn);
 
-    client_conn
-        .sender
-        .send(Message::Notification(Notification {
-            method: "textDocument/didOpen".to_string(),
-            params: serde_json::json!({
-                "textDocument": {
-                    "uri": "file:///test.ifml",
-                    "languageId": "ifml",
-                    "version": 1,
-                    "text": r#"view "Hello" {
-                        component "greeting" {
-                            type: list;
-                            data: 
-                        }
-                    }"#
-                }
-            }),
-        }))
-        .unwrap();
+    open_document(
+        &client_conn,
+        "file:///test.ifml",
+        "view \"Hello\" { component \"g\" { data: Customer } }",
+    );
 
+    // Wait for diagnostics
+    let _ = recv_diagnostics(&client_conn, "file:///test.ifml");
+
+    // Request completion after "data: " — position at index 36 is right after "data: "
+    // "view \"Hello\" { component \"g\" { data: Customer } }"
+    //                                               ^-- 36
     client_conn
         .sender
         .send(Message::Request(Request {
@@ -259,7 +243,7 @@ fn test_lsp_completion_at_data_field() {
             method: "textDocument/completion".to_string(),
             params: serde_json::json!({
                 "textDocument": { "uri": "file:///test.ifml" },
-                "position": { "line": 3, "character": 12 }
+                "position": { "line": 0, "character": 36 }
             }),
         }))
         .unwrap();
@@ -267,13 +251,16 @@ fn test_lsp_completion_at_data_field() {
     let msg = client_conn.receiver.recv().unwrap();
     match msg {
         Message::Response(resp) => {
+            let result = resp.result.unwrap_or(serde_json::Value::Null);
+            assert!(!result.is_null(), "completion should return results");
             let completion: CompletionResponse =
-                serde_json::from_value(resp.result.unwrap()).unwrap();
+                serde_json::from_value(result).unwrap();
             match completion {
                 CompletionResponse::List(list) => {
                     assert!(
-                        list.items.iter().any(|i| i.label == "data:"),
-                        "should suggest data: property"
+                        list.items.iter().any(|i| i.label == "Customer"),
+                        "should suggest Customer entity, got labels: {:?}",
+                        list.items.iter().map(|i| &i.label).collect::<Vec<_>>()
                     );
                 }
                 _ => panic!("Expected completion list"),
@@ -290,28 +277,20 @@ fn test_lsp_goto_definition_view() {
     let (server_conn, client_conn) = Connection::memory();
 
     std::thread::spawn(move || {
-        run_lsp_server(server_conn, LspBackend::new()).unwrap();
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
     });
 
     do_init_handshake(&client_conn);
 
-    client_conn
-        .sender
-        .send(Message::Notification(Notification {
-            method: "textDocument/didOpen".to_string(),
-            params: serde_json::json!({
-                "textDocument": {
-                    "uri": "file:///test.ifml",
-                    "languageId": "ifml",
-                    "version": 1,
-                    "text": r#"view "CustomerList" { component "c" { type: list; data: Customer; } }
-view "CustomerDetail" { component "d" { type: details; data: Customer; } }"#
-                }
-            }),
-        }))
-        .unwrap();
+    open_document(
+        &client_conn,
+        "file:///test.ifml",
+        r#"view "CustomerList" { component "c" { type: list; data: Customer; } }
+view "CustomerDetail" { component "d" { type: details; data: Customer; } }"#,
+    );
 
-    // Position at character 8 is inside "CustomerList" (starts at column 6)
+    let _ = recv_diagnostics(&client_conn, "file:///test.ifml");
+
     client_conn
         .sender
         .send(Message::Request(Request {
@@ -349,44 +328,36 @@ view "CustomerDetail" { component "d" { type: details; data: Customer; } }"#
 fn test_lsp_goto_definition_entity_no_file() {
     let (server_conn, client_conn) = Connection::memory();
 
-    let backend = LspBackend::new()
-        .with_entity_names(vec!["Customer".to_string()])
-        .with_schema_infos({
-            let mut m = HashMap::new();
-            m.insert(
-                "Customer".to_string(),
-                SchemaInfo {
-                    title: "Customer".to_string(),
-                    description: None,
-                    properties: vec!["name".to_string(), "email".to_string()],
-                    rel_path: "customer.json".to_string(),
-                },
-            );
-            m
-        });
+    let mut schema_infos = std::collections::HashMap::new();
+    schema_infos.insert(
+        "Customer".to_string(),
+        SchemaInfo {
+            title: "Customer".to_string(),
+            description: None,
+            properties: vec!["name".to_string(), "email".to_string()],
+            rel_path: "customer.json".to_string(),
+        },
+    );
+    let state = GrafeoState {
+        entity_names: vec!["Customer".to_string()],
+        schema_infos,
+        schema_dirs: vec![],
+    };
 
     std::thread::spawn(move || {
-        run_lsp_server(server_conn, backend).unwrap();
+        run_lsp_server(server_conn, state).unwrap();
     });
 
     do_init_handshake(&client_conn);
 
-    client_conn
-        .sender
-        .send(Message::Notification(Notification {
-            method: "textDocument/didOpen".to_string(),
-            params: serde_json::json!({
-                "textDocument": {
-                    "uri": "file:///test.ifml",
-                    "languageId": "ifml",
-                    "version": 1,
-                    "text": r#"view "Test" { component "c" { type: list; data: Customer; } }"#
-                }
-            }),
-        }))
-        .unwrap();
+    open_document(
+        &client_conn,
+        "file:///test.ifml",
+        r#"view "Test" { component "c" { type: list; data: Customer; } }"#,
+    );
 
-    // Position at "Customer" entity reference (around character 60)
+    let _ = recv_diagnostics(&client_conn, "file:///test.ifml");
+
     client_conn
         .sender
         .send(Message::Request(Request {
@@ -402,24 +373,15 @@ fn test_lsp_goto_definition_entity_no_file() {
     let msg = client_conn.receiver.recv().unwrap();
     match msg {
         Message::Response(resp) => {
-            // Result may be None if schema file doesn't exist on disk
-            // but we should get a Response (not panic)
-            assert!(resp.result.is_none(), "Expected no result (no schema file)");
+            // Result may be None or Null if schema file doesn't exist on disk
+            match resp.result {
+                None => {} // result field absent
+                Some(val) if val.is_null() => {} // result is null
+                other => panic!("Expected null result (no schema file), got: {:?}", other),
+            }
         }
         _ => panic!("Expected response"),
     }
 
-    do_shutdown(&client_conn);
-}
-
-#[test]
-fn test_lsp_initialized_notification() {
-    let (server_conn, client_conn) = Connection::memory();
-
-    std::thread::spawn(move || {
-        run_lsp_server(server_conn, LspBackend::new()).unwrap();
-    });
-
-    do_init_handshake(&client_conn);
     do_shutdown(&client_conn);
 }
