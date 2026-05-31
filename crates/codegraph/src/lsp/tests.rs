@@ -199,6 +199,45 @@ fn test_lsp_diagnostic_for_invalid_ifml() {
 }
 
 #[test]
+fn test_lsp_diagnostic_for_missing_entity() {
+    let (server_conn, client_conn) = Connection::memory();
+
+    let state = GrafeoState {
+        entity_names: vec!["Customer".to_string()],
+        schema_infos: std::collections::HashMap::new(),
+        schema_dirs: vec![],
+    };
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, state).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // data: Order — Order is NOT in entity_names (only Customer is)
+    open_document(
+        &client_conn,
+        "file:///bad_entity.ifml",
+        r#"view "Test" { component "c" { type: list; data: Order; fields: [name]; } }"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///bad_entity.ifml");
+    assert!(
+        !params.diagnostics.is_empty(),
+        "referencing unknown entity 'Order' should produce diagnostics"
+    );
+    assert!(
+        params.diagnostics.iter().any(|d| {
+            d.message.contains("Entity") && d.message.contains("Order")
+        }),
+        "should have error about unknown entity 'Order', got: {:?}",
+        params.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
 fn test_lsp_completion_with_entity_data() {
     let (server_conn, client_conn) = Connection::memory();
 

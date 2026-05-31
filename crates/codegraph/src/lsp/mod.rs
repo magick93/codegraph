@@ -110,7 +110,12 @@ fn server_capabilities() -> ServerCapabilities {
         }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
-        document_symbol_provider: Some(OneOf::Left(true)),
+        diagnostic_provider: Some(DiagnosticServerCapabilities::Options(DiagnosticOptions {
+            identifier: None,
+            inter_file_dependencies: true,
+            workspace_diagnostics: false,
+            work_done_progress_options: WorkDoneProgressOptions { work_done_progress: None },
+        })),
         ..Default::default()
     }
 }
