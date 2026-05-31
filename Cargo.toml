@@ -42,3 +42,4 @@ utoipa = { version = "5", features = ["uuid", "chrono"] }
 sea-orm = { version = "1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
 axum = "0.8"
 bytes = "1"
+lsp-types = "0.97"

@@ -298,6 +298,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // them up and emit broken `pub mod` declarations.
     clean_generated_output(output_dir, &order, &config.defaults.type_suffix);
 
+    // Clean stale IFML route directories from previous runs.
+    clean_stale_ifml_routes(output_dir, &[]);
+
     // Clean generated migration files (seq >= 10) from previous runs.  New runs
     // may generate a different set of files (e.g. duplicates removed),
     // and stale numbered SQL files must not linger in the migrations directory.
@@ -1388,6 +1391,49 @@ fn write_output(file: &GeneratedFile) -> Result<()> {
     }
     fs::write(&file.path, &file.content)?;
     Ok(())
+}
+
+/// Clean stale IFML-generated route files that are no longer in the IFML model.
+/// IFML routes are generated at src/routes/{view_name}/+page.svelte and +page.ts.
+/// This removes routes for views that no longer exist in the current model.
+fn clean_stale_ifml_routes(output_dir: &Path, active_views: &[String]) {
+    let routes_dir = output_dir.join("src").join("routes");
+    if !routes_dir.exists() {
+        return;
+    }
+
+    let entries = match std::fs::read_dir(&routes_dir) {
+        Ok(e) => e,
+        _ => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        // Skip non-IFML directories (they start with _, (, or contain other chars)
+        if dir_name.starts_with('_') || dir_name.starts_with('(') || dir_name.starts_with('.') {
+            continue;
+        }
+
+        // If this directory name doesn't match any active view, it's stale
+        let is_active = active_views.iter().any(|v| v.to_lowercase() == dir_name);
+        if !is_active {
+            // Check if the directory contains IFML-generated files
+            let has_ifml_files = path.join("+page.svelte").exists();
+            if has_ifml_files {
+                tracing::debug!("Removing stale IFML route: {}", path.display());
+                let _ = std::fs::remove_dir_all(&path);
+            }
+        }
+    }
 }
 
 /// Remove stale `mod.rs` files from a previous generation run.

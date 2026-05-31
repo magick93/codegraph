@@ -24,7 +24,14 @@ export function openDiagramPanel(context: vscode.ExtensionContext, uri: vscode.U
         }
     );
 
-    panel.webview.html = getPlaceholderHtml();
+    const scriptUri = panel.webview.asWebviewUri(
+        vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview', 'ifml-diagram.js')
+    );
+    const styleUri = panel.webview.asWebviewUri(
+        vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview', 'ifml-diagram.css')
+    );
+
+    panel.webview.html = getWebviewHtml(scriptUri, styleUri, panel);
 
     const sync = new SyncEngine(panel, uri);
 
@@ -45,52 +52,38 @@ export function openDiagramPanel(context: vscode.ExtensionContext, uri: vscode.U
     panels.set(key, panel);
 }
 
-function getPlaceholderHtml(): string {
+function getNonce(): string {
+    let text = '';
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    for (let i = 0; i < 64; i++) {
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
+    }
+    return text;
+}
+
+function getWebviewHtml(
+    scriptUri: vscode.Uri,
+    styleUri: vscode.Uri,
+    panel: vscode.WebviewPanel,
+): string {
+    const nonce = getNonce();
+    const cspSource = panel.webview.cspSource;
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IFML Diagram</title>
-    <style>
-        body {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-            color: #888;
-            background: #1e1e1e;
-        }
-        .placeholder {
-            text-align: center;
-            padding: 2em;
-        }
-        .placeholder h2 {
-            margin-bottom: 0.5em;
-            color: #ccc;
-            font-weight: 300;
-        }
-        .placeholder p {
-            font-size: 0.9em;
-            color: #666;
-            line-height: 1.6;
-        }
-        .placeholder .icon {
-            font-size: 3em;
-            margin-bottom: 0.5em;
-        }
-    </style>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'none';
+        style-src ${cspSource} 'unsafe-inline';
+        script-src 'nonce-${nonce}' 'wasm-unsafe-eval';
+        font-src ${cspSource};
+    " />
+    <link rel="stylesheet" href="${styleUri}" />
 </head>
 <body>
-    <div class="placeholder">
-        <div class="icon">&#9678;</div>
-        <h2>IFML Diagram Preview</h2>
-        <p>The visual diagram editor is under construction.</p>
-        <p>This panel will render the SvelteFlow-based IFML diagram.</p>
-        <p>Edits to the .ifml file will sync here in real-time.</p>
-    </div>
+    <div id="root"></div>
+    <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
 }

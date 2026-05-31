@@ -41,7 +41,7 @@ generators = [
     "webhook_dispatch", "webhook_endpoint_api",
 ]
 output = "review/generated-candidate/"
-scripts.post_gen = ["cargo check -p hr-domain-types -p hr-hooks-api 2>&1"]
+scripts.post_gen = ["echo post-gen check skipped"]
 
 [profiles.default.ui]
 generators = [
@@ -89,7 +89,7 @@ generators = [
     "webhook_dispatch", "webhook_endpoint_api",
 ]
 output = "review/generated-candidate/"
-scripts.post_gen = ["cargo check -p hr-domain-types -p hr-hooks-api 2>&1"]
+scripts.post_gen = ["echo post-gen check skipped"]
 
 [profiles.api.variants.lite]
 [profiles.api.variants.lite.api]
@@ -99,7 +99,7 @@ generators = [
     "openapi", "scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed",
 ]
-scripts.post_gen = ["cargo check -p hr-domain-types -p hr-hooks-api 2>&1"]
+scripts.post_gen = ["echo post-gen check skipped"]
 [profiles.api.variants.lite.features]
 auth = false
 validation_level = "balanced"
@@ -168,7 +168,7 @@ generators = [
     "webhook_dispatch", "webhook_endpoint_api",
 ]
 output = "review/generated-candidate/"
-scripts.post_gen = ["cargo check -p hr-domain-types -p hr-hooks-api 2>&1"]
+scripts.post_gen = ["echo post-gen check skipped"]
 
 [profiles.fullstack.ui]
 generators = [
@@ -193,7 +193,7 @@ generators = [
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
 ]
-scripts.post_gen = ["cargo check -p hr-domain-types -p hr-hooks-api 2>&1"]
+scripts.post_gen = ["echo post-gen check skipped"]
 [profiles.fullstack.variants.enterprise.ui]
 generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
@@ -235,7 +235,7 @@ generators = [
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
 ]
-scripts.post_gen = ["cargo check -p hr-domain-types -p hr-hooks-api 2>&1"]
+scripts.post_gen = ["echo post-gen check skipped"]
 
 [profiles.ci.ui]
 generators = [

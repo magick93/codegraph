@@ -485,14 +485,16 @@ async fn cmd_lsp(
     classifier: Option<&Path>,
     config: Option<&Path>,
 ) -> codegraph::error::Result<()> {
+    use codegraph::lsp::{run_lsp_server, LspBackend};
     use codegraph_backend::{create_backend, BackendConfig};
+    use lsp_server::Connection;
 
-    let backend_config = BackendConfig::default();
-    let be = create_backend(&backend_config)
+    let _backend_config = BackendConfig::default();
+    let _be = create_backend(&_backend_config)
         .await
         .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
 
-    // Load JSON Schema files
+    // Load JSON Schema files into the graph (future: pass to LspBackend)
     for dir in schema_dirs {
         if dir.exists() {
             let empty_entities = std::collections::HashSet::new();
@@ -507,7 +509,7 @@ async fn cmd_lsp(
             };
 
             codegraph::ingest::async_ingest::ingest_schemas(
-                be.ingestor(),
+                _be.ingestor(),
                 dir,
                 &classifier_config,
                 &empty_entities,
@@ -518,16 +520,15 @@ async fn cmd_lsp(
         }
     }
 
-    // TODO: Full LSP server implementation
-    // For now, print a message and exit
-    println!("LSP server mode — ready to accept connections");
-    println!("Schema dirs: {:?}", schema_dirs);
-    println!("Classifier: {:?}", classifier);
-    println!("Config: {:?}", config);
+    eprintln!("codegraph LSP server starting (IFML language)...");
+    let (connection, io_threads) = Connection::stdio();
+    let backend = LspBackend::new();
 
-    // Block until Ctrl+C
-    tokio::signal::ctrl_c().await
-        .map_err(|e| codegraph::error::Error::Config(format!("Ctrl+C failed: {e}")))?;
+    run_lsp_server(connection, backend)?;
+
+    io_threads
+        .join()
+        .map_err(|e| codegraph::error::Error::Config(format!("IO thread error: {e}")))?;
 
     Ok(())
 }

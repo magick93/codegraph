@@ -690,6 +690,19 @@ impl GraphQuerier for MockEngine {
             .cloned())
     }
 
+    async fn get_ifml_view_containers(&self) -> Result<Vec<ViewContainerNode>, GraphError> {
+        let map = self.view_containers.lock().unwrap();
+        Ok(map.values().cloned().collect())
+    }
+
+    async fn get_ifml_view_components(
+        &self,
+        _container_name: &str,
+    ) -> Result<Vec<ViewComponentNode>, GraphError> {
+        let map = self.view_components.lock().unwrap();
+        Ok(map.values().cloned().collect())
+    }
+
     async fn get_generation_order(&self) -> Result<Vec<String>, GraphError> {
         Ok(self.get_entity_names().await?)
     }
