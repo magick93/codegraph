@@ -6,10 +6,10 @@ use auto_lsp::lsp_server::Connection;
 use auto_lsp::lsp_types::*;
 use auto_lsp::lsp_types::{
     notification::{
-        DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Initialized,
-        PublishDiagnostics,
+        Cancel, DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Initialized,
+        PublishDiagnostics, SetTrace,
     },
-    request::{Completion, GotoDefinition, HoverRequest},
+    request::{Completion, DocumentDiagnosticRequest, GotoDefinition, HoverRequest},
 };
 use auto_lsp::server::notification_registry::NotificationRegistry;
 use auto_lsp::server::options::InitOptions;
@@ -56,10 +56,13 @@ pub fn run_lsp_server(
     request_registry
         .on::<Completion, _>(handlers::handle_completion)
         .on::<HoverRequest, _>(handlers::handle_hover)
-        .on::<GotoDefinition, _>(handlers::handle_goto_definition);
+        .on::<GotoDefinition, _>(handlers::handle_goto_definition)
+        .on::<DocumentDiagnosticRequest, _>(handlers::handle_document_diagnostic);
 
     notification_registry
         .on::<Initialized, _>(|_db, _params| Ok(()))
+        .on::<SetTrace, _>(|_db, _params| Ok(()))
+        .on::<Cancel, _>(|_db, _params| Ok(()))
         .on_mut::<DidOpenTextDocument, _>(|session, params| {
             let uri = params.text_document.uri.clone();
             open_text_document(session, params)?;

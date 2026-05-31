@@ -5,7 +5,8 @@ pub static GRAFE: OnceLock<Mutex<Option<GrafeoState>>> = OnceLock::new();
 
 pub fn init_grafe(state: GrafeoState) {
     let lock = GRAFE.get_or_init(|| Mutex::new(None));
-    *lock.lock().unwrap() = Some(state);
+    let mut guard = lock.lock().unwrap();
+    *guard = Some(state);
 }
 
 pub fn with_grafe<F, R>(f: F) -> R
@@ -14,7 +15,10 @@ where
 {
     let lock = GRAFE.get().expect("GRAFE not initialized");
     let guard = lock.lock().unwrap();
-    f(guard.as_ref().expect("GRAFE not initialized"))
+    match guard.as_ref() {
+        Some(s) => f(s),
+        None => panic!("GRAFE not initialized"),
+    }
 }
 
 pub struct GrafeoState {

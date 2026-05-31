@@ -520,6 +520,22 @@ pub fn compute_diagnostics(
     diagnostics
 }
 
+pub fn handle_document_diagnostic(
+    db: &BaseDb,
+    params: DocumentDiagnosticParams,
+) -> anyhow::Result<DocumentDiagnosticReportResult> {
+    let diagnostics = compute_diagnostics(db, &params.text_document.uri);
+    Ok(DocumentDiagnosticReportResult::Report(
+        DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+            related_documents: None,
+            full_document_diagnostic_report: FullDocumentDiagnosticReport {
+                result_id: None,
+                items: diagnostics,
+            },
+        }),
+    ))
+}
+
 fn find_line_with_text(text: &str, needle: &str) -> Option<u32> {
     for (i, line) in text.lines().enumerate() {
         if line.contains(needle) {
