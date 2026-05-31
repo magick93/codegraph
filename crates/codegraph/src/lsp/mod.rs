@@ -30,15 +30,25 @@ pub fn run_lsp_server(
     init_grafe(grafeo_state);
 
     let db = BaseDb::default();
-    let (mut session, init_params) = Session::create(
-        InitOptions {
-            parsers: &*IFML_PARSERS,
-            capabilities: server_capabilities(),
-            server_info: None,
-        },
-        connection,
-        db,
-    )?;
+    let init_options = InitOptions {
+        parsers: &*IFML_PARSERS,
+        capabilities: server_capabilities(),
+        server_info: None,
+    };
+
+    let (mut session, init_params) = Session::create(init_options, connection, db)
+        .map_err(|e| {
+            // Provide a helpful message if the client forgot initializationOptions
+            let msg = e.to_string();
+            if msg.contains("MissingPerFileParser") || msg.contains("perFileParser") {
+                eprintln!(
+                    "ERROR: LSP client did not send initializationOptions.perFileParser.\n\
+                     The VS Code extension sends this automatically. If using a custom client,\n\
+                     include: {{ \"initializationOptions\": {{ \"perFileParser\": {{ \"ifml\": \"ifml\" }} }} }}"
+                );
+            }
+            e
+        })?;
 
     let mut request_registry = RequestRegistry::<BaseDb>::default();
     let mut notification_registry = NotificationRegistry::<BaseDb>::default();

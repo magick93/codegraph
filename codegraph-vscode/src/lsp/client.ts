@@ -179,6 +179,9 @@ export class LspClient {
           documentSelector: [{ language: 'ifml' }],
           outputChannel: this.outputChannel,
           diagnosticCollectionName: 'ifml',
+          initializationOptions: {
+            perFileParser: { ifml: 'ifml' },
+          },
         }
       );
 
