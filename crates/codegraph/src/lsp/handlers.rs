@@ -32,6 +32,8 @@ static IFML_LANG: LazyLock<tree_sitter::Language> = LazyLock::new(|| {
     tree_sitter_ifml::language()
 });
 
+const VALID_COMPONENT_TYPES: &[&str] = &["list", "form", "details", "search", "tree", "chart"];
+
 static VIEW_DECL_QUERY: LazyLock<Query> = LazyLock::new(|| {
     Query::new(
         &IFML_LANG,
@@ -46,6 +48,27 @@ static DATA_REF_QUERY: LazyLock<Query> = LazyLock::new(|| {
         r"(property_assignment key: (identifier) @key value: (value_expression (expression (identifier) @val)))",
     )
     .expect("Failed to create data ref query")
+});
+
+/// Matches `type: SomeValue` where SomeValue is any identifier
+static TYPE_VALUE_QUERY: LazyLock<Query> = LazyLock::new(|| {
+    Query::new(
+        &IFML_LANG,
+        r"(property_assignment
+            key: (identifier) @type_key
+            value: (value_expression (expression (identifier) @type_val))
+        )",
+    )
+    .expect("Failed to create type value query")
+});
+
+/// Matches individual fields inside a fields: [a, b, c] array
+static FIELD_IN_ARRAY_QUERY: LazyLock<Query> = LazyLock::new(|| {
+    Query::new(
+        &IFML_LANG,
+        r"(array_literal (value_expression (expression (identifier) @field_id)))",
+    )
+    .expect("Failed to create field array query")
 });
 
 static NAVIGATE_BINDING_QUERY: LazyLock<Query> = LazyLock::new(|| {
@@ -673,6 +696,12 @@ pub fn compute_diagnostics(
     // exactly where the syntax error occurs.
     collect_errors(&root, source_bytes, &mut diagnostics);
 
+    // Validate component type values (must be list/form/details/search/tree/chart)
+    validate_component_types(source_bytes, &root, source, &mut diagnostics);
+
+    // Validate no duplicate fields in fields: [...] arrays
+    validate_no_duplicate_fields(source_bytes, &root, source, &mut diagnostics);
+
     let data_refs = extract_data_refs(source_bytes, &root);
     with_grafe(|grafe| {
         if let Some(grafe) = grafe {
@@ -938,6 +967,90 @@ fn collect_errors(node: &tree_sitter::Node, source: &[u8], diagnostics: &mut Vec
             collect_errors(&cursor.node(), source, diagnostics);
             if !cursor.goto_next_sibling() {
                 break;
+            }
+        }
+    }
+}
+
+/// Validate that every `type:` property uses a known component type value.
+fn validate_component_types(
+    source: &[u8],
+    root: &tree_sitter::Node,
+    text: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&TYPE_VALUE_QUERY, *root, source);
+    let name_idx = TYPE_VALUE_QUERY.capture_index_for_name("type_key").unwrap();
+    let val_idx = TYPE_VALUE_QUERY.capture_index_for_name("type_val").unwrap();
+
+    while let Some(m) = matches.next() {
+        let mut key = None;
+        let mut val_text = None;
+        let mut val_range = None;
+        for capture in m.captures {
+            if capture.index == name_idx {
+                key = capture.node.utf8_text(source).ok().map(|s: &str| s.to_string());
+            } else if capture.index == val_idx {
+                val_text = capture.node.utf8_text(source).ok().map(|s: &str| s.to_string());
+                let r = capture.node.range();
+                val_range = Some(Range::new(
+                    Position::new(r.start_point.row as u32, r.start_point.column as u32),
+                    Position::new(r.end_point.row as u32, r.end_point.column as u32),
+                ));
+            }
+        }
+        if let (Some(k), Some(v), Some(range)) = (key, val_text, val_range) {
+            if k == "type" && !VALID_COMPONENT_TYPES.contains(&v.as_str()) {
+                diagnostics.push(Diagnostic {
+                    range,
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    message: format!(
+                        "Unknown component type '{}'. Expected one of: {}",
+                        v,
+                        VALID_COMPONENT_TYPES.join(", ")
+                    ),
+                    source: Some("codegraph".to_string()),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+}
+
+/// Validate no duplicate field names in fields: [...] arrays.
+fn validate_no_duplicate_fields(
+    source: &[u8],
+    root: &tree_sitter::Node,
+    text: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&FIELD_IN_ARRAY_QUERY, *root, source);
+    let name_idx = FIELD_IN_ARRAY_QUERY.capture_index_for_name("field_id").unwrap();
+
+    let mut seen: std::collections::HashMap<String, tree_sitter::Range> = std::collections::HashMap::new();
+    while let Some(m) = matches.next() {
+        for capture in m.captures {
+            if capture.index == name_idx {
+                if let Ok(field_name) = capture.node.utf8_text(source) {
+                    if let Some(prev_range) = seen.get(field_name) {
+                        // Duplicate found — add diagnostic on both occurrences
+                        let cur_range = capture.node.range();
+                        diagnostics.push(Diagnostic {
+                            range: Range::new(
+                                Position::new(cur_range.start_point.row as u32, cur_range.start_point.column as u32),
+                                Position::new(cur_range.end_point.row as u32, cur_range.end_point.column as u32),
+                            ),
+                            severity: Some(DiagnosticSeverity::WARNING),
+                            message: format!("Duplicate field '{}'", field_name),
+                            source: Some("codegraph".to_string()),
+                            ..Default::default()
+                        });
+                    } else {
+                        seen.insert(field_name.to_string(), capture.node.range());
+                    }
+                }
             }
         }
     }
