@@ -48,26 +48,54 @@ function findBinaryPath(configured: string, extensionPath?: string): { binary: s
     }
   }
 
-  // Fallback: try cargo from the extension path (walk up to find project root)
-  const cargoRoot = findCargoRoot(extensionPath || (workspaces?.[0]?.uri.fsPath ?? process.cwd()));
-  if (cargoRoot) {
-    return { binary: 'cargo', args: ['run', '--manifest-path', path.join(cargoRoot, 'Cargo.toml'), '--', 'lsp'], cwd: cargoRoot };
+  // Fallback: search ALL search dirs for ANY Cargo.toml, try cargo from there
+  // Also check common parent-relative paths for monorepo setups
+  for (const d of Array.from(searchDirs)) {
+    // Also check d/../ (parent) and d/../../ (grandparent) for the binary
+    for (const rel of ['../', '../../', '../../../']) {
+      const parent = path.resolve(d, rel);
+      for (const sub of ['target/release/codegraph', 'target/debug/codegraph']) {
+        const candidate = path.join(parent, sub);
+        if (fs.existsSync(candidate)) return { binary: candidate, args: [] };
+      }
+    }
   }
-  return { binary: configured, args: [] };
-}
 
-/// Walk up from startDir to find a Cargo.toml that contains workspace members
-function findCargoRoot(startDir: string): string | null {
-  for (let d = startDir; d !== path.dirname(d); d = path.dirname(d)) {
+  // Also search common development subdirectories of each search dir
+  const commonDirs = ['git/codegraph', 'codegraph', 'projects/codegraph', 'src/codegraph'];
+  for (const d of Array.from(searchDirs)) {
+    for (const sub of commonDirs) {
+      for (const bin of ['target/release/codegraph', 'target/debug/codegraph']) {
+        const candidate = path.join(d, sub, bin);
+        if (fs.existsSync(candidate)) return { binary: candidate, args: [] };
+      }
+    }
+  }
+
+  // Last resort: any Cargo.toml mentioning codegraph → cargo run -p codegraph
+  for (const d of Array.from(searchDirs)) {
     const cargoPath = path.join(d, 'Cargo.toml');
     if (fs.existsSync(cargoPath)) {
       try {
         const content = fs.readFileSync(cargoPath, 'utf8');
-        if (content.includes('codegraph') || content.includes('codegraph-core')) return d;
-      } catch { return d; }
+        if (content.includes('codegraph')) {
+          return { binary: 'cargo', args: ['run', '-p', 'codegraph', '--', 'lsp'], cwd: d };
+        }
+      } catch { /* ignore */ }
+    }
+    // Also check common subdirectories for Cargo.toml
+    for (const sub of commonDirs) {
+      const subCargo = path.join(d, sub, 'Cargo.toml');
+      if (fs.existsSync(subCargo)) {
+        try {
+          if (fs.readFileSync(subCargo, 'utf8').includes('codegraph')) {
+            return { binary: 'cargo', args: ['run', '-p', 'codegraph', '--', 'lsp'], cwd: path.join(d, sub) };
+          }
+        } catch { /* ignore */ }
+      }
     }
   }
-  return null;
+  return { binary: configured, args: [] };
 }
 
 export class LspClient {
