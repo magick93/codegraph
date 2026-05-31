@@ -519,28 +519,84 @@ async fn cmd_lsp(
         }
     }
 
-    // Pre-fetch all schema names and properties for synchronous LSP access.
-    // Strip the type suffix (default "Type") so entity names match what
-    // developers write in IFML (e.g. "Customer" not "CustomerType").
-    let default_suffix = "Type";
-    let schemas = be.querier().list_schemas(None).await?;
-    let entity_names: Vec<String> = schemas
-        .iter()
-        .map(|s| {
-            s.title
-                .strip_suffix(default_suffix)
-                .unwrap_or(&s.title)
-                .to_string()
-        })
+    // Run entity classification using AutoClassifier if domain config is provided.
+    // This replaces the naive suffix-stripping with structural scoring + naming rules.
+    let classifier_config = if let Some(classifier_path) = classifier {
+        codegraph_classifier::config::parse_classifier_config(classifier_path)
+            .map_err(|e| codegraph::error::Error::Config(e.to_string()))?
+    } else {
+        codegraph_classifier::config::parse_classifier_config_str("{}")
+            .map_err(|e| codegraph::error::Error::Config(e.to_string()))?
+    };
+
+    let all_data = be
+        .querier()
+        .get_classification_data()
+        .await
+        .map_err(codegraph::error::Error::Graph)?;
+
+    let classifier_types: HashSet<String> = classifier_config
+        .primitive_wrappers
+        .keys()
+        .cloned()
+        .chain(classifier_config.array_wrappers.keys().cloned())
+        .chain(classifier_config.range_wrappers.keys().cloned())
+        .chain(
+            classifier_config
+                .composite_wrappers
+                .iter()
+                .map(|cw| cw.schema.clone()),
+        )
         .collect();
 
+    let naming_rules = classifier_config.naming_rules.clone();
+    let auto_classifier =
+        codegraph::classify::AutoClassifier::new(classifier_types, naming_rules);
+
+    let mut entity_names_set: HashSet<String> = HashSet::new();
+
+    if let Some(config_path) = config {
+        let domain_config = codegraph_config::config::parse_domain_config(config_path)
+            .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
+
+        for (domain_name, domain_entry) in &domain_config.domains {
+            let domain_schemas: Vec<_> = all_data
+                .iter()
+                .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
+                .cloned()
+                .collect();
+            let result =
+                auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
+            for score in &result.entities {
+                entity_names_set.insert(score.title.clone());
+            }
+            // Also include legacy explicit entities from domains.toml
+            for entity in &domain_entry.entities {
+                entity_names_set.insert(entity.clone());
+            }
+        }
+    } else {
+        // No domain config — fall back to suffix stripping
+        let default_suffix = "Type";
+        let schemas = be.querier().list_schemas(None).await?;
+        for schema in &schemas {
+            entity_names_set.insert(
+                schema
+                    .title
+                    .strip_suffix(default_suffix)
+                    .unwrap_or(&schema.title)
+                    .to_string(),
+            );
+        }
+    }
+
+    let entity_names: Vec<String> = entity_names_set.into_iter().collect();
+
+    // Build schema_infos keyed by entity name for synchronous LSP access
+    let schemas = be.querier().list_schemas(None).await?;
     let mut schema_infos = HashMap::new();
     for schema in &schemas {
-        let entity_name = schema
-            .title
-            .strip_suffix(default_suffix)
-            .unwrap_or(&schema.title)
-            .to_string();
+        let entity_name = schema.title.clone();
         if let Ok(props) = be.querier().get_properties(&schema.title).await {
             schema_infos.insert(
                 entity_name,

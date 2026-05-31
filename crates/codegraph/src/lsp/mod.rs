@@ -9,7 +9,10 @@ use auto_lsp::lsp_types::{
         Cancel, DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
         Initialized, PublishDiagnostics, SetTrace,
     },
-    request::{Completion, DocumentDiagnosticRequest, GotoDefinition, HoverRequest},
+    request::{
+        CodeActionRequest, Completion, DocumentDiagnosticRequest, GotoDefinition, HoverRequest,
+        SemanticTokensFullRequest,
+    },
 };
 use auto_lsp::server::notification_registry::NotificationRegistry;
 use auto_lsp::server::options::InitOptions;
@@ -57,7 +60,9 @@ pub fn run_lsp_server(
         .on::<Completion, _>(handlers::handle_completion)
         .on::<HoverRequest, _>(handlers::handle_hover)
         .on::<GotoDefinition, _>(handlers::handle_goto_definition)
-        .on::<DocumentDiagnosticRequest, _>(handlers::handle_document_diagnostic);
+        .on::<DocumentDiagnosticRequest, _>(handlers::handle_document_diagnostic)
+        .on::<CodeActionRequest, _>(handlers::handle_code_action)
+        .on::<SemanticTokensFullRequest, _>(handlers::handle_semantic_tokens_full);
 
     notification_registry
         .on::<Initialized, _>(|_db, _params| Ok(()))
@@ -114,12 +119,30 @@ fn server_capabilities() -> ServerCapabilities {
         }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
+        semantic_tokens_provider: Some(
+            SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
+                legend: SemanticTokensLegend {
+                    token_types: handlers::TOKEN_TYPES
+                        .iter()
+                        .map(|s| SemanticTokenType::new(s))
+                        .collect(),
+                    token_modifiers: handlers::TOKEN_MODIFIERS
+                        .iter()
+                        .map(|s| SemanticTokenModifier::new(s))
+                        .collect(),
+                },
+                full: Some(SemanticTokensFullOptions::Bool(true)),
+                range: None,
+                ..Default::default()
+            }),
+        ),
         diagnostic_provider: Some(DiagnosticServerCapabilities::Options(DiagnosticOptions {
             identifier: None,
             inter_file_dependencies: true,
             workspace_diagnostics: false,
             work_done_progress_options: WorkDoneProgressOptions { work_done_progress: None },
         })),
+        code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         ..Default::default()
     }
 }

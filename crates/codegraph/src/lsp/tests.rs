@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
 use auto_lsp::lsp_server::{Connection, Message, Notification, Request, RequestId};
 use auto_lsp::lsp_types::*;
@@ -246,6 +247,55 @@ fn test_lsp_diagnostic_for_missing_entity() {
 }
 
 #[test]
+fn test_lsp_diagnostic_invalid_param_binding() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // Detail has params { customerId: Uuid }
+    // List navigates to Detail with wrongKey — invalid
+    open_document(
+        &client_conn,
+        "file:///test.ifml",
+        r#"view "List" {
+            component "c" {
+                type: list;
+                data: Customer;
+                on select -> navigate("Detail", { wrongKey: row.id });
+            }
+        }
+
+view "Detail" {
+    params { customerId: Uuid };
+    component "d" {
+        type: details;
+        data: Customer;
+    }
+}"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///test.ifml");
+    assert!(
+        params.diagnostics.iter().any(|d| {
+            d.message.contains("wrongKey")
+                && d.message.contains("not a declared parameter")
+        }),
+        "Should warn about invalid parameter binding 'wrongKey', got: {:?}",
+        params.diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
 fn test_lsp_completion_with_entity_data() {
     let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();
@@ -374,6 +424,60 @@ view "CustomerDetail" { component "d" { type: details; data: Customer; } }"#,
 }
 
 #[test]
+fn test_lsp_semantic_tokens() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    open_document(
+        &client_conn,
+        "file:///test.ifml",
+        r#"view "Hello" { component "c" { type: list; data: Customer; } }"#,
+    );
+
+    let _ = recv_diagnostics(&client_conn, "file:///test.ifml");
+
+    client_conn
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(10i32),
+            method: "textDocument/semanticTokens/full".to_string(),
+            params: serde_json::json!({
+                "textDocument": { "uri": "file:///test.ifml" }
+            }),
+        }))
+        .unwrap();
+
+    let msg = client_conn.receiver.recv().unwrap();
+    match msg {
+        Message::Response(resp) => {
+            let result: Option<SemanticTokensResult> = serde_json::from_value(
+                resp.result.unwrap_or(serde_json::Value::Null),
+            )
+            .ok()
+            .flatten();
+            match result {
+                Some(SemanticTokensResult::Tokens(tokens)) => {
+                    assert!(
+                        !tokens.data.is_empty(),
+                        "Should produce semantic tokens"
+                    );
+                }
+                _ => panic!("Expected SemanticTokensResult::Tokens"),
+            }
+        }
+        _ => panic!("Expected response"),
+    }
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
 fn test_lsp_goto_definition_entity_no_file() {
     let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();
@@ -428,6 +532,79 @@ fn test_lsp_goto_definition_entity_no_file() {
                 None => {} // result field absent
                 Some(val) if val.is_null() => {} // result is null
                 other => panic!("Expected null result (no schema file), got: {:?}", other),
+            }
+        }
+        _ => panic!("Expected response"),
+    }
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_code_action_missing_entity() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    let state = GrafeoState {
+        entity_names: vec!["Customer".to_string()],
+        schema_infos: HashMap::new(),
+        schema_dirs: vec![],
+    };
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, state).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    open_document(
+        &client_conn,
+        "file:///test.ifml",
+        r#"view "Test" { component "c" { type: list; data: Order; } }"#,
+    );
+
+    let _ = recv_diagnostics(&client_conn, "file:///test.ifml");
+
+    client_conn
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(10i32),
+            method: "textDocument/codeAction".to_string(),
+            params: serde_json::json!({
+                "textDocument": { "uri": "file:///test.ifml" },
+                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 50 } },
+                "context": {
+                    "diagnostics": [],
+                    "triggerKind": 2
+                }
+            }),
+        }))
+        .unwrap();
+
+    let msg = client_conn.receiver.recv().unwrap();
+    match msg {
+        Message::Response(resp) => {
+            let result: Option<Vec<CodeActionOrCommand>> = serde_json::from_value(
+                resp.result.unwrap_or(serde_json::Value::Null),
+            )
+            .ok();
+            match result {
+                Some(actions) => {
+                    assert!(!actions.is_empty(), "Should have at least one code action");
+                    let titles: Vec<String> = actions
+                        .iter()
+                        .map(|a| match a {
+                            CodeActionOrCommand::CodeAction(ca) => ca.title.clone(),
+                            CodeActionOrCommand::Command(cmd) => cmd.title.clone(),
+                        })
+                        .collect();
+                    assert!(
+                        titles.iter().any(|t| t.contains("Create schema")),
+                        "Should have 'Create schema' action, got: {:?}",
+                        titles
+                    );
+                }
+                None => panic!("Expected code action response"),
             }
         }
         _ => panic!("Expected response"),
