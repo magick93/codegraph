@@ -1,8 +1,13 @@
 import * as vscode from 'vscode';
-import { LspClient } from '../lsp/client';
 import { openDiagramPanel } from '../webview/panel';
 
-export function registerCommands(context: vscode.ExtensionContext, lspClient: LspClient | undefined): void {
+export interface LspClientLike {
+    start(): void;
+    stop(): void;
+    restart?(): Promise<void>;
+}
+
+export function registerCommands(context: vscode.ExtensionContext, lspClient: LspClientLike | undefined): void {
     context.subscriptions.push(
         vscode.commands.registerCommand('ifml.openDiagram', () => {
             const editor = vscode.window.activeTextEditor;
@@ -50,7 +55,7 @@ export function registerCommands(context: vscode.ExtensionContext, lspClient: Ls
 
     context.subscriptions.push(
         vscode.commands.registerCommand('ifml.refreshLsp', async () => {
-            if (lspClient) {
+            if (lspClient?.restart) {
                 await lspClient.restart();
                 vscode.window.showInformationMessage('IFML Language Server restarted');
             } else {
