@@ -519,15 +519,31 @@ async fn cmd_lsp(
         }
     }
 
-    // Pre-fetch all schema names and properties for synchronous LSP access
+    // Pre-fetch all schema names and properties for synchronous LSP access.
+    // Strip the type suffix (default "Type") so entity names match what
+    // developers write in IFML (e.g. "Customer" not "CustomerType").
+    let default_suffix = "Type";
     let schemas = be.querier().list_schemas(None).await?;
-    let entity_names: Vec<String> = schemas.iter().map(|s| s.title.clone()).collect();
+    let entity_names: Vec<String> = schemas
+        .iter()
+        .map(|s| {
+            s.title
+                .strip_suffix(default_suffix)
+                .unwrap_or(&s.title)
+                .to_string()
+        })
+        .collect();
 
     let mut schema_infos = HashMap::new();
     for schema in &schemas {
+        let entity_name = schema
+            .title
+            .strip_suffix(default_suffix)
+            .unwrap_or(&schema.title)
+            .to_string();
         if let Ok(props) = be.querier().get_properties(&schema.title).await {
             schema_infos.insert(
-                schema.title.clone(),
+                entity_name,
                 SchemaInfo {
                     title: schema.title.clone(),
                     description: schema.description.clone(),
