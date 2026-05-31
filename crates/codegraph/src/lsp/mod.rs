@@ -79,9 +79,7 @@ fn handle_request(
             let result = handlers::handle_completion(backend, &params);
             let response = Response {
                 id: req.id,
-                result: result
-                    .as_ref()
-                    .map(|r| serde_json::to_value(r).unwrap()),
+                result: Some(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
                 error: None,
             };
             connection
@@ -95,9 +93,7 @@ fn handle_request(
             let result = handlers::handle_hover(backend, &params);
             let response = Response {
                 id: req.id,
-                result: result
-                    .as_ref()
-                    .map(|r| serde_json::to_value(r).unwrap()),
+                result: Some(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
                 error: None,
             };
             connection
@@ -136,9 +132,7 @@ fn handle_request(
             let result = handlers::handle_goto_definition(backend, &params);
             let response = Response {
                 id: req.id,
-                result: result
-                    .as_ref()
-                    .map(|r| serde_json::to_value(r).unwrap()),
+                result: Some(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
                 error: None,
             };
             connection
