@@ -2,8 +2,9 @@ import * as vscode from 'vscode';
 import { registerCommands } from './commands/register';
 import { StatusBar } from './status-bar';
 import { IfmlCompletionProvider } from './completion/providers';
+import { LspClient } from './lsp/client';
 
-let lspClient: { start(): void; stop(): void } | undefined;
+let lspClient: LspClient | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
     const statusBar = new StatusBar();
@@ -23,20 +24,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
     statusBar.show();
 
-    // Dynamically import LSP client so vscode-languageclient isn't loaded
-    // at module load time (it's excluded from the VSIX package)
-    startLspClient(context, statusBar).catch((err) => {
+    // Start LSP in background (safe even if vscode-languageclient isn't bundled)
+    try {
+        const client = new LspClient(context, statusBar);
+        lspClient = client;
+        client.start();
+    } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         statusBar.setLspState('disconnected');
         console.warn(`IFML LSP client failed to start: ${msg}`);
-    });
-}
-
-async function startLspClient(context: vscode.ExtensionContext, statusBar: StatusBar): Promise<void> {
-    const { LspClient } = await import('./lsp/client');
-    const client = new LspClient(context, statusBar);
-    lspClient = client;
-    client.start();
+    }
 }
 
 export function deactivate(): void {

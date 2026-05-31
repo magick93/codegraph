@@ -1,13 +1,8 @@
 import * as vscode from 'vscode';
 import { openDiagramPanel } from '../webview/panel';
+import { LspClient } from '../lsp/client';
 
-export interface LspClientLike {
-    start(): void;
-    stop(): void;
-    restart?(): Promise<void>;
-}
-
-export function registerCommands(context: vscode.ExtensionContext, lspClient: LspClientLike | undefined): void {
+export function registerCommands(context: vscode.ExtensionContext, lspClient: LspClient | undefined): void {
     context.subscriptions.push(
         vscode.commands.registerCommand('ifml.openDiagram', () => {
             const editor = vscode.window.activeTextEditor;
