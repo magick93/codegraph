@@ -361,6 +361,64 @@ view "Detail" {
 }
 
 #[test]
+fn test_lsp_no_false_duplicate_across_views() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+    do_init_handshake(&client_conn);
+
+    // Two views with overlapping field names should NOT flag as duplicates
+    open_document(
+        &client_conn,
+        "file:///test.ifml",
+        r#"view "A" { component "c1" { type: list; data: Customer; fields: [name, email]; } }
+view "B" { component "c2" { type: list; data: Order; fields: [name, email]; } }"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///test.ifml");
+    let dups: Vec<&Diagnostic> = params.diagnostics.iter()
+        .filter(|d| d.message.contains("Duplicate"))
+        .collect();
+    assert!(
+        dups.is_empty(),
+        "Fields in different views should not be flagged as duplicates. Got: {:?}",
+        dups.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_duplicate_field_in_same_array() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+    do_init_handshake(&client_conn);
+
+    // Duplicate 'email' in the SAME fields array should flag as duplicate
+    open_document(
+        &client_conn,
+        "file:///test.ifml",
+        r#"view "A" { component "c" { type: list; data: Customer; fields: [name, email, email]; } }"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///test.ifml");
+    let dups: Vec<&Diagnostic> = params.diagnostics.iter()
+        .filter(|d| d.message.contains("Duplicate"))
+        .collect();
+    assert!(
+        !dups.is_empty(),
+        "Duplicate 'email' in same array should be flagged"
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
 fn test_lsp_completion_with_entity_data() {
     let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();

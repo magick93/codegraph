@@ -50,6 +50,14 @@ static DATA_REF_QUERY: LazyLock<Query> = LazyLock::new(|| {
     .expect("Failed to create data ref query")
 });
 
+static NAVIGATE_BINDING_QUERY: LazyLock<Query> = LazyLock::new(|| {
+    Query::new(
+        &IFML_LANG,
+        r"(navigate_action (string) @target (parameter_binding (binding_pair key: (identifier) @binding.key)))",
+    )
+    .expect("Failed to create navigate binding query")
+});
+
 /// Matches `type: SomeValue` where SomeValue is any identifier
 static TYPE_VALUE_QUERY: LazyLock<Query> = LazyLock::new(|| {
     Query::new(
@@ -60,23 +68,6 @@ static TYPE_VALUE_QUERY: LazyLock<Query> = LazyLock::new(|| {
         )",
     )
     .expect("Failed to create type value query")
-});
-
-/// Matches individual fields inside a fields: [a, b, c] array
-static FIELD_IN_ARRAY_QUERY: LazyLock<Query> = LazyLock::new(|| {
-    Query::new(
-        &IFML_LANG,
-        r"(array_literal (value_expression (expression (identifier) @field_id)))",
-    )
-    .expect("Failed to create field array query")
-});
-
-static NAVIGATE_BINDING_QUERY: LazyLock<Query> = LazyLock::new(|| {
-    Query::new(
-        &IFML_LANG,
-        r"(navigate_action (string) @target (parameter_binding (binding_pair key: (identifier) @binding.key)))",
-    )
-    .expect("Failed to create navigate binding query")
 });
 
 pub fn handle_completion(
@@ -1018,42 +1009,106 @@ fn validate_component_types(
     }
 }
 
-/// Validate no duplicate field names in fields: [...] arrays.
+/// Recursively walk a node and its descendants looking for property_assignment nodes.
+fn walk_for_fields_assignments(
+    node: &tree_sitter::Node,
+    source: &[u8],
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if node.kind() == "property_assignment" {
+        check_fields_duplicates(node, source, diagnostics);
+        return; // property_assignment children are not nested property_assignments
+    }
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            walk_for_fields_assignments(&cursor.node(), source, diagnostics);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// Check a single property_assignment node: if its key is "fields", look for duplicates
+/// inside its array_literal value.
+fn check_fields_duplicates(
+    node: &tree_sitter::Node,
+    source: &[u8],
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    // First child should be the key identifier
+    let mut c = node.walk();
+    if !c.goto_first_child() { return; }
+    let first = c.node();
+    if first.kind() != "identifier" { return; }
+    let key_text = match first.utf8_text(source) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    if key_text != "fields" { return; }
+
+    // Walk children to find value_expression → array_literal
+    let mut seen: std::collections::HashMap<&str, ()> = std::collections::HashMap::new();
+
+    // Restart from first child of the property_assignment
+    let mut walker = node.walk();
+    if !walker.goto_first_child() { return; }
+    loop {
+        let child = walker.node();
+        if child.kind() == "value_expression" {
+            // Find array_literal inside this value_expression
+            let mut ve = child.walk();
+            if ve.goto_first_child() {
+                loop {
+                    let ve_child = ve.node();
+                    if ve_child.kind() == "array_literal" {
+                        // Walk array_literal children looking for value_expression elements
+                        let mut arr = ve_child.walk();
+                        if arr.goto_first_child() {
+                            loop {
+                                let elem = arr.node();
+                                if elem.kind() == "value_expression" {
+                                    if let Ok(text) = elem.utf8_text(source) {
+                                        let trimmed = text.trim();
+                                             if seen.contains_key(trimmed) {
+                                            let r = elem.range();
+                                            diagnostics.push(Diagnostic {
+                                                range: Range::new(
+                                                    Position::new(r.start_point.row as u32, r.start_point.column as u32),
+                                                    Position::new(r.end_point.row as u32, r.end_point.column as u32),
+                                                ),
+                                                severity: Some(DiagnosticSeverity::WARNING),
+                                                message: format!("Duplicate field '{}'", trimmed),
+                                                source: Some("codegraph".to_string()),
+                                                ..Default::default()
+                                            });
+                                        } else {
+                                            seen.insert(trimmed, ());
+                                        }
+                                    }
+                                }
+                                if !arr.goto_next_sibling() { break; }
+                            }
+                        }
+                    }
+                    if !ve.goto_next_sibling() { break; }
+                }
+            }
+        }
+        if !walker.goto_next_sibling() { break; }
+    }
+}
+
+/// Validate no duplicate field names within each individual fields: [...] array.
+/// Each `fields:` array is checked independently (same field in different views is NOT a duplicate).
 fn validate_no_duplicate_fields(
     source: &[u8],
     root: &tree_sitter::Node,
     text: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(&FIELD_IN_ARRAY_QUERY, *root, source);
-    let name_idx = FIELD_IN_ARRAY_QUERY.capture_index_for_name("field_id").unwrap();
-
-    let mut seen: std::collections::HashMap<String, tree_sitter::Range> = std::collections::HashMap::new();
-    while let Some(m) = matches.next() {
-        for capture in m.captures {
-            if capture.index == name_idx {
-                if let Ok(field_name) = capture.node.utf8_text(source) {
-                    if let Some(prev_range) = seen.get(field_name) {
-                        // Duplicate found — add diagnostic on both occurrences
-                        let cur_range = capture.node.range();
-                        diagnostics.push(Diagnostic {
-                            range: Range::new(
-                                Position::new(cur_range.start_point.row as u32, cur_range.start_point.column as u32),
-                                Position::new(cur_range.end_point.row as u32, cur_range.end_point.column as u32),
-                            ),
-                            severity: Some(DiagnosticSeverity::WARNING),
-                            message: format!("Duplicate field '{}'", field_name),
-                            source: Some("codegraph".to_string()),
-                            ..Default::default()
-                        });
-                    } else {
-                        seen.insert(field_name.to_string(), capture.node.range());
-                    }
-                }
-            }
-        }
-    }
+    walk_for_fields_assignments(root, source, diagnostics);
 }
 
 fn find_line_with_text(text: &str, needle: &str) -> Option<u32> {
