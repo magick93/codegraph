@@ -108,13 +108,13 @@
     return { nodes, edges };
   }
 
-  function onNodeClick(_event: any, node: Node) {
-    selectedNodeId = node.id;
+  function onNodeClick(_event: any, node: Node | undefined) {
+    selectedNodeId = node?.id ?? null;
     selectedEdgeId = null;
   }
 
-  function onEdgeClick(_event: any, edge: Edge) {
-    selectedEdgeId = edge.id;
+  function onEdgeClick(_event: any, edge: Edge | undefined) {
+    selectedEdgeId = edge?.id ?? null;
     selectedNodeId = null;
   }
 

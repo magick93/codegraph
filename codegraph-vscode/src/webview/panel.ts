@@ -94,19 +94,28 @@ function getWebviewHtml(
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="
-    default-src 'none';
-    style-src ${cspSource} 'unsafe-inline';
-    script-src 'nonce-${nonce}' 'unsafe-eval';
-    img-src ${cspSource} data:;
-    font-src ${cspSource};
-    connect-src 'self' ${cspSource} ws:;
-  " />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' 'unsafe-eval'; img-src ${cspSource} data:;">
   <link rel="stylesheet" href="${styleUri}" />
 </head>
 <body>
   <div id="root"></div>
-  <script nonce="${nonce}" src="${scriptUri}"></script>
+  <script nonce="${nonce}">
+(function() {
+  let el = document.createElement('div');
+  el.id = 'error';
+  el.style.cssText = 'display:none;padding:12px;color:red;font-family:monospace;white-space:pre-wrap';
+  document.body.prepend(el);
+  window.onerror = function(m, u, l, c) {
+    el.style.display = 'block';
+    el.textContent += '\\n' + m + ' (' + u + ':' + l + ')';
+  };
+  window.addEventListener('unhandledrejection', function(e) {
+    el.style.display = 'block';
+    el.textContent += '\\nPromise: ' + e.reason;
+  });
+})();
+  </script>
+  <script defer nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
 }
