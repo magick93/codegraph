@@ -2,6 +2,22 @@ import * as vscode from 'vscode';
 
 // ── IFML Business Model Types ─────────────────────────────────────
 
+export interface CodegenConfig {
+  targets: string[];
+  outputDir: string;
+  lastRun: string | null;
+  frameworks: FrameworkInfo[];
+}
+
+export interface FrameworkInfo {
+  id: string;
+  label: string;
+  description: string;
+  available: boolean;
+}
+
+// ── IFML Business Model Types ─────────────────────────────────────
+
 export interface IfmlModel {
   viewContainers: ViewContainerData[];
   actions: ActionDefData[];
@@ -102,6 +118,10 @@ export class SyncEngine {
       command: 'sync/selectElement',
       elementId,
     });
+  }
+
+  sendCodegenConfig(config: CodegenConfig) {
+    this.panel.webview.postMessage({ command: 'sync/codegenConfig', config });
   }
 
   handleDiagramChange(handler: (model: IfmlModel) => void): void {

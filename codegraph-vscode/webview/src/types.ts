@@ -69,9 +69,24 @@ export interface DataFlowData {
   targetParam?: string;
 }
 
+export interface CodegenConfig {
+  targets: string[];
+  outputDir: string;
+  lastRun: string | null;
+  frameworks: FrameworkInfo[];
+}
+
+export interface FrameworkInfo {
+  id: string;
+  label: string;
+  description: string;
+  available: boolean;
+}
+
 export type SyncMessage =
   | { command: 'sync/modelUpdate'; model: IfmlModel }
   | { command: 'sync/selectElement'; elementId: string }
   | { command: 'sync/diagramChanged'; model: IfmlModel }
   | { command: 'sync/selectInText'; elementId: string }
-  | { command: 'documentChanged'; text: string };
+  | { command: 'documentChanged'; text: string }
+  | { command: 'sync/codegenConfig'; config: CodegenConfig };

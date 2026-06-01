@@ -25,6 +25,9 @@ pub enum Commands {
         /// Path to extension-points.toml (optional)
         #[arg(long)]
         extension_points: Option<PathBuf>,
+        /// IFML framework targets for code generation (e.g. svelte, react)
+        #[arg(long)]
+        ifml_framework: Vec<String>,
     },
     /// Classify all schemas and show entity/VO decisions
     Classify {
@@ -76,6 +79,9 @@ pub enum Commands {
         /// Paths to IFML DSL (.ifml) files
         #[arg(long)]
         ifml_files: Vec<PathBuf>,
+        /// IFML framework targets for code generation (e.g. svelte, react)
+        #[arg(long)]
+        ifml_framework: Vec<String>,
     },
     /// Start the IFML Language Server Protocol server
     Lsp {

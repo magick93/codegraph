@@ -18,13 +18,14 @@
   import Palette from './palette/Palette.svelte';
   import PropertySheet from './property-sheet/PropertySheet.svelte';
   import { SyncClient } from './sync';
-  import type { IfmlModel } from './types';
+  import type { IfmlModel, CodegenConfig } from './types';
 
   let nodes = $state<Node[]>([]);
   let edges = $state<Edge[]>([]);
   let selectedNodeId = $state<string | null>(null);
   let selectedEdgeId = $state<string | null>(null);
   let currentModel = $state<IfmlModel | null>(null);
+  let codegenConfig = $state<CodegenConfig | null>(null);
 
   const sync = new SyncClient();
   const nodeTypes = {
@@ -133,6 +134,9 @@
       edges = flow.edges;
       debug = `Rendered: ${flow.nodes.length} nodes, ${flow.edges.length} edges`;
     }
+    if (msg.command === 'sync/codegenConfig') {
+      codegenConfig = msg.config;
+    }
   });
 </script>
 
@@ -160,6 +164,7 @@
       edgeId={selectedEdgeId}
       {nodes}
       {edges}
+      {codegenConfig}
     />
   </div>
 </div>

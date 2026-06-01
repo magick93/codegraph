@@ -1,6 +1,7 @@
 pub mod context;
 pub mod dependency_graph;
 pub mod navigation_generator;
+pub mod output_paths;
 pub mod profiles;
 pub mod querier;
 pub mod route_generator;

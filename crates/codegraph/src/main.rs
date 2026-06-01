@@ -18,6 +18,7 @@ struct RunArgs<'a> {
     profiles_config_path: Option<PathBuf>,
     no_post_gen: bool,
     ifml_files: &'a [PathBuf],
+    ifml_framework: &'a [String],
 }
 
 #[tokio::main]
@@ -29,7 +30,8 @@ async fn main() -> codegraph::error::Result<()> {
             config,
             output,
             extension_points,
-        } => cmd_generate(&config, &output, extension_points.as_deref()).await,
+            ifml_framework,
+        } => cmd_generate(&config, &output, extension_points.as_deref(), &ifml_framework).await,
         cli::Commands::Classify {
             schemas,
             classifier,
@@ -48,6 +50,7 @@ async fn main() -> codegraph::error::Result<()> {
             profiles_config,
             no_post_gen,
             ifml_files,
+            ifml_framework,
         } => {
             cmd_run(RunArgs {
                 schemas: &schemas,
@@ -60,6 +63,7 @@ async fn main() -> codegraph::error::Result<()> {
                 profiles_config_path: profiles_config,
                 no_post_gen,
                 ifml_files: &ifml_files,
+                ifml_framework: &ifml_framework,
             })
             .await
         }
@@ -141,6 +145,7 @@ async fn cmd_generate(
     config_path: &Path,
     output: &Path,
     extension_points_path: Option<&Path>,
+    ifml_frameworks: &[String],
 ) -> codegraph::error::Result<()> {
     let config = codegraph_config::config::parse_domain_config(config_path)
         .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
@@ -180,6 +185,7 @@ async fn cmd_generate(
         hooks_base: None,
         ext_points: ext_config.as_ref(),
         build_plan: None,
+        ifml_frameworks: ifml_frameworks.to_vec(),
     })
     .await?;
     print!("{}", report.summary());
@@ -201,6 +207,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         profiles_config_path,
         no_post_gen,
         ifml_files,
+        ifml_framework,
     } = args;
 
     let backend_config = BackendConfig::default();
@@ -361,6 +368,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         hooks_base: None,
         ext_points: ext_config.as_ref(),
         build_plan: build_plan.as_ref(),
+        ifml_frameworks: ifml_framework.to_vec(),
     })
     .await?;
 

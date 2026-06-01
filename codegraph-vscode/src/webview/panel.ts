@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { SyncEngine } from './sync';
+import { SyncEngine, type CodegenConfig } from './sync';
 import { parseIfmlForDiagram } from './parser';
 
 const panels = new Map<string, { panel: vscode.WebviewPanel; sync: SyncEngine }>();
@@ -21,7 +21,7 @@ export function openDiagramPanel(context: vscode.ExtensionContext, uri: vscode.U
       localResourceRoots: [
         vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview'),
       ],
-      retainContextWhenHidden: true,
+      retainContextWhenHidden: false,
     }
   );
 
@@ -43,6 +43,20 @@ export function openDiagramPanel(context: vscode.ExtensionContext, uri: vscode.U
   panel.webview.onDidReceiveMessage((msg) => {
     if (msg.command === 'sync/ready') {
       sendModelFromDocument(uri, sync);
+      sync.sendCodegenConfig(readCodegenConfig(context));
+    }
+    if (msg.command === 'sync/codegenToggle') {
+      const targets = vscode.workspace.getConfiguration('ifml.codegen').get<string[]>('targets', ['svelte']);
+      const idx = targets.indexOf(msg.framework);
+      if (msg.enabled && idx === -1) {
+        targets.push(msg.framework);
+      } else if (!msg.enabled && idx !== -1) {
+        targets.splice(idx, 1);
+      }
+      vscode.workspace.getConfiguration('ifml.codegen').update('targets', targets, true);
+    }
+    if (msg.command === 'sync/codegenRun') {
+      vscode.commands.executeCommand('ifml.generate');
     }
   });
 
@@ -59,6 +73,22 @@ export function openDiagramPanel(context: vscode.ExtensionContext, uri: vscode.U
   });
 
   panels.set(key, { panel, sync });
+}
+
+function readCodegenConfig(context: vscode.ExtensionContext): CodegenConfig {
+  const targets = vscode.workspace.getConfiguration('ifml.codegen').get<string[]>('targets', ['svelte']);
+  const outputDir = vscode.workspace.getConfiguration('ifml.codegen').get<string>('outputDir', 'generated');
+  const lastRun = context.workspaceState.get<string>('codegenLastRun', null);
+
+  const allFrameworks = [
+    { id: 'svelte', label: 'SvelteKit', description: 'SvelteKit routes + load functions', available: true },
+    { id: 'react', label: 'Next.js (React)', description: 'Next.js App Router pages', available: true },
+    { id: 'vue', label: 'Vue/Nuxt', description: 'Nuxt 3 pages', available: true },
+    { id: 'flutter', label: 'Flutter', description: 'Flutter screens + routes', available: true },
+    { id: 'swiftui', label: 'SwiftUI', description: 'SwiftUI views + nav', available: true },
+  ];
+
+  return { targets, outputDir, lastRun, frameworks: allFrameworks };
 }
 
 function sendModelFromDocument(uri: vscode.Uri, sync: SyncEngine): void {

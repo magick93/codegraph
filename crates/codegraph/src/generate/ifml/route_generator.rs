@@ -14,12 +14,16 @@ use super::querier::*;
 
 pub struct IfmlRouteGenerator {
     output_dir: PathBuf,
+    framework: String,
+    output_paths: super::output_paths::OutputPaths,
 }
 
 impl IfmlRouteGenerator {
-    pub fn new(output_dir: &Path) -> Self {
+    pub fn new(output_dir: &Path, framework: &str) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
+            framework: framework.to_string(),
+            output_paths: super::output_paths::OutputPaths::for_framework(framework),
         }
     }
 }
@@ -35,7 +39,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
         db: &dyn GraphQuerier,
         _config: &DomainConfig,
         _generation_order: &[GenerationEntry],
-        _tera: &tera::Tera,
+        tera: &tera::Tera,
     ) -> Result<Vec<GeneratedFile>> {
         let querier = IfmlGraphQuerier::new(db);
         let model = querier.get_ifml_model().await.map_err(|e| {
@@ -48,21 +52,24 @@ impl GlobalGenerator for IfmlRouteGenerator {
 
         let mut files = vec![];
 
-        for vc in &model.view_containers {
-            let route_name = vc.name.to_lowercase();
+        let page_template = format!("ifml/{}/page.tera", self.framework);
+        let load_template = format!("ifml/{}/page_load.tera", self.framework);
 
-            if let Ok(content) = render_page_svelte(&vc) {
+        for vc in &model.view_containers {
+            if let Ok(content) = render_page_svelte(&vc, tera, &page_template) {
                 files.push(GeneratedFile {
-                    path: self.output_dir.join(format!("src/routes/{route_name}/+page.svelte")),
+                    path: self.output_dir.join((self.output_paths.route_page)(&vc.name)),
                     content,
                 });
             }
 
-            if let Ok(content) = render_page_load(&vc) {
-                files.push(GeneratedFile {
-                    path: self.output_dir.join(format!("src/routes/{route_name}/+page.ts")),
-                    content,
-                });
+            if let Some(ref route_load_fn) = self.output_paths.route_load {
+                if let Ok(content) = render_page_load(&vc, tera, &load_template) {
+                    files.push(GeneratedFile {
+                        path: self.output_dir.join(route_load_fn(&vc.name)),
+                        content,
+                    });
+                }
             }
         }
 
@@ -71,7 +78,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
 }
 
 #[derive(Debug, Serialize)]
-struct PageSvelteContext {
+pub struct PageSvelteContext {
     name: String,
     label: String,
     components: Vec<PageComponentContext>,
@@ -79,7 +86,7 @@ struct PageSvelteContext {
 }
 
 #[derive(Debug, Serialize)]
-struct PageComponentContext {
+pub struct PageComponentContext {
     name: String,
     component_type: String,
     entity: String,
@@ -88,99 +95,45 @@ struct PageComponentContext {
 }
 
 #[derive(Debug, Serialize)]
-struct PageLoadContext {
+pub struct PageLoadContext {
     name: String,
     components: Vec<PageLoadComponentContext>,
 }
 
 #[derive(Debug, Serialize)]
-struct PageLoadComponentContext {
+pub struct PageLoadComponentContext {
     component_type: String,
     entity: String,
     route_name: String,
 }
 
-fn render_page_svelte(vc: &super::context::IfmlViewContainer) -> Result<String> {
-    Ok(generate_page_svelte_inline(vc))
+fn render_page_svelte(vc: &super::context::IfmlViewContainer, tera: &tera::Tera, template: &str) -> Result<String> {
+    let ctx = PageSvelteContext {
+        name: vc.name.clone(),
+        label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
+        components: vc.components.iter().map(|c| PageComponentContext {
+            name: c.name.clone(),
+            component_type: c.component_type.clone(),
+            entity: c.entity.clone().unwrap_or_default(),
+            fields: c.fields.clone(),
+            filter: c.filter.clone().unwrap_or_default(),
+        }).collect(),
+        params: vc.params.clone(),
+    };
+    render_template(tera, template, &ctx)
 }
 
-fn render_page_load(vc: &super::context::IfmlViewContainer) -> Result<String> {
-    Ok(generate_page_load_inline(vc))
-}
-
-fn generate_page_svelte_inline(vc: &super::context::IfmlViewContainer) -> String {
-    let mut s = String::new();
-    s.push_str("<script lang=\"ts\">\n");
-    s.push_str("  import type { PageData } from './$types';\n");
-    s.push_str("  export let data: PageData;\n");
-    s.push_str("</script>\n\n");
-
-    for comp in &vc.components {
-        match comp.component_type.as_str() {
-            "list" => {
-                s.push_str("<h1>");
-                s.push_str(vc.label.as_deref().unwrap_or(&vc.name));
-                s.push_str("</h1>\n<table>\n");
-                s.push_str("  <thead><tr>\n");
-                for field in &comp.fields {
-                    s.push_str(&format!("    <th>{}</th>\n", field));
-                }
-                s.push_str("  </tr></thead>\n");
-                s.push_str("  <tbody>\n");
-                s.push_str("    {#each data.items as item}\n");
-                s.push_str("      <tr>\n");
-                for field in &comp.fields {
-                    s.push_str(&format!("        <td>{{item.{}}}</td>\n", field));
-                }
-                s.push_str("      </tr>\n");
-                s.push_str("    {/each}\n");
-                s.push_str("  </tbody>\n");
-                s.push_str("</table>\n");
+fn render_page_load(vc: &super::context::IfmlViewContainer, tera: &tera::Tera, template: &str) -> Result<String> {
+    let ctx = PageLoadContext {
+        name: vc.name.clone(),
+        components: vc.components.iter().map(|c| {
+            let route_name = c.entity.as_ref().map(|e| e.to_lowercase()).unwrap_or_default();
+            PageLoadComponentContext {
+                component_type: c.component_type.clone(),
+                entity: c.entity.clone().unwrap_or_default(),
+                route_name,
             }
-            "form" => {
-                s.push_str("<form method=\"POST\">\n");
-                for field in &comp.fields {
-                    s.push_str(&format!(
-                        "  <label>{field}\n    <input name=\"{field}\" />\n  </label>\n"
-                    ));
-                }
-                s.push_str("  <button type=\"submit\">Submit</button>\n");
-                s.push_str("</form>\n");
-            }
-            "details" => {
-                s.push_str("<dl>\n");
-                for field in &comp.fields {
-                    s.push_str(&format!(
-                        "  <dt>{field}</dt>\n  <dd>{{data.{field}}}</dd>\n"
-                    ));
-                }
-                s.push_str("</dl>\n");
-            }
-            _ => {}
-        }
-    }
-
-    s
-}
-
-fn generate_page_load_inline(vc: &super::context::IfmlViewContainer) -> String {
-    let mut s = String::new();
-    s.push_str("import type { PageLoad } from './$types';\n\n");
-    s.push_str("export const load: PageLoad = async ({ params, fetch }) => {\n");
-
-    for comp in &vc.components {
-        if comp.component_type == "list" {
-            if let Some(entity) = &comp.entity {
-                let api_path = entity.to_lowercase();
-                s.push_str(&format!(
-                    "  const response = await fetch('/api/{api_path}');\n"
-                ));
-                s.push_str("  const items = await response.json();\n\n");
-                s.push_str("  return { items };\n");
-            }
-        }
-    }
-
-    s.push_str("};\n");
-    s
+        }).collect(),
+    };
+    render_template(tera, template, &ctx)
 }

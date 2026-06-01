@@ -193,6 +193,9 @@ pub struct GeneratorOpts<'a> {
     pub ext_points: Option<&'a codegraph_ext_points::ExtensionPointsConfig>,
     /// Build profile plan controlling which generators to run.
     pub build_plan: Option<&'a crate::profile::BuildPlan>,
+    /// IFML framework targets (e.g. "svelte", "react").
+    /// If empty, defaults to `["svelte"]` at dispatch.
+    pub ifml_frameworks: Vec<String>,
 }
 
 /// Run all generators for all entities in topological order.
@@ -218,6 +221,7 @@ pub async fn run_generators(
         hooks_base: None,
         ext_points: None,
         build_plan: None,
+        ifml_frameworks: vec![],
     })
     .await
 }
@@ -249,6 +253,7 @@ pub async fn run_generators_with_domain_types_base(
         hooks_base: Some(hooks_base),
         ext_points: None,
         build_plan: None,
+        ifml_frameworks: vec![],
     })
     .await
 }
@@ -268,6 +273,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         hooks_base,
         ext_points,
         build_plan, // used for has_webhooks / profile-based filter
+        ifml_frameworks,
     } = opts;
     // Wrap the querier in a caching layer to avoid redundant graph queries
     // across the 15+ generators that each independently query the same schemas.
@@ -519,17 +525,36 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(webhook::endpoint_api::WebhookEndpointApiGenerator::new(
             output_dir,
         )) as Box<dyn GlobalGenerator>,
-        Box::new(ifml::route_generator::IfmlRouteGenerator::new(output_dir))
-            as Box<dyn GlobalGenerator>,
-        Box::new(ifml::navigation_generator::IfmlNavigationGenerator::new(
-            output_dir,
-        )) as Box<dyn GlobalGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_global(gen.name()))
     .collect::<Vec<_>>();
 
     let mut global_gens = global_gens;
+
+    // Add IFML generators per framework
+    let ifml_frameworks = if ifml_frameworks.is_empty() {
+        vec!["svelte".to_string()]
+    } else {
+        ifml_frameworks.clone()
+    };
+    for fw in &ifml_frameworks {
+        let fw_output = output_dir.join(fw);
+        if build_plan.is_none() || plan_has_global(&format!("ifml_route_{}", fw)) {
+            global_gens.push(
+                Box::new(ifml::route_generator::IfmlRouteGenerator::new(&fw_output, fw))
+                    as Box<dyn GlobalGenerator>,
+            );
+        }
+        if build_plan.is_none() || plan_has_global(&format!("ifml_navigation_{}", fw)) {
+            global_gens.push(
+                Box::new(ifml::navigation_generator::IfmlNavigationGenerator::new(
+                    &fw_output, fw,
+                )) as Box<dyn GlobalGenerator>,
+            );
+        }
+    }
+
     if let Some(ext) = ext_points {
         let integration_gens: [Box<dyn GlobalGenerator>; 4] = [
             Box::new(integration::tables::IntegrationTablesGenerator::new(

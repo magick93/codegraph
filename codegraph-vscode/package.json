@@ -19,6 +19,7 @@
     "onCommand:ifml.validate",
     "onCommand:ifml.generate",
     "onCommand:ifml.refreshLsp",
+    "onCommand:ifml.selectCodegenTargets",
     "workspaceContains:**/*.ifml"
   ],
   "main": "./out/extension.js",
@@ -59,6 +60,10 @@
       {
         "command": "ifml.refreshLsp",
         "title": "IFML: Restart Language Server"
+      },
+      {
+        "command": "ifml.selectCodegenTargets",
+        "title": "IFML: Select Code Generation Targets"
       }
     ],
     "configuration": {
@@ -93,6 +98,19 @@
           "type": "boolean",
           "default": true,
           "description": "Enable real-time validation diagnostics"
+        },
+        "ifml.codegen.targets": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["svelte", "react", "vue", "flutter", "swiftui"] },
+          "default": ["svelte"],
+          "description": "Enabled IFML code generation target frameworks. Each target generates framework-specific code (routes, navigation, components).",
+          "scope": "resource"
+        },
+        "ifml.codegen.outputDir": {
+          "type": "string",
+          "default": "generated",
+          "description": "Root output directory for generated code, relative to workspace root.",
+          "scope": "resource"
         }
       }
     },
@@ -100,6 +118,11 @@
       {
         "command": "ifml.openDiagram",
         "key": "ctrl+shift+i"
+      },
+      {
+        "key": "ctrl+shift+g",
+        "command": "ifml.generate",
+        "when": "editorLangId == ifml"
       }
     ]
   },

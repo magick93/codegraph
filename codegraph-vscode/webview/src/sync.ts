@@ -1,4 +1,4 @@
-import type { IfmlModel, SyncMessage } from './types';
+import type { IfmlModel, SyncMessage, CodegenConfig } from './types';
 
 export class SyncClient {
   private vscode: any;
@@ -22,5 +22,13 @@ export class SyncClient {
 
   sendDiagramChange(model: IfmlModel): void {
     this.postMessage({ command: 'sync/diagramChanged', model });
+  }
+
+  sendCodegenToggle(framework: string, enabled: boolean) {
+    this.postMessage({ command: 'sync/codegenToggle', framework, enabled } as any);
+  }
+
+  sendCodegenRun() {
+    this.postMessage({ command: 'sync/codegenRun' } as any);
   }
 }

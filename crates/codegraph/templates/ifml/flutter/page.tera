@@ -1,0 +1,89 @@
+import 'package:flutter/material.dart';
+
+class {{ name }}Page extends StatelessWidget {
+  final Map<String, dynamic>? data;
+
+  const {{ name }}Page({super.key, this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('{{ label }}'),
+      ),
+      body: _buildBody(context),
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
+    {% for comp in components %}
+    {% if comp.component_type == "list" %}
+    final items = (data?['items'] as List<dynamic>?) ?? <dynamic>[];
+    return ListView(
+      children: [
+        DataTable(
+          columns: const [
+{% for field in comp.fields %}
+            DataColumn(label: Text('{{ field }}')),
+{% endfor %}
+          ],
+          rows: items.map((item) {
+            return DataRow(cells: [
+{% for field in comp.fields %}
+              DataCell(Text('${item['{{ field }}']}')),
+{% endfor %}
+            ]);
+          }).toList(),
+        ),
+      ],
+    );
+    {% elif comp.component_type == "form" %}
+    final formKey = GlobalKey<FormState>();
+    return Form(
+      key: formKey,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+{% for field in comp.fields %}
+          TextFormField(
+            decoration: InputDecoration(labelText: '{{ field }}'),
+          ),
+{% endfor %}
+          const SizedBox(height: 16),
+          ElevatedButton(
+            onPressed: () {},
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    {% elif comp.component_type == "details" %}
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+{% for field in comp.fields %}
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 120,
+                child: Text(
+                  '{{ field }}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              Expanded(
+                child: Text('${data?['{{ field }}']}'),
+              ),
+            ],
+          ),
+        ),
+{% endfor %}
+      ],
+    );
+    {% endif %}
+    {% endfor %}
+  }
+}

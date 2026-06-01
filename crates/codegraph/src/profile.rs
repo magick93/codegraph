@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -137,6 +137,8 @@ pub struct BuildPlan {
     pub global_generators: Vec<String>,
     /// Post-gen scripts collected from all sections, ordered alphabetically by section name.
     pub post_gen_scripts: Vec<(String, Vec<String>)>,
+    /// IFML framework targets configured for this build.
+    pub ifml_frameworks: Vec<IfmlFrameworkTarget>,
 }
 
 impl BuildPlan {
@@ -145,17 +147,24 @@ impl BuildPlan {
     /// Returns an error if any generator name is unknown or if feature requirements
     /// are not met.
     pub fn from_profile(profile: &ResolvedProfile, registry: &CapabilityRegistry) -> Result<Self> {
-        registry.validate_profile(profile)?;
+        let expanded_sections =
+            Self::expand_ifml_sections(&profile.sections, &profile.ifml_frameworks);
+
+        let validation_profile = ResolvedProfile {
+            sections: expanded_sections.clone(),
+            ..profile.clone()
+        };
+        registry.validate_profile(&validation_profile)?;
 
         let mut entity_gens = Vec::new();
         let mut domain_gens = Vec::new();
         let mut global_gens = Vec::new();
         let mut post_gen_scripts = Vec::new();
 
-        let mut section_names: Vec<&String> = profile.sections.keys().collect();
+        let mut section_names: Vec<&String> = expanded_sections.keys().collect();
         section_names.sort();
         for section_name in section_names {
-            let section = &profile.sections[section_name];
+            let section = &expanded_sections[section_name];
             if section.generators.is_empty() {
                 continue;
             }
@@ -189,7 +198,48 @@ impl BuildPlan {
             domain_generators: domain_gens,
             global_generators: global_gens,
             post_gen_scripts,
+            ifml_frameworks: profile.ifml_frameworks.clone(),
         })
+    }
+
+    /// Expand IFML generators in sections based on configured frameworks.
+    ///
+    /// When `ifml_frameworks` is non-empty, each `ifml_route` generator is
+    /// replaced with `ifml_route_{framework}` for every configured framework,
+    /// and similarly for `ifml_navigation`. If no frameworks are configured,
+    /// sections are returned unchanged (backward compatible).
+    fn expand_ifml_sections(
+        sections: &HashMap<String, ResolvedSection>,
+        ifml_frameworks: &[IfmlFrameworkTarget],
+    ) -> HashMap<String, ResolvedSection> {
+        if ifml_frameworks.is_empty() {
+            return sections.clone();
+        }
+
+        sections
+            .iter()
+            .map(|(name, section)| {
+                let generators: Vec<String> = section
+                    .generators
+                    .iter()
+                    .flat_map(|gen| match gen.as_str() {
+                        "ifml_route" | "ifml_navigation" => ifml_frameworks
+                            .iter()
+                            .map(|fw| format!("{}_{}", gen, fw.name))
+                            .collect::<Vec<_>>(),
+                        _ => vec![gen.clone()],
+                    })
+                    .collect();
+
+                (
+                    name.clone(),
+                    ResolvedSection {
+                        generators,
+                        ..section.clone()
+                    },
+                )
+            })
+            .collect()
     }
 
     /// Returns true if the named entity generator is in the plan.
@@ -205,6 +255,11 @@ impl BuildPlan {
     /// Returns true if the named global generator is in the plan.
     pub fn has_global_gen(&self, name: &str) -> bool {
         self.global_generators.iter().any(|g| g == name)
+    }
+
+    /// Returns the IFML framework targets configured for this build plan.
+    pub fn ifml_framework_targets(&self) -> Vec<&IfmlFrameworkTarget> {
+        self.ifml_frameworks.iter().collect()
     }
 }
 
@@ -304,6 +359,29 @@ fn cap(
     }
 }
 
+/// A single IFML framework target to generate for.
+///
+/// Each entry represents one framework (e.g. "svelte", "react") with
+/// optional output directory override and target section.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct IfmlFrameworkTarget {
+    pub name: String,
+    pub output: Option<PathBuf>,
+    #[serde(default = "default_framework_target")]
+    pub target: String,
+}
+
+fn default_framework_target() -> String {
+    "ui".to_string()
+}
+
+/// IFML framework configuration block parsed from `[profiles.X.ifml]`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ProfileIfmlConfig {
+    #[serde(default)]
+    pub frameworks: Vec<IfmlFrameworkTarget>,
+}
+
 /// Top-level profile configuration.
 ///
 /// Profiles are loaded from `profiles.toml`. Each profile declares one or more
@@ -335,6 +413,10 @@ pub struct ProfileDef {
     /// Optional variant overrides, keyed by variant name.
     #[serde(default)]
     pub variants: Option<HashMap<String, ProfileVariant>>,
+
+    /// IFML framework configuration (multiplier targets).
+    #[serde(default)]
+    pub ifml: Option<ProfileIfmlConfig>,
 }
 
 /// Meta data for a profile.
@@ -416,6 +498,7 @@ pub struct ResolvedProfile {
     pub meta: ProfileMeta,
     pub features: toml::Table,
     pub sections: HashMap<String, ResolvedSection>,
+    pub ifml_frameworks: Vec<IfmlFrameworkTarget>,
 }
 
 /// A single resolved project output section ready for the build planner.
@@ -533,10 +616,17 @@ fn resolve_profile(def: &ProfileDef, variant: Option<&str>) -> Result<ResolvedPr
     // If a section has no generators, it's a no-op (allowed — enables
     // selectively enabling targets via variants that omit the section).
 
+    let ifml_frameworks = def
+        .ifml
+        .as_ref()
+        .map(|c| c.frameworks.clone())
+        .unwrap_or_default();
+
     Ok(ResolvedProfile {
         meta,
         features,
         sections,
+        ifml_frameworks,
     })
 }
 
