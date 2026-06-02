@@ -1,0 +1,13 @@
+{
+  "$id": "IdentifierType.json",
+  "title": "IdentifierType",
+  "description": "A character string used to uniquely identify an instance of an object",
+  "type": "object",
+  "properties": {
+    "value": { "type": "string" },
+    "schemeId": { "type": "string" },
+    "schemeVersionId": { "type": "string" },
+    "schemeAgencyId": { "type": "string" }
+  },
+  "required": ["value"]
+}

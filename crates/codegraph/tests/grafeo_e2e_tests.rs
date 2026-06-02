@@ -10,8 +10,9 @@ use std::path::Path;
 use codegraph::generate::codelist::rust_enum::RustCodelistGenerator;
 use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
 use codegraph::generate::domain_types::dto::DomainTypesDtoGenerator;
+use codegraph::generate::domain_types::scaffold::DomainTypesScaffoldGenerator;
 use codegraph::generate::template_engine::create_tera;
-use codegraph::generate::traits::EntityGenerator;
+use codegraph::generate::traits::{EntityGenerator, GlobalGenerator};
 use codegraph_core::traits::GraphQuerier;
 use codegraph_grafeo::GrafeoEngine;
 use codegraph_type_contracts::RefClassificationKind;
@@ -359,6 +360,114 @@ async fn grafeo_candidate_response_dto_content() {
     assert!(
         content.contains("pub updated_at:"),
         "response must include updated_at"
+    );
+}
+
+// === Structured wrapper import prefix config ===
+
+#[tokio::test]
+async fn grafeo_structured_import_uses_configurable_prefix() {
+    let (engine, config) = setup_grafeo().await;
+    let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
+
+    // Default prefix should be "codegraph_type_contracts"
+    assert_eq!(
+        config.defaults.types_import_prefix,
+        "codegraph_type_contracts"
+    );
+
+    let tmp = std::env::temp_dir().join("grafeo-test-structured-import");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = gen
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera)
+        .await
+        .unwrap();
+
+    let response_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_response"))
+        .expect("should produce dto_response file");
+    let content = &response_file.content;
+
+    // Default: should import from codegraph_type_contracts
+    assert!(
+        content.contains("use codegraph_type_contracts::IdentifierType;"),
+        "default prefix should produce codegraph_type_contracts import"
+    );
+    assert!(
+        content.contains("external_identifier"),
+        "should include structured wrapper field"
+    );
+}
+
+#[tokio::test]
+async fn grafeo_structured_import_respects_custom_prefix() {
+    let (engine, mut config) = setup_grafeo().await;
+    let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
+
+    // Override the import prefix to simulate a domain crate
+    config.defaults.types_import_prefix = "crate::structured".to_string();
+
+    let tmp = std::env::temp_dir().join("grafeo-test-structured-import-custom");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = gen
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera)
+        .await
+        .unwrap();
+
+    let response_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_response"))
+        .expect("should produce dto_response file");
+    let content = &response_file.content;
+
+    // With custom prefix: should NOT reference codegraph crate
+    assert!(
+        !content.contains("codegraph_type_contracts"),
+        "custom prefix should not contain codegraph_type_contracts"
+    );
+    assert!(
+        content.contains("use crate::structured::IdentifierType;"),
+        "custom prefix should be used in import"
+    );
+}
+
+#[tokio::test]
+async fn grafeo_scaffold_lib_rs_includes_structured_re_exports() {
+    let (engine, config) = setup_grafeo().await;
+    let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
+
+    let tmp = std::env::temp_dir().join("grafeo-test-scaffold-re-exports");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    let gen = DomainTypesScaffoldGenerator::new_with_base(tmp.clone());
+    let order = codegraph::generate::compute_generation_order(&engine, &config)
+        .await
+        .unwrap();
+    let files = gen
+        .generate(&engine, &config, &order, &tera)
+        .await
+        .unwrap();
+
+    let lib_rs = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("lib.rs"))
+        .expect("should produce lib.rs");
+    let content = &lib_rs.content;
+
+    // Should re-export IdentifierType since CandidateType uses it
+    assert!(
+        content.contains("pub use codegraph_type_contracts::IdentifierType;"),
+        "lib.rs should re-export IdentifierType"
+    );
+    assert!(
+        content.contains("// --- STRUCTURED WRAPPER RE-EXPORTS ---"),
+        "lib.rs should have structured wrapper section"
     );
 }
 

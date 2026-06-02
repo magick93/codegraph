@@ -40,5 +40,11 @@ column = "effective_period"
 postgres = "DATERANGE"
 rust = "DateRange"
 
+[structured_wrappers]
+[structured_wrappers.IdentifierType]
+postgres = "JSONB"
+rust = "IdentifierType"
+sea_orm = "Json"
+
 [codelist_as_check]
 schemas = []

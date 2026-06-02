@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::error::Result;
@@ -64,7 +65,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
 
     async fn generate(
         &self,
-        _db: &dyn GraphQuerier,
+        db: &dyn GraphQuerier,
         config: &DomainConfig,
         generation_order: &[GenerationEntry],
         tera: &tera::Tera,
@@ -199,12 +200,58 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
         // Suppress lints inherent to code-generated domain types:
         // - module_inception: HR Open entity names sometimes match their domain (e.g. screening::screening)
         // - unused_imports: Update DTOs import all Create* types for completeness
+
+        // Collect structured wrapper types used by generated entities so that
+        // lib.rs provides a local re-export (e.g. `pub use codegraph_type_contracts::IdentifierType;`).
+        // This allows generated DTOs to write `use crate::IdentifierType;` when
+        // `types_import_prefix = "crate"` in domains.toml, avoiding direct
+        // dependency on the codegraph crate name.
+        let mut structured_types: HashSet<String> = HashSet::new();
+        for entry in generation_order {
+            if let Ok(props) = db.get_properties(&entry.schema_title).await {
+                for prop in &props {
+                    if prop.effective_kind() == Some(RefClassificationKind::StructuredWrapper) {
+                        let mut ty = prop.rust_field_type.as_str();
+                        if let Some(s) = ty.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>'))
+                        {
+                            ty = s;
+                        }
+                        if let Some(s) = ty
+                            .strip_prefix("Option<")
+                            .and_then(|s| s.strip_suffix('>'))
+                        {
+                            ty = s;
+                        }
+                        if !ty.is_empty() && ty != "serde_json::Value" {
+                            structured_types.insert(ty.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
         let mut sorted_domains = domain_order.clone();
         sorted_domains.sort();
         let domain_mods: String = sorted_domains
             .iter()
             .map(|d| format!("pub mod {};\n", d))
             .collect();
+
+        let mut structured_re_exports = String::new();
+        let mut sorted_types: Vec<&String> = structured_types.iter().collect();
+        sorted_types.sort();
+        for ty in &sorted_types {
+            structured_re_exports.push_str(&format!(
+                "pub use codegraph_type_contracts::{};\n",
+                ty
+            ));
+        }
+        if !structured_re_exports.is_empty() {
+            structured_re_exports = format!(
+                "\n// --- STRUCTURED WRAPPER RE-EXPORTS ---\n{}",
+                structured_re_exports
+            );
+        }
 
         let lib_content = format!(
             "// Generated crate — do not edit.\n\
@@ -215,7 +262,8 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
              pub mod query;\n\
              \n\
              pub use context::{{SourceContext, SourceOrigin}};\n\
-             pub use query::{{ListParams, PagedResult, QueryError, SortOrder}};\n\
+             pub use query::{{ListParams, PagedResult, QueryError, SortOrder}};\
+             {structured_re_exports}\n\
              \n\
              // --- GENERATED DOMAIN MODULES ---\n\
              {domain_mods}"

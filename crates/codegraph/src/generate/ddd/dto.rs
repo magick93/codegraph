@@ -846,9 +846,10 @@ pub async fn build_dto_context(
         }
     }
 
+    let import_prefix = &config.defaults.types_import_prefix;
     let structured_imports: Vec<String> = structured_type_names
         .into_iter()
-        .map(|t| format!("use codegraph_type_contracts::{t};"))
+        .map(|t| format!("use {import_prefix}::{t};"))
         .collect();
 
     Ok(DtoContext {
