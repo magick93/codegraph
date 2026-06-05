@@ -104,6 +104,56 @@ fn node_type_ddl() -> Vec<&'static str> {
         "CREATE NODE TYPE IF NOT EXISTS Domain (
             name STRING NOT NULL
         )",
+        // ViewContainer — IFML
+        "CREATE NODE TYPE IF NOT EXISTS ViewContainer (
+            name STRING NOT NULL,
+            label STRING,
+            is_xor BOOLEAN NOT NULL DEFAULT false,
+            is_default BOOLEAN NOT NULL DEFAULT false,
+            is_landmark BOOLEAN NOT NULL DEFAULT false,
+            is_modal BOOLEAN NOT NULL DEFAULT false,
+            domain STRING
+        )",
+        // ViewComponent — IFML
+        "CREATE NODE TYPE IF NOT EXISTS ViewComponent (
+            name STRING NOT NULL,
+            component_type STRING NOT NULL,
+            mode STRING,
+            entity STRING,
+            fields STRING,
+            filter STRING,
+            domain STRING
+        )",
+        // Event — IFML
+        "CREATE NODE TYPE IF NOT EXISTS Event (
+            name STRING NOT NULL,
+            event_type STRING NOT NULL,
+            params STRING,
+            domain STRING
+        )",
+        // Action — IFML
+        "CREATE NODE TYPE IF NOT EXISTS ActionNode (
+            name STRING NOT NULL,
+            domain STRING
+        )",
+        // ParameterDefinition — IFML
+        "CREATE NODE TYPE IF NOT EXISTS ParameterDefinition (
+            name STRING NOT NULL,
+            direction STRING NOT NULL,
+            type_ref STRING NOT NULL,
+            domain STRING
+        )",
+        // DataBinding — IFML
+        "CREATE NODE TYPE IF NOT EXISTS DataBinding (
+            conditional_expression STRING,
+            expression_language STRING NOT NULL DEFAULT 'ifml',
+            domain STRING
+        )",
+        // ModuleDefinition — IFML
+        "CREATE NODE TYPE IF NOT EXISTS ModuleDefinition (
+            name STRING NOT NULL,
+            domain STRING
+        )",
     ]
 }
 
@@ -122,5 +172,22 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS RequiresExtension",
         "CREATE EDGE TYPE IF NOT EXISTS InDomain",
         "CREATE EDGE TYPE IF NOT EXISTS DomainDepends (dependency_type STRING)",
+        // IFML edge types
+        "CREATE EDGE TYPE IF NOT EXISTS ContainsViewContainer (sort_order INTEGER)",
+        "CREATE EDGE TYPE IF NOT EXISTS ContainsViewComponent (sort_order INTEGER)",
+        "CREATE EDGE TYPE IF NOT EXISTS HasEvent",
+        "CREATE EDGE TYPE IF NOT EXISTS NavigationFlow (target_param_binding STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS DataFlow (source_param STRING, target_param STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS HasParameter (direction STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS ParameterBindingGroup",
+        "CREATE EDGE TYPE IF NOT EXISTS ParameterBinding",
+        "CREATE EDGE TYPE IF NOT EXISTS HasDataBinding",
+        "CREATE EDGE TYPE IF NOT EXISTS BindsToEntity",
+        "CREATE EDGE TYPE IF NOT EXISTS BindsToProperty (role STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS TriggersAction",
+        "CREATE EDGE TYPE IF NOT EXISTS ActionEvent (outcome STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS HasModuleDefinition",
+        "CREATE EDGE TYPE IF NOT EXISTS HasViewComponentPart (role STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS HasConditionalExpr",
     ]
 }

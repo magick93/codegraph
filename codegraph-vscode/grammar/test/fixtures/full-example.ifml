@@ -1,0 +1,57 @@
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    label "Customer Management";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name, email, phone, status];
+
+        on select(row) -> navigate("CustomerDetail", {
+            customerId: row.id
+        });
+    }
+
+    component "searchBar" {
+        type: form;
+
+        on submit(values) -> refresh("grid", {
+            query: searchBar.query
+        });
+    }
+}
+
+view "CustomerDetail" {
+    params { customerId: Uuid };
+
+    component "info" {
+        type: details;
+        data: Customer;
+        fields: [name, email, phone];
+
+        on edit -> navigate("CustomerEdit", {
+            customerId: params.customerId
+        });
+    }
+}
+
+view "CustomerEdit" {
+    params { customerId: Uuid };
+
+    component "form" {
+        type: form;
+        data: Customer;
+        mode: edit;
+
+        on save(values) -> action("UpdateCustomer", {
+            on success -> navigate("CustomerDetail");
+            on error -> stay;
+        });
+
+        on cancel -> navigate("CustomerDetail");
+    }
+}

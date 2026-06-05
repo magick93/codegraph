@@ -1,0 +1,97 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+
+interface PageProps {
+  params: Record<string, string>;
+}
+
+export default function Page({ params }: PageProps) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadData() {
+      try {
+{% for comp in components %}
+{% if comp.component_type == "list" %}
+{% if comp.entity %}
+        const res = await fetch('/api/{{ comp.entity | lower }}');
+        const items = await res.json();
+        setData(prev => ({ ...prev, items }));
+{% endif %}
+{% elif comp.component_type == "details" %}
+{% if comp.entity %}
+        const res = await fetch(`/api/{{ comp.entity | lower }}/${params.id}`);
+        const item = await res.json();
+        setData(prev => ({ ...prev, item }));
+{% endif %}
+{% elif comp.component_type == "form" %}
+{% if comp.entity %}
+        if (params.id) {
+          const res = await fetch(`/api/{{ comp.entity | lower }}/${params.id}`);
+          const formData = await res.json();
+          setData(prev => ({ ...prev, formData }));
+        }
+{% endif %}
+{% endif %}
+{% endfor %}
+      } catch (err) {
+        console.error('Failed to load data', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, [params]);
+
+  if (loading) return <div>Loading...</div>;
+
+  return (
+    <div>
+      <h1>{{ label }}</h1>
+{% for comp in components %}
+{% if comp.component_type == "list" %}
+      <table>
+        <thead>
+          <tr>
+{% for field in comp.fields %}
+            <th>{{ field }}</th>
+{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {data?.items?.map((item: any, i: number) => (
+            <tr key={i}>
+{% for field in comp.fields %}
+              <td>{item.{{ field }}}</td>
+{% endfor %}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+{% elif comp.component_type == "form" %}
+      <form method="POST">
+{% for field in comp.fields %}
+        <label>
+          {{ field }}
+          <input name="{{ field }}" defaultValue={data?.formData?.['{{ field }}'] || ''} />
+        </label>
+{% endfor %}
+        <button type="submit">Submit</button>
+      </form>
+
+{% elif comp.component_type == "details" %}
+      <dl>
+{% for field in comp.fields %}
+        <dt>{{ field }}</dt>
+        <dd>{data?.item?.['{{ field }}']}</dd>
+{% endfor %}
+      </dl>
+
+{% endif %}
+{% endfor %}
+    </div>
+  );
+}

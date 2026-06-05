@@ -1,0 +1,50 @@
+import SwiftUI
+
+struct RouteDefinition {
+    let name: String
+    let route: String
+    let label: String
+    let isLandmark: Bool
+    let isModal: Bool
+    let params: [String]
+}
+
+let routeMap: [String: RouteDefinition] = [
+{% for view in views %}
+    "{{ view.name }}": RouteDefinition(
+        name: "{{ view.name }}",
+        route: "/{{ view.route }}",
+        label: "{{ view.label }}",
+        isLandmark: {{ view.is_landmark }},
+        isModal: {{ view.is_modal }},
+        params: [{% for p in view.params %}"{{ p.name }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+    ),
+{% endfor %}
+]
+
+struct NavLink {
+    let from: String
+    let to: String
+    let event: String
+    let label: String
+}
+
+let navigationLinks: [NavLink] = [
+{% for link in nav_links %}
+    NavLink(from: "{{ link.from }}", to: "{{ link.to }}", event: "{{ link.event }}", label: "{{ link.label }}"),
+{% endfor %}
+]
+
+func resolveRoute(routeName: String, params: [String: String] = [:]) -> String {
+    guard let def = routeMap[routeName] else {
+        fatalError("Unknown route: \(routeName)")
+    }
+    var path = def.route
+    for (key, value) in params {
+        path = path.replacingOccurrences(
+            of: ":\(key)",
+            with: value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
+        )
+    }
+    return path
+}

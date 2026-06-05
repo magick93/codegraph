@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -9,7 +10,7 @@ use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::{DomainConfig, SearchConfig};
 
@@ -850,6 +851,12 @@ fn composition_node_to_child_table(
         }
     }
 
+    // Deduplicate check constraints by name
+    {
+        let mut seen = HashSet::new();
+        check_constraints.retain(|chk| seen.insert(chk.name.clone()));
+    }
+
     // Deduplicate columns
     {
         let mut seen = HashSet::new();
@@ -1074,6 +1081,13 @@ impl DdlGenerator {
                 check_constraints.extend(checks);
                 comments.extend(cmts);
             }
+        }
+
+        // Deduplicate check constraints by name — duplicate ColumnInfo entries
+        // from cross-domain schema merging produce duplicate constraints.
+        {
+            let mut seen = HashSet::new();
+            check_constraints.retain(|chk| seen.insert(chk.name.clone()));
         }
 
         // Convert child CompositionNodes → ChildTableDefs
@@ -1455,6 +1469,7 @@ impl EntityGenerator for DdlGenerator {
         domain: &str,
         config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let mut ctx = self
             .query_ddl_context(db, schema_title, domain, config)
@@ -1471,7 +1486,7 @@ impl EntityGenerator for DdlGenerator {
         let mut files = Vec::new();
 
         // Main table DDL
-        let table_sql = render_template(tera, "db/table.tera", &ctx)?;
+        let table_sql = render_template_with_project(tera, "db/table.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self
                 .output_dir
@@ -1482,7 +1497,7 @@ impl EntityGenerator for DdlGenerator {
 
         // RLS policy (if tenant-scoped)
         if ctx.is_tenant_scoped {
-            let rls_sql = render_template(tera, "db/rls.tera", &ctx)?;
+            let rls_sql = render_template_with_project(tera, "db/rls.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: self
                     .output_dir
@@ -1494,7 +1509,7 @@ impl EntityGenerator for DdlGenerator {
 
         // Updated_at trigger
         if ctx.has_updated_at {
-            let trigger_sql = render_template(tera, "db/trigger.tera", &ctx)?;
+            let trigger_sql = render_template_with_project(tera, "db/trigger.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: self.output_dir.join("migrations").join(format!(
                     "{}_{}_trigger.sql",
@@ -1505,7 +1520,7 @@ impl EntityGenerator for DdlGenerator {
         }
 
         // Domain event trigger (pgmq)
-        let event_trigger_sql = render_template(tera, "db/domain_event_trigger.tera", &ctx)?;
+        let event_trigger_sql = render_template_with_project(tera, "db/domain_event_trigger.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("migrations").join(format!(
                 "{}_{}_event_trigger.sql",
@@ -1516,7 +1531,7 @@ impl EntityGenerator for DdlGenerator {
 
         // ProcessHistoryType-compatible view for workflow entities
         if ctx.has_workflow {
-            let view_sql = render_template(tera, "db/process_history_view.tera", &ctx)?;
+            let view_sql = render_template_with_project(tera, "db/process_history_view.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: self.output_dir.join("migrations").join(format!(
                     "{}_{}_process_history_view.sql",
@@ -1528,7 +1543,7 @@ impl EntityGenerator for DdlGenerator {
 
         // Full-text search infrastructure (tsvector, GIN index, trigger)
         if ctx.fts.is_some() {
-            let fts_sql = render_template(tera, "db/fts.tera", &ctx)?;
+            let fts_sql = render_template_with_project(tera, "db/fts.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: self
                     .output_dir
@@ -1540,7 +1555,7 @@ impl EntityGenerator for DdlGenerator {
 
         // Semantic search infrastructure (pgvector columns, HNSW indexes)
         if !ctx.embeddings.is_empty() {
-            let embedding_sql = render_template(tera, "db/embedding.tera", &ctx)?;
+            let embedding_sql = render_template_with_project(tera, "db/embedding.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: self.output_dir.join("migrations").join(format!(
                     "{}_{}_embedding.sql",

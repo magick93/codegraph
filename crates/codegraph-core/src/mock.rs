@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
+use uuid::Uuid;
 
 pub struct MockEngine {
     schemas: Mutex<HashMap<String, SchemaNode>>,
@@ -16,6 +17,12 @@ pub struct MockEngine {
     consumed_fields: Mutex<HashMap<String, Vec<(PropertyNode, String)>>>,
     /// Maps (property_name, schema_title) -> target SchemaNode for $ref resolution
     ref_targets: Mutex<HashMap<(String, String), SchemaNode>>,
+    view_containers: Mutex<HashMap<String, ViewContainerNode>>,
+    view_components: Mutex<HashMap<String, ViewComponentNode>>,
+    events: Mutex<HashMap<String, EventNode>>,
+    action_nodes: Mutex<HashMap<String, ActionNode>>,
+    parameter_definitions: Mutex<HashMap<String, ParameterDefinitionNode>>,
+    data_bindings: Mutex<HashMap<String, DataBindingNode>>,
     start_time: Instant,
 }
 
@@ -30,6 +37,12 @@ impl MockEngine {
             composite_ranges: Mutex::new(HashMap::new()),
             consumed_fields: Mutex::new(HashMap::new()),
             ref_targets: Mutex::new(HashMap::new()),
+            view_containers: Mutex::new(HashMap::new()),
+            view_components: Mutex::new(HashMap::new()),
+            events: Mutex::new(HashMap::new()),
+            action_nodes: Mutex::new(HashMap::new()),
+            parameter_definitions: Mutex::new(HashMap::new()),
+            data_bindings: Mutex::new(HashMap::new()),
             start_time: Instant::now(),
         }
     }
@@ -385,17 +398,79 @@ impl GraphIngestor for MockEngine {
         Ok(())
     }
 
+    async fn ingest_view_container(&self, node: &ViewContainerNode) -> Result<String, GraphError> {
+        let id = format!("vc:{}", node.name);
+        self.view_containers
+            .lock()
+            .unwrap()
+            .insert(node.name.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_view_component(&self, node: &ViewComponentNode) -> Result<String, GraphError> {
+        let id = format!("comp:{}", node.name);
+        self.view_components
+            .lock()
+            .unwrap()
+            .insert(node.name.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_event(&self, node: &EventNode) -> Result<String, GraphError> {
+        let id = format!("evt:{}", node.name);
+        self.events
+            .lock()
+            .unwrap()
+            .insert(node.name.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_action_node(&self, node: &ActionNode) -> Result<String, GraphError> {
+        let id = format!("action:{}", node.name);
+        self.action_nodes
+            .lock()
+            .unwrap()
+            .insert(node.name.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_parameter_definition(
+        &self,
+        node: &ParameterDefinitionNode,
+    ) -> Result<String, GraphError> {
+        let id = format!("param:{}", node.name);
+        self.parameter_definitions
+            .lock()
+            .unwrap()
+            .insert(node.name.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_data_binding(&self, _node: &DataBindingNode) -> Result<String, GraphError> {
+        let id = format!("db:{}", Uuid::new_v4());
+        Ok(id)
+    }
+
     async fn finalize(&self) -> Result<IngestStats, GraphError> {
         let schemas = self.schemas.lock().unwrap();
         let properties = self.properties.lock().unwrap();
         let codelists = self.codelists.lock().unwrap();
         let enum_values = self.enum_values.lock().unwrap();
+        let vc = self.view_containers.lock().unwrap();
+        let vcomp = self.view_components.lock().unwrap();
+        let evt = self.events.lock().unwrap();
+        let act = self.action_nodes.lock().unwrap();
+        let param = self.parameter_definitions.lock().unwrap();
+
+        let ifml_count =
+            vc.len() + vcomp.len() + evt.len() + act.len() + param.len();
 
         Ok(IngestStats {
             schema_count: schemas.len(),
             property_count: properties.values().map(|v| v.len()).sum(),
             codelist_count: codelists.len(),
             enum_value_count: enum_values.values().map(|v| v.len()).sum(),
+            ifml_node_count: ifml_count,
             duration: self.start_time.elapsed(),
             ..Default::default()
         })
@@ -613,6 +688,19 @@ impl GraphQuerier for MockEngine {
         Ok(ref_targets
             .get(&(property_name.to_string(), schema_title.to_string()))
             .cloned())
+    }
+
+    async fn get_ifml_view_containers(&self) -> Result<Vec<ViewContainerNode>, GraphError> {
+        let map = self.view_containers.lock().unwrap();
+        Ok(map.values().cloned().collect())
+    }
+
+    async fn get_ifml_view_components(
+        &self,
+        _container_name: &str,
+    ) -> Result<Vec<ViewComponentNode>, GraphError> {
+        let map = self.view_components.lock().unwrap();
+        Ok(map.values().cloned().collect())
     }
 
     async fn get_generation_order(&self) -> Result<Vec<String>, GraphError> {

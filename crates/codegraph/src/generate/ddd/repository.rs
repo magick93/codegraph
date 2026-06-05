@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -6,8 +7,8 @@ use codegraph_core::types::ParentCandidate;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::render_template_with_project;
 use crate::generate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
-use crate::generate::render_template;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
@@ -68,6 +69,7 @@ impl EntityGenerator for RepositoryTraitGenerator {
         domain: &str,
         config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
             .get_schema(schema_title)
@@ -157,7 +159,7 @@ impl EntityGenerator for RepositoryTraitGenerator {
         let mut files = Vec::new();
 
         // Repository trait (Tera template)
-        let trait_content = render_template(tera, "ddd/repository.tera", &ctx)?;
+        let trait_content = render_template_with_project(tera, "ddd/repository.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: base_dir.join("repository.rs"),
             content: trait_content,

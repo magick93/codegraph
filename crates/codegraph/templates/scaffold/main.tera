@@ -313,9 +313,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(state);
 
     // Merge custom extension routes (Router<()>) after .with_state()
+{% if ext_points %}
     let app = custom_routes.into_iter().fold(app, |app, (prefix, router)| {
         app.nest(&prefix, router)
     });
+{% endif %}
 
     let app = app
         .layer(axum::middleware::from_fn(metrics_middleware::track_metrics))

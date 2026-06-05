@@ -1,0 +1,52 @@
+<script setup lang="ts">
+definePageMeta({
+  title: '{{ label }}',
+})
+</script>
+
+<template>
+  <div>
+    {% for comp in components %}
+    {% if comp.component_type == "list" %}
+    <h1>{{ label }}</h1>
+    <table>
+      <thead>
+        <tr>
+        {% for field in comp.fields %}
+          <th>{{ field }}</th>
+        {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="(item, index) in items" :key="index">
+        {% for field in comp.fields %}
+          <td>{% raw %}{{ item.{% endraw %}{{ field }}{% raw %} }}{% endraw %}</td>
+        {% endfor %}
+        </tr>
+      </tbody>
+    </table>
+
+    {% elif comp.component_type == "form" %}
+    <form @submit.prevent="handleSubmit">
+    {% for field in comp.fields %}
+      <label>
+        {{ field }}
+        <input name="{{ field }}" v-model="form.{{ field }}" />
+      </label>
+    {% endfor %}
+      <button type="submit">Save</button>
+      <button type="button" @click="cancel">Cancel</button>
+    </form>
+
+    {% elif comp.component_type == "details" %}
+    <dl>
+    {% for field in comp.fields %}
+      <dt>{{ field }}</dt>
+      <dd>{% raw %}{{ data.{% endraw %}{{ field }}{% raw %} }}{% endraw %}</dd>
+    {% endfor %}
+    </dl>
+
+    {% endif %}
+    {% endfor %}
+  </div>
+</template>

@@ -1,0 +1,46 @@
+import 'package:flutter/material.dart';
+
+class AppRoutes {
+  static const Map<String, String> routeMap = {
+{% for view in views %}
+    '{{ view.name }}': '/{{ view.route }}',
+{% endfor %}
+  };
+
+  static const Map<String, _RouteMeta> _meta = {
+{% for view in views %}
+    '{{ view.name }}': _RouteMeta(
+      label: '{{ view.label }}',
+      isLandmark: {{ view.is_landmark }},
+      isModal: {{ view.is_modal }},
+      params: [{% for p in view.params %}'{{ p.name }}'{% if not loop.last %}, {% endif %}{% endfor %}],
+    ),
+{% endfor %}
+  };
+
+  static String resolve(String name, {Map<String, String>? params}) {
+    final path = routeMap[name];
+    if (path == null) throw ArgumentError('Unknown route: $name');
+    var result = path;
+    if (params != null) {
+      params.forEach((key, value) {
+        result = result.replaceAll(':$key', Uri.encodeComponent(value));
+      });
+    }
+    return result;
+  }
+}
+
+class _RouteMeta {
+  final String label;
+  final bool isLandmark;
+  final bool isModal;
+  final List<String> params;
+
+  const _RouteMeta({
+    required this.label,
+    required this.isLandmark,
+    required this.isModal,
+    required this.params,
+  });
+}

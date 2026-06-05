@@ -25,6 +25,14 @@ pub enum Commands {
         /// Path to extension-points.toml (optional)
         #[arg(long)]
         extension_points: Option<PathBuf>,
+        /// Paths to additional template directories. Templates in these directories
+        /// shadow codegraph's built-in templates by name. May be specified multiple
+        /// times; later directories take precedence.
+        #[arg(long)]
+        template_dir: Vec<PathBuf>,
+        /// IFML framework targets for code generation (e.g. svelte, react)
+        #[arg(long)]
+        ifml_framework: Vec<String>,
     },
     /// Classify all schemas and show entity/VO decisions
     Classify {
@@ -73,5 +81,30 @@ pub enum Commands {
         /// Skip post-generation scripts even if the profile declares them
         #[arg(long)]
         no_post_gen: bool,
+        /// Paths to additional template directories. Templates in these directories
+        /// shadow codegraph's built-in templates by name. May be specified multiple
+        /// times; later directories take precedence.
+        #[arg(long)]
+        template_dir: Vec<PathBuf>,
+        /// Paths to IFML DSL (.ifml) files
+        #[arg(long)]
+        ifml_files: Vec<PathBuf>,
+        /// IFML framework targets for code generation (e.g. svelte, react)
+        #[arg(long)]
+        ifml_framework: Vec<String>,
+    },
+    /// Start the IFML Language Server Protocol server
+    Lsp {
+        /// Paths to JSON schema directories
+        #[arg(long)]
+        schemas: Vec<PathBuf>,
+
+        /// Path to classifier.toml
+        #[arg(long)]
+        classifier: Option<PathBuf>,
+
+        /// Path to domains.toml
+        #[arg(long)]
+        config: Option<PathBuf>,
     },
 }

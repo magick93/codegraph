@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -5,7 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -112,6 +113,7 @@ impl GlobalGenerator for HookRegistryGenerator {
         config: &DomainConfig,
         generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         // Group generation_order entries by domain (same pattern as ScaffoldGenerator)
         let mut domain_entity_map: std::collections::HashMap<String, Vec<RegistryEntity>> =
@@ -174,7 +176,7 @@ impl GlobalGenerator for HookRegistryGenerator {
         let mut files = Vec::new();
 
         // 1. Render registry.rs
-        let registry_content = render_template(tera, "hooks/registry.tera", &registry_ctx)?;
+        let registry_content = render_template_with_project(tera, "hooks/registry.tera", &registry_ctx, project)?;
         files.push(GeneratedFile {
             path: generated_dir.join("registry.rs"),
             content: registry_content,
@@ -218,7 +220,7 @@ impl GlobalGenerator for HookRegistryGenerator {
                 })
                 .collect(),
         };
-        let generated_mod_content = render_template(tera, "hooks/generated_mod.tera", &merged_ctx)?;
+        let generated_mod_content = render_template_with_project(tera, "hooks/generated_mod.tera", &merged_ctx, project)?;
         files.push(GeneratedFile {
             path: mod_path,
             content: generated_mod_content,
@@ -237,7 +239,7 @@ impl GlobalGenerator for HookRegistryGenerator {
                     .collect(),
             };
             let domain_mod_content =
-                render_template(tera, "hooks/domain_mod.tera", &domain_mod_ctx)?;
+                render_template_with_project(tera, "hooks/domain_mod.tera", &domain_mod_ctx, project)?;
             files.push(GeneratedFile {
                 path: generated_dir.join(&domain.name).join("mod.rs"),
                 content: domain_mod_content,

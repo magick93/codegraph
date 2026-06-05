@@ -1,0 +1,5 @@
+view "Hello" {
+    component "hi" {
+        type: list;
+    }
+}

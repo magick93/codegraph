@@ -1,0 +1,46 @@
+import SwiftUI
+
+struct {{ name }}View: View {
+    let data: [String: Any]?
+
+    var body: some View {
+        NavigationStack {
+            {% for comp in components %}
+            {% if comp.component_type == "list" %}
+            let items = (data?["items"] as? [[String: Any]]) ?? []
+            List(items, id: \.self) { item in
+                VStack(alignment: .leading) {
+                    {% for field in comp.fields %}
+                    Text("\(item["{{ field }}"] ?? "")")
+                    {% endfor %}
+                }
+            }
+            .navigationTitle("{{ label }}")
+
+            {% elif comp.component_type == "form" %}
+            Form {
+                {% for field in comp.fields %}
+                TextField("{{ field }}", text: .constant(""))
+                {% endfor %}
+                Button("Save") {}
+            }
+            .navigationTitle("{{ label }}")
+
+            {% elif comp.component_type == "details" %}
+            VStack(alignment: .leading, spacing: 12) {
+                {% for field in comp.fields %}
+                HStack {
+                    Text("{{ field }}:")
+                        .fontWeight(.semibold)
+                    Text("\(data?["{{ field }}"] ?? "")")
+                }
+                {% endfor %}
+            }
+            .padding()
+            .navigationTitle("{{ label }}")
+
+            {% endif %}
+            {% endfor %}
+        }
+    }
+}

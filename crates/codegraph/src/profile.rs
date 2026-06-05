@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -137,6 +137,10 @@ pub struct BuildPlan {
     pub global_generators: Vec<String>,
     /// Post-gen scripts collected from all sections, ordered alphabetically by section name.
     pub post_gen_scripts: Vec<(String, Vec<String>)>,
+    /// IFML framework targets configured for this build.
+    pub ifml_frameworks: Vec<IfmlFrameworkTarget>,
+    /// Optional template pack directory override from the selected variant.
+    pub template_pack_path: Option<PathBuf>,
 }
 
 impl BuildPlan {
@@ -145,17 +149,24 @@ impl BuildPlan {
     /// Returns an error if any generator name is unknown or if feature requirements
     /// are not met.
     pub fn from_profile(profile: &ResolvedProfile, registry: &CapabilityRegistry) -> Result<Self> {
-        registry.validate_profile(profile)?;
+        let expanded_sections =
+            Self::expand_ifml_sections(&profile.sections, &profile.ifml_frameworks);
+
+        let validation_profile = ResolvedProfile {
+            sections: expanded_sections.clone(),
+            ..profile.clone()
+        };
+        registry.validate_profile(&validation_profile)?;
 
         let mut entity_gens = Vec::new();
         let mut domain_gens = Vec::new();
         let mut global_gens = Vec::new();
         let mut post_gen_scripts = Vec::new();
 
-        let mut section_names: Vec<&String> = profile.sections.keys().collect();
+        let mut section_names: Vec<&String> = expanded_sections.keys().collect();
         section_names.sort();
         for section_name in section_names {
-            let section = &profile.sections[section_name];
+            let section = &expanded_sections[section_name];
             if section.generators.is_empty() {
                 continue;
             }
@@ -189,7 +200,49 @@ impl BuildPlan {
             domain_generators: domain_gens,
             global_generators: global_gens,
             post_gen_scripts,
+            ifml_frameworks: profile.ifml_frameworks.clone(),
+            template_pack_path: profile.template_pack_path.clone(),
         })
+    }
+
+    /// Expand IFML generators in sections based on configured frameworks.
+    ///
+    /// When `ifml_frameworks` is non-empty, each `ifml_route` generator is
+    /// replaced with `ifml_route_{framework}` for every configured framework,
+    /// and similarly for `ifml_navigation`. If no frameworks are configured,
+    /// sections are returned unchanged (backward compatible).
+    fn expand_ifml_sections(
+        sections: &HashMap<String, ResolvedSection>,
+        ifml_frameworks: &[IfmlFrameworkTarget],
+    ) -> HashMap<String, ResolvedSection> {
+        if ifml_frameworks.is_empty() {
+            return sections.clone();
+        }
+
+        sections
+            .iter()
+            .map(|(name, section)| {
+                let generators: Vec<String> = section
+                    .generators
+                    .iter()
+                    .flat_map(|gen| match gen.as_str() {
+                        "ifml_route" | "ifml_navigation" => ifml_frameworks
+                            .iter()
+                            .map(|fw| format!("{}_{}", gen, fw.name))
+                            .collect::<Vec<_>>(),
+                        _ => vec![gen.clone()],
+                    })
+                    .collect();
+
+                (
+                    name.clone(),
+                    ResolvedSection {
+                        generators,
+                        ..section.clone()
+                    },
+                )
+            })
+            .collect()
     }
 
     /// Returns true if the named entity generator is in the plan.
@@ -206,6 +259,19 @@ impl BuildPlan {
     pub fn has_global_gen(&self, name: &str) -> bool {
         self.global_generators.iter().any(|g| g == name)
     }
+
+    /// Returns the IFML framework targets configured for this build plan.
+    pub fn ifml_framework_targets(&self) -> Vec<&IfmlFrameworkTarget> {
+        self.ifml_frameworks.iter().collect()
+    }
+
+    /// Returns the template override directories for template resolution.
+    ///
+    /// When the profile variant specifies a `template_pack`, the resolved
+    /// directory is returned so generators can look there first for overrides.
+    pub fn template_override_dirs(&self) -> Vec<&Path> {
+        self.template_pack_path.iter().map(|p| p.as_path()).collect()
+    }
 }
 
 /// Build the registry of all known generator capabilities.
@@ -213,6 +279,16 @@ impl BuildPlan {
 /// This is the single source of truth for which generators exist and what
 /// they require. When adding a new generator, add its entry here.
 fn capabilities() -> HashMap<String, GeneratorCapability> {
+    let mut map = base_capabilities();
+    // Merge IFML generator capabilities
+    for cap in crate::generate::ifml::profiles::ifml_capabilities() {
+        map.insert(cap.name.clone(), cap);
+    }
+    map
+}
+
+/// Base capabilities without IFML generators.
+fn base_capabilities() -> HashMap<String, GeneratorCapability> {
     use GeneratorKind::{Domain, Entity, Global};
     use GeneratorTarget::*;
 
@@ -294,6 +370,29 @@ fn cap(
     }
 }
 
+/// A single IFML framework target to generate for.
+///
+/// Each entry represents one framework (e.g. "svelte", "react") with
+/// optional output directory override and target section.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct IfmlFrameworkTarget {
+    pub name: String,
+    pub output: Option<PathBuf>,
+    #[serde(default = "default_framework_target")]
+    pub target: String,
+}
+
+fn default_framework_target() -> String {
+    "ui".to_string()
+}
+
+/// IFML framework configuration block parsed from `[profiles.X.ifml]`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ProfileIfmlConfig {
+    #[serde(default)]
+    pub frameworks: Vec<IfmlFrameworkTarget>,
+}
+
 /// Top-level profile configuration.
 ///
 /// Profiles are loaded from `profiles.toml`. Each profile declares one or more
@@ -325,6 +424,10 @@ pub struct ProfileDef {
     /// Optional variant overrides, keyed by variant name.
     #[serde(default)]
     pub variants: Option<HashMap<String, ProfileVariant>>,
+
+    /// IFML framework configuration (multiplier targets).
+    #[serde(default)]
+    pub ifml: Option<ProfileIfmlConfig>,
 }
 
 /// Meta data for a profile.
@@ -345,6 +448,58 @@ pub struct ProfileMeta {
 
     #[serde(default)]
     pub tags: Vec<String>,
+
+    /// Override the generated app's Rust crate name (default: "hr-app").
+    #[serde(default)]
+    pub app_name: Option<String>,
+
+    /// Override the generated domain types crate module name (default: "hr_domain_types").
+    #[serde(default)]
+    pub domain_types_crate: Option<String>,
+
+    /// Override the generated hooks API crate module name ("" disables hooks, default: "hr_hooks_api").
+    #[serde(default)]
+    pub hooks_api_crate: Option<String>,
+
+    /// Override the OpenAPI info title (default: "HR Open API").
+    #[serde(default)]
+    pub api_title: Option<String>,
+
+    /// Override the generator name in "Generated by" headers (default: "hr-graph").
+    #[serde(default)]
+    pub generator_name: Option<String>,
+
+    /// Override the target directory for domain-types crate generators.
+    /// Relative paths are resolved from the project root (CWD).
+    /// Default: compiled-in workspace root (crates/hr-domain-types/src).
+    #[serde(default)]
+    pub domain_types_base: Option<String>,
+
+    /// Override the target directory for hooks-api crate generators.
+    /// Relative paths are resolved from the project root (CWD).
+    /// Default: compiled-in workspace root.
+    #[serde(default)]
+    pub hooks_api_base: Option<String>,
+
+    /// Override the target directory for extensions crate generators.
+    #[serde(default)]
+    pub extensions_base: Option<String>,
+
+    /// Override the target directory for the app config crate.
+    #[serde(default)]
+    pub app_config_base: Option<String>,
+
+    /// Override the target directory for the decision engine crate.
+    #[serde(default)]
+    pub decision_engine_base: Option<String>,
+
+    /// Override the target directory for the codegraph-workflow crate.
+    #[serde(default)]
+    pub codegraph_workflow_base: Option<String>,
+
+    /// Override the target directory for the codegraph-type-contracts crate.
+    #[serde(default)]
+    pub type_contracts_base: Option<String>,
 }
 
 /// A single project output section (e.g. `[api]`, `[ui]`).
@@ -406,6 +561,11 @@ pub struct ResolvedProfile {
     pub meta: ProfileMeta,
     pub features: toml::Table,
     pub sections: HashMap<String, ResolvedSection>,
+    pub ifml_frameworks: Vec<IfmlFrameworkTarget>,
+    /// Optional template pack directory override from the selected variant.
+    /// When set, the build planner uses this as an additional template source
+    /// (resolved relative to the profiles.toml directory when relative).
+    pub template_pack_path: Option<PathBuf>,
 }
 
 /// A single resolved project output section ready for the build planner.
@@ -439,7 +599,30 @@ pub fn load_and_resolve_profile(
         ))
     })?;
 
-    resolve_profile(def, variant)
+    let mut resolved = resolve_profile(def, variant)?;
+
+    // Resolve template_pack path from the variant, relative to profiles.toml directory.
+    if let Some(variant_name) = variant {
+        if let Some(variant_def) = def
+            .variants
+            .as_ref()
+            .and_then(|vs| vs.get(variant_name))
+        {
+            resolved.template_pack_path = variant_def.template_pack.as_ref().map(|tp| {
+                let path = PathBuf::from(tp);
+                if path.is_absolute() {
+                    path
+                } else {
+                    profiles_path
+                        .parent()
+                        .unwrap_or(Path::new("."))
+                        .join(&path)
+                }
+            });
+        }
+    }
+
+    Ok(resolved)
 }
 
 fn resolve_profile(def: &ProfileDef, variant: Option<&str>) -> Result<ResolvedProfile> {
@@ -451,6 +634,18 @@ fn resolve_profile(def: &ProfileDef, variant: Option<&str>) -> Result<ResolvedPr
         deprecates: vec![],
         since: None,
         tags: vec![],
+        app_name: None,
+        domain_types_crate: None,
+        hooks_api_crate: None,
+        api_title: None,
+        generator_name: None,
+        domain_types_base: None,
+        hooks_api_base: None,
+        extensions_base: None,
+        app_config_base: None,
+        decision_engine_base: None,
+        codegraph_workflow_base: None,
+        type_contracts_base: None,
     });
 
     let mut features = def.features.clone().unwrap_or_default();
@@ -523,10 +718,18 @@ fn resolve_profile(def: &ProfileDef, variant: Option<&str>) -> Result<ResolvedPr
     // If a section has no generators, it's a no-op (allowed — enables
     // selectively enabling targets via variants that omit the section).
 
+    let ifml_frameworks = def
+        .ifml
+        .as_ref()
+        .map(|c| c.frameworks.clone())
+        .unwrap_or_default();
+
     Ok(ResolvedProfile {
         meta,
         features,
         sections,
+        ifml_frameworks,
+        template_pack_path: None, // set by caller (load_and_resolve_profile)
     })
 }
 

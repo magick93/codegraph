@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -47,10 +48,10 @@ impl GlobalGenerator for ReportViewGenerator {
         _config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let reports_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
+        let reports_path = std::env::current_dir()
+            .unwrap_or_default()
             .join("reports.toml");
 
         if !reports_path.exists() {
@@ -64,6 +65,7 @@ impl GlobalGenerator for ReportViewGenerator {
 
         let mut ctx = tera::Context::new();
         ctx.insert("reports", &config.reports);
+        ctx.insert("project", project);
 
         let mut files = Vec::new();
 

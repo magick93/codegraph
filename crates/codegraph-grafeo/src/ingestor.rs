@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    CodeList, CompositeColumn, CompositeRange, EdgeProperties, EdgeType, EnumValue, IngestStats,
-    PropertyNode, SchemaNode,
+    ActionNode, CodeList, CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties,
+    EdgeType, EnumValue, EventNode, IngestStats, ParameterDefinitionNode, PropertyNode,
+    SchemaNode, ViewComponentNode, ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -68,6 +69,27 @@ fn build_edge_props_string(props: Option<&EdgeProperties>) -> String {
     }
     if let Some(v) = &p.def_name {
         fields.push(format!("def_name: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.target_param_binding {
+        fields.push(format!("target_param_binding: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.source_param {
+        fields.push(format!("source_param: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.event_type {
+        fields.push(format!("event_type: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.outcome {
+        fields.push(format!("outcome: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.component_type {
+        fields.push(format!("component_type: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.direction {
+        fields.push(format!("direction: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.expression {
+        fields.push(format!("expression: '{}'", escape_gql(v)));
     }
     if fields.is_empty() {
         String::new()
@@ -323,6 +345,22 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::RequiresExtension => "RequiresExtension",
             EdgeType::InDomain => "InDomain",
             EdgeType::DomainDepends => "DomainDepends",
+            EdgeType::ContainsViewContainer => "ContainsViewContainer",
+            EdgeType::ContainsViewComponent => "ContainsViewComponent",
+            EdgeType::HasEvent => "HasEvent",
+            EdgeType::NavigationFlow => "NavigationFlow",
+            EdgeType::DataFlow => "DataFlow",
+            EdgeType::HasParameter => "HasParameter",
+            EdgeType::ParameterBindingGroup => "ParameterBindingGroup",
+            EdgeType::ParameterBinding => "ParameterBinding",
+            EdgeType::HasDataBinding => "HasDataBinding",
+            EdgeType::BindsToEntity => "BindsToEntity",
+            EdgeType::BindsToProperty => "BindsToProperty",
+            EdgeType::TriggersAction => "TriggersAction",
+            EdgeType::ActionEvent => "ActionEvent",
+            EdgeType::HasModuleDefinition => "HasModuleDefinition",
+            EdgeType::HasViewComponentPart => "HasViewComponentPart",
+            EdgeType::HasConditionalExpr => "HasConditionalExpr",
         };
 
         let match_clause = match &edge_type {
@@ -434,6 +472,120 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(to_id),
                 )
             }
+
+            // IFML edge types — simple MATCH on node label + name
+            EdgeType::ContainsViewContainer => {
+                format!(
+                    "MATCH (a:ViewContainer {{name: '{}'}}), (b:ViewContainer {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::ContainsViewComponent => {
+                format!(
+                    "MATCH (a:ViewContainer {{name: '{}'}}), (b:ViewComponent {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasEvent => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b:Event {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::NavigationFlow => {
+                format!(
+                    "MATCH (a:Event {{name: '{}'}}), (b:ViewContainer {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::DataFlow => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasParameter => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b:ParameterDefinition {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::ParameterBindingGroup => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::ParameterBinding => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasDataBinding => {
+                format!(
+                    "MATCH (a:ViewComponent {{name: '{}'}}), (b:DataBinding {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::BindsToEntity => {
+                format!(
+                    "MATCH (a:DataBinding {{name: '{}'}}), (b:Schema {{title: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::BindsToProperty => {
+                format!(
+                    "MATCH (a:ViewComponent {{name: '{}'}}), (b:Property {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::TriggersAction => {
+                format!(
+                    "MATCH (a:Event {{name: '{}'}}), (b:ActionNode {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::ActionEvent => {
+                format!(
+                    "MATCH (a:ActionNode {{name: '{}'}}), (b:Event {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasModuleDefinition => {
+                format!(
+                    "MATCH (a:ViewContainer {{name: '{}'}}), (b:ModuleDefinition {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasViewComponentPart => {
+                format!(
+                    "MATCH (a:ViewComponent {{name: '{}'}}), (b:ViewComponent {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasConditionalExpr => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
         };
 
         let props_str = build_edge_props_string(props);
@@ -442,6 +594,128 @@ impl GraphIngestor for GrafeoEngine {
             .execute(&gql)
             .map_err(|e| GraphError::Ingest(format!("ingest_edge {label} failed: {e}")))?;
         Ok(())
+    }
+
+    async fn ingest_view_container(&self, node: &ViewContainerNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("vc:{}", node.name);
+        let gql = format!(
+            "INSERT (:ViewContainer {{ \
+                name: '{}', label: {}, is_xor: {}, is_default: {}, \
+                is_landmark: {}, is_modal: {}, domain: {} \
+            }})",
+            escape_gql(&node.name),
+            opt_str(&node.label),
+            node.is_xor,
+            node.is_default,
+            node.is_landmark,
+            node.is_modal,
+            opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_view_container failed: {e}")))?;
+        Ok(id)
+    }
+
+    async fn ingest_view_component(&self, node: &ViewComponentNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("comp:{}", node.name);
+        let fields_json = node
+            .fields
+            .as_ref()
+            .map(|f| serde_json::to_string(f).unwrap_or_default());
+        let gql = format!(
+            "INSERT (:ViewComponent {{ \
+                name: '{}', component_type: '{}', mode: {}, \
+                entity: {}, fields: {}, filter: {}, domain: {} \
+            }})",
+            escape_gql(&node.name),
+            escape_gql(&node.component_type),
+            opt_str(&node.mode),
+            opt_str(&node.entity),
+            opt_str(&fields_json),
+            opt_str(&node.filter),
+            opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_view_component failed: {e}")))?;
+        Ok(id)
+    }
+
+    async fn ingest_event(&self, node: &EventNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("evt:{}", node.name);
+        let params_json = node
+            .params
+            .as_ref()
+            .map(|p| serde_json::to_string(p).unwrap_or_default());
+        let gql = format!(
+            "INSERT (:Event {{ \
+                name: '{}', event_type: '{}', params: {}, domain: {} \
+            }})",
+            escape_gql(&node.name),
+            escape_gql(&node.event_type),
+            opt_str(&params_json),
+            opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_event failed: {e}")))?;
+        Ok(id)
+    }
+
+    async fn ingest_action_node(&self, node: &ActionNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("action:{}", node.name);
+        let gql = format!(
+            "INSERT (:ActionNode {{ name: '{}', domain: {} }})",
+            escape_gql(&node.name),
+            opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_action_node failed: {e}")))?;
+        Ok(id)
+    }
+
+    async fn ingest_parameter_definition(
+        &self,
+        node: &ParameterDefinitionNode,
+    ) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("param:{}", node.name);
+        let gql = format!(
+            "INSERT (:ParameterDefinition {{ \
+                name: '{}', direction: '{}', type_ref: '{}', domain: {} \
+            }})",
+            escape_gql(&node.name),
+            escape_gql(&node.direction),
+            escape_gql(&node.type_ref),
+            opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_parameter_definition failed: {e}")))?;
+        Ok(id)
+    }
+
+    async fn ingest_data_binding(&self, node: &DataBindingNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("db:{}", uuid::Uuid::new_v4());
+        let gql = format!(
+            "INSERT (:DataBinding {{ \
+                conditional_expression: {}, expression_language: '{}', domain: {} \
+            }})",
+            opt_str(&node.conditional_expression),
+            escape_gql(&node.expression_language),
+            opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_data_binding failed: {e}")))?;
+        Ok(id)
     }
 
     async fn finalize(&self) -> Result<IngestStats, GraphError> {
@@ -467,6 +741,10 @@ impl GraphIngestor for GrafeoEngine {
                 "MATCH (r:CompositeRange) RETURN count(r) AS cnt",
             )?,
             domain_count: count_from_gql(self, "MATCH (d:Domain) RETURN count(d) AS cnt")?,
+            ifml_node_count: count_from_gql(
+                self,
+                "MATCH (n) WHERE n:ViewContainer OR n:ViewComponent OR n:Event OR n:ActionNode OR n:ParameterDefinition OR n:DataBinding RETURN count(n) AS cnt",
+            )?,
             duration: self.start_time().elapsed(),
         })
     }

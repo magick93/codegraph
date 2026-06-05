@@ -1,0 +1,155 @@
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name, email, phone, status];
+
+        on select(row) -> navigate("CustomerDetail", {
+            customerId: row.id
+        });
+    }
+}
+
+view "CustomerDetail" {
+    params { customerId: Uuid };
+
+    component "info" {
+        type: details;
+        data: Customer;
+
+        on edit -> navigate("CustomerEdit", {
+            customerId: params.customerId
+        });
+    }
+}
+
+view "CustomerEdit" {
+    params { customerId: Uuid };
+
+    component "form" {
+        type: form;
+        data: Customer;
+        mode: edit;
+
+        on save(values) -> action("UpdateCustomer", {
+            body: values;
+            on success -> navigate("CustomerDetail", {
+                customerId: params.customerId
+            });
+            on error -> stay;
+        });
+
+        on cancel -> navigate("CustomerDetail");
+    }
+}
+
+view "Dashboard" {
+    on load -> refresh("recentOrders");
+
+    component "recentOrders" {
+        type: list;
+        data: Order;
+        fields: [id, customerName, total, date];
+        filter: date == today();
+    }
+
+    component "topProducts" {
+        type: list;
+        data: Product;
+        fields: [name, salesCount];
+        filter: salesCount > 1000;
+        sort: salesCount desc;
+    }
+}
+
+view "SearchPage" {
+    component "searchForm" {
+        type: form;
+        data: ProductSearchQuery;
+
+        on submit(values) -> navigate("SearchPage", {
+            query: values.term
+        });
+    }
+
+    component "results" {
+        type: list;
+        data: Product;
+        fields: [name, sku, price];
+        filter: name ~= params.query;
+
+        on select(row) -> navigate("ProductDetail", {
+            productId: row.id
+        });
+    }
+}
+
+view "DeleteConfirm" {
+    modal: true;
+
+    component "confirmForm" {
+        type: form;
+        data: ConfirmDelete;
+
+        on submit(values) -> action("DeleteProduct", {
+            on success -> navigate("ProductList");
+            on error -> stay;
+        });
+
+        on cancel -> navigate("ProductList");
+    }
+}
+
+view "WizardPage" {
+    xor: true;
+
+    container "Step1" {
+        default: true;
+
+        component "personalInfo" {
+            type: form;
+            data: Customer;
+            fields: [name, email, phone];
+
+            on submit(values) -> navigate("Step2", {
+                name: values.name,
+                email: values.email
+            });
+        }
+    }
+
+    container "Step2" {
+        component "addressInfo" {
+            type: form;
+            data: Address;
+
+            on submit(values) -> navigate("Step3", {
+                street: values.street,
+                city: values.city
+            });
+        }
+    }
+
+    container "Step3" {
+        component "review" {
+            type: details;
+            data: CustomerReview;
+
+            on confirm -> action("CreateCustomer");
+
+            on back -> navigate("Step2");
+        }
+    }
+}
+
+action "UpdateCustomer" {
+    body: values;
+}
+
+action "DeleteProduct" {
+    id: params.productId;
+}

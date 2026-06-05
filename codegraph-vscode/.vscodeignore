@@ -1,0 +1,15 @@
+.vscode/**
+.vscode-test/**
+.gitignore
+node_modules/**
+src/**
+test/**
+tsconfig.json
+**/*.ts
+grammar/node_modules/**
+grammar/bindings/**
+grammar/test/**
+grammar/Cargo.toml
+grammar/binding.gyp
+grammar/package-lock.json
+webview/**

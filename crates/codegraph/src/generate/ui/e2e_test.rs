@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -5,7 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
@@ -180,6 +181,7 @@ impl EntityGenerator for UiE2eTestGenerator {
         domain: &str,
         config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
             .get_schema(schema_title)
@@ -496,7 +498,7 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // CRUD test
         if has_list || has_create || has_read || has_update || has_delete {
-            let content = render_template(tera, "ui/test/crud.test.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/test/crud.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.api.crud.test.ts", path_segment)),
                 content,
@@ -505,7 +507,7 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // Validation test
         if has_create {
-            let content = render_template(tera, "ui/test/validation.test.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/test/validation.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.validation.test.ts", path_segment)),
                 content,
@@ -514,7 +516,7 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // Workflow test
         if has_workflow {
-            let content = render_template(tera, "ui/test/workflow.test.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/test/workflow.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.workflow.test.ts", path_segment)),
                 content,
@@ -523,25 +525,25 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // Persona-based tests
         if has_list || has_create || has_read || has_update || has_delete {
-            let content = render_template(tera, "ui/test/owner_crud.test.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/test/owner_crud.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.owner.crud.test.ts", path_segment)),
                 content,
             });
 
-            let content = render_template(tera, "ui/test/employee_view.test.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/test/employee_view.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.employee.view.test.ts", path_segment)),
                 content,
             });
 
-            let content = render_template(tera, "ui/test/manager_team.test.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/test/manager_team.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.manager.team.test.ts", path_segment)),
                 content,
             });
 
-            let content = render_template(tera, "ui/test/isolation.test.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/test/isolation.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.isolation.test.ts", path_segment)),
                 content,
@@ -550,13 +552,13 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // Search tests (only for FTS-enabled entities)
         if has_fts && has_list {
-            let content = render_template(tera, "ui/test/search.test.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/test/search.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.search.test.ts", path_segment)),
                 content,
             });
 
-            let content = render_template(tera, "ui/test/search_isolation.test.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/test/search_isolation.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.search.isolation.test.ts", path_segment)),
                 content,

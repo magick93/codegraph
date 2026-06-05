@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -5,7 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -53,6 +54,7 @@ impl GlobalGenerator for CliScaffoldGenerator {
         config: &DomainConfig,
         generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let mut domain_entity_map: std::collections::HashMap<String, Vec<CliScaffoldEntity>> =
             std::collections::HashMap::new();
@@ -94,49 +96,49 @@ impl GlobalGenerator for CliScaffoldGenerator {
 
         let mut files = Vec::new();
 
-        let main_rs = render_template(tera, "cli/main.tera", &ctx)?;
+        let main_rs = render_template_with_project(tera, "cli/main.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("cli").join("src").join("main.rs"),
             content: main_rs,
         });
 
-        let cargo_toml = render_template(tera, "cli/cargo_toml.tera", &ctx)?;
+        let cargo_toml = render_template_with_project(tera, "cli/cargo_toml.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("cli").join("Cargo.toml"),
             content: cargo_toml,
         });
 
-        let build_rs = render_template(tera, "cli/build_rs.tera", &ctx)?;
+        let build_rs = render_template_with_project(tera, "cli/build_rs.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("cli").join("build.rs"),
             content: build_rs,
         });
 
-        let config_rs = render_template(tera, "cli/config.tera", &ctx)?;
+        let config_rs = render_template_with_project(tera, "cli/config.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("cli").join("src").join("config.rs"),
             content: config_rs,
         });
 
-        let output_rs = render_template(tera, "cli/output.tera", &ctx)?;
+        let output_rs = render_template_with_project(tera, "cli/output.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("cli").join("src").join("output.rs"),
             content: output_rs,
         });
 
-        let client_rs = render_template(tera, "cli/client.tera", &ctx)?;
+        let client_rs = render_template_with_project(tera, "cli/client.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("cli").join("src").join("client.rs"),
             content: client_rs,
         });
 
-        let util_rs = render_template(tera, "cli/util.tera", &ctx)?;
+        let util_rs = render_template_with_project(tera, "cli/util.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("cli").join("src").join("util.rs"),
             content: util_rs,
         });
 
-        let commands_mod = render_template(tera, "cli/commands_mod.tera", &ctx)?;
+        let commands_mod = render_template_with_project(tera, "cli/commands_mod.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self
                 .output_dir

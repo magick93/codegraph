@@ -12,5 +12,6 @@ pub struct IngestStats {
     pub composite_column_count: usize,
     pub composite_range_count: usize,
     pub domain_count: usize,
+    pub ifml_node_count: usize,
     pub duration: Duration,
 }

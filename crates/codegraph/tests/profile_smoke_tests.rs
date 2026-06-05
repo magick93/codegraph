@@ -493,6 +493,7 @@ async fn generation_with_api_profile_produces_fewer_files_than_full() {
         ext_points: None,
         seed_config: None,
         build_plan: Some(&plan),
+        ifml_frameworks: vec![],
     })
     .await
     .unwrap();
@@ -563,6 +564,7 @@ async fn generation_with_ui_profile_produces_only_ui_files() {
         ext_points: None,
         seed_config: None,
         build_plan: Some(&plan),
+        ifml_frameworks: vec![],
     })
     .await
     .unwrap();
@@ -603,6 +605,7 @@ async fn generation_with_cli_profile_produces_only_cli_files() {
         ext_points: None,
         seed_config: None,
         build_plan: Some(&plan),
+        ifml_frameworks: vec![],
     })
     .await
     .unwrap();
@@ -646,6 +649,7 @@ async fn generation_with_lite_variant_produces_fewer_files_than_full_api() {
         ext_points: None,
         seed_config: None,
         build_plan: Some(&full_plan),
+        ifml_frameworks: vec![],
         })
         .await
         .unwrap();
@@ -673,6 +677,7 @@ async fn generation_with_lite_variant_produces_fewer_files_than_full_api() {
         ext_points: None,
         seed_config: None,
         build_plan: Some(&lite_plan),
+        ifml_frameworks: vec![],
         })
         .await
         .unwrap();

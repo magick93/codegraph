@@ -15,6 +15,8 @@ grafeo-common = "=0.5.33"
 grafeo-adapters = "=0.5.33"
 async-trait = "0.1"
 rust_decimal = { version = "1", features = ["serde-with-str"] }
+uuid.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 codegraph-core = { path = "../codegraph-core", features = ["test-fixtures"] }

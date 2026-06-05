@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -6,7 +7,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -81,11 +82,12 @@ impl GlobalGenerator for IntegrationTablesGenerator {
         _config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let ctx = self.build_context();
         let mut files = Vec::new();
 
-        let ddl = render_template(tera, "integration/tables.tera", &ctx)?;
+        let ddl = render_template_with_project(tera, "integration/tables.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self
                 .output_dir
@@ -101,7 +103,7 @@ impl GlobalGenerator for IntegrationTablesGenerator {
                 "audit_log".into(),
             ],
         };
-        let rls = render_template(tera, "integration/rls.tera", &rls_ctx)?;
+        let rls = render_template_with_project(tera, "integration/rls.tera", &rls_ctx, project)?;
         files.push(GeneratedFile {
             path: self
                 .output_dir
@@ -110,7 +112,7 @@ impl GlobalGenerator for IntegrationTablesGenerator {
             content: rls,
         });
 
-        let seed = render_template(tera, "integration/seed.tera", &ctx)?;
+        let seed = render_template_with_project(tera, "integration/seed.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self
                 .output_dir

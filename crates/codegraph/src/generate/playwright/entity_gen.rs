@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -5,7 +6,7 @@ use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use crate::generate::ui::common::collect_ui_fields;
 
@@ -36,6 +37,7 @@ impl EntityGenerator for PlaywrightEntityGenerator {
         domain: &str,
         config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
             .get_schema(schema_title)
@@ -114,8 +116,8 @@ impl EntityGenerator for PlaywrightEntityGenerator {
             .join("factories")
             .join(domain);
 
-        let page_content = render_template(tera, "playwright/entity_page.tera", &ctx)?;
-        let factory_content = render_template(tera, "playwright/test_data_factory.tera", &ctx)?;
+        let page_content = render_template_with_project(tera, "playwright/entity_page.tera", &ctx, project)?;
+        let factory_content = render_template_with_project(tera, "playwright/test_data_factory.tera", &ctx, project)?;
 
         Ok(vec![
             GeneratedFile {

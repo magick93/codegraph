@@ -1,0 +1,7 @@
+view "Hello" {
+    component "greeting" {
+        type: list;
+        data: Person;
+        fields: [name, email];
+    }
+}

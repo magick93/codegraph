@@ -1,0 +1,41 @@
+'use client';
+
+import { useState } from 'react';
+
+interface FormProps {
+  initialData?: Record<string, any>;
+  onSubmit?: (data: Record<string, any>) => void;
+}
+
+export default function Form({ initialData, onSubmit }: FormProps) {
+  const [formState, setFormState] = useState<Record<string, any>>(initialData ?? {});
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (onSubmit) {
+      onSubmit(formState);
+    }
+  };
+
+  return (
+    <div>
+      <h1>{{ label }}</h1>
+      <form method="POST" onSubmit={handleSubmit}>
+{% for field in fields %}
+        <label>
+          {{ field }}
+          <input
+            name="{{ field }}"
+            defaultValue={initialData?.['{{ field }}'] ?? ''}
+            onChange={(e) => setFormState(prev => ({ ...prev, '{{ field }}': e.target.value }))}
+          />
+        </label>
+{% endfor %}
+        <div className="actions">
+          <button type="submit">Save</button>
+          <button type="button" onClick={() => history.back()}>Cancel</button>
+        </div>
+      </form>
+    </div>
+  );
+}

@@ -1,0 +1,30 @@
+import type { PageLoad } from './$types';
+
+export const load: PageLoad = async ({ params, fetch }) => {
+{% for comp in components %}
+{% if comp.component_type == "list" %}
+	const response = await fetch('/api/{{ comp.route_name }}');
+	const items = await response.json();
+
+	return { items };
+
+{% elif comp.component_type == "details" %}
+	const response = await fetch(`/api/{{ comp.route_name }}/${params.id}`);
+	const item = await response.json();
+
+	return { item };
+
+{% elif comp.component_type == "form" %}
+	// Form load: fetch data for editing if params.id is present
+{% if comp.entity %}
+	if (params.id) {
+		const response = await fetch(`/api/{{ comp.route_name }}/${params.id}`);
+		const formData = await response.json();
+		return { formData };
+	}
+{% endif %}
+{% endif %}
+{% endfor %}
+
+	return {};
+};

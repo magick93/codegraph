@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -7,7 +8,7 @@ use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -44,8 +45,7 @@ pub struct DomainTypesScaffoldGenerator {
 impl DomainTypesScaffoldGenerator {
     /// Production constructor: derives the output path from the compiled-in workspace root.
     pub fn new(_output_dir: &Path) -> Self {
-        let src_dir = super::domain_types_src_dir();
-        Self { src_dir }
+        Self { src_dir: super::domain_types_src_dir() }
     }
 
     /// Test / override constructor: writes output under `base_dir` instead of
@@ -53,7 +53,7 @@ impl DomainTypesScaffoldGenerator {
     /// avoid corrupting the real `crates/hr-domain-types/src` when running with
     /// a mock graph.
     pub fn new_with_base(base_dir: PathBuf) -> Self {
-        Self { src_dir: base_dir }
+        Self { src_dir: base_dir.join("src") }
     }
 }
 
@@ -69,6 +69,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
         config: &DomainConfig,
         generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         // Group generation_order entries by domain, deduplicating by (domain, module_name).
         let mut domain_entity_map: std::collections::HashMap<String, Vec<(String, String)>> =
@@ -166,7 +167,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
                     .collect(),
             };
 
-            let content = render_template(tera, "domain_types/domain_mod.tera", &domain_mod_ctx)?;
+            let content = render_template_with_project(tera, "domain_types/domain_mod.tera", &domain_mod_ctx, project)?;
             files.push(GeneratedFile {
                 path: src_dir.join(domain_name).join("mod.rs"),
                 content,
@@ -188,7 +189,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
                 };
 
                 let content =
-                    render_template(tera, "domain_types/entity_mod.tera", &entity_mod_ctx)?;
+                    render_template_with_project(tera, "domain_types/entity_mod.tera", &entity_mod_ctx, project)?;
                 files.push(GeneratedFile {
                     path: src_dir.join(domain_name).join(module_name).join("mod.rs"),
                     content,

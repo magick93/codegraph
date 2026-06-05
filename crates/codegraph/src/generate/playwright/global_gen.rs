@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -6,7 +7,7 @@ use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 
@@ -36,6 +37,7 @@ impl GlobalGenerator for PlaywrightGlobalGenerator {
         config: &DomainConfig,
         generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         // Group entities by domain, preserving stable order via BTreeMap.
         // Use pg_table_name from the schema (same as PlaywrightEntityGenerator) so that
@@ -74,8 +76,8 @@ impl GlobalGenerator for PlaywrightGlobalGenerator {
 
         let e2e_dir = self.output_dir.join("e2e");
 
-        let lib_content = render_template(tera, "playwright/crate_lib.tera", &ctx)?;
-        let cargo_content = render_template(tera, "playwright/crate_cargo.tera", &ctx)?;
+        let lib_content = render_template_with_project(tera, "playwright/crate_lib.tera", &ctx, project)?;
+        let cargo_content = render_template_with_project(tera, "playwright/crate_cargo.tera", &ctx, project)?;
 
         Ok(vec![
             GeneratedFile {

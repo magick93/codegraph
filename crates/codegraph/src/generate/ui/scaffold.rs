@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -5,7 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -70,6 +71,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
         config: &DomainConfig,
         generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         // Group generation_order entries by domain
         let mut domain_entity_map: std::collections::HashMap<String, Vec<UiNavEntity>> =
@@ -311,7 +313,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
 
         let mut files = Vec::new();
         for (template, path) in templates {
-            let content = render_template(tera, template, &ctx)?;
+            let content = render_template_with_project(tera, template, &ctx, project)?;
             files.push(GeneratedFile {
                 path: path.clone(),
                 content,
@@ -349,7 +351,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             ];
 
             for (template, path) in webhook_templates {
-                let content = render_template(tera, template, &ctx)?;
+                let content = render_template_with_project(tera, template, &ctx, project)?;
                 files.push(GeneratedFile {
                     path: path.clone(),
                     content,
@@ -370,7 +372,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             ];
 
             for (template, path) in webhook_test_templates {
-                let content = render_template(tera, template, &ctx)?;
+                let content = render_template_with_project(tera, template, &ctx, project)?;
                 files.push(GeneratedFile {
                     path: path.clone(),
                     content,
@@ -425,7 +427,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             ];
 
             for (template, path) in integration_templates {
-                let content = render_template(tera, template, &ctx)?;
+                let content = render_template_with_project(tera, template, &ctx, project)?;
                 files.push(GeneratedFile {
                     path: path.clone(),
                     content,

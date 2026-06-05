@@ -922,4 +922,36 @@ tag = "Some"
             .unwrap();
         assert!(entity.hierarchy_field.is_none());
     }
+
+    #[test]
+    fn parse_types_import_prefix_default() {
+        let toml_str = r#"
+[defaults]
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting/json"
+postgres_schema = "recruiting"
+"#;
+        let config = parse_domain_config_str(toml_str).unwrap();
+        assert_eq!(
+            config.defaults.types_import_prefix,
+            "codegraph_type_contracts"
+        );
+    }
+
+    #[test]
+    fn parse_types_import_prefix_custom() {
+        let toml_str = r#"
+[defaults]
+types_import_prefix = "crate::structured"
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting/json"
+postgres_schema = "recruiting"
+"#;
+        let config = parse_domain_config_str(toml_str).unwrap();
+        assert_eq!(config.defaults.types_import_prefix, "crate::structured");
+    }
 }

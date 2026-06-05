@@ -1,0 +1,53 @@
+<script lang="ts">
+	import type { PageData } from './$types';
+
+	let { data }: { data: PageData } = $props();
+</script>
+
+<svelte:head>
+	<title>{{ label }}</title>
+</svelte:head>
+
+{% for comp in components %}
+{% if comp.component_type == "list" %}
+<h1>{{ label }}</h1>
+<table>
+	<thead>
+		<tr>
+		{% for field in comp.fields %}
+			<th>{{ field }}</th>
+		{% endfor %}
+		</tr>
+	</thead>
+	<tbody>
+{% raw %}		{#each data.items as item}{% endraw %}
+			<tr>
+			{% for field in comp.fields %}
+				<td>{item.{{ field }}</td>
+			{% endfor %}
+			</tr>
+{% raw %}		{/each}{% endraw %}
+	</tbody>
+</table>
+
+{% elif comp.component_type == "form" %}
+<form method="POST">
+	{% for field in comp.fields %}
+	<label>
+		{{ field }}
+		<input name="{{ field }}" />
+	</label>
+	{% endfor %}
+	<button type="submit">Submit</button>
+</form>
+
+{% elif comp.component_type == "details" %}
+<dl>
+	{% for field in comp.fields %}
+	<dt>{{ field }}</dt>
+	<dd>{data.{{ field }}</dd>
+	{% endfor %}
+</dl>
+
+{% endif %}
+{% endfor %}

@@ -1,8 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use codegraph_backend::{create_backend, BackendConfig};
+use codegraph::generate::ProjectConfig;
 
 mod cli;
 
@@ -17,6 +18,9 @@ struct RunArgs<'a> {
     variant: Option<&'a str>,
     profiles_config_path: Option<PathBuf>,
     no_post_gen: bool,
+    template_dir: &'a [PathBuf],
+    ifml_files: &'a [PathBuf],
+    ifml_framework: &'a [String],
 }
 
 #[tokio::main]
@@ -28,7 +32,9 @@ async fn main() -> codegraph::error::Result<()> {
             config,
             output,
             extension_points,
-        } => cmd_generate(&config, &output, extension_points.as_deref()).await,
+            template_dir,
+            ifml_framework,
+        } => cmd_generate(&config, &output, extension_points.as_deref(), &template_dir, &ifml_framework).await,
         cli::Commands::Classify {
             schemas,
             classifier,
@@ -46,6 +52,9 @@ async fn main() -> codegraph::error::Result<()> {
             variant,
             profiles_config,
             no_post_gen,
+            template_dir,
+            ifml_files,
+            ifml_framework,
         } => {
             cmd_run(RunArgs {
                 schemas: &schemas,
@@ -57,8 +66,14 @@ async fn main() -> codegraph::error::Result<()> {
                 variant: variant.as_deref(),
                 profiles_config_path: profiles_config,
                 no_post_gen,
+                template_dir: &template_dir,
+                ifml_files: &ifml_files,
+                ifml_framework: &ifml_framework,
             })
             .await
+        }
+        cli::Commands::Lsp { schemas, classifier, config } => {
+            cmd_lsp(&schemas, classifier.as_deref(), config.as_deref()).await
         }
     }
 }
@@ -135,6 +150,8 @@ async fn cmd_generate(
     config_path: &Path,
     output: &Path,
     extension_points_path: Option<&Path>,
+    template_dir: &[PathBuf],
+    ifml_frameworks: &[String],
 ) -> codegraph::error::Result<()> {
     let config = codegraph_config::config::parse_domain_config(config_path)
         .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
@@ -147,8 +164,13 @@ async fn cmd_generate(
     let ui_overrides = load_ui_overrides(config_path)?;
     let ui_domains = load_ui_domains(config_path)?;
 
-    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-    let tera = codegraph::generate::template_engine::create_tera(&template_dir)?;
+    let tera = if template_dir.is_empty() {
+        let td = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        codegraph::generate::template_engine::create_tera(&td)?
+    } else {
+        let dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
+        codegraph::generate::template_engine::create_tera_with_overrides(&dirs)?
+    };
 
     let ext_config = match extension_points_path {
         Some(path) => Some(
@@ -174,6 +196,8 @@ async fn cmd_generate(
         hooks_base: None,
         ext_points: ext_config.as_ref(),
         build_plan: None,
+        ifml_frameworks: ifml_frameworks.to_vec(),
+        project_config: None,
     })
     .await?;
     print!("{}", report.summary());
@@ -194,6 +218,9 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         variant,
         profiles_config_path,
         no_post_gen,
+        template_dir,
+        ifml_files,
+        ifml_framework,
     } = args;
 
     let backend_config = BackendConfig::default();
@@ -212,10 +239,33 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
     // Load and resolve the profile.
     let profiles_path = profiles_config_path.unwrap_or_else(|| PathBuf::from("profiles.toml"));
     let registry = codegraph::profile::CapabilityRegistry::new();
+    let mut project_config: Option<ProjectConfig> = None;
+    let mut domain_types_base_path: Option<PathBuf> = None;
     let build_plan = if profiles_path.exists() || profile_name != "default" {
         let resolved =
             codegraph::profile::load_and_resolve_profile(&profiles_path, profile_name, variant)?;
         let plan = codegraph::profile::BuildPlan::from_profile(&resolved, &registry)?;
+
+        // Build project config from profile meta (optional fields override defaults).
+        let meta = &resolved.meta;
+        domain_types_base_path = meta.domain_types_base
+            .as_ref()
+            .map(|p| std::env::current_dir().unwrap_or_default().join(p));
+        project_config = Some(ProjectConfig {
+            app_name: meta.app_name.clone().unwrap_or_else(|| "hr-app".into()),
+            domain_types_crate: meta.domain_types_crate.clone().unwrap_or_else(|| "hr_domain_types".into()),
+            hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_else(|| "hr_hooks_api".into()),
+            api_title: meta.api_title.clone().unwrap_or_else(|| "HR Open API".into()),
+            generator_name: meta.generator_name.clone().unwrap_or_else(|| "hr-graph".into()),
+            domain_types_base: meta.domain_types_base.clone().unwrap_or_default(),
+            hooks_api_base: meta.hooks_api_base.clone().unwrap_or_default(),
+            extensions_base: meta.extensions_base.clone().unwrap_or_default(),
+            app_config_base: meta.app_config_base.clone().unwrap_or_default(),
+            decision_engine_base: meta.decision_engine_base.clone().unwrap_or_default(),
+            codegraph_workflow_base: meta.codegraph_workflow_base.clone().unwrap_or_default(),
+            type_contracts_base: meta.type_contracts_base.clone().unwrap_or_default(),
+        });
+
         println!(
             "Using profile \"{}\" (variant: {:?}) — {} entity, {} domain, {} global generators",
             resolved.meta.name,
@@ -250,6 +300,26 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         "Pass 1 complete: {} schemas ingested",
         ingest_result.schemas_created
     );
+
+    // Pass 1b: Ingest IFML DSL files (if provided)
+    if !ifml_files.is_empty() {
+        println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
+        let mut total_stats = codegraph::ingest::ifml_ingest::IfmlIngestStats::default();
+        for ifml_path in ifml_files {
+            let model = codegraph_ifml_dsl::parse_ifml_file(ifml_path)
+                .map_err(|e| codegraph::error::Error::Config(format!(
+                    "Failed to parse IFML file '{}': {}", ifml_path.display(), e
+                )))?;
+            let stats = codegraph::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+            total_stats.view_containers += stats.view_containers;
+            total_stats.containers += stats.containers;
+            total_stats.components += stats.components;
+            total_stats.events += stats.events;
+            total_stats.parameters += stats.parameters;
+            total_stats.actions += stats.actions;
+        }
+        println!("Pass 1b complete: {total_stats}");
+    }
 
     // Auto-classify
     let classifier_types: HashSet<String> = classifier_config
@@ -308,8 +378,17 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
     )
     .await?;
 
-    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-    let tera = codegraph::generate::template_engine::create_tera(&template_dir)?;
+    let override_dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
+
+    // When the profile-template-pack PR lands, template_pack from the resolved
+    // profile variant can be appended to override_dirs here.
+
+    let tera = if override_dirs.is_empty() {
+        let td = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        codegraph::generate::template_engine::create_tera(&td)?
+    } else {
+        codegraph::generate::template_engine::create_tera_with_overrides(&override_dirs)?
+    };
 
     let ext_config = match extension_points_path {
         Some(path) => Some(
@@ -330,10 +409,12 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         ui_domains: &ui_domains,
         schema_base_dir: schemas,
         seed_config: load_seed_config(config_path).as_deref(),
-        domain_types_base: None,
+        domain_types_base: domain_types_base_path.as_deref(),
         hooks_base: None,
         ext_points: ext_config.as_ref(),
         build_plan: build_plan.as_ref(),
+        ifml_frameworks: ifml_framework.to_vec(),
+        project_config: project_config.as_ref(),
     })
     .await?;
 
@@ -449,6 +530,163 @@ async fn cmd_classify(
         }
         cli::ClassifyFormat::Json => codegraph::classify::output::format_json(&results),
     }
+
+    Ok(())
+}
+
+async fn cmd_lsp(
+    schema_dirs: &[PathBuf],
+    classifier: Option<&Path>,
+    config: Option<&Path>,
+) -> codegraph::error::Result<()> {
+    use codegraph::lsp::{run_lsp_server, GrafeoState, SchemaInfo};
+    use codegraph_backend::{create_backend, BackendConfig};
+
+    let backend_config = BackendConfig::default();
+    let be = create_backend(&backend_config)
+        .await
+        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
+
+    // Load JSON Schema files into the graph
+    for dir in schema_dirs {
+        if dir.exists() {
+            let empty_entities = std::collections::HashSet::new();
+            let default_ui = codegraph_config::UiOverrideConfig::default();
+            let default_suffix = "Type".to_string();
+            let classifier_config = if let Some(classifier_path) = classifier {
+                codegraph_classifier::config::parse_classifier_config(classifier_path)
+                    .map_err(|e| codegraph::error::Error::Config(e.to_string()))?
+            } else {
+                codegraph_classifier::config::parse_classifier_config_str("{}")
+                    .map_err(|e| codegraph::error::Error::Config(e.to_string()))?
+            };
+
+            codegraph::ingest::async_ingest::ingest_schemas(
+                be.ingestor(),
+                dir,
+                &classifier_config,
+                &empty_entities,
+                &default_ui,
+                &default_suffix,
+            )
+            .await?;
+        }
+    }
+
+    // Run entity classification using AutoClassifier if domain config is provided.
+    // This replaces the naive suffix-stripping with structural scoring + naming rules.
+    let classifier_config = if let Some(classifier_path) = classifier {
+        codegraph_classifier::config::parse_classifier_config(classifier_path)
+            .map_err(|e| codegraph::error::Error::Config(e.to_string()))?
+    } else {
+        codegraph_classifier::config::parse_classifier_config_str("{}")
+            .map_err(|e| codegraph::error::Error::Config(e.to_string()))?
+    };
+
+    let all_data = be
+        .querier()
+        .get_classification_data()
+        .await
+        .map_err(codegraph::error::Error::Graph)?;
+
+    let classifier_types: HashSet<String> = classifier_config
+        .primitive_wrappers
+        .keys()
+        .cloned()
+        .chain(classifier_config.array_wrappers.keys().cloned())
+        .chain(classifier_config.range_wrappers.keys().cloned())
+        .chain(
+            classifier_config
+                .composite_wrappers
+                .iter()
+                .map(|cw| cw.schema.clone()),
+        )
+        .collect();
+
+    let naming_rules = classifier_config.naming_rules.clone();
+    let auto_classifier =
+        codegraph::classify::AutoClassifier::new(classifier_types, naming_rules);
+
+    // Build entity names by stripping the "Type" suffix from raw schema titles.
+    // IFML references entities without the suffix (e.g. "Customer" not "CustomerType").
+    // We ALSO try the AutoClassifier for more precise entity/VO classification,
+    // but always include suffix-stripped names as a reliable fallback.
+    let default_suffix = "Type";
+    let mut entity_names_set: HashSet<String> = HashSet::new();
+
+    // Always include suffix-stripped names for every loaded schema (reliable fallback)
+    let schemas = be.querier().list_schemas(None).await?;
+    for schema in &schemas {
+        entity_names_set.insert(
+            schema
+                .title
+                .strip_suffix(default_suffix)
+                .unwrap_or(&schema.title)
+                .to_string(),
+        );
+    }
+
+    // Also try AutoClassifier if domain config is provided (more precise)
+    if let Some(config_path) = config {
+        if let Ok(domain_config) = codegraph_config::config::parse_domain_config(config_path) {
+            for (domain_name, domain_entry) in &domain_config.domains {
+                let domain_schemas: Vec<_> = all_data
+                    .iter()
+                    .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
+                    .cloned()
+                    .collect();
+                let result =
+                    auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
+                for score in &result.entities {
+                    let name = score
+                        .title
+                        .strip_suffix(default_suffix)
+                        .unwrap_or(&score.title)
+                        .to_string();
+                    entity_names_set.insert(name);
+                }
+                // Also include legacy explicit entities from domains.toml
+                for entity in &domain_entry.entities {
+                    entity_names_set.insert(entity.clone());
+                }
+            }
+        }
+    }
+
+    let entity_names: Vec<String> = entity_names_set.into_iter().collect();
+
+    // Build schema_infos keyed by entity name for synchronous LSP access
+    let schemas = be.querier().list_schemas(None).await?;
+    let mut schema_infos = HashMap::new();
+    for schema in &schemas {
+        let entity_name = schema
+            .title
+            .strip_suffix(default_suffix)
+            .unwrap_or(&schema.title)
+            .to_string();
+        if let Ok(props) = be.querier().get_properties(&schema.title).await {
+            schema_infos.insert(
+                entity_name,
+                SchemaInfo {
+                    title: schema.title.clone(),
+                    description: schema.description.clone(),
+                    properties: props.iter().map(|p| p.name.clone()).collect(),
+                    rel_path: schema.rel_path.clone(),
+                },
+            );
+        }
+    }
+
+    let grafeo_state = GrafeoState {
+        entity_names,
+        schema_infos,
+        schema_dirs: schema_dirs.to_vec(),
+    };
+
+    eprintln!("codegraph LSP server starting (IFML language)...");
+    let (connection, _io_threads) = auto_lsp::lsp_server::Connection::stdio();
+    run_lsp_server(connection, grafeo_state)
+        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
 
     Ok(())
 }
