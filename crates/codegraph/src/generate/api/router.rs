@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -7,7 +8,7 @@ use codegraph_core::types::ParentCandidate;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{DomainGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
@@ -156,6 +157,7 @@ impl DomainGenerator for RouterGenerator {
         entity_titles: &[String],
         config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let mut entities = Vec::new();
         // Maps pg_table_name → entity index (for dedup)
@@ -406,7 +408,7 @@ impl DomainGenerator for RouterGenerator {
             entities,
         };
 
-        let content = render_template(tera, "api/router.tera", &ctx)?;
+        let content = render_template_with_project(tera, "api/router.tera", &ctx, project)?;
         Ok(vec![GeneratedFile {
             path: self
                 .output_dir

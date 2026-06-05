@@ -7,6 +7,7 @@
 //! Each codelist schema becomes an individual `<Title>.ts` file, and a barrel
 //! `index.ts` re-exports them all.
 
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -14,7 +15,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -88,6 +89,7 @@ impl GlobalGenerator for UiCodelistGenerator {
         _config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let codelist_dir = self.codelist_dir();
 
@@ -172,7 +174,7 @@ impl GlobalGenerator for UiCodelistGenerator {
                 options,
             };
 
-            let content = render_template(tera, "ui/codelist_data.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/codelist_data.tera", &ctx, project)?;
 
             files.push(GeneratedFile {
                 path: self.ts_output_dir().join(format!("{}.ts", title)),

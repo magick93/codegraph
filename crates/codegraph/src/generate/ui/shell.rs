@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -5,7 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
@@ -44,6 +45,7 @@ impl EntityGenerator for UiShellGenerator {
         domain: &str,
         config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
             .get_schema(schema_title)
@@ -94,7 +96,7 @@ impl EntityGenerator for UiShellGenerator {
 
         // List page
         if operations.contains(&"list".to_string()) {
-            let content = render_template(tera, "ui/shell_list.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/shell_list.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: base.join("+page.svelte"),
                 content,
@@ -103,12 +105,12 @@ impl EntityGenerator for UiShellGenerator {
 
         // Detail page
         if operations.contains(&"read".to_string()) {
-            let content = render_template(tera, "ui/shell_detail.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/shell_detail.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: base.join("[id]").join("+page.svelte"),
                 content,
             });
-            let load = render_template(tera, "ui/shell_detail_load.tera", &ctx)?;
+            let load = render_template_with_project(tera, "ui/shell_detail_load.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: base.join("[id]").join("+page.server.ts"),
                 content: load,
@@ -117,7 +119,7 @@ impl EntityGenerator for UiShellGenerator {
 
         // Create page
         if operations.contains(&"create".to_string()) {
-            let content = render_template(tera, "ui/shell_create.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/shell_create.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: base.join("new").join("+page.svelte"),
                 content,
@@ -126,7 +128,7 @@ impl EntityGenerator for UiShellGenerator {
 
         // Edit page
         if operations.contains(&"update".to_string()) {
-            let content = render_template(tera, "ui/shell_edit.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/shell_edit.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: base.join("[id]").join("edit").join("+page.svelte"),
                 content,

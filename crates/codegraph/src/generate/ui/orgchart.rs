@@ -1,10 +1,11 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -33,6 +34,7 @@ impl GlobalGenerator for UiOrgchartGenerator {
         config: &DomainConfig,
         generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         // Only generate if any entity in the build order has has_orgchart = true
         let has_orgchart_entity = generation_order.iter().any(|entry| {
@@ -53,14 +55,14 @@ impl GlobalGenerator for UiOrgchartGenerator {
         let mut files = Vec::new();
 
         // +page.server.ts
-        let load_content = render_template(tera, "ui/orgchart_load.tera", &serde_json::json!({}))?;
+        let load_content = render_template_with_project(tera, "ui/orgchart_load.tera", &serde_json::json!({}), project)?;
         files.push(GeneratedFile {
             path: src.join("+page.server.ts"),
             content: load_content,
         });
 
         // +page.svelte
-        let page_content = render_template(tera, "ui/orgchart_page.tera", &serde_json::json!({}))?;
+        let page_content = render_template_with_project(tera, "ui/orgchart_page.tera", &serde_json::json!({}), project)?;
         files.push(GeneratedFile {
             path: src.join("+page.svelte"),
             content: page_content,

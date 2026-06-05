@@ -38,6 +38,10 @@ fn default_type_suffix() -> String {
     "Type".to_string()
 }
 
+fn default_types_import_prefix() -> String {
+    "codegraph_type_contracts".to_string()
+}
+
 /// Global defaults for all entities.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DefaultsConfig {
@@ -58,6 +62,11 @@ pub struct DefaultsConfig {
     /// Suffix to strip from schema titles (e.g. "Type" for HR Open). Default: "Type".
     #[serde(default = "default_type_suffix")]
     pub type_suffix: String,
+    /// Import prefix for structured wrapper types in generated code.
+    /// Default: "codegraph_type_contracts" (the crate where IdentifierType etc. live).
+    /// Domain crates should set this to their own crate or module path (e.g. "crate").
+    #[serde(default = "default_types_import_prefix")]
+    pub types_import_prefix: String,
 }
 
 impl Default for DefaultsConfig {
@@ -69,6 +78,7 @@ impl Default for DefaultsConfig {
             app_name: default_app_name(),
             max_bulk_size: default_max_bulk_size(),
             type_suffix: default_type_suffix(),
+            types_import_prefix: default_types_import_prefix(),
         }
     }
 }
@@ -879,5 +889,37 @@ tag = "Some"
             .get("SomeType")
             .unwrap();
         assert!(entity.hierarchy_field.is_none());
+    }
+
+    #[test]
+    fn parse_types_import_prefix_default() {
+        let toml_str = r#"
+[defaults]
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting/json"
+postgres_schema = "recruiting"
+"#;
+        let config = parse_domain_config_str(toml_str).unwrap();
+        assert_eq!(
+            config.defaults.types_import_prefix,
+            "codegraph_type_contracts"
+        );
+    }
+
+    #[test]
+    fn parse_types_import_prefix_custom() {
+        let toml_str = r#"
+[defaults]
+types_import_prefix = "crate::structured"
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting/json"
+postgres_schema = "recruiting"
+"#;
+        let config = parse_domain_config_str(toml_str).unwrap();
+        assert_eq!(config.defaults.types_import_prefix, "crate::structured");
     }
 }

@@ -1,10 +1,11 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -41,10 +42,11 @@ impl GlobalGenerator for BasejumpSetupGenerator {
         _config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let empty_ctx: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
-        let rbac_roles = render_template(tera, "db/rbac_roles.tera", &empty_ctx)?;
+        let rbac_roles = render_template_with_project(tera, "db/rbac_roles.tera", &empty_ctx, project)?;
 
         Ok(vec![
             GeneratedFile {

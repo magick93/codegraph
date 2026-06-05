@@ -678,8 +678,8 @@ async fn candidate_handler() {
     );
     // Bulk create: uses crate BulkItemError, not a local duplicate type
     assert!(
-        content.contains("use hr_hooks_api::BulkItemError"),
-        "Handler should import BulkItemError from hr_hooks_api, not define a local duplicate"
+        content.contains("use crate::error::BulkItemError"),
+        "Handler should import BulkItemError from crate::error, not define a local duplicate"
     );
     // Bulk create: max_bulk_size rejection must not use format! with no args (clippy::useless_format)
     assert!(

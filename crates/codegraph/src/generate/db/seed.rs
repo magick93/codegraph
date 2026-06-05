@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -42,6 +43,7 @@ struct SeedConfigFile {
 
 #[derive(Debug, Deserialize)]
 struct SeedDefaults {
+    #[allow(dead_code)]
     enabled: Option<bool>,
     demo_org_name: String,
 }
@@ -97,12 +99,18 @@ impl SeedDataGenerator {
         }
     }
 
-    fn load_context(&self) -> SeedContext {
+    fn load_context(&self) -> Option<SeedContext> {
         if let Some(ref config_path) = self.seed_config_path {
             if config_path.exists() {
                 match fs::read_to_string(config_path) {
                     Ok(content) => match toml::from_str::<SeedConfigFile>(&content) {
-                        Ok(config) => return Self::convert_config_to_context(config),
+                        Ok(config) => {
+                            if !config.defaults.enabled.unwrap_or(true) {
+                                tracing::info!("Seed data generation disabled via config");
+                                return None;
+                            }
+                            return Some(Self::convert_config_to_context(config));
+                        }
                         Err(e) => {
                             tracing::warn!(
                                 "Failed to parse seed config at {}: {}. \
@@ -124,7 +132,7 @@ impl SeedDataGenerator {
             }
         }
 
-        Self::hardcoded_context()
+        Some(Self::hardcoded_context())
     }
 
     fn convert_config_to_context(config: SeedConfigFile) -> SeedContext {
@@ -242,11 +250,15 @@ impl GlobalGenerator for SeedDataGenerator {
         _config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let ctx = self.load_context();
+        let Some(ctx) = self.load_context() else {
+            return Ok(vec![]);
+        };
 
         let mut tera_ctx = tera::Context::new();
         tera_ctx.insert("seed", &ctx);
+        tera_ctx.insert("project", project);
 
         let content = tera
             .render("db/seed.tera", &tera_ctx)

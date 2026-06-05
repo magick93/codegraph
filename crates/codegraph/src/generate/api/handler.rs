@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -6,10 +7,10 @@ use codegraph_core::types::ParentCandidate;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::render_template_with_project;
 use crate::generate::filter_fields::{
     resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
 };
-use crate::generate::render_template;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
@@ -102,6 +103,7 @@ impl EntityGenerator for HandlerGenerator {
         domain: &str,
         config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
             .get_schema(schema_title)
@@ -517,7 +519,7 @@ impl EntityGenerator for HandlerGenerator {
                 .unwrap_or(false),
         };
 
-        let content = render_template(tera, "api/handler.tera", &ctx)?;
+        let content = render_template_with_project(tera, "api/handler.tera", &ctx, project)?;
         Ok(vec![GeneratedFile {
             path: self
                 .output_dir

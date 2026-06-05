@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -5,7 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -40,13 +41,14 @@ impl GlobalGenerator for PgmqSetupGenerator {
         config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let mut domains: Vec<String> = config.domains.keys().cloned().collect();
         domains.sort();
 
         let ctx = PgmqSetupContext { domains };
 
-        let content = render_template(tera, "db/pgmq_setup.tera", &ctx)?;
+        let content = render_template_with_project(tera, "db/pgmq_setup.tera", &ctx, project)?;
         Ok(vec![GeneratedFile {
             path: self
                 .output_dir

@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -5,7 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 use codegraph_type_contracts::RefClassificationKind;
@@ -897,6 +898,7 @@ impl EntityGenerator for DtoGenerator {
         domain: &str,
         config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let ctx = build_dto_context(db, schema_title, domain, config).await?;
 
@@ -914,7 +916,7 @@ impl EntityGenerator for DtoGenerator {
         let mut files = Vec::new();
 
         if ctx.operations.contains(&"create".to_string()) {
-            let content = render_template(tera, "ddd/dto_create.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ddd/dto_create.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: base_dir.join("dto_create.rs"),
                 content,
@@ -922,14 +924,14 @@ impl EntityGenerator for DtoGenerator {
         }
 
         if ctx.operations.contains(&"update".to_string()) {
-            let content = render_template(tera, "ddd/dto_update.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ddd/dto_update.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: base_dir.join("dto_update.rs"),
                 content,
             });
         }
 
-        let response = render_template(tera, "ddd/dto_response.tera", &ctx)?;
+        let response = render_template_with_project(tera, "ddd/dto_response.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: base_dir.join("dto_response.rs"),
             content: response,

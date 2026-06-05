@@ -155,7 +155,71 @@ use tera::Tera;
 use crate::error::{Error, Result};
 use codegraph_config::{DomainConfig, UiDomainConfig, UiOverrideConfig};
 
+use std::sync::OnceLock;
+
 use self::traits::{DomainGenerator, EntityGenerator, GeneratedFile, GlobalGenerator};
+
+// =============================================================================
+// Project-level configuration for template rendering.
+// Set once at the start of the generation pipeline, then accessible from
+// any generator via `get_project_config()` — no need to thread through
+// every helper function.
+// =============================================================================
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectConfig {
+    pub app_name: String,
+    pub domain_types_crate: String,
+    pub hooks_api_crate: String,
+    pub api_title: String,
+    pub generator_name: String,
+    /// Path to the domain-types crate root (e.g. "crates/placekit-domain-types").
+    /// Used by the scaffold generator to add a path dependency in Cargo.toml.
+    /// Empty string means "no separate domain-types crate" (types live in the app).
+    pub domain_types_base: String,
+    pub hooks_api_base: String,
+    pub extensions_base: String,
+    pub app_config_base: String,
+    pub decision_engine_base: String,
+    pub codegraph_workflow_base: String,
+    pub type_contracts_base: String,
+}
+
+impl Default for ProjectConfig {
+    fn default() -> Self {
+        Self {
+            app_name: "hr-app".into(),
+            domain_types_crate: "hr_domain_types".into(),
+            hooks_api_crate: "hr_hooks_api".into(),
+            api_title: "HR Open API".into(),
+            generator_name: "hr-graph".into(),
+            domain_types_base: String::new(),
+            hooks_api_base: String::new(),
+            extensions_base: String::new(),
+            app_config_base: String::new(),
+            decision_engine_base: String::new(),
+            codegraph_workflow_base: String::new(),
+            type_contracts_base: String::new(),
+        }
+    }
+}
+
+static PROJECT_CONFIG: OnceLock<ProjectConfig> = OnceLock::new();
+
+/// Initialize the global project config. Must be called before any generator runs.
+pub fn init_project_config(config: ProjectConfig) {
+    PROJECT_CONFIG.set(config).ok();
+}
+
+/// Get the current project config. Falls back to a box-leaked default if not initialized.
+pub fn get_project_config() -> &'static ProjectConfig {
+    PROJECT_CONFIG.get().unwrap_or_else(|| {
+        // Leak a default on first call as permanent fallback
+        let default: &'static ProjectConfig = Box::leak(Box::new(ProjectConfig::default()));
+        PROJECT_CONFIG.set(default.clone()).ok();
+        PROJECT_CONFIG.get().unwrap()
+    })
+}
 
 /// An entity in the generation order with its graph schema_id and domain.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -196,6 +260,8 @@ pub struct GeneratorOpts<'a> {
     /// IFML framework targets (e.g. "svelte", "react").
     /// If empty, defaults to `["svelte"]` at dispatch.
     pub ifml_frameworks: Vec<String>,
+    /// Project-level config injected into all template contexts.
+    pub project_config: Option<&'a ProjectConfig>,
 }
 
 /// Run all generators for all entities in topological order.
@@ -222,6 +288,7 @@ pub async fn run_generators(
         ext_points: None,
         build_plan: None,
         ifml_frameworks: vec![],
+        project_config: None,
     })
     .await
 }
@@ -254,6 +321,7 @@ pub async fn run_generators_with_domain_types_base(
         ext_points: None,
         build_plan: None,
         ifml_frameworks: vec![],
+        project_config: None,
     })
     .await
 }
@@ -274,7 +342,13 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         ext_points,
         build_plan, // used for has_webhooks / profile-based filter
         ifml_frameworks,
+        project_config,
     } = opts;
+    // Initialize global project config so generator helpers can access it.
+    let default_project = ProjectConfig::default();
+    let project = project_config.unwrap_or(&default_project);
+    init_project_config(project.clone());
+
     // Wrap the querier in a caching layer to avoid redundant graph queries
     // across the 15+ generators that each independently query the same schemas.
     let cached_db = CachingQuerier::new(db);
@@ -292,7 +366,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         .unwrap_or(true);
     let has_reports = build_plan
         .map(|bp| bp.has_global_gen("report_views"))
-        .unwrap_or(true);
+        .unwrap_or(true)
+        && std::env::current_dir().unwrap_or_default().join("reports.toml").exists();
 
     let order = compute_generation_order(db, config).await?;
     let mut report = report::GenerationReport::new();
@@ -368,7 +443,6 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             db::entity::SeaOrmEntityGenerator::new(output_dir)
                 .with_parent_candidates(parent_candidates.clone()),
         ) as Box<dyn EntityGenerator>,
-        Box::new(ddd::dto::DtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         Box::new(
             ddd::repository::RepositoryTraitGenerator::new(output_dir)
                 .with_parent_candidates(parent_candidates.clone()),
@@ -447,6 +521,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             ))
         },
         Box::new(cli::command::CliCommandGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
+        Box::new(ddd::dto::DtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_entity(gen.name()))
@@ -588,7 +663,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             let mut errors = Vec::new();
             for gen in entity_gens.iter() {
                 match gen
-                    .generate(db, &entry.schema_title, &entry.domain, config, tera)
+                    .generate(db, &entry.schema_title, &entry.domain, config, tera, project)
                     .await
                 {
                     Ok(files) => entity_files.extend(files),
@@ -662,7 +737,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         let codelist_sql_gen = db::codelist::CodelistGenerator::new(output_dir);
         for (idx, cl) in codelists.iter().enumerate() {
             if let Ok(files) = codelist_sql_gen
-                .generate(db, &cl.name, "common", config, tera)
+                .generate(db, &cl.name, "common", config, tera, project)
                 .await
             {
                 for file in files {
@@ -674,9 +749,13 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
-    // Codelist Rust enums into hr-domain-types crate (source-of-truth for DTOs)
-    match domain_types::codelist::DomainTypesCodelistGenerator::new()
-        .generate_all(db, tera)
+    // Codelist Rust enums into domain-types crate (source-of-truth for DTOs)
+    let codelist_gen = match domain_types_base {
+        Some(base) => domain_types::codelist::DomainTypesCodelistGenerator::new_with_base(base.to_path_buf()),
+        None => domain_types::codelist::DomainTypesCodelistGenerator::new(),
+    };
+    match codelist_gen
+        .generate_all(db, tera, project)
         .await
     {
         Ok(files) => {
@@ -721,7 +800,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             domain_gens.iter().map(move |gen| {
                 let domain = domain.clone();
                 async move {
-                    let result = gen.generate(db, &domain, entity_titles, config, tera).await;
+                    let result = gen.generate(db, &domain, entity_titles, config, tera, project).await;
                     (domain, gen.name().to_string(), result)
                 }
             })
@@ -751,7 +830,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let global_results: Vec<_> = futures::future::join_all(
         global_gens
             .iter()
-            .map(|gen| gen.generate(db, config, &order, tera)),
+            .map(|gen| gen.generate(db, config, &order, tera, project)),
     )
     .await;
 
@@ -1073,6 +1152,7 @@ pub async fn compute_generation_order(
 }
 
 /// Render a serializable context through a Tera template.
+/// Injects `project` config into the template context when provided.
 pub fn render_template<C: serde::Serialize>(
     tera: &Tera,
     template_name: &str,
@@ -1080,6 +1160,21 @@ pub fn render_template<C: serde::Serialize>(
 ) -> Result<String> {
     let context = tera::Context::from_serialize(ctx)
         .map_err(|e| Error::Template(format!("Serialize context: {}", e)))?;
+    tera.render(template_name, &context)
+        .map_err(|e| Error::Template(format!("'{}': {}", template_name, e)))
+}
+
+/// Like [`render_template`] but injects `project` into the template context.
+/// Templates can use `{{ project.app_name }}`, `{{ project.domain_types_crate }}`, etc.
+pub fn render_template_with_project<C: serde::Serialize>(
+    tera: &Tera,
+    template_name: &str,
+    ctx: &C,
+    project: &ProjectConfig,
+) -> Result<String> {
+    let mut context = tera::Context::from_serialize(ctx)
+        .map_err(|e| Error::Template(format!("Serialize context: {}", e)))?;
+    context.insert("project", project);
     tera.render(template_name, &context)
         .map_err(|e| Error::Template(format!("'{}': {}", template_name, e)))
 }

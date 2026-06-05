@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -5,7 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
@@ -127,6 +128,7 @@ impl EntityGenerator for UiPageGenerator {
         domain: &str,
         config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
             .get_schema(schema_title)
@@ -368,12 +370,12 @@ impl EntityGenerator for UiPageGenerator {
 
         // List page
         if ctx.has_list {
-            let content = render_template(tera, "ui/list_page.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/list_page.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: routes_dir.join("+page.svelte"),
                 content,
             });
-            let load = render_template(tera, "ui/list_load.tera", &ctx)?;
+            let load = render_template_with_project(tera, "ui/list_load.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: routes_dir.join("+page.server.ts"),
                 content: load,
@@ -382,14 +384,14 @@ impl EntityGenerator for UiPageGenerator {
 
         // Detail page
         if ctx.has_read {
-            let content = render_template(tera, "ui/detail_page.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/detail_page.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: routes_dir
                     .join(format!("[{}]", ctx.param_name))
                     .join("+page.svelte"),
                 content,
             });
-            let load = render_template(tera, "ui/detail_load.tera", &ctx)?;
+            let load = render_template_with_project(tera, "ui/detail_load.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: routes_dir
                     .join(format!("[{}]", ctx.param_name))
@@ -400,7 +402,7 @@ impl EntityGenerator for UiPageGenerator {
 
         // Create page
         if ctx.has_create {
-            let content = render_template(tera, "ui/form_page.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/form_page.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: routes_dir.join("new").join("+page.svelte"),
                 content,
@@ -409,7 +411,7 @@ impl EntityGenerator for UiPageGenerator {
 
         // Edit page
         if ctx.has_update {
-            let content = render_template(tera, "ui/edit_page.tera", &ctx)?;
+            let content = render_template_with_project(tera, "ui/edit_page.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: routes_dir
                     .join(format!("[{}]", ctx.param_name))
@@ -417,7 +419,7 @@ impl EntityGenerator for UiPageGenerator {
                     .join("+page.svelte"),
                 content,
             });
-            let load = render_template(tera, "ui/edit_load.tera", &ctx)?;
+            let load = render_template_with_project(tera, "ui/edit_load.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: routes_dir
                     .join(format!("[{}]", ctx.param_name))

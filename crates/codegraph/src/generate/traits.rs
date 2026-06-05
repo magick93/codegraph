@@ -6,7 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use crate::error::Result;
 use codegraph_config::DomainConfig;
 
-use super::GenerationEntry;
+use super::{GenerationEntry, ProjectConfig};
 
 /// A target file to render from a template.
 #[derive(Debug)]
@@ -38,6 +38,7 @@ pub trait EntityGenerator: Send + Sync {
         domain: &str,
         config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>>;
 }
 
@@ -53,6 +54,7 @@ pub trait DomainGenerator: Send + Sync {
         entity_titles: &[String],
         config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>>;
 }
 
@@ -72,5 +74,6 @@ pub trait GlobalGenerator: Send + Sync {
         config: &DomainConfig,
         generation_order: &[GenerationEntry],
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>>;
 }

@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// GenderCodeList codelist values.
+/// Gender code list.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[allow(clippy::enum_variant_names)]
 pub enum GenderCodeList {
@@ -14,9 +14,7 @@ pub enum GenderCodeList {
 
     Female,
 
-    NotSpecified,
-
-    Other,
+    X,
 
 }
 
@@ -28,9 +26,7 @@ impl std::fmt::Display for GenderCodeList {
 
             Self::Female => write!(f, "Female"),
 
-            Self::NotSpecified => write!(f, "NotSpecified"),
-
-            Self::Other => write!(f, "Other"),
+            Self::X => write!(f, "X"),
 
         }
     }
@@ -46,9 +42,7 @@ impl std::str::FromStr for GenderCodeList {
 
             "Female" => Ok(Self::Female),
 
-            "NotSpecified" => Ok(Self::NotSpecified),
-
-            "Other" => Ok(Self::Other),
+            "X" => Ok(Self::X),
 
             _ => Err(format!("unknown GenderCodeList value: {}", s)),
         }

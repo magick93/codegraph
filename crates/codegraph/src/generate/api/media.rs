@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -6,7 +7,7 @@ use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
@@ -46,6 +47,7 @@ impl EntityGenerator for MediaRouteGenerator {
         domain: &str,
         _config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = match db.get_schema(schema_title).await? {
             Some(s) => s,
@@ -78,7 +80,7 @@ impl EntityGenerator for MediaRouteGenerator {
                 media_accept: self.default_accept.clone(),
             };
 
-            let content = render_template(tera, "api/media_route.tera", &ctx)?;
+            let content = render_template_with_project(tera, "api/media_route.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: self
                     .output_dir

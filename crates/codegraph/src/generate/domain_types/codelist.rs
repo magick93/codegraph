@@ -8,6 +8,7 @@ use codegraph_core::traits::GraphQuerier;
 use crate::error::Result;
 use crate::generate::codelist::rust_enum::RustCodelistGenerator;
 use crate::generate::traits::GeneratedFile;
+use crate::generate::ProjectConfig;
 
 use super::domain_types_src_dir;
 
@@ -46,7 +47,8 @@ impl DomainTypesCodelistGenerator {
         &self,
         db: &dyn GraphQuerier,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        self.inner.generate_all(db, tera).await
+        self.inner.generate_all(db, tera, project).await
     }
 }

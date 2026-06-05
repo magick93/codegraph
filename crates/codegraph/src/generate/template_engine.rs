@@ -4,13 +4,7 @@ use tera::Tera;
 
 use crate::error::{Error, Result};
 
-/// Initialize the Tera template engine from a template directory.
-pub fn create_tera(template_dir: &Path) -> Result<Tera> {
-    let glob = template_dir.join("**/*.tera").to_string_lossy().to_string();
-
-    let mut tera = Tera::new(&glob).map_err(|e| Error::Template(e.to_string()))?;
-
-    // Register custom filters
+fn register_filters(tera: &mut Tera) {
     tera.register_filter("snake_case", snake_case_filter);
     tera.register_filter("upper_camel", upper_camel_filter);
     tera.register_filter("pascal_case", pascal_case_filter);
@@ -20,8 +14,50 @@ pub fn create_tera(template_dir: &Path) -> Result<Tera> {
     tera.register_filter("dollar_quote", dollar_quote_filter);
     tera.register_filter("strip_pg_quotes", strip_pg_quotes_filter);
     tera.register_filter("quote_pg", quote_pg_filter);
+}
 
+/// Initialize the Tera template engine from a template directory.
+pub fn create_tera(template_dir: &Path) -> Result<Tera> {
+    let glob = template_dir.join("**/*.tera").to_string_lossy().to_string();
+    let mut tera = Tera::new(&glob).map_err(|e| Error::Template(e.to_string()))?;
+    register_filters(&mut tera);
     Ok(tera)
+}
+
+/// Create a Tera instance with codegraph's built-in templates as defaults,
+/// plus zero or more override directories that shadow templates by name.
+/// Later directories take precedence over earlier ones.
+pub fn create_tera_with_overrides(override_dirs: &[&Path]) -> Result<Tera> {
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let glob = base.join("**/*.tera").to_string_lossy().to_string();
+    let mut tera = Tera::new(&glob).map_err(|e| Error::Template(e.to_string()))?;
+    for dir in override_dirs {
+        if dir.exists() {
+            merge_tera_dir(&mut tera, dir)?;
+        }
+    }
+    register_filters(&mut tera);
+    Ok(tera)
+}
+
+/// Walk a directory and add every `.tera` file to the Tera engine,
+/// shadowing any existing template with the same name.
+fn merge_tera_dir(tera: &mut Tera, dir: &Path) -> Result<()> {
+    for entry in walkdir::WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("tera") {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(dir)
+            .expect("walkdir path must be under base dir");
+        let name = relative.to_string_lossy().replace('\\', "/");
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| Error::Template(format!("read override {name}: {e}")))?;
+        tera.add_raw_template(&name, &content)
+            .map_err(|e| Error::Template(format!("add override {name}: {e}")))?;
+    }
+    Ok(())
 }
 
 fn snake_case_filter(
@@ -41,7 +77,7 @@ fn upper_camel_filter(
     let s = value
         .as_str()
         .ok_or_else(|| tera::Error::msg("upper_camel filter expects a string"))?;
-    let stripped = codegraph_naming::strip_type_suffix(s);
+    let stripped = codegraph_naming::strip_suffix(s, "Type");
     Ok(tera::Value::String(codegraph_naming::to_pascal_case(&stripped)))
 }
 

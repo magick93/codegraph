@@ -6,6 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
 use crate::generate::traits::{DomainGenerator, GeneratedFile};
+use crate::generate::ProjectConfig;
 
 static LINKS_MODULE: &str = include_str!("../../../templates/api/links.tera");
 
@@ -34,6 +35,7 @@ impl DomainGenerator for LinksGenerator {
         _entity_titles: &[String],
         _config: &DomainConfig,
         _tera: &tera::Tera,
+        _project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         Ok(vec![GeneratedFile {
             path: self.output_dir.join("src").join("api").join("links.rs"),

@@ -688,10 +688,10 @@ pub fn compute_diagnostics(
     collect_errors(&root, source_bytes, &mut diagnostics);
 
     // Validate component type values (must be list/form/details/search/tree/chart)
-    validate_component_types(source_bytes, &root, source, &mut diagnostics);
+    validate_component_types(source_bytes, &root, &mut diagnostics);
 
     // Validate no duplicate fields in fields: [...] arrays
-    validate_no_duplicate_fields(source_bytes, &root, source, &mut diagnostics);
+    validate_no_duplicate_fields(source_bytes, &root, &mut diagnostics);
 
     let data_refs = extract_data_refs(source_bytes, &root);
     with_grafe(|grafe| {
@@ -967,7 +967,6 @@ fn collect_errors(node: &tree_sitter::Node, source: &[u8], diagnostics: &mut Vec
 fn validate_component_types(
     source: &[u8],
     root: &tree_sitter::Node,
-    text: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let mut cursor = QueryCursor::new();
@@ -1105,7 +1104,6 @@ fn check_fields_duplicates(
 fn validate_no_duplicate_fields(
     source: &[u8],
     root: &tree_sitter::Node,
-    text: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     walk_for_fields_assignments(root, source, diagnostics);

@@ -1,3 +1,4 @@
+use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -7,7 +8,7 @@ use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
@@ -89,6 +90,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
         domain: &str,
         config: &DomainConfig,
         tera: &tera::Tera,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
             .get_schema(schema_title)
@@ -505,7 +507,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             structured_imports,
         };
 
-        let content = render_template(tera, "db/entity.tera", &ctx)?;
+        let content = render_template_with_project(tera, "db/entity.tera", &ctx, project)?;
         let mut files = vec![GeneratedFile {
             path: self
                 .output_dir
@@ -552,6 +554,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     config,
                     &mut visited,
                     0,
+                    project,
                 ))
                 .await?;
                 files.extend(child_files);
@@ -573,6 +576,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     &self.output_dir,
                     tera,
                     config,
+                    project,
                 )?;
                 files.extend(child_files);
             }
@@ -605,6 +609,7 @@ async fn build_child_entity(
     config: &DomainConfig,
     visited: &mut std::collections::HashSet<String>,
     depth: usize,
+    project: &ProjectConfig,
 ) -> Result<Vec<GeneratedFile>> {
     if depth >= MAX_CHILD_ENTITY_DEPTH {
         return Ok(Vec::new());
@@ -850,6 +855,7 @@ async fn build_child_entity(
                     config,
                     visited,
                     depth + 1,
+                    project,
                 ))
                 .await?;
                 nested_files.extend(nested);
@@ -948,7 +954,7 @@ async fn build_child_entity(
         structured_imports,
     };
 
-    let content = render_template(tera, "db/entity.tera", &ctx)?;
+    let content = render_template_with_project(tera, "db/entity.tera", &ctx, project)?;
     let mut files = vec![GeneratedFile {
         path: output_dir
             .join("src")
@@ -974,6 +980,7 @@ fn build_codelist_child_entity(
     output_dir: &Path,
     tera: &tera::Tera,
     config: &DomainConfig,
+    project: &ProjectConfig,
 ) -> Result<Vec<GeneratedFile>> {
     let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
         "{}_{}",
@@ -1070,7 +1077,7 @@ fn build_codelist_child_entity(
         structured_imports: Vec::new(),
     };
 
-    let content = render_template(tera, "db/entity.tera", &ctx)?;
+    let content = render_template_with_project(tera, "db/entity.tera", &ctx, project)?;
     Ok(vec![GeneratedFile {
         path: output_dir
             .join("src")

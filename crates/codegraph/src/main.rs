@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use codegraph_backend::{create_backend, BackendConfig};
+use codegraph::generate::ProjectConfig;
 
 mod cli;
 
@@ -17,6 +18,7 @@ struct RunArgs<'a> {
     variant: Option<&'a str>,
     profiles_config_path: Option<PathBuf>,
     no_post_gen: bool,
+    template_dir: &'a [PathBuf],
     ifml_files: &'a [PathBuf],
     ifml_framework: &'a [String],
 }
@@ -30,8 +32,9 @@ async fn main() -> codegraph::error::Result<()> {
             config,
             output,
             extension_points,
+            template_dir,
             ifml_framework,
-        } => cmd_generate(&config, &output, extension_points.as_deref(), &ifml_framework).await,
+        } => cmd_generate(&config, &output, extension_points.as_deref(), &template_dir, &ifml_framework).await,
         cli::Commands::Classify {
             schemas,
             classifier,
@@ -49,6 +52,7 @@ async fn main() -> codegraph::error::Result<()> {
             variant,
             profiles_config,
             no_post_gen,
+            template_dir,
             ifml_files,
             ifml_framework,
         } => {
@@ -62,6 +66,7 @@ async fn main() -> codegraph::error::Result<()> {
                 variant: variant.as_deref(),
                 profiles_config_path: profiles_config,
                 no_post_gen,
+                template_dir: &template_dir,
                 ifml_files: &ifml_files,
                 ifml_framework: &ifml_framework,
             })
@@ -145,6 +150,7 @@ async fn cmd_generate(
     config_path: &Path,
     output: &Path,
     extension_points_path: Option<&Path>,
+    template_dir: &[PathBuf],
     ifml_frameworks: &[String],
 ) -> codegraph::error::Result<()> {
     let config = codegraph_config::config::parse_domain_config(config_path)
@@ -158,8 +164,13 @@ async fn cmd_generate(
     let ui_overrides = load_ui_overrides(config_path)?;
     let ui_domains = load_ui_domains(config_path)?;
 
-    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-    let tera = codegraph::generate::template_engine::create_tera(&template_dir)?;
+    let tera = if template_dir.is_empty() {
+        let td = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        codegraph::generate::template_engine::create_tera(&td)?
+    } else {
+        let dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
+        codegraph::generate::template_engine::create_tera_with_overrides(&dirs)?
+    };
 
     let ext_config = match extension_points_path {
         Some(path) => Some(
@@ -186,6 +197,7 @@ async fn cmd_generate(
         ext_points: ext_config.as_ref(),
         build_plan: None,
         ifml_frameworks: ifml_frameworks.to_vec(),
+        project_config: None,
     })
     .await?;
     print!("{}", report.summary());
@@ -206,6 +218,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         variant,
         profiles_config_path,
         no_post_gen,
+        template_dir,
         ifml_files,
         ifml_framework,
     } = args;
@@ -226,10 +239,33 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
     // Load and resolve the profile.
     let profiles_path = profiles_config_path.unwrap_or_else(|| PathBuf::from("profiles.toml"));
     let registry = codegraph::profile::CapabilityRegistry::new();
+    let mut project_config: Option<ProjectConfig> = None;
+    let mut domain_types_base_path: Option<PathBuf> = None;
     let build_plan = if profiles_path.exists() || profile_name != "default" {
         let resolved =
             codegraph::profile::load_and_resolve_profile(&profiles_path, profile_name, variant)?;
         let plan = codegraph::profile::BuildPlan::from_profile(&resolved, &registry)?;
+
+        // Build project config from profile meta (optional fields override defaults).
+        let meta = &resolved.meta;
+        domain_types_base_path = meta.domain_types_base
+            .as_ref()
+            .map(|p| std::env::current_dir().unwrap_or_default().join(p));
+        project_config = Some(ProjectConfig {
+            app_name: meta.app_name.clone().unwrap_or_else(|| "hr-app".into()),
+            domain_types_crate: meta.domain_types_crate.clone().unwrap_or_else(|| "hr_domain_types".into()),
+            hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_else(|| "hr_hooks_api".into()),
+            api_title: meta.api_title.clone().unwrap_or_else(|| "HR Open API".into()),
+            generator_name: meta.generator_name.clone().unwrap_or_else(|| "hr-graph".into()),
+            domain_types_base: meta.domain_types_base.clone().unwrap_or_default(),
+            hooks_api_base: meta.hooks_api_base.clone().unwrap_or_default(),
+            extensions_base: meta.extensions_base.clone().unwrap_or_default(),
+            app_config_base: meta.app_config_base.clone().unwrap_or_default(),
+            decision_engine_base: meta.decision_engine_base.clone().unwrap_or_default(),
+            codegraph_workflow_base: meta.codegraph_workflow_base.clone().unwrap_or_default(),
+            type_contracts_base: meta.type_contracts_base.clone().unwrap_or_default(),
+        });
+
         println!(
             "Using profile \"{}\" (variant: {:?}) — {} entity, {} domain, {} global generators",
             resolved.meta.name,
@@ -342,8 +378,17 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
     )
     .await?;
 
-    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-    let tera = codegraph::generate::template_engine::create_tera(&template_dir)?;
+    let override_dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
+
+    // When the profile-template-pack PR lands, template_pack from the resolved
+    // profile variant can be appended to override_dirs here.
+
+    let tera = if override_dirs.is_empty() {
+        let td = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        codegraph::generate::template_engine::create_tera(&td)?
+    } else {
+        codegraph::generate::template_engine::create_tera_with_overrides(&override_dirs)?
+    };
 
     let ext_config = match extension_points_path {
         Some(path) => Some(
@@ -364,11 +409,12 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         ui_domains: &ui_domains,
         schema_base_dir: schemas,
         seed_config: load_seed_config(config_path).as_deref(),
-        domain_types_base: None,
+        domain_types_base: domain_types_base_path.as_deref(),
         hooks_base: None,
         ext_points: ext_config.as_ref(),
         build_plan: build_plan.as_ref(),
         ifml_frameworks: ifml_framework.to_vec(),
+        project_config: project_config.as_ref(),
     })
     .await?;
 
