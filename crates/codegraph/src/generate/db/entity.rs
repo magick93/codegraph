@@ -458,7 +458,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
         // collisions (e.g. common::PositionType vs screening::PositionType).
         let entity_module_name = format!("{}_{}", schema_name, table_name);
 
-        // Collect structured wrapper import paths from columns with JsonBinary type.
+        let import_prefix = &config.defaults.types_import_prefix;
         let structured_imports: Vec<String> = columns
             .iter()
             .filter(|c| c.sea_orm_attr.as_deref() == Some(r#"column_type = "JsonBinary""#))
@@ -475,7 +475,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     inner = s;
                 }
                 if inner != "serde_json::Value" && !inner.is_empty() {
-                    Some(format!("use codegraph_type_contracts::{inner};"))
+                    Some(format!("use {import_prefix}::{inner};"))
                 } else {
                     None
                 }
@@ -919,6 +919,7 @@ async fn build_child_entity(
 
     let entity_module_name = format!("{}_{}", schema_name, child_table_name);
 
+    let import_prefix = &config.defaults.types_import_prefix;
     let structured_imports: Vec<String> = columns
         .iter()
         .filter(|c| c.sea_orm_attr.as_deref() == Some(r#"column_type = "JsonBinary""#))
@@ -935,7 +936,7 @@ async fn build_child_entity(
                 inner = s;
             }
             if inner != "serde_json::Value" && !inner.is_empty() {
-                Some(format!("use codegraph_type_contracts::{inner};"))
+                Some(format!("use {import_prefix}::{inner};"))
             } else {
                 None
             }

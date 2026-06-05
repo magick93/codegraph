@@ -34,6 +34,10 @@
           "$ref": "ApplicationType.json",
           "description": "Source application (entity reference)"
         },
+        "externalIdentifier": {
+          "$ref": "../../common/json/base/IdentifierType.json",
+          "description": "External identifier (structured wrapper / JSONB)"
+        },
         "compensationExpectation": {
           "$ref": "../../common/json/AmountType.json",
           "description": "Expected compensation (composite wrapper)"
