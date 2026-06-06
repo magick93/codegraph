@@ -369,6 +369,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         .map(|bp| bp.has_global_gen("report_views"))
         .unwrap_or(true)
         && std::env::current_dir().unwrap_or_default().join("reports.toml").exists();
+    let has_grpc = build_plan
+        .map(|bp| bp.has_global_gen("grpc_scaffold"))
+        .unwrap_or(false);
 
     let order = compute_generation_order(db, config).await?;
     let mut report = report::GenerationReport::new();
@@ -557,6 +560,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             output_dir,
             has_webhooks,
             has_reports,
+            has_grpc,
         )) as Box<dyn GlobalGenerator>,
         Box::new(ui::scaffold::UiScaffoldGenerator::new(
             output_dir,
