@@ -137,7 +137,7 @@ async fn candidate_ddl_table() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -197,7 +197,7 @@ async fn candidate_ddl_trigger() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -221,7 +221,7 @@ async fn candidate_ddl_rls() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -255,7 +255,7 @@ async fn candidate_ddl_rls_has_authenticated_policies() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -301,9 +301,9 @@ async fn scaffold_middleware_supports_dual_auth() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-dual-auth");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -394,7 +394,7 @@ async fn candidate_entity_model() {
 
     let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -416,7 +416,7 @@ async fn candidate_dto_create() {
     let app_output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto");
     let app_gen = generate::ddd::dto::DtoGenerator::new(&app_output_dir);
     let app_files = app_gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
     let app_create = app_files
@@ -437,7 +437,7 @@ async fn candidate_dto_create() {
     std::fs::create_dir_all(&tmp).unwrap();
     let dt_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let dt_files = dt_gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
     let dt_create = dt_files
@@ -469,7 +469,7 @@ async fn candidate_dto_response() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-resp");
     let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
     let response_file = files
@@ -487,7 +487,7 @@ async fn candidate_dto_response() {
     std::fs::create_dir_all(&tmp).unwrap();
     let dt_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let dt_files = dt_gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
     let dt_response = dt_files
@@ -511,7 +511,7 @@ async fn candidate_command() {
 
     let gen = generate::ddd::command::CommandGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -534,7 +534,7 @@ async fn candidate_query() {
 
     let gen = generate::ddd::query::QueryGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -557,7 +557,7 @@ async fn candidate_event() {
 
     let gen = generate::ddd::event::EventGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -580,7 +580,7 @@ async fn candidate_repository() {
 
     let gen = generate::ddd::repository::RepositoryTraitGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -616,7 +616,7 @@ async fn candidate_handler() {
 
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -705,6 +705,7 @@ async fn recruiting_router() {
             &["CandidateType".to_string()],
             &config,
             &tera,
+            generate::get_project_config(),
         )
         .await
         .unwrap();
@@ -793,6 +794,7 @@ async fn router_nests_child_under_parent() {
             &["CompensationType".to_string(), "RewardType".to_string()],
             &config,
             &tera,
+            generate::get_project_config(),
         )
         .await
         .unwrap();
@@ -836,6 +838,7 @@ async fn router_no_relationships_renders_flat() {
             &["CandidateType".to_string()],
             &config,
             &tera,
+            generate::get_project_config(),
         )
         .await
         .unwrap();
@@ -957,7 +960,7 @@ async fn child_handler_uses_find_by_id_scoped_for_ownership() {
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera)
+        .generate(&mock, "RewardType", "compensation", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -1005,7 +1008,7 @@ async fn child_handler_derives_parent_ref_from_graph() {
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera)
+        .generate(&mock, "RewardType", "compensation", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -1036,7 +1039,7 @@ async fn child_handler_retains_utoipa_tags() {
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera)
+        .generate(&mock, "RewardType", "compensation", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -1128,6 +1131,7 @@ async fn array_items_fk_uses_parent_type_name() {
             &["CompensationType".to_string(), "RewardType".to_string()],
             &config,
             &tera,
+            generate::get_project_config(),
         )
         .await
         .unwrap();
@@ -1241,7 +1245,7 @@ async fn array_items_handler_fk_uses_parent_type_name() {
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera)
+        .generate(&mock, "RewardType", "compensation", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -1274,6 +1278,7 @@ async fn links_generator_produces_output() {
             &["CandidateType".to_string()],
             &config,
             &tera,
+            generate::get_project_config(),
         )
         .await
         .unwrap();
@@ -1308,7 +1313,7 @@ async fn child_handler_nested_path_includes_parent() {
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera)
+        .generate(&mock, "RewardType", "compensation", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -1338,7 +1343,7 @@ async fn openapi_spec() {
 
     let gen = generate::api::openapi::OpenApiGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -1478,9 +1483,9 @@ async fn scaffold_main() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -1558,9 +1563,9 @@ async fn scaffold_error_module() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-error");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -1597,9 +1602,9 @@ async fn scaffold_generates_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-mw");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -1630,7 +1635,7 @@ async fn candidate_test_gen() {
 
     let gen = generate::test::test_gen::TestGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -1785,7 +1790,7 @@ async fn fk_field_consistent_across_ddl_and_entity() {
     // DDL: should have employer_id UUID column
     let ddl_gen = generate::db::ddl::DdlGenerator::new(Path::new("/tmp/test-fk-ddl"));
     let ddl_files = ddl_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera)
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
     let ddl_content = &ddl_files[0].content;
@@ -1800,7 +1805,7 @@ async fn fk_field_consistent_across_ddl_and_entity() {
     let entity_gen =
         generate::db::entity::SeaOrmEntityGenerator::new(Path::new("/tmp/test-fk-entity"));
     let entity_files = entity_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera)
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
     let entity_content = &entity_files[0].content;
@@ -1822,7 +1827,7 @@ async fn codelist_field_produces_text_fk_in_ddl() {
 
     let ddl_gen = generate::db::ddl::DdlGenerator::new(Path::new("/tmp/test-codelist-ddl"));
     let ddl_files = ddl_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera)
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
     let ddl_content = &ddl_files[0].content;
@@ -1885,7 +1890,7 @@ async fn codelist_field_with_code_suffix_no_double_code() {
     let ddl_gen =
         generate::db::ddl::DdlGenerator::new(Path::new("/tmp/test-codelist-no-double-code"));
     let ddl_files = ddl_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera)
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
     let ddl_content = &ddl_files[0].content;
@@ -1906,7 +1911,7 @@ async fn codelist_field_with_code_suffix_no_double_code() {
         "/tmp/test-codelist-no-double-code-entity",
     ));
     let entity_files = entity_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera)
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
     let entity_content = &entity_files[0].content;
@@ -2000,7 +2005,7 @@ async fn candidate_create_dto_renders_entity_ref_as_id_field() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera)
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2163,7 +2168,7 @@ async fn candidate_ddl_event_trigger() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2204,7 +2209,7 @@ async fn pgmq_setup_global() {
 
     let gen = generate::db::event_trigger::PgmqSetupGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2238,7 +2243,7 @@ async fn platform_schema_global() {
 
     let gen = generate::db::platform_schema::PlatformSchemaGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2292,7 +2297,7 @@ async fn platform_schema_rls_consistency() {
 
     let gen = generate::db::platform_schema::PlatformSchemaGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2338,7 +2343,7 @@ async fn candidate_enriched_event() {
 
     let gen = generate::ddd::event::EventGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2387,7 +2392,7 @@ async fn candidate_command_correlation_id() {
 
     let gen = generate::ddd::command::CommandGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2411,7 +2416,7 @@ async fn workflow_action_calls_service() {
 
     let gen = generate::api::workflow_action::WorkflowActionGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2512,7 +2517,7 @@ async fn workflow_action_child_entity_renders() {
     let gen = generate::api::workflow_action::WorkflowActionGenerator::new(&output_dir)
         .with_parent_candidates(parent_candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera)
+        .generate(&mock, "RewardType", "compensation", &config, &tera, generate::get_project_config())
         .await
         .expect("workflow_action template should render for child entity with workflow");
 
@@ -2542,7 +2547,7 @@ async fn workflow_seed_global() {
 
     let gen = generate::db::workflow_seed::WorkflowSeedGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2583,7 +2588,7 @@ async fn command_uses_parameterized_set_config() {
 
     let gen = generate::ddd::command::CommandGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2633,7 +2638,7 @@ async fn query_uses_parameterized_set_config() {
 
     let gen = generate::ddd::query::QueryGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2683,9 +2688,9 @@ async fn scaffold_main_has_security_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-security");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2760,9 +2765,9 @@ async fn scaffold_main_has_graceful_shutdown() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shutdown");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2791,9 +2796,9 @@ async fn scaffold_main_has_health_ready() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-health-ready");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2824,7 +2829,7 @@ async fn workflow_action_uses_real_identity() {
 
     let gen = generate::api::workflow_action::WorkflowActionGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -2860,7 +2865,7 @@ async fn candidate_ddl_no_tenant_id() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3034,7 +3039,7 @@ async fn composite_range_collapses_start_end_into_daterange() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "PositionHistoryType", "common", &config, &tera)
+        .generate(&mock, "PositionHistoryType", "common", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3377,7 +3382,7 @@ async fn recursive_child_tables_with_full_classification() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&engine, "PersonType", "common", &config, &tera)
+        .generate(&engine, "PersonType", "common", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3513,7 +3518,7 @@ async fn child_command_accepts_parent_id() {
     let gen = generate::ddd::command::CommandGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera)
+        .generate(&mock, "RewardType", "compensation", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3544,7 +3549,7 @@ async fn child_repository_trait_create_has_parent_id() {
     let gen = generate::ddd::repository::RepositoryTraitGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera)
+        .generate(&mock, "RewardType", "compensation", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3578,7 +3583,7 @@ async fn child_query_has_find_by_id_scoped() {
     let gen =
         generate::ddd::query::QueryGenerator::new(&output_dir).with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera)
+        .generate(&mock, "RewardType", "compensation", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3603,7 +3608,7 @@ async fn child_handler_has_nested_utoipa_path() {
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera)
+        .generate(&mock, "RewardType", "compensation", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3641,7 +3646,7 @@ async fn entity_generator_injects_fk_for_parent_candidate() {
     let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera)
+        .generate(&mock, "RewardType", "compensation", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3671,7 +3676,7 @@ async fn ddl_generator_injects_fk_for_parent_candidate() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir).with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera)
+        .generate(&mock, "RewardType", "compensation", &config, &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3706,9 +3711,9 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shadow");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3728,15 +3733,109 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
 }
 
 #[tokio::test]
+async fn scaffold_cargo_toml_has_domain_types_and_hooks_deps() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-deps");
+
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let files = gen
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
+        .await
+        .unwrap();
+
+    let cargo = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("Cargo.toml"))
+        .expect("Should have Cargo.toml");
+
+    assert!(
+        cargo.content.contains("hr-domain-types"),
+        "Cargo.toml should have hr-domain-types path dependency"
+    );
+    assert!(
+        cargo.content.contains("hr-hooks-api"),
+        "Cargo.toml should have hr-hooks-api path dependency"
+    );
+    let build_deps_pos = cargo.content.find("[build-dependencies]");
+    let deps_section = if let Some(pos) = build_deps_pos {
+        &cargo.content[..pos]
+    } else {
+        cargo.content.as_str()
+    };
+    assert!(
+        deps_section.contains("hr-domain-types"),
+        "hr-domain-types must be in [dependencies], not [build-dependencies]"
+    );
+    assert!(
+        deps_section.contains("hr-hooks-api"),
+        "hr-hooks-api must be in [dependencies], not [build-dependencies]"
+    );
+}
+
+#[tokio::test]
+async fn hooks_output_respects_output_dir() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = tempfile::TempDir::new().unwrap();
+    let domain_types_tmp = tempfile::TempDir::new().unwrap();
+    let hooks_tmp = tempfile::TempDir::new().unwrap();
+
+    let report = generate::run_generators_with_domain_types_base(
+        &mock,
+        &config,
+        output_dir.path(),
+        &tera,
+        &Default::default(),
+        &Default::default(),
+        std::path::Path::new(""),
+        domain_types_tmp.path(),
+        hooks_tmp.path(),
+    )
+    .await
+    .expect("generation should succeed");
+
+    for file in &report.files {
+        let path_str = file.path.to_string_lossy();
+        assert!(
+            !path_str.contains("codegraph-core"),
+            "File written to codegraph workspace: {}",
+            path_str
+        );
+    }
+
+    assert!(
+        !report.has_errors(),
+        "Generation should have no errors: {:?}",
+        report.errors
+    );
+}
+
+#[test]
+fn project_config_defaults_are_non_empty() {
+    let cfg = generate::ProjectConfig::default();
+    assert!(
+        !cfg.domain_types_base.is_empty(),
+        "domain_types_base should default to a non-empty path"
+    );
+    assert!(
+        !cfg.hooks_api_base.is_empty(),
+        "hooks_api_base should default to a non-empty path"
+    );
+}
+
+#[tokio::test]
 async fn scaffold_generates_build_rs() {
     let mock = setup_mock().await;
     let config = test_domain_config();
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-build-rs");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3758,9 +3857,9 @@ async fn scaffold_main_has_version_endpoint() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-version");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3823,7 +3922,7 @@ async fn webhook_dispatch_generator_produces_dispatch_module() {
 
     let gen = generate::webhook::dispatch::WebhookDispatchGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 
@@ -3849,7 +3948,7 @@ async fn webhook_endpoint_api_generator_produces_api_and_router() {
 
     let gen = generate::webhook::endpoint_api::WebhookEndpointApiGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera)
+        .generate(&mock, &config, &test_generation_order(), &tera, generate::get_project_config())
         .await
         .unwrap();
 

@@ -192,8 +192,8 @@ async fn cmd_generate(
         ui_domains: &ui_domains,
         schema_base_dir: Path::new(""),
         seed_config: load_seed_config(config_path).as_deref(),
-        domain_types_base: None,
-        hooks_base: None,
+        domain_types_base: Some(output.join("crates").join("hr-domain-types").as_path()),
+        hooks_base: Some(output.join("crates").join("hr-hooks-api").as_path()),
         ext_points: ext_config.as_ref(),
         build_plan: None,
         ifml_frameworks: ifml_frameworks.to_vec(),
@@ -240,7 +240,6 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
     let profiles_path = profiles_config_path.unwrap_or_else(|| PathBuf::from("profiles.toml"));
     let registry = codegraph::profile::CapabilityRegistry::new();
     let mut project_config: Option<ProjectConfig> = None;
-    let mut domain_types_base_path: Option<PathBuf> = None;
     let build_plan = if profiles_path.exists() || profile_name != "default" {
         let resolved =
             codegraph::profile::load_and_resolve_profile(&profiles_path, profile_name, variant)?;
@@ -248,9 +247,6 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
 
         // Build project config from profile meta (optional fields override defaults).
         let meta = &resolved.meta;
-        domain_types_base_path = meta.domain_types_base
-            .as_ref()
-            .map(|p| std::env::current_dir().unwrap_or_default().join(p));
         project_config = Some(ProjectConfig {
             app_name: meta.app_name.clone().unwrap_or_else(|| "hr-app".into()),
             domain_types_crate: meta.domain_types_crate.clone().unwrap_or_else(|| "hr_domain_types".into()),
@@ -409,8 +405,8 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         ui_domains: &ui_domains,
         schema_base_dir: schemas,
         seed_config: load_seed_config(config_path).as_deref(),
-        domain_types_base: domain_types_base_path.as_deref(),
-        hooks_base: None,
+        domain_types_base: Some(&output.join("crates").join("hr-domain-types")),
+        hooks_base: Some(&output.join("crates").join("hr-hooks-api")),
         ext_points: ext_config.as_ref(),
         build_plan: build_plan.as_ref(),
         ifml_frameworks: ifml_framework.to_vec(),
