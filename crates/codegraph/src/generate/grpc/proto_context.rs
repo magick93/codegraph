@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::PropertyNode;

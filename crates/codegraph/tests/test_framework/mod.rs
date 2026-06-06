@@ -1,6 +1,6 @@
 pub mod validators;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use codegraph_core::caching_querier::CachingQuerier;
 use codegraph_core::traits::GraphQuerier;

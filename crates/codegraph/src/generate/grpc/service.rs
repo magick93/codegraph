@@ -13,7 +13,6 @@ use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
 use super::proto_context::ProtoContext;
-use super::proto_type::proto_type_from_field;
 
 #[derive(Debug, Serialize)]
 pub struct GrpcServiceContext {

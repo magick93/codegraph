@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use serde::Serialize;
 
 use crate::error::Result;
 use crate::generate::render_template_with_project;
