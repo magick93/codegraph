@@ -16,6 +16,7 @@ pub mod playwright;
 pub mod scaffold;
 pub mod test;
 pub mod ui;
+pub mod grpc;
 pub mod webhook;
 
 /// Returns the lowercased PG cast string for range/geometry types, or `None` for standard types.
