@@ -25,7 +25,7 @@ pagination = true
 validation_level = "strict"
 offline_mode = false
 ifml_backend = true
-grpc_backend = "tonic"
+grpc_backend = true
 
 [profiles.default.api]
 generators = [
@@ -79,7 +79,7 @@ since = "2026-05-08"
 auth = true
 pagination = true
 validation_level = "strict"
-grpc_backend = "tonic"
+grpc_backend = true
 
 [profiles.api.api]
 generators = [
@@ -160,7 +160,7 @@ since = "2026-05-08"
 auth = true
 pagination = true
 validation_level = "strict"
-grpc_backend = "tonic"
+grpc_backend = true
 
 [profiles.fullstack.api]
 generators = [
@@ -199,6 +199,7 @@ generators = [
     "domain_types_scaffold",
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
+    "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",
 ]
 scripts.post_gen = ["echo post-gen check skipped"]
 [profiles.fullstack.variants.enterprise.ui]
@@ -212,6 +213,7 @@ generators = [
 audit_trail = true
 multitenancy = true
 row_level_security = true
+grpc_backend = true
 
 [profiles.fullstack.variants.lite]
 [profiles.fullstack.variants.lite.api]
@@ -232,7 +234,7 @@ tags = ["ci", "lint"]
 since = "2026-05-08"
 
 [profiles.ci.features]
-grpc_backend = "tonic"
+grpc_backend = true
 
 [profiles.ci.api]
 generators = [
