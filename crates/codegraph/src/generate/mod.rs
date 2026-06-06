@@ -526,6 +526,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         },
         Box::new(cli::command::CliCommandGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         Box::new(ddd::dto::DtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
+        // gRPC entity generators
+        Box::new(grpc::proto::GrpcProtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
+        Box::new(grpc::service::GrpcServiceGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_entity(gen.name()))
@@ -540,6 +543,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(ui::domain_layout::UiDomainLayoutGenerator::new(output_dir))
             as Box<dyn DomainGenerator>,
         Box::new(cli::domain::CliDomainGenerator::new(output_dir)) as Box<dyn DomainGenerator>,
+        // gRPC domain generator
+        Box::new(grpc::router::GrpcRouterGenerator::new(output_dir)) as Box<dyn DomainGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_domain(gen.name()))
@@ -605,6 +610,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(webhook::endpoint_api::WebhookEndpointApiGenerator::new(
             output_dir,
         )) as Box<dyn GlobalGenerator>,
+        // gRPC global generator
+        Box::new(grpc::scaffold::GrpcScaffoldGenerator::new(output_dir))
+            as Box<dyn GlobalGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_global(gen.name()))

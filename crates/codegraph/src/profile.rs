@@ -349,6 +349,12 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("integration_catalog",  Global, Common, &[], &[]),
         cap("webhook_dispatch",     Global, Common, &[], &[]),
         cap("webhook_endpoint_api", Global, Common, &[], &[]),
+
+        // ── gRPC generators ────────────────────────────────────────────
+        cap("grpc_proto",           Entity,  Api, &["grpc_backend"], &[]),
+        cap("grpc_service",         Entity,  Api, &["grpc_backend"], &[]),
+        cap("grpc_router",          Domain,  Api, &["grpc_backend"], &[]),
+        cap("grpc_scaffold",        Global,  Api, &["grpc_backend"], &[]),
     ];
 
     entries.into_iter().map(|c| (c.name.clone(), c)).collect()
