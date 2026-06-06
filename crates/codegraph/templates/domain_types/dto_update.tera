@@ -14,16 +14,18 @@ use super::dto_create::Create{{ child.struct_name }}Request;
 {%- endfor %}
 
 /// Request body for updating an existing {{ entity_name }}.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, garde::Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema{% if has_validate %}, garde::Validate{% endif %})]
 pub struct Update{{ entity_name }}Request {
 {%- for field in fields %}
 {%- if field.name == "id" %}{% continue %}{%- endif %}
 {%- if field.name not in immutable_fields %}
 {%- if not field.is_entity_ref %}
+{%- if has_validate %}
 {%- if field.min_length or field.max_length %}
     #[garde(inner(length({% if field.min_length %}min = {{ field.min_length }}{% endif %}{% if field.min_length and field.max_length %}, {% endif %}{% if field.max_length %}max = {{ field.max_length }}{% endif %})))]
 {%- else %}
     #[garde(skip)]
+{%- endif %}
 {%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
 {%- if field.is_array %}
@@ -32,7 +34,9 @@ pub struct Update{{ entity_name }}Request {
     pub {{ field.name }}: Option<{{ field.rust_type }}>,
 {%- endif %}
 {%- else %}
+{%- if has_validate %}
     #[garde(skip)]
+{%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub {{ field.name }}_id: Option<uuid::Uuid>,
 {%- endif %}
@@ -40,11 +44,15 @@ pub struct Update{{ entity_name }}Request {
 {%- endfor %}
 {%- for child in child_dtos %}
 {%- if child.is_array %}
+{%- if has_validate %}
     #[garde(skip)]
+{%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub {{ child.field_name }}: Option<Vec<Create{{ child.struct_name }}Request>>,
 {%- else %}
+{%- if has_validate %}
     #[garde(skip)]
+{%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub {{ child.field_name }}: Option<Create{{ child.struct_name }}Request>,
 {%- endif %}

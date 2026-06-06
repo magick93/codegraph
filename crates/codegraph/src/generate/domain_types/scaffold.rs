@@ -241,11 +241,9 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
         let mut structured_re_exports = String::new();
         let mut sorted_types: Vec<&String> = structured_types.iter().collect();
         sorted_types.sort();
+        let prefix = &project.types_import_prefix;
         for ty in &sorted_types {
-            structured_re_exports.push_str(&format!(
-                "pub use codegraph_type_contracts::{};\n",
-                ty
-            ));
+            structured_re_exports.push_str(&format!("pub use {}::{};\n", prefix, ty));
         }
         if !structured_re_exports.is_empty() {
             structured_re_exports = format!(
@@ -272,6 +270,18 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
         files.push(GeneratedFile {
             path: src_dir.join("lib.rs"),
             content: lib_content,
+        });
+
+        // 4. Generate Cargo.toml at the crate root (parent of src/)
+        let cargo_toml = render_template_with_project(
+            tera,
+            "domain_types/cargo_toml.tera",
+            &serde_json::json!({}),
+            project,
+        )?;
+        files.push(GeneratedFile {
+            path: src_dir.parent().unwrap().join("Cargo.toml"),
+            content: cargo_toml,
         });
 
         Ok(files)

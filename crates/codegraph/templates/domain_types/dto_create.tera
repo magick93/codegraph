@@ -11,13 +11,14 @@ pub use crate::codelist::{{ import }};
 {%- endfor %}
 
 /// Request body for creating a new {{ entity_name }}.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, garde::Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema{% if has_validate %}, garde::Validate{% endif %})]
 pub struct Create{{ entity_name }}Request {
 {%- for field in fields %}
 {%- if field.name == "id" %}{% continue %}{%- endif %}
 {%- if field.name not in workflow_excluded_fields %}
 {%- if not field.is_entity_ref %}
 {%- if field.is_required %}
+{%- if has_validate %}
 {%- if field.min_length or field.max_length %}
     #[garde(length({% if field.min_length %}min = {{ field.min_length }}{% endif %}{% if field.min_length and field.max_length %}, {% endif %}{% if field.max_length %}max = {{ field.max_length }}{% endif %}))]
 {%- elif field.pattern %}
@@ -29,16 +30,19 @@ pub struct Create{{ entity_name }}Request {
 {%- else %}
     #[garde(skip)]
 {%- endif %}
+{%- endif %}
 {%- if field.is_array %}
     pub {{ field.name }}: Vec<{{ field.rust_type }}>,
 {%- else %}
     pub {{ field.name }}: {{ field.rust_type }},
 {%- endif %}
 {%- else %}
+{%- if has_validate %}
 {%- if field.min_length or field.max_length %}
     #[garde(inner(length({% if field.min_length %}min = {{ field.min_length }}{% endif %}{% if field.min_length and field.max_length %}, {% endif %}{% if field.max_length %}max = {{ field.max_length }}{% endif %})))]
 {%- else %}
     #[garde(skip)]
+{%- endif %}
 {%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
 {%- if field.is_array %}
@@ -48,7 +52,9 @@ pub struct Create{{ entity_name }}Request {
 {%- endif %}
 {%- endif %}
 {%- else %}
+{%- if has_validate %}
     #[garde(skip)]
+{%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub {{ field.name }}_id: Option<uuid::Uuid>,
 {%- endif %}
@@ -56,11 +62,15 @@ pub struct Create{{ entity_name }}Request {
 {%- endfor %}
 {%- for child in child_dtos %}
 {%- if child.is_array %}
+{%- if has_validate %}
     #[garde(skip)]
+{%- endif %}
     #[serde(default)]
     pub {{ child.field_name }}: Vec<Create{{ child.struct_name }}Request>,
 {%- else %}
+{%- if has_validate %}
     #[garde(skip)]
+{%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub {{ child.field_name }}: Option<Create{{ child.struct_name }}Request>,
 {%- endif %}
@@ -68,15 +78,19 @@ pub struct Create{{ entity_name }}Request {
 }
 {%- for child in all_child_dtos %}
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, garde::Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema{% if has_validate %}, garde::Validate{% endif %})]
 pub struct Create{{ child.struct_name }}Request {
 {%- for field in child.fields %}
 {%- if field.name != "id" %}
 {%- if field.is_required %}
+{%- if has_validate %}
     #[garde(skip)]
+{%- endif %}
     pub {{ field.name }}: {{ field.rust_type }},
 {%- else %}
+{%- if has_validate %}
     #[garde(skip)]
+{%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub {{ field.name }}: Option<{{ field.rust_type }}>,
 {%- endif %}
@@ -84,11 +98,15 @@ pub struct Create{{ child.struct_name }}Request {
 {%- endfor %}
 {%- for nested in child.child_dtos %}
 {%- if nested.is_array %}
+{%- if has_validate %}
     #[garde(skip)]
+{%- endif %}
     #[serde(default)]
     pub {{ nested.field_name }}: Vec<Create{{ nested.struct_name }}Request>,
 {%- else %}
+{%- if has_validate %}
     #[garde(skip)]
+{%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub {{ nested.field_name }}: Option<Create{{ nested.struct_name }}Request>,
 {%- endif %}
