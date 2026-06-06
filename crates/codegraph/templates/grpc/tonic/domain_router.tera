@@ -1,0 +1,23 @@
+use std::sync::Arc;
+use tonic::transport::Server;
+use crate::domain::{{ domain }}::*;
+use crate::api::grpc::*;
+
+{% for entity in entities %}
+use {{ proto_types_prefix }}{{ domain }}::{{ entity.module_name }}_service_server::{{ entity.proto_service_server }};
+{% endfor %}
+
+pub trait Repositories {
+    {% for entity in entities %}
+    type {{ entity.repo_trait }}: {{ entity.repo_trait }};
+    {% endfor %}
+}
+
+pub fn grpc_router<R: Repositories + 'static>() -> Server {
+    Server::builder()
+        {% for entity in entities %}
+        .add_service({{ entity.proto_service_server }}::new(
+            {{ entity.grpc_service_struct }}::<R>::new(),
+        ))
+        {% endfor %}
+}
