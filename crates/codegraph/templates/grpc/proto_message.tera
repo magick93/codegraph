@@ -1,0 +1,26 @@
+syntax = "proto3";
+package {{ package }};
+
+{% for imp in imports -%}
+import "{{ imp }}";
+{% endfor %}
+import "shared.proto";
+option go_package = "{{ package }}/;{{ package }}";
+
+{% for enum in enums %}
+enum {{ enum.name }} {
+  {% for val in enum.values %}
+  {{ val.name }} = {{ val.number }};
+  {% endfor %}
+}
+{% endfor %}
+
+{% for msg in messages %}
+{% if msg.description %}/// {{ msg.description }}{% endif %}
+message {{ msg.name }} {
+  {% for field in msg.fields %}
+  {% if field.description %}  // {{ field.description }}{% endif %}
+  {% if field.is_repeated %}repeated {% elif field.is_optional %}optional {% endif %}{{ field.proto_type }} {{ field.name }} = {{ field.field_number }};
+  {% endfor %}
+}
+{% endfor %}

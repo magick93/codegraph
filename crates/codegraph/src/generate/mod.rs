@@ -16,6 +16,7 @@ pub mod playwright;
 pub mod scaffold;
 pub mod test;
 pub mod ui;
+pub mod grpc;
 pub mod webhook;
 
 /// Returns the lowercased PG cast string for range/geometry types, or `None` for standard types.
@@ -368,6 +369,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         .map(|bp| bp.has_global_gen("report_views"))
         .unwrap_or(true)
         && std::env::current_dir().unwrap_or_default().join("reports.toml").exists();
+    let has_grpc = build_plan
+        .map(|bp| bp.has_global_gen("grpc_scaffold"))
+        .unwrap_or(false);
 
     let order = compute_generation_order(db, config).await?;
     let mut report = report::GenerationReport::new();
@@ -522,6 +526,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         },
         Box::new(cli::command::CliCommandGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         Box::new(ddd::dto::DtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
+        // gRPC entity generators
+        Box::new(grpc::proto::GrpcProtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
+        Box::new(grpc::service::GrpcServiceGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_entity(gen.name()))
@@ -536,6 +543,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(ui::domain_layout::UiDomainLayoutGenerator::new(output_dir))
             as Box<dyn DomainGenerator>,
         Box::new(cli::domain::CliDomainGenerator::new(output_dir)) as Box<dyn DomainGenerator>,
+        // gRPC domain generator
+        Box::new(grpc::router::GrpcRouterGenerator::new(output_dir)) as Box<dyn DomainGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_domain(gen.name()))
@@ -556,6 +565,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             output_dir,
             has_webhooks,
             has_reports,
+            has_grpc,
         )) as Box<dyn GlobalGenerator>,
         Box::new(ui::scaffold::UiScaffoldGenerator::new(
             output_dir,
@@ -600,6 +610,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(webhook::endpoint_api::WebhookEndpointApiGenerator::new(
             output_dir,
         )) as Box<dyn GlobalGenerator>,
+        // gRPC global generator
+        Box::new(grpc::scaffold::GrpcScaffoldGenerator::new(output_dir))
+            as Box<dyn GlobalGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_global(gen.name()))

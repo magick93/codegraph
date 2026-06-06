@@ -4,7 +4,7 @@ Graph-driven code generation from JSON Schema.
 
 ## Overview
 
-codegraph ingests JSON Schema files, builds a type dependency graph, auto-classifies entities vs. value objects, and generates full-stack boilerplate code. It currently targets the Rust/Axum/SeaORM/SvelteKit stack.
+codegraph ingests JSON Schema files, builds a type dependency graph, auto-classifies entities vs. value objects, and generates full-stack boilerplate code. It currently targets the Rust/Axum/SeaORM/SvelteKit stack, with optional gRPC support via tonic.
 
 ## Getting Started
 
@@ -22,13 +22,28 @@ cargo run -- run \
 1. **Ingest** — Load JSON Schema files, resolve `$ref` references, build a typed property graph
 2. **Classify** — Auto-classify schemas as entities (own table, CRUD) or value objects (embedded JSONB)
 3. **Validate** — Check codelists, ref targets, FK targets, composition depth, circular refs
-4. **Generate** — Dispatch to 54+ generators producing Rust structs, SQL migrations, Axum handlers, SvelteKit UI, etc.
+4. **Generate** — Dispatch to 58+ generators producing Rust structs, SQL migrations, Axum handlers, SvelteKit UI, gRPC proto + tonic services, etc.
+
+### gRPC Code Generation
+
+When `grpc_backend = true` is set in `profiles.toml` (default in all API profiles), four additional generators produce:
+
+| Generator | Output |
+|-----------|--------|
+| `grpc_proto` | `proto/{domain}/{entity}.proto` (messages + gRPC service definition) |
+| `grpc_service` | `src/api/grpc/{module}_grpc.rs` (tonic server impl + From conversions) |
+| `grpc_router` | `src/api/grpc/{domain}_router.rs` (tonic router with all entity services) |
+| `grpc_scaffold` | `proto/shared.proto`, `src/api/grpc/mod.rs`, shared conversion helpers |
+
+**Build integration**: The generated `build.rs` compiles all `.proto` files via `tonic_build`, producing both server and client code. Clients are auto-generated (`{Entity}ServiceClient<T>`) with zero additional codegen.
+
+**Prerequisites**: `protoc` (the protobuf compiler) must be in `PATH` for the generated project to build.
 
 ## Configuration
 
 - `domains.toml` — Define bounded contexts, entity roles, workflows
 - `classifier.toml` — Type mappings, naming rules, wrapper classification
-- `profiles.toml` — Generator selection profiles with variants
+- `profiles.toml` — Generator selection profiles with variants (includes `grpc_backend` feature)
 - `seed.toml` — Demo seed data (optional)
 
 ## License

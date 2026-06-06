@@ -6,7 +6,7 @@ Workspace root `Cargo.toml` with 10 crates:
 
 | Crate | Purpose |
 |-------|---------|
-| `codegraph` | Main binary: CLI, ingest, classify, validate, 54+ generators |
+| `codegraph` | Main binary: CLI, ingest, classify, validate, 58+ generators |
 | `codegraph-core` | Graph data model: `GraphQuerier`, `GraphIngestor`, node/edge types |
 | `codegraph-grafeo` | Grafeo graph database adapter implementing core traits |
 | `codegraph-backend` | Backend factory (currently Grafeo-only) |
@@ -96,6 +96,124 @@ JSON Schema → SchemaLoader → GraphIngestor (GQL INSERT) → Grafeo graph
                                                                     ↓
                                               Generators read via GraphQuerier
                                               (IfmlGraphQuerier wraps it)
+```
+
+## gRPC Code Generation
+
+### Overview
+
+Four gRPC generators produce `.proto` files and tonic-based Rust server code alongside the existing REST API. JSON Schema drives the data model; gRPC generators read the same Grafeo graph as the REST generators.
+
+### Generators
+
+| Generator | Kind | Output |
+|-----------|------|--------|
+| `grpc_proto` | Entity | `proto/{domain}/{module}.proto` — messages + service definition |
+| `grpc_service` | Entity | `src/api/grpc/{module}_grpc.rs` — tonic server impl + `From` conversions |
+| `grpc_router` | Domain | `src/api/grpc/{domain}_router.rs` — service registration |
+| `grpc_scaffold` | Global | `proto/shared.proto`, `src/api/grpc/mod.rs`, shared conversion helpers |
+
+### Architecture layers
+
+| Layer | Location | Notes |
+|-------|----------|-------|
+| **Type mapping** | `crates/codegraph/src/generate/grpc/proto_type.rs` | Maps `RefClassificationKind` → proto/tonic types. 34 unit tests |
+| **Proto context** | `crates/codegraph/src/generate/grpc/proto_context.rs` | Queries graph, builds messages (entity + CRUD + search + tree + transition) |
+| **Proto generator** | `crates/codegraph/src/generate/grpc/proto.rs` | `GrpcProtoGenerator` — renders `proto_message.tera` + `proto_service.tera` |
+| **Service generator** | `crates/codegraph/src/generate/grpc/service.rs` | `GrpcServiceGenerator` — renders `server_impl.tera` + `conversions.tera` |
+| **Router generator** | `crates/codegraph/src/generate/grpc/router.rs` | `GrpcRouterGenerator` — renders `domain_router.tera` |
+| **Scaffold generator** | `crates/codegraph/src/generate/grpc/scaffold.rs` | `GrpcScaffoldGenerator` — shared proto + `mod.rs` + conversion helpers |
+| **Templates** | `crates/codegraph/templates/grpc/` | 6 Tera templates (proto, service, shared, conversions, server impl, router) |
+| **Build integration** | `crates/codegraph/templates/scaffold/build_rs.tera` | Conditional proto compilation via `tonic_build`. Generates both server AND client code |
+| **Profile control** | `profiles.toml` | `grpc_backend = true` feature gates the 4 generators |
+
+### Field numbering strategy
+
+- `id` = field number 1
+- Entity properties = sequential field numbers starting at 2
+- `created_at` = 998, `updated_at` = 999 (synthetic timestamps)
+
+### Codelist enum threshold
+
+- `InlineEnum` → proto `enum`
+- `CodelistReference` with ≤20 values → proto `enum`
+- `CodelistReference` with >20 values → proto `string`
+
+### Proto compilation
+
+The generated `build.rs` walks the `proto/` directory tree and compiles all `.proto` files via `tonic_build`:
+
+```rust
+tonic_build::configure()
+    .build_server(true)
+    .build_client(true)
+    .compile(&protos, &["proto"])
+```
+
+Setting `build_client(true)` causes tonic to auto-generate typed client structs (`{Entity}ServiceClient<T>`) — zero additional codegen needed.
+
+### Dependency graph
+
+```
+ProtoContext (context builder)
+    │
+    ▼
+proto_type_from_field() (type mapping)
+    │
+    ▼
+GrpcProtoGenerator → .proto files (messages + service)
+    │
+    ▼
+GrpcServiceGenerator → .rs files (server impl + conversions)
+    │
+    ▼
+GrpcRouterGenerator → domain router (service registration)
+    │
+    ▼
+GrpcScaffoldGenerator → shared.proto + mod.rs + convert.rs
+    │
+    ▼
+ScaffoldGenerator integration → build.rs + Cargo.toml (has_grpc flag)
+```
+
+## Test Framework
+
+A composable, output-type-agnostic test harness lives at `crates/codegraph/tests/test_framework/`.
+
+### OutputValidator trait
+
+```rust
+pub trait OutputValidator: Send + Sync {
+    fn name(&self) -> &str;
+    fn validate(&self, files: &[GeneratedFile], work_dir: &Path) -> Result<(), Vec<String>>;
+}
+```
+
+### Built-in validators
+
+| Validator | Checks | Reusable for |
+|-----------|--------|-------------|
+| `SnapshotCollector` | Collects files into a map for manual assertion | All generators |
+| `FilePresenceValidator` | Required files exist | All generators |
+| `StringPatternValidator` | Content contains/avoids patterns | All generators |
+| `ProtoCompileValidator` | `protoc` compilation (skipped if absent) | Proto output |
+
+### Usage
+
+```rust
+#[path = "test_framework/mod.rs"]
+mod test_framework;
+
+let test = GeneratorTest {
+    db: &engine,
+    config: &config,
+    tera: &tera,
+    output_dir: temp_dir.path(),
+    validators: vec![
+        Box::new(FilePresenceValidator::new("proto_check", vec!["proto/recruiting/candidate.proto".into()])),
+    ],
+};
+let files = test.run().expect("generation failed");
 ```
 
 ## VS Code Extension
@@ -214,6 +332,17 @@ cargo test -p codegraph -- lsp            # 5 LSP server tests
 cargo test -p codegraph --test ifml_e2e_tests  # 5 E2E tests
 cargo test -p codegraph --lib -- ifml     # 6 dependency graph tests
 
+# gRPC tests (all levels)
+cargo test -p codegraph --lib -- grpc     # 34+ unit tests
+cargo test -p codegraph --test grpc_snapshot_tests  # Level 2: Insta snapshots
+cargo test -p codegraph --test grpc_compile_tests   # Level 3: protoc compilation
+
+# Profile smoke tests (includes gRPC profile validation)
+cargo test -p codegraph --test profile_smoke_tests
+
+# Full pipeline integration (requires protoc)
+cargo test -p codegraph --test grafeo_e2e_tests -- grafeo_all_entity_generators_produce_output_for_candidate
+
 # VS Code extension tests
 cd codegraph-vscode
 npm run test:compile
@@ -248,7 +377,9 @@ cargo run -- classify --schemas <dir> --classifier classifier.toml \
 - No `unwrap()` in production code. Use `thiserror` + `?` propagation.
 - Imports grouped: std → external → internal → current crate, separated by blank lines.
 - Templates in `crates/codegraph/templates/` use Tera syntax.
-- 54+ generators in `crates/codegraph/src/generate/` organized by target (api, db, ddd, ui, cli, etc.).
+- 58+ generators in `crates/codegraph/src/generate/` organized by target (api, db, ddd, ui, cli, etc.).
 - IFML-specific generators in `crates/codegraph/src/generate/ifml/`.
+- gRPC-specific generators in `crates/codegraph/src/generate/grpc/`.
 - New node/edge types go in `crates/codegraph-core/src/types/` + `crates/codegraph-grafeo/src/schema_ddl.rs`.
 - New GraphIngestor/GraphQuerier trait methods need implementations in Grafeo engine AND MockEngine AND CachingQuerier.
+- New gRPC generators need registration in `generate/mod.rs`, a capability entry in `profile.rs`, and an entry in `profiles.toml`.

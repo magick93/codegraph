@@ -1,0 +1,35 @@
+// ── Proto → Domain: Create ─────────────────────────────────────────────
+impl From<{{ entity_name }}CreateRequest> for Create{{ entity_name }}Command {
+    fn from(req: {{ entity_name }}CreateRequest) -> Self {
+        Self {
+            {% for field in create_fields %}
+            {{ field.name }}: req.{{ field.name }}{{ field.conversion }},
+            {% endfor %}
+        }
+    }
+}
+
+// ── Proto → Domain: Update ─────────────────────────────────────────────
+impl From<{{ entity_name }}UpdateRequest> for Update{{ entity_name }}Command {
+    fn from(req: {{ entity_name }}UpdateRequest) -> Self {
+        Self {
+            {% for field in update_fields %}
+            {{ field.name }}: req.{{ field.name }}{{ field.conversion }},
+            {% endfor %}
+        }
+    }
+}
+
+// ── Domain Response → Proto Entity ─────────────────────────────────────
+impl From<{{ entity_name }}Response> for {{ entity_name }} {
+    fn from(resp: {{ entity_name }}Response) -> Self {
+        Self {
+            id: resp.id.to_string(),
+            {% for field in response_fields %}
+            {{ field.name }}: resp.{{ field.name }}{{ field.conversion }},
+            {% endfor %}
+            created_at: Some(resp.created_at.into()),
+            updated_at: Some(resp.updated_at.into()),
+        }
+    }
+}

@@ -1,0 +1,214 @@
+use std::sync::Arc;
+use tonic::{Request, Response, Status};
+use {{ proto_types_prefix }}{{ package }}::{{ proto_service_mod }}::{{ proto_service_trait }};
+use crate::domain::{{ domain }}::{{ module_name }}::repository::{{ repo_trait }};
+
+pub struct {{ entity_name }}GrpcService<R: {{ repo_trait }}> {
+    repo: Arc<R>,
+}
+
+impl<R: {{ repo_trait }}> {{ entity_name }}GrpcService<R> {
+    pub fn new(repo: Arc<R>) -> Self {
+        Self { repo }
+    }
+}
+
+#[tonic::async_trait]
+impl<R: {{ repo_trait }} + 'static> {{ proto_service_trait }} for {{ entity_name }}GrpcService<R> {
+    {% if has_create %}
+    async fn create(
+        &self,
+        request: Request<{{ entity_name }}CreateRequest>,
+    ) -> Result<Response<{{ entity_name }}>, Status> {
+        let req = request.into_inner();
+        let cmd = Create{{ entity_name }}Command::from(req);
+        let db = crate::app_state::get_db();
+        let tx = db.begin().await.map_err(|e| Status::internal(e.to_string()))?;
+        let id = self.repo
+            .create(&tx, cmd)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        tx.commit().await.map_err(|e| Status::internal(e.to_string()))?;
+        let response = self.repo.find_by_id(&db, id).await
+            .map_err(|e| Status::internal(e.to_string()))?
+            .ok_or_else(|| Status::not_found("entity not found"))?
+            .into();
+        Ok(Response::new(response))
+    }
+    {% endif %}
+
+    {% if has_read %}
+    async fn get(
+        &self,
+        request: Request<Get{{ entity_name }}Request>,
+    ) -> Result<Response<{{ entity_name }}>, Status> {
+        let req = request.into_inner();
+        let id = uuid::Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("invalid id"))?;
+        let db = crate::app_state::get_db();
+        let result = self.repo
+            .find_by_id(&db, id)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        match result {
+            Some(entity) => Ok(Response::new(entity.into())),
+            None => Err(Status::not_found("entity not found")),
+        }
+    }
+    {% endif %}
+
+    {% if has_update %}
+    async fn update(
+        &self,
+        request: Request<Update{{ entity_name }}Request>,
+    ) -> Result<Response<{{ entity_name }}>, Status> {
+        let req = request.into_inner();
+        let id = uuid::Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("invalid id"))?;
+        let cmd = Update{{ entity_name }}Command::from(req);
+        let db = crate::app_state::get_db();
+        let tx = db.begin().await.map_err(|e| Status::internal(e.to_string()))?;
+        self.repo
+            .update(&tx, id, cmd)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        tx.commit().await.map_err(|e| Status::internal(e.to_string()))?;
+        let response = self.repo.find_by_id(&db, id).await
+            .map_err(|e| Status::internal(e.to_string()))?
+            .ok_or_else(|| Status::not_found("entity not found"))?
+            .into();
+        Ok(Response::new(response))
+    }
+    {% endif %}
+
+    {% if has_delete %}
+    async fn delete(
+        &self,
+        request: Request<Delete{{ entity_name }}Request>,
+    ) -> Result<Response<prost_types::Empty>, Status> {
+        let req = request.into_inner();
+        let id = uuid::Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("invalid id"))?;
+        let db = crate::app_state::get_db();
+        let tx = db.begin().await.map_err(|e| Status::internal(e.to_string()))?;
+        self.repo
+            .delete(&tx, id)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        tx.commit().await.map_err(|e| Status::internal(e.to_string()))?;
+        Ok(Response::new(prost_types::Empty::default()))
+    }
+    {% endif %}
+
+    {% if has_list %}
+    async fn list(
+        &self,
+        request: Request<List{{ entity_name }}Request>,
+    ) -> Result<Response<List{{ entity_name }}Response>, Status> {
+        let req = request.into_inner();
+        let db = crate::app_state::get_db();
+        let filters: std::collections::HashMap<String, String> = req.filters.into_iter()
+            .map(|f| (f.field, f.value))
+            .collect();
+        let (entities, total) = self.repo
+            .list(&db, req.page_token.parse().unwrap_or(1), req.page_size as u64, &filters)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let data: Vec<{{ entity_name }}> = entities.into_iter().map(Into::into).collect();
+        Ok(Response::new(List{{ entity_name }}Response {
+            data,
+            total: total as i32,
+            next_page_token: String::new(),
+        }))
+    }
+    {% endif %}
+
+    {% if has_fts %}
+    async fn search(
+        &self,
+        request: Request<SearchRequest>,
+    ) -> Result<Response<SearchResponse>, Status> {
+        let req = request.into_inner();
+        let db = crate::app_state::get_db();
+        let (entities, total) = self.repo
+            .search(&db, &req.query, req.page_size as u64, req.page_token.parse().unwrap_or(1))
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let data: Vec<{{ entity_name }}> = entities.into_iter().map(Into::into).collect();
+        Ok(Response::new(SearchResponse {
+            data,
+            total: total as i32,
+            next_page_token: String::new(),
+        }))
+    }
+    {% endif %}
+
+    {% if has_embeddings %}
+    type SemanticSearchStream = tokio_stream::wrappers::ReceiverStream<Result<SearchResult, Status>>;
+
+    async fn semantic_search(
+        &self,
+        request: Request<SemanticSearchRequest>,
+    ) -> Result<Response<Self::SemanticSearchStream>, Status> {
+        let req = request.into_inner();
+        let db = crate::app_state::get_db();
+        let results = self.repo
+            .semantic_search(&db, &req.query, req.limit as u64)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+        for result in results {
+            let item = SearchResult {
+                id: result.id.to_string(),
+                score: result.score,
+            };
+            if tx.send(Ok(item)).await.is_err() {
+                break;
+            }
+        }
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+    }
+    {% endif %}
+
+    {% if has_workflow %}
+    async fn transition(
+        &self,
+        request: Request<TransitionRequest>,
+    ) -> Result<Response<{{ entity_name }}>, Status> {
+        let req = request.into_inner();
+        let id = uuid::Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("invalid id"))?;
+        let db = crate::app_state::get_db();
+        let entity = self.repo
+            .transition(&db, id, &req.action, req.comment.as_deref(), req.assignee_id.as_deref())
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        Ok(Response::new(entity.into()))
+    }
+    {% endif %}
+
+    {% if hierarchy_field %}
+    type GetTreeStream = tokio_stream::wrappers::ReceiverStream<Result<{{ entity_name }}, Status>>;
+
+    async fn get_tree(
+        &self,
+        request: Request<TreeRequest>,
+    ) -> Result<Response<Self::GetTreeStream>, Status> {
+        let req = request.into_inner();
+        let id = uuid::Uuid::parse_str(&req.id)
+            .map_err(|_| Status::invalid_argument("invalid id"))?;
+        let db = crate::app_state::get_db();
+        let tree = self.repo
+            .find_tree(&db, id, req.max_depth.unwrap_or(10) as u64)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+        for node in tree {
+            if tx.send(Ok(node.into())).await.is_err() {
+                break;
+            }
+        }
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+    }
+    {% endif %}
+}

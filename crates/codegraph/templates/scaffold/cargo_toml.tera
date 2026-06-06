@@ -40,6 +40,21 @@ hex = "0.4"
 rand = "0.8"
 fastrand = "2"
 {% if domain_types_path %}{{ project.domain_types_crate | replace(from="_", to="-") }} = { path = "{{ domain_types_path }}" }{% endif %}
+{% if has_grpc %}
+tonic = { version = "0.14", optional = true }
+prost = { version = "0.13", optional = true }
+prost-types = { version = "0.13", optional = true }
+tokio-stream = { version = "0.1", optional = true }
+{% endif %}
+
+{% if has_grpc %}
+[features]
+default = []
+grpc = ["tonic", "prost", "prost-types", "tokio-stream"]
+{% endif %}
 
 [build-dependencies]
 shadow-rs = "1"
+{% if has_grpc %}
+tonic-build = "0.14"
+{% endif %}

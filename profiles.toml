@@ -25,6 +25,7 @@ pagination = true
 validation_level = "strict"
 offline_mode = false
 ifml_backend = true
+grpc_backend = true
 
 [profiles.default.api]
 generators = [
@@ -39,6 +40,8 @@ generators = [
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
+    # gRPC
+    "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",
 ]
 output = "review/generated-candidate/"
 scripts.post_gen = ["echo post-gen check skipped"]
@@ -76,6 +79,7 @@ since = "2026-05-08"
 auth = true
 pagination = true
 validation_level = "strict"
+grpc_backend = true
 
 [profiles.api.api]
 generators = [
@@ -87,6 +91,7 @@ generators = [
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
+    "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",
 ]
 output = "review/generated-candidate/"
 scripts.post_gen = ["echo post-gen check skipped"]
@@ -155,6 +160,7 @@ since = "2026-05-08"
 auth = true
 pagination = true
 validation_level = "strict"
+grpc_backend = true
 
 [profiles.fullstack.api]
 generators = [
@@ -166,6 +172,7 @@ generators = [
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
+    "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",
 ]
 output = "review/generated-candidate/"
 scripts.post_gen = ["echo post-gen check skipped"]
@@ -192,6 +199,7 @@ generators = [
     "domain_types_scaffold",
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
+    "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",
 ]
 scripts.post_gen = ["echo post-gen check skipped"]
 [profiles.fullstack.variants.enterprise.ui]
@@ -205,6 +213,7 @@ generators = [
 audit_trail = true
 multitenancy = true
 row_level_security = true
+grpc_backend = true
 
 [profiles.fullstack.variants.lite]
 [profiles.fullstack.variants.lite.api]
@@ -224,6 +233,9 @@ description = "CI compile-gate — generate everything, check it compiles, no te
 tags = ["ci", "lint"]
 since = "2026-05-08"
 
+[profiles.ci.features]
+grpc_backend = true
+
 [profiles.ci.api]
 generators = [
     "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
@@ -234,6 +246,7 @@ generators = [
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
+    "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",
 ]
 scripts.post_gen = ["echo post-gen check skipped"]
 

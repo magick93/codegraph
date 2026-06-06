@@ -3,4 +3,39 @@
 
 fn main() {
     shadow_rs::ShadowBuilder::builder().build().unwrap();
+    {% if has_grpc %}
+    compile_grpc_protos();
+    {% endif %}
 }
+
+{% if has_grpc %}
+fn compile_grpc_protos() {
+    let proto_dir = std::path::Path::new("proto");
+    if !proto_dir.exists() {
+        return;
+    }
+    let mut protos = Vec::new();
+    collect_protos(proto_dir, &mut protos);
+    if protos.is_empty() {
+        return;
+    }
+    tonic_build::configure()
+        .build_server(true)
+        .build_client(true)
+        .compile(&protos, &["proto"])
+        .expect("protobuf compilation failed");
+}
+
+fn collect_protos(dir: &std::path::Path, protos: &mut Vec<std::path::PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_protos(&path, protos);
+            } else if path.extension().map_or(false, |e| e == "proto") {
+                protos.push(path);
+            }
+        }
+    }
+}
+{% endif %}

@@ -1,0 +1,27 @@
+---
+source: crates/codegraph/tests/grpc_snapshot_tests.rs
+expression: "&f.content"
+---
+use std::sync::Arc;
+use tonic::transport::Server;
+use crate::domain::recruiting::*;
+use crate::api::grpc::*;
+
+
+use crate::api::grpc::proto::recruiting::candidate_service_server::CandidateServiceServer;
+
+
+pub trait Repositories {
+    
+    type CandidateRepository: CandidateRepository;
+    
+}
+
+pub fn grpc_router<R: Repositories + 'static>() -> Server {
+    Server::builder()
+        
+        .add_service(CandidateServiceServer::new(
+            CandidateGrpcService::<R>::new(),
+        ))
+        
+}
