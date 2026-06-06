@@ -1,0 +1,149 @@
+---
+source: crates/codegraph/tests/grpc_snapshot_tests.rs
+expression: "&f.content"
+---
+syntax = "proto3";
+package recruiting;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "recruiting/;recruiting";
+
+
+enum CandidateStatus {
+  
+  CANDIDATESTATUS_UNSPECIFIED = 0;
+  
+}
+
+
+
+/// Candidate entity
+message Candidate {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+    // Given name
+  string given_name = 2;
+  
+    // Family name
+  string family_name = 3;
+  
+    // Email address
+  string email = 4;
+  
+    // Application status
+  CandidateStatus status = 5;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for Candidate
+message CreateCandidateRequest {
+  
+    // Given name
+  string given_name = 2;
+  
+    // Family name
+  string family_name = 3;
+  
+    // Email address
+  string email = 4;
+  
+    // Application status
+  CandidateStatus status = 5;
+  
+}
+
+/// Update request for Candidate
+message UpdateCandidateRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+    // Given name
+  optional string given_name = 2;
+  
+    // Family name
+  optional string family_name = 3;
+  
+    // Email address
+  optional string email = 4;
+  
+    // Application status
+  optional CandidateStatus status = 5;
+  
+}
+
+/// Get request for Candidate
+message GetCandidateRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for Candidate
+message DeleteCandidateRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for Candidate
+message ListCandidateRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for Candidate
+message ListCandidateResponse {
+  
+  
+  repeated Candidate data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── Candidate Service ──────────────────────────────────────────
+service CandidateService {
+  
+  // Create a new entity
+  rpc Create(CreateCandidateRequest) returns (Candidate);
+  
+  // Get an entity by ID
+  rpc Get(GetCandidateRequest) returns (Candidate);
+  
+  // Update an existing entity
+  rpc Update(UpdateCandidateRequest) returns (Candidate);
+  
+  // Delete an entity by ID
+  rpc Delete(DeleteCandidateRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListCandidateRequest) returns (ListCandidateResponse);
+  
+}

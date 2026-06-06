@@ -1,0 +1,57 @@
+---
+source: crates/codegraph/tests/grpc_snapshot_tests.rs
+expression: "&f.content"
+---
+// ── Proto → Domain: Create ─────────────────────────────────────────────
+impl From<CandidateCreateRequest> for CreateCandidateCommand {
+    fn from(req: CandidateCreateRequest) -> Self {
+        Self {
+            
+            given_name: req.given_name,
+            
+            family_name: req.family_name,
+            
+            email: req.email,
+            
+            status: req.status,
+            
+        }
+    }
+}
+
+// ── Proto → Domain: Update ─────────────────────────────────────────────
+impl From<CandidateUpdateRequest> for UpdateCandidateCommand {
+    fn from(req: CandidateUpdateRequest) -> Self {
+        Self {
+            
+            given_name: req.given_name,
+            
+            family_name: req.family_name,
+            
+            email: req.email,
+            
+            status: req.status,
+            
+        }
+    }
+}
+
+// ── Domain Response → Proto Entity ─────────────────────────────────────
+impl From<CandidateResponse> for Candidate {
+    fn from(resp: CandidateResponse) -> Self {
+        Self {
+            id: resp.id.to_string(),
+            
+            given_name: resp.given_name,
+            
+            family_name: resp.family_name,
+            
+            email: resp.email,
+            
+            status: resp.status.to_string(),
+            
+            created_at: Some(resp.created_at.into()),
+            updated_at: Some(resp.updated_at.into()),
+        }
+    }
+}
