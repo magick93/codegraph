@@ -14,4 +14,4 @@ rust_decimal = { version = "1", features = ["serde-with-str"] }
 utoipa = { version = "5", features = ["chrono", "uuid", "decimal"] }
 async-trait = "0.1"
 garde = { version = "0.22", features = ["derive"] }
-codegraph-type-contracts = { path = "../codegraph-type-contracts" }
+{% if project.type_contracts_base %}codegraph-type-contracts = { path = "{{ project.type_contracts_base }}" }{% endif %}

@@ -250,7 +250,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         let meta = &resolved.meta;
         domain_types_base_path = meta.domain_types_base
             .as_ref()
-            .map(|p| std::env::current_dir().unwrap_or_default().join(p));
+            .map(|p| output.join(p));
         project_config = Some(ProjectConfig {
             app_name: meta.app_name.clone().unwrap_or_else(|| "hr-app".into()),
             domain_types_crate: meta.domain_types_crate.clone().unwrap_or_else(|| "hr_domain_types".into()),
