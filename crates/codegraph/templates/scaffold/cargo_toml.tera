@@ -40,6 +40,7 @@ hex = "0.4"
 rand = "0.8"
 fastrand = "2"
 {% if domain_types_path %}{{ project.domain_types_crate | replace(from="_", to="-") }} = { path = "{{ domain_types_path }}" }{% endif %}
+{% if hooks_api_path %}{{ project.hooks_api_crate | replace(from="_", to="-") }} = { path = "{{ hooks_api_path }}" }{% endif %}
 {% if has_grpc %}
 tonic = { version = "0.14", optional = true }
 prost = { version = "0.13", optional = true }

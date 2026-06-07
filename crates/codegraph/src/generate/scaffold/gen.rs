@@ -66,9 +66,7 @@ fn resolve_path(base: &str, abs_output: &Path) -> String {
     if base.is_empty() {
         return String::new();
     }
-    let abs_base = std::env::current_dir()
-        .unwrap_or_default()
-        .join(base);
+    let abs_base = abs_output.join(base);
     pathdiff::diff_paths(&abs_base, abs_output)
         .unwrap_or_else(|| PathBuf::from(base))
         .to_string_lossy()
