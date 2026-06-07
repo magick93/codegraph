@@ -1914,6 +1914,14 @@ impl RepositoryImplEmitter {
             if col.is_workflow_managed || col.is_composite_range || col.is_media {
                 continue;
             }
+            // Skip parent FK column for child entities — it's already set above
+            if tree.parent_ref.is_some()
+                && (col.field_name == *tree.parent_ref.as_deref().unwrap()
+                    || col.field_name
+                        == format!("{}_id", codegraph_naming::to_snake_case(tree.parent_ref.as_deref().unwrap())))
+            {
+                continue;
+            }
             let entity_field = &col.field_name;
             let dto_field = col.dto_name();
             if col.dto_rust_type.is_some() {
@@ -1989,11 +1997,26 @@ impl RepositoryImplEmitter {
         .unwrap();
 
         // Collect non-workflow columns for the INSERT (exclude composite range
-        // columns which exist in DDL but not on DTOs)
+        // columns which exist in DDL but not on DTOs, and exclude parent FK
+        // for child entities since it's already set from the route)
         let insert_cols: Vec<&TreeColumn> = tree
             .direct_columns
             .iter()
-            .filter(|c| !c.is_workflow_managed && !c.is_composite_range && !c.is_media)
+            .filter(|c| {
+                if c.is_workflow_managed || c.is_composite_range || c.is_media {
+                    return false;
+                }
+                // Skip parent FK column for child entities
+                if let Some(ref parent_ref) = tree.parent_ref {
+                    if c.pg_column_name == *parent_ref
+                        || c.pg_column_name
+                            == format!("{}_id", codegraph_naming::to_snake_case(parent_ref))
+                    {
+                        return false;
+                    }
+                }
+                true
+            })
             .collect();
 
         // Build column names: id + optional FK + direct columns (use PG column names for SQL, quoted)
