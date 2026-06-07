@@ -264,6 +264,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             decision_engine_base: meta.decision_engine_base.clone().unwrap_or_default(),
             codegraph_workflow_base: meta.codegraph_workflow_base.clone().unwrap_or_default(),
             type_contracts_base: meta.type_contracts_base.clone().unwrap_or_default(),
+            types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
         });
 
         println!(

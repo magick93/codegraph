@@ -36,6 +36,8 @@ pub struct DtoContext {
     pub has_approval_status: bool,
     /// Import paths for structured JSONB wrapper types used by DTO fields.
     pub structured_imports: Vec<String>,
+    /// Whether to emit garde validation attributes on DTO fields.
+    pub has_validate: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -871,6 +873,7 @@ pub async fn build_dto_context(
         has_workflow,
         has_approval_status,
         structured_imports,
+        has_validate: true,
     })
 }
 
