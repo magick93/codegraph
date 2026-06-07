@@ -326,11 +326,14 @@ cargo run -- lsp --schemas schemas/ --classifier classifier.toml --config domain
 
 ```bash
 # Rust tests
-cargo test --workspace                    # all tests (164+)
+cargo test --workspace                    # all tests (635+)
 cargo test -p codegraph-ifml-dsl          # 20 DSL parser tests
 cargo test -p codegraph -- lsp            # 5 LSP server tests
 cargo test -p codegraph --test ifml_e2e_tests  # 5 E2E tests
 cargo test -p codegraph --lib -- ifml     # 6 dependency graph tests
+
+# Dialect tests
+cargo test -p codegraph --lib -- generate::db::dialect  # 12 dialect unit tests
 
 # gRPC tests (all levels)
 cargo test -p codegraph --lib -- grpc     # 34+ unit tests
@@ -372,6 +375,80 @@ cargo run -- classify --schemas <dir> --classifier classifier.toml \
   --config domains.toml
 ```
 
+## Database Dialect Support (feat/sqlite-support)
+
+### Overview
+
+Codegraph supports configurable database target dialects via the `SqlDialect`
+trait. Currently two dialects are implemented:
+
+| Dialect | `database_target` value | Key features |
+|---------|------------------------|--------------|
+| PostgreSQL | `"postgres"` (default) | UUID, JSONB, TIMESTAMPTZ, RLS, extensions, PL/pgSQL, schemas |
+| SQLite | `"sqlite"` | TEXT, INTEGER, no RLS, inline triggers, FTS5, STRICT tables |
+
+### Architecture
+
+```
+profiles.toml                           database_target from features
+    │                                           │
+    ▼                                           ▼
+BuildPlan                             ───►   ProjectConfig.database_target
+    │                                           │
+    ▼                                           ▼
+DB Generators (ddl, entity, etc.)     ───►   SqlDialect trait
+    │                                           │
+    ▼                                           ▼
+Tera templates                              {{ project.database_target }}
+templates/db/sqlite/*.tera               (available in all template contexts)
+```
+
+### SqlDialect trait
+
+Defined at `crates/codegraph/src/generate/db/dialect.rs`:
+
+- **30 methods** covering: type mapping, default expressions, feature flags,
+  identifier handling, trigger syntax, FTS engine selection
+- `DatabaseTarget` enum: `Postgres`, `Sqlite` (default: `Postgres`)
+- Factory: `dialect_for_target(DatabaseTarget)` returns `Box<dyn SqlDialect>`
+- 12 unit tests
+
+### Profile configuration
+
+```toml
+[profiles.default.features]
+database_target = "sqlite"     # default is "postgres"
+```
+
+The `database_target` value is parsed from the `[features]` table in
+`profiles.toml` and stored in `BuildPlan.database_target`. It's propagated
+to all templates via `ProjectConfig.database_target`.
+
+### SQLite templates
+
+Located at `crates/codegraph/templates/db/sqlite/`:
+
+| Template | Purpose |
+|----------|---------|
+| `table.tera` | CREATE TABLE with STRICT mode, TEXT types |
+| `entity.tera` | SeaORM entity without `schema_name` attribute |
+| `trigger.tera` | Inline CREATE TRIGGER (no PL/pgSQL) |
+| `fts.tera` | FTS5 virtual table with sync triggers |
+| `codelist.tera` | INSERT OR IGNORE for idempotent seed |
+| `rls.tera` | Placeholder (SQLite has no RLS) |
+| `domain_event_trigger.tera` | Simple event table insert (replaces pgmq) |
+
+Generators select the template directory based on the dialect. The existing
+`templates/db/` templates remain the PostgreSQL originals and are untouched.
+
+### Adding a new dialect
+
+1. Add a variant to `DatabaseTarget` in `dialect.rs`
+2. Implement `SqlDialect` for the new target
+3. Add templates under `templates/db/<target>/`
+4. Register the dialect in `dialect_for_target()`
+5. Unit tests in `dialect.rs` `#[cfg(test)]` block
+
 ## Code conventions
 
 - No `unwrap()` in production code. Use `thiserror` + `?` propagation.
@@ -383,3 +460,6 @@ cargo run -- classify --schemas <dir> --classifier classifier.toml \
 - New node/edge types go in `crates/codegraph-core/src/types/` + `crates/codegraph-grafeo/src/schema_ddl.rs`.
 - New GraphIngestor/GraphQuerier trait methods need implementations in Grafeo engine AND MockEngine AND CachingQuerier.
 - New gRPC generators need registration in `generate/mod.rs`, a capability entry in `profile.rs`, and an entry in `profiles.toml`.
+- New DB generators (or modifications to existing ones) must use the `SqlDialect` trait (see `crates/codegraph/src/generate/db/dialect.rs`) for type mapping and feature gating instead of hardcoding PostgreSQL types.
+- When adding new template files for a dialect, place them in `templates/db/<dialect>/` and the generator selects the right template path based on `database_target`.
+- The `project.database_target` variable is available in all Tera templates via `ProjectConfig`.

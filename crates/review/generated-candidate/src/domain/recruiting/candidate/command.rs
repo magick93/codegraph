@@ -14,6 +14,9 @@ use super::dto_create::CreateCandidateRequest;
 use super::dto_update::UpdateCandidateRequest;
 
 
+use crate::error::BulkItemError;
+
+
 /// Set API key + org session variables within a transaction so Postgres RLS policies
 /// can enforce tenant isolation and scope checks. Uses `set_config(..., true)` which
 /// is equivalent to `SET LOCAL` but supports parameterised values (no SQL injection).
@@ -45,14 +48,18 @@ async fn set_rls_session_vars(
 pub struct CandidateCommandHandler {
     repo: Arc<dyn CandidateRepository>,
     db: DatabaseConnection,
+
     hooks: Option<Arc<dyn hr_hooks_api::generated::recruiting::candidate::CandidateLifecycle>>,
+
 }
 
 impl CandidateCommandHandler {
     pub fn new(
         repo: Arc<dyn CandidateRepository>,
         db: DatabaseConnection,
+
         hooks: Option<Arc<dyn hr_hooks_api::generated::recruiting::candidate::CandidateLifecycle>>,
+
     ) -> Self {
         Self { repo, db, hooks }
     }
@@ -74,7 +81,8 @@ impl CandidateCommandHandler {
         correlation_id: Uuid,
         api_key_id: Uuid,
         organization_id: Uuid,
-    ) -> Vec<Result<Uuid, hr_hooks_api::BulkItemError>> {
+    ) -> Vec<Result<Uuid, crate::error::BulkItemError>> {
+        
         // --- before_bulk_create hook (can reject entire batch) ---
         if let Some(hooks) = &self.hooks {
             if let Err(e) = hooks.before_bulk_create(&items).await {
@@ -82,7 +90,7 @@ impl CandidateCommandHandler {
                 return items
                     .iter()
                     .enumerate()
-                    .map(|(idx, _)| Err(hr_hooks_api::BulkItemError {
+                    .map(|(idx, _)| Err(crate::error::BulkItemError {
                         index: idx,
                         error: format!("Batch rejected: {e}"),
                     }))
@@ -90,7 +98,9 @@ impl CandidateCommandHandler {
             }
         }
 
-        let mut results: Vec<Result<Uuid, hr_hooks_api::BulkItemError>> = Vec::with_capacity(items.len());
+        
+
+        let mut results: Vec<Result<Uuid, crate::error::BulkItemError>> = Vec::with_capacity(items.len());
 
         for (idx, item) in items.into_iter().enumerate() {
             // Validate each item with garde
@@ -100,7 +110,7 @@ impl CandidateCommandHandler {
                     .map(|(path, error)| format!("{}: {}", path, error.message()))
                     .collect::<Vec<_>>()
                     .join("; ");
-                results.push(Err(hr_hooks_api::BulkItemError {
+                results.push(Err(crate::error::BulkItemError {
                     index: idx,
                     error: format!("Validation failed: {msg}"),
                 }));
@@ -111,13 +121,14 @@ impl CandidateCommandHandler {
             match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id).await {
 
                 Ok(id) => results.push(Ok(id)),
-                Err(e) => results.push(Err(hr_hooks_api::BulkItemError {
+                Err(e) => results.push(Err(crate::error::BulkItemError {
                     index: idx,
                     error: e.to_string(),
                 })),
             }
         }
 
+        
         // --- after_bulk_create hook (audit/notification, post-commit) ---
         if let Some(hooks) = &self.hooks {
             let bulk_results = hr_hooks_api::BulkCreateResults {
@@ -128,6 +139,8 @@ impl CandidateCommandHandler {
                 tracing::error!(correlation_id = %correlation_id, "after_bulk_create hook failed: {e}");
             }
         }
+
+        
 
         results
     }
@@ -146,6 +159,7 @@ impl CandidateCommandHandler {
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id).await?;
 
+        
         // --- before_create hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = hr_hooks_api::TxContext::new(&tx, correlation_id, organization_id, api_key_id, source);
@@ -162,10 +176,13 @@ impl CandidateCommandHandler {
             }
         }
 
+        
+
 
         let id = self.repo.create(&tx, cmd).await?;
 
 
+        
         // --- after_create_tx hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = hr_hooks_api::TxContext::new(&tx, correlation_id, organization_id, api_key_id, source);
@@ -182,9 +199,12 @@ impl CandidateCommandHandler {
             }
         }
 
+        
+
         tx.commit().await?;
         tracing::info!(entity_id = %id, event = "created", "Candidate");
 
+        
         // --- after_create_commit hook ---
         if let Some(hooks) = &self.hooks {
             let post_ctx = hr_hooks_api::PostCommitContext::new(
@@ -195,6 +215,8 @@ impl CandidateCommandHandler {
             }
         }
 
+        
+
         Ok(id)
     }
 
@@ -204,6 +226,7 @@ impl CandidateCommandHandler {
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id).await?;
 
+        
         // --- before_update hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = hr_hooks_api::TxContext::new(&tx, correlation_id, organization_id, api_key_id, &source);
@@ -220,8 +243,11 @@ impl CandidateCommandHandler {
             }
         }
 
+        
+
         self.repo.update(&tx, id, cmd).await?;
 
+        
         // --- after_update_tx hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = hr_hooks_api::TxContext::new(&tx, correlation_id, organization_id, api_key_id, &source);
@@ -238,9 +264,12 @@ impl CandidateCommandHandler {
             }
         }
 
+        
+
         tx.commit().await?;
         tracing::info!(entity_id = %id, event = "updated", "Candidate");
 
+        
         // --- after_update_commit hook ---
         if let Some(hooks) = &self.hooks {
             let post_ctx = hr_hooks_api::PostCommitContext::new(
@@ -250,6 +279,8 @@ impl CandidateCommandHandler {
                 tracing::error!(entity_id = %id, correlation_id = %correlation_id, "after_update_commit hook failed: {e}");
             }
         }
+
+        
 
         Ok(())
     }

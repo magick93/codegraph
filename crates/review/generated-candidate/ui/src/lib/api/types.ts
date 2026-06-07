@@ -98,6 +98,11 @@ export interface CandidateResponse {
 
 
 
+	/** External identifier (structured wrapper / JSONB) */
+	external_identifier?: string | null;
+
+
+
 	/** Gender codelist reference */
 	gender?: string | null;
 
@@ -163,6 +168,10 @@ export interface CreateCandidateRequest {
 
 
 
+	external_identifier?: string | null;
+
+
+
 	gender?: string | null;
 
 
@@ -204,6 +213,8 @@ export interface UpdateCandidateRequest {
 	compensation_expectation?: string | null;
 
 	compensation_expectation_currency?: string | null;
+
+	external_identifier?: string | null;
 
 	gender?: string | null;
 

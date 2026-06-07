@@ -1,0 +1,24 @@
+syntax = "proto3";
+package shared;
+option go_package = "shared/;shared";
+
+message PaginationRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message PaginatedResponse {
+  int32 total = 1;
+  string next_page_token = 2;
+}
+
+message FilterClause {
+  string field = 1;
+  string value = 2;
+  string operator = 3;  // eq, neq, contains, gt, lt, gte, lte
+}
+
+message SearchResult {
+  string id = 1;
+  float score = 2;
+}

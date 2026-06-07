@@ -37,7 +37,7 @@ test.describe.serial('Application Owner CRUD', () => {
 
 
     try {
-      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/candidate', { 'birth_date': '2025-01-15', 'family_name': 'Test Family Name', 'given_name': 'Test Given Name', 'compensation_expectation': 42, 'compensation_expectation_currency': 'USD', 'gender': 'Male', 'position_schedule_type_codes': [{ code: 'FullTime' }], 'position_titles': ['Test Position Titles'], 'status': 'active', 'uri': 'Test Uri' });
+      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/candidate', { 'birth_date': '2025-01-15', 'family_name': 'Test Family Name', 'given_name': 'Test Given Name', 'compensation_expectation': 42, 'compensation_expectation_currency': 'USD', 'external_identifier': { value: 'Test External Identifier' }, 'gender': 'Male', 'position_schedule_type_codes': [{ code: 'FullTime' }], 'position_titles': ['Test Position Titles'], 'status': 'active', 'uri': 'Test Uri' });
       depIds['candidate_id'] = dep_1['id'] as string;
     } catch (_e) {
       // Dependency entity may already exist or have its own required fields

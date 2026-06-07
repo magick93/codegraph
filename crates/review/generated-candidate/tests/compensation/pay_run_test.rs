@@ -9,7 +9,7 @@ mod tests {
     #[test]
     fn test_pay_run_entity_columns() {
         // Verify the entity model compiles and has expected columns
-        let _model = hr_app::entity::pay_run::Model {
+        let _model = hr-app::entity::pay_run::Model {
             id: Uuid::new_v4(),
             ..Default::default()
         };

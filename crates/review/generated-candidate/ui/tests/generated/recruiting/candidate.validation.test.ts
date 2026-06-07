@@ -99,6 +99,9 @@ test.describe('Candidate Validation', () => {
 
 
 
+
+
+
     // No number or date fields to test with invalid input — verify form renders
     await expect(ownerPage.locator('[data-testid="candidate-submit-btn"]')).toBeVisible();
 

@@ -1,5 +1,6 @@
 ---
-source: hr-graph/tests/generate_tests.rs
+source: crates/codegraph/tests/generate_tests.rs
+assertion_line: 742
 expression: code
 ---
 //! Generated repository implementation for Application.
@@ -34,7 +35,6 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
         let model = crate::entity::recruiting_application::ActiveModel {
             id: Set(id),
             candidate_id: Set(Some(parent_id)),
-            candidate_id_id: Set(cmd.candidate_id_id),
             ..Default::default()
         };
         model.insert(tx).await?;

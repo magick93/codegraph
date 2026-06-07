@@ -251,6 +251,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         domain_types_base_path = meta.domain_types_base
             .as_ref()
             .map(|p| output.join(p));
+        let database_target_str = plan.database_target().to_string();
         project_config = Some(ProjectConfig {
             app_name: meta.app_name.clone().unwrap_or_else(|| "hr-app".into()),
             domain_types_crate: meta.domain_types_crate.clone().unwrap_or_else(|| "hr_domain_types".into()),
@@ -264,6 +265,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             decision_engine_base: meta.decision_engine_base.clone().unwrap_or_default(),
             codegraph_workflow_base: meta.codegraph_workflow_base.clone().unwrap_or_default(),
             type_contracts_base: meta.type_contracts_base.clone().unwrap_or_default(),
+            database_target: database_target_str,
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
         });
 

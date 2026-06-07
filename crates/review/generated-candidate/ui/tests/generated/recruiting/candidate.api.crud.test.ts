@@ -54,6 +54,10 @@ function testData(): Record<string, unknown> {
 
 
 
+    'external_identifier': { value: 'Test External Identifier' },
+
+
+
     'gender': 'Male',
 
 
@@ -107,6 +111,10 @@ function updatedData(): Record<string, unknown> {
 
 
     'compensation_expectation_currency': 'AUD',
+
+
+
+    'external_identifier': { value: 'Updated External Identifier' },
 
 
 
@@ -224,6 +232,12 @@ test.describe.serial('Candidate CRUD', () => {
 
 
 
+    if (await page.locator('[data-testid="external_identifier-value"]').isVisible()) {
+      await page.locator('[data-testid="external_identifier-value"]').fill(String((data['external_identifier'] as Record<string, unknown>)?.['value'] ?? ''));
+    }
+
+
+
     if (await page.locator('#gender').isVisible()) {
       await page.locator('#gender').selectOption(String(data['gender']));
     }
@@ -311,6 +325,12 @@ test.describe.serial('Candidate CRUD', () => {
 
     if (await page.locator('[data-testid="candidate-field-compensation_expectation_currency"]').count() > 0) {
       await expect(page.locator('[data-testid="candidate-field-compensation_expectation_currency"]')).toBeVisible();
+    }
+
+
+
+    if (await page.locator('[data-testid="candidate-field-external_identifier"]').count() > 0) {
+      await expect(page.locator('[data-testid="candidate-field-external_identifier"]')).toBeVisible();
     }
 
 
@@ -420,6 +440,8 @@ test.describe.serial('Candidate CRUD', () => {
 
     await expect(page.locator('[data-testid="candidate-field-compensation_expectation_currency"]')).toBeVisible();
 
+    await expect(page.locator('[data-testid="candidate-field-external_identifier"]')).toBeVisible();
+
     await expect(page.locator('[data-testid="candidate-field-gender"]')).toBeVisible();
 
     await expect(page.locator('[data-testid="candidate-field-position_schedule_type_codes"]')).toBeVisible();
@@ -492,6 +514,13 @@ test.describe.serial('Candidate CRUD', () => {
 
     if (await page.locator('#compensation_expectation_currency').isVisible()) {
       await page.locator('#compensation_expectation_currency').selectOption('AUD');
+    }
+
+
+
+    if (await page.locator('[data-testid="external_identifier-value"]').isVisible()) {
+      await page.locator('[data-testid="external_identifier-value"]').clear();
+      await page.locator('[data-testid="external_identifier-value"]').fill(String((data['external_identifier'] as Record<string, unknown>)?.['value'] ?? ''));
     }
 
 
@@ -588,6 +617,12 @@ test.describe.serial('Candidate CRUD', () => {
 
     if (await page.locator('[data-testid="candidate-field-compensation_expectation_currency"]').count() > 0) {
       await expect(page.locator('[data-testid="candidate-field-compensation_expectation_currency"]')).toBeVisible();
+    }
+
+
+
+    if (await page.locator('[data-testid="candidate-field-external_identifier"]').count() > 0) {
+      await expect(page.locator('[data-testid="candidate-field-external_identifier"]')).toBeVisible();
     }
 
 

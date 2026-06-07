@@ -19,6 +19,7 @@ function testData(): Record<string, unknown> {
     'candidate_id': 'Test Candidate Id',
     'compensation_expectation': 42,
     'compensation_expectation_currency': 'USD',
+    'external_identifier': { value: 'Test External Identifier' },
     'gender': 'Male',
     'position_schedule_type_codes': [{ code: 'FullTime' }],
     'position_titles': ['Test Position Titles'],
@@ -36,6 +37,7 @@ function updatedData(): Record<string, unknown> {
     'candidate_id': 'Updated Candidate Id',
     'compensation_expectation': 99,
     'compensation_expectation_currency': 'AUD',
+    'external_identifier': { value: 'Updated External Identifier' },
     'gender': 'Other',
     'position_schedule_type_codes': [{ code: 'SharedTime' }],
     'position_titles': ['Updated Position Titles'],
@@ -108,6 +110,9 @@ test.describe.serial('Candidate Owner CRUD', () => {
     if (await ownerPage.locator('#compensation_expectation_currency').isVisible()) {
       await ownerPage.locator('#compensation_expectation_currency').selectOption(String(data['compensation_expectation_currency']));
     }
+    if (await ownerPage.locator('[data-testid="external_identifier-value"]').isVisible()) {
+      await ownerPage.locator('[data-testid="external_identifier-value"]').fill(String((data['external_identifier'] as Record<string, unknown>)?.['value'] ?? ''));
+    }
     if (await ownerPage.locator('#gender').isVisible()) {
       await ownerPage.locator('#gender').selectOption(String(data['gender']));
     }
@@ -161,6 +166,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="candidate-field-candidate_id"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="candidate-field-compensation_expectation"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="candidate-field-compensation_expectation_currency"]')).toBeVisible();
+    await expect(ownerPage.locator('[data-testid="candidate-field-external_identifier"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="candidate-field-gender"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="candidate-field-position_schedule_type_codes"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="candidate-field-position_titles"]')).toBeVisible();
@@ -200,6 +206,10 @@ test.describe.serial('Candidate Owner CRUD', () => {
     }
     if (await ownerPage.locator('#compensation_expectation_currency').isVisible()) {
       await ownerPage.locator('#compensation_expectation_currency').selectOption('AUD');
+    }
+    if (await ownerPage.locator('[data-testid="external_identifier-value"]').isVisible()) {
+      await ownerPage.locator('[data-testid="external_identifier-value"]').clear();
+      await ownerPage.locator('[data-testid="external_identifier-value"]').fill(String((updated['external_identifier'] as Record<string, unknown>)?.['value'] ?? ''));
     }
     if (await ownerPage.locator('#gender').isVisible()) {
       await ownerPage.locator('#gender').selectOption('Other');

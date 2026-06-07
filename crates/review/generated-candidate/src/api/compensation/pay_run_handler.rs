@@ -13,7 +13,7 @@ use crate::domain::compensation::pay_run::dto_response::PayRunResponse;
 use crate::domain::compensation::pay_run::dto_response::PayRunLinkedResponse;
 
 use crate::domain::compensation::pay_run::dto_create::CreatePayRunRequest;
-use hr_hooks_api::BulkItemError;
+use crate::error::BulkItemError;
 
 /// Accepts either a single item or an array of items for creation.
 #[derive(Debug, serde::Deserialize, utoipa::ToSchema)]

@@ -61,6 +61,7 @@
   "recruiting_candidate_field_candidate_id": "Candidate Id",
   "recruiting_candidate_field_compensation_expectation": "Compensation Expectation",
   "recruiting_candidate_field_compensation_expectation_currency": "Compensation Expectation Currency",
+  "recruiting_candidate_field_external_identifier": "External Identifier",
   "recruiting_candidate_field_gender": "Gender",
   "recruiting_candidate_field_position_schedule_type_codes": "Position Schedule Type Codes",
   "recruiting_candidate_field_position_titles": "Position Titles",

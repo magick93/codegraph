@@ -21,6 +21,10 @@ fn test_tera() -> tera::Tera {
     template_engine::create_tera(&template_dir).unwrap()
 }
 
+fn test_project_config() -> codegraph::generate::ProjectConfig {
+    codegraph::generate::ProjectConfig::default()
+}
+
 fn candidate_schema() -> SchemaNode {
     SchemaNode {
         schema_id: "recruiting/json/CandidateType.json".to_string(),
@@ -154,7 +158,7 @@ async fn cli_command_generator_includes_filter_fields_in_output() {
 
     let gen = generate::cli::command::CliCommandGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -213,7 +217,7 @@ async fn cli_command_generator_produces_entity_commands() {
 
     let gen = generate::cli::command::CliCommandGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -260,7 +264,7 @@ async fn cli_command_generator_includes_workflow_subcommands() {
 
     let gen = generate::cli::command::CliCommandGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -290,7 +294,7 @@ async fn cli_command_generator_includes_field_args_for_create() {
 
     let gen = generate::cli::command::CliCommandGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -336,7 +340,7 @@ async fn cli_command_generator_includes_api_calls() {
 
     let gen = generate::cli::command::CliCommandGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -372,7 +376,7 @@ async fn cli_command_generator_skips_empty_table_name() {
 
     let gen = generate::cli::command::CliCommandGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -399,6 +403,7 @@ async fn cli_domain_generator_produces_domain_module() {
             &["CandidateType".to_string()],
             &config,
             &tera,
+            &test_project_config(),
         )
         .await
         .unwrap();
@@ -453,6 +458,7 @@ async fn cli_domain_generator_deduplicates_modules() {
             &["CandidateType".to_string(), "CandidateType2".to_string()],
             &config,
             &tera,
+            &test_project_config(),
         )
         .await
         .unwrap();
@@ -483,7 +489,7 @@ async fn cli_scaffold_generator_produces_all_files() {
 
     let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &generation_order, &tera)
+        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -541,7 +547,7 @@ async fn cli_scaffold_main_contains_domain_routing() {
 
     let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &generation_order, &tera)
+        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -588,7 +594,7 @@ async fn cli_scaffold_cargo_toml_has_correct_deps() {
 
     let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &generation_order, &tera)
+        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -635,7 +641,7 @@ async fn cli_scaffold_client_has_crud_methods() {
 
     let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &generation_order, &tera)
+        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -682,7 +688,7 @@ async fn cli_scaffold_output_has_format_options() {
 
     let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &generation_order, &tera)
+        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -763,7 +769,7 @@ async fn cli_scaffold_handles_multiple_domains() {
 
     let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &generation_order, &tera)
+        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -1011,7 +1017,7 @@ async fn cli_scaffold_cargo_toml_has_shadow_rs() {
 
     let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &generation_order, &tera)
+        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -1046,7 +1052,7 @@ async fn cli_scaffold_generates_build_rs() {
 
     let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &generation_order, &tera)
+        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -1077,7 +1083,7 @@ async fn cli_scaffold_main_has_version_subcommand() {
 
     let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &generation_order, &tera)
+        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
         .await
         .unwrap();
 

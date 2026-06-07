@@ -33,7 +33,7 @@ use utoipa::OpenApi;
         crate::domain::compensation::pay_run::dto_create::CreatePayRunRequest,
         crate::api::compensation::pay_run_handler::CreatePayRunBody,
         crate::api::compensation::pay_run_handler::BulkCreateResponse,
-        hr_hooks_api::BulkItemError,
+        crate::error::BulkItemError,
 
 
         crate::domain::compensation::pay_run::dto_update::UpdatePayRunRequest,

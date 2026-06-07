@@ -47,7 +47,7 @@ use utoipa::OpenApi;
         crate::domain::recruiting::candidate::dto_create::CreateCandidateRequest,
         crate::api::recruiting::candidate_handler::CreateCandidateBody,
         crate::api::recruiting::candidate_handler::BulkCreateResponse,
-        hr_hooks_api::BulkItemError,
+        crate::error::BulkItemError,
 
 
         crate::domain::recruiting::candidate::dto_update::UpdateCandidateRequest,
@@ -58,7 +58,7 @@ use utoipa::OpenApi;
         crate::domain::recruiting::application::dto_create::CreateApplicationRequest,
         crate::api::recruiting::application_handler::CreateApplicationBody,
         crate::api::recruiting::application_handler::BulkCreateResponse,
-        hr_hooks_api::BulkItemError,
+        crate::error::BulkItemError,
 
 
         crate::domain::recruiting::application::dto_update::UpdateApplicationRequest,

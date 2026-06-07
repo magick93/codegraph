@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
+use crate::generate::db::dialect::DatabaseTarget;
 
 /// Generator kind — determines how the build planner invokes the generator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +142,8 @@ pub struct BuildPlan {
     pub ifml_frameworks: Vec<IfmlFrameworkTarget>,
     /// Optional template pack directory override from the selected variant.
     pub template_pack_path: Option<PathBuf>,
+    /// Database target dialect for SQL generation (default: Postgres).
+    pub database_target: DatabaseTarget,
 }
 
 impl BuildPlan {
@@ -195,6 +198,14 @@ impl BuildPlan {
             }
         }
 
+        // Parse database_target from features (default: Postgres)
+        let database_target = profile
+            .features
+            .get("database_target")
+            .and_then(|v| v.as_str())
+            .map(DatabaseTarget::from_config)
+            .unwrap_or_default();
+
         Ok(BuildPlan {
             entity_generators: entity_gens,
             domain_generators: domain_gens,
@@ -202,6 +213,7 @@ impl BuildPlan {
             post_gen_scripts,
             ifml_frameworks: profile.ifml_frameworks.clone(),
             template_pack_path: profile.template_pack_path.clone(),
+            database_target,
         })
     }
 
@@ -258,6 +270,11 @@ impl BuildPlan {
     /// Returns true if the named global generator is in the plan.
     pub fn has_global_gen(&self, name: &str) -> bool {
         self.global_generators.iter().any(|g| g == name)
+    }
+
+    /// Returns the database target dialect for this build plan.
+    pub fn database_target(&self) -> DatabaseTarget {
+        self.database_target
     }
 
     /// Returns the IFML framework targets configured for this build plan.

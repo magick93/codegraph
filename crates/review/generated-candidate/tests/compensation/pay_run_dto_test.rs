@@ -8,7 +8,7 @@ mod tests {
     #[test]
     fn test_pay_run_create_dto_deserializes() {
         let json = r#"{ }"#;
-        let _result: Result<hr_app::domain::compensation::pay_run::dto_create::CreatePayRunRequest, _> =
+        let _result: Result<hr-app::domain::compensation::pay_run::dto_create::CreatePayRunRequest, _> =
             serde_json::from_str(json);
         // Should not panic even with empty body (optional fields)
     }
@@ -16,7 +16,7 @@ mod tests {
     #[test]
     fn test_pay_run_response_serializes() {
         // Verify Response DTO can serialize
-        let response = hr_app::domain::compensation::pay_run::dto_response::PayRunResponse {
+        let response = hr-app::domain::compensation::pay_run::dto_response::PayRunResponse {
             id: uuid::Uuid::new_v4(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -30,35 +30,35 @@ mod tests {
     fn test_pay_run_create_body_single_deserializes() {
         // Verify CreateBody untagged enum deserializes a single JSON object
         let json = r#"{ }"#;
-        let body: hr_app::api::compensation::pay_run_handler::CreatePayRunBody =
+        let body: hr-app::api::compensation::pay_run_handler::CreatePayRunBody =
             serde_json::from_str(json).expect("single object should deserialize as CreateBody::Single");
-        assert!(matches!(body, hr_app::api::compensation::pay_run_handler::CreatePayRunBody::Single(_)));
+        assert!(matches!(body, hr-app::api::compensation::pay_run_handler::CreatePayRunBody::Single(_)));
     }
 
     #[test]
     fn test_pay_run_create_body_bulk_deserializes() {
         // Verify CreateBody untagged enum deserializes a JSON array
         let json = r#"[{}, {}]"#;
-        let body: hr_app::api::compensation::pay_run_handler::CreatePayRunBody =
+        let body: hr-app::api::compensation::pay_run_handler::CreatePayRunBody =
             serde_json::from_str(json).expect("array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, hr_app::api::compensation::pay_run_handler::CreatePayRunBody::Bulk(ref items) if items.len() == 2));
+        assert!(matches!(body, hr-app::api::compensation::pay_run_handler::CreatePayRunBody::Bulk(ref items) if items.len() == 2));
     }
 
     #[test]
     fn test_pay_run_create_body_empty_array_deserializes() {
         // Verify empty array deserializes (handler rejects it, but serde should accept it)
         let json = r#"[]"#;
-        let body: hr_app::api::compensation::pay_run_handler::CreatePayRunBody =
+        let body: hr-app::api::compensation::pay_run_handler::CreatePayRunBody =
             serde_json::from_str(json).expect("empty array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, hr_app::api::compensation::pay_run_handler::CreatePayRunBody::Bulk(ref items) if items.is_empty()));
+        assert!(matches!(body, hr-app::api::compensation::pay_run_handler::CreatePayRunBody::Bulk(ref items) if items.is_empty()));
     }
 
     #[test]
     fn test_pay_run_bulk_create_response_serializes() {
         // Verify BulkCreateResponse serializes with correct JSON structure
-        let response = hr_app::api::compensation::pay_run_handler::BulkCreateResponse {
+        let response = hr-app::api::compensation::pay_run_handler::BulkCreateResponse {
             success: vec![
-                hr_app::domain::compensation::pay_run::dto_response::PayRunResponse {
+                hr-app::domain::compensation::pay_run::dto_response::PayRunResponse {
                     id: uuid::Uuid::new_v4(),
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
@@ -66,7 +66,7 @@ mod tests {
                 },
             ],
             failed: vec![
-                hr_app::api::compensation::pay_run_handler::BulkItemError {
+                hr-app::api::compensation::pay_run_handler::BulkItemError {
                     index: 1,
                     error: "test error".to_string(),
                 },

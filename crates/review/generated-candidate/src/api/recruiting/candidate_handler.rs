@@ -13,7 +13,7 @@ use crate::domain::recruiting::candidate::dto_response::CandidateResponse;
 use crate::domain::recruiting::candidate::dto_response::CandidateLinkedResponse;
 
 use crate::domain::recruiting::candidate::dto_create::CreateCandidateRequest;
-use hr_hooks_api::BulkItemError;
+use crate::error::BulkItemError;
 
 /// Accepts either a single item or an array of items for creation.
 #[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
@@ -193,6 +193,8 @@ pub async fn get_by_id(
     let linked = linked.with_related("amount", format!("{}/{}", self_href, "amount"));
 
     let linked = linked.with_related("distribution_guidelines", format!("{}/{}", self_href, "distribution-guidelines"));
+
+    let linked = linked.with_related("identifier", format!("{}/{}", self_href, "identifier"));
 
     let linked = linked.with_related("gender_code_list", format!("{}/{}", self_href, "gender-code-list"));
 

@@ -1,0 +1,268 @@
+syntax = "proto3";
+package recruiting;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+import "shared.proto";
+option go_package = "recruiting/;recruiting";
+
+
+
+
+/// Candidate entity
+message Candidate {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional google.protobuf.Timestamp birthDate = 2;
+  
+    // Last name
+  string familyName = 3;
+  
+    // First name
+  string givenName = 4;
+  
+    // Application process history (array-type schema)
+  optional CandidateApplicationProcessHistory applicationProcessHistory = 5;
+  
+    // Unique candidate identifier
+  string candidateId = 6;
+  
+    // Expected compensation (composite wrapper)
+  optional CandidateCompensationExpectation compensationExpectation = 7;
+  
+    // Distribution guidelines (inline def with allOf)
+  optional CandidateDistributionGuidelines distributionGuidelines = 8;
+  
+    // External identifier (structured wrapper / JSONB)
+  optional google.protobuf.Struct externalIdentifier = 9;
+  
+    // Gender codelist reference
+  optional string gender = 10;
+  
+    // Candidate name (value object)
+  optional CandidatePersonName personName = 11;
+  
+    // Schedule type preferences (array of codelist)
+  optional string positionScheduleTypeCodes = 12;
+  
+    // Preferred position titles (array_wrapper)
+  repeated string positionTitles = 13;
+  
+    // Array of value-object qualifications
+  optional CandidateQualifications qualifications = 14;
+  
+    // Source application (entity reference)
+  optional string referredByApplication = 15;
+  
+    // Current candidate status
+  optional string status = 16;
+  
+    // Public profile URL
+  optional string uri = 17;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for Candidate
+message CreateCandidateRequest {
+  
+  
+  optional google.protobuf.Timestamp birthDate = 2;
+  
+    // Last name
+  string familyName = 3;
+  
+    // First name
+  string givenName = 4;
+  
+    // Application process history (array-type schema)
+  optional CandidateApplicationProcessHistory applicationProcessHistory = 5;
+  
+    // Unique candidate identifier
+  string candidateId = 6;
+  
+    // Expected compensation (composite wrapper)
+  optional CandidateCompensationExpectation compensationExpectation = 7;
+  
+    // Distribution guidelines (inline def with allOf)
+  optional CandidateDistributionGuidelines distributionGuidelines = 8;
+  
+    // External identifier (structured wrapper / JSONB)
+  optional google.protobuf.Struct externalIdentifier = 9;
+  
+    // Gender codelist reference
+  optional string gender = 10;
+  
+    // Candidate name (value object)
+  optional CandidatePersonName personName = 11;
+  
+    // Schedule type preferences (array of codelist)
+  optional string positionScheduleTypeCodes = 12;
+  
+    // Preferred position titles (array_wrapper)
+  repeated string positionTitles = 13;
+  
+    // Array of value-object qualifications
+  optional CandidateQualifications qualifications = 14;
+  
+    // Source application (entity reference)
+  optional string referredByApplication = 15;
+  
+    // Current candidate status
+  optional string status = 16;
+  
+    // Public profile URL
+  optional string uri = 17;
+  
+}
+
+/// Update request for Candidate
+message UpdateCandidateRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional google.protobuf.Timestamp birthDate = 2;
+  
+    // Last name
+  optional string familyName = 3;
+  
+    // First name
+  optional string givenName = 4;
+  
+    // Application process history (array-type schema)
+  optional CandidateApplicationProcessHistory applicationProcessHistory = 5;
+  
+    // Unique candidate identifier
+  optional string candidateId = 6;
+  
+    // Expected compensation (composite wrapper)
+  optional CandidateCompensationExpectation compensationExpectation = 7;
+  
+    // Distribution guidelines (inline def with allOf)
+  optional CandidateDistributionGuidelines distributionGuidelines = 8;
+  
+    // External identifier (structured wrapper / JSONB)
+  optional google.protobuf.Struct externalIdentifier = 9;
+  
+    // Gender codelist reference
+  optional string gender = 10;
+  
+    // Candidate name (value object)
+  optional CandidatePersonName personName = 11;
+  
+    // Schedule type preferences (array of codelist)
+  optional string positionScheduleTypeCodes = 12;
+  
+    // Preferred position titles (array_wrapper)
+  repeated string positionTitles = 13;
+  
+    // Array of value-object qualifications
+  optional CandidateQualifications qualifications = 14;
+  
+    // Source application (entity reference)
+  optional string referredByApplication = 15;
+  
+    // Current candidate status
+  optional string status = 16;
+  
+    // Public profile URL
+  optional string uri = 17;
+  
+}
+
+/// Get request for Candidate
+message GetCandidateRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for Candidate
+message DeleteCandidateRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for Candidate
+message ListCandidateRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Filter by workflow status
+  optional string status = 4;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for Candidate
+message ListCandidateResponse {
+  
+  
+  repeated Candidate data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+/// Workflow transition request
+message TransitionRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+    // Transition action name
+  string action = 2;
+  
+    // Optional comment
+  optional string comment = 3;
+  
+    // Optional assignee UUID
+  optional string assignee_id = 4;
+  
+}
+
+
+
+// ── Candidate Service ──────────────────────────────────────────
+service CandidateService {
+  
+  // Create a new entity
+  rpc Create(CreateCandidateRequest) returns (Candidate);
+  
+  // Get an entity by ID
+  rpc Get(GetCandidateRequest) returns (Candidate);
+  
+  // Update an existing entity
+  rpc Update(UpdateCandidateRequest) returns (Candidate);
+  
+  // List entities with pagination
+  rpc List(ListCandidateRequest) returns (ListCandidateResponse);
+  
+  // Execute a workflow transition
+  rpc Transition(TransitionRequest) returns (Candidate);
+  
+}

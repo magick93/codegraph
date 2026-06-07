@@ -4,7 +4,7 @@ Graph-driven code generation from JSON Schema.
 
 ## Overview
 
-codegraph ingests JSON Schema files, builds a type dependency graph, auto-classifies entities vs. value objects, and generates full-stack boilerplate code. It currently targets the Rust/Axum/SeaORM/SvelteKit stack, with optional gRPC support via tonic.
+codegraph ingests JSON Schema files, builds a type dependency graph, auto-classifies entities vs. value objects, and generates full-stack boilerplate code. It targets the Rust/Axum/SeaORM/SvelteKit stack, with optional gRPC support via tonic, and configurable database dialect (PostgreSQL default, SQLite experimental).
 
 ## Getting Started
 
@@ -38,6 +38,24 @@ When `grpc_backend = true` is set in `profiles.toml` (default in all API profile
 **Build integration**: The generated `build.rs` compiles all `.proto` files via `tonic_build`, producing both server and client code. Clients are auto-generated (`{Entity}ServiceClient<T>`) with zero additional codegen.
 
 **Prerequisites**: `protoc` (the protobuf compiler) must be in `PATH` for the generated project to build.
+
+### Database Dialect Support
+
+Generated SQL can target PostgreSQL (default) or SQLite via the `database_target` profile feature:
+
+```toml
+# profiles.toml
+[profiles.default.features]
+database_target = "sqlite"   # or "postgres" (default)
+```
+
+When set to `"sqlite"`, generated DDL uses SQLite-compatible types (`TEXT` for UUID/JSON,
+`INTEGER` for booleans/timestamps, `BLOB` for geometry/vectors), omits PostgreSQL-only
+features (schemas, RLS, extensions, PL/pgSQL), and uses inline trigger syntax.
+
+The `SqlDialect` trait (`crates/codegraph/src/generate/db/dialect.rs`) abstracts all
+dialect differences. Adding a new target requires implementing the trait and creating
+templates under `templates/db/<target>/`.
 
 ## Configuration
 

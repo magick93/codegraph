@@ -99,6 +99,14 @@ impl<'a> CandidatePage<'a> {
 
 
 
+    pub async fn fill_external_identifier(&self, value: &str) -> Result<()> {
+        self.page.fill_builder("#external_identifier", value).fill().await?;
+        Ok(())
+    }
+
+
+
+
     pub async fn select_gender(&self, value: &str) -> Result<()> {
         self.page
             .select_option_builder("#gender")
@@ -231,6 +239,12 @@ impl<'a> CandidatePage<'a> {
 
         if let Some(v) = data.get("compensation_expectation_currency").and_then(|v| v.as_str()) {
             self.select_compensation_expectation_currency(v).await.ok();
+        }
+
+
+
+        if let Some(v) = data.get("external_identifier").and_then(|v| v.as_str()) {
+            self.fill_external_identifier(v).await.ok();
         }
 
 
