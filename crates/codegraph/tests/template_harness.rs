@@ -464,6 +464,114 @@ async fn candidate_dto_create() {
 }
 
 #[tokio::test]
+async fn dto_create_template_omits_garde_when_disabled() {
+    let tera = test_tera();
+    let project = codegraph::generate::ProjectConfig::default();
+
+    let ctx = codegraph::generate::ddd::dto::DtoContext {
+        module_name: "test_entity".to_string(),
+        entity_name: "TestEntity".to_string(),
+        domain: "test".to_string(),
+        fields: vec![
+            codegraph::generate::ddd::dto::DtoField {
+                name: "name".to_string(),
+                rust_type: "String".to_string(),
+                is_required: true,
+                is_array: false,
+                description: String::new(),
+                render_strategy: "direct_column".to_string(),
+                is_entity_ref: false,
+                is_hierarchy_field: false,
+                min_length: Some(2),
+                max_length: Some(100),
+                minimum: None,
+                maximum: None,
+                pattern: None,
+                format: None,
+            },
+            codegraph::generate::ddd::dto::DtoField {
+                name: "email".to_string(),
+                rust_type: "String".to_string(),
+                is_required: false,
+                is_array: false,
+                description: String::new(),
+                render_strategy: "direct_column".to_string(),
+                is_entity_ref: false,
+                is_hierarchy_field: false,
+                min_length: None,
+                max_length: None,
+                minimum: None,
+                maximum: None,
+                pattern: None,
+                format: Some("email".to_string()),
+            },
+            codegraph::generate::ddd::dto::DtoField {
+                name: "parent".to_string(),
+                rust_type: "Uuid".to_string(),
+                is_required: false,
+                is_array: false,
+                description: String::new(),
+                render_strategy: "entity_ref".to_string(),
+                is_entity_ref: true,
+                is_hierarchy_field: false,
+                min_length: None,
+                max_length: None,
+                minimum: None,
+                maximum: None,
+                pattern: None,
+                format: None,
+            },
+        ],
+        immutable_fields: vec![],
+        workflow_excluded_fields: vec![],
+        list_exclude: vec![],
+        list_include: vec![],
+        has_list_fields: false,
+        operations: vec!["create".to_string(), "update".to_string()],
+        child_dtos: vec![],
+        all_child_dtos: vec![],
+        codelist_imports: vec![],
+        codelist_imports_update: vec![],
+        has_workflow: false,
+        has_approval_status: false,
+        structured_imports: vec![],
+        has_validate: false,
+    };
+
+    let create = codegraph::generate::render_template_with_project(
+        &tera,
+        "domain_types/dto_create.tera",
+        &ctx,
+        &project,
+    )
+    .unwrap();
+    assert!(
+        !create.contains("garde::Validate"),
+        "Should NOT derive garde::Validate when disabled"
+    );
+    assert!(
+        !create.contains("#[garde("),
+        "Should NOT have garde attributes when disabled"
+    );
+
+    let update = codegraph::generate::render_template_with_project(
+        &tera,
+        "domain_types/dto_update.tera",
+        &ctx,
+        &project,
+    )
+    .unwrap();
+    assert!(
+        !update.contains("garde::Validate"),
+        "Update DTO should NOT derive garde::Validate when disabled"
+    );
+    assert!(
+        !update.contains("#[garde("),
+        "Update DTO should NOT have garde attributes when disabled"
+    );
+}
+
+#[tokio::test]
 async fn candidate_dto_response() {
     let mock = setup_mock().await;
     let config = test_domain_config();
@@ -2088,8 +2196,12 @@ async fn codelist_enum_template_renders_correctly() {
         !content.contains("#[serde(rename"),
         "PascalCase values should NOT have serde rename"
     );
-    // Default derive (first variant marked with #[default])
-    assert!(content.contains("#[default]"), "Should implement Default");
+    // Default derive (first variant marked with #[default]) — issue #9
+    assert!(
+        content.contains("Default,"),
+        "Codelist enum should derive Default (issue #9)"
+    );
+    assert!(content.contains("#[default]"), "First variant should be #[default]");
     assert!(
         content.contains("Male"),
         "Default should be first variant (Male)"

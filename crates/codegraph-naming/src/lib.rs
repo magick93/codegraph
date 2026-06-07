@@ -84,7 +84,7 @@ pub fn to_kebab_case(name: &str) -> String {
 /// PostgreSQL reserved words that cause syntax errors when used as unquoted identifiers.
 ///
 /// Source: PostgreSQL 16 documentation, Appendix C — SQL Key Words (reserved).
-const PG_RESERVED: &[&str] = &[
+pub const PG_RESERVED: &[&str] = &[
     "all",
     "analyse",
     "analyze",

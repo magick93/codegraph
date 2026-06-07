@@ -472,6 +472,46 @@ async fn grafeo_scaffold_lib_rs_includes_structured_re_exports() {
     );
 }
 
+#[tokio::test]
+async fn grafeo_scaffold_domain_types_has_cargo_toml() {
+    let (engine, config) = setup_grafeo().await;
+    let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
+
+    let tmp = std::env::temp_dir().join("grafeo-test-scaffold-cargo-toml");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    let gen = DomainTypesScaffoldGenerator::new_with_base(tmp.clone());
+    let order = codegraph::generate::compute_generation_order(&engine, &config)
+        .await
+        .unwrap();
+    let files = gen
+        .generate(&engine, &config, &order, &tera, &ProjectConfig::default())
+        .await
+        .unwrap();
+
+    let has_cargo_toml = files
+        .iter()
+        .any(|f| f.path.to_string_lossy().ends_with("Cargo.toml"));
+    assert!(
+        has_cargo_toml,
+        "DomainTypesScaffoldGenerator should produce a Cargo.toml"
+    );
+
+    let cargo_toml = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("Cargo.toml"))
+        .unwrap();
+    assert!(
+        cargo_toml.content.contains("[package]"),
+        "Cargo.toml should have [package] section"
+    );
+    assert!(
+        cargo_toml.content.contains("name = \"hr-domain-types\""),
+        "Should use correct package name"
+    );
+}
+
 // === Task 6: Update DTO ===
 
 #[tokio::test]

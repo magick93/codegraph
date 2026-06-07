@@ -923,4 +923,102 @@ tag = "Some"
         assert!(entity.hierarchy_field.is_none());
     }
 
+    #[test]
+    fn parse_auditable_defaults() {
+        let toml_str = r#"
+[defaults]
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting/json"
+postgres_schema = "recruiting"
+"#;
+        let config = parse_domain_config_str(toml_str).unwrap();
+        let recruiting = &config.domains["recruiting"];
+        assert!(recruiting.auditable.is_none());
+    }
+
+    #[test]
+    fn parse_auditable_explicit() {
+        let toml_str = r#"
+[defaults]
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting/json"
+postgres_schema = "recruiting"
+auditable = false
+"#;
+        let config = parse_domain_config_str(toml_str).unwrap();
+        let recruiting = &config.domains["recruiting"];
+        assert_eq!(recruiting.auditable, Some(false));
+    }
+
+    #[test]
+    fn parse_tier_default() {
+        let toml_str = r#"
+[defaults]
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting/json"
+postgres_schema = "recruiting"
+"#;
+        let config = parse_domain_config_str(toml_str).unwrap();
+        assert_eq!(config.domains["recruiting"].tier, "extended");
+    }
+
+    #[test]
+    fn parse_tier_explicit() {
+        let toml_str = r#"
+[defaults]
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting/json"
+postgres_schema = "recruiting"
+tier = "core"
+"#;
+        let config = parse_domain_config_str(toml_str).unwrap();
+        assert_eq!(config.domains["recruiting"].tier, "core");
+    }
+
+    #[test]
+    fn parse_types_import_prefix_domain_override() {
+        let toml_str = r#"
+[defaults]
+types_import_prefix = "codegraph_type_contracts"
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting/json"
+postgres_schema = "recruiting"
+
+[domains.recruiting.entity_config.CandidateType]
+role = "root"
+"#;
+        let config = parse_domain_config_str(toml_str).unwrap();
+        assert_eq!(
+            config.defaults.types_import_prefix,
+            "codegraph_type_contracts"
+        );
+    }
+
+    #[test]
+    fn parse_types_import_prefix_entity_override() {
+        let toml_str = r#"
+[defaults]
+types_import_prefix = "crate::structured"
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting/json"
+postgres_schema = "recruiting"
+
+[domains.recruiting.entity_config.CandidateType]
+role = "root"
+"#;
+        let config = parse_domain_config_str(toml_str).unwrap();
+        assert_eq!(config.defaults.types_import_prefix, "crate::structured");
+    }
 }

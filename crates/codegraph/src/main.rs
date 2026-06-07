@@ -250,7 +250,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         let meta = &resolved.meta;
         domain_types_base_path = meta.domain_types_base
             .as_ref()
-            .map(|p| std::env::current_dir().unwrap_or_default().join(p));
+            .map(|p| output.join(p));
         let database_target_str = plan.database_target().to_string();
         project_config = Some(ProjectConfig {
             app_name: meta.app_name.clone().unwrap_or_else(|| "hr-app".into()),
@@ -266,6 +266,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             codegraph_workflow_base: meta.codegraph_workflow_base.clone().unwrap_or_default(),
             type_contracts_base: meta.type_contracts_base.clone().unwrap_or_default(),
             database_target: database_target_str,
+            types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
         });
 
         println!(
