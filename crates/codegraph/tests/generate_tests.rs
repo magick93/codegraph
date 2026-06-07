@@ -151,6 +151,10 @@ fn test_domain_config() -> codegraph_config::DomainConfig {
     codegraph_config::config::parse_domain_config(Path::new("tests/fixtures/domains.toml")).unwrap()
 }
 
+fn test_project_config() -> codegraph::generate::ProjectConfig {
+    codegraph::generate::ProjectConfig::default()
+}
+
 // === Generation Ordering Tests ===
 
 #[tokio::test]
@@ -219,7 +223,7 @@ async fn test_ddl_generator_produces_table_sql() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -272,7 +276,7 @@ async fn test_entity_generator_produces_model() {
 
     let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -303,7 +307,7 @@ async fn test_dto_generator_produces_create_and_response() {
 
     let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera)
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
         .await
         .unwrap();
 
@@ -846,7 +850,7 @@ async fn test_domain_types_codelist_generates_enum_not_string_alias() {
     )
     .unwrap();
 
-    let files = gen.generate_all(&mock, &tera).await.unwrap();
+    let files = gen.generate_all(&mock, &tera, &test_project_config()).await.unwrap();
 
     assert!(
         files.len() >= 2,
