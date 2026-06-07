@@ -1,0 +1,139 @@
+syntax = "proto3";
+package recruiting;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "recruiting/;recruiting";
+
+
+
+
+/// Application entity
+message Application {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  string applicationId = 2;
+  
+  
+  optional google.protobuf.Timestamp appliedDate = 3;
+  
+  
+  optional string candidate = 4;
+  
+  
+  optional string status = 5;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for Application
+message CreateApplicationRequest {
+  
+  
+  string applicationId = 2;
+  
+  
+  optional google.protobuf.Timestamp appliedDate = 3;
+  
+  
+  optional string candidate = 4;
+  
+  
+  optional string status = 5;
+  
+}
+
+/// Update request for Application
+message UpdateApplicationRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional string applicationId = 2;
+  
+  
+  optional google.protobuf.Timestamp appliedDate = 3;
+  
+  
+  optional string candidate = 4;
+  
+  
+  optional string status = 5;
+  
+}
+
+/// Get request for Application
+message GetApplicationRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for Application
+message DeleteApplicationRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for Application
+message ListApplicationRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for Application
+message ListApplicationResponse {
+  
+  
+  repeated Application data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── Application Service ──────────────────────────────────────────
+service ApplicationService {
+  
+  // Create a new entity
+  rpc Create(CreateApplicationRequest) returns (Application);
+  
+  // Get an entity by ID
+  rpc Get(GetApplicationRequest) returns (Application);
+  
+  // Update an existing entity
+  rpc Update(UpdateApplicationRequest) returns (Application);
+  
+  // Delete an entity by ID
+  rpc Delete(DeleteApplicationRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListApplicationRequest) returns (ListApplicationResponse);
+  
+}

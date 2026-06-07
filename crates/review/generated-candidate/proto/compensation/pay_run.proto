@@ -1,0 +1,130 @@
+syntax = "proto3";
+package compensation;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "compensation/;compensation";
+
+
+
+
+/// PayRun entity
+message PayRun {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  string payRunId = 2;
+  
+  
+  optional google.protobuf.Timestamp runDate = 3;
+  
+  
+  optional PayRunTotalAmount totalAmount = 4;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for PayRun
+message CreatePayRunRequest {
+  
+  
+  string payRunId = 2;
+  
+  
+  optional google.protobuf.Timestamp runDate = 3;
+  
+  
+  optional PayRunTotalAmount totalAmount = 4;
+  
+}
+
+/// Update request for PayRun
+message UpdatePayRunRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional string payRunId = 2;
+  
+  
+  optional google.protobuf.Timestamp runDate = 3;
+  
+  
+  optional PayRunTotalAmount totalAmount = 4;
+  
+}
+
+/// Get request for PayRun
+message GetPayRunRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for PayRun
+message DeletePayRunRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for PayRun
+message ListPayRunRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for PayRun
+message ListPayRunResponse {
+  
+  
+  repeated PayRun data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── PayRun Service ──────────────────────────────────────────
+service PayRunService {
+  
+  // Create a new entity
+  rpc Create(CreatePayRunRequest) returns (PayRun);
+  
+  // Get an entity by ID
+  rpc Get(GetPayRunRequest) returns (PayRun);
+  
+  // Update an existing entity
+  rpc Update(UpdatePayRunRequest) returns (PayRun);
+  
+  // Delete an entity by ID
+  rpc Delete(DeletePayRunRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListPayRunRequest) returns (ListPayRunResponse);
+  
+}

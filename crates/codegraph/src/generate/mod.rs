@@ -184,6 +184,9 @@ pub struct ProjectConfig {
     pub decision_engine_base: String,
     pub codegraph_workflow_base: String,
     pub type_contracts_base: String,
+    /// Database target dialect for SQL generation ("postgres" or "sqlite").
+    /// Used by DB templates to branch on dialect-specific syntax.
+    pub database_target: String,
 }
 
 impl Default for ProjectConfig {
@@ -201,6 +204,7 @@ impl Default for ProjectConfig {
             decision_engine_base: String::new(),
             codegraph_workflow_base: String::new(),
             type_contracts_base: String::new(),
+            database_target: "postgres".to_string(),
         }
     }
 }

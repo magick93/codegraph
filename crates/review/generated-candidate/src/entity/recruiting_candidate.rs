@@ -34,6 +34,11 @@ pub struct Model {
     pub compensation_expectation_currency: Option<String>,
 
 
+    #[sea_orm(column_type = "JsonBinary")]
+
+    pub external_identifier: Option<serde_json::Value>,
+
+
     pub gender: Option<String>,
 
 

@@ -1,6 +1,7 @@
 pub mod basejump_setup;
 pub mod codelist;
 pub mod ddl;
+pub mod dialect;
 pub mod entity;
 pub mod event_trigger;
 pub mod platform_schema;

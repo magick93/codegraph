@@ -36,14 +36,18 @@ async fn set_rls_session_vars(
 pub struct ApplicationQueryHandler {
     repo: Arc<dyn ApplicationRepository>,
     db: DatabaseConnection,
+
     hooks: Option<Arc<dyn hr_hooks_api::generated::recruiting::application::ApplicationLifecycle>>,
+
 }
 
 impl ApplicationQueryHandler {
     pub fn new(
         repo: Arc<dyn ApplicationRepository>,
         db: DatabaseConnection,
+
         hooks: Option<Arc<dyn hr_hooks_api::generated::recruiting::application::ApplicationLifecycle>>,
+
     ) -> Self {
         Self { repo, db, hooks }
     }
@@ -54,6 +58,8 @@ impl ApplicationQueryHandler {
         set_rls_session_vars(&tx, api_key_id, organization_id).await?;
         let mut result = self.repo.find_by_id(&tx, id).await?;
         tx.commit().await?;
+
+        
 
         // --- on_query hook ---
         if let Some(hooks) = &self.hooks {
@@ -68,6 +74,8 @@ impl ApplicationQueryHandler {
                 }
             }
         }
+
+        
 
         Ok(result)
     }

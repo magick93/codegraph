@@ -50,6 +50,10 @@ function testData(): Record<string, unknown> {
 
 
 
+    'external_identifier': { value: 'Test External Identifier' },
+
+
+
     'gender': 'Male',
 
 

@@ -19,6 +19,7 @@ function testData(): Record<string, unknown> {
     'candidate_id': 'ACME Isolation Candidate Id',
     'compensation_expectation': 77,
     'compensation_expectation_currency': 'USD',
+    'external_identifier': { value: 'ACME Isolation External Identifier' },
     'gender': 'Male',
     'position_schedule_type_codes': [{ code: 'FullTime' }],
     'position_titles': ['ACME Isolation Position Titles'],

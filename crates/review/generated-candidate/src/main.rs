@@ -309,8 +309,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         .route("/integrations", axum::routing::get(integrations::get_integrations))
 
-        .nest("/reports", api::report_router::report_routes())
-
 
         .nest("/webhooks", crate::webhook_router::webhook_routes())
 
@@ -341,9 +339,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(state);
 
     // Merge custom extension routes (Router<()>) after .with_state()
-    let app = custom_routes.into_iter().fold(app, |app, (prefix, router)| {
-        app.nest(&prefix, router)
-    });
+
 
     let app = app
         .layer(axum::middleware::from_fn(metrics_middleware::track_metrics))

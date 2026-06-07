@@ -13,7 +13,7 @@ use crate::domain::recruiting::application::dto_response::ApplicationResponse;
 use crate::domain::recruiting::application::dto_response::ApplicationLinkedResponse;
 
 use crate::domain::recruiting::application::dto_create::CreateApplicationRequest;
-use hr_hooks_api::BulkItemError;
+use crate::error::BulkItemError;
 
 /// Accepts either a single item or an array of items for creation.
 #[derive(Debug, serde::Deserialize, utoipa::ToSchema)]

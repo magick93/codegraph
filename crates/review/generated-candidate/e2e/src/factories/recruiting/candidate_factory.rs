@@ -35,6 +35,10 @@ impl CandidateFactory {
 
 
 
+        m.insert("external_identifier", json!("Test External Identifier"));
+
+
+
         m.insert("gender", json!("Male"));
 
 

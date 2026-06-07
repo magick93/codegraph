@@ -105,7 +105,7 @@ pub async fn transition(
         .ok_or_else(|| AppError::not_found(format!("Candidate {id} not found")))?;
     let entity_data = serde_json::to_value(&entity)
         .map_err(|e| AppError::internal(format!("Serialize error: {e}")))?;
-    let ctx = platform_workflow::TransitionContext {
+    let ctx = codegraph_workflow::TransitionContext {
         tenant_id: api_key_info.organization_id,
         entity_id: id,
         domain: "recruiting".to_string(),
@@ -116,10 +116,10 @@ pub async fn transition(
         idempotency_key: body.idempotency_key,
         comment: body.comment,
         entity_data,
-        trigger_source: platform_workflow::TriggerSource::User,
+        trigger_source: codegraph_workflow::TriggerSource::User,
     };
     let ws = state.workflow_service.transition(ctx).await.map_err(|e| {
-        use platform_workflow::WorkflowError;
+        use codegraph_workflow::WorkflowError;
         match &e {
             WorkflowError::InvalidTransition { .. } | WorkflowError::AlreadyTerminal => {
                 AppError::conflict(e.to_string()).with_correlation_id(correlation_id)
@@ -168,7 +168,7 @@ pub async fn delegate(
 ) -> Result<axum::http::StatusCode, AppError> {
     let correlation_id = extract_correlation_id(&headers, body.correlation_id);
     let from_actor_id = api_key_info.api_key_id;
-    let ctx = platform_workflow::DelegationContext {
+    let ctx = codegraph_workflow::DelegationContext {
         tenant_id: api_key_info.organization_id,
         entity_id: id,
         domain: "recruiting".to_string(),

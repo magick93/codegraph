@@ -19,6 +19,7 @@ function testData(): Record<string, unknown> {
     'candidate_id': 'Test Candidate Id',
     'compensation_expectation': 42,
     'compensation_expectation_currency': 'USD',
+    'external_identifier': { value: 'Test External Identifier' },
     'gender': 'Male',
     'position_schedule_type_codes': [{ code: 'FullTime' }],
     'position_titles': ['Test Position Titles'],
@@ -82,6 +83,7 @@ test.describe.serial('Candidate Employee View', () => {
     await expect(employeePage.locator('[data-testid="candidate-field-candidate_id"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-compensation_expectation"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-compensation_expectation_currency"]')).toBeVisible();
+    await expect(employeePage.locator('[data-testid="candidate-field-external_identifier"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-gender"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-position_schedule_type_codes"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-position_titles"]')).toBeVisible();

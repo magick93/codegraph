@@ -9,7 +9,7 @@ mod tests {
     #[test]
     fn test_candidate_entity_columns() {
         // Verify the entity model compiles and has expected columns
-        let _model = hr_app::entity::candidate::Model {
+        let _model = hr-app::entity::candidate::Model {
             id: Uuid::new_v4(),
             ..Default::default()
         };

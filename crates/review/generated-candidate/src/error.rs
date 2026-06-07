@@ -56,6 +56,7 @@ impl AppError {
         Self { status: StatusCode::UNPROCESSABLE_ENTITY, code: "HOOK_ABORTED", message: reason.into(), details: None, correlation_id: None }
     }
 
+
     pub fn hook_error(err: hr_hooks_api::HookError) -> Self {
         match err {
             hr_hooks_api::HookError::Validation(msg) => Self::validation(msg, vec![]),
@@ -65,6 +66,7 @@ impl AppError {
             hr_hooks_api::HookError::Internal(e) => Self::internal(e.to_string()),
         }
     }
+
 
     pub fn with_correlation_id(mut self, id: Uuid) -> Self {
         self.correlation_id = Some(id);
@@ -87,4 +89,11 @@ impl IntoResponse for AppError {
         }
         (self.status, Json(body)).into_response()
     }
+}
+
+/// Error item for bulk create/update operations.
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct BulkItemError {
+    pub index: usize,
+    pub error: String,
 }

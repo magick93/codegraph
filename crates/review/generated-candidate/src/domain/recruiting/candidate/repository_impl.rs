@@ -40,6 +40,7 @@ impl CandidateRepository for CandidateRepositoryImpl {
             candidate_id: Set(cmd.candidate_id),
             compensation_expectation: Set(cmd.compensation_expectation),
             compensation_expectation_currency: Set(cmd.compensation_expectation_currency.map(|v| v.to_string())),
+            external_identifier: Set(cmd.external_identifier.as_ref().and_then(|v| serde_json::to_value(v).ok())),
             gender: Set(cmd.gender.map(|v| v.to_string())),
             position_titles: Set(cmd.position_titles),
             referred_by_application_id: Set(cmd.referred_by_application_id),
@@ -226,6 +227,7 @@ impl CandidateRepository for CandidateRepositoryImpl {
             candidate_id: row.candidate_id,
             compensation_expectation: row.compensation_expectation,
             compensation_expectation_currency: row.compensation_expectation_currency.and_then(|v| v.parse().ok()),
+            external_identifier: row.external_identifier.and_then(|v| serde_json::from_value(v).ok()),
             gender: row.gender.and_then(|v| v.parse().ok()),
             position_titles: row.position_titles,
             referred_by_application_id: row.referred_by_application_id,
@@ -260,6 +262,7 @@ impl CandidateRepository for CandidateRepositoryImpl {
         if let Some(v) = cmd.candidate_id { model.candidate_id = Set(v); }
         if let Some(v) = cmd.compensation_expectation { model.compensation_expectation = Set(Some(v)); }
         if let Some(v) = cmd.compensation_expectation_currency { model.compensation_expectation_currency = Set(Some(v.to_string())); }
+        if let Some(v) = cmd.external_identifier { model.external_identifier = Set(serde_json::to_value(v).ok()); }
         if let Some(v) = cmd.gender { model.gender = Set(Some(v.to_string())); }
         if let Some(v) = cmd.position_titles { model.position_titles = Set(Some(v)); }
         if let Some(v) = cmd.referred_by_application_id { model.referred_by_application_id = Set(Some(v)); }
@@ -480,6 +483,7 @@ impl CandidateRepository for CandidateRepositoryImpl {
                 candidate_id: row.candidate_id,
                 compensation_expectation: row.compensation_expectation,
                 compensation_expectation_currency: row.compensation_expectation_currency.and_then(|v| v.parse().ok()),
+                external_identifier: row.external_identifier.and_then(|v| serde_json::from_value(v).ok()),
                 gender: row.gender.and_then(|v| v.parse().ok()),
                 position_titles: row.position_titles,
                 referred_by_application_id: row.referred_by_application_id,

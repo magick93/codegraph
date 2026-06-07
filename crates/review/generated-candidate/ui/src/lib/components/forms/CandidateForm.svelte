@@ -51,6 +51,14 @@
 
 
 
+	let external_identifier = $state<Record<string, unknown>>(
+		typeof initialData['external_identifier'] === 'object' && initialData['external_identifier'] !== null && !Array.isArray(initialData['external_identifier'])
+			? (initialData['external_identifier'] as Record<string, unknown>)
+			: {}
+	);
+
+
+
 	let gender = $state(String(initialData['gender'] ?? ''));
 
 
@@ -110,6 +118,10 @@
 
 
 
+			if ((external_identifier as Record<string, unknown>).value) data['external_identifier'] = external_identifier;
+
+
+
 			if (gender) data['gender'] = gender;
 
 
@@ -161,6 +173,10 @@
 
 
 			if (compensation_expectation_currency !== String(initialData['compensation_expectation_currency'] ?? '')) data['compensation_expectation_currency'] = compensation_expectation_currency;
+
+
+
+			if (JSON.stringify(external_identifier) !== JSON.stringify(initialData['external_identifier'] ?? {})) data['external_identifier'] = external_identifier;
 
 
 
@@ -298,6 +314,29 @@
 				<NativeSelect.Option value="AUD">AUD</NativeSelect.Option>
 
 			</NativeSelect.Root>
+
+		</Field.Field>
+
+
+
+		<Field.Field>
+			<StructuredWrapperField
+				label={m.recruiting_candidate_field_external_identifier()}
+				required={false}
+				isArray={false}
+				fieldName="external_identifier"
+				subFields={[
+					{ name: 'value', label: 'Value', required: true, showByDefault: true, description: '' },
+					{ name: 'schemeAgencyId', label: 'Scheme Agency Id', required: false, showByDefault: true, description: '' },
+					{ name: 'schemeId', label: 'Scheme Id', required: false, showByDefault: false, description: '' },
+					{ name: 'schemeVersionId', label: 'Scheme Version Id', required: false, showByDefault: false, description: '' },
+					
+				]}
+				bind:value={external_identifier}
+				disabled={submitting}
+			/>
+
+			<Field.Description>External identifier (structured wrapper / JSONB)</Field.Description>
 
 		</Field.Field>
 

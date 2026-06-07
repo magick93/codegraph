@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS recruiting.candidate (
     compensation_expectation_currency TEXT,
 
 
+    external_identifier JSONB,
+
+
     gender TEXT,
 
 
@@ -306,6 +309,9 @@ COMMENT ON COLUMN recruiting.candidate.compensation_expectation IS $$Expected co
 
 
 COMMENT ON COLUMN recruiting.candidate.compensation_expectation_currency IS $$Expected compensation (composite wrapper)$$;
+
+
+COMMENT ON COLUMN recruiting.candidate.external_identifier IS $$External identifier (structured wrapper / JSONB)$$;
 
 
 COMMENT ON COLUMN recruiting.candidate.gender IS $$Gender codelist reference$$;

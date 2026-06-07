@@ -150,6 +150,24 @@ export const CandidateDescriptor: EntityDescriptor = {
     },
 
     {
+      name: 'external_identifier',
+      label: 'External Identifier',
+      type: 'text',
+      tsType: 'string',
+
+
+
+
+      description: 'External identifier (structured wrapper / JSONB)',
+
+
+
+
+
+
+    },
+
+    {
       name: 'gender',
       label: 'Gender',
       type: 'select',
