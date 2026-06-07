@@ -12,6 +12,8 @@
 
 use std::fmt;
 
+use codegraph_naming::PG_RESERVED;
+
 /// Supported database targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatabaseTarget {
@@ -369,7 +371,7 @@ impl SqlDialect for SqliteDialect {
 
     fn wrap_default(&self, default: &str, _pg_type: &str) -> String {
         // Remove PostgreSQL ::type casts for SQLite
-        let cleaned = default.split("::").next().unwrap_or(default);
+        let cleaned = default.split("::").next().unwrap();
         // Replace gen_random_uuid() with empty (client-generated)
         if cleaned.trim() == "gen_random_uuid()" {
             String::new()
@@ -419,26 +421,6 @@ fn fnv1a_64(data: &[u8]) -> u64 {
     }
     hash
 }
-
-/// PostgreSQL reserved words (from codegraph-naming).
-const PG_RESERVED: &[&str] = &[
-    "all", "analyse", "analyze", "and", "any", "array", "as", "asc",
-    "asymmetric", "authorization", "between", "binary", "both", "case",
-    "cast", "check", "collate", "collation", "column", "concurrently",
-    "constraint", "create", "cross", "current_catalog", "current_date",
-    "current_role", "current_schema", "current_time", "current_timestamp",
-    "current_user", "default", "deferrable", "desc", "distinct", "do",
-    "else", "end", "except", "false", "fetch", "for", "foreign", "freeze",
-    "from", "full", "grant", "group", "having", "ilike", "in", "initially",
-    "inner", "intersect", "into", "is", "isnull", "join", "lateral",
-    "leading", "left", "like", "limit", "localtime", "localtimestamp",
-    "natural", "not", "notnull", "null", "offset", "on", "only", "or",
-    "order", "outer", "overlaps", "placing", "primary", "references",
-    "returning", "right", "select", "session_user", "similar", "some",
-    "start", "symmetric", "table", "tablesample", "then", "to", "trailing",
-    "true", "union", "unique", "user", "using", "variadic", "verbose",
-    "when", "where", "window", "with",
-];
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
