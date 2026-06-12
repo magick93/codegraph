@@ -83,6 +83,10 @@ impl GlobalGenerator for WorkflowSeedGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
+        // Workflow seed data inserts into platform.* tables — PG-only (schema-qualified)
+        if !self.dialect.has_schemas() {
+            return Ok(vec![]);
+        }
         let mut entries = Vec::new();
 
         let mut domain_names: Vec<&String> = config.domains.keys().collect();

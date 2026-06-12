@@ -34,7 +34,6 @@ pathdiff = "0.2"
 ast-ifml = { path = "../ast-ifml" }
 tree-sitter-ifml = { path = "../tree-sitter-ifml" }
 auto-lsp = { version = "0.6", features = ["lsp_server"] }
-sqlglot-rust = "0.10.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

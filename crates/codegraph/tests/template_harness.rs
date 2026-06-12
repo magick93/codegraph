@@ -315,8 +315,7 @@ async fn ddl_with_sqlite_dialect_uses_sqlite_types() {
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir)
         .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
 
-    let mut project = test_project_config();
-    project.database_target = "sqlite".to_string();
+    let project = test_project_config();
 
     let files = gen
         .generate(&mock, "CandidateType", "recruiting", &config, &tera, &project)

@@ -260,6 +260,11 @@ impl GlobalGenerator for SeedDataGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
+        // Seed data inserts into platform.* schema-qualified tables — PG-only
+        if !self.dialect.has_schemas() {
+            return Ok(vec![]);
+        }
+
         let Some(ctx) = self.load_context() else {
             return Ok(vec![]);
         };

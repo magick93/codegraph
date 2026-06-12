@@ -1523,7 +1523,7 @@ impl EntityGenerator for DdlGenerator {
         // Apply dialect-specific type mapping and default wrapping
         apply_dialect_type_mapping(&*self.dialect, &mut ctx);
 
-        // Quote identifiers through the dialect (SQLite never quotes)
+        // Quote PostgreSQL reserved words in column names (PG-specific, harmless pass-through for other dialects)
         quote_ddl_identifiers(&mut ctx);
 
         let mut files = Vec::new();

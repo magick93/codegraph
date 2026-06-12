@@ -66,6 +66,11 @@ impl GlobalGenerator for ReportViewGenerator {
             return Ok(vec![]);
         }
 
+        // Report views reference schema-qualified tables — PG-only
+        if !self.dialect.has_schemas() {
+            return Ok(vec![]);
+        }
+
         let reports_toml = std::fs::read_to_string(&reports_path)
             .map_err(|e| crate::error::Error::Config(format!("Failed to read reports.toml: {e}")))?;
         let config: ReportsConfig = toml::from_str(&reports_toml)
