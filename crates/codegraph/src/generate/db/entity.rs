@@ -8,6 +8,7 @@ use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
@@ -58,6 +59,7 @@ pub struct EntityRelation {
 pub struct SeaOrmEntityGenerator {
     output_dir: PathBuf,
     parent_candidates: Vec<codegraph_core::types::ParentCandidate>,
+    dialect: Box<dyn SqlDialect>,
 }
 
 impl SeaOrmEntityGenerator {
@@ -65,7 +67,13 @@ impl SeaOrmEntityGenerator {
         Self {
             output_dir: output_dir.to_path_buf(),
             parent_candidates: Vec::new(),
+            dialect: dialect_for_target(DatabaseTarget::Postgres),
         }
+    }
+
+    pub fn with_dialect(mut self, dialect: Box<dyn SqlDialect>) -> Self {
+        self.dialect = dialect;
+        self
     }
 
     pub fn with_parent_candidates(
@@ -507,7 +515,12 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             structured_imports,
         };
 
-        let content = render_template_with_project(tera, "db/entity.tera", &ctx, project)?;
+        let content = render_template_with_project(
+            tera,
+            &db_template_for(&*self.dialect, "entity"),
+            &ctx,
+            project,
+        )?;
         let mut files = vec![GeneratedFile {
             path: self
                 .output_dir

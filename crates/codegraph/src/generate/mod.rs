@@ -154,6 +154,7 @@ use codegraph_core::traits::GraphQuerier;
 use tera::Tera;
 
 use crate::error::{Error, Result};
+use crate::generate::db::dialect::{dialect_for_target, DatabaseTarget};
 use codegraph_config::{DomainConfig, UiDomainConfig, UiOverrideConfig};
 
 use std::sync::OnceLock;
@@ -359,6 +360,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let project = project_config.unwrap_or(&default_project);
     init_project_config(project.clone());
 
+    // Create the database dialect based on project config.
+    let make_dialect = || dialect_for_target(DatabaseTarget::from_config(&project.database_target));
+
     // Wrap the querier in a caching layer to avoid redundant graph queries
     // across the 15+ generators that each independently query the same schemas.
     let cached_db = CachingQuerier::new(db);
@@ -450,10 +454,12 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let entity_gens: Vec<Box<dyn EntityGenerator>> = vec![
         Box::new(
             db::ddl::DdlGenerator::new(output_dir)
+                .with_dialect(make_dialect())
                 .with_parent_candidates(parent_candidates.clone()),
         ) as Box<dyn EntityGenerator>,
         Box::new(
             db::entity::SeaOrmEntityGenerator::new(output_dir)
+                .with_dialect(make_dialect())
                 .with_parent_candidates(parent_candidates.clone()),
         ) as Box<dyn EntityGenerator>,
         Box::new(
@@ -560,15 +566,22 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     .collect::<Vec<_>>();
 
     let global_gens: Vec<Box<dyn GlobalGenerator>> = vec![
-        Box::new(db::basejump_setup::BasejumpSetupGenerator::new(output_dir))
-            as Box<dyn GlobalGenerator>,
-        Box::new(db::event_trigger::PgmqSetupGenerator::new(output_dir))
-            as Box<dyn GlobalGenerator>,
-        Box::new(db::platform_schema::PlatformSchemaGenerator::new(
-            output_dir,
-        )) as Box<dyn GlobalGenerator>,
-        Box::new(db::workflow_seed::WorkflowSeedGenerator::new(output_dir))
-            as Box<dyn GlobalGenerator>,
+        Box::new(
+            db::basejump_setup::BasejumpSetupGenerator::new(output_dir)
+                .with_dialect(make_dialect()),
+        ) as Box<dyn GlobalGenerator>,
+        Box::new(
+            db::event_trigger::PgmqSetupGenerator::new(output_dir)
+                .with_dialect(make_dialect()),
+        ) as Box<dyn GlobalGenerator>,
+        Box::new(
+            db::platform_schema::PlatformSchemaGenerator::new(output_dir)
+                .with_dialect(make_dialect()),
+        ) as Box<dyn GlobalGenerator>,
+        Box::new(
+            db::workflow_seed::WorkflowSeedGenerator::new(output_dir)
+                .with_dialect(make_dialect()),
+        ) as Box<dyn GlobalGenerator>,
         Box::new(api::openapi::OpenApiGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
         Box::new(scaffold::gen::ScaffoldGenerator::new(
             output_dir,
@@ -606,11 +619,17 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             ))
         },
         Box::new(cli::scaffold::CliScaffoldGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
-        Box::new(db::report_view::ReportViewGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
-        Box::new(db::seed::SeedDataGenerator::new(
-            output_dir,
-            seed_config.map(|p| p.to_path_buf()),
-        )) as Box<dyn GlobalGenerator>,
+        Box::new(
+            db::report_view::ReportViewGenerator::new(output_dir)
+                .with_dialect(make_dialect()),
+        ) as Box<dyn GlobalGenerator>,
+        Box::new(
+            db::seed::SeedDataGenerator::new(
+                output_dir,
+                seed_config.map(|p| p.to_path_buf()),
+            )
+            .with_dialect(make_dialect()),
+        ) as Box<dyn GlobalGenerator>,
         Box::new(playwright::global_gen::PlaywrightGlobalGenerator::new(
             output_dir,
         )) as Box<dyn GlobalGenerator>,
@@ -756,7 +775,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             .list_codelists()
             .await
             .map_err(|e| Error::Config(e.to_string()))?;
-        let codelist_sql_gen = db::codelist::CodelistGenerator::new(output_dir);
+        let codelist_sql_gen = db::codelist::CodelistGenerator::new(output_dir)
+            .with_dialect(make_dialect());
         for (idx, cl) in codelists.iter().enumerate() {
             if let Ok(files) = codelist_sql_gen
                 .generate(db, &cl.name, "common", config, tera, project)

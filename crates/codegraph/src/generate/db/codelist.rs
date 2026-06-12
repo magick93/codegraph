@@ -6,6 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
@@ -28,13 +29,20 @@ pub struct CodelistValue {
 
 pub struct CodelistGenerator {
     output_dir: PathBuf,
+    dialect: Box<dyn SqlDialect>,
 }
 
 impl CodelistGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
+            dialect: dialect_for_target(DatabaseTarget::Postgres),
         }
+    }
+
+    pub fn with_dialect(mut self, dialect: Box<dyn SqlDialect>) -> Self {
+        self.dialect = dialect;
+        self
     }
 }
 
@@ -87,7 +95,12 @@ impl EntityGenerator for CodelistGenerator {
             render_as: schema.classification.clone(),
         };
 
-        let content = render_template_with_project(tera, "db/codelist.tera", &ctx, project)?;
+        let content = render_template_with_project(
+            tera,
+            &db_template_for(&*self.dialect, "codelist"),
+            &ctx,
+            project,
+        )?;
         Ok(vec![GeneratedFile {
             path: self
                 .output_dir

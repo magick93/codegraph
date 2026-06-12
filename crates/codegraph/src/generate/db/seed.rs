@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::Result;
+use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -89,6 +90,7 @@ struct SeedScopeConfig {
 pub struct SeedDataGenerator {
     output_dir: PathBuf,
     seed_config_path: Option<PathBuf>,
+    dialect: Box<dyn SqlDialect>,
 }
 
 impl SeedDataGenerator {
@@ -96,7 +98,13 @@ impl SeedDataGenerator {
         Self {
             output_dir: output_dir.to_path_buf(),
             seed_config_path,
+            dialect: dialect_for_target(DatabaseTarget::Postgres),
         }
+    }
+
+    pub fn with_dialect(mut self, dialect: Box<dyn SqlDialect>) -> Self {
+        self.dialect = dialect;
+        self
     }
 
     fn load_context(&self) -> Option<SeedContext> {
@@ -261,7 +269,7 @@ impl GlobalGenerator for SeedDataGenerator {
         tera_ctx.insert("project", project);
 
         let content = tera
-            .render("db/seed.tera", &tera_ctx)
+            .render(&db_template_for(&*self.dialect, "seed"), &tera_ctx)
             .map_err(|e| crate::error::Error::Template(e.to_string()))?;
 
         Ok(vec![GeneratedFile {

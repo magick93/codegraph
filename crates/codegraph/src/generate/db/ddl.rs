@@ -10,6 +10,7 @@ use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::{DomainConfig, SearchConfig};
@@ -899,6 +900,7 @@ fn composition_node_to_child_table(
 pub struct DdlGenerator {
     output_dir: PathBuf,
     parent_candidates: Vec<codegraph_core::types::ParentCandidate>,
+    dialect: Box<dyn SqlDialect>,
 }
 
 impl DdlGenerator {
@@ -906,7 +908,13 @@ impl DdlGenerator {
         Self {
             output_dir: output_dir.to_path_buf(),
             parent_candidates: Vec::new(),
+            dialect: dialect_for_target(DatabaseTarget::Postgres),
         }
+    }
+
+    pub fn with_dialect(mut self, dialect: Box<dyn SqlDialect>) -> Self {
+        self.dialect = dialect;
+        self
     }
 
     pub fn with_parent_candidates(
@@ -1456,6 +1464,38 @@ fn quote_ddl_identifiers(ctx: &mut DdlContext) {
     quote_child_tables(&mut ctx.child_tables);
 }
 
+/// Post-process column types and defaults through the dialect.
+/// Converts PG types to dialect-appropriate types (e.g. UUID → TEXT for SQLite)
+/// and wraps default expressions (e.g. strips ::type casts, removes gen_random_uuid()).
+fn apply_dialect_type_mapping(dialect: &dyn SqlDialect, ctx: &mut DdlContext) {
+    for col in &mut ctx.columns {
+        let original_type = col.pg_type.clone();
+        if let Some(mapped) = dialect.map_pg_type(&original_type) {
+            col.pg_type = mapped;
+        }
+        if let Some(default) = col.default.take() {
+            let wrapped = dialect.wrap_default(&default, &original_type);
+            if !wrapped.is_empty() {
+                col.default = Some(wrapped);
+            }
+        }
+    }
+    for child in &mut ctx.child_tables {
+        for col in &mut child.columns {
+            let original_type = col.pg_type.clone();
+            if let Some(mapped) = dialect.map_pg_type(&original_type) {
+                col.pg_type = mapped;
+            }
+            if let Some(default) = col.default.take() {
+                let wrapped = dialect.wrap_default(&default, &original_type);
+                if !wrapped.is_empty() {
+                    col.default = Some(wrapped);
+                }
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl EntityGenerator for DdlGenerator {
     fn name(&self) -> &str {
@@ -1480,13 +1520,21 @@ impl EntityGenerator for DdlGenerator {
             return Ok(Vec::new());
         }
 
-        // Quote PostgreSQL reserved words in column names to prevent syntax errors
+        // Apply dialect-specific type mapping and default wrapping
+        apply_dialect_type_mapping(&*self.dialect, &mut ctx);
+
+        // Quote identifiers through the dialect (SQLite never quotes)
         quote_ddl_identifiers(&mut ctx);
 
         let mut files = Vec::new();
 
-        // Main table DDL
-        let table_sql = render_template_with_project(tera, "db/table.tera", &ctx, project)?;
+        // Main table DDL — dialect-aware template path
+        let table_sql = render_template_with_project(
+            tera,
+            &db_template_for(&*self.dialect, "table"),
+            &ctx,
+            project,
+        )?;
         files.push(GeneratedFile {
             path: self
                 .output_dir
@@ -1495,9 +1543,14 @@ impl EntityGenerator for DdlGenerator {
             content: table_sql,
         });
 
-        // RLS policy (if tenant-scoped)
-        if ctx.is_tenant_scoped {
-            let rls_sql = render_template_with_project(tera, "db/rls.tera", &ctx, project)?;
+        // RLS policy — only on dialects that support it
+        if ctx.is_tenant_scoped && self.dialect.has_rls() {
+            let rls_sql = render_template_with_project(
+                tera,
+                &db_template_for(&*self.dialect, "rls"),
+                &ctx,
+                project,
+            )?;
             files.push(GeneratedFile {
                 path: self
                     .output_dir
@@ -1507,9 +1560,14 @@ impl EntityGenerator for DdlGenerator {
             });
         }
 
-        // Updated_at trigger
-        if ctx.has_updated_at {
-            let trigger_sql = render_template_with_project(tera, "db/trigger.tera", &ctx, project)?;
+        // Updated_at trigger — dialect-aware style
+        if ctx.has_updated_at && self.dialect.has_plpgsql() {
+            let trigger_sql = render_template_with_project(
+                tera,
+                &db_template_for(&*self.dialect, "trigger"),
+                &ctx,
+                project,
+            )?;
             files.push(GeneratedFile {
                 path: self.output_dir.join("migrations").join(format!(
                     "{}_{}_trigger.sql",
@@ -1519,8 +1577,13 @@ impl EntityGenerator for DdlGenerator {
             });
         }
 
-        // Domain event trigger (pgmq)
-        let event_trigger_sql = render_template_with_project(tera, "db/domain_event_trigger.tera", &ctx, project)?;
+        // Domain event trigger — dialect-aware style
+        let event_trigger_sql = render_template_with_project(
+            tera,
+            &db_template_for(&*self.dialect, "domain_event_trigger"),
+            &ctx,
+            project,
+        )?;
         files.push(GeneratedFile {
             path: self.output_dir.join("migrations").join(format!(
                 "{}_{}_event_trigger.sql",
@@ -1531,7 +1594,12 @@ impl EntityGenerator for DdlGenerator {
 
         // ProcessHistoryType-compatible view for workflow entities
         if ctx.has_workflow {
-            let view_sql = render_template_with_project(tera, "db/process_history_view.tera", &ctx, project)?;
+            let view_sql = render_template_with_project(
+                tera,
+                "db/process_history_view.tera",
+                &ctx,
+                project,
+            )?;
             files.push(GeneratedFile {
                 path: self.output_dir.join("migrations").join(format!(
                     "{}_{}_process_history_view.sql",
@@ -1541,9 +1609,14 @@ impl EntityGenerator for DdlGenerator {
             });
         }
 
-        // Full-text search infrastructure (tsvector, GIN index, trigger)
-        if ctx.fts.is_some() {
-            let fts_sql = render_template_with_project(tera, "db/fts.tera", &ctx, project)?;
+        // Full-text search — only on dialects that support it
+        if ctx.fts.is_some() && self.dialect.has_fulltext_search() {
+            let fts_sql = render_template_with_project(
+                tera,
+                &db_template_for(&*self.dialect, "fts"),
+                &ctx,
+                project,
+            )?;
             files.push(GeneratedFile {
                 path: self
                     .output_dir
@@ -1553,9 +1626,14 @@ impl EntityGenerator for DdlGenerator {
             });
         }
 
-        // Semantic search infrastructure (pgvector columns, HNSW indexes)
-        if !ctx.embeddings.is_empty() {
-            let embedding_sql = render_template_with_project(tera, "db/embedding.tera", &ctx, project)?;
+        // Semantic search (embeddings) — only on dialects that support it
+        if !ctx.embeddings.is_empty() && self.dialect.has_embeddings() {
+            let embedding_sql = render_template_with_project(
+                tera,
+                "db/embedding.tera",
+                &ctx,
+                project,
+            )?;
             files.push(GeneratedFile {
                 path: self.output_dir.join("migrations").join(format!(
                     "{}_{}_embedding.sql",

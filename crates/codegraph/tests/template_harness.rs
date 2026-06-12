@@ -5,6 +5,7 @@
 //! per-schema, per-template.
 
 use codegraph::generate;
+use codegraph::generate::db::dialect::{dialect_for_target, DatabaseTarget};
 use codegraph::generate::template_engine;
 #[allow(unused_imports)]
 use codegraph::generate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
@@ -295,6 +296,59 @@ async fn candidate_ddl_rls_has_authenticated_policies() {
     assert!(
         rls_file.content.contains("org_isolation_delete"),
         "RLS should have all four CRUD policies"
+    );
+}
+
+/// This test verifies that DdlGenerator with SQLite dialect uses SQLite-compatible
+/// types (TEXT for UUID, TEXT for TIMESTAMPTZ) instead of PostgreSQL types.
+/// Before the dialect wiring fix, this test FAILS because the generator ignores the
+/// dialect and emits PG types (UUID, TIMESTAMPTZ, gen_random_uuid()).
+/// After the fix, it should PASS with SQLite types.
+#[tokio::test]
+async fn ddl_with_sqlite_dialect_uses_sqlite_types() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-sqlite-ddl");
+
+    // Create DdlGenerator with SQLite dialect
+    let gen = generate::db::ddl::DdlGenerator::new(&output_dir)
+        .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
+
+    let mut project = test_project_config();
+    project.database_target = "sqlite".to_string();
+
+    let files = gen
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &project)
+        .await
+        .unwrap();
+
+    let table_file = files
+        .iter()
+        .find(|f| {
+            f.path
+                .to_string_lossy()
+                .contains("recruiting_candidate.sql")
+        })
+        .expect("Should have a table SQL file");
+
+    // With SQLite dialect, the id column should be TEXT not UUID
+    assert!(
+        table_file.content.contains("id TEXT"),
+        "SQLite DDL should use TEXT for id column. Got:\n{}",
+        table_file.content
+    );
+    // With SQLite dialect, timestamps should be TEXT not TIMESTAMPTZ
+    assert!(
+        table_file.content.contains("created_at TEXT"),
+        "SQLite DDL should use TEXT for created_at. Got:\n{}",
+        table_file.content
+    );
+    // With SQLite dialect, gen_random_uuid() should not appear (UUIDs are client-generated)
+    assert!(
+        !table_file.content.contains("gen_random_uuid"),
+        "SQLite DDL should not contain gen_random_uuid(). Got:\n{}",
+        table_file.content
     );
 }
 

@@ -371,12 +371,11 @@ impl SqlDialect for SqliteDialect {
 
     fn wrap_default(&self, default: &str, _pg_type: &str) -> String {
         // Remove PostgreSQL ::type casts for SQLite
-        let cleaned = default.split("::").next().unwrap();
-        // Replace gen_random_uuid() with empty (client-generated)
-        if cleaned.trim() == "gen_random_uuid()" {
-            String::new()
-        } else {
-            cleaned.to_string()
+        let cleaned = default.split("::").next().unwrap_or(default);
+        match cleaned.trim() {
+            "gen_random_uuid()" => String::new(),
+            "now()" => "(unixepoch())".to_string(),
+            _ => cleaned.to_string(),
         }
     }
 
@@ -407,6 +406,19 @@ pub fn dialect_for_target(target: DatabaseTarget) -> Box<dyn SqlDialect> {
     match target {
         DatabaseTarget::Postgres => Box::new(PostgresDialect::new()),
         DatabaseTarget::Sqlite => Box::new(SqliteDialect::new()),
+    }
+}
+
+/// Resolve a template name based on the dialect.
+///
+/// Postgres templates live at `db/{name}.tera` (the default).
+/// Dialect-specific overrides live at `db/{dialect_dir}/{name}.tera`.
+pub fn db_template_for(dialect: &dyn SqlDialect, name: &str) -> String {
+    let dir = DatabaseTarget::from_config(dialect.name()).template_dir();
+    if dir == "postgres" {
+        format!("db/{}.tera", name)
+    } else {
+        format!("db/{}/{}.tera", dir, name)
     }
 }
 
