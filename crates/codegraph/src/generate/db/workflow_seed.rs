@@ -6,6 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
@@ -51,13 +52,20 @@ pub struct WorkflowSeedContext {
 
 pub struct WorkflowSeedGenerator {
     output_dir: PathBuf,
+    dialect: Box<dyn SqlDialect>,
 }
 
 impl WorkflowSeedGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
+            dialect: dialect_for_target(DatabaseTarget::Postgres),
         }
+    }
+
+    pub fn with_dialect(mut self, dialect: Box<dyn SqlDialect>) -> Self {
+        self.dialect = dialect;
+        self
     }
 }
 
@@ -75,6 +83,10 @@ impl GlobalGenerator for WorkflowSeedGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
+        // Workflow seed data inserts into platform.* tables — PG-only (schema-qualified)
+        if !self.dialect.has_schemas() {
+            return Ok(vec![]);
+        }
         let mut entries = Vec::new();
 
         let mut domain_names: Vec<&String> = config.domains.keys().collect();
@@ -136,7 +148,12 @@ impl GlobalGenerator for WorkflowSeedGenerator {
         }
 
         let ctx = WorkflowSeedContext { entries };
-        let content = render_template_with_project(tera, "db/workflow_seed.tera", &ctx, project)?;
+        let content = render_template_with_project(
+            tera,
+            &db_template_for(&*self.dialect, "workflow_seed"),
+            &ctx,
+            project,
+        )?;
         Ok(vec![GeneratedFile {
             path: self
                 .output_dir

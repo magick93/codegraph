@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
+use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -26,13 +27,20 @@ struct ReportDef {
 
 pub struct ReportViewGenerator {
     output_dir: PathBuf,
+    dialect: Box<dyn SqlDialect>,
 }
 
 impl ReportViewGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
+            dialect: dialect_for_target(DatabaseTarget::Postgres),
         }
+    }
+
+    pub fn with_dialect(mut self, dialect: Box<dyn SqlDialect>) -> Self {
+        self.dialect = dialect;
+        self
     }
 }
 
@@ -58,6 +66,11 @@ impl GlobalGenerator for ReportViewGenerator {
             return Ok(vec![]);
         }
 
+        // Report views reference schema-qualified tables — PG-only
+        if !self.dialect.has_schemas() {
+            return Ok(vec![]);
+        }
+
         let reports_toml = std::fs::read_to_string(&reports_path)
             .map_err(|e| crate::error::Error::Config(format!("Failed to read reports.toml: {e}")))?;
         let config: ReportsConfig = toml::from_str(&reports_toml)
@@ -70,7 +83,7 @@ impl GlobalGenerator for ReportViewGenerator {
         let mut files = Vec::new();
 
         let view_sql = tera
-            .render("db/report_view.tera", &ctx)
+            .render(&db_template_for(&*self.dialect, "report_view"), &ctx)
             .map_err(|e| crate::error::Error::Template(e.to_string()))?;
         files.push(GeneratedFile {
             path: self
