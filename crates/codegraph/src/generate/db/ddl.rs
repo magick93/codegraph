@@ -1502,6 +1502,10 @@ impl EntityGenerator for DdlGenerator {
         "ddl"
     }
 
+    fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {
+        Some(vec![DatabaseTarget::Postgres, DatabaseTarget::Sqlite])
+    }
+
     async fn generate(
         &self,
         db: &dyn GraphQuerier,
@@ -1596,7 +1600,7 @@ impl EntityGenerator for DdlGenerator {
         if ctx.has_workflow {
             let view_sql = render_template_with_project(
                 tera,
-                "db/process_history_view.tera",
+                &db_template_for(&*self.dialect, "process_history_view"),
                 &ctx,
                 project,
             )?;
@@ -1630,7 +1634,7 @@ impl EntityGenerator for DdlGenerator {
         if !ctx.embeddings.is_empty() && self.dialect.has_embeddings() {
             let embedding_sql = render_template_with_project(
                 tera,
-                "db/embedding.tera",
+                &db_template_for(&*self.dialect, "embedding"),
                 &ctx,
                 project,
             )?;

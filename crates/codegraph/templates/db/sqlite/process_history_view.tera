@@ -1,0 +1,3 @@
+-- SQLite process history view
+-- Process history views are not supported for SQLite
+SELECT 0 WHERE 0;
