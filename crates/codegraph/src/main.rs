@@ -253,11 +253,11 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             .map(|p| output.join(p));
         let database_target_str = plan.database_target().to_string();
         project_config = Some(ProjectConfig {
-            app_name: meta.app_name.clone().unwrap_or_else(|| "hr-app".into()),
-            domain_types_crate: meta.domain_types_crate.clone().unwrap_or_else(|| "hr_domain_types".into()),
-            hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_else(|| "hr_hooks_api".into()),
+            app_name: meta.app_name.clone().unwrap_or_else(|| "app".into()),
+            domain_types_crate: meta.domain_types_crate.clone().unwrap_or_else(|| "domain_types".into()),
+            hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_else(|| "hooks_api".into()),
             api_title: meta.api_title.clone().unwrap_or_else(|| "HR Open API".into()),
-            generator_name: meta.generator_name.clone().unwrap_or_else(|| "hr-graph".into()),
+            generator_name: meta.generator_name.clone().unwrap_or_else(|| "codegraph".into()),
             domain_types_base: meta.domain_types_base.clone().unwrap_or_default(),
             hooks_api_base: meta.hooks_api_base.clone().unwrap_or_default(),
             extensions_base: meta.extensions_base.clone().unwrap_or_default(),

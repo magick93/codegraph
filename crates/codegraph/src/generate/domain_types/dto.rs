@@ -1,5 +1,5 @@
 use crate::generate::ProjectConfig;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
@@ -10,30 +10,20 @@ use crate::generate::ddd::dto::build_dto_context;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
-/// Generates DTO files into the `hr-domain-types` crate instead of the generated app.
+/// Generates DTO files into the domain-types crate instead of the generated app.
 ///
 /// Reuses the same `DtoContext` and context-building logic as the app-level `DtoGenerator`,
-/// but outputs to `crates/hr-domain-types/src/{domain}/{entity}/` using dedicated templates.
+/// but outputs to `{base_dir}/src/{domain}/{entity}/` using dedicated templates.
 pub struct DomainTypesDtoGenerator {
-    /// Base `src/` directory for `hr-domain-types` output.
+    /// Base `src/` directory for domain-types output.
     ///
-    /// In production this is `{workspace_root}/crates/hr-domain-types/src`.
+    /// In production this is `{workspace_root}/crates/domain-types/src`.
     /// In tests this should be a temp directory to avoid corrupting the real workspace source.
     src_dir: PathBuf,
 }
 
 impl DomainTypesDtoGenerator {
-    /// Production constructor: writes DTOs using the compiled-in workspace root path.
-    /// When `domain_types_base` is set in `GeneratorOpts`, the pipeline overrides
-    /// this via `new_with_base` at dispatch time.
-    pub fn new(_output_dir: &Path) -> Self {
-        Self {
-            src_dir: super::domain_types_src_dir(),
-        }
-    }
-
-    /// Test / override constructor: writes output under `base_dir` (crate root)
-    /// instead of the compiled-in workspace root. Appends `src/` internally.
+    /// Creates a generator that writes output under `base_dir` (crate root), appending `src/` internally.
     pub fn new_with_base(base_dir: PathBuf) -> Self {
         Self { src_dir: base_dir.join("src") }
     }

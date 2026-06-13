@@ -1,6 +1,6 @@
 use crate::generate::ProjectConfig;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
@@ -32,26 +32,19 @@ struct EntityModContext {
 }
 
 /// Generates scaffold files (`lib.rs`, per-domain `mod.rs`, per-entity `mod.rs`)
-/// for the `hr-domain-types` crate.
+/// for the domain-types crate.
 pub struct DomainTypesScaffoldGenerator {
-    /// Base directory for `hr-domain-types/src` output.
+    /// Base directory for domain-types/src output.
     ///
-    /// In production this is `{workspace_root}/crates/hr-domain-types/src`.
+    /// In production this is `{workspace_root}/crates/domain-types/src`.
     /// In tests this should be a temp directory to avoid corrupting the real
     /// workspace source files.
     src_dir: PathBuf,
 }
 
 impl DomainTypesScaffoldGenerator {
-    /// Production constructor: derives the output path from the compiled-in workspace root.
-    pub fn new(_output_dir: &Path) -> Self {
-        Self { src_dir: super::domain_types_src_dir() }
-    }
-
-    /// Test / override constructor: writes output under `base_dir` instead of
-    /// the compiled-in workspace root.  Pass a `tempfile::tempdir()` path to
-    /// avoid corrupting the real `crates/hr-domain-types/src` when running with
-    /// a mock graph.
+    /// Creates a generator that writes output under `base_dir` (crate root), appending `src/` internally.
+    /// Pass a `tempfile::tempdir()` path to avoid corrupting the real source when using a mock graph.
     pub fn new_with_base(base_dir: PathBuf) -> Self {
         Self { src_dir: base_dir.join("src") }
     }
