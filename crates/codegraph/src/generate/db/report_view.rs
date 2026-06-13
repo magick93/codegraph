@@ -50,6 +50,10 @@ impl GlobalGenerator for ReportViewGenerator {
         "report_views"
     }
 
+    fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {
+        Some(vec![DatabaseTarget::Postgres, DatabaseTarget::Sqlite])
+    }
+
     async fn generate(
         &self,
         _db: &dyn GraphQuerier,

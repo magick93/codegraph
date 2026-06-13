@@ -221,6 +221,13 @@ pub trait SqlDialect: fmt::Debug + Send + Sync {
         }
     }
 
+    /// Map a SeaORM column type name to the dialect-appropriate equivalent.
+    /// Returns `None` if the type is already dialect-agnostic.
+    fn map_sea_orm_type(&self, sea_orm_type: &str) -> Option<String> {
+        let _ = sea_orm_type;
+        None
+    }
+
     /// Wrap a default expression for a specific column type.
     fn wrap_default(&self, default: &str, _pg_type: &str) -> String {
         default.to_string()
@@ -351,6 +358,16 @@ impl SqlDialect for SqliteDialect {
     fn fts_engine(&self) -> &'static str { "fts5" }
 
     // ── Type mapping overrides ───────────────────────────────────────────
+
+    fn map_sea_orm_type(&self, sea_orm_type: &str) -> Option<String> {
+        match sea_orm_type {
+            "Uuid" => Some("Text".to_string()),
+            "TimestampWithTimeZone" => Some("Text".to_string()),
+            "DateTimeWithTimeZone" => Some("Text".to_string()),
+            "Boolean" => Some("Integer".to_string()),
+            _ => None,
+        }
+    }
 
     fn map_pg_type(&self, pg_type: &str) -> Option<String> {
         let upper = pg_type.to_uppercase();

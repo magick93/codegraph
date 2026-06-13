@@ -5,13 +5,15 @@
 //! per-schema, per-template.
 
 use codegraph::generate;
+use codegraph::generate::db::basejump_setup::BasejumpSetupGenerator;
+use codegraph::generate::db::codelist::CodelistGenerator;
 use codegraph::generate::db::dialect::{dialect_for_target, DatabaseTarget};
 use codegraph::generate::template_engine;
 #[allow(unused_imports)]
 use codegraph::generate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
 use codegraph::generate::GenerationEntry;
 use codegraph_core::mock::MockEngine;
-use codegraph_core::types::{PropertyNode, SchemaNode};
+use codegraph_core::types::{EnumValue, PropertyNode, SchemaNode};
 use std::path::Path;
 
 fn test_domain_config() -> codegraph_config::DomainConfig {
@@ -34,6 +36,39 @@ fn test_generation_order() -> Vec<GenerationEntry> {
 
 fn test_project_config() -> codegraph::generate::ProjectConfig {
     codegraph::generate::ProjectConfig::default()
+}
+
+fn sqlite_project_config() -> codegraph::generate::ProjectConfig {
+    codegraph::generate::ProjectConfig {
+        database_target: "sqlite".to_string(),
+        ..Default::default()
+    }
+}
+
+fn gender_codelist_schema() -> SchemaNode {
+    SchemaNode {
+        schema_id: "common/json/codelist/GenderCodeList.json".to_string(),
+        title: "GenderCodeList".to_string(),
+        description: Some("Gender codes".to_string()),
+        schema_type: "object".to_string(),
+        classification: "codelist".to_string(),
+        domain: Some("common".to_string()),
+        rel_path: "common/json/codelist/GenderCodeList.json".to_string(),
+        pg_type: "TEXT".to_string(),
+        rust_type: "String".to_string(),
+        sea_orm_type: "Text".to_string(),
+        rust_type_name: "GenderCode".to_string(),
+        pg_table_name: "gender_code".to_string(),
+        api_path_segment: String::new(),
+        parent_schema: None,
+        is_entity: false,
+        is_codelist: true,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+    }
 }
 
 fn candidate_schema() -> SchemaNode {
@@ -4046,4 +4081,206 @@ async fn webhook_endpoint_api_generator_produces_api_and_router() {
     assert!(router_file.content.contains("webhook-endpoints"));
     assert!(router_file.content.contains("list_endpoints"));
     assert!(router_file.content.contains("delete_subscription"));
+}
+
+// === SQLite Dialect Integration Tests ===
+
+/// Verify that SeaOrmEntityGenerator with SQLite dialect uses the SQLite-specific
+/// entity template: no schema_name attribute, primary key without auto_increment = false.
+#[tokio::test]
+async fn entity_with_sqlite_dialect_uses_sqlite_template() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-entity");
+
+    let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir)
+        .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
+    let files = gen
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .await
+        .unwrap();
+
+    assert_eq!(files.len(), 1, "Should produce exactly one entity file");
+    let content = &files[0].content;
+
+    // SQLite entity template has a distinctive header comment
+    assert!(
+        content.contains("SQLite SeaORM entity"),
+        "Should use SQLite entity template. Got:\n{content}"
+    );
+
+    // SQLite entity must NOT have schema_name in the sea_orm table annotation
+    assert!(
+        !content.contains(r#"schema_name =""#),
+        "SQLite entity must not have schema_name in sea_orm attribute. Got:\n{content}"
+    );
+
+    // SQLite primary key should NOT have auto_increment = false
+    assert!(
+        content.contains("#[sea_orm(primary_key)]"),
+        "SQLite entity should have primary_key annotation. Got:\n{content}"
+    );
+    assert!(
+        !content.contains("auto_increment = false"),
+        "SQLite entity should NOT have auto_increment = false. Got:\n{content}"
+    );
+
+    // Should contain the tenant-scoped column
+    assert!(
+        content.contains("platform_organization_id"),
+        "Entity should include platform_organization_id. Got:\n{content}"
+    );
+}
+
+/// Verify that CodelistGenerator with SQLite dialect produces INSERT OR IGNORE
+/// instead of the PostgreSQL ON CONFLICT DO NOTHING pattern.
+#[tokio::test]
+async fn codelist_with_sqlite_dialect_uses_insert_or_ignore() {
+    let engine = MockEngine::builder()
+        .with_schema(gender_codelist_schema())
+        .with_enum_values(
+            "GenderCodeList",
+            vec![
+                EnumValue {
+                    value: "Male".to_string(),
+                    display_name: Some("Male".to_string()),
+                    sort_order: 0,
+                },
+                EnumValue {
+                    value: "Female".to_string(),
+                    display_name: Some("Female".to_string()),
+                    sort_order: 1,
+                },
+                EnumValue {
+                    value: "X".to_string(),
+                    display_name: Some("Non-binary".to_string()),
+                    sort_order: 2,
+                },
+            ],
+        )
+        .build();
+
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-codelist");
+
+    let gen = CodelistGenerator::new(&output_dir)
+        .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
+    let files = gen
+        .generate(&engine, "GenderCodeList", "common", &config, &tera, &test_project_config())
+        .await
+        .unwrap();
+
+    assert!(!files.is_empty(), "Codelist generator should produce a file");
+    let content = &files[0].content;
+
+    // SQLite codelist template uses INSERT OR IGNORE
+    assert!(
+        content.contains("INSERT OR IGNORE"),
+        "SQLite codelist should use INSERT OR IGNORE. Got:\n{content}"
+    );
+
+    // Should contain codelist values
+    assert!(
+        content.contains("'Male'"),
+        "Should contain Male codelist value. Got:\n{content}"
+    );
+    assert!(
+        content.contains("'Female'"),
+        "Should contain Female codelist value. Got:\n{content}"
+    );
+
+    // Should use STRICT table mode
+    assert!(
+        content.contains("STRICT"),
+        "SQLite codelist table should use STRICT mode. Got:\n{content}"
+    );
+}
+
+/// Verify that PG-only generators are skipped when using SQLite dialect.
+/// These generators check dialect feature flags and return empty results.
+#[tokio::test]
+async fn pg_only_generators_skipped_for_sqlite_dialect() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let generation_order = test_generation_order();
+
+    // BasejumpSetupGenerator is PG-only (requires extensions)
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-basejump");
+    let gen = BasejumpSetupGenerator::new(&output_dir)
+        .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
+    let files = gen
+        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
+        .await
+        .unwrap();
+    assert!(
+        files.is_empty(),
+        "BasejumpSetupGenerator should return empty for SQLite. Got {} files",
+        files.len()
+    );
+
+    // PgmqSetupGenerator is PG-only (requires plpgsql)
+    let output_dir2 = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-pgmq");
+    let gen2 = generate::db::event_trigger::PgmqSetupGenerator::new(&output_dir2)
+        .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
+    let files2 = gen2
+        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
+        .await
+        .unwrap();
+    assert!(
+        files2.is_empty(),
+        "PgmqSetupGenerator should return empty for SQLite. Got {} files",
+        files2.len()
+    );
+
+    // PlatformSchemaGenerator is PG-only (requires schemas)
+    let output_dir3 = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-platform");
+    let gen3 = generate::db::platform_schema::PlatformSchemaGenerator::new(&output_dir3)
+        .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
+    let files3 = gen3
+        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
+        .await
+        .unwrap();
+    assert!(
+        files3.is_empty(),
+        "PlatformSchemaGenerator should return empty for SQLite. Got {} files",
+        files3.len()
+    );
+}
+
+/// Verify that scaffold Cargo.toml uses sqlx-sqlite when database_target is "sqlite".
+#[tokio::test]
+async fn scaffold_cargo_toml_with_sqlite_dialect() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-scaffold");
+    let project = sqlite_project_config();
+
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let files = gen
+        .generate(&mock, &config, &test_generation_order(), &tera, &project)
+        .await
+        .unwrap();
+
+    let cargo_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("Cargo.toml"))
+        .expect("Should generate Cargo.toml");
+
+    // With SQLite dialect, should use sqlx-sqlite feature
+    assert!(
+        cargo_file.content.contains("sqlx-sqlite"),
+        "SQLite scaffold Cargo.toml should use sqlx-sqlite feature. Got:\n{}",
+        cargo_file.content
+    );
+
+    // Must NOT use sqlx-postgres
+    assert!(
+        !cargo_file.content.contains("sqlx-postgres"),
+        "SQLite scaffold Cargo.toml must NOT use sqlx-postgres. Got:\n{}",
+        cargo_file.content
+    );
 }

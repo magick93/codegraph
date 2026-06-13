@@ -52,6 +52,10 @@ impl EntityGenerator for CodelistGenerator {
         "codelist"
     }
 
+    fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {
+        Some(vec![DatabaseTarget::Postgres, DatabaseTarget::Sqlite])
+    }
+
     async fn generate(
         &self,
         db: &dyn GraphQuerier,

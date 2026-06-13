@@ -1,0 +1,3 @@
+-- SQLite does not support vector embeddings
+-- Embedding infrastructure is not available for SQLite
+SELECT 0 WHERE 0;

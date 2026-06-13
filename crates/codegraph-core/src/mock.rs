@@ -66,6 +66,7 @@ pub struct MockEngineBuilder {
     composite_ranges: HashMap<String, CompositeRange>,
     consumed_fields: HashMap<String, Vec<(PropertyNode, String)>>,
     ref_targets: HashMap<(String, String), SchemaNode>,
+    enum_values: HashMap<String, Vec<EnumValue>>,
 }
 
 impl MockEngineBuilder {
@@ -112,6 +113,11 @@ impl MockEngineBuilder {
             (property_name.to_string(), schema_title.to_string()),
             target,
         );
+        self
+    }
+
+    pub fn with_enum_values(mut self, schema_title: &str, values: Vec<EnumValue>) -> Self {
+        self.enum_values.insert(schema_title.to_string(), values);
         self
     }
 
@@ -171,6 +177,12 @@ impl MockEngineBuilder {
             let mut ref_targets = engine.ref_targets.lock().unwrap();
             for (k, v) in self.ref_targets {
                 ref_targets.insert(k, v);
+            }
+        }
+        {
+            let mut enum_values = engine.enum_values.lock().unwrap();
+            for (k, v) in self.enum_values {
+                enum_values.insert(k, v);
             }
         }
         engine
