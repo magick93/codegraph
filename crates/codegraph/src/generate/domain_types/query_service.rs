@@ -1,5 +1,5 @@
 use crate::generate::ProjectConfig;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
@@ -17,25 +17,17 @@ struct QueryServiceContext {
     domain: String,
 }
 
-/// Generates query service trait files into `hr-domain-types` per entity.
+/// Generates query service trait files into the domain-types crate per entity.
 pub struct QueryServiceGenerator {
-    /// Base `src/` directory for `hr-domain-types` output.
+    /// Base `src/` directory for domain-types output.
     ///
-    /// In production this is `{workspace_root}/crates/hr-domain-types/src`.
+    /// In production this is `{workspace_root}/crates/domain-types/src`.
     /// In tests this should be a temp directory to avoid corrupting the real workspace source.
     src_dir: PathBuf,
 }
 
 impl QueryServiceGenerator {
-    /// Production constructor: derives the output path from the compiled-in workspace root.
-    pub fn new(_output_dir: &Path) -> Self {
-        Self {
-            src_dir: super::domain_types_src_dir(),
-        }
-    }
-
-    /// Test / override constructor: writes output under `base_dir` instead of the
-    /// compiled-in workspace root.
+    /// Creates a generator that writes output under `base_dir` (crate root), appending `src/` internally.
     pub fn new_with_base(base_dir: PathBuf) -> Self {
         Self { src_dir: base_dir.join("src") }
     }

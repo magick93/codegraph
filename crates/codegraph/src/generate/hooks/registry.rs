@@ -56,48 +56,15 @@ fn parse_existing_pub_mods(path: &Path) -> std::collections::HashSet<String> {
 }
 
 pub struct HookRegistryGenerator {
-    _output_dir: PathBuf,
     /// Base directory for generated hooks output.
-    ///
-    /// In production this is `{workspace_root}/crates/hr-hooks-api/src/generated`.
-    /// In tests this should be a temp directory to avoid corrupting the real workspace source.
     generated_dir: PathBuf,
 }
 
 impl HookRegistryGenerator {
-    /// Production constructor: derives the output path from the compiled-in workspace root.
-    pub fn new(output_dir: &Path) -> Self {
+    pub fn new_with_base(base_dir: PathBuf) -> Self {
         Self {
-            _output_dir: output_dir.to_path_buf(),
-            generated_dir: Self::default_generated_dir(),
-        }
-    }
-
-    /// Test / override constructor: writes output under `base_dir` instead of the
-    /// compiled-in workspace root.  Pass a `tempfile::tempdir()` path to avoid
-    /// corrupting the real `crates/hr-hooks-api/src/generated` when running with a mock graph.
-    pub fn new_with_base(output_dir: &Path, base_dir: PathBuf) -> Self {
-        Self {
-            _output_dir: output_dir.to_path_buf(),
             generated_dir: base_dir,
         }
-    }
-
-    /// Compute the workspace root from `CARGO_MANIFEST_DIR` (which points to `hr-graph/`).
-    fn workspace_root() -> PathBuf {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        PathBuf::from(manifest_dir)
-            .parent()
-            .expect("hr-graph should be inside workspace root")
-            .to_path_buf()
-    }
-
-    fn default_generated_dir() -> PathBuf {
-        Self::workspace_root()
-            .join("crates")
-            .join("hr-hooks-api")
-            .join("src")
-            .join("generated")
     }
 }
 

@@ -197,11 +197,11 @@ pub struct ProjectConfig {
 impl Default for ProjectConfig {
     fn default() -> Self {
         Self {
-            app_name: "hr-app".into(),
-            domain_types_crate: "hr_domain_types".into(),
-            hooks_api_crate: "hr_hooks_api".into(),
+            app_name: "app".into(),
+            domain_types_crate: "domain_types".into(),
+            hooks_api_crate: "hooks_api".into(),
             api_title: "HR Open API".into(),
-            generator_name: "hr-graph".into(),
+            generator_name: "codegraph".into(),
             domain_types_base: String::new(),
             hooks_api_base: String::new(),
             extensions_base: String::new(),
@@ -259,10 +259,10 @@ pub struct GeneratorOpts<'a> {
     /// If `None` or the file doesn't exist, the generator falls back to
     /// hardcoded HR-specific demo data.
     pub seed_config: Option<&'a Path>,
-    /// Override target dir for `hr-domain-types` crate generators.
-    /// `None` uses the compiled-in workspace root (production).
+    /// Override target dir for domain-types crate generators.
+    /// `None` defaults to the main output directory.
     pub domain_types_base: Option<&'a Path>,
-    /// Override target dir for `hr-hooks-api` crate generators.
+    /// Override target dir for hooks generators.
     pub hooks_base: Option<&'a Path>,
     /// Extension points config for integration infrastructure generators.
     pub ext_points: Option<&'a codegraph_ext_points::ExtensionPointsConfig>,
@@ -508,38 +508,22 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             ui_domains.clone(),
         )) as Box<dyn EntityGenerator>,
         Box::new(ui::shell::UiShellGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
-        if let Some(base) = hooks_base {
-            Box::new(
-                hooks::lifecycle_trait::LifecycleTraitGenerator::new_with_base(
-                    output_dir,
-                    base.to_path_buf(),
-                ),
-            ) as Box<dyn EntityGenerator>
-        } else {
-            Box::new(hooks::lifecycle_trait::LifecycleTraitGenerator::new(
-                output_dir,
-            ))
-        },
-        // domain_types generators: use the provided base override in tests to avoid
-        // corrupting the real crates/hr-domain-types/src when running with a mock graph.
-        if let Some(base) = domain_types_base {
-            Box::new(domain_types::dto::DomainTypesDtoGenerator::new_with_base(
-                base.to_path_buf(),
-            )) as Box<dyn EntityGenerator>
-        } else {
-            Box::new(domain_types::dto::DomainTypesDtoGenerator::new(output_dir))
-        },
-        if let Some(base) = domain_types_base {
-            Box::new(
-                domain_types::query_service::QueryServiceGenerator::new_with_base(
-                    base.to_path_buf(),
-                ),
-            ) as Box<dyn EntityGenerator>
-        } else {
-            Box::new(domain_types::query_service::QueryServiceGenerator::new(
-                output_dir,
-            ))
-        },
+        Box::new(
+            hooks::lifecycle_trait::LifecycleTraitGenerator::new_with_base(
+                hooks_base.map(|b| b.to_path_buf()).unwrap_or_else(|| output_dir.to_path_buf()),
+            ),
+        ) as Box<dyn EntityGenerator>,
+        // domain_types generators: use the provided base override, defaulting to output_dir.
+        Box::new(
+            domain_types::dto::DomainTypesDtoGenerator::new_with_base(
+                domain_types_base.map(|b| b.to_path_buf()).unwrap_or_else(|| output_dir.to_path_buf()),
+            ),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(
+            domain_types::query_service::QueryServiceGenerator::new_with_base(
+                domain_types_base.map(|b| b.to_path_buf()).unwrap_or_else(|| output_dir.to_path_buf()),
+            ),
+        ) as Box<dyn EntityGenerator>,
         Box::new(cli::command::CliCommandGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         Box::new(ddd::dto::DtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         // gRPC entity generators
@@ -605,25 +589,14 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             output_dir,
             schema_base_dir,
         )) as Box<dyn GlobalGenerator>,
-        if let Some(base) = hooks_base {
-            Box::new(hooks::registry::HookRegistryGenerator::new_with_base(
-                output_dir,
-                base.to_path_buf(),
-            )) as Box<dyn GlobalGenerator>
-        } else {
-            Box::new(hooks::registry::HookRegistryGenerator::new(output_dir))
-        },
-        if let Some(base) = domain_types_base {
-            Box::new(
-                domain_types::scaffold::DomainTypesScaffoldGenerator::new_with_base(
-                    base.to_path_buf(),
-                ),
-            ) as Box<dyn GlobalGenerator>
-        } else {
-            Box::new(domain_types::scaffold::DomainTypesScaffoldGenerator::new(
-                output_dir,
-            ))
-        },
+        Box::new(hooks::registry::HookRegistryGenerator::new_with_base(
+            hooks_base.map(|b| b.to_path_buf()).unwrap_or_else(|| output_dir.to_path_buf()),
+        )) as Box<dyn GlobalGenerator>,
+        Box::new(
+            domain_types::scaffold::DomainTypesScaffoldGenerator::new_with_base(
+                domain_types_base.map(|b| b.to_path_buf()).unwrap_or_else(|| output_dir.to_path_buf()),
+            ),
+        ) as Box<dyn GlobalGenerator>,
         Box::new(cli::scaffold::CliScaffoldGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
         Box::new(
             db::report_view::ReportViewGenerator::new(output_dir)
@@ -803,10 +776,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     }
 
     // Codelist Rust enums into domain-types crate (source-of-truth for DTOs)
-    let codelist_gen = match domain_types_base {
-        Some(base) => domain_types::codelist::DomainTypesCodelistGenerator::new_with_base(base.to_path_buf()),
-        None => domain_types::codelist::DomainTypesCodelistGenerator::new(),
-    };
+    let codelist_gen = domain_types::codelist::DomainTypesCodelistGenerator::new_with_base(
+        domain_types_base.map(|b| b.to_path_buf()).unwrap_or_else(|| output_dir.to_path_buf()),
+    );
     match codelist_gen
         .generate_all(db, tera, project)
         .await
