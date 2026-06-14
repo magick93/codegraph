@@ -1024,6 +1024,9 @@ impl DtoGenerator {
             })
             .collect();
 
+        // Query all properties for dot-notation intermediate entity fields
+        let all_props = db.list_all_properties().await?;
+
         // Build enriched_types for dot-notation paths
         let enriched_types: Vec<serde_json::Value> = if has_dot_paths {
             let mut enriched = Vec::new();
@@ -1035,16 +1038,55 @@ impl DtoGenerator {
                         continue;
                     }
 
+                    let intermediate = &path.segments[0];
                     let leaf = &path.segments[path.segments.len() - 1];
 
-                    // TODO: query the graph for all fields of the intermediate entity
-                    // to build richer base_fields. For now, id/created_at/updated_at
-                    // are sufficient to demonstrate the pattern.
-                    let base_fields: Vec<serde_json::Value> = vec![
-                        serde_json::json!({"name": "id", "rust_type": "Uuid", "is_optional": false}),
-                        serde_json::json!({"name": "created_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}),
-                        serde_json::json!({"name": "updated_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}),
-                    ];
+                    // Query all scalar properties of the intermediate entity from the graph.
+                    // Properties are keyed by schema title (e.g. "DeploymentType"), but
+                    // entity_name may use rust_type_name (e.g. "Deployment"). Try both.
+                    let mut base_fields: Vec<serde_json::Value> = Vec::new();
+                    base_fields.push(serde_json::json!({"name": "id", "rust_type": "Uuid", "is_optional": false}));
+
+                    // Determine the property lookup key by checking the schema title.
+                    // Properties are keyed by schema title (e.g. "DeploymentType"), but
+                    // entity_name may use rust_type_name (e.g. "Deployment").
+                    let props_key = {
+                        let maybe = db.get_schema(&intermediate.entity_name).await?;
+                        match maybe {
+                            Some(s) => Some(s.title),
+                            None => {
+                                // Try appending "Type" suffix
+                                let with_type = format!("{}Type", intermediate.entity_name);
+                                db.get_schema(&with_type).await?.map(|s| s.title)
+                            }
+                        }
+                    };
+                    if let Some(ref key) = props_key {
+                        if let Some(props) = all_props.get(key) {
+                            for prop in props {
+                                // Skip synthetic/generated fields — handled separately
+                                if prop.rust_field_name == "id"
+                                    || prop.rust_field_name == "created_at"
+                                    || prop.rust_field_name == "updated_at"
+                                {
+                                    continue;
+                                }
+                                // Skip value objects / child tables (separate child DTOs, not flat columns)
+                                if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
+                                    continue;
+                                }
+                                let is_optional = prop.is_nullable || !prop.is_required;
+                                base_fields.push(serde_json::json!({
+                                    "name": prop.rust_field_name,
+                                    "rust_type": prop.rust_field_type,
+                                    "is_optional": is_optional,
+                                }));
+                            }
+                        }
+                    }
+
+                    base_fields.push(serde_json::json!({"name": "created_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}));
+                    base_fields.push(serde_json::json!({"name": "updated_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}));
 
                     let nested_fields: Vec<serde_json::Value> = vec![serde_json::json!({
                         "alias": leaf.module_name,

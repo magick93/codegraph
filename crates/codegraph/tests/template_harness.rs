@@ -4876,12 +4876,76 @@ async fn dto_include_dot_notation() {
         ui_override_inline: None,
     };
 
+    // Scalar properties on DeploymentType (non-FK fields that should appear in enriched type)
+    let scalar_deployment_props = vec![
+        PropertyNode {
+            name: "assignment_reason_code".to_string(),
+            prop_type: "string".to_string(),
+            description: Some("Reason for the deployment assignment".to_string()),
+            format: None,
+            is_required: false,
+            is_nullable: true,
+            is_array: false,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: "assignment_reason_code".to_string(),
+            pg_column_type: "TEXT".to_string(),
+            rust_field_name: "assignment_reason_code".to_string(),
+            rust_field_type: "Option<String>".to_string(),
+            sea_orm_type: "Text".to_string(),
+            render_strategy: "codelist".to_string(),
+            ref_target: Some("AssignmentReasonCodeList".to_string()),
+            classification: Some("codelist".to_string()),
+            projection: None,
+            classification_kind: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        },
+        PropertyNode {
+            name: "full_time_equivalent_ratio".to_string(),
+            prop_type: "number".to_string(),
+            description: Some("FTE ratio".to_string()),
+            format: None,
+            is_required: false,
+            is_nullable: true,
+            is_array: false,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: "full_time_equivalent_ratio".to_string(),
+            pg_column_type: "NUMERIC".to_string(),
+            rust_field_name: "full_time_equivalent_ratio".to_string(),
+            rust_field_type: "Option<rust_decimal::Decimal>".to_string(),
+            sea_orm_type: "Decimal".to_string(),
+            render_strategy: "primitive_wrapper".to_string(),
+            ref_target: None,
+            classification: Some("primitive_wrapper".to_string()),
+            projection: None,
+            classification_kind: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        },
+    ];
+
     let mock = MockEngine::builder()
         .with_schema(position_schema)
         .with_schema(deployment_schema)
         .with_schema(worker_schema)
         .with_properties("WorkerType", vec![deployment_prop])
-        .with_properties("DeploymentType", vec![position_prop])
+        .with_properties("DeploymentType", {
+            let mut all = scalar_deployment_props;
+            all.push(position_prop);
+            all
+        })
         .build();
 
     let tera = test_tera();
@@ -4933,6 +4997,15 @@ allow_include = ["deployment.position"]
     assert!(
         content.contains("position: Option<PositionResponse>"),
         "Should contain position field in enriched type. Got:\n{content}"
+    );
+    // Verify the intermediate entity's scalar fields are included (not just id/timestamps)
+    assert!(
+        content.contains("assignment_reason_code:"),
+        "Should contain intermediate entity's scalar fields. Got:\n{content}"
+    );
+    assert!(
+        content.contains("full_time_equivalent_ratio:"),
+        "Should contain intermediate entity's numeric fields. Got:\n{content}"
     );
 }
 
