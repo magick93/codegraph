@@ -1512,6 +1512,40 @@ impl RepositoryImplEmitter {
         }
         self.emit_footer(&mut code);
 
+        // Resolve scalar fields for each include path segment.
+        // For each path, we build per-segment field name lists so the
+        // fetch methods can populate all fields of the response structs.
+        let all_props = db.list_all_properties().await?;
+        let mut include_segment_fields: Vec<Vec<Vec<String>>> = Vec::new();
+        for path in include_paths {
+            let mut per_seg_fields: Vec<Vec<String>> = Vec::new();
+            for seg in &path.segments {
+                let mut fields: Vec<String> = Vec::new();
+            // Use schema_title (canonical graph key) for property lookup.
+            // Resolved include paths always set this correctly.
+            let schema_title = match db.get_schema(&seg.schema_title).await? {
+                Some(s) => s.title.clone(),
+                None => seg.entity_name.clone(),
+            };
+                if let Some(props) = all_props.get(&schema_title) {
+                    for prop in props {
+                        if prop.rust_field_name == "id"
+                            || prop.rust_field_name == "created_at"
+                            || prop.rust_field_name == "updated_at"
+                        {
+                            continue;
+                        }
+                        if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
+                            continue;
+                        }
+                        fields.push(prop.rust_field_name.clone());
+                    }
+                }
+                per_seg_fields.push(fields);
+            }
+            include_segment_fields.push(per_seg_fields);
+        }
+
         if !include_paths.is_empty() {
             writeln!(code).unwrap();
             writeln!(
@@ -1520,7 +1554,7 @@ impl RepositoryImplEmitter {
                 tree.entity_name
             )
             .unwrap();
-            self.emit_include_fetch_methods(&tree, &mut code, include_paths);
+            self.emit_include_fetch_methods(&tree, &mut code, include_paths, &include_segment_fields);
             writeln!(code, "}}").unwrap();
         }
 
@@ -3303,14 +3337,27 @@ impl RepositoryImplEmitter {
         tree: &EntityTree,
         code: &mut String,
         include_paths: &[ResolvedIncludePath],
+        include_segment_fields: &[Vec<Vec<String>>],
     ) {
-        for path in include_paths {
+        for (idx, path) in include_paths.iter().enumerate() {
+            let per_seg_fields = include_segment_fields.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
             if path.segments.len() == 1 {
-                self.emit_single_fetch_method(tree, code, path);
-                self.emit_batch_fetch_method(tree, code, path);
+                let fields = per_seg_fields.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                self.emit_single_fetch_method(tree, code, path, fields);
+                self.emit_batch_fetch_method(tree, code, path, fields);
             } else {
-                self.emit_dot_fetch_method(tree, code, path);
+                let intermediate_fields = per_seg_fields.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let leaf_fields = per_seg_fields.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
+                self.emit_dot_fetch_method(tree, code, path, intermediate_fields, leaf_fields);
             }
+        }
+    }
+
+    /// Emit field assignments for a SeaORM entity row into a response struct.
+    /// Emits `field_name: row.field_name,` for each field in `fields`.
+    fn emit_field_assignments(code: &mut String, row_var: &str, fields: &[String]) {
+        for field in fields {
+            writeln!(code, "                {}: {}.{},", field, row_var, field).unwrap();
         }
     }
 
@@ -3319,6 +3366,7 @@ impl RepositoryImplEmitter {
         tree: &EntityTree,
         code: &mut String,
         path: &ResolvedIncludePath,
+        target_fields: &[String],
     ) {
         let seg = &path.segments[0];
         let src_module = &tree.entity_module;
@@ -3375,6 +3423,7 @@ impl RepositoryImplEmitter {
             writeln!(code, "        for row in rows {{").unwrap();
             writeln!(code, "            results.push({} {{", resp_type).unwrap();
             writeln!(code, "                id: row.id,").unwrap();
+            Self::emit_field_assignments(code, "row", target_fields);
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
             writeln!(code, "            }});").unwrap();
@@ -3428,6 +3477,7 @@ impl RepositoryImplEmitter {
             writeln!(code, "        }};").unwrap();
             writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
             writeln!(code, "            id: target.id,").unwrap();
+            Self::emit_field_assignments(code, "target", target_fields);
             writeln!(code, "            created_at: target.created_at,").unwrap();
             writeln!(code, "            updated_at: target.updated_at,").unwrap();
             writeln!(code, "        }}))").unwrap();
@@ -3441,6 +3491,7 @@ impl RepositoryImplEmitter {
         tree: &EntityTree,
         code: &mut String,
         path: &ResolvedIncludePath,
+        target_fields: &[String],
     ) {
         let seg = &path.segments[0];
         let src_module = &tree.entity_module;
@@ -3516,6 +3567,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code, "                id: row.id,").unwrap();
+            Self::emit_field_assignments(code, "row", target_fields);
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
             writeln!(code, "            }});").unwrap();
@@ -3571,6 +3623,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code, "            id: t.id,").unwrap();
+            Self::emit_field_assignments(code, "t", target_fields);
             writeln!(code, "            created_at: t.created_at,").unwrap();
             writeln!(code, "            updated_at: t.updated_at,").unwrap();
             writeln!(
@@ -3608,10 +3661,13 @@ impl RepositoryImplEmitter {
         _tree: &EntityTree,
         code: &mut String,
         path: &ResolvedIncludePath,
+        intermediate_fields: &[String],
+        leaf_fields: &[String],
     ) {
         let seg0 = &path.segments[0];
         let seg1 = &path.segments[1];
         let resp_type = &path.response_rust_type;
+        let leaf_resp_type = path.segments.last().map(|s| format!("{}Response", s.entity_name)).unwrap_or_default();
         let intermediate_module = format!("{}_{}", seg0.domain, seg0.module_name);
         let leaf_module = format!("{}_{}", seg1.domain, seg1.module_name);
 
@@ -3661,7 +3717,7 @@ impl RepositoryImplEmitter {
         writeln!(code, "        }};").unwrap();
         writeln!(
             code,
-            "        let target = crate::entity::{}::Entity::find()",
+            "        let leaf = crate::entity::{}::Entity::find()",
             leaf_module
         )
         .unwrap();
@@ -3673,16 +3729,24 @@ impl RepositoryImplEmitter {
         .unwrap();
         writeln!(code, "            .one(db)").unwrap();
         writeln!(code, "            .await?;").unwrap();
-        writeln!(code, "        let target = match target {{").unwrap();
-        writeln!(code, "            Some(t) => t,").unwrap();
-        writeln!(code, "            None => return Ok(None),").unwrap();
-        writeln!(code, "        }};").unwrap();
+
+        // Build enriched response: base fields from intermediate, nested leaf from leaf
+        writeln!(code, "        let leaf_dto = leaf.map(|l| {} {{", leaf_resp_type).unwrap();
+        writeln!(code, "            id: l.id,").unwrap();
+        Self::emit_field_assignments(code, "l", leaf_fields);
+        writeln!(code, "            created_at: l.created_at,").unwrap();
+        writeln!(code, "            updated_at: l.updated_at,").unwrap();
+        writeln!(code, "        }});").unwrap();
 
         writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
-        writeln!(code, "            id: target.id,").unwrap();
-        writeln!(code, "            created_at: target.created_at,").unwrap();
-        writeln!(code, "            updated_at: target.updated_at,").unwrap();
+        writeln!(code, "            id: intermediate.id,").unwrap();
+        // Intermediate entity fields go into the enriched struct base
+        Self::emit_field_assignments(code, "intermediate", intermediate_fields);
+        writeln!(code, "            created_at: intermediate.created_at,").unwrap();
+        writeln!(code, "            updated_at: intermediate.updated_at,").unwrap();
+        writeln!(code, "            {}: leaf_dto,", seg1.module_name).unwrap();
         writeln!(code, "        }}))").unwrap();
+
         writeln!(code, "    }}").unwrap();
     }
 

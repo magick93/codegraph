@@ -1050,15 +1050,13 @@ impl DtoGenerator {
                     // Determine the property lookup key by checking the schema title.
                     // Properties are keyed by schema title (e.g. "DeploymentType"), but
                     // entity_name may use rust_type_name (e.g. "Deployment").
-                    let props_key = {
-                        let maybe = db.get_schema(&intermediate.entity_name).await?;
-                        match maybe {
-                            Some(s) => Some(s.title),
-                            None => {
-                                // Try appending "Type" suffix
-                                let with_type = format!("{}Type", intermediate.entity_name);
-                                db.get_schema(&with_type).await?.map(|s| s.title)
-                            }
+                    // Use schema_title (canonical graph key) for property lookup.
+                    // Resolved include paths always set this correctly.
+                    let props_key = match db.get_schema(&intermediate.schema_title).await? {
+                        Some(s) => Some(s.title),
+                        None => {
+                            let with_type = format!("{}Type", intermediate.entity_name);
+                            db.get_schema(&with_type).await?.map(|s| s.title)
                         }
                     };
                     if let Some(ref key) = props_key {

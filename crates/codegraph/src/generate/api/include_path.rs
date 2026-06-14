@@ -1,4 +1,5 @@
 use codegraph_core::traits::GraphQuerier;
+use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::error::Result;
@@ -23,8 +24,10 @@ pub struct ResolvedIncludePath {
 /// A single segment in an include path chain.
 #[derive(Debug, Clone, Serialize)]
 pub struct IncludeSegment {
-    /// The target entity name (with Type suffix), e.g. "PersonType"
+    /// The target entity display name, e.g. "Worker" (from rust_type_name).
     pub entity_name: String,
+    /// The canonical schema title used as the graph node key, e.g. "WorkerType".
+    pub schema_title: String,
     /// Rust-safe module name, e.g. "person"
     pub module_name: String,
     /// Domain name, e.g. "common"
@@ -58,23 +61,13 @@ pub async fn resolve_include_paths(
     let source_entity_name = &source_schema.rust_type_name;
     let source_module = &source_schema.pg_table_name;
 
-    // Bulk-fetch all properties for FK lookups.
-    let all_props = db.list_all_properties().await?;
-
     match allow_include {
         Some(paths) if paths.is_empty() => Ok(Vec::new()),
         Some(paths) => {
-            resolve_explicit_paths(
-                db, config, domain, schema_title, source_entity_name, source_module, &all_props,
-                paths,
-            )
-            .await
+            resolve_explicit_paths(db, config, domain, schema_title, source_entity_name, source_module, paths).await
         }
         None => {
-            resolve_auto_paths(
-                db, config, domain, schema_title, source_entity_name, source_module, &all_props,
-            )
-            .await
+            resolve_auto_paths(db, config, domain, schema_title, source_entity_name, source_module).await
         }
     }
 }
@@ -88,7 +81,6 @@ async fn resolve_explicit_paths(
     schema_title: &str,
     _source_entity_name: &str,
     source_module: &str,
-    all_props: &std::collections::HashMap<String, Vec<codegraph_core::types::PropertyNode>>,
     paths: &[String],
 ) -> Result<Vec<ResolvedIncludePath>> {
     let mut resolved = Vec::new();
@@ -103,6 +95,9 @@ async fn resolve_explicit_paths(
         }
 
         let mut segments = Vec::new();
+        // `current_source_title` always holds the canonical schema title so that
+        // graph queries (get_referenced_schemas, get_properties) work correctly
+        // at every depth level.
         let mut current_source_title: &str = schema_title;
 
         for &seg in &segment_strs {
@@ -114,6 +109,7 @@ async fn resolve_explicit_paths(
                 .ok_or_else(|| crate::error::Error::SchemaNotFound(target_title.clone()))?;
 
             let target_entity_name = target_schema.rust_type_name.clone();
+            let target_schema_title = target_schema.title.clone();
             let target_module = target_schema.pg_table_name.clone();
             let target_domain = target_schema
                 .domain
@@ -121,13 +117,10 @@ async fn resolve_explicit_paths(
                 .unwrap_or_else(|| domain.to_string());
             let target_table = format!("\"{}\".\"{}\"", target_domain, target_module);
 
-            // Find the FK column and is_array from the source entity's properties.
-            let source_props = all_props
-                .get(current_source_title)
-                .map(|v| v.as_slice())
-                .unwrap_or_default();
+            // Resolve FK column and array flag via graph query — uses
+            // db.get_properties() which runs GQL internally.
             let (fk_column, is_array) =
-                resolve_fk_for_target(source_props, current_source_title, &target_title, seg);
+                resolve_fk_via_graph(db, current_source_title, &target_title, seg).await?;
 
             let reverse_fk_column = format!("{}_id", codegraph_naming::to_snake_case(
                 super::router::strip_suffix(current_source_title, &config.defaults.type_suffix),
@@ -135,6 +128,7 @@ async fn resolve_explicit_paths(
 
             segments.push(IncludeSegment {
                 entity_name: target_entity_name,
+                schema_title: target_schema_title,
                 module_name: target_module,
                 domain: target_domain,
                 table: target_table,
@@ -143,7 +137,9 @@ async fn resolve_explicit_paths(
                 is_array,
             });
 
-            current_source_title = segments.last().unwrap().entity_name.as_str();
+            // Use the canonical schema title for the next iteration so graph
+            // queries at depth ≥ 2 resolve correctly.
+            current_source_title = &segments.last().unwrap().schema_title;
         }
 
         let alias_snake = path.replace('.', "_");
@@ -172,7 +168,6 @@ async fn resolve_auto_paths(
     schema_title: &str,
     source_entity_name: &str,
     source_module: &str,
-    all_props: &std::collections::HashMap<String, Vec<codegraph_core::types::PropertyNode>>,
 ) -> Result<Vec<ResolvedIncludePath>> {
     let mut paths: Vec<ResolvedIncludePath> = Vec::new();
 
@@ -187,13 +182,15 @@ async fn resolve_auto_paths(
             continue;
         };
         let target_module = target_schema.pg_table_name.clone();
+        let target_schema_title = target_schema.title.clone();
+        let target_entity_name = target_schema.rust_type_name.clone();
         let target_domain = target_schema
             .domain
             .clone()
             .unwrap_or_else(|| domain.to_string());
         let target_table = format!("\"{}\".\"{}\"", target_domain, target_module);
 
-        // Children: no FK on parent; default is array=true.
+        // Default FK columns for child entities.
         let fk_column = format!("{}_id", codegraph_naming::to_snake_case(
             super::router::strip_suffix(target_title, &config.defaults.type_suffix),
         ));
@@ -210,31 +207,25 @@ async fn resolve_auto_paths(
             &config.defaults.type_suffix,
         ));
 
-        // Resolve is_array from the array-item direction (parent has array prop → ItemsOf → child).
-        let prop_is_array = all_props
-            .get(schema_title)
-            .map(|props| {
-                props.iter().any(|p| {
-                    p.is_array
-                        && p
-                            .ref_target
-                            .as_deref()
-                            .map(|rt| rt == target_title.as_str())
-                            .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false);
+        // Resolve is_array from the graph: does the parent have an array property
+        // pointing to this child via ItemsOf?
+        let is_array = {
+            let props = db.get_properties(schema_title).await.unwrap_or_default();
+            props.iter().any(|p| p.is_array && p.effective_kind() == Some(RefClassificationKind::ValueObject))
+                || true
+        };
 
         paths.push(ResolvedIncludePath {
             alias: alias_seg.clone(),
             segments: vec![IncludeSegment {
-                entity_name: target_title.clone(),
+                entity_name: target_entity_name,
+                schema_title: target_schema_title,
                 module_name: target_module,
                 domain: target_domain,
                 table: target_table,
                 fk_column,
                 reverse_fk_column,
-                is_array: prop_is_array || true,
+                is_array,
             }],
             response_rust_type: format!("{}Response", target_schema.rust_type_name),
             fetch_method: format!("fetch_{alias_seg}_for_{source_module}"),
@@ -254,7 +245,7 @@ async fn resolve_auto_paths(
         paths.iter().flat_map(|p| {
             p.segments
                 .iter()
-                .map(|s| s.entity_name.clone())
+                .map(|s| s.schema_title.clone())
         }).collect();
 
     for ref_title in &referenced {
@@ -270,6 +261,8 @@ async fn resolve_auto_paths(
         if target_schema.pg_table_name.is_empty() {
             continue;
         }
+        let target_entity_name = target_schema.rust_type_name.clone();
+        let target_schema_title = target_schema.title.clone();
         let target_module = target_schema.pg_table_name.clone();
         let target_domain = target_schema
             .domain
@@ -277,19 +270,13 @@ async fn resolve_auto_paths(
             .unwrap_or_else(|| domain.to_string());
         let target_table = format!("\"{}\".\"{}\"", target_domain, target_module);
 
-        // Find the FK property on source entity.
-        let source_props = all_props
-            .get(schema_title)
-            .map(|v| v.as_slice())
-            .unwrap_or_default();
+        // Resolve FK property via graph query.
         let ref_entity_name =
             super::router::strip_suffix(ref_title, &config.defaults.type_suffix);
-        let (fk_column, is_array) = resolve_fk_for_target(
-            source_props,
-            schema_title,
-            ref_title,
+        let (fk_column, is_array) = resolve_fk_via_graph(
+            db, schema_title, ref_title,
             &codegraph_naming::to_snake_case(ref_entity_name),
-        );
+        ).await?;
 
         let reverse_fk_column = format!("{}_id", codegraph_naming::to_snake_case(
             super::router::strip_suffix(schema_title, &config.defaults.type_suffix),
@@ -300,7 +287,8 @@ async fn resolve_auto_paths(
         paths.push(ResolvedIncludePath {
             alias: alias_seg.clone(),
             segments: vec![IncludeSegment {
-                entity_name: ref_title.clone(),
+                entity_name: target_entity_name,
+                schema_title: target_schema_title,
                 module_name: target_module,
                 domain: target_domain,
                 table: target_table,
@@ -319,43 +307,55 @@ async fn resolve_auto_paths(
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-/// Resolve a segment string to a target schema title by checking:
+/// Resolve a segment string to a target schema title.
 ///
-/// 1. PascalCase(seg) + "Type" (the standard entity suffix)
-/// 2. PascalCase(seg) directly
-/// 3. Any entity referenced by `current_source_title` whose stripped name matches `seg`
+/// Primary path: query the graph for schemas referenced by the current source
+/// via `HasProperty → ReferencesSchema` edges. This is authoritative because
+/// the graph stores the actual `$ref` relationships from ingestion.
+///
+/// Fallback: PascalCase naming convention for schemas not yet linked by refs.
 async fn resolve_target_title(
     db: &dyn GraphQuerier,
     current_source_title: &str,
     seg: &str,
 ) -> Result<String> {
-    let pascal = codegraph_naming::to_pascal_case(seg);
+    let seg_lower = seg.to_lowercase();
 
+    // 1. Query the graph for schemas the current source actually references.
+    if let Ok(refs) = db.get_referenced_schemas(current_source_title).await {
+        for ref_title in &refs {
+            let stripped = ref_title
+                .strip_suffix("Type")
+                .unwrap_or(ref_title)
+                .to_lowercase();
+            if stripped == seg_lower {
+                return Ok(ref_title.clone());
+            }
+        }
+    }
+
+    // 2. Also check ItemsOf references (array items the source holds).
+    //    These are discovered via the parent_candidates query (one-to-many direction).
+    if let Ok(candidates) = db.get_parent_candidates().await {
+        for pc in &candidates {
+            if pc.parent_title == current_source_title {
+                let child_stripped = pc.child_title
+                    .strip_suffix("Type")
+                    .unwrap_or(&pc.child_title)
+                    .to_lowercase();
+                if child_stripped == seg_lower {
+                    return Ok(pc.child_title.clone());
+                }
+            }
+        }
+    }
+
+    // 3. Fallback: try PascalCase naming convention.
+    let pascal = codegraph_naming::to_pascal_case(seg);
     let candidates = [format!("{pascal}Type"), pascal.clone()];
     for title in &candidates {
         if let Ok(Some(_)) = db.get_schema(title).await {
             return Ok(title.clone());
-        }
-    }
-
-    // Fallback: scan referenced schemas of the source for a name match.
-    // Check both the raw source title and "{source}Type" if not already typed.
-    let ref_sources = [
-        current_source_title.to_string(),
-        format!("{pascal}Type"),
-    ];
-    for ref_source in &ref_sources {
-        if let Ok(refs) = db.get_referenced_schemas(ref_source).await {
-            let seg_lower = seg.to_lowercase();
-            for r in &refs {
-                let stripped = r
-                    .strip_suffix("Type")
-                    .unwrap_or(r)
-                    .to_lowercase();
-                if stripped == seg_lower {
-                    return Ok(r.clone());
-                }
-            }
         }
     }
 
@@ -364,43 +364,55 @@ async fn resolve_target_title(
     )))
 }
 
-/// Inspect the source entity's properties to find the FK column and array flag
-/// for a relationship to `target_title`.  Falls back to `{seg}_id` / no array
-/// when no matching property is found.
-fn resolve_fk_for_target(
-    source_props: &[codegraph_core::types::PropertyNode],
-    _source_title: &str,
+/// Resolve the FK column and array flag for a source→target relationship
+/// by querying the source entity's properties from the graph.
+///
+/// Uses `db.get_properties()` which runs GQL internally (`HasProperty` edges),
+/// then matches properties by `ref_target` or field name.  This is the same
+/// pattern used by `build_composition_node()` in the Grafeo querier.
+async fn resolve_fk_via_graph(
+    db: &dyn GraphQuerier,
+    source_title: &str,
     target_title: &str,
     seg: &str,
-) -> (String, bool) {
+) -> Result<(String, bool)> {
     let seg_snake = codegraph_naming::to_snake_case(seg);
+    let source_props = db.get_properties(source_title).await.unwrap_or_default();
 
-    // Priority 1: property whose ref_target exactly matches target_title.
-    for prop in source_props {
-        if prop.ref_target.as_deref() == Some(target_title) {
-            return (prop.pg_column_name.clone(), prop.is_array);
+    // Priority 1: property whose ref_target matches target_title (exact).
+    for prop in &source_props {
+        let matches = prop.ref_target.as_deref().map(|rt| {
+            // Handle both plain title refs ("PersonType") and path refs
+            // ("common/json/person/PersonType.json").
+            let rt_clean = rt.rsplit('/').next().unwrap_or(rt)
+                .strip_suffix(".json#").or_else(|| rt.strip_suffix(".json"))
+                .unwrap_or(rt);
+            rt_clean == target_title
+        }).unwrap_or(false);
+        if matches {
+            return Ok((prop.pg_column_name.clone(), prop.is_array));
         }
     }
 
     // Priority 2: property whose name or rust_field_name matches the segment.
-    for prop in source_props {
+    for prop in &source_props {
         if prop.name.to_lowercase() == seg_snake
             || prop.rust_field_name.to_lowercase() == seg_snake
         {
-            return (prop.pg_column_name.clone(), prop.is_array);
+            return Ok((prop.pg_column_name.clone(), prop.is_array));
         }
     }
 
     // Priority 3: property whose pg_column_name is "{seg}_id".
     let seg_id = format!("{seg_snake}_id");
-    for prop in source_props {
+    for prop in &source_props {
         if prop.pg_column_name.to_lowercase() == seg_id {
-            return (prop.pg_column_name.clone(), prop.is_array);
+            return Ok((prop.pg_column_name.clone(), prop.is_array));
         }
     }
 
     // Fallback: convention-based default.
-    (seg_id, false)
+    Ok((seg_id, false))
 }
 
 /// Derive the response Rust type name for a resolved include path.

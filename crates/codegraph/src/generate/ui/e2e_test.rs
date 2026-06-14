@@ -809,14 +809,14 @@ async fn resolve_e2e_include_config(
             }
             seen_deps.insert(dep_id.clone());
 
-            // Resolve the target schema for api_path
+            // Resolve the target schema for api_path using the canonical schema_title.
             let target_schema = db
-                .get_schema(&seg.entity_name)
+                .get_schema(&seg.schema_title)
                 .await?
-                .ok_or_else(|| crate::error::Error::SchemaNotFound(seg.entity_name.clone()))?;
+                .ok_or_else(|| crate::error::Error::SchemaNotFound(seg.schema_title.clone()))?;
             let api_path = format!("/api/{}/{}", seg.domain, target_schema.api_path_segment);
 
-            let fields_json = build_test_data_json(db, &seg.entity_name, Some(&seg.domain)).await;
+            let fields_json = build_test_data_json(db, &seg.schema_title, Some(&seg.domain)).await;
 
             // FK map: this entity has a FK to the previously created (deeper) entity.
             // The FK column is the fk_column of the deeper segment — it describes

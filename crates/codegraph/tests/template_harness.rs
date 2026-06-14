@@ -4605,6 +4605,7 @@ async fn repository_emitter_produces_fetch_methods_with_include() {
         alias: "person".to_string(),
         segments: vec![IncludeSegment {
             entity_name: "PersonType".to_string(),
+            schema_title: "PersonType".to_string(),
             module_name: "person".to_string(),
             domain: "hr".to_string(),
             table: "\"hr\".\"person\"".to_string(),
