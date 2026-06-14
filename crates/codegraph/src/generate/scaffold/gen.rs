@@ -212,6 +212,12 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: qs_query_rs,
         });
 
+        let meta_content = render_template_with_project(tera, "scaffold/meta.tera", &serde_json::json!({}), project)?;
+        files.push(GeneratedFile {
+            path: self.output_dir.join("src").join("api").join("meta.rs"),
+            content: meta_content,
+        });
+
         let integrations_rs = render_template_with_project(tera, "scaffold/integrations_handler.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("integrations.rs"),

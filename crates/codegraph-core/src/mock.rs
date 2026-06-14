@@ -17,6 +17,7 @@ pub struct MockEngine {
     consumed_fields: Mutex<HashMap<String, Vec<(PropertyNode, String)>>>,
     /// Maps (property_name, schema_title) -> target SchemaNode for $ref resolution
     ref_targets: Mutex<HashMap<(String, String), SchemaNode>>,
+    parent_candidates: Mutex<Vec<ParentCandidate>>,
     view_containers: Mutex<HashMap<String, ViewContainerNode>>,
     view_components: Mutex<HashMap<String, ViewComponentNode>>,
     events: Mutex<HashMap<String, EventNode>>,
@@ -37,6 +38,7 @@ impl MockEngine {
             composite_ranges: Mutex::new(HashMap::new()),
             consumed_fields: Mutex::new(HashMap::new()),
             ref_targets: Mutex::new(HashMap::new()),
+            parent_candidates: Mutex::new(Vec::new()),
             view_containers: Mutex::new(HashMap::new()),
             view_components: Mutex::new(HashMap::new()),
             events: Mutex::new(HashMap::new()),
@@ -66,6 +68,7 @@ pub struct MockEngineBuilder {
     composite_ranges: HashMap<String, CompositeRange>,
     consumed_fields: HashMap<String, Vec<(PropertyNode, String)>>,
     ref_targets: HashMap<(String, String), SchemaNode>,
+    parent_candidates: Vec<ParentCandidate>,
 }
 
 impl MockEngineBuilder {
@@ -112,6 +115,11 @@ impl MockEngineBuilder {
             (property_name.to_string(), schema_title.to_string()),
             target,
         );
+        self
+    }
+
+    pub fn with_parent_candidate(mut self, pc: ParentCandidate) -> Self {
+        self.parent_candidates.push(pc);
         self
     }
 
@@ -171,6 +179,12 @@ impl MockEngineBuilder {
             let mut ref_targets = engine.ref_targets.lock().unwrap();
             for (k, v) in self.ref_targets {
                 ref_targets.insert(k, v);
+            }
+        }
+        {
+            let mut pcs = engine.parent_candidates.lock().unwrap();
+            for pc in &self.parent_candidates {
+                pcs.push(pc.clone());
             }
         }
         engine
@@ -565,7 +579,7 @@ impl GraphQuerier for MockEngine {
     }
 
     async fn get_parent_candidates(&self) -> Result<Vec<ParentCandidate>, GraphError> {
-        Ok(vec![])
+        Ok(self.parent_candidates.lock().unwrap().clone())
     }
 
     async fn get_codelist(&self, name: &str) -> Result<Option<CodeList>, GraphError> {
@@ -655,6 +669,10 @@ impl GraphQuerier for MockEngine {
 
     async fn get_allof_targets(&self, _schema_title: &str) -> Result<Vec<String>, GraphError> {
         Ok(vec![])
+    }
+
+    async fn list_all_properties(&self) -> Result<HashMap<String, Vec<PropertyNode>>, GraphError> {
+        Ok(self.properties.lock().unwrap().clone())
     }
 
     async fn get_referencing_schemas(

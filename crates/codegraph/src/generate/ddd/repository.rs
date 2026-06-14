@@ -8,6 +8,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::generate::render_template_with_project;
+use crate::generate::api::include_path::resolve_include_paths;
 use crate::generate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
@@ -131,6 +132,15 @@ impl EntityGenerator for RepositoryTraitGenerator {
             .map(|v| !v.is_empty())
             .unwrap_or(false);
 
+        let include_paths = resolve_include_paths(
+            db,
+            config,
+            &domain,
+            schema_title,
+            entity_cfg.and_then(|ec| ec.allow_include.as_ref()),
+        )
+        .await?;
+
         let ctx = RepositoryContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -168,7 +178,7 @@ impl EntityGenerator for RepositoryTraitGenerator {
         // Repository implementation (Rust emitter)
         let emitter = RepositoryImplEmitter;
         let impl_content = emitter
-            .emit(db, schema_title, &domain, config, parent_ref.as_deref())
+            .emit(db, schema_title, &domain, config, parent_ref.as_deref(), &include_paths)
             .await?;
         files.push(GeneratedFile {
             path: base_dir.join("repository_impl.rs"),

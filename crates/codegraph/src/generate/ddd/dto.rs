@@ -6,6 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::api::include_path::{resolve_include_paths, ResolvedIncludePath};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
@@ -941,7 +942,152 @@ impl EntityGenerator for DtoGenerator {
             content: response,
         });
 
+        // Generate include DTOs if allow_include is configured
+        let entity_cfg = config
+            .domains
+            .get(domain)
+            .and_then(|d| d.get_entity_config(schema_title));
+        let include_paths = if let Some(ec) = entity_cfg {
+            resolve_include_paths(db, config, domain, schema_title, ec.allow_include.as_ref()).await?
+        } else {
+            Vec::new()
+        };
+
+        if !include_paths.is_empty() {
+            let mut dto_files = self
+                .build_include_dtos(db, schema_title, domain, config, tera, project, &include_paths)
+                .await?;
+            files.append(&mut dto_files);
+        }
+
         Ok(files)
+    }
+}
+
+impl DtoGenerator {
+    /// Generate include DTO files for eager-loading via `?include=` query parameter.
+    async fn build_include_dtos(
+        &self,
+        db: &dyn GraphQuerier,
+        schema_title: &str,
+        domain: &str,
+        _config: &DomainConfig,
+        tera: &tera::Tera,
+        project: &ProjectConfig,
+        include_paths: &[ResolvedIncludePath],
+    ) -> Result<Vec<GeneratedFile>> {
+        let schema = db
+            .get_schema(schema_title)
+            .await?
+            .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
+
+        let entity_name = schema.rust_type_name;
+        let module_name = schema.pg_table_name;
+
+        let has_includes = !include_paths.is_empty();
+        let has_dot_paths = include_paths.iter().any(|p| p.segments.len() > 1);
+
+        // Build include_fields for the template
+        let include_fields: Vec<serde_json::Value> = include_paths
+            .iter()
+            .map(|path| {
+                let (rust_type, inner_type, is_vec) = if path.segments.len() == 1 {
+                    let seg = &path.segments[0];
+                    if seg.is_array {
+                        (
+                            format!("Option<Vec<{}Response>>", seg.entity_name),
+                            format!("{}Response", seg.entity_name),
+                            true,
+                        )
+                    } else {
+                        (
+                            format!("Option<{}Response>", seg.entity_name),
+                            format!("{}Response", seg.entity_name),
+                            false,
+                        )
+                    }
+                } else {
+                    (
+                        format!("Option<Vec<{}>>", path.response_rust_type),
+                        path.response_rust_type.clone(),
+                        true,
+                    )
+                };
+
+                serde_json::json!({
+                    "alias": path.alias,
+                    "rust_type": rust_type,
+                    "inner_type": inner_type,
+                    "is_vec": is_vec,
+                    "is_dot_path": path.segments.len() > 1,
+                })
+            })
+            .collect();
+
+        // Build enriched_types for dot-notation paths
+        let enriched_types: Vec<serde_json::Value> = if has_dot_paths {
+            let mut enriched = Vec::new();
+            let mut seen_type_names = std::collections::HashSet::new();
+
+            for path in include_paths {
+                if path.segments.len() > 1 {
+                    if !seen_type_names.insert(path.response_rust_type.clone()) {
+                        continue;
+                    }
+
+                    let leaf = &path.segments[path.segments.len() - 1];
+
+                    // TODO: query the graph for all fields of the intermediate entity
+                    // to build richer base_fields. For now, id/created_at/updated_at
+                    // are sufficient to demonstrate the pattern.
+                    let base_fields: Vec<serde_json::Value> = vec![
+                        serde_json::json!({"name": "id", "rust_type": "Uuid", "is_optional": false}),
+                        serde_json::json!({"name": "created_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}),
+                        serde_json::json!({"name": "updated_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}),
+                    ];
+
+                    let nested_fields: Vec<serde_json::Value> = vec![serde_json::json!({
+                        "alias": leaf.module_name,
+                        "rust_type": format!("Option<{}Response>", leaf.entity_name),
+                        "inner_type": format!("{}Response", leaf.entity_name),
+                        "is_vec": false,
+                    })];
+
+                    enriched.push(serde_json::json!({
+                        "type_name": path.response_rust_type,
+                        "base_fields": base_fields,
+                        "nested_fields": nested_fields,
+                    }));
+                }
+            }
+            enriched
+        } else {
+            Vec::new()
+        };
+
+        let ctx = serde_json::json!({
+            "entity_name": entity_name,
+            "module_name": module_name,
+            "domain": domain,
+            "has_includes": has_includes,
+            "has_dot_paths": has_dot_paths,
+            "include_fields": include_fields,
+            "enriched_types": enriched_types,
+        });
+
+        let content =
+            render_template_with_project(tera, "ddd/dto_included.tera", &ctx, project)?;
+
+        Ok(vec![GeneratedFile {
+            path: self
+                .output_dir
+                .join("src")
+                .join("domain")
+                .join(domain)
+                .join(&module_name)
+                .join("dto_included.rs"),
+            content,
+        }])
     }
 }
 

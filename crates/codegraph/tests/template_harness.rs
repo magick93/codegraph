@@ -483,8 +483,8 @@ async fn candidate_dto_create() {
     assert!(
         app_create
             .content
-            .contains("pub use hr_domain_types::recruiting::candidate::CreateCandidateRequest"),
-        "App DTO should re-export from hr_domain_types. Got:\n{}",
+            .contains("pub use domain_types::recruiting::candidate::CreateCandidateRequest"),
+        "App DTO should re-export from domain_types. Got:\n{}",
         app_create.content
     );
 
@@ -4046,4 +4046,1043 @@ async fn webhook_endpoint_api_generator_produces_api_and_router() {
     assert!(router_file.content.contains("webhook-endpoints"));
     assert!(router_file.content.contains("list_endpoints"));
     assert!(router_file.content.contains("delete_subscription"));
+}
+
+// ── Include Path Resolution Tests ─────────────────────────────────────────────
+
+mod include_path_resolution_tests {
+    use super::*;
+    use codegraph::generate::api::include_path::resolve_include_paths;
+    use codegraph_config::config::parse_domain_config_str;
+    use codegraph_core::types::{DetectionSource, ParentCandidate};
+
+    fn schema_node(title: &str, domain: &str, table: &str, is_entity: bool) -> SchemaNode {
+        SchemaNode {
+            schema_id: format!("{domain}/json/{title}.json"),
+            title: title.to_string(),
+            description: None,
+            schema_type: "object".to_string(),
+            classification: if is_entity {
+                "entity_reference".to_string()
+            } else {
+                "value_object".to_string()
+            },
+            domain: Some(domain.to_string()),
+            rel_path: format!("{domain}/json/{title}.json"),
+            pg_type: "UUID".to_string(),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            rust_type_name: title.to_string(),
+            pg_table_name: table.to_string(),
+            api_path_segment: table.to_string(),
+            parent_schema: None,
+            is_entity,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+        }
+    }
+
+    fn ref_property(
+        name: &str,
+        pg_column: &str,
+        ref_target: &str,
+        is_array: bool,
+    ) -> PropertyNode {
+        PropertyNode {
+            name: name.to_string(),
+            prop_type: "string".to_string(),
+            description: None,
+            format: None,
+            is_required: false,
+            is_nullable: true,
+            is_array,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: pg_column.to_string(),
+            pg_column_type: "UUID".to_string(),
+            rust_field_name: pg_column.to_string(),
+            rust_field_type: if is_array { "Vec<Uuid>".to_string() } else { "Uuid".to_string() },
+            sea_orm_type: "Uuid".to_string(),
+            render_strategy: if is_array {
+                "array_wrapper".to_string()
+            } else {
+                "entity_reference".to_string()
+            },
+            ref_target: Some(ref_target.to_string()),
+            classification: Some(if is_array {
+                "array_wrapper".to_string()
+            } else {
+                "entity_reference".to_string()
+            }),
+            projection: None,
+            classification_kind: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    }
+
+    fn hr_domain_config() -> codegraph_config::DomainConfig {
+        parse_domain_config_str(
+            r#"
+[defaults]
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType"]
+"#,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn resolve_single_segment_include() {
+        let engine = MockEngine::builder()
+            .with_schema(schema_node("WorkerType", "hr", "worker", true))
+            .with_schema(schema_node("PersonType", "common", "person", true))
+            .with_properties(
+                "WorkerType",
+                vec![ref_property("person_id", "person_id", "PersonType", false)],
+            )
+            .build();
+
+        let config = hr_domain_config();
+        let paths = resolve_include_paths(
+            &engine,
+            &config,
+            "hr",
+            "WorkerType",
+            Some(&vec!["person".to_string()]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(paths.len(), 1, "should resolve 1 include path");
+        assert_eq!(
+            paths[0].alias, "person",
+            "alias should match the segment"
+        );
+        assert_eq!(
+            paths[0].segments.len(),
+            1,
+            "single-segment path should have 1 segment"
+        );
+        assert_eq!(
+            paths[0].segments[0].entity_name, "PersonType",
+            "entity_name should be the target schema name"
+        );
+        assert!(
+            !paths[0].segments[0].is_array,
+            "scalar FK should not be array"
+        );
+        assert_eq!(
+            paths[0].segments[0].fk_column, "person_id",
+            "FK column should match the property pg_column_name"
+        );
+        assert!(
+            paths[0].fetch_method.contains("fetch_person"),
+            "fetch_method should include 'fetch_person', got: {}",
+            paths[0].fetch_method
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_dot_notation_include() {
+        let engine = MockEngine::builder()
+            .with_schema(schema_node("WorkerType", "hr", "worker", true))
+            .with_schema(schema_node("DeploymentType", "hr", "deployment", true))
+            .with_schema(schema_node("PositionType", "hr", "position", true))
+            .with_properties(
+                "WorkerType",
+                vec![ref_property(
+                    "deployment_id",
+                    "deployment_id",
+                    "DeploymentType",
+                    true,
+                )],
+            )
+            .with_properties(
+                "DeploymentType",
+                vec![ref_property(
+                    "position_id",
+                    "position_id",
+                    "PositionType",
+                    false,
+                )],
+            )
+            .build();
+
+        let config = hr_domain_config();
+        let paths = resolve_include_paths(
+            &engine,
+            &config,
+            "hr",
+            "WorkerType",
+            Some(&vec!["deployment.position".to_string()]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(paths.len(), 1, "should resolve 1 include path");
+        assert_eq!(
+            paths[0].alias, "deployment.position",
+            "alias should preserve dot-notation"
+        );
+        assert_eq!(
+            paths[0].segments.len(),
+            2,
+            "dot-notation path should have 2 segments"
+        );
+
+        // First segment: DeploymentType (array via ItemsOf)
+        assert_eq!(
+            paths[0].segments[0].entity_name, "DeploymentType",
+            "first segment entity should be DeploymentType"
+        );
+        assert!(
+            paths[0].segments[0].is_array,
+            "deployments property is an array"
+        );
+
+        // Second segment: PositionType (scalar FK)
+        assert_eq!(
+            paths[0].segments[1].entity_name, "PositionType",
+            "second segment entity should be PositionType"
+        );
+        assert!(
+            !paths[0].segments[1].is_array,
+            "position_id is a scalar FK, not array"
+        );
+
+        assert_eq!(
+            paths[0].response_rust_type,
+            "DeploymentTypeWithPositionTypeResponse",
+            "multi-segment path should produce enriched response type"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_auto_discovered_include() {
+        let engine = MockEngine::builder()
+            .with_schema(schema_node("WorkerType", "hr", "worker", true))
+            .with_schema(schema_node("PersonType", "common", "person", true))
+            .with_properties(
+                "WorkerType",
+                vec![ref_property("person_id", "person_id", "PersonType", false)],
+            )
+            .with_parent_candidate(ParentCandidate {
+                child_title: "PersonType".to_string(),
+                parent_title: "WorkerType".to_string(),
+                field_name: "person_id".to_string(),
+                source: DetectionSource::ScalarRef,
+            })
+            .build();
+
+        let config = hr_domain_config();
+        let paths = resolve_include_paths(
+            &engine,
+            &config,
+            "hr",
+            "WorkerType",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            !paths.is_empty(),
+            "auto-discovery should return at least 1 path"
+        );
+
+        let person_path = paths.iter().find(|p| p.alias == "person");
+        assert!(
+            person_path.is_some(),
+            "auto-discovered paths should include 'person'"
+        );
+
+        if let Some(path) = person_path {
+            assert_eq!(
+                path.segments[0].entity_name, "PersonType",
+                "auto-discovered entity should be PersonType"
+            );
+        }
+    }
+}
+
+// ── Include Feature Tests (E4 + E5) ──────────────────────────────────────────
+
+fn worker_schema() -> SchemaNode {
+    SchemaNode {
+        schema_id: "hr/json/WorkerType.json".to_string(),
+        title: "WorkerType".to_string(),
+        description: Some("A worker".to_string()),
+        schema_type: "object".to_string(),
+        classification: "entity_reference".to_string(),
+        domain: Some("hr".to_string()),
+        rel_path: "hr/json/WorkerType.json".to_string(),
+        pg_type: "UUID".to_string(),
+        rust_type: "Uuid".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: "Worker".to_string(),
+        pg_table_name: "worker".to_string(),
+        api_path_segment: "workers".to_string(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+    }
+}
+
+fn person_schema() -> SchemaNode {
+    SchemaNode {
+        schema_id: "hr/json/PersonType.json".to_string(),
+        title: "PersonType".to_string(),
+        description: Some("A person".to_string()),
+        schema_type: "object".to_string(),
+        classification: "entity_reference".to_string(),
+        domain: Some("hr".to_string()),
+        rel_path: "hr/json/PersonType.json".to_string(),
+        pg_type: "UUID".to_string(),
+        rust_type: "Uuid".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: "Person".to_string(),
+        pg_table_name: "person".to_string(),
+        api_path_segment: "persons".to_string(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+    }
+}
+
+fn worker_properties_with_person_ref() -> Vec<PropertyNode> {
+    vec![PropertyNode {
+        name: "person".to_string(),
+        prop_type: "object".to_string(),
+        description: Some("FK to person".to_string()),
+        format: None,
+        is_required: false,
+        is_nullable: true,
+        is_array: false,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: "person_id".to_string(),
+        pg_column_type: "UUID".to_string(),
+        rust_field_name: "person".to_string(),
+        rust_field_type: "Option<Uuid>".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        render_strategy: "entity_reference".to_string(),
+        ref_target: Some("PersonType".to_string()),
+        classification: Some("entity_reference".to_string()),
+        projection: None,
+        classification_kind: Some(codegraph_type_contracts::RefClassificationKind::EntityReference),
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    }]
+}
+
+fn setup_include_mock() -> MockEngine {
+    MockEngine::builder()
+        .with_schema(worker_schema())
+        .with_schema(person_schema())
+        .with_properties("WorkerType", worker_properties_with_person_ref())
+        .build()
+}
+
+fn include_domain_config() -> codegraph_config::DomainConfig {
+    let toml_str = r#"
+[defaults]
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType", "PersonType"]
+
+[domains.hr.entity_config.WorkerType]
+allow_include = ["person"]
+operations = ["create", "read", "update", "list"]
+"#;
+    codegraph_config::config::parse_domain_config_str(toml_str).unwrap()
+}
+
+fn no_include_domain_config() -> codegraph_config::DomainConfig {
+    let toml_str = r#"
+[defaults]
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType", "PersonType"]
+
+[domains.hr.entity_config.WorkerType]
+operations = ["create", "read", "update", "list"]
+"#;
+    codegraph_config::config::parse_domain_config_str(toml_str).unwrap()
+}
+
+// ── E4: Handler generation with ?include= ───────────────────────────────
+
+#[tokio::test]
+async fn handler_with_include_produces_include_code() {
+    let mock = setup_include_mock();
+    let config = include_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-handler-include");
+
+    let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
+    let files = gen
+        .generate(&mock, "WorkerType", "hr", &config, &tera, &test_project_config())
+        .await
+        .unwrap();
+
+    assert_eq!(files.len(), 1, "Should produce exactly one handler file");
+    let content = &files[0].content;
+
+    // 1. ListParams struct has include: Option<String> field
+    assert!(
+        content.contains("pub include: Option<String>"),
+        "ListParams must have include field. Got:\n{content}"
+    );
+
+    // 2. ALLOWED_INCLUDE_KEYS constant contains "person"
+    assert!(
+        content.contains("ALLOWED_INCLUDE_KEYS"),
+        "Should have ALLOWED_INCLUDE_KEYS constant. Got:\n{content}"
+    );
+    assert!(
+        content.contains("\"person\""),
+        "ALLOWED_INCLUDE_KEYS should contain 'person'. Got:\n{content}"
+    );
+
+    // 3. get_by_id body contains include parsing with split(',')
+    // The expression is multi-line in the generated code, so check key fragments.
+    assert!(
+        content.contains("params.include"),
+        "get_by_id should reference params.include. Got:\n{content}"
+    );
+    assert!(
+        content.contains(".as_ref()"),
+        "get_by_id should call .as_ref() on include. Got:\n{content}"
+    );
+    assert!(
+        content.contains(r#".split(',').map(|p| p.trim().to_string()).collect()"#),
+        "get_by_id should split include by comma. Got:\n{content}"
+    );
+
+    // 4. Validation: ALLOWED_INCLUDE_KEYS.contains(&path.as_str())
+    assert!(
+        content.contains("ALLOWED_INCLUDE_KEYS.contains(&path.as_str())"),
+        "Should validate include paths against ALLOWED_INCLUDE_KEYS. Got:\n{content}"
+    );
+
+    // 5. Validation: path.split('.').count() > 3
+    assert!(
+        content.contains("path.split('.').count() > 3"),
+        "Should validate max include depth. Got:\n{content}"
+    );
+
+    // 6. Return type uses WorkerWithIncludeResponse instead of serde_json::Value
+    // The get_by_id function should use the typed response; locate it by finding the
+    // `async fn get_by_id` signature with WorkerWithIncludeResponse.
+    assert!(
+        content.contains("WorkerWithIncludeResponse"),
+        "get_by_id should return WorkerWithIncludeResponse. Got:\n{content}"
+    );
+    assert!(
+        content.contains("get_by_id") && content.contains("Result<Json<WorkerWithIncludeResponse"),
+        "get_by_id function must return WorkerWithIncludeResponse. Got:\n{content}"
+    );
+
+    // 7. Match branch for 'person' using repo.fetch_person_for_worker
+    assert!(
+        content.contains(r#""person" => {"#),
+        "Should have match arm for 'person'. Got:\n{content}"
+    );
+    assert!(
+        content.contains("fetch_person_for_worker"),
+        "Should reference fetch_person_for_worker in match arm. Got:\n{content}"
+    );
+
+    // 8. Response construction with WorkerWithIncludeResponse
+    assert!(
+        content.contains("WorkerWithIncludeResponse {"),
+        "Should construct WorkerWithIncludeResponse. Got:\n{content}"
+    );
+    assert!(
+        content.contains("included: Some(included)"),
+        "Response should include included data. Got:\n{content}"
+    );
+    assert!(
+        content.contains("meta: crate::api::Meta"),
+        "Response should have meta. Got:\n{content}"
+    );
+
+    // 9. Utoipa annotation references WorkerWithIncludeResponse in body =
+    assert!(
+        content.contains("body = WorkerWithIncludeResponse"),
+        "Utoipa annotation should reference WorkerWithIncludeResponse. Got:\n{content}"
+    );
+}
+
+#[tokio::test]
+async fn handler_without_include_omits_include_code() {
+    let mock = setup_include_mock();
+    let config = no_include_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-handler-no-include");
+
+    let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
+    let files = gen
+        .generate(&mock, "WorkerType", "hr", &config, &tera, &test_project_config())
+        .await
+        .unwrap();
+
+    assert_eq!(files.len(), 1, "Should produce exactly one handler file");
+    let content = &files[0].content;
+
+    // Should NOT have include-related code
+    assert!(
+        !content.contains("pub include: Option<String>"),
+        "ListParams must NOT have include field without allow_include. Got:\n{content}"
+    );
+    assert!(
+        !content.contains("ALLOWED_INCLUDE_KEYS"),
+        "Should NOT have ALLOWED_INCLUDE_KEYS without allow_include. Got:\n{content}"
+    );
+    assert!(
+        !content.contains("fetch_person_for_worker"),
+        "Should NOT reference fetch_person_for_worker without allow_include. Got:\n{content}"
+    );
+
+    // Should return serde_json::Value in get_by_id
+    assert!(
+        content.contains("-> Result<Json<serde_json::Value>"),
+        "get_by_id should return serde_json::Value without allow_include. Got:\n{content}"
+    );
+    assert!(
+        !content.contains("WorkerWithIncludeResponse"),
+        "Should NOT reference WorkerWithIncludeResponse without allow_include. Got:\n{content}"
+    );
+}
+
+// ── E5: Repository emitter with ?include= ───────────────────────────────
+
+#[tokio::test]
+async fn repository_emitter_produces_fetch_methods_with_include() {
+    use codegraph::generate::api::include_path::{IncludeSegment, ResolvedIncludePath};
+    use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
+
+    let mock = setup_include_mock();
+    let config = include_domain_config();
+
+    let include_paths = vec![ResolvedIncludePath {
+        alias: "person".to_string(),
+        segments: vec![IncludeSegment {
+            entity_name: "PersonType".to_string(),
+            module_name: "person".to_string(),
+            domain: "hr".to_string(),
+            table: "\"hr\".\"person\"".to_string(),
+            fk_column: "person_id".to_string(),
+            reverse_fk_column: "worker_id".to_string(),
+            is_array: false,
+        }],
+        response_rust_type: "PersonResponse".to_string(),
+        fetch_method: "fetch_person_for_worker".to_string(),
+        batch_fetch_method: "fetch_person_batch_for_worker".to_string(),
+    }];
+
+    let emitter = RepositoryImplEmitter;
+    let code = emitter
+        .emit(&mock, "WorkerType", "hr", &config, None, &include_paths)
+        .await
+        .unwrap();
+
+    // 1. Single fetch method exists
+    assert!(
+        code.contains("pub(crate) async fn fetch_person_for_worker"),
+        "Repository should emit fetch_person_for_worker. Got:\n{code}"
+    );
+
+    // 2. Single fetch uses .filter(crate::entity::hr_person::Column::Id.eq(fk_value))
+    assert!(
+        code.contains(r#"crate::entity::hr_person::Column::Id.eq(fk_value)"#),
+        "Single fetch should filter by Id.eq(fk_value). Got:\n{code}"
+    );
+
+    // 3. Batch fetch method exists
+    assert!(
+        code.contains("pub(crate) async fn fetch_person_batch_for_worker"),
+        "Repository should emit fetch_person_batch_for_worker. Got:\n{code}"
+    );
+
+    // 4. Batch fetch accepts source_ids: &[Uuid]
+    assert!(
+        code.contains("source_ids: &[Uuid]"),
+        "Batch fetch should accept source_ids: &[Uuid]. Got:\n{code}"
+    );
+
+    // 5. Batch fetch returns HashMap<Uuid, Option<PersonResponse>>
+    assert!(
+        code.contains("HashMap<Uuid, Option<PersonResponse>>"),
+        "Batch fetch should return HashMap<Uuid, Option<PersonResponse>>. Got:\n{code}"
+    );
+}
+
+#[tokio::test]
+async fn repository_emitter_omits_fetch_methods_without_include() {
+    use codegraph::generate::api::include_path::ResolvedIncludePath;
+    use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
+
+    let mock = setup_include_mock();
+    let config = include_domain_config();
+
+    let paths: &[ResolvedIncludePath] = &[];
+    let emitter = RepositoryImplEmitter;
+    let code = emitter
+        .emit(&mock, "WorkerType", "hr", &config, None, paths)
+        .await
+        .unwrap();
+
+    assert!(
+        !code.contains("fetch_person_for_worker"),
+        "Should NOT emit fetch_person_for_worker without include paths. Got:\n{code}"
+    );
+    assert!(
+        !code.contains("fetch_person_batch_for_worker"),
+        "Should NOT emit fetch_person_batch_for_worker without include paths. Got:\n{code}"
+    );
+}
+
+// ── E6: DTO generation with ?include= ───────────────────────────────────
+
+#[tokio::test]
+async fn dto_include_single_level() {
+    let mock = setup_include_mock();
+    let config = include_domain_config();
+    let tera = test_tera();
+    let output_dir =
+        std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-single");
+
+    let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let included_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_included"))
+        .expect("Should have a dto_included.rs file");
+
+    let content = &included_file.content;
+
+    assert!(
+        content.contains("struct WorkerIncludedData"),
+        "Should contain WorkerIncludedData struct. Got:\n{content}"
+    );
+    assert!(
+        content.contains("person: Option<PersonResponse>"),
+        "Should contain person field with PersonResponse type. Got:\n{content}"
+    );
+    assert!(
+        content.contains("struct WorkerWithIncludeResponse"),
+        "Should contain WorkerWithIncludeResponse struct. Got:\n{content}"
+    );
+    assert!(
+        content.contains("pub data: WorkerLinkedResponse"),
+        "Should contain data field with WorkerLinkedResponse. Got:\n{content}"
+    );
+    assert!(
+        content.contains("pub included: Option<WorkerIncludedData>"),
+        "Should contain included field. Got:\n{content}"
+    );
+    assert!(
+        content.contains("pub meta: crate::api::Meta"),
+        "Should contain meta field. Got:\n{content}"
+    );
+}
+
+#[tokio::test]
+async fn dto_include_not_generated_when_not_configured() {
+    let mock = setup_include_mock();
+    let config = no_include_domain_config();
+    let tera = test_tera();
+    let output_dir =
+        std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-none");
+
+    let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let included_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_included"));
+
+    assert!(
+        included_file.is_none(),
+        "Should NOT generate dto_included.rs when allow_include is not configured"
+    );
+}
+
+#[tokio::test]
+async fn dto_include_dot_notation() {
+    let position_schema = SchemaNode {
+        schema_id: "hr/json/PositionType.json".to_string(),
+        title: "PositionType".to_string(),
+        description: Some("A position".to_string()),
+        schema_type: "object".to_string(),
+        classification: "entity_reference".to_string(),
+        domain: Some("hr".to_string()),
+        rel_path: "hr/json/PositionType.json".to_string(),
+        pg_type: "UUID".to_string(),
+        rust_type: "Uuid".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: "Position".to_string(),
+        pg_table_name: "position".to_string(),
+        api_path_segment: "positions".to_string(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+    };
+
+    let deployment_schema = SchemaNode {
+        schema_id: "hr/json/DeploymentType.json".to_string(),
+        title: "DeploymentType".to_string(),
+        description: Some("A deployment".to_string()),
+        schema_type: "object".to_string(),
+        classification: "entity_reference".to_string(),
+        domain: Some("hr".to_string()),
+        rel_path: "hr/json/DeploymentType.json".to_string(),
+        pg_type: "UUID".to_string(),
+        rust_type: "Uuid".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: "Deployment".to_string(),
+        pg_table_name: "deployment".to_string(),
+        api_path_segment: "deployments".to_string(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+    };
+
+    let worker_schema = worker_schema();
+
+    let deployment_prop = PropertyNode {
+        name: "deployment".to_string(),
+        prop_type: "object".to_string(),
+        description: Some("FK to deployment".to_string()),
+        format: None,
+        is_required: false,
+        is_nullable: true,
+        is_array: true,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: "deployment_id".to_string(),
+        pg_column_type: "UUID".to_string(),
+        rust_field_name: "deployment".to_string(),
+        rust_field_type: "Vec<Uuid>".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        render_strategy: "entity_reference".to_string(),
+        ref_target: Some("DeploymentType".to_string()),
+        classification: Some("entity_reference".to_string()),
+        projection: None,
+        classification_kind: None,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    };
+
+    let position_prop = PropertyNode {
+        name: "position".to_string(),
+        prop_type: "object".to_string(),
+        description: Some("FK to position".to_string()),
+        format: None,
+        is_required: false,
+        is_nullable: true,
+        is_array: false,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: "position_id".to_string(),
+        pg_column_type: "UUID".to_string(),
+        rust_field_name: "position".to_string(),
+        rust_field_type: "Uuid".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        render_strategy: "entity_reference".to_string(),
+        ref_target: Some("PositionType".to_string()),
+        classification: Some("entity_reference".to_string()),
+        projection: None,
+        classification_kind: None,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    };
+
+    let mock = MockEngine::builder()
+        .with_schema(position_schema)
+        .with_schema(deployment_schema)
+        .with_schema(worker_schema)
+        .with_properties("WorkerType", vec![deployment_prop])
+        .with_properties("DeploymentType", vec![position_prop])
+        .build();
+
+    let tera = test_tera();
+    let output_dir =
+        std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-dot");
+
+    let config = codegraph_config::config::parse_domain_config_str(
+        r#"
+[defaults]
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType", "DeploymentType", "PositionType"]
+
+[domains.hr.entity_config.WorkerType]
+operations = ["create", "read", "update", "list"]
+allow_include = ["deployment.position"]
+"#,
+    )
+    .unwrap();
+
+    let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let included_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_included"))
+        .expect("Should have a dto_included.rs file");
+
+    let content = &included_file.content;
+
+    assert!(
+        content.contains("struct DeploymentWithPositionResponse"),
+        "Should contain enriched type for dot-notation path. Got:\n{content}"
+    );
+    assert!(
+        content.contains("position: Option<PositionResponse>"),
+        "Should contain position field in enriched type. Got:\n{content}"
+    );
+}
+
+#[tokio::test]
+async fn ui_e2e_include_test_generated_when_allow_include_configured() {
+    let dep_schema = SchemaNode {
+        schema_id: "hr/json/DepEntityType.json".into(),
+        title: "DepEntityType".into(),
+        schema_type: "object".into(),
+        classification: "entity_reference".into(),
+        domain: Some("hr".into()),
+        rel_path: "hr/json/DepEntityType.json".into(),
+        pg_type: "UUID".into(),
+        rust_type: "Uuid".into(),
+        sea_orm_type: "Uuid".into(),
+        rust_type_name: "DepEntityType".into(),
+        pg_table_name: "dep_entity".into(),
+        api_path_segment: "dep-entities".into(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+        description: None,
+    };
+
+    let worker_schema = SchemaNode {
+        schema_id: "hr/json/WorkerType.json".into(),
+        title: "WorkerType".into(),
+        schema_type: "object".into(),
+        classification: "entity_reference".into(),
+        domain: Some("hr".into()),
+        rel_path: "hr/json/WorkerType.json".into(),
+        pg_type: "UUID".into(),
+        rust_type: "Uuid".into(),
+        sea_orm_type: "Uuid".into(),
+        rust_type_name: "WorkerType".into(),
+        pg_table_name: "worker".into(),
+        api_path_segment: "workers".into(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+        description: None,
+    };
+
+    let worker_props = vec![PropertyNode {
+        name: "dep_entity_id".into(),
+        prop_type: "string".into(),
+        description: None,
+        format: None,
+        is_required: false,
+        is_nullable: true,
+        is_array: false,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: "dep_entity_id".into(),
+        pg_column_type: "UUID".into(),
+        rust_field_name: "dep_entity_id".into(),
+        rust_field_type: "Uuid".into(),
+        sea_orm_type: "Uuid".into(),
+        render_strategy: "entity_reference".into(),
+        ref_target: Some("DepEntityType".into()),
+        classification: Some("entity_reference".into()),
+        projection: None,
+        classification_kind: None,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    }];
+
+    let mock = MockEngine::builder()
+        .with_schema(dep_schema)
+        .with_schema(worker_schema)
+        .with_properties("WorkerType", worker_props)
+        .build();
+
+    let tera = test_tera();
+    let output_dir = tempfile::TempDir::new().unwrap();
+
+    let config_str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = []
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+depends_on = ["common"]
+entities = ["WorkerType", "DepEntityType"]
+
+[domains.hr.entity_config.WorkerType]
+role = "root"
+allow_include = ["dep_entity"]
+[domains.hr.entity_config.DepEntityType]
+role = "root"
+"#;
+    let config = codegraph_config::config::parse_domain_config_str(config_str).unwrap();
+
+    let gen = crate::generate::ui::e2e_test::UiE2eTestGenerator::new(output_dir.path());
+    let files = gen
+        .generate(&mock, "WorkerType", "hr", &config, &tera, &test_project_config())
+        .await
+        .unwrap();
+
+    let include_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("include.test.ts"))
+        .expect("Should generate an include.test.ts file when allow_include is configured");
+
+    let content = &include_file.content;
+    assert!(
+        content.contains("WorkerType Include"),
+        "Should contain entity name in test description"
+    );
+    assert!(
+        content.contains("dep_entity"),
+        "Should test the configured include path alias"
+    );
+    assert!(
+        content.contains("unknown include path returns 400"),
+        "Should test invalid include path"
+    );
+    assert!(
+        content.contains("include depth beyond 3 returns 400"),
+        "Should test depth limit"
+    );
+    assert!(
+        content.contains("list with ?include= returns included data"),
+        "Should test list with include when has_list"
+    );
+    assert!(
+        content.contains("test.afterAll"),
+        "Should include cleanup"
+    );
 }

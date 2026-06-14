@@ -1,4 +1,5 @@
 use crate::generate::ProjectConfig;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -23,6 +24,47 @@ pub struct EntityRefDep {
     /// JSON object literal (without outer braces) for minimal valid creation payload
     /// e.g. `'language': 'aa', 'name': 'Test Dep'`
     pub test_data_json: String,
+}
+
+/// Configuration for generated include E2E tests.
+#[derive(Debug, Serialize)]
+pub struct E2eIncludeConfig {
+    /// Entity creation steps, ordered by dependency (deps first, main last).
+    pub setup_steps: Vec<IncludeSetupStep>,
+    /// depIds key of the main entity (last step).
+    pub main_entity_id_ref: String,
+    /// Include paths to test via get_by_id.
+    pub test_paths: Vec<IncludeTestPath>,
+    /// Whether multiple single-segment paths exist (for multi-include test).
+    pub has_multi_include: bool,
+    /// Whether to generate list-with-include tests.
+    pub test_list_include: bool,
+}
+
+/// One entity creation step for include test setup.
+#[derive(Debug, Serialize)]
+pub struct IncludeSetupStep {
+    /// depIds key, e.g. "person" or "candidate"
+    pub dep_id: String,
+    /// API path for createEntityAsAcme, e.g. "/api/common/person"
+    pub api_path: String,
+    /// JS object entries for required fields (without outer braces)
+    pub fields_json: String,
+    /// FK mappings: (field_on_this_entity, depId_of_target)
+    pub fk_map: Vec<[String; 2]>,
+}
+
+/// An include path to test.
+#[derive(Debug, Serialize)]
+pub struct IncludeTestPath {
+    /// Query parameter value, e.g. "person" or "deployment.position"
+    pub alias: String,
+    /// depIds key of the target (last segment) entity
+    pub target_dep_id: String,
+    /// Whether this is a dot-notation path
+    pub is_dot_path: bool,
+    /// Whether the relationship is 1:many
+    pub is_array: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,6 +104,8 @@ pub struct UiE2eTestContext {
     pub parent_test_data_json: String,
     /// JS object literal for creating the grandparent entity (only set for depth-2 nesting)
     pub grandparent_test_data_json: String,
+    /// Include E2E test configuration. None when include is not configured.
+    pub e2e_include: Option<E2eIncludeConfig>,
 }
 
 pub struct UiE2eTestGenerator {
@@ -316,6 +360,20 @@ impl EntityGenerator for UiE2eTestGenerator {
         }
         let has_entity_ref_deps = !entity_ref_deps.is_empty();
 
+        // Resolve include test config
+        let e2e_include = if let Some(ec) = entity_cfg {
+            if ec.allow_include.as_ref().map_or(false, |v| !v.is_empty()) {
+                let resolved = crate::generate::api::include_path::resolve_include_paths(
+                    db, config, &domain, schema_title, ec.allow_include.as_ref(),
+                ).await?;
+                resolve_e2e_include_config(db, config, &domain, schema_title, &resolved, has_list).await?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Collect child sections for detail page testing
         let child_sections = collect_child_sections(db, schema_title, config, &domain).await?;
         let has_child_sections = !child_sections.is_empty();
@@ -485,6 +543,7 @@ impl EntityGenerator for UiE2eTestGenerator {
             parent,
             parent_test_data_json,
             grandparent_test_data_json,
+            e2e_include,
         };
 
         let tests_dir = self
@@ -561,6 +620,15 @@ impl EntityGenerator for UiE2eTestGenerator {
             let content = render_template_with_project(tera, "ui/test/search_isolation.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.search.isolation.test.ts", path_segment)),
+                content,
+            });
+        }
+
+        // Include test
+        if ctx.e2e_include.is_some() && has_read {
+            let content = render_template_with_project(tera, "ui/test/include.test.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.include.test.ts", path_segment)),
                 content,
             });
         }
@@ -704,4 +772,126 @@ fn test_value_for_field(field: &UiField) -> String {
             }
         }
     }
+}
+
+/// Build E2E include test configuration from resolved include paths.
+/// Creates setup steps (entity creation in dependency order) and test path info.
+async fn resolve_e2e_include_config(
+    db: &dyn GraphQuerier,
+    _config: &DomainConfig,
+    domain: &str,
+    schema_title: &str,
+    include_paths: &[crate::generate::api::include_path::ResolvedIncludePath],
+    has_list: bool,
+) -> Result<Option<E2eIncludeConfig>> {
+    let mut all_steps: Vec<IncludeSetupStep> = Vec::new();
+    let mut test_paths: Vec<IncludeTestPath> = Vec::new();
+    let mut seen_deps: HashSet<String> = HashSet::new();
+
+    // Collect FK map for the main entity, deduplicated by FK column name
+    let mut main_fk_map: Vec<[String; 2]> = Vec::new();
+    let mut seen_main_fk_cols: HashSet<String> = HashSet::new();
+
+    for path in include_paths {
+        let mut prev_dep_id: Option<String> = None;
+        // fk_column of the previously processed (deeper) segment — this is the FK
+        // column on the CURRENT segment's entity pointing to the deeper entity.
+        let mut prev_fk_column: Option<String> = None;
+
+        // Process segments in REVERSE order (leaf entity first)
+        for (seg_idx, seg) in path.segments.iter().enumerate().rev() {
+            let dep_id = format!("{}_{}", seg.module_name, seg_idx);
+
+            if seen_deps.contains(&dep_id) {
+                prev_dep_id = Some(dep_id);
+                prev_fk_column = Some(seg.fk_column.clone());
+                continue;
+            }
+            seen_deps.insert(dep_id.clone());
+
+            // Resolve the target schema for api_path
+            let target_schema = db
+                .get_schema(&seg.entity_name)
+                .await?
+                .ok_or_else(|| crate::error::Error::SchemaNotFound(seg.entity_name.clone()))?;
+            let api_path = format!("/api/{}/{}", seg.domain, target_schema.api_path_segment);
+
+            let fields_json = build_test_data_json(db, &seg.entity_name, Some(&seg.domain)).await;
+
+            // FK map: this entity has a FK to the previously created (deeper) entity.
+            // The FK column is the fk_column of the deeper segment — it describes
+            // the column on this entity's table that references the deeper entity.
+            let mut fk_map: Vec<[String; 2]> = Vec::new();
+            if let Some(ref prev_id) = prev_dep_id {
+                if let Some(ref fk_col) = prev_fk_column {
+                    fk_map.push([fk_col.clone(), prev_id.clone()]);
+                }
+            }
+
+            all_steps.push(IncludeSetupStep {
+                dep_id: dep_id.clone(),
+                api_path,
+                fields_json,
+                fk_map,
+            });
+
+            prev_dep_id = Some(dep_id);
+            prev_fk_column = Some(seg.fk_column.clone());
+        }
+
+        // Record the test path
+        if let Some(_first_seg) = path.segments.first() {
+            let last_idx = path.segments.len() - 1;
+            let last_seg = &path.segments[last_idx];
+            let target_dep_id = format!("{}_{}", last_seg.module_name, last_idx);
+
+            test_paths.push(IncludeTestPath {
+                alias: path.alias.clone(),
+                target_dep_id,
+                is_dot_path: path.segments.len() > 1,
+                is_array: last_seg.is_array,
+            });
+        }
+
+        // Add main entity FK to the first segment of this path (deduplicated)
+        if let Some(ref first_seg) = path.segments.first() {
+            let first_dep_id = format!("{}_{}", first_seg.module_name, 0);
+            if seen_main_fk_cols.insert(first_seg.fk_column.clone()) {
+                main_fk_map.push([first_seg.fk_column.clone(), first_dep_id]);
+            }
+        }
+    }
+
+    if test_paths.is_empty() {
+        return Ok(None);
+    }
+
+    // Add main entity as the LAST setup step
+    let source_schema = db
+        .get_schema(schema_title)
+        .await?
+        .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
+    let main_dep_id = source_schema.pg_table_name.clone();
+
+    if !seen_deps.contains(&main_dep_id) {
+        let main_api_path = format!("/api/{}/{}", domain, source_schema.api_path_segment);
+        let main_fields = build_test_data_json(db, schema_title, Some(domain)).await;
+
+        all_steps.push(IncludeSetupStep {
+            dep_id: main_dep_id.clone(),
+            api_path: main_api_path,
+            fields_json: main_fields,
+            fk_map: main_fk_map,
+        });
+    }
+
+    let has_multi = test_paths.len() >= 2;
+
+    Ok(Some(E2eIncludeConfig {
+        setup_steps: all_steps,
+        main_entity_id_ref: main_dep_id,
+        test_paths,
+        has_multi_include: has_multi,
+        test_list_include: has_list,
+    }))
 }

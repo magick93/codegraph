@@ -5,6 +5,7 @@ use codegraph_naming::quote_pg_column;
 use codegraph_type_contracts::RefClassificationKind;
 
 use crate::error::Result;
+use crate::generate::api::include_path::ResolvedIncludePath;
 use crate::generate::filter_fields::{
     resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
 };
@@ -1477,6 +1478,7 @@ impl RepositoryImplEmitter {
         domain: &str,
         config: &DomainConfig,
         parent_ref: Option<&str>,
+        include_paths: &[ResolvedIncludePath],
     ) -> Result<String> {
         let tree = self
             .query_entity_tree(db, schema_title, domain, config, parent_ref)
@@ -1509,6 +1511,18 @@ impl RepositoryImplEmitter {
             self.emit_find_ancestors_fn(&tree, &mut code);
         }
         self.emit_footer(&mut code);
+
+        if !include_paths.is_empty() {
+            writeln!(code).unwrap();
+            writeln!(
+                code,
+                "impl {}RepositoryImpl {{",
+                tree.entity_name
+            )
+            .unwrap();
+            self.emit_include_fetch_methods(&tree, &mut code, include_paths);
+            writeln!(code, "}}").unwrap();
+        }
 
         Ok(code)
     }
@@ -3281,6 +3295,394 @@ impl RepositoryImplEmitter {
         writeln!(code, "        }}").unwrap();
         writeln!(code).unwrap();
         writeln!(code, "        Ok(results)").unwrap();
+        writeln!(code, "    }}").unwrap();
+    }
+
+    fn emit_include_fetch_methods(
+        &self,
+        tree: &EntityTree,
+        code: &mut String,
+        include_paths: &[ResolvedIncludePath],
+    ) {
+        for path in include_paths {
+            if path.segments.len() == 1 {
+                self.emit_single_fetch_method(tree, code, path);
+                self.emit_batch_fetch_method(tree, code, path);
+            } else {
+                self.emit_dot_fetch_method(tree, code, path);
+            }
+        }
+    }
+
+    fn emit_single_fetch_method(
+        &self,
+        tree: &EntityTree,
+        code: &mut String,
+        path: &ResolvedIncludePath,
+    ) {
+        let seg = &path.segments[0];
+        let src_module = &tree.entity_module;
+        let resp_type = &path.response_rust_type;
+        let target_module = format!("{}_{}", seg.domain, seg.module_name);
+
+        writeln!(code).unwrap();
+        writeln!(
+            code,
+            "    pub(crate) async fn {}(",
+            path.fetch_method
+        )
+        .unwrap();
+        writeln!(code, "        &self,").unwrap();
+        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
+        writeln!(code, "        source_id: Uuid,").unwrap();
+        if seg.is_array {
+            writeln!(
+                code,
+                "    ) -> Result<Vec<{}>, Box<dyn std::error::Error>> {{",
+                resp_type
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+                resp_type
+            )
+            .unwrap();
+        }
+
+        if seg.is_array {
+            let reverse_fk_pascal = codegraph_naming::to_pascal_case(&seg.reverse_fk_column);
+            writeln!(
+                code,
+                "        let rows = crate::entity::{}::Entity::find()",
+                target_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::{}.eq(source_id))",
+                target_module, reverse_fk_pascal
+            )
+            .unwrap();
+            writeln!(code, "            .all(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(
+                code,
+                "        let mut results = Vec::with_capacity(rows.len());"
+            )
+            .unwrap();
+            writeln!(code, "        for row in rows {{").unwrap();
+            writeln!(code, "            results.push({} {{", resp_type).unwrap();
+            writeln!(code, "                id: row.id,").unwrap();
+            writeln!(code, "                created_at: row.created_at,").unwrap();
+            writeln!(code, "                updated_at: row.updated_at,").unwrap();
+            writeln!(code, "            }});").unwrap();
+            writeln!(code, "        }}").unwrap();
+            writeln!(code, "        Ok(results)").unwrap();
+        } else {
+            writeln!(
+                code,
+                "        let source = crate::entity::{}::Entity::find()",
+                src_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.eq(source_id))",
+                src_module
+            )
+            .unwrap();
+            writeln!(code, "            .one(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(code, "        let source = match source {{").unwrap();
+            writeln!(code, "            Some(s) => s,").unwrap();
+            writeln!(code, "            None => return Ok(None),").unwrap();
+            writeln!(code, "        }};").unwrap();
+            writeln!(
+                code,
+                "        let fk_value = match source.{} {{",
+                seg.fk_column
+            )
+            .unwrap();
+            writeln!(code, "            Some(v) => v,").unwrap();
+            writeln!(code, "            None => return Ok(None),").unwrap();
+            writeln!(code, "        }};").unwrap();
+            writeln!(
+                code,
+                "        let target = crate::entity::{}::Entity::find()",
+                target_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.eq(fk_value))",
+                target_module
+            )
+            .unwrap();
+            writeln!(code, "            .one(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(code, "        let target = match target {{").unwrap();
+            writeln!(code, "            Some(t) => t,").unwrap();
+            writeln!(code, "            None => return Ok(None),").unwrap();
+            writeln!(code, "        }};").unwrap();
+            writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
+            writeln!(code, "            id: target.id,").unwrap();
+            writeln!(code, "            created_at: target.created_at,").unwrap();
+            writeln!(code, "            updated_at: target.updated_at,").unwrap();
+            writeln!(code, "        }}))").unwrap();
+        }
+
+        writeln!(code, "    }}").unwrap();
+    }
+
+    fn emit_batch_fetch_method(
+        &self,
+        tree: &EntityTree,
+        code: &mut String,
+        path: &ResolvedIncludePath,
+    ) {
+        let seg = &path.segments[0];
+        let src_module = &tree.entity_module;
+        let resp_type = &path.response_rust_type;
+        let target_module = format!("{}_{}", seg.domain, seg.module_name);
+
+        writeln!(code).unwrap();
+        writeln!(
+            code,
+            "    pub(crate) async fn {}(",
+            path.batch_fetch_method
+        )
+        .unwrap();
+        writeln!(code, "        &self,").unwrap();
+        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
+        writeln!(code, "        source_ids: &[Uuid],").unwrap();
+        if seg.is_array {
+            writeln!(
+                code,
+                "    ) -> Result<std::collections::HashMap<Uuid, Vec<{}>>, Box<dyn std::error::Error>> {{",
+                resp_type
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "    ) -> Result<std::collections::HashMap<Uuid, Option<{}>>, Box<dyn std::error::Error>> {{",
+                resp_type
+            )
+            .unwrap();
+        }
+
+        if seg.is_array {
+            let reverse_fk_pascal = codegraph_naming::to_pascal_case(&seg.reverse_fk_column);
+            writeln!(
+                code,
+                "        let rows = crate::entity::{}::Entity::find()",
+                target_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::{}.is_in(source_ids.to_vec()))",
+                target_module, reverse_fk_pascal
+            )
+            .unwrap();
+            writeln!(code, "            .all(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(
+                code,
+                "        let mut result: std::collections::HashMap<Uuid, Vec<{}>> = std::collections::HashMap::new();",
+                resp_type
+            )
+            .unwrap();
+            writeln!(code, "        for id in source_ids {{").unwrap();
+            writeln!(
+                code,
+                "            result.entry(*id).or_insert_with(Vec::new);"
+            )
+            .unwrap();
+            writeln!(code, "        }}").unwrap();
+            writeln!(code, "        for row in rows {{").unwrap();
+            writeln!(
+                code,
+                "            let key = row.{};",
+                seg.reverse_fk_column
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            result.entry(key).or_default().push({} {{",
+                resp_type
+            )
+            .unwrap();
+            writeln!(code, "                id: row.id,").unwrap();
+            writeln!(code, "                created_at: row.created_at,").unwrap();
+            writeln!(code, "                updated_at: row.updated_at,").unwrap();
+            writeln!(code, "            }});").unwrap();
+            writeln!(code, "        }}").unwrap();
+        } else {
+            writeln!(
+                code,
+                "        let sources = crate::entity::{}::Entity::find()",
+                src_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.is_in(source_ids.to_vec()))",
+                src_module
+            )
+            .unwrap();
+            writeln!(code, "            .all(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(
+                code,
+                "        let mut fk_values: Vec<Uuid> = Vec::new();"
+            )
+            .unwrap();
+            writeln!(code, "        for source in &sources {{").unwrap();
+            writeln!(
+                code,
+                "            if let Some(fk) = source.{} {{",
+                seg.fk_column
+            )
+            .unwrap();
+            writeln!(code, "                fk_values.push(fk);").unwrap();
+            writeln!(code, "            }}").unwrap();
+            writeln!(code, "        }}").unwrap();
+            writeln!(
+                code,
+                "        let targets = crate::entity::{}::Entity::find()",
+                target_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.is_in(fk_values))",
+                target_module
+            )
+            .unwrap();
+            writeln!(code, "            .all(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(
+                code,
+                "        let target_by_id: std::collections::HashMap<Uuid, {}> = targets.into_iter().map(|t| (t.id, {} {{",
+                resp_type, resp_type
+            )
+            .unwrap();
+            writeln!(code, "            id: t.id,").unwrap();
+            writeln!(code, "            created_at: t.created_at,").unwrap();
+            writeln!(code, "            updated_at: t.updated_at,").unwrap();
+            writeln!(
+                code,
+                "        }})).collect();"
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "        let mut result: std::collections::HashMap<Uuid, Option<{}>> = std::collections::HashMap::new();",
+                resp_type
+            )
+            .unwrap();
+            writeln!(code, "        for id in source_ids {{").unwrap();
+            writeln!(
+                code,
+                "            let found = sources.iter().find(|s| s.id == *id).and_then(|s| s.{}.and_then(|fk| target_by_id.get(&fk).cloned()));",
+                seg.fk_column
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            result.insert(*id, found);"
+            )
+            .unwrap();
+            writeln!(code, "        }}").unwrap();
+        }
+
+        writeln!(code, "        Ok(result)").unwrap();
+        writeln!(code, "    }}").unwrap();
+    }
+
+    fn emit_dot_fetch_method(
+        &self,
+        _tree: &EntityTree,
+        code: &mut String,
+        path: &ResolvedIncludePath,
+    ) {
+        let seg0 = &path.segments[0];
+        let seg1 = &path.segments[1];
+        let resp_type = &path.response_rust_type;
+        let intermediate_module = format!("{}_{}", seg0.domain, seg0.module_name);
+        let leaf_module = format!("{}_{}", seg1.domain, seg1.module_name);
+
+        writeln!(code).unwrap();
+        writeln!(
+            code,
+            "    pub(crate) async fn {}(",
+            path.fetch_method
+        )
+        .unwrap();
+        writeln!(code, "        &self,").unwrap();
+        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
+        writeln!(code, "        source_id: Uuid,").unwrap();
+        writeln!(
+            code,
+            "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+            resp_type
+        )
+        .unwrap();
+
+        writeln!(
+            code,
+            "        let intermediate = crate::entity::{}::Entity::find()",
+            intermediate_module
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "            .filter(crate::entity::{}::Column::Id.eq(source_id))",
+            intermediate_module
+        )
+        .unwrap();
+        writeln!(code, "            .one(db)").unwrap();
+        writeln!(code, "            .await?;").unwrap();
+        writeln!(code, "        let intermediate = match intermediate {{").unwrap();
+        writeln!(code, "            Some(s) => s,").unwrap();
+        writeln!(code, "            None => return Ok(None),").unwrap();
+        writeln!(code, "        }};").unwrap();
+        writeln!(
+            code,
+            "        let fk_value = match intermediate.{} {{",
+            seg1.fk_column
+        )
+        .unwrap();
+        writeln!(code, "            Some(v) => v,").unwrap();
+        writeln!(code, "            None => return Ok(None),").unwrap();
+        writeln!(code, "        }};").unwrap();
+        writeln!(
+            code,
+            "        let target = crate::entity::{}::Entity::find()",
+            leaf_module
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "            .filter(crate::entity::{}::Column::Id.eq(fk_value))",
+            leaf_module
+        )
+        .unwrap();
+        writeln!(code, "            .one(db)").unwrap();
+        writeln!(code, "            .await?;").unwrap();
+        writeln!(code, "        let target = match target {{").unwrap();
+        writeln!(code, "            Some(t) => t,").unwrap();
+        writeln!(code, "            None => return Ok(None),").unwrap();
+        writeln!(code, "        }};").unwrap();
+
+        writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
+        writeln!(code, "            id: target.id,").unwrap();
+        writeln!(code, "            created_at: target.created_at,").unwrap();
+        writeln!(code, "            updated_at: target.updated_at,").unwrap();
+        writeln!(code, "        }}))").unwrap();
         writeln!(code, "    }}").unwrap();
     }
 

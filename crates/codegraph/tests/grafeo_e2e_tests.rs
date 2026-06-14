@@ -14,6 +14,7 @@ use codegraph::generate::domain_types::scaffold::DomainTypesScaffoldGenerator;
 use codegraph::generate::template_engine::create_tera;
 use codegraph::generate::traits::{EntityGenerator, GlobalGenerator};
 use codegraph::generate::ProjectConfig;
+use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_grafeo::GrafeoEngine;
 use codegraph_type_contracts::RefClassificationKind;
@@ -507,7 +508,7 @@ async fn grafeo_scaffold_domain_types_has_cargo_toml() {
         "Cargo.toml should have [package] section"
     );
     assert!(
-        cargo_toml.content.contains("name = \"hr-domain-types\""),
+        cargo_toml.content.contains("name = \"domain-types\""),
         "Should use correct package name"
     );
 }
@@ -956,7 +957,7 @@ async fn grafeo_candidate_repository_impl_content() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -1158,7 +1159,7 @@ async fn grafeo_cross_layer_repository_consistency() {
 
     let emitter = RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -1559,7 +1560,7 @@ async fn grafeo_candidate_composite_wrapper_in_repository() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -1706,7 +1707,7 @@ async fn grafeo_composite_wrapper_cross_layer_consistency() {
     // Repository (RepositoryImplEmitter::emit() → String)
     let emitter = RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -1850,7 +1851,7 @@ async fn grafeo_repository_impl_includes_child_inserts() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -1949,7 +1950,7 @@ async fn grafeo_repository_entity_ref_uses_id_suffix() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -1996,7 +1997,7 @@ async fn grafeo_entity_ref_cross_layer_consistency() {
         .await
         .unwrap();
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -2060,7 +2061,7 @@ async fn grafeo_repository_dto_field_alignment() {
 
     let emitter = RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -2134,7 +2135,7 @@ async fn grafeo_candidate_inspect_output() {
     // Also write repository impl (not part of run_generators template flow)
     let emitter = RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
     let repo_dir = output_dir
@@ -2390,4 +2391,185 @@ async fn grafeo_gender_codelist_variants_no_rename_when_pascal() {
         content.contains("    NotSpecified,"),
         "NotSpecified variant should exist"
     );
+}
+
+// === Include (`?include=`) feature E2E ===
+
+/// Helper: inline domain config with `allow_include` for CandidateType.
+fn include_domain_config() -> codegraph_config::DomainConfig {
+    let config_str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = []
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting"
+postgres_schema = "recruiting"
+depends_on = ["common"]
+entities = ["CandidateType", "ApplicationType"]
+
+[domains.recruiting.entity_config.CandidateType]
+role = "root"
+allow_include = ["application"]
+"#;
+    parse_domain_config_str(config_str).unwrap()
+}
+
+#[tokio::test]
+async fn grafeo_e2e_include_dto_generated_for_candidate() {
+    let config = include_domain_config();
+    let classifier =
+        codegraph_classifier::config::parse_classifier_config(Path::new("tests/fixtures/classifier.toml"))
+            .unwrap();
+    let entity_names = entity_names_from_config(&config);
+    let engine = GrafeoEngine::in_memory().unwrap();
+
+    codegraph::ingest::async_ingest::ingest_schemas(
+        &engine,
+        Path::new("tests/fixtures/schemas"),
+        &classifier,
+        &entity_names,
+        &codegraph_config::UiOverrideConfig::default(),
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap();
+
+    let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
+    let output_dir = std::env::temp_dir().join("grafeo-test-include-dto");
+    let _ = std::fs::remove_dir_all(&output_dir);
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    // Generate handler — has_include triggers ALLOWED_INCLUDE_KEYS and WithIncludeResponse
+    let parent_candidates = engine.get_parent_candidates().await.unwrap();
+    let handler_gen = codegraph::generate::api::handler::HandlerGenerator::new(&output_dir)
+        .with_parent_candidates(parent_candidates);
+    let handler_files = handler_gen
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .await
+        .unwrap();
+
+    let handler = handler_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("_handler.rs"))
+        .expect("handler should be generated");
+    let hc = &handler.content;
+
+    // Handler must include ALLOWED_INCLUDE_KEYS with the resolved include path
+    assert!(
+        hc.contains("ALLOWED_INCLUDE_KEYS"),
+        "handler should define ALLOWED_INCLUDE_KEYS when allow_include is configured"
+    );
+    assert!(
+        hc.contains("\"application\""),
+        "ALLOWED_INCLUDE_KEYS should contain 'application'. Generated:\n{}",
+        hc,
+    );
+
+    // Handler must use CandidateWithIncludeResponse for the get_by_id response type
+    assert!(
+        hc.contains("CandidateWithIncludeResponse"),
+        "handler should reference CandidateWithIncludeResponse. Generated:\n{}",
+        hc,
+    );
+
+    // Generate DTO — DtoGenerator (not DomainTypesDtoGenerator) produces dto_included.rs
+    let dto_gen = codegraph::generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let dto_files = dto_gen
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .await
+        .unwrap();
+
+    let included = dto_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_included"))
+        .expect("dto_included.rs should be generated when allow_include is configured");
+    let dc = &included.content;
+
+    // DTO must define CandidateIncludedData
+    assert!(
+        dc.contains("CandidateIncludedData"),
+        "DTO should define CandidateIncludedData struct. Generated:\n{}",
+        dc,
+    );
+
+    // DTO must include the resolved include field with correct entity response type
+    assert!(
+        dc.contains("pub application: Option<ApplicationResponse>"),
+        "included DTO should have 'application: Option<ApplicationResponse>'. Generated:\n{}",
+        dc,
+    );
+
+    // DTO must define CandidateWithIncludeResponse as the top-level type
+    assert!(
+        dc.contains("CandidateWithIncludeResponse"),
+        "DTO should define CandidateWithIncludeResponse. Generated:\n{}",
+        dc,
+    );
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+#[tokio::test]
+async fn grafeo_e2e_include_validates_unknown_path() {
+    let config = include_domain_config();
+    let classifier =
+        codegraph_classifier::config::parse_classifier_config(Path::new("tests/fixtures/classifier.toml"))
+            .unwrap();
+    let entity_names = entity_names_from_config(&config);
+    let engine = GrafeoEngine::in_memory().unwrap();
+
+    codegraph::ingest::async_ingest::ingest_schemas(
+        &engine,
+        Path::new("tests/fixtures/schemas"),
+        &classifier,
+        &entity_names,
+        &codegraph_config::UiOverrideConfig::default(),
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap();
+
+    let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
+    let output_dir = std::env::temp_dir().join("grafeo-test-include-validate");
+    let _ = std::fs::remove_dir_all(&output_dir);
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    let parent_candidates = engine.get_parent_candidates().await.unwrap();
+    let handler_gen = codegraph::generate::api::handler::HandlerGenerator::new(&output_dir)
+        .with_parent_candidates(parent_candidates);
+    let handler_files = handler_gen
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .await
+        .unwrap();
+
+    let handler = handler_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("_handler.rs"))
+        .expect("handler should be generated");
+    let hc = &handler.content;
+
+    // The generated handler must validate include paths against ALLOWED_INCLUDE_KEYS
+    assert!(
+        hc.contains("ALLOWED_INCLUDE_KEYS.contains(&path.as_str())"),
+        "handler should validate unknown include paths with ALLOWED_INCLUDE_KEYS.contains. Generated:\n{}",
+        hc,
+    );
+
+    // The handler must return a 400 error for unknown paths
+    assert!(
+        hc.contains("AppError::bad_request(format!(\"Unknown include path: {path}\")"),
+        "handler should return bad_request for unknown include paths. Generated:\n{}",
+        hc,
+    );
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&output_dir);
 }

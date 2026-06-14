@@ -348,8 +348,8 @@ async fn test_repository_emitter_produces_impl() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "CandidateType", "recruiting", &config, None)
-        .await
+.emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+                .await
         .unwrap();
 
     assert!(code.contains("CandidateRepository"));
@@ -377,8 +377,8 @@ async fn test_repository_emitter_uses_num_items() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "CandidateType", "recruiting", &config, None)
-        .await
+.emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+                .await
         .unwrap();
 
     assert!(
@@ -451,8 +451,8 @@ async fn snapshot_repository_emitter_simple_entity() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "CandidateType", "recruiting", &config, None)
-        .await
+.emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+                .await
         .unwrap();
 
     insta::assert_snapshot!("repo_simple_entity", code);
@@ -510,8 +510,8 @@ async fn snapshot_repository_emitter_codelist_columns() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "CandidateType", "recruiting", &config, None)
-        .await
+.emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+                .await
         .unwrap();
 
     insta::assert_snapshot!("repo_codelist_columns", code);
@@ -591,8 +591,8 @@ async fn snapshot_repository_emitter_structured_wrapper() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "CandidateType", "recruiting", &config, None)
-        .await
+.emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+                .await
         .unwrap();
 
     insta::assert_snapshot!("repo_structured_wrapper", code);
@@ -691,8 +691,8 @@ async fn snapshot_repository_emitter_child_tables() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "CandidateType", "recruiting", &config, None)
-        .await
+.emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+                .await
         .unwrap();
 
     insta::assert_snapshot!("repo_child_tables", code);
@@ -735,6 +735,7 @@ async fn snapshot_repository_emitter_with_parent_ref() {
             "recruiting",
             &config,
             Some("candidate_id"),
+            &[],
         )
         .await
         .unwrap();

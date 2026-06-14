@@ -14,6 +14,7 @@ use crate::generate::filter_fields::{
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
+use super::include_path::{ResolvedIncludePath, resolve_include_paths};
 use super::router::{ChildInfo, CrossRefInfo};
 
 #[derive(Debug, Serialize)]
@@ -69,6 +70,10 @@ pub struct HandlerContext {
     /// When true, the find_tree method returns Vec<serde_json::Value> instead of Vec<Response>.
     #[serde(default)]
     pub tree_include: bool,
+    /// When true, the get_by_id handler returns typed WithIncludeResponse instead of serde_json::Value.
+    pub has_include: bool,
+    /// Resolved include paths for `?include=` query parameter.
+    pub include_paths: Vec<ResolvedIncludePath>,
 }
 
 pub struct HandlerGenerator {
@@ -476,6 +481,13 @@ impl EntityGenerator for HandlerGenerator {
                 (None, None, None)
             };
 
+        // Resolve include paths from config
+        let include_paths = if let Some(ec) = entity_cfg {
+            resolve_include_paths(db, config, &domain, schema_title, ec.allow_include.as_ref()).await?
+        } else {
+            Vec::new()
+        };
+
         let nested_filter_fields =
             resolve_nested_filter_fields(db, schema_title, &module_name, &domain, config).await?;
 
@@ -517,6 +529,8 @@ impl EntityGenerator for HandlerGenerator {
                 .and_then(|ec| ec.tree_include.as_ref())
                 .map(|v| !v.is_empty())
                 .unwrap_or(false),
+            has_include: !include_paths.is_empty(),
+            include_paths: include_paths.clone(),
         };
 
         let content = render_template_with_project(tera, "api/handler.tera", &ctx, project)?;
