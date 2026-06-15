@@ -946,6 +946,14 @@ pub async fn compute_generation_order(
         if !schema.is_entity {
             continue;
         }
+        // Skip inline/local definitions (e.g., #/definitions/AssessmentScoreType defined
+        // inside ReportType.json). These are child entities generated recursively from
+        // their parent schema's value-object properties. They should not have standalone
+        // entity entries in the generation order — that would produce dangling mod.rs
+        // references to .rs files that don't exist.
+        if schema.parent_schema.is_some() {
+            continue;
+        }
         let domain = schema.domain.as_deref().unwrap_or("");
         if domain.is_empty() || !domain_rank.contains_key(domain) {
             continue;

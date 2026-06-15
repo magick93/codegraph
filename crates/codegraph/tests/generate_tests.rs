@@ -197,6 +197,73 @@ async fn test_generation_ordering_respects_domain_order() {
     assert_eq!(order[1].domain, "recruiting");
 }
 
+#[tokio::test]
+async fn test_generation_ordering_excludes_inline_def_schemas() {
+    // Build an inline-def schema (parent_schema is set — like #/definitions/AssessmentScoreType)
+    let inline_schema = SchemaNode {
+        schema_id: "assessments/json/ReportType.json#/definitions/AssessmentScoreType".into(),
+        title: "AssessmentScoreType".into(),
+        description: None,
+        schema_type: "object".to_string(),
+        classification: "entity_reference".to_string(),
+        domain: Some("assessments".into()),
+        rel_path: "assessments/json/ReportType.json#/definitions/AssessmentScoreType".into(),
+        pg_type: "UUID".to_string(),
+        rust_type: "Uuid".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: "AssessmentScoreType".into(),
+        pg_table_name: "assessment_score".into(),
+        api_path_segment: "assessment-score".into(),
+        parent_schema: Some("ReportType".into()), // marks this as an inline/local definition
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+    };
+
+    // Also add a top-level schema for the same domain to ensure the domain
+    // itself is not excluded (only the inline def should be filtered).
+    let top_schema = mock_schema(
+        "assessments/json/ReportType.json",
+        "ReportType",
+        "report",
+        "assessments",
+        "entity_reference",
+    );
+
+    let config_str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.assessments]
+label = "Assessments"
+schema_dir = "assessments"
+postgres_schema = "assessments"
+entities = ["ReportType", "AssessmentScoreType"]
+"#;
+    let config = codegraph_config::config::parse_domain_config_str(config_str).unwrap();
+
+    let mock = MockEngine::builder()
+        .with_schema(inline_schema)
+        .with_schema(top_schema)
+        .build();
+
+    let order = generate::compute_generation_order(&mock, &config)
+        .await
+        .unwrap();
+
+    // Only the top-level schema should be in the order — the inline def must be excluded
+    assert_eq!(order.len(), 1, "inline def schema should be excluded from generation order");
+    assert_eq!(order[0].schema_title, "ReportType");
+    assert!(
+        !order.iter().any(|e| e.schema_title == "AssessmentScoreType"),
+        "AssessmentScoreType (inline def) must not appear in generation order"
+    );
+}
+
 // === DDL Generator Tests ===
 
 #[tokio::test]
