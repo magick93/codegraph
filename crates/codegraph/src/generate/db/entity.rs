@@ -266,13 +266,18 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     // Codelist FK columns — pg_column_name already has _code suffix when
                     // the JSON property ends in "Code" (e.g. workerTypeCode → worker_type_code).
                     // Do NOT append _code again to avoid "worker_type_code_code" double suffix.
+                    // The FIELD name strips the _code suffix to match the DTO convention
+                    // that repository/command/handler code uses (e.g. worker_type, not worker_type_code).
+                    // The COLUMN name keeps the _code suffix to match the actual database column.
                     let is_nullable = !prop.is_required;
                     let rust_type = if is_nullable {
                         "Option<String>".to_string()
                     } else {
                         "String".to_string()
                     };
-                    let field_name = prop.rust_field_name.clone();
+                    let field_name = crate::generate::ddd::dto::strip_code_suffix_safe(
+                        &prop.rust_field_name,
+                    );
                     let column_name = prop.pg_column_name.clone();
 
                     columns.push(EntityColumn {
@@ -291,7 +296,8 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     if prop.is_array {
                         continue;
                     }
-                    // CodelistCheck uses CHECK constraint, no _code suffix
+                    // CodelistCheck uses CHECK constraint, no _code suffix.
+                    // Apply strip_code_suffix_safe to match DTO naming convention.
                     let is_nullable = !prop.is_required;
                     let rust_type = if is_nullable {
                         "Option<String>".to_string()
@@ -300,7 +306,9 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     };
 
                     columns.push(EntityColumn {
-                        field_name: prop.rust_field_name.clone(),
+                        field_name: crate::generate::ddd::dto::strip_code_suffix_safe(
+                            &prop.rust_field_name,
+                        ),
                         rust_type,
                         sea_orm_type: "String".to_string(),
                         column_name: prop.pg_column_name.clone(),

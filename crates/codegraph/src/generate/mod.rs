@@ -941,16 +941,20 @@ pub async fn compute_generation_order(
         .map_err(|e| Error::Config(e.to_string()))?;
 
     // Build a set of entity titles present in each domain's graph data.
+    // We include all schemas that have a pg_table_name (meaning they produce
+    // entity .rs files), not just is_entity=true schemas. This ensures that
+    // ValueObject, CompositeWrapper, and other non-root types referenced by
+    // DTO/repository code as crate::entity::<module>:: actually have files.
+    // Inline/local definitions (parent_schema.is_some()) are excluded since
+    // they are generated recursively as child entities from their parent.
     let mut graph_entities_by_domain: HashMap<String, HashSet<String>> = HashMap::new();
     for schema in &all_schemas {
-        if !schema.is_entity {
+        if schema.pg_table_name.is_empty() {
             continue;
         }
-        // Skip inline/local definitions (e.g., #/definitions/AssessmentScoreType defined
-        // inside ReportType.json). These are child entities generated recursively from
-        // their parent schema's value-object properties. They should not have standalone
-        // entity entries in the generation order — that would produce dangling mod.rs
-        // references to .rs files that don't exist.
+        if schema.is_codelist || schema.is_primitive_wrapper {
+            continue;
+        }
         if schema.parent_schema.is_some() {
             continue;
         }
