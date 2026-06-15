@@ -942,22 +942,35 @@ impl EntityGenerator for DtoGenerator {
             content: response,
         });
 
-        // Generate include DTOs if allow_include is configured
+        // Generate include DTOs if allow_include is configured.
+        // Skip non-root entities (child, value_object) unless they have explicit
+        // allow_include configuration — auto-discovered includes only make sense
+        // for root entities.
         let entity_cfg = config
             .domains
             .get(domain)
             .and_then(|d| d.get_entity_config(schema_title));
-        let include_paths = if let Some(ec) = entity_cfg {
-            resolve_include_paths(db, config, domain, schema_title, ec.allow_include.as_ref()).await?
-        } else {
-            Vec::new()
-        };
+        let has_explicit_include = entity_cfg
+            .and_then(|ec| ec.allow_include.as_ref())
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let is_root = entity_cfg
+            .and_then(|ec| ec.role.as_deref())
+            .map(|r| r == "root")
+            .unwrap_or(true);
+        if has_explicit_include || is_root {
+            let include_paths = if let Some(ec) = entity_cfg {
+                resolve_include_paths(db, config, domain, schema_title, ec.allow_include.as_ref()).await?
+            } else {
+                Vec::new()
+            };
 
-        if !include_paths.is_empty() {
-            let mut dto_files = self
-                .build_include_dtos(db, schema_title, domain, config, tera, project, &include_paths)
-                .await?;
-            files.append(&mut dto_files);
+            if !include_paths.is_empty() {
+                let mut dto_files = self
+                    .build_include_dtos(db, schema_title, domain, config, tera, project, &include_paths)
+                    .await?;
+                files.append(&mut dto_files);
+            }
         }
 
         Ok(files)
@@ -987,9 +1000,13 @@ impl DtoGenerator {
         let has_includes = !include_paths.is_empty();
         let has_dot_paths = include_paths.iter().any(|p| p.segments.len() > 1);
 
-        // Build include_fields for the template
-        let include_fields: Vec<serde_json::Value> = include_paths
+        // Build include_fields for the template, deduplicating by alias to prevent
+        // duplicate struct field names when multiple include paths resolve to the same alias.
+        let include_fields: Vec<serde_json::Value> = {
+            let mut seen_aliases = std::collections::HashSet::new();
+            include_paths
             .iter()
+            .filter(|path| seen_aliases.insert(path.alias.clone()))
             .map(|path| {
                 let (rust_type, inner_type, is_vec) = if path.segments.len() == 1 {
                     let seg = &path.segments[0];
@@ -1022,7 +1039,8 @@ impl DtoGenerator {
                     "is_dot_path": path.segments.len() > 1,
                 })
             })
-            .collect();
+            .collect()
+        };
 
         // Query all properties for dot-notation intermediate entity fields
         let all_props = db.list_all_properties().await?;

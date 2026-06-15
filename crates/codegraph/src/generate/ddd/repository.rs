@@ -132,14 +132,27 @@ impl EntityGenerator for RepositoryTraitGenerator {
             .map(|v| !v.is_empty())
             .unwrap_or(false);
 
-        let include_paths = resolve_include_paths(
-            db,
-            config,
-            &domain,
-            schema_title,
-            entity_cfg.and_then(|ec| ec.allow_include.as_ref()),
-        )
-        .await?;
+        // Skip non-root entities unless they have explicit allow_include.
+        let has_explicit_include = entity_cfg
+            .and_then(|ec| ec.allow_include.as_ref())
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let is_root = entity_cfg
+            .and_then(|ec| ec.role.as_deref())
+            .map(|r| r == "root")
+            .unwrap_or(true);
+        let include_paths = if has_explicit_include || is_root {
+            resolve_include_paths(
+                db,
+                config,
+                &domain,
+                schema_title,
+                entity_cfg.and_then(|ec| ec.allow_include.as_ref()),
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
 
         let ctx = RepositoryContext {
             has_create: operations.contains(&"create".to_string()),

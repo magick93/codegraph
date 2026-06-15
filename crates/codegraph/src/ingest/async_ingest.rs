@@ -15,6 +15,19 @@ use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snak
 use crate::error::{Error, Result};
 use crate::ingest::schema_loader::SchemaLoader;
 
+/// Sanitize a schema/property description for use in generated code doc comments.
+/// Truncates to the first line (newlines break /// doc comments), trims whitespace,
+/// and caps length to 1000 characters.
+fn sanitize_description(s: &str) -> String {
+    s.lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(1000)
+        .collect()
+}
+
 /// Ingest all schemas from `schema_dir` into the graph via `GraphIngestor`.
 ///
 /// Uses `entity_names` to determine which schemas are entities vs value objects.
@@ -124,7 +137,7 @@ async fn ingest_schema_node(
             .schema
             .get("description")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .map(|s| sanitize_description(s)),
         schema_type: entry
             .schema
             .get("type")
@@ -416,7 +429,7 @@ async fn ingest_properties_from_schema(
                 description: prop_schema
                     .get("description")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
+                    .map(|s| sanitize_description(s)),
                 format: prop_schema
                     .get("format")
                     .and_then(|v| v.as_str())
@@ -676,7 +689,7 @@ async fn ingest_codelist_values(
     let description = schema
         .get("description")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(|s| sanitize_description(s));
 
     let pg_table_name = to_snake_case(&strip_suffix(title, suffix));
 

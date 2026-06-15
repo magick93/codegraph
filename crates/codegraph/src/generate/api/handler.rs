@@ -481,9 +481,22 @@ impl EntityGenerator for HandlerGenerator {
                 (None, None, None)
             };
 
-        // Resolve include paths from config
-        let include_paths = if let Some(ec) = entity_cfg {
-            resolve_include_paths(db, config, &domain, schema_title, ec.allow_include.as_ref()).await?
+        // Resolve include paths from config. Skip non-root entities unless they
+        // have explicit allow_include configuration.
+        let has_explicit_include = entity_cfg
+            .and_then(|ec| ec.allow_include.as_ref())
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let is_root = entity_cfg
+            .and_then(|ec| ec.role.as_deref())
+            .map(|r| r == "root")
+            .unwrap_or(true);
+        let include_paths = if has_explicit_include || is_root {
+            if let Some(ec) = entity_cfg {
+                resolve_include_paths(db, config, &domain, schema_title, ec.allow_include.as_ref()).await?
+            } else {
+                Vec::new()
+            }
         } else {
             Vec::new()
         };

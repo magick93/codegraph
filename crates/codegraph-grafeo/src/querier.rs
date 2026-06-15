@@ -314,7 +314,7 @@ impl GraphQuerier for GrafeoEngine {
 
     async fn get_parent_candidates(&self) -> Result<Vec<ParentCandidate>, GraphError> {
         let gql = "MATCH (child:Schema)-[:HasProperty]->(p:Property {is_required: true, is_array: false})-[:ReferencesSchema]->(parent:Schema {is_entity: true}) \
-                   RETURN child.title, parent.title, p.name";
+                   RETURN DISTINCT child.title, parent.title, p.name";
         let result = query_gql(self, gql)?;
         let reader = RowReader::from_columns(&result.columns);
         let mut candidates = Vec::new();
@@ -330,7 +330,7 @@ impl GraphQuerier for GrafeoEngine {
         // Detect one-to-many relationships: parent entity has an array property
         // whose items reference a child entity (ItemsOf edge).
         let array_gql = "MATCH (parent:Schema {is_entity: true})-[:HasProperty]->(p:Property {is_array: true})-[:ItemsOf]->(child:Schema {is_entity: true}) \
-                          RETURN child.title, parent.title, p.name";
+                          RETURN DISTINCT child.title, parent.title, p.name";
         let array_result = query_gql(self, array_gql)?;
         let array_reader = RowReader::from_columns(&array_result.columns);
         let scalar_keys: std::collections::HashSet<(String, String)> = candidates
