@@ -1073,6 +1073,14 @@ impl DtoGenerator {
                                 if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
                                     continue;
                                 }
+                                // Skip entity reference fields whose name matches the leaf segment —
+                                // they will be added as a nested field (e.g., {position: Option<PositionResponse>})
+                                // and would cause error[E0062]: field specified more than once.
+                                if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference))
+                                    && prop.rust_field_name == leaf.module_name
+                                {
+                                    continue;
+                                }
                                 let is_optional = prop.is_nullable || !prop.is_required;
                                 base_fields.push(serde_json::json!({
                                     "name": prop.rust_field_name,
