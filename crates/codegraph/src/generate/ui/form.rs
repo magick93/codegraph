@@ -67,6 +67,7 @@ pub fn ui_field_from_property(
         open_end,
         ref_api_path: None, // Populated later by collect_ui_fields
         structured_sub_fields: vec![],
+        nested_type_name: None,
     }
 }
 

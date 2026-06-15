@@ -9,6 +9,7 @@ use codegraph_type_contracts::RefClassificationKind;
 use super::form::{field_name_to_label, ui_field_from_property};
 use super::page::{ChildSection, UiField};
 use crate::error::Result;
+use crate::generate::api::router;
 
 /// Collects UI fields from graph properties, applying standard classification
 /// and codelist value resolution. Shared across page, form, and type generators.
@@ -36,6 +37,43 @@ pub async fn collect_ui_fields(
 
     for prop in &props {
         if prop.effective_kind() == Some(RefClassificationKind::ValueObject) {
+            // Resolve the target schema and emit a nested type reference.
+            let target_schema = if prop.is_array {
+                db.get_array_item_schema(&prop.name, schema_title).await?
+            } else {
+                db.get_property_ref_target(&prop.name, schema_title).await?
+            };
+            if let Some(target) = target_schema {
+                let source_entity_name =
+                    router::strip_suffix(schema_title, "Type");
+                // TS interface name for the parent type to reference, e.g. "WorkerPersonLegalResponse"
+                let ts_type_name = format!(
+                    "{}{}Response",
+                    codegraph_naming::to_pascal_case(source_entity_name),
+                    router::strip_suffix(&target.rust_type_name, "Type"),
+                );
+                // Schema title for the type generator to resolve sub-fields, e.g. "PersonLegalType"
+                let schema_title_for_ref = target.title.clone();
+                fields.push(UiField {
+                    name: prop.rust_field_name.clone(),
+                    label: field_name_to_label(&prop.rust_field_name),
+                    ts_type: ts_type_name,
+                    input_type: "text".to_string(),
+                    is_required: prop.is_required,
+                    is_array: prop.is_array,
+                    is_entity_ref: false,
+                    is_immutable: false,
+                    is_codelist: false,
+                    is_range: false,
+                    codelist_values: vec![],
+                    description: prop.description.clone().unwrap_or_default(),
+                    pg_type: prop.pg_column_type.clone(),
+                    open_end: false,
+                    ref_api_path: None,
+                    structured_sub_fields: vec![],
+                    nested_type_name: Some(schema_title_for_ref),
+                });
+            }
             continue;
         }
 
@@ -87,6 +125,7 @@ pub async fn collect_ui_fields(
                         open_end: false,
                         ref_api_path: None,
                         structured_sub_fields: vec![],
+                        nested_type_name: None,
                     });
                 }
             }

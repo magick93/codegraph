@@ -80,6 +80,10 @@ pub struct UiField {
     /// Non-empty when this field is a StructuredWrapper (e.g. IdentifierType).
     /// Contains sub-field definitions queried from the graph at generation time.
     pub structured_sub_fields: Vec<UiSubField>,
+    /// When set, this field is a nested ValueObject referencing another type.
+    /// The `ts_type` holds the nested interface name (e.g. "WorkerPersonLegalResponse").
+    #[serde(default)]
+    pub nested_type_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
