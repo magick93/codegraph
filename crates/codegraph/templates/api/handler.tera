@@ -289,7 +289,7 @@ pub async fn get_by_id(
     
     let mut included = {{ entity_name }}IncludedData { 
         {% for ipath in include_paths %}
-        {{ ipath.alias | snake_case }}: None,
+        {{ ipath.alias | replace(from=".", to="_") }}: None,
         {% endfor %}
     };
     
@@ -299,7 +299,7 @@ pub async fn get_by_id(
         match path.as_str() {
         {% for ipath in include_paths %}
             "{{ ipath.alias }}" => {
-                included.{{ ipath.alias }} = repo.{{ ipath.fetch_method }}(&db, id).await
+                included.{{ ipath.alias | replace(from=".", to="_") }} = repo.{{ ipath.fetch_method }}(&db, id).await
                     .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id))?;
             }

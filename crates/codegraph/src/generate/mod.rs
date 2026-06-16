@@ -192,6 +192,11 @@ pub struct ProjectConfig {
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
     pub types_import_prefix: String,
+    /// Git revision SHA used for fallback path dependencies in generated Cargo.toml.
+    /// When domain_types_base is empty, the domain types Cargo.toml uses this rev
+    /// to reference codegraph-type-contracts as a git dependency.
+    #[serde(default)]
+    pub codegraph_rev: String,
 }
 
 impl Default for ProjectConfig {
@@ -209,6 +214,7 @@ impl Default for ProjectConfig {
             decision_engine_base: String::new(),
             codegraph_workflow_base: String::new(),
             type_contracts_base: String::new(),
+            codegraph_rev: String::new(),
             database_target: "postgres".to_string(),
             types_import_prefix: "codegraph_type_contracts".into(),
         }
@@ -1710,6 +1716,11 @@ fn prune_entity_mod(src_dir: &Path) -> Result<Option<GeneratedFile>> {
     }
 
     scan_dir(&domain_dir, prefix, &mut used)?;
+    // Also scan api/ for entity references (e.g., media upload handlers).
+    let api_dir = src_dir.join("api");
+    if api_dir.is_dir() {
+        scan_dir(&api_dir, prefix, &mut used)?;
+    }
 
     if used.is_empty() {
         return Ok(None);

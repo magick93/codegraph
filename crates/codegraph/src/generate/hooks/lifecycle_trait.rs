@@ -61,6 +61,11 @@ impl EntityGenerator for LifecycleTraitGenerator {
         if module_name.is_empty() {
             return Ok(Vec::new());
         }
+        // Skip child/inline definition schemas — they don't have standalone entity
+        // files, so the hook_registry can't reference their lifecycle traits.
+        if schema.parent_schema.is_some() {
+            return Ok(Vec::new());
+        }
 
         let operations = config
             .domains

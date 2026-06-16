@@ -1017,8 +1017,12 @@ impl DtoGenerator {
                     )
                 };
 
+                let field_alias = path.alias.replace('.', "_");
+                let needs_serde_rename = field_alias != path.alias;
                 serde_json::json!({
                     "alias": path.alias,
+                    "field_alias": field_alias,
+                    "serde_rename": if needs_serde_rename { Some(&path.alias) } else { None },
                     "rust_type": rust_type,
                     "inner_type": inner_type,
                     "is_vec": is_vec,
