@@ -952,9 +952,6 @@ pub async fn compute_generation_order(
         if schema.pg_table_name.is_empty() {
             continue;
         }
-        if schema.is_codelist || schema.is_primitive_wrapper {
-            continue;
-        }
         if schema.parent_schema.is_some() {
             continue;
         }
