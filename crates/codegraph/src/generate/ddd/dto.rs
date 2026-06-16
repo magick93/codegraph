@@ -647,23 +647,9 @@ pub async fn build_dto_context(
             rust_type
         };
 
-        // Strip _code suffix from codelist field names to match repo emitter's
-        // dto_field_name convention (e.g. language_code → language).
-        // Guard: don't strip if it would produce a Rust keyword or collide
-        // with another existing field name.
-        let field_name = match prop.effective_kind() {
-            Some(RefClassificationKind::CodelistReference)
-            | Some(RefClassificationKind::CodelistCheck) => {
-                let stripped = strip_code_suffix_safe(&prop.rust_field_name);
-                if stripped != prop.rust_field_name && all_field_names.contains(&stripped) {
-                    // Collision: another field already uses the stripped name
-                    prop.rust_field_name.clone()
-                } else {
-                    stripped
-                }
-            }
-            _ => prop.rust_field_name.clone(),
-        };
+        // rust_field_name is already sanitized at ingestion (no _code suffix),
+        // so the DTO field name matches directly.
+        let field_name = prop.rust_field_name.clone();
 
         fields.push(DtoField {
             name: field_name,

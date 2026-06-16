@@ -275,9 +275,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     } else {
                         "String".to_string()
                     };
-                    let field_name = crate::generate::ddd::dto::strip_code_suffix_safe(
-                        &prop.rust_field_name,
-                    );
+                    let field_name = prop.rust_field_name.clone();
                     let column_name = prop.pg_column_name.clone();
 
                     columns.push(EntityColumn {
@@ -297,7 +295,6 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                         continue;
                     }
                     // CodelistCheck uses CHECK constraint, no _code suffix.
-                    // Apply strip_code_suffix_safe to match DTO naming convention.
                     let is_nullable = !prop.is_required;
                     let rust_type = if is_nullable {
                         "Option<String>".to_string()
@@ -306,9 +303,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     };
 
                     columns.push(EntityColumn {
-                        field_name: crate::generate::ddd::dto::strip_code_suffix_safe(
-                            &prop.rust_field_name,
-                        ),
+                        field_name: prop.rust_field_name.clone(),
                         rust_type,
                         sea_orm_type: "String".to_string(),
                         column_name: prop.pg_column_name.clone(),

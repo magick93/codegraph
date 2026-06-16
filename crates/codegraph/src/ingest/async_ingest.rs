@@ -4,6 +4,7 @@ use std::path::Path;
 use heck::ToUpperCamelCase;
 use codegraph_classifier::classify::{classify_plain_type, classify_ref};
 use codegraph_classifier::config::ClassifierConfig;
+use codegraph_type_contracts::RefClassificationKind;
 use codegraph_config::UiOverrideConfig;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
@@ -13,6 +14,7 @@ use codegraph_core::types::{
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 
 use crate::error::{Error, Result};
+use crate::generate::ddd::dto::strip_code_suffix_safe;
 use crate::ingest::schema_loader::SchemaLoader;
 
 /// Sanitize a schema/property description for use in generated code doc comments.
@@ -26,6 +28,24 @@ fn sanitize_description(s: &str) -> String {
         .chars()
         .take(1000)
         .collect()
+}
+
+/// Sanitize a string into a valid PascalCase Rust type identifier.
+/// Removes characters that aren't alphanumeric (except underscores),
+/// converts to PascalCase, and truncates to 200 chars.
+fn sanitize_rust_type_name(s: &str) -> String {
+    // Keep only valid identifier characters and spaces (for PascalCase conversion)
+    let cleaned: String = s
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == ' ')
+        .collect();
+    // Convert to PascalCase
+    let pascal = cleaned.to_upper_camel_case();
+    // Remove leading digits
+    let trimmed: String = pascal.chars().skip_while(|c| c.is_ascii_digit()).collect();
+    let trimmed = if trimmed.is_empty() { "_".to_string() } else { trimmed };
+    // Cap length
+    trimmed.chars().take(200).collect()
 }
 
 /// Ingest all schemas from `schema_dir` into the graph via `GraphIngestor`.
@@ -150,7 +170,7 @@ async fn ingest_schema_node(
         pg_type: "UUID".to_string(),
         rust_type: stripped.to_string(),
         sea_orm_type: "Uuid".to_string(),
-        rust_type_name: stripped.to_string(),
+        rust_type_name: sanitize_rust_type_name(&stripped),
         pg_table_name: to_snake_case(&stripped),
         api_path_segment: to_kebab_case(&stripped),
         parent_schema: parent_schema.map(|s| s.to_string()),
@@ -466,6 +486,14 @@ async fn ingest_properties_from_schema(
                 ui_override_form: None,
                 ui_override_inline: None,
             };
+
+            // Sanitize rust_field_name for codelist properties: strip the _code
+            // suffix so that entity model, DTO, and repository generators all see
+            // the same field name (e.g., "worker_type" instead of "worker_type_code").
+            // The pg_column_name retains the _code suffix for the actual DB column.
+            if matches!(prop.effective_kind(), Some(RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck)) {
+                prop.rust_field_name = strip_code_suffix_safe(&prop.rust_field_name);
+            }
 
             // Apply UI overrides based on ref_target
             if let Some(ref_target) = prop.ref_target.clone() {

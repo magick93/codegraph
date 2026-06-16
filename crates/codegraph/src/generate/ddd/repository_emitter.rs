@@ -1350,18 +1350,12 @@ async fn build_columns_and_children(
             } else {
                 let codelist_type =
                     crate::generate::ddd::dto::codelist_enum_name_from_ref(&prop.ref_target);
-                let stripped =
-                    crate::generate::ddd::dto::strip_code_suffix_safe(&prop.rust_field_name);
-                let dto_field_name =
-                    if stripped != prop.rust_field_name && all_field_names.contains(&stripped) {
-                        prop.rust_field_name.clone()
-                    } else {
-                        stripped
-                    };
+                // rust_field_name is sanitized at ingestion (no _code suffix),
+                // so it matches the DTO field name directly.
                 direct_columns.push(TreeColumn {
                     field_name: prop.rust_field_name.clone(),
                     pg_column_name: prop.pg_column_name.clone(),
-                    dto_field_name: Some(dto_field_name),
+                    dto_field_name: None, // same as field_name
                     rust_type: "String".to_string(),
                     is_nullable: !prop.is_required,
                     is_entity_ref: false,

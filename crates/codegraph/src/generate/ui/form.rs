@@ -37,11 +37,9 @@ pub fn ui_field_from_property(
         .strip_prefix("r#")
         .unwrap_or(&prop.rust_field_name)
         .to_string();
-    // Strip _code suffix from codelist field names so the form field name
-    // matches the DTO field name (the DTO generator applies the same logic).
-    let ts_field_name = if is_codelist {
-        crate::generate::ddd::dto::strip_code_suffix_safe(&ts_field_name)
-    } else if is_entity_ref {
+    // rust_field_name is sanitized at ingestion (no _code suffix),
+    // so it matches the DTO field name directly.
+    let ts_field_name = if is_entity_ref {
         // EntityReference fields get _id suffix in the backend DTO (added by
         // the Tera template). The UI field name must match.
         format!("{}_id", ts_field_name)
