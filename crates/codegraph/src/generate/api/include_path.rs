@@ -276,6 +276,21 @@ async fn resolve_auto_paths(
         if target_schema.pg_table_name.is_empty() {
             continue;
         }
+        // Skip child entities and inline definitions — they don't have standalone
+        // entity .rs files, so repository code referencing crate::entity::<module>::
+        // would fail with E0583.
+        if target_schema.parent_schema.is_some() {
+            continue;
+        }
+        // Skip force_value_objects — they won't have standalone entity generation.
+        let is_force_vo = config
+            .domains
+            .get(domain)
+            .map(|d| d.force_value_objects.contains(ref_title))
+            .unwrap_or(false);
+        if is_force_vo {
+            continue;
+        }
         let target_entity_name = target_schema.rust_type_name.clone();
         let target_schema_title = target_schema.title.clone();
         let target_module = target_schema.pg_table_name.clone();
