@@ -201,6 +201,13 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             });
         }
 
+        // Collect entity titles for FK-on-VO detection (used in the VO match arm below).
+        let entity_titles: std::collections::HashSet<String> = config
+            .domains
+            .values()
+            .flat_map(|d| d.entities.iter().cloned())
+            .collect();
+
         for prop in &props {
             // Skip 'id' — hardcoded above as the UUID primary key
             if prop.rust_field_name == "id" {
@@ -356,7 +363,35 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     }
                 }
                 Some(RefClassificationKind::ValueObject) => {
-                    // Child tables are generated as separate entity files below
+                    // When a non-array VO property targets a known entity, emit an FK
+                    // column on this entity model instead of a child table (the DDL
+                    // generates a FK reference, not a child table).
+                    if !prop.is_array {
+                        if let Some(true) = db
+                            .get_property_ref_target(&prop.name, schema_title)
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|t| entity_titles.contains(&t.title))
+                        {
+                            let is_nullable = !prop.is_required;
+                            columns.push(EntityColumn {
+                                field_name: prop.rust_field_name.clone(),
+                                rust_type: if is_nullable {
+                                    "Option<Uuid>".to_string()
+                                } else {
+                                    "Uuid".to_string()
+                                },
+                                sea_orm_type: "Uuid".to_string(),
+                                column_name: prop.pg_column_name.clone(),
+                                is_primary_key: false,
+                                is_nullable,
+                                pg_cast: None,
+                                sea_orm_attr: None,
+                            });
+                        }
+                    }
+                    // Child tables for non-entity VO targets are generated below
                 }
                 _ => {}
             }
@@ -534,25 +569,19 @@ impl EntityGenerator for SeaOrmEntityGenerator {
         }];
 
         // Generate child entity files for ValueObject properties.
-        // Skip non-array VOs that target a known entity — the DDL emits an FK
-        // column for those, so no child table/entity is needed.
-        let entity_titles: std::collections::HashSet<String> = config
-            .domains
-            .values()
-            .flat_map(|d| d.entities.iter().cloned())
-            .collect();
+        // FK columns for VO→entity references are handled in the main column loop above.
         for prop in &props {
             if prop.effective_kind() == Some(RefClassificationKind::ValueObject) {
-                // Mirror DDL's try_emit_entity_fk_for_vo: skip when target is entity and non-array
+                // Non-array VOs targeting entities are already handled as FK columns
+                // in the main column loop above — skip them here.
                 if !prop.is_array {
-                    let is_entity_target = db
+                    if let Some(true) = db
                         .get_property_ref_target(&prop.name, schema_title)
                         .await
                         .ok()
                         .flatten()
                         .map(|t| entity_titles.contains(&t.title))
-                        .unwrap_or(false);
-                    if is_entity_target {
+                    {
                         continue;
                     }
                 }
