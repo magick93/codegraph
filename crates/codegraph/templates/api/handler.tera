@@ -11,6 +11,10 @@ use crate::error::AppError;
 use crate::middleware::ApiKeyInfo;
 use crate::domain::{{ domain }}::{{ module_name }}::dto_response::{{ entity_name }}Response;
 use crate::domain::{{ domain }}::{{ module_name }}::dto_response::{{ entity_name }}LinkedResponse;
+{% if has_include %}
+use crate::domain::{{ domain }}::{{ module_name }}::dto_included::{{ entity_name }}WithIncludeResponse;
+use crate::domain::{{ domain }}::{{ module_name }}::dto_included::{{ entity_name }}IncludedData;
+{% endif %}
 {% if has_create %}
 use crate::domain::{{ domain }}::{{ module_name }}::dto_create::Create{{ entity_name }}Request;
 use crate::error::BulkItemError;
