@@ -108,6 +108,20 @@ async fn resolve_explicit_paths(
                 .await?
                 .ok_or_else(|| crate::error::Error::SchemaNotFound(target_title.clone()))?;
 
+            // Skip force_value_objects — they don't have standalone entity or DTO
+            // generation, so fetch methods referencing {Entity}Response would fail.
+            let is_force_vo = config
+                .domains
+                .get(domain)
+                .map(|d| d.force_value_objects.contains(&target_title))
+                .unwrap_or(false);
+            if is_force_vo {
+                tracing::warn!(
+                    "include path '{path}' targets force_value_object '{target_title}' — skipping"
+                );
+                break;
+            }
+
             let target_entity_name = target_schema.rust_type_name.clone();
             let target_schema_title = target_schema.title.clone();
             let target_module = target_schema.pg_table_name.clone();
@@ -205,10 +219,9 @@ async fn resolve_auto_paths(
             .unwrap_or_else(|| domain.to_string());
         let target_table = format!("\"{}\".\"{}\"", target_domain, target_module);
 
-        // Default FK columns for child entities.
-        let fk_column = format!("{}_id", codegraph_naming::to_snake_case(
-            super::router::strip_suffix(target_title, &config.defaults.type_suffix),
-        ));
+        // Resolve FK column from the child entity's domain config (parent_ref)
+        // or from graph properties, falling back to convention-based naming.
+        let fk_column = resolve_child_fk_column(config, domain, target_title, schema_title, db).await?;
         let reverse_fk_column = format!(
             "{}_id",
             codegraph_naming::to_snake_case(super::router::strip_suffix(
@@ -459,4 +472,41 @@ fn derive_response_type(segments: &[IncludeSegment]) -> String {
             segments.last().unwrap().entity_name,
         )
     }
+}
+
+/// Resolve the FK column on a child entity that references its parent.
+/// Priority: 1) domain config `parent_ref`, 2) graph properties, 3) convention.
+async fn resolve_child_fk_column(
+    config: &codegraph_config::DomainConfig,
+    domain: &str,
+    child_title: &str,
+    parent_title: &str,
+    db: &dyn GraphQuerier,
+) -> Result<String> {
+    // Priority 1: parent_ref from the child entity's domain config.
+    if let Some(fk) = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(child_title))
+        .and_then(|ec| ec.parent_ref.clone())
+    {
+        return Ok(fk);
+    }
+
+    // Priority 2: graph properties — find the property on the child that
+    // references the parent.
+    let seg = codegraph_naming::to_snake_case(
+        super::router::strip_suffix(child_title, &config.defaults.type_suffix),
+    );
+    let (fk, _) = resolve_fk_via_graph(db, child_title, parent_title, &seg).await?;
+    if !fk.ends_with("_id") {
+        // The resolved column name doesn't look like an FK — fall back.
+        return Ok(format!(
+            "{}_id",
+            codegraph_naming::to_snake_case(
+                super::router::strip_suffix(child_title, &config.defaults.type_suffix),
+            )
+        ));
+    }
+    Ok(fk)
 }
