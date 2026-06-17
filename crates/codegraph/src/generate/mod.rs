@@ -4,6 +4,7 @@ pub mod ifml;
 pub mod report;
 pub mod template_engine;
 pub mod traits;
+pub mod type_registry;
 
 pub mod api;
 pub mod cli;
@@ -365,6 +366,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let default_project = ProjectConfig::default();
     let project = project_config.unwrap_or(&default_project);
     init_project_config(project.clone());
+    type_registry::init_type_registry();
 
     // Create the database dialect based on project config.
     let make_dialect = || dialect_for_target(DatabaseTarget::from_config(&project.database_target));
@@ -377,6 +379,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // Pre-warm the cache with bulk queries to avoid hundreds of individual
     // graph queries during generation.
     cached_db.warm().await.map_err(Error::Graph)?;
+
+    // Register framework types so generators can resolve them without hard-coded paths.
+    type_registry::register_framework_types();
 
     // Whether webhook generators are active.  Derived from build_plan when available;
     // defaults to true for backward compatibility (all existing profiles include

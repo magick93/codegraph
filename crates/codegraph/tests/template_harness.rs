@@ -774,6 +774,7 @@ async fn candidate_repository() {
 
 #[tokio::test]
 async fn candidate_handler() {
+    generate::type_registry::register_framework_types();
     let mock = setup_mock().await;
     let config = test_domain_config();
     let tera = test_tera();

@@ -1,4 +1,3 @@
-use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -9,6 +8,8 @@ use crate::error::Result;
 use crate::generate::api::include_path::{resolve_include_paths, ResolvedIncludePath};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
+use crate::generate::type_registry;
+use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 use codegraph_type_contracts::RefClassificationKind;
 
@@ -933,6 +934,38 @@ impl EntityGenerator for DtoGenerator {
             content: response,
         });
 
+        // Register all DTO types produced by this generator for cross-generator import resolution.
+        let module_path = || -> Vec<String> {
+            vec!["crate".into(), "domain".into(), ctx.domain.clone(), ctx.module_name.clone()]
+        };
+        type_registry::register_type(
+            &format!("{}Response", ctx.entity_name),
+            [module_path(), vec!["dto_response".into()]].concat(),
+        );
+        type_registry::register_type(
+            &format!("{}LinkedResponse", ctx.entity_name),
+            [module_path(), vec!["dto_response".into()]].concat(),
+        );
+        if ctx.operations.contains(&"create".to_string()) {
+            type_registry::register_type(
+                &format!("Create{}Request", ctx.entity_name),
+                [module_path(), vec!["dto_create".into()]].concat(),
+            );
+        }
+        if ctx.operations.contains(&"update".to_string()) {
+            type_registry::register_type(
+                &format!("Update{}Request", ctx.entity_name),
+                [module_path(), vec!["dto_update".into()]].concat(),
+            );
+        }
+        // Register child DTO types (first-level children are referenced by parent DTOs).
+        for child in &ctx.all_child_dtos {
+            type_registry::register_type(
+                &child.struct_name,
+                [module_path(), vec!["dto_response".into()]].concat(),
+            );
+        }
+
         // Generate include DTOs if allow_include is configured.
         // Skip non-root entities (child, value_object) unless they have explicit
         // allow_include configuration — auto-discovered includes only make sense
@@ -1126,6 +1159,39 @@ impl DtoGenerator {
             Vec::new()
         };
 
+        // Register include DTO types for cross-generator import resolution.
+        let module_path: Vec<String> = vec![
+            "crate".into(), "domain".into(), domain.into(), module_name.clone(), "dto_included".into(),
+        ];
+        type_registry::register_type(&format!("{}WithIncludeResponse", entity_name), module_path.clone());
+        type_registry::register_type(&format!("{}IncludedData", entity_name), module_path.clone());
+        for path in include_paths {
+            type_registry::register_type(&path.response_rust_type, module_path.clone());
+        }
+
+        // Collect all type names referenced by include fields for cross-entity import resolution.
+        let mut ref_type_names: Vec<String> = Vec::new();
+        for field in &include_fields {
+            if let Some(inner) = field["inner_type"].as_str() {
+                ref_type_names.push(inner.to_string());
+            }
+        }
+        for et in &enriched_types {
+            if let Some(nested) = et["nested_fields"].as_array() {
+                for nf in nested {
+                    if let Some(inner) = nf["inner_type"].as_str() {
+                        ref_type_names.push(inner.to_string());
+                    }
+                }
+            }
+        }
+        // Also add framework types referenced by the template.
+        ref_type_names.push("Meta".into());
+        let caller_module: Vec<String> = vec![
+            "crate".into(), "domain".into(), domain.into(), module_name.clone(), "dto_included".into(),
+        ];
+        let imports = type_registry::resolve_imports(&ref_type_names, &caller_module);
+
         let ctx = serde_json::json!({
             "entity_name": entity_name,
             "module_name": module_name,
@@ -1134,6 +1200,7 @@ impl DtoGenerator {
             "has_dot_paths": has_dot_paths,
             "include_fields": include_fields,
             "enriched_types": enriched_types,
+            "imports": imports,
         });
 
         let content =

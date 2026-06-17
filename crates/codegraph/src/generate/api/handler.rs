@@ -1,4 +1,3 @@
-use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -7,11 +6,13 @@ use codegraph_core::types::ParentCandidate;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template_with_project;
 use crate::generate::filter_fields::{
     resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
 };
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
+use crate::generate::type_registry;
+use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
 use super::include_path::{ResolvedIncludePath, resolve_include_paths};
@@ -74,6 +75,9 @@ pub struct HandlerContext {
     pub has_include: bool,
     /// Resolved include paths for `?include=` query parameter.
     pub include_paths: Vec<ResolvedIncludePath>,
+    /// Resolved `use` import statements for types referenced by this handler.
+    /// Populated via `type_registry::resolve_imports()` instead of hard-coded template paths.
+    pub handler_imports: Vec<String>,
 }
 
 pub struct HandlerGenerator {
@@ -504,6 +508,45 @@ impl EntityGenerator for HandlerGenerator {
         let nested_filter_fields =
             resolve_nested_filter_fields(db, schema_title, &module_name, &domain, config).await?;
 
+        // Resolve handler imports via TypeRegistry instead of hard-coded template paths.
+        let has_include = !include_paths.is_empty();
+        let mut handler_refs: Vec<String> = vec![
+            "AppState".into(),
+            "AppError".into(),
+            "ApiKeyInfo".into(),
+            format!("{}Response", entity_name),
+            format!("{}LinkedResponse", entity_name),
+            format!("{}Repository", entity_name),
+            "BulkItemError".into(),
+        ];
+        if operations.contains(&"create".to_string()) {
+            handler_refs.push(format!("Create{}Request", entity_name));
+        }
+        if operations.contains(&"update".to_string()) {
+            handler_refs.push(format!("Update{}Request", entity_name));
+        }
+        if has_include {
+            handler_refs.push(format!("{}WithIncludeResponse", entity_name));
+            handler_refs.push(format!("{}IncludedData", entity_name));
+        }
+        // Register handler-produced types (inline response structs).
+        if operations.contains(&"create".to_string()) {
+            type_registry::register_type(
+                &format!("{}BulkCreateResponse", entity_name),
+                vec!["crate".into(), "api".into(), domain.clone(), format!("{}_handler", module_name)],
+            );
+            type_registry::register_type(
+                &format!("Create{}Body", entity_name),
+                vec!["crate".into(), "api".into(), domain.clone(), format!("{}_handler", module_name)],
+            );
+            handler_refs.push(format!("Create{}Body", entity_name));
+            handler_refs.push(format!("{}BulkCreateResponse", entity_name));
+        }
+        let handler_caller: Vec<String> = vec![
+            "crate".into(), "api".into(), domain.clone(), format!("{}_handler", module_name),
+        ];
+        let handler_imports = type_registry::resolve_imports(&handler_refs, &handler_caller);
+
         let ctx = HandlerContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -542,8 +585,9 @@ impl EntityGenerator for HandlerGenerator {
                 .and_then(|ec| ec.tree_include.as_ref())
                 .map(|v| !v.is_empty())
                 .unwrap_or(false),
-            has_include: !include_paths.is_empty(),
+            has_include,
             include_paths: include_paths.clone(),
+            handler_imports,
         };
 
         let content = render_template_with_project(tera, "api/handler.tera", &ctx, project)?;
