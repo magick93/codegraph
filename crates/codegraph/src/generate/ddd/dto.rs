@@ -192,8 +192,9 @@ async fn build_child_dto(
                 }
             }
             Some(RefClassificationKind::EntityReference) => {
+                let fd = codegraph_core::types::resolve_field(c);
                 child_fields.push(DtoField {
-                    name: format!("{}_id", c.rust_field_name),
+                    name: fd.rust_field_name.clone(),
                     rust_type: "uuid::Uuid".to_string(),
                     is_required: false,
                     is_array: false,
@@ -210,9 +211,10 @@ async fn build_child_dto(
                 });
             }
             Some(RefClassificationKind::StructuredWrapper) => {
+                let fd = codegraph_core::types::resolve_field(c);
                 // StructuredWrappers are stored as a single JSONB column inline.
                 child_fields.push(DtoField {
-                    name: c.rust_field_name.clone(),
+                    name: fd.rust_field_name.clone(),
                     rust_type: "serde_json::Value".to_string(),
                     is_required: c.is_required,
                     is_array: false,
@@ -278,10 +280,11 @@ async fn build_child_dto(
                         child_dtos: vec![],
                     });
                 } else {
+                    let fd = codegraph_core::types::resolve_field(c);
                     let rust_type = codelist_enum_name_from_ref(&c.ref_target)
                         .unwrap_or_else(|| "String".to_string());
                     child_fields.push(DtoField {
-                        name: c.rust_field_name.clone(),
+                        name: fd.rust_field_name.clone(),
                         rust_type,
                         is_required: c.is_required,
                         is_array: false,
@@ -302,8 +305,9 @@ async fn build_child_dto(
             | Some(RefClassificationKind::ArrayWrapper)
             | Some(RefClassificationKind::RangeWrapper)
             | Some(RefClassificationKind::InlineEnum) => {
+                let fd = codegraph_core::types::resolve_field(c);
                 child_fields.push(DtoField {
-                    name: c.rust_field_name.clone(),
+                    name: fd.rust_field_name.clone(),
                     rust_type: c.rust_field_type.clone(),
                     is_required: c.is_required,
                     is_array: false,
@@ -328,8 +332,9 @@ async fn build_child_dto(
                         "String" | "bool" | "i16" | "i32" | "i64" | "f32" | "f64" | "u32" | "u64"
                     )
                 {
+                    let fd = codegraph_core::types::resolve_field(c);
                     child_fields.push(DtoField {
-                        name: c.rust_field_name.clone(),
+                        name: fd.rust_field_name.clone(),
                         rust_type: t.clone(),
                         is_required: c.is_required,
                         is_array: false,
@@ -543,8 +548,9 @@ pub async fn build_dto_context(
                 false
             };
             if is_entity_fk {
+                let fd = codegraph_core::types::resolve_field(prop);
                 fields.push(DtoField {
-                    name: format!("{}_id", prop.rust_field_name),
+                    name: fd.rust_field_name.clone(),
                     rust_type: "Uuid".to_string(),
                     is_required: false,
                     is_array: false,
@@ -647,19 +653,18 @@ pub async fn build_dto_context(
             rust_type
         };
 
-        // rust_field_name is already sanitized at ingestion (no _code suffix),
-        // so the DTO field name matches directly.
-        let field_name = prop.rust_field_name.clone();
+        let field_def = codegraph_core::types::resolve_field(prop);
+        // Use field_def.rust_field_name for DTO field names
 
         fields.push(DtoField {
-            name: field_name,
+            name: field_def.rust_field_name.clone(),
             rust_type,
             is_required: prop.is_required,
             is_array: prop.is_array,
             description: prop.description.as_deref().unwrap_or("").to_string(),
             render_strategy: prop.render_strategy.clone(),
             is_entity_ref,
-            is_hierarchy_field: hierarchy_field_name.as_deref() == Some(&prop.rust_field_name),
+            is_hierarchy_field: hierarchy_field_name.as_deref() == Some(&field_def.rust_field_name),
             min_length: prop.min_length,
             max_length: prop.max_length,
             minimum: prop.minimum,

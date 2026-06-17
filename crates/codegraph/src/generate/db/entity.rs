@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::resolve_field;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
@@ -217,6 +218,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             if consumed_fields.contains(&prop.name) {
                 continue;
             }
+            let field_def = resolve_field(prop);
             match prop.effective_kind() {
                 Some(RefClassificationKind::PrimitiveWrapper)
                 | Some(RefClassificationKind::StructuredWrapper)
@@ -251,14 +253,14 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     };
 
                     columns.push(EntityColumn {
-                        field_name: prop.rust_field_name.clone(),
+                        field_name: field_def.rust_field_name,
                         rust_type,
                         sea_orm_type: if is_structured {
                             "JsonBinary".to_string()
                         } else {
                             prop.sea_orm_type.clone()
                         },
-                        column_name: prop.pg_column_name.clone(),
+                        column_name: field_def.column_name,
                         is_primary_key: false,
                         is_nullable,
                         pg_cast,
@@ -270,26 +272,17 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     if prop.is_array {
                         continue;
                     }
-                    // Codelist FK columns — pg_column_name already has _code suffix when
-                    // the JSON property ends in "Code" (e.g. workerTypeCode → worker_type_code).
-                    // Do NOT append _code again to avoid "worker_type_code_code" double suffix.
-                    // The FIELD name strips the _code suffix to match the DTO convention
-                    // that repository/command/handler code uses (e.g. worker_type, not worker_type_code).
-                    // The COLUMN name keeps the _code suffix to match the actual database column.
                     let is_nullable = !prop.is_required;
                     let rust_type = if is_nullable {
                         "Option<String>".to_string()
                     } else {
                         "String".to_string()
                     };
-                    let field_name = prop.rust_field_name.clone();
-                    let column_name = prop.pg_column_name.clone();
-
                     columns.push(EntityColumn {
-                        field_name,
+                        field_name: field_def.rust_field_name,
                         rust_type,
                         sea_orm_type: "String".to_string(),
-                        column_name,
+                        column_name: field_def.column_name,
                         is_primary_key: false,
                         is_nullable,
                         pg_cast: None,
@@ -301,7 +294,6 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     if prop.is_array {
                         continue;
                     }
-                    // CodelistCheck uses CHECK constraint, no _code suffix.
                     let is_nullable = !prop.is_required;
                     let rust_type = if is_nullable {
                         "Option<String>".to_string()
@@ -310,10 +302,10 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     };
 
                     columns.push(EntityColumn {
-                        field_name: prop.rust_field_name.clone(),
+                        field_name: field_def.rust_field_name,
                         rust_type,
                         sea_orm_type: "String".to_string(),
-                        column_name: prop.pg_column_name.clone(),
+                        column_name: field_def.column_name,
                         is_primary_key: false,
                         is_nullable,
                         pg_cast: None,
@@ -321,13 +313,11 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     });
                 }
                 Some(RefClassificationKind::EntityReference) => {
-                    let field_name = format!("{}_id", prop.rust_field_name);
-                    let column_name = format!("{}_id", prop.pg_column_name);
                     columns.push(EntityColumn {
-                        field_name,
+                        field_name: field_def.rust_field_name,
                         rust_type: "Option<Uuid>".to_string(),
                         sea_orm_type: "Uuid".to_string(),
-                        column_name,
+                        column_name: field_def.column_name,
                         is_primary_key: false,
                         is_nullable: true,
                         pg_cast: None,
@@ -339,8 +329,8 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     if let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await
                     {
                         for col in &comp_cols {
-                            let field_name = format!("{}{}", prop.rust_field_name, col.suffix);
-                            let column_name = format!("{}{}", prop.pg_column_name, col.suffix);
+                            let field_name = format!("{}{}", field_def.rust_field_name, col.suffix);
+                            let column_name = format!("{}{}", field_def.column_name, col.suffix);
                             let is_nullable = !prop.is_required;
                             // Entity models always use the raw column type (e.g. String),
                             // not the DTO enum type (e.g. CurrencyCodeList).
@@ -376,14 +366,14 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                         {
                             let is_nullable = !prop.is_required;
                             columns.push(EntityColumn {
-                                field_name: prop.rust_field_name.clone(),
+                                field_name: field_def.rust_field_name,
                                 rust_type: if is_nullable {
                                     "Option<Uuid>".to_string()
                                 } else {
                                     "Uuid".to_string()
                                 },
                                 sea_orm_type: "Uuid".to_string(),
-                                column_name: prop.pg_column_name.clone(),
+                                column_name: field_def.column_name,
                                 is_primary_key: false,
                                 is_nullable,
                                 pg_cast: None,
@@ -763,6 +753,7 @@ async fn build_child_entity(
         if consumed_fields.contains(&child_prop.name) {
             continue;
         }
+        let child_field_def = resolve_field(child_prop);
         match child_prop.effective_kind() {
             Some(RefClassificationKind::PrimitiveWrapper)
             | Some(RefClassificationKind::StructuredWrapper)
@@ -795,14 +786,14 @@ async fn build_child_entity(
                 };
 
                 columns.push(EntityColumn {
-                    field_name: child_prop.rust_field_name.clone(),
+                    field_name: child_field_def.rust_field_name,
                     rust_type,
                     sea_orm_type: if is_structured {
                         "JsonBinary".to_string()
                     } else {
                         child_prop.sea_orm_type.clone()
                     },
-                    column_name: child_prop.pg_column_name.clone(),
+                    column_name: child_field_def.column_name,
                     is_primary_key: false,
                     is_nullable,
                     pg_cast,
@@ -818,10 +809,10 @@ async fn build_child_entity(
                 };
 
                 columns.push(EntityColumn {
-                    field_name: child_prop.rust_field_name.clone(),
+                    field_name: child_field_def.rust_field_name,
                     rust_type,
                     sea_orm_type: "String".to_string(),
-                    column_name: child_prop.pg_column_name.clone(),
+                    column_name: child_field_def.column_name,
                     is_primary_key: false,
                     is_nullable,
                     pg_cast: None,
@@ -837,10 +828,10 @@ async fn build_child_entity(
                 };
 
                 columns.push(EntityColumn {
-                    field_name: child_prop.rust_field_name.clone(),
+                    field_name: child_field_def.rust_field_name,
                     rust_type,
                     sea_orm_type: "String".to_string(),
-                    column_name: child_prop.pg_column_name.clone(),
+                    column_name: child_field_def.column_name,
                     is_primary_key: false,
                     is_nullable,
                     pg_cast: None,
@@ -848,13 +839,11 @@ async fn build_child_entity(
                 });
             }
             Some(RefClassificationKind::EntityReference) => {
-                let field_name = format!("{}_id", child_prop.rust_field_name);
-                let column_name = format!("{}_id", child_prop.pg_column_name);
                 columns.push(EntityColumn {
-                    field_name,
+                    field_name: child_field_def.rust_field_name,
                     rust_type: "Option<Uuid>".to_string(),
                     sea_orm_type: "Uuid".to_string(),
-                    column_name,
+                    column_name: child_field_def.column_name,
                     is_primary_key: false,
                     is_nullable: true,
                     pg_cast: None,
@@ -865,8 +854,8 @@ async fn build_child_entity(
             | Some(RefClassificationKind::MediaWrapper) => {
                 if let Ok(comp_cols) = db.get_composite_columns(&child_prop.name, &ts.title).await {
                     for col in &comp_cols {
-                        let field_name = format!("{}{}", child_prop.rust_field_name, col.suffix);
-                        let column_name = format!("{}{}", child_prop.pg_column_name, col.suffix);
+                        let field_name = format!("{}{}", child_field_def.rust_field_name, col.suffix);
+                        let column_name = format!("{}{}", child_field_def.column_name, col.suffix);
                         let is_nullable = !child_prop.is_required;
                         let rust_type = if is_nullable {
                             format!("Option<{}>", col.rust_type)

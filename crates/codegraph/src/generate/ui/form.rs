@@ -9,6 +9,7 @@ use crate::error::Result;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
+use codegraph_core::types::resolve_field;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 
@@ -27,15 +28,16 @@ pub fn ui_field_from_property(
     is_range: bool,
     open_end: bool,
 ) -> UiField {
+    let resolved = resolve_field(prop);
     let ts_type = rust_type_to_ts(&prop.rust_field_type, is_entity_ref);
     let input_type = classify_input_type(prop, is_entity_ref, is_codelist);
 
     // Strip the Rust `r#` prefix — it is only needed for Rust identifiers,
     // not for TypeScript / Svelte property access.
-    let ts_field_name = prop
+    let ts_field_name = resolved
         .rust_field_name
         .strip_prefix("r#")
-        .unwrap_or(&prop.rust_field_name)
+        .unwrap_or(&resolved.rust_field_name)
         .to_string();
     // rust_field_name is sanitized at ingestion (no _code suffix),
     // so it matches the DTO field name directly.
@@ -56,7 +58,7 @@ pub fn ui_field_from_property(
         is_required: prop.is_required,
         is_array: prop.is_array,
         is_entity_ref,
-        is_immutable: immutable_fields.contains(&prop.rust_field_name),
+        is_immutable: immutable_fields.contains(&resolved.rust_field_name),
         is_codelist,
         is_range,
         codelist_values: codelist_values.to_vec(),

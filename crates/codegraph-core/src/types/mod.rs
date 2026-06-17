@@ -3,6 +3,7 @@ mod composite;
 mod composition;
 mod discovery;
 mod edge;
+mod field_def;
 mod ifml;
 mod property;
 mod schema;
@@ -13,6 +14,7 @@ pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};
 pub use discovery::{DetectionSource, Extension, ParentCandidate};
 pub use edge::{EdgeProperties, EdgeType};
+pub use field_def::{resolve_field, FieldDefinition};
 pub use ifml::{
     ActionNode, DataBindingNode, DataFlowData, EventNode, NavigationFlowData,
     ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,

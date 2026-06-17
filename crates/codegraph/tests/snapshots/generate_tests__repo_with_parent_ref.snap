@@ -60,7 +60,7 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
 
         Ok(Some(ApplicationResponse {
             id: row.id,
-            candidate_id_id: row.candidate_id_id,
+            candidate_id: row.candidate_id,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }))
@@ -87,7 +87,7 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
 
         Ok(Some(ApplicationResponse {
             id: row.id,
-            candidate_id_id: row.candidate_id_id,
+            candidate_id: row.candidate_id,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }))
@@ -105,7 +105,7 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
             id: Set(id),
             ..Default::default()
         };
-        if let Some(v) = cmd.candidate_id_id { model.candidate_id_id = Set(Some(v)); }
+        if let Some(v) = cmd.candidate_id { model.candidate_id = Set(Some(v)); }
         match model.update(tx).await {
             Ok(_) => {}
             Err(sea_orm::DbErr::RecordNotUpdated) => { /* RLS hid the row — find_by_id will return 404 */ }
@@ -167,7 +167,7 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
         for row in rows {
             results.push(ApplicationResponse {
                 id: row.id,
-                candidate_id_id: row.candidate_id_id,
+                candidate_id: row.candidate_id,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
             });

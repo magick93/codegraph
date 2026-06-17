@@ -699,6 +699,7 @@ async fn build_child_table_info(
         .iter()
         .filter(|c| c.pg_column_name != "id" && !consumed_fields.contains(&c.name))
     {
+        let field_def = codegraph_core::types::resolve_field(c);
         match c.effective_kind() {
             Some(RefClassificationKind::CodelistReference)
             | Some(RefClassificationKind::CodelistCheck) => {
@@ -716,7 +717,7 @@ async fn build_child_table_info(
                         codegraph_naming::to_pascal_case(&c.rust_field_name)
                     );
                     nested_child_tables.push(ChildTableInfo {
-                        field_name: c.rust_field_name.clone(),
+                        field_name: field_def.rust_field_name.clone(),
                         struct_name: nested_struct,
                         sql_table_name: nested_table,
                         sql_schema_name: schema_name.to_string(),
@@ -737,8 +738,8 @@ async fn build_child_table_info(
                     });
                 } else {
                     child_columns.push(ChildColumn {
-                        field_name: c.rust_field_name.clone(),
-                        pg_column_name: c.pg_column_name.clone(),
+                        field_name: field_def.rust_field_name.clone(),
+                        pg_column_name: field_def.column_name.clone(),
                         rust_type: "String".to_string(),
                         is_nullable: !c.is_required,
                         dto_rust_type: enum_name,
@@ -756,8 +757,8 @@ async fn build_child_table_info(
                     None
                 };
                 child_columns.push(ChildColumn {
-                    field_name: c.rust_field_name.clone(),
-                    pg_column_name: c.pg_column_name.clone(),
+                    field_name: field_def.rust_field_name.clone(),
+                    pg_column_name: field_def.column_name.clone(),
                     rust_type: c.rust_field_type.clone(),
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
@@ -766,8 +767,8 @@ async fn build_child_table_info(
             }
             Some(RefClassificationKind::EntityReference) => {
                 child_columns.push(ChildColumn {
-                    field_name: format!("{}_id", c.rust_field_name),
-                    pg_column_name: format!("{}_id", c.pg_column_name),
+                    field_name: field_def.rust_field_name,
+                    pg_column_name: field_def.column_name,
                     rust_type: "Uuid".to_string(),
                     is_nullable: true,
                     dto_rust_type: None,
@@ -788,8 +789,8 @@ async fn build_child_table_info(
                             .cloned();
                         let pg_cast = pg_cast_for_type(&col.pg_type);
                         child_columns.push(ChildColumn {
-                            field_name: format!("{}{}", c.rust_field_name, col.suffix),
-                            pg_column_name: format!("{}{}", c.pg_column_name, col.suffix),
+                            field_name: format!("{}{}", field_def.rust_field_name, col.suffix),
+                            pg_column_name: format!("{}{}", field_def.column_name, col.suffix),
                             rust_type: col.rust_type.clone(),
                             is_nullable: !c.is_required,
                             dto_rust_type,
@@ -801,8 +802,8 @@ async fn build_child_table_info(
             Some(RefClassificationKind::StructuredWrapper) => {
                 // StructuredWrappers are stored as a single JSONB column inline.
                 child_columns.push(ChildColumn {
-                    field_name: c.rust_field_name.clone(),
-                    pg_column_name: c.pg_column_name.clone(),
+                    field_name: field_def.rust_field_name.clone(),
+                    pg_column_name: field_def.column_name.clone(),
                     rust_type: "serde_json::Value".to_string(),
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
@@ -837,8 +838,8 @@ async fn build_child_table_info(
                     )
                 {
                     child_columns.push(ChildColumn {
-                        field_name: c.rust_field_name.clone(),
-                        pg_column_name: c.pg_column_name.clone(),
+                        field_name: field_def.rust_field_name.clone(),
+                        pg_column_name: field_def.column_name.clone(),
                         rust_type: t.clone(),
                         is_nullable: !c.is_required,
                         dto_rust_type: None,
@@ -1249,6 +1250,7 @@ async fn build_columns_and_children(
             continue;
         }
         let is_workflow_field = workflow_managed.contains(&prop.rust_field_name);
+        let field_def = codegraph_core::types::resolve_field(prop);
         if matches!(
             prop.effective_kind(),
             Some(RefClassificationKind::CompositeWrapper)
@@ -1262,8 +1264,8 @@ async fn build_columns_and_children(
                         .as_ref()
                         .filter(|dt| *dt != &col.rust_type)
                         .cloned();
-                    let suffix_name = format!("{}{}", prop.rust_field_name, col.suffix);
-                    let suffix_pg = format!("{}{}", prop.pg_column_name, col.suffix);
+                    let suffix_name = format!("{}{}", field_def.rust_field_name, col.suffix);
+                    let suffix_pg = format!("{}{}", field_def.column_name, col.suffix);
                     direct_columns.push(TreeColumn {
                         field_name: suffix_name,
                         pg_column_name: suffix_pg,
@@ -1294,8 +1296,8 @@ async fn build_columns_and_children(
                 None
             };
             direct_columns.push(TreeColumn {
-                field_name: prop.rust_field_name.clone(),
-                pg_column_name: prop.pg_column_name.clone(),
+                field_name: field_def.rust_field_name.clone(),
+                pg_column_name: field_def.column_name.clone(),
                 dto_field_name: None,
                 rust_type: prop.rust_field_type.clone(),
                 is_nullable: !prop.is_required,
@@ -1327,7 +1329,7 @@ async fn build_columns_and_children(
                 );
                 if seen_child_structs.insert(child_struct.clone()) {
                     child_tables.push(ChildTableInfo {
-                        field_name: prop.rust_field_name.clone(),
+                        field_name: field_def.rust_field_name.clone(),
                         struct_name: child_struct,
                         sql_table_name: child_table_name,
                         sql_schema_name: schema_name.to_string(),
@@ -1353,8 +1355,8 @@ async fn build_columns_and_children(
                 // rust_field_name is sanitized at ingestion (no _code suffix),
                 // so it matches the DTO field name directly.
                 direct_columns.push(TreeColumn {
-                    field_name: prop.rust_field_name.clone(),
-                    pg_column_name: prop.pg_column_name.clone(),
+                    field_name: field_def.rust_field_name.clone(),
+                    pg_column_name: field_def.column_name.clone(),
                     dto_field_name: None, // same as field_name
                     rust_type: "String".to_string(),
                     is_nullable: !prop.is_required,
@@ -1370,8 +1372,8 @@ async fn build_columns_and_children(
             }
         } else if prop.effective_kind() == Some(RefClassificationKind::StructuredWrapper) {
             direct_columns.push(TreeColumn {
-                field_name: prop.rust_field_name.clone(),
-                pg_column_name: prop.pg_column_name.clone(),
+                field_name: field_def.rust_field_name.clone(),
+                pg_column_name: field_def.column_name.clone(),
                 dto_field_name: None,
                 rust_type: "serde_json::Value".to_string(),
                 is_nullable: !prop.is_required,
@@ -1386,8 +1388,8 @@ async fn build_columns_and_children(
             });
         } else if prop.effective_kind() == Some(RefClassificationKind::EntityReference) {
             direct_columns.push(TreeColumn {
-                field_name: format!("{}_id", prop.rust_field_name),
-                pg_column_name: format!("{}_id", prop.pg_column_name),
+                field_name: field_def.rust_field_name,
+                pg_column_name: field_def.column_name,
                 dto_field_name: None,
                 rust_type: "Uuid".to_string(),
                 is_nullable: true,
@@ -1413,8 +1415,8 @@ async fn build_columns_and_children(
             };
             if is_entity_fk {
                 direct_columns.push(TreeColumn {
-                    field_name: format!("{}_id", prop.rust_field_name),
-                    pg_column_name: format!("{}_id", prop.pg_column_name),
+                    field_name: format!("{}_id", field_def.rust_field_name),
+                    pg_column_name: format!("{}_id", field_def.column_name),
                     dto_field_name: None,
                     rust_type: "Uuid".to_string(),
                     is_nullable: true,

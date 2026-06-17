@@ -4,7 +4,7 @@ use std::path::Path;
 use heck::ToUpperCamelCase;
 use codegraph_classifier::classify::{classify_plain_type, classify_ref};
 use codegraph_classifier::config::ClassifierConfig;
-use codegraph_type_contracts::RefClassificationKind;
+use codegraph_type_contracts::{DddFieldProjection, RefClassificationKind};
 use codegraph_config::UiOverrideConfig;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
@@ -479,7 +479,7 @@ async fn ingest_properties_from_schema(
                 render_strategy: clf.render_strategy,
                 ref_target: clf.ref_target,
                 classification: None,
-                projection: None,
+                projection: clf.projection,
                 classification_kind: Some(clf.kind),
                 ui_override_detail: None,
                 ui_override_list_cell: None,
@@ -766,6 +766,7 @@ struct PropertyClassification {
     kind: codegraph_type_contracts::RefClassificationKind,
     /// Inline enum values to be ingested as a synthetic codelist.
     inline_enum_values: Vec<String>,
+    projection: Option<DddFieldProjection>,
 }
 
 /// Classify a single property and return its type mapping and classification.
@@ -793,6 +794,7 @@ fn classify_single_property(
             ref_target: Some(ref_path.to_string()),
             kind,
             inline_enum_values: vec![],
+            projection: Some(clf.projection),
         }
     } else if let Some(enum_vals) = prop_schema.get("enum").and_then(|v| v.as_array()) {
         let vals: Vec<String> = enum_vals
@@ -816,6 +818,7 @@ fn classify_single_property(
             ref_target: Some(synthetic_name),
             kind,
             inline_enum_values: vals,
+            projection: None,
         }
     } else if is_array {
         if let Some(items_ref) = prop_schema
@@ -863,6 +866,7 @@ fn classify_single_property(
                 ref_target: Some(items_ref.to_string()),
                 kind,
                 inline_enum_values: vec![],
+                projection: Some(clf.projection),
             }
         } else {
             let clf = classify_plain_type(prop_schema.get("items").unwrap_or(prop_schema));
@@ -881,6 +885,7 @@ fn classify_single_property(
                 ref_target: None,
                 kind,
                 inline_enum_values: vec![],
+                projection: Some(clf.projection),
             }
         }
     } else {
@@ -896,6 +901,7 @@ fn classify_single_property(
             ref_target: None,
             kind,
             inline_enum_values: vec![],
+            projection: Some(clf.projection),
         }
     }
 }
