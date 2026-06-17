@@ -679,32 +679,30 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
-    // Per-entity generators — run entities in parallel, generators sequentially per entity.
-    // Each entity is independent, so we can safely parallelize across entities.
-    let entity_results: Vec<_> = futures::future::join_all(order.iter().map(|entry| {
-        let entity_gens = &entity_gens;
-        async move {
-            let mut entity_files = Vec::new();
-            let mut errors = Vec::new();
-            for gen in entity_gens.iter() {
-                match gen
-                    .generate(db, &entry.schema_title, &entry.domain, config, tera, project)
-                    .await
-                {
-                    Ok(files) => entity_files.extend(files),
-                    Err(e) => {
-                        errors.push(report::GenerationError {
-                            entity: entry.schema_title.clone(),
-                            generator: gen.name().to_string(),
-                            source: e,
-                        });
-                    }
+    // Per-entity generators — run entities sequentially to ensure TypeRegistry
+    // is populated for earlier entities before later entities reference their types.
+    // Within each entity, generators run sequentially.
+    let mut entity_results: Vec<(Vec<GeneratedFile>, Vec<report::GenerationError>)> = Vec::new();
+    for entry in &order {
+        let mut entity_files = Vec::new();
+        let mut errors = Vec::new();
+        for gen in entity_gens.iter() {
+            match gen
+                .generate(db, &entry.schema_title, &entry.domain, config, tera, project)
+                .await
+            {
+                Ok(files) => entity_files.extend(files),
+                Err(e) => {
+                    errors.push(report::GenerationError {
+                        entity: entry.schema_title.clone(),
+                        generator: gen.name().to_string(),
+                        source: e,
+                    });
                 }
             }
-            (entity_files, errors)
         }
-    }))
-    .await;
+        entity_results.push((entity_files, errors));
+    }
 
     // Entity migrations start at 500 to avoid overlap with codelist range (10..200).
     // Deduplicate migration files by their unprefixed base name: two different schema

@@ -122,6 +122,16 @@ async fn resolve_explicit_paths(
                 break;
             }
 
+            // Skip codelists — they have standalone enum generation but no entity
+            // module or response DTO, so fetch methods referencing {Entity}Response
+            // would fail.
+            if target_schema.is_codelist {
+                tracing::warn!(
+                    "include path '{path}' targets codelist '{target_title}' — skipping (no DTO/entity)"
+                );
+                break;
+            }
+
             let target_entity_name = target_schema.rust_type_name.clone();
             let target_schema_title = target_schema.title.clone();
             let target_module = target_schema.pg_table_name.clone();
@@ -208,6 +218,10 @@ async fn resolve_auto_paths(
             .map(|d| d.force_value_objects.contains(target_title))
             .unwrap_or(false);
         if is_force_vo {
+            continue;
+        }
+        // Skip codelists — no standalone entity generation.
+        if target_schema.is_codelist {
             continue;
         }
         let target_module = target_schema.pg_table_name.clone();
@@ -302,6 +316,10 @@ async fn resolve_auto_paths(
             .map(|d| d.force_value_objects.contains(ref_title))
             .unwrap_or(false);
         if is_force_vo {
+            continue;
+        }
+        // Skip codelists — no standalone entity generation.
+        if target_schema.is_codelist {
             continue;
         }
         let target_entity_name = target_schema.rust_type_name.clone();

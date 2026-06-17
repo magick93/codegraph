@@ -1508,12 +1508,9 @@ impl RepositoryImplEmitter {
         }
         self.emit_footer(&mut code);
 
-        // Resolve scalar fields for each include path segment.
-        // For each path, we build per-segment field name lists so the
-        // fetch methods can populate all fields of the response structs.
-        // We need TWO parallel lists because entity Model fields use
-        // pg_column_name (e.g. "worker_type_code") while response DTO
-        // fields use rust_field_name (e.g. "worker_type").
+        // Resolve scalar fields for each include path segment using resolve_field()
+        // so that both the DTO side and entity Model side use rust_field_name.
+        // EntityReference fields get _id appended; CodelistReference fields get _code stripped.
         let all_props = db.list_all_properties().await?;
         let mut include_segment_dto_fields: Vec<Vec<Vec<String>>> = Vec::new();
         let mut include_segment_col_fields: Vec<Vec<Vec<String>>> = Vec::new();
@@ -1540,8 +1537,9 @@ impl RepositoryImplEmitter {
                         if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
                             continue;
                         }
-                        dto_fields.push(prop.rust_field_name.clone());
-                        col_fields.push(prop.pg_column_name.clone());
+                        let fd = codegraph_core::types::resolve_field(prop);
+                        dto_fields.push(fd.rust_field_name.clone());
+                        col_fields.push(fd.rust_field_name.clone());
                     }
                 }
                 per_seg_dto.push(dto_fields);
