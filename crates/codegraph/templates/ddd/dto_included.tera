@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct {{ entity_name }}IncludedData {
 {% for field in include_fields %}
-    #[serde(skip_serializing_if = "Option::is_none"){% if field.serde_rename %}, rename = "{{ field.serde_rename }}"{% endif %}]
+    #[serde(skip_serializing_if = "Option::is_none"{% if field.serde_rename %}, rename = "{{ field.serde_rename }}"{% endif %})]
     pub {{ field.field_alias }}: {{ field.rust_type }},
 {% endfor %}
 }

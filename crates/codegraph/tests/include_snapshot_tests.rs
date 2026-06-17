@@ -143,6 +143,11 @@ fn snapshot_dto_included_single_level() {
         .find(|f| f.path.to_string_lossy().contains("dto_included"))
         .expect("Should have a dto_included.rs file");
 
+    assert!(
+        included_file.content.contains(r#"#[serde(skip_serializing_if = "Option::is_none")]"#),
+        "serde attr must close correctly when no rename is set"
+    );
+
     insta::assert_snapshot!("dto_included_worker", &included_file.content);
 }
 
@@ -365,6 +370,10 @@ fn snapshot_dto_included_dot_notation() {
     assert!(
         content.contains("deployment.position"),
         "should have serde rename for the original dot-notation"
+    );
+    assert!(
+        content.contains(r#"is_none", rename"#),
+        "comma and rename must be inside serde() parens, not after the closing ')'"
     );
 
     insta::assert_snapshot!("dto_included_dot_notation", content);
