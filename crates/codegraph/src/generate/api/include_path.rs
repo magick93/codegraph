@@ -1,4 +1,5 @@
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::resolve_field;
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
@@ -132,6 +133,15 @@ async fn resolve_explicit_paths(
                 break;
             }
 
+            // Skip non-entity types — they don't have standalone entity generation
+            // or response DTOs, so include paths referencing them would fail.
+            if !target_schema.is_entity {
+                tracing::warn!(
+                    "include path '{path}' targets non-entity '{target_title}' — skipping"
+                );
+                break;
+            }
+
             let target_entity_name = target_schema.rust_type_name.clone();
             let target_schema_title = target_schema.title.clone();
             let target_module = target_schema.pg_table_name.clone();
@@ -222,6 +232,10 @@ async fn resolve_auto_paths(
         }
         // Skip codelists — no standalone entity generation.
         if target_schema.is_codelist {
+            continue;
+        }
+        // Skip non-entity types — no standalone entity generation.
+        if !target_schema.is_entity {
             continue;
         }
         let target_module = target_schema.pg_table_name.clone();
@@ -320,6 +334,10 @@ async fn resolve_auto_paths(
         }
         // Skip codelists — no standalone entity generation.
         if target_schema.is_codelist {
+            continue;
+        }
+        // Skip non-entity types — no standalone entity generation.
+        if !target_schema.is_entity {
             continue;
         }
         let target_entity_name = target_schema.rust_type_name.clone();
@@ -451,7 +469,8 @@ async fn resolve_fk_via_graph(
             rt_clean == target_title
         }).unwrap_or(false);
         if matches {
-            return Ok((prop.pg_column_name.clone(), prop.is_array));
+            let fd = resolve_field(prop);
+            return Ok((fd.rust_field_name, prop.is_array));
         }
     }
 
@@ -460,7 +479,8 @@ async fn resolve_fk_via_graph(
         if prop.name.to_lowercase() == seg_snake
             || prop.rust_field_name.to_lowercase() == seg_snake
         {
-            return Ok((prop.pg_column_name.clone(), prop.is_array));
+            let fd = resolve_field(prop);
+            return Ok((fd.rust_field_name, prop.is_array));
         }
     }
 
@@ -468,7 +488,8 @@ async fn resolve_fk_via_graph(
     let seg_id = format!("{seg_snake}_id");
     for prop in &source_props {
         if prop.pg_column_name.to_lowercase() == seg_id {
-            return Ok((prop.pg_column_name.clone(), prop.is_array));
+            let fd = resolve_field(prop);
+            return Ok((fd.rust_field_name, prop.is_array));
         }
     }
 

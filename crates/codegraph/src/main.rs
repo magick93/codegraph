@@ -255,7 +255,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         project_config = Some(ProjectConfig {
             app_name: meta.app_name.clone().unwrap_or_else(|| "app".into()),
             domain_types_crate: meta.domain_types_crate.clone().unwrap_or_else(|| "domain_types".into()),
-            hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_else(|| "hooks_api".into()),
+            hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_default(),
             api_title: meta.api_title.clone().unwrap_or_else(|| "HR Open API".into()),
             generator_name: meta.generator_name.clone().unwrap_or_else(|| "codegraph".into()),
             domain_types_base: meta.domain_types_base.clone().unwrap_or_default(),

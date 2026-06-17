@@ -205,7 +205,7 @@ impl Default for ProjectConfig {
         Self {
             app_name: "app".into(),
             domain_types_crate: "domain_types".into(),
-            hooks_api_crate: "hooks_api".into(),
+            hooks_api_crate: String::new(),
             api_title: "HR Open API".into(),
             generator_name: "codegraph".into(),
             domain_types_base: String::new(),
