@@ -1533,13 +1533,12 @@ impl RepositoryImplEmitter {
             for seg in &path.segments {
                 let mut dto_fields: Vec<String> = Vec::new();
                 let mut col_fields: Vec<String> = Vec::new();
-            // Use schema_title (canonical graph key) for property lookup.
-            // Resolved include paths always set this correctly.
-            let schema_title = match db.get_schema(&seg.schema_title).await? {
-                Some(s) => s.title.clone(),
-                None => seg.entity_name.clone(),
-            };
-                if let Some(props) = all_props.get(&schema_title) {
+                // Use schema_title directly — include_path.rs already resolves
+                // it to the canonical title for each segment. The fallback graph
+                // query could return the wrong properties from a shared parent
+                // when schema inheritance is involved.
+                if let Some(props) = all_props.get(&seg.schema_title) {
+                    let mut seen = std::collections::HashSet::new();
                     for prop in props {
                         if prop.rust_field_name == "id"
                             || prop.rust_field_name == "created_at"
@@ -1551,8 +1550,12 @@ impl RepositoryImplEmitter {
                             continue;
                         }
                         let fd = codegraph_core::types::resolve_field(prop);
-                        dto_fields.push(fd.rust_field_name.clone());
-                        col_fields.push(fd.rust_field_name.clone());
+                        // Deduplicate by rust_field_name — list_all_properties()
+                        // can return duplicate entries from interface inheritance.
+                        if seen.insert(fd.rust_field_name.clone()) {
+                            dto_fields.push(fd.rust_field_name.clone());
+                            col_fields.push(fd.rust_field_name.clone());
+                        }
                     }
                 }
                 per_seg_dto.push(dto_fields);
