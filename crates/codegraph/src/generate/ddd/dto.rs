@@ -1211,9 +1211,10 @@ impl DtoGenerator {
                             .or_else(|| rt.strip_prefix("Vec<"))
                             .and_then(|s| s.strip_suffix('>'))
                             .unwrap_or(rt);
-                        if inner != rt {
-                            ref_type_names.push(inner.to_string());
-                        }
+                        // Add unwrapped types (e.g. "JobResponse") and
+                        // wrapped types (e.g. "CertificationResponse" from
+                        // "Vec<CertificationResponse>") to the import list.
+                        ref_type_names.push(inner.to_string());
                     }
                 }
             }
