@@ -1128,7 +1128,12 @@ impl DtoGenerator {
                                     continue;
                                 }
                                 let is_optional = prop.is_nullable || !prop.is_required;
-                                let field_type = if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference | RefClassificationKind::StructuredWrapper)) {
+                                let field_type = if matches!(prop.effective_kind(), Some(RefClassificationKind::StructuredWrapper)) {
+                                    // Structured wrappers (e.g. IdentifierType) are stored as JSONB
+                                    // and use serde_json::Value in DTOs — not custom Response types.
+                                    let base = if prop.is_array { "Vec<serde_json::Value>" } else { "serde_json::Value" };
+                                    if is_optional { format!("Option<{base}>") } else { base.to_string() }
+                                } else if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference)) {
                                     if prop.is_array {
                                         let inner = prop.rust_field_type
                                             .strip_prefix("Vec<")
