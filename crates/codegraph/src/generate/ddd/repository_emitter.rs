@@ -582,7 +582,6 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         write!(
             code,
             ", sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(item.{field}.clone().into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))",
-            field = col.field_name,
         )
         .unwrap();
     } else if is_vec_type(&col.rust_type) {
@@ -590,14 +589,12 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         write!(
             code,
             ", sea_orm::Value::Array({array_type}, Some(Box::new(item.{field}.clone().into_iter().map(|s| {value_ctor}).collect())))",
-            field = col.field_name,
         )
         .unwrap();
     } else if has_enum {
         write!(
             code,
             ", sea_orm::Value::String(Some(Box::new(item.{field}.to_string())))",
-            field = col.field_name,
         )
         .unwrap();
     } else {
