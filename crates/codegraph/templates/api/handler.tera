@@ -6,8 +6,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use uuid::Uuid;
 
-{%- for import in handler_imports %}{{ import }}
-{% endfor -%}
+{% if handler_imports %}{% for import in handler_imports %}{{ import }}
+{% endfor %}{% endif -%}
 {% if has_create %}
 
 /// Accepts either a single item or an array of items for creation.

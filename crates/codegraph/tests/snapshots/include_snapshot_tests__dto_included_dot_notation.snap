@@ -8,6 +8,7 @@ expression: content
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use crate::domain::hr::worker::dto_response::WorkerLinkedResponse;
 
 /// Included data for `?include=` eager-loading.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

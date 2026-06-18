@@ -1,6 +1,6 @@
 ---
 source: crates/codegraph/tests/include_snapshot_tests.rs
-assertion_line: 148
+assertion_line: 151
 expression: "&included_file.content"
 ---
 //! Included DTO for Worker eager-loading via `?include=`.
@@ -8,6 +8,7 @@ expression: "&included_file.content"
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use crate::domain::hr::worker::dto_response::WorkerLinkedResponse;
 
 /// Included data for `?include=` eager-loading.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

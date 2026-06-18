@@ -3,9 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-
-{%- for import in imports %}{{ import }}
-{% endfor %}
+{% if imports %}{% for import in imports %}{{ import }}
+{% endfor %}{% endif -%}
 {% if has_includes %}
 /// Included data for `?include=` eager-loading.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

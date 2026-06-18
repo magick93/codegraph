@@ -16,14 +16,18 @@ function testData(): Record<string, unknown> {
     'birth_date': '2025-01-15',
     'family_name': 'Test Family Name',
     'given_name': 'Test Given Name',
+    'application_process_history': 'Test Application Process History',
     'candidate_id': 'Test Candidate Id',
     'compensation_expectation': 42,
     'compensation_expectation_currency': 'USD',
+    'distribution_guidelines': 'Test Distribution Guidelines',
     'external_identifier': { value: 'Test External Identifier' },
     'gender': 'Male',
+    'person_name': 'Test Person Name',
     'position_schedule_type_codes': [{ code: 'FullTime' }],
     'position_titles': ['Test Position Titles'],
-    ...(depIds['referred_by_application_id'] ? { 'referred_by_application_id': depIds['referred_by_application_id'] } : {}),
+    'qualifications': ['Test Qualifications'],
+    ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
     'status': 'active',
     'uri': 'Test Uri',
   };
@@ -37,8 +41,8 @@ test.describe.serial('Candidate Employee View', () => {
 
 
     try {
-      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/application', { 'applied_date': '2025-01-15', 'status': 'Applied' });
-      depIds['referred_by_application_id'] = dep_1['id'] as string;
+      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/application', {  });
+      depIds['referred_by_application_id_id'] = dep_1['id'] as string;
     } catch (_e) {
       // Dependency entity may already exist or have its own required fields
     }
@@ -51,9 +55,9 @@ test.describe.serial('Candidate Employee View', () => {
   test.afterAll(async ({ orgContext }) => {
     const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
 
-    if (depIds['referred_by_application_id']) {
+    if (depIds['referred_by_application_id_id']) {
       try {
-        await fetch(`${baseUrl}/api/recruiting/application/${depIds['referred_by_application_id']}`, {
+        await fetch(`${baseUrl}/api/recruiting/application/${depIds['referred_by_application_id_id']}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
         });
@@ -80,14 +84,18 @@ test.describe.serial('Candidate Employee View', () => {
     await expect(employeePage.locator('[data-testid="candidate-field-birth_date"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-family_name"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-given_name"]')).toBeVisible();
+    await expect(employeePage.locator('[data-testid="candidate-field-application_process_history"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-candidate_id"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-compensation_expectation"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-compensation_expectation_currency"]')).toBeVisible();
+    await expect(employeePage.locator('[data-testid="candidate-field-distribution_guidelines"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-external_identifier"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-gender"]')).toBeVisible();
+    await expect(employeePage.locator('[data-testid="candidate-field-person_name"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-position_schedule_type_codes"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-position_titles"]')).toBeVisible();
-    await expect(employeePage.locator('[data-testid="candidate-field-referred_by_application_id"]')).toBeVisible();
+    await expect(employeePage.locator('[data-testid="candidate-field-qualifications"]')).toBeVisible();
+    await expect(employeePage.locator('[data-testid="candidate-field-referred_by_application_id_id"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-status"]')).toBeVisible();
     await expect(employeePage.locator('[data-testid="candidate-field-uri"]')).toBeVisible();
   });

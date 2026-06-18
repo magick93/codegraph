@@ -15,7 +15,7 @@ function testData(): Record<string, unknown> {
   return {
     'application_id': 'Test Application Id',
     'applied_date': '2025-01-15',
-    ...(depIds['candidate_id'] ? { 'candidate_id': depIds['candidate_id'] } : {}),
+    ...(depIds['candidate_id_id'] ? { 'candidate_id_id': depIds['candidate_id_id'] } : {}),
     'status': 'Applied',
   };
 }
@@ -24,7 +24,7 @@ function updatedData(): Record<string, unknown> {
   return {
     'application_id': 'Updated Application Id',
     'applied_date': '2025-06-20',
-    ...(depIds['candidate_id'] ? { 'candidate_id': depIds['candidate_id'] } : {}),
+    ...(depIds['candidate_id_id'] ? { 'candidate_id_id': depIds['candidate_id_id'] } : {}),
     'status': 'Rejected',
   };
 }
@@ -37,8 +37,8 @@ test.describe.serial('Application Owner CRUD', () => {
 
 
     try {
-      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/candidate', { 'birth_date': '2025-01-15', 'family_name': 'Test Family Name', 'given_name': 'Test Given Name', 'compensation_expectation': 42, 'compensation_expectation_currency': 'USD', 'external_identifier': { value: 'Test External Identifier' }, 'gender': 'Male', 'position_schedule_type_codes': [{ code: 'FullTime' }], 'position_titles': ['Test Position Titles'], 'status': 'active', 'uri': 'Test Uri' });
-      depIds['candidate_id'] = dep_1['id'] as string;
+      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/candidate', {  });
+      depIds['candidate_id_id'] = dep_1['id'] as string;
     } catch (_e) {
       // Dependency entity may already exist or have its own required fields
     }
@@ -49,9 +49,9 @@ test.describe.serial('Application Owner CRUD', () => {
   test.afterAll(async ({ orgContext }) => {
     const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
 
-    if (depIds['candidate_id']) {
+    if (depIds['candidate_id_id']) {
       try {
-        await fetch(`${baseUrl}/api/recruiting/candidate/${depIds['candidate_id']}`, {
+        await fetch(`${baseUrl}/api/recruiting/candidate/${depIds['candidate_id_id']}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
         });
@@ -80,8 +80,8 @@ test.describe.serial('Application Owner CRUD', () => {
     if (await ownerPage.locator('#applied_date').isVisible()) {
       await ownerPage.locator('#applied_date').fill(String(data['applied_date']));
     }
-    if (data['candidate_id'] && await ownerPage.locator('#candidate_id').isVisible()) {
-      await ownerPage.locator('#candidate_id').fill(String(data['candidate_id']));
+    if (data['candidate_id_id'] && await ownerPage.locator('#candidate_id_id').isVisible()) {
+      await ownerPage.locator('#candidate_id_id').fill(String(data['candidate_id_id']));
     }
     if (await ownerPage.locator('#status').isVisible()) {
       await ownerPage.locator('#status').selectOption(String(data['status']));
@@ -113,7 +113,7 @@ test.describe.serial('Application Owner CRUD', () => {
 
     await expect(ownerPage.locator('[data-testid="application-field-application_id"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="application-field-applied_date"]')).toBeVisible();
-    await expect(ownerPage.locator('[data-testid="application-field-candidate_id"]')).toBeVisible();
+    await expect(ownerPage.locator('[data-testid="application-field-candidate_id_id"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="application-field-status"]')).toBeVisible();
   });
 
@@ -134,9 +134,9 @@ test.describe.serial('Application Owner CRUD', () => {
       await ownerPage.locator('#applied_date').clear();
       await ownerPage.locator('#applied_date').fill(String(updated['applied_date']));
     }
-    if (updated['candidate_id'] && await ownerPage.locator('#candidate_id').isVisible()) {
-      await ownerPage.locator('#candidate_id').clear();
-      await ownerPage.locator('#candidate_id').fill(String(updated['candidate_id']));
+    if (updated['candidate_id_id'] && await ownerPage.locator('#candidate_id_id').isVisible()) {
+      await ownerPage.locator('#candidate_id_id').clear();
+      await ownerPage.locator('#candidate_id_id').fill(String(updated['candidate_id_id']));
     }
     if (await ownerPage.locator('#status').isVisible()) {
       await ownerPage.locator('#status').selectOption('Rejected');

@@ -15,7 +15,7 @@ function testData(): Record<string, unknown> {
   return {
     'application_id': 'ACME Isolation Application Id',
     'applied_date': '2025-03-10',
-    ...(depIds['candidate_id'] ? { 'candidate_id': depIds['candidate_id'] } : {}),
+    ...(depIds['candidate_id_id'] ? { 'candidate_id_id': depIds['candidate_id_id'] } : {}),
     'status': 'Applied',
   };
 }
@@ -28,8 +28,8 @@ test.describe.serial('Application Cross-Org Isolation', () => {
 
 
     try {
-      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/candidate', { 'birth_date': '2025-01-15', 'family_name': 'Test Family Name', 'given_name': 'Test Given Name', 'compensation_expectation': 42, 'compensation_expectation_currency': 'USD', 'external_identifier': { value: 'Test External Identifier' }, 'gender': 'Male', 'position_schedule_type_codes': [{ code: 'FullTime' }], 'position_titles': ['Test Position Titles'], 'status': 'active', 'uri': 'Test Uri' });
-      depIds['candidate_id'] = dep_1['id'] as string;
+      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/candidate', {  });
+      depIds['candidate_id_id'] = dep_1['id'] as string;
     } catch (_e) {
       // Dependency entity may already exist or have its own required fields
     }
@@ -47,9 +47,9 @@ test.describe.serial('Application Cross-Org Isolation', () => {
   test.afterAll(async ({ orgContext }) => {
     const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
 
-    if (depIds['candidate_id']) {
+    if (depIds['candidate_id_id']) {
       try {
-        await fetch(`${baseUrl}/api/recruiting/candidate/${depIds['candidate_id']}`, {
+        await fetch(`${baseUrl}/api/recruiting/candidate/${depIds['candidate_id_id']}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
         });

@@ -58,8 +58,8 @@ export const ApplicationDescriptor: EntityDescriptor = {
     },
 
     {
-      name: 'candidate_id',
-      label: 'Candidate Id',
+      name: 'candidate_id_id',
+      label: 'Candidate Id Id',
       type: 'text',
       tsType: 'string',
 

@@ -76,6 +76,24 @@ export const CandidateDescriptor: EntityDescriptor = {
     },
 
     {
+      name: 'application_process_history',
+      label: 'Application Process History',
+      type: 'text',
+      tsType: 'CandidateProcessHistoryResponse',
+
+
+
+
+      description: 'Application process history (array-type schema)',
+
+
+
+
+
+
+    },
+
+    {
       name: 'candidate_id',
       label: 'Candidate Id',
       type: 'text',
@@ -150,6 +168,24 @@ export const CandidateDescriptor: EntityDescriptor = {
     },
 
     {
+      name: 'distribution_guidelines',
+      label: 'Distribution Guidelines',
+      type: 'text',
+      tsType: 'CandidateDistributionGuidelinesResponse',
+
+
+
+
+      description: 'Distribution guidelines (inline def with allOf)',
+
+
+
+
+
+
+    },
+
+    {
       name: 'external_identifier',
       label: 'External Identifier',
       type: 'text',
@@ -199,6 +235,24 @@ export const CandidateDescriptor: EntityDescriptor = {
         ],
 
       },
+
+
+    },
+
+    {
+      name: 'person_name',
+      label: 'Person Name',
+      type: 'text',
+      tsType: 'CandidateNameResponse',
+
+
+
+
+      description: 'Candidate name (value object)',
+
+
+
+
 
 
     },
@@ -258,8 +312,26 @@ export const CandidateDescriptor: EntityDescriptor = {
     },
 
     {
-      name: 'referred_by_application_id',
-      label: 'Referred By Application Id',
+      name: 'qualifications',
+      label: 'Qualifications',
+      type: 'text',
+      tsType: 'CandidateQualificationResponse',
+
+
+
+
+      description: 'Array of value-object qualifications',
+
+
+
+
+
+
+    },
+
+    {
+      name: 'referred_by_application_id_id',
+      label: 'Referred By Application Id Id',
       type: 'text',
       tsType: 'string',
 
@@ -372,11 +444,11 @@ export const CandidateDescriptor: EntityDescriptor = {
     field: 'candidate_status_code',
     transitions: [
 
-      { from: 'interviewing', to: 'offer', label: 'Offer', confirm: true },
+      { from: 'screening', to: 'interviewing', label: 'Interviewing', confirm: true },
 
-      { from: 'interviewing', to: 'rejected', label: 'Rejected', confirm: true },
+      { from: 'screening', to: 'rejected', label: 'Rejected', confirm: true },
 
-      { from: 'interviewing', to: 'withdrawn', label: 'Withdrawn', confirm: true },
+      { from: 'screening', to: 'withdrawn', label: 'Withdrawn', confirm: true },
 
       { from: 'offer', to: 'hired', label: 'Hired', confirm: true },
 
@@ -384,11 +456,11 @@ export const CandidateDescriptor: EntityDescriptor = {
 
       { from: 'offer', to: 'withdrawn', label: 'Withdrawn', confirm: true },
 
-      { from: 'screening', to: 'interviewing', label: 'Interviewing', confirm: true },
+      { from: 'interviewing', to: 'offer', label: 'Offer', confirm: true },
 
-      { from: 'screening', to: 'rejected', label: 'Rejected', confirm: true },
+      { from: 'interviewing', to: 'rejected', label: 'Rejected', confirm: true },
 
-      { from: 'screening', to: 'withdrawn', label: 'Withdrawn', confirm: true },
+      { from: 'interviewing', to: 'withdrawn', label: 'Withdrawn', confirm: true },
 
       { from: 'new', to: 'screening', label: 'Screening', confirm: true },
 
