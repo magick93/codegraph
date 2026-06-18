@@ -1482,6 +1482,18 @@ impl RepositoryImplEmitter {
             .await?;
         let mut code = String::with_capacity(4096);
 
+        // Deduplicate include paths by alias to prevent duplicate struct field
+        // emissions (auto-discover can produce the same child entity through
+        // multiple FK relationships).
+        let include_paths = {
+            let mut seen = std::collections::HashSet::new();
+            include_paths
+                .iter()
+                .filter(|path| seen.insert(path.alias.clone()))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
         self.emit_header(&tree, &mut code);
         if tree.has_create {
             self.emit_create_fn(&tree, &mut code);
@@ -1515,7 +1527,7 @@ impl RepositoryImplEmitter {
         let all_props = db.list_all_properties().await?;
         let mut include_segment_dto_fields: Vec<Vec<Vec<String>>> = Vec::new();
         let mut include_segment_col_fields: Vec<Vec<Vec<String>>> = Vec::new();
-        for path in include_paths {
+        for path in &include_paths {
             let mut per_seg_dto: Vec<Vec<String>> = Vec::new();
             let mut per_seg_col: Vec<Vec<String>> = Vec::new();
             for seg in &path.segments {
@@ -1559,7 +1571,7 @@ impl RepositoryImplEmitter {
                 tree.module_name.clone(), "repository_impl".into(),
             ];
             let mut include_type_names: Vec<String> = Vec::new();
-            for path in include_paths {
+            for path in &include_paths {
                 include_type_names.push(path.response_rust_type.clone());
                 if path.segments.len() > 1 {
                     if let Some(last_seg) = path.segments.last() {
@@ -1582,7 +1594,7 @@ impl RepositoryImplEmitter {
                 tree.entity_name
             )
             .unwrap();
-            self.emit_include_fetch_methods(&tree, &mut code, include_paths, &include_segment_dto_fields, &include_segment_col_fields);
+            self.emit_include_fetch_methods(&tree, &mut code, &include_paths, &include_segment_dto_fields, &include_segment_col_fields);
             writeln!(code, "}}").unwrap();
         }
 

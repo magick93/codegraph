@@ -505,6 +505,17 @@ impl EntityGenerator for HandlerGenerator {
             Vec::new()
         };
 
+        // Deduplicate include paths by alias to prevent duplicate struct fields
+        // in the generated handler code (auto-discover can produce the same child
+        // entity through multiple FK relationships).
+        let include_paths = {
+            let mut seen = std::collections::HashSet::new();
+            include_paths
+                .into_iter()
+                .filter(|path| seen.insert(path.alias.clone()))
+                .collect::<Vec<_>>()
+        };
+
         let nested_filter_fields =
             resolve_nested_filter_fields(db, schema_title, &module_name, &domain, config).await?;
 
