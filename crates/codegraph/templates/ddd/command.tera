@@ -141,7 +141,7 @@ impl {{ entity_name }}CommandHandler {
         if let Some(hooks) = &self.hooks {
             let bulk_results = {{ project.hooks_api_crate }}::BulkCreateResults {
                 succeeded: results.iter().filter_map(|r| r.as_ref().ok().copied()).collect(),
-                failed: results.iter().filter_map(|r| r.as_ref().err().cloned()).collect(),
+                failed: results.iter().filter_map(|r| r.as_ref().err().cloned().map(|e| {{ project.hooks_api_crate }}::BulkItemError { index: e.index, error: e.error })).collect(),
             };
             if let Err(e) = hooks.after_bulk_create(&bulk_results).await {
                 tracing::error!(correlation_id = %correlation_id, "after_bulk_create hook failed: {e}");

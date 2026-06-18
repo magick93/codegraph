@@ -238,9 +238,6 @@ fn emit_response_construction(code: &mut String, tree: &EntityTree) {
     writeln!(code, "        Ok(Some({}Response {{", tree.entity_name).unwrap();
     writeln!(code, "            id: row.id,").unwrap();
     for col in &tree.direct_columns {
-        if col.is_composite_range {
-            continue;
-        }
         emit_entity_to_dto_field(code, col, "row", "            ");
     }
     emit_child_field_population(code, &tree.child_tables, "            ");
@@ -2978,9 +2975,6 @@ impl RepositoryImplEmitter {
         .unwrap();
         writeln!(code, "                id: row.id,").unwrap();
         for col in &tree.direct_columns {
-            if col.is_composite_range {
-                continue;
-            }
             emit_entity_to_dto_field(code, col, "row", "                ");
         }
         emit_child_field_population(code, &tree.child_tables, "                ");
@@ -3229,9 +3223,6 @@ impl RepositoryImplEmitter {
         }
         writeln!(code, "                id: row.id,").unwrap();
         for col in &tree.direct_columns {
-            if col.is_composite_range {
-                continue;
-            }
             emit_entity_to_dto_field(code, col, "row", "                ");
         }
         emit_child_field_population(code, &tree.child_tables, "                ");
@@ -3385,9 +3376,6 @@ impl RepositoryImplEmitter {
         .unwrap();
         writeln!(code, "                id: row.id,").unwrap();
         for col in &tree.direct_columns {
-            if col.is_composite_range {
-                continue;
-            }
             emit_entity_to_dto_field(code, col, "row", "                ");
         }
         emit_child_field_population(code, &tree.child_tables, "                ");

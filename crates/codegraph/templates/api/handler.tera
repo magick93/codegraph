@@ -285,13 +285,16 @@ pub async fn get_by_id(
         {% endfor %}
     };
     
-    let db = &state.db;
+    use sea_orm::TransactionTrait;
+    let tx = state.db.begin().await
+        .map_err(|e| AppError::internal(format!("Failed to begin transaction: {e}")
+            .with_correlation_id(correlation_id)))?;
     let repo = crate::domain::{{ domain }}::{{ module_name }}::repository_impl::{{ entity_name }}RepositoryImpl;
     for path in &include_paths {
         match path.as_str() {
         {% for ipath in include_paths %}
             "{{ ipath.alias }}" => {
-                included.{{ ipath.alias | replace(from=".", to="_") }} = repo.{{ ipath.fetch_method }}(&db, id).await
+                included.{{ ipath.alias | replace(from=".", to="_") }} = repo.{{ ipath.fetch_method }}(&tx, id).await
                     .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id))?;
             }
@@ -299,6 +302,9 @@ pub async fn get_by_id(
             _ => {}
         }
     }
+    tx.commit().await
+        .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}")
+            .with_correlation_id(correlation_id)))?;
     
     Ok(Json({{ entity_name }}WithIncludeResponse {
         data: linked,

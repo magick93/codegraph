@@ -1128,7 +1128,7 @@ impl DtoGenerator {
                                     continue;
                                 }
                                 let is_optional = prop.is_nullable || !prop.is_required;
-                                let field_type = if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference)) {
+                                let field_type = if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference | RefClassificationKind::StructuredWrapper)) {
                                     let stripped = prop.rust_field_type.strip_suffix("Type").unwrap_or(&prop.rust_field_type);
                                     format!("{}Response", stripped)
                                 } else {

@@ -540,19 +540,14 @@ impl EntityGenerator for HandlerGenerator {
             handler_refs.push(format!("{}WithIncludeResponse", entity_name));
             handler_refs.push(format!("{}IncludedData", entity_name));
         }
-        // Register handler-produced types (inline response structs).
-        if operations.contains(&"create".to_string()) {
-            type_registry::register_type(
-                &format!("{}BulkCreateResponse", entity_name),
-                vec!["crate".into(), "api".into(), domain.clone(), format!("{}_handler", module_name)],
-            );
-            type_registry::register_type(
-                &format!("Create{}Body", entity_name),
-                vec!["crate".into(), "api".into(), domain.clone(), format!("{}_handler", module_name)],
-            );
-            handler_refs.push(format!("Create{}Body", entity_name));
-            handler_refs.push(format!("{}BulkCreateResponse", entity_name));
-        }
+        // Note: Create{entity_name}Body and {entity_name}BulkCreateResponse are
+        // defined inline by handler.tera and must NOT be registered in the type
+        // registry or added to handler_refs. Doing so causes E0432/E0255 when
+        // multiple domains share an entity name (e.g. "Order" in screening AND
+        // assessments): the second handler's registration silently fails (name
+        // collision), resolve_imports generates wrong cross-module imports for
+        // types that should be local, producing duplicate definitions and
+        // non-existent type references in the generated code.
         let handler_caller: Vec<String> = vec![
             "crate".into(), "api".into(), domain.clone(), format!("{}_handler", module_name),
         ];
