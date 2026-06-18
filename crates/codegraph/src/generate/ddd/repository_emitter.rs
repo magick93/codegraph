@@ -647,6 +647,8 @@ async fn build_child_table_info(
         return None;
     }
 
+    let prop_field_def = codegraph_core::types::resolve_field(prop);
+
     let raw_child_props = db
         .get_properties(&target_schema.title)
         .await
@@ -661,7 +663,7 @@ async fn build_child_table_info(
 
     let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
         "{}_{}",
-        parent_table_name, prop.pg_column_name
+        parent_table_name, prop_field_def.column_name
     ));
     let child_struct_name = format!(
         "{}{}",
@@ -858,7 +860,7 @@ async fn build_child_table_info(
     }
 
     Some(ChildTableInfo {
-        field_name: prop.rust_field_name.clone(),
+        field_name: prop_field_def.rust_field_name.clone(),
         struct_name: child_struct_name,
         sql_table_name: child_table_name,
         sql_schema_name: schema_name.to_string(),
@@ -1793,7 +1795,7 @@ impl RepositoryImplEmitter {
                     for prop in &via_props {
                         if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, &entry.via_entity).await {
                             if target.title == schema_title {
-                                let col = format!("{}_id", codegraph_naming::to_snake_case(&prop.name));
+                                let col = codegraph_core::types::resolve_field(prop).column_name;
                                 via_fk = Some(col);
                                 break;
                             }

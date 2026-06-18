@@ -425,6 +425,43 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
+    // Pre-register DTO types for force VOs so that cross-entity import resolution
+    // (e.g. AmountResponse referenced by Person DTOs) works even though VOs are
+    // not in the main entity generation order.
+    for (domain_name, domain_entry) in &config.domains {
+        for vo_title in &domain_entry.force_value_objects {
+            let entity_name = codegraph_naming::strip_suffix(vo_title, suffix);
+            let module_name = codegraph_naming::to_snake_case(&entity_name);
+            let base = || -> Vec<String> {
+                vec!["crate".into(), "domain".into(), domain_name.clone(), module_name.clone()]
+            };
+            type_registry::register_type(
+                &format!("{}Response", entity_name),
+                [base(), vec!["dto_response".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("{}LinkedResponse", entity_name),
+                [base(), vec!["dto_response".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("Create{}Request", entity_name),
+                [base(), vec!["dto_create".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("Update{}Request", entity_name),
+                [base(), vec!["dto_update".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("{}WithIncludeResponse", entity_name),
+                [base(), vec!["dto_included".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("{}IncludedData", entity_name),
+                [base(), vec!["dto_included".into()]].concat(),
+            );
+        }
+    }
+
     // Whether webhook generators are active.  Derived from build_plan when available;
     // defaults to true for backward compatibility (all existing profiles include
     // webhook_dispatch and webhook_endpoint_api).
@@ -440,14 +477,38 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         .unwrap_or(false);
 
     let order = compute_generation_order(db, config).await?;
+
+    // Compute a separate generation order for force VOs.  These are skipped
+    // by compute_generation_order (to avoid DDL/entity/handler/repository
+    // generators), but still need DTO generation.
+    let vo_order: Vec<GenerationEntry> = config
+        .domains
+        .iter()
+        .flat_map(|(domain_name, domain_entry)| {
+            domain_entry.force_value_objects.iter().map(move |vo_title| {
+                GenerationEntry {
+                    schema_title: vo_title.clone(),
+                    domain: domain_name.clone(),
+                    pg_schema: domain_name.clone(),
+                    is_cyclic: false,
+                }
+            })
+        })
+        .collect();
+
     let mut report = report::GenerationReport::new();
 
     // Clean stale generated files from the output directory before generators
     // run.  Previous pipeline runs may have produced files for entities that
     // are no longer in the generation order (e.g. reclassified as VOs).
+    // Include VOs in the clean set to preserve their generated directories.
     // The filesystem-scanning `generate_mod_files` pass would otherwise pick
     // them up and emit broken `pub mod` declarations.
-    clean_generated_output(output_dir, &order, &config.defaults.type_suffix);
+    {
+        let all_for_clean: Vec<GenerationEntry> =
+            order.iter().chain(vo_order.iter()).cloned().collect();
+        clean_generated_output(output_dir, &all_for_clean, &config.defaults.type_suffix);
+    }
 
     // Clean stale IFML route directories from previous runs.
     clean_stale_ifml_routes(output_dir, &[]);
@@ -744,6 +805,36 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             }
         }
         entity_results.push((entity_files, errors));
+    }
+
+    // VO-only generation: run only DTO generators for force VOs.
+    // DDL, entity model, handler, repository, command, query MUST skip VOs.
+    {
+        let dto_gen_names: std::collections::HashSet<&str> =
+            ["dto", "domain_types_dto"].into_iter().collect();
+        for entry in &vo_order {
+            let mut vo_files = Vec::new();
+            let mut vo_errors = Vec::new();
+            for gen in entity_gens.iter() {
+                if !dto_gen_names.contains(gen.name()) {
+                    continue;
+                }
+                match gen
+                    .generate(db, &entry.schema_title, &entry.domain, config, tera, project)
+                    .await
+                {
+                    Ok(files) => vo_files.extend(files),
+                    Err(e) => {
+                        vo_errors.push(report::GenerationError {
+                            entity: entry.schema_title.clone(),
+                            generator: gen.name().to_string(),
+                            source: e,
+                        });
+                    }
+                }
+            }
+            entity_results.push((vo_files, vo_errors));
+        }
     }
 
     // Entity migrations start at 500 to avoid overlap with codelist range (10..200).
