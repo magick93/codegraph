@@ -1199,6 +1199,24 @@ impl DtoGenerator {
                     }
                 }
             }
+            // Also add base_fields' response type references (e.g.,
+            // CertificationResponse, IdentifierResponse) so they are
+            // imported.  Strip Option<...> and Vec<...> wrappers to
+            // extract the inner type name.
+            if let Some(base) = et["base_fields"].as_array() {
+                for bf in base {
+                    if let Some(rt) = bf["rust_type"].as_str() {
+                        let inner = rt
+                            .strip_prefix("Option<")
+                            .or_else(|| rt.strip_prefix("Vec<"))
+                            .and_then(|s| s.strip_suffix('>'))
+                            .unwrap_or(rt);
+                        if inner != rt {
+                            ref_type_names.push(inner.to_string());
+                        }
+                    }
+                }
+            }
         }
         // Also add framework types referenced by the template.
         ref_type_names.push(format!("{}LinkedResponse", entity_name));
