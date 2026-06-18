@@ -526,8 +526,12 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         ".clone()"
     };
     let has_enum = col.dto_rust_type.is_some();
-    // DTO field for codelist references strips _code suffix
-    let field = super::dto::strip_code_suffix_safe(&col.field_name);
+    // DTO field for codelist references strips _code suffix; other fields match directly.
+    let field = if has_enum {
+        super::dto::strip_code_suffix_safe(&col.field_name)
+    } else {
+        col.field_name.clone()
+    };
 
     if col.is_nullable {
         if is_vec_string(&col.rust_type) || (is_vec_type(&col.rust_type) && has_enum) {
@@ -2064,7 +2068,15 @@ impl RepositoryImplEmitter {
         let op = CrudOp::CreateActiveModel;
         for col in op.columns(tree) {
             let entity_field = &col.field_name;
-            let dto_field = super::dto::strip_code_suffix_safe(entity_field);
+            // DTO field access uses stripped name for codelist enums
+            let dto_access = |f: &str| -> String {
+                if col.dto_rust_type.is_some() {
+                    super::dto::strip_code_suffix_safe(f)
+                } else {
+                    f.to_string()
+                }
+            };
+            let dto_field = dto_access(entity_field);
             if col.dto_rust_type.is_some() {
                 if col.is_array {
                     // Vec<CodelistEnum> → Vec<String>
@@ -2432,7 +2444,11 @@ impl RepositoryImplEmitter {
         let op = CrudOp::Update;
         for col in op.columns(tree) {
             let entity_field = &col.field_name;
-            let dto_field = super::dto::strip_code_suffix_safe(entity_field);
+            let dto_field = if col.dto_rust_type.is_some() {
+                super::dto::strip_code_suffix_safe(entity_field)
+            } else {
+                entity_field.to_string()
+            };
             if col.is_structured_wrapper {
                 // StructuredWrapper (scalar or array): serialize to JSONB.
                 if col.is_nullable {
