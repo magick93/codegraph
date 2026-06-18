@@ -37,5 +37,5 @@ pub struct {{ et.type_name }} {
 pub struct {{ entity_name }}WithIncludeResponse {
     pub data: {{ entity_name }}LinkedResponse,
     pub included: Option<{{ entity_name }}IncludedData>,
-    pub meta: crate::api::Meta,
+    pub meta: crate::api::meta::Meta,
 }

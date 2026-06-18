@@ -303,7 +303,7 @@ pub async fn get_by_id(
     Ok(Json({{ entity_name }}WithIncludeResponse {
         data: linked,
         included: Some(included),
-        meta: crate::api::Meta { correlation_id: correlation_id.to_string() },
+        meta: crate::api::meta::Meta { correlation_id: correlation_id.to_string() },
     }))
 {% else %}
     Ok(Json(serde_json::json!({

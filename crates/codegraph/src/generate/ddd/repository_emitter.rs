@@ -1601,6 +1601,20 @@ impl RepositoryImplEmitter {
             for import in &imports {
                 writeln!(code, "{}", import).unwrap();
             }
+            // Also add direct imports for enriched types from dto_included module.
+            // These types (e.g. DeploymentWithPositionResponse) are generated in the
+            // current entity's dto_included.rs but may not yet be registered in the
+            // type registry when the repository emitter runs (DTO generator runs later).
+            for path in &include_paths {
+                if path.segments.len() > 1 {
+                    writeln!(
+                        code,
+                        "use super::dto_included::{};",
+                        path.response_rust_type
+                    )
+                    .unwrap();
+                }
+            }
 
             writeln!(code).unwrap();
             writeln!(
@@ -2026,33 +2040,32 @@ impl RepositoryImplEmitter {
                 continue;
             }
             let entity_field = &col.field_name;
-            let dto_field = col.dto_name();
             if col.dto_rust_type.is_some() {
                 if col.is_array {
                     // Vec<CodelistEnum> → Vec<String>
                     if col.is_nullable {
                         writeln!(
                             code,
-                            "            {entity_field}: Set(cmd.{dto_field}.map(|v| v.into_iter().map(|x| x.to_string()).collect())),",
+                            "            {entity_field}: Set(cmd.{entity_field}.map(|v| v.into_iter().map(|x| x.to_string()).collect())),",
                         )
                         .unwrap();
                     } else {
                         writeln!(
                             code,
-                            "            {entity_field}: Set(cmd.{dto_field}.into_iter().map(|v| v.to_string()).collect()),",
+                            "            {entity_field}: Set(cmd.{entity_field}.into_iter().map(|v| v.to_string()).collect()),",
                         )
                         .unwrap();
                     }
                 } else if col.is_nullable {
                     writeln!(
                         code,
-                        "            {entity_field}: Set(cmd.{dto_field}.map(|v| v.to_string())),",
+                        "            {entity_field}: Set(cmd.{entity_field}.map(|v| v.to_string())),",
                     )
                     .unwrap();
                 } else {
                     writeln!(
                         code,
-                        "            {entity_field}: Set(cmd.{dto_field}.to_string()),",
+                        "            {entity_field}: Set(cmd.{entity_field}.to_string()),",
                     )
                     .unwrap();
                 }
@@ -2062,25 +2075,25 @@ impl RepositoryImplEmitter {
                     if col.is_array {
                         writeln!(
                             code,
-                            "            {entity_field}: Set(cmd.{dto_field}.map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))),",
+                            "            {entity_field}: Set(cmd.{entity_field}.map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))),",
                         ).unwrap();
                     } else {
                         writeln!(
                             code,
-                            "            {entity_field}: Set(cmd.{dto_field}.as_ref().and_then(|v| serde_json::to_value(v).ok())),",
+                            "            {entity_field}: Set(cmd.{entity_field}.as_ref().and_then(|v| serde_json::to_value(v).ok())),",
                         ).unwrap();
                     }
                 } else {
                     writeln!(
                         code,
-                        "            {entity_field}: Set(serde_json::to_value(cmd.{dto_field}).unwrap_or(serde_json::Value::Null)),",
+                        "            {entity_field}: Set(serde_json::to_value(cmd.{entity_field}).unwrap_or(serde_json::Value::Null)),",
                     ).unwrap();
                 }
             } else {
                 writeln!(
                     code,
                     "            {}: Set(cmd.{}),",
-                    entity_field, dto_field
+                    entity_field, entity_field
                 )
                 .unwrap();
             }
@@ -2166,7 +2179,7 @@ impl RepositoryImplEmitter {
         }
 
         for col in &insert_cols {
-            let dto_field = col.dto_name();
+            let dto_field = &col.field_name;
             let has_enum = col.dto_rust_type.is_some();
             let clone_suffix = if is_copy_type(&col.rust_type) {
                 ""
@@ -2415,25 +2428,24 @@ impl RepositoryImplEmitter {
                 continue;
             }
             let entity_field = &col.field_name;
-            let dto_field = col.dto_name();
             if col.is_structured_wrapper {
                 // StructuredWrapper (scalar or array): serialize to JSONB.
                 if col.is_nullable {
                     if col.is_array {
                         writeln!(
                             code,
-                            "        if let Some(v) = cmd.{dto_field} {{ model.{entity_field} = Set(Some(serde_json::to_value(v).unwrap_or(serde_json::Value::Null))); }}",
+                            "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set(Some(serde_json::to_value(v).unwrap_or(serde_json::Value::Null))); }}",
                         ).unwrap();
                     } else {
                         writeln!(
                             code,
-                            "        if let Some(v) = cmd.{dto_field} {{ model.{entity_field} = Set(serde_json::to_value(v).ok()); }}",
+                            "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set(serde_json::to_value(v).ok()); }}",
                         ).unwrap();
                     }
                 } else {
                     writeln!(
                         code,
-                        "        if let Some(v) = cmd.{dto_field} {{ model.{entity_field} = Set(serde_json::to_value(v).unwrap_or(serde_json::Value::Null)); }}",
+                        "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set(serde_json::to_value(v).unwrap_or(serde_json::Value::Null)); }}",
                     ).unwrap();
                 }
             } else {
@@ -2447,13 +2459,13 @@ impl RepositoryImplEmitter {
                 if col.is_nullable {
                     writeln!(
                         code,
-                        "        if let Some(v) = cmd.{dto_field} {{ model.{entity_field} = Set(Some({value_expr})); }}",
+                        "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set(Some({value_expr})); }}",
                     )
                     .unwrap();
                 } else {
                     writeln!(
                         code,
-                        "        if let Some(v) = cmd.{dto_field} {{ model.{entity_field} = Set({value_expr}); }}",
+                        "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set({value_expr}); }}",
                     )
                     .unwrap();
                 }
@@ -2499,7 +2511,7 @@ impl RepositoryImplEmitter {
             .unwrap();
             for col in &range_cols {
                 let cast = col.pg_cast.as_deref().unwrap();
-                let dto_field = col.dto_name();
+                let dto_field = &col.field_name;
                 let pg_col = q(&col.pg_column_name);
                 let typed_value = typed_value_expr(&col.rust_type, "v");
                 writeln!(code, "            if let Some(v) = cmd.{dto_field} {{").unwrap();

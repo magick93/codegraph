@@ -1128,9 +1128,15 @@ impl DtoGenerator {
                                     continue;
                                 }
                                 let is_optional = prop.is_nullable || !prop.is_required;
+                                let field_type = if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference)) {
+                                    let stripped = prop.rust_field_type.strip_suffix("Type").unwrap_or(&prop.rust_field_type);
+                                    format!("{}Response", stripped)
+                                } else {
+                                    prop.rust_field_type.clone()
+                                };
                                 base_fields.push(serde_json::json!({
                                     "name": prop.rust_field_name,
-                                    "rust_type": prop.rust_field_type,
+                                    "rust_type": field_type,
                                     "is_optional": is_optional,
                                 }));
                             }
