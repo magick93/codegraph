@@ -2188,7 +2188,11 @@ impl RepositoryImplEmitter {
         }
 
         for col in &insert_cols {
-            let dto_field = &col.field_name;
+            // DTO field names may differ from entity column names for codelist
+            // references — the DTO strips the _code suffix (e.g. "assignment_reason"
+            // vs "assignment_reason_code"). Apply strip_code_suffix_safe to match.
+            let base_field = &col.field_name;
+            let dto_field = super::dto::strip_code_suffix_safe(base_field);
             let has_enum = col.dto_rust_type.is_some();
             let clone_suffix = if is_copy_type(&col.rust_type) {
                 ""
