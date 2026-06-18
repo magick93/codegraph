@@ -9,6 +9,7 @@ use crate::generate::api::include_path::ResolvedIncludePath;
 use crate::generate::filter_fields::{
     resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
 };
+use crate::generate::type_registry;
 use codegraph_config::DomainConfig;
 
 /// Quote a SQL identifier (table or column name) if it is a PostgreSQL reserved word.
@@ -1550,6 +1551,30 @@ impl RepositoryImplEmitter {
         }
 
         if !include_paths.is_empty() {
+            // Add import statements for cross-entity types referenced by include paths.
+            // These types (e.g. PersonResponse) live in other entity modules and need
+            // use crate::domain::{domain}::{module}::dto_response::TypeName imports.
+            let caller_base: Vec<String> = vec![
+                "crate".into(), "domain".into(), domain.into(),
+                tree.module_name.clone(), "repository_impl".into(),
+            ];
+            let mut include_type_names: Vec<String> = Vec::new();
+            for path in include_paths {
+                include_type_names.push(path.response_rust_type.clone());
+                if path.segments.len() > 1 {
+                    if let Some(last_seg) = path.segments.last() {
+                        include_type_names.push(format!("{}Response", last_seg.entity_name));
+                    }
+                }
+            }
+            // Deduplicate while preserving order.
+            let mut seen = std::collections::HashSet::new();
+            include_type_names.retain(|n| seen.insert(n.clone()));
+            let imports = type_registry::resolve_imports(&include_type_names, &caller_base);
+            for import in &imports {
+                writeln!(code, "{}", import).unwrap();
+            }
+
             writeln!(code).unwrap();
             writeln!(
                 code,
