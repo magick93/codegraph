@@ -49,5 +49,5 @@ pub struct DeploymentWithPositionResponse {
 pub struct WorkerWithIncludeResponse {
     pub data: WorkerLinkedResponse,
     pub included: Option<WorkerIncludedData>,
-    pub meta: crate::api::Meta,
+    pub meta: crate::api::meta::Meta,
 }

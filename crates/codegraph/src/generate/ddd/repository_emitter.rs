@@ -1466,6 +1466,44 @@ async fn build_columns_and_children(
     Ok((direct_columns, child_tables))
 }
 
+/// Which CRUD operation is being emitted.
+/// Centralises column filtering and DTO field name resolution
+/// so all paths stay consistent — adding a new variant forces
+/// defining its filter and field name at compile time.
+#[derive(Clone, Copy)]
+enum CrudOp {
+    CreateActiveModel,
+    CreateRawSql,
+    Update,
+}
+
+impl CrudOp {
+    fn columns<'a>(&self, tree: &'a EntityTree) -> Vec<&'a TreeColumn> {
+        match self {
+            CrudOp::CreateActiveModel => tree.direct_columns.iter()
+                .filter(|c| !c.is_workflow_managed && !c.is_composite_range && !c.is_media)
+                .filter(|c| !Self::is_parent_fk(c, tree))
+                .collect(),
+            CrudOp::CreateRawSql => tree.direct_columns.iter()
+                .filter(|c| !c.is_workflow_managed && !c.is_composite_range && !c.is_media)
+                .filter(|c| !Self::is_parent_fk(c, tree))
+                .collect(),
+            CrudOp::Update => tree.direct_columns.iter()
+                .filter(|c| !c.is_workflow_managed && !c.is_media && !c.is_composite_range)
+                .filter(|c| c.pg_cast.is_none())
+                .collect(),
+        }
+    }
+
+    fn is_parent_fk(c: &TreeColumn, tree: &EntityTree) -> bool {
+        tree.parent_ref.as_ref().is_some_and(|pr| {
+            c.field_name.eq_ignore_ascii_case(pr)
+                || c.pg_column_name.eq_ignore_ascii_case(pr)
+                || c.pg_column_name == format!("{}_id", codegraph_naming::to_snake_case(pr))
+        })
+    }
+}
+
 /// Emits repository implementation Rust code by walking the entity's graph subtree.
 pub struct RepositoryImplEmitter;
 
@@ -1992,6 +2030,7 @@ impl RepositoryImplEmitter {
             .iter()
             .any(|c| c.pg_cast.is_some() && !c.is_composite_range);
 
+        // Dispatch to CrudOp::CreateActiveModel or CrudOp::CreateRawSql
         if has_range_cols {
             // Use raw SQL INSERT so range parameters get explicit casts
             self.emit_create_raw_sql(tree, code);
@@ -2027,18 +2066,8 @@ impl RepositoryImplEmitter {
             let fk_field = codegraph_naming::to_snake_case(parent_ref);
             writeln!(code, "            {fk_field}: Set(Some(parent_id)),").unwrap();
         }
-        for col in &tree.direct_columns {
-            if col.is_workflow_managed || col.is_composite_range || col.is_media {
-                continue;
-            }
-            // Skip parent FK column for child entities — it's already set above
-            if tree.parent_ref.is_some()
-                && (col.field_name == *tree.parent_ref.as_deref().unwrap()
-                    || col.field_name
-                        == format!("{}_id", codegraph_naming::to_snake_case(tree.parent_ref.as_deref().unwrap())))
-            {
-                continue;
-            }
+        let op = CrudOp::CreateActiveModel;
+        for col in op.columns(tree) {
             let entity_field = &col.field_name;
             if col.dto_rust_type.is_some() {
                 if col.is_array {
@@ -2115,25 +2144,8 @@ impl RepositoryImplEmitter {
         // Collect non-workflow columns for the INSERT (exclude composite range
         // columns which exist in DDL but not on DTOs, and exclude parent FK
         // for child entities since it's already set from the route)
-        let insert_cols: Vec<&TreeColumn> = tree
-            .direct_columns
-            .iter()
-            .filter(|c| {
-                if c.is_workflow_managed || c.is_composite_range || c.is_media {
-                    return false;
-                }
-                // Skip parent FK column for child entities
-                if let Some(ref parent_ref) = tree.parent_ref {
-                    if c.pg_column_name == *parent_ref
-                        || c.pg_column_name
-                            == format!("{}_id", codegraph_naming::to_snake_case(parent_ref))
-                    {
-                        return false;
-                    }
-                }
-                true
-            })
-            .collect();
+        let op = CrudOp::CreateRawSql;
+        let insert_cols = op.columns(tree);
 
         // Build column names: id + optional FK + direct columns (use PG column names for SQL, quoted)
         let mut col_names = vec!["id".to_string()];
@@ -2417,16 +2429,8 @@ impl RepositoryImplEmitter {
         writeln!(code, "            id: Set(id),").unwrap();
         writeln!(code, "            ..Default::default()").unwrap();
         writeln!(code, "        }};").unwrap();
-        for col in &tree.direct_columns {
-            // Workflow-managed and media fields aren't on the update DTO.
-            if col.is_workflow_managed || col.is_media {
-                continue;
-            }
-            // Range columns are handled separately via raw SQL with explicit casts.
-            // Composite range columns don't exist on DTOs at all.
-            if col.pg_cast.is_some() || col.is_composite_range {
-                continue;
-            }
+        let op = CrudOp::Update;
+        for col in op.columns(tree) {
             let entity_field = &col.field_name;
             if col.is_structured_wrapper {
                 // StructuredWrapper (scalar or array): serialize to JSONB.

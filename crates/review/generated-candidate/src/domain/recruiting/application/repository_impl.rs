@@ -157,6 +157,7 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
         Ok((results, total))
     }
 }
+use crate::domain::recruiting::candidate::dto_response::CandidateResponse;
 
 impl ApplicationRepositoryImpl {
 
@@ -194,8 +195,6 @@ impl ApplicationRepositoryImpl {
                 compensation_expectation: target.compensation_expectation,
                 external_identifier: target.external_identifier,
                 gender: target.gender,
-                position_schedule_type_codes: target.position_schedule_type_codes,
-                position_titles: target.position_titles,
                 referred_by_application_id: target.referred_by_application_id,
                 status: target.status,
                 uri: target.uri,
@@ -232,8 +231,6 @@ impl ApplicationRepositoryImpl {
                 compensation_expectation: t.compensation_expectation,
                 external_identifier: t.external_identifier,
                 gender: t.gender,
-                position_schedule_type_codes: t.position_schedule_type_codes,
-                position_titles: t.position_titles,
                 referred_by_application_id: t.referred_by_application_id,
                 status: t.status,
                 uri: t.uri,

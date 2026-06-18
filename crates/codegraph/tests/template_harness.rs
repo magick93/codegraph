@@ -4540,7 +4540,7 @@ async fn handler_with_include_produces_include_code() {
         "Response should include included data. Got:\n{content}"
     );
     assert!(
-        content.contains("meta: crate::api::Meta"),
+        content.contains("meta: crate::api::meta::Meta"),
         "Response should have meta. Got:\n{content}"
     );
 
@@ -4732,7 +4732,7 @@ async fn dto_include_single_level() {
         "Should contain included field. Got:\n{content}"
     );
     assert!(
-        content.contains("pub meta: crate::api::Meta"),
+        content.contains("pub meta: crate::api::meta::Meta"),
         "Should contain meta field. Got:\n{content}"
     );
 }

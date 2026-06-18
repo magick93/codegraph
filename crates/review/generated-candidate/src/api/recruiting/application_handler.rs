@@ -4,11 +4,19 @@
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
-use uuid::Uuid;use crate::app_state::AppState;
+use uuid::Uuid;
+
+use crate::app_state::AppState;
 use crate::error::AppError;
 use crate::middleware::ApiKeyInfo;
-use crate::domain::recruiting::candidate::dto_included::ApplicationResponse;
+use crate::domain::recruiting::application::dto_response::ApplicationResponse;
+use crate::domain::recruiting::application::dto_response::ApplicationLinkedResponse;
+use crate::domain::recruiting::application::repository::ApplicationRepository;
 use crate::error::BulkItemError;
+use crate::domain::recruiting::application::dto_create::CreateApplicationRequest;
+use crate::domain::recruiting::application::dto_update::UpdateApplicationRequest;
+use crate::domain::recruiting::application::dto_included::ApplicationWithIncludeResponse;
+use crate::domain::recruiting::application::dto_included::ApplicationIncludedData;
 
 
 /// Accepts either a single item or an array of items for creation.
@@ -232,7 +240,7 @@ pub async fn get_by_id(
     Ok(Json(ApplicationWithIncludeResponse {
         data: linked,
         included: Some(included),
-        meta: crate::api::Meta { correlation_id: correlation_id.to_string() },
+        meta: crate::api::meta::Meta { correlation_id: correlation_id.to_string() },
     }))
 
 }

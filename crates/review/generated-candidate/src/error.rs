@@ -82,7 +82,7 @@ impl IntoResponse for AppError {
 }
 
 /// Error item for bulk create/update operations.
-#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct BulkItemError {
     pub index: usize,
     pub error: String,

@@ -4,11 +4,14 @@
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
-use uuid::Uuid;use crate::app_state::AppState;
+use uuid::Uuid;
+
+use crate::app_state::AppState;
 use crate::error::AppError;
 use crate::middleware::ApiKeyInfo;
 use crate::domain::recruiting::candidate::dto_response::CandidateResponse;
 use crate::domain::recruiting::candidate::dto_response::CandidateLinkedResponse;
+use crate::domain::recruiting::candidate::repository::CandidateRepository;
 use crate::error::BulkItemError;
 use crate::domain::recruiting::candidate::dto_create::CreateCandidateRequest;
 use crate::domain::recruiting::candidate::dto_update::UpdateCandidateRequest;
@@ -249,7 +252,7 @@ pub async fn get_by_id(
     Ok(Json(CandidateWithIncludeResponse {
         data: linked,
         included: Some(included),
-        meta: crate::api::Meta { correlation_id: correlation_id.to_string() },
+        meta: crate::api::meta::Meta { correlation_id: correlation_id.to_string() },
     }))
 
 }
