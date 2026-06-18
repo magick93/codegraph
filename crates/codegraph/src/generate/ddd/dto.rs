@@ -1129,8 +1129,17 @@ impl DtoGenerator {
                                 }
                                 let is_optional = prop.is_nullable || !prop.is_required;
                                 let field_type = if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference | RefClassificationKind::StructuredWrapper)) {
-                                    let stripped = prop.rust_field_type.strip_suffix("Type").unwrap_or(&prop.rust_field_type);
-                                    format!("{}Response", stripped)
+                                    if prop.is_array {
+                                        let inner = prop.rust_field_type
+                                            .strip_prefix("Vec<")
+                                            .and_then(|s| s.strip_suffix('>'))
+                                            .unwrap_or(&prop.rust_field_type);
+                                        let stripped = inner.strip_suffix("Type").unwrap_or(inner);
+                                        format!("Vec<{}Response>", stripped)
+                                    } else {
+                                        let stripped = prop.rust_field_type.strip_suffix("Type").unwrap_or(&prop.rust_field_type);
+                                        format!("{}Response", stripped)
+                                    }
                                 } else {
                                     prop.rust_field_type.clone()
                                 };
