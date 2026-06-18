@@ -1545,6 +1545,11 @@ impl RepositoryImplEmitter {
                         if prop.pg_column_name.is_empty() {
                             continue;
                         }
+                        // Skip array properties — the entity generator expands
+                        // these into separate child tables, not direct Model fields.
+                        if prop.is_array {
+                            continue;
+                        }
                         if prop.rust_field_name == "id"
                             || prop.rust_field_name == "created_at"
                             || prop.rust_field_name == "updated_at"
