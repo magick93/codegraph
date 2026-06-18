@@ -1186,6 +1186,7 @@ impl DtoGenerator {
             }
         }
         // Also add framework types referenced by the template.
+        ref_type_names.push(format!("{}LinkedResponse", entity_name));
         ref_type_names.push("Meta".into());
         let caller_module: Vec<String> = vec![
             "crate".into(), "domain".into(), domain.into(), module_name.clone(), "dto_included".into(),

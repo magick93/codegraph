@@ -383,6 +383,48 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // Register framework types so generators can resolve them without hard-coded paths.
     type_registry::register_framework_types();
 
+    // Pre-register all expected entity types so types from entities later in
+    // the generation order (e.g. CertificationResponse referenced by Person's
+    // include DTOs) are resolvable when earlier entities process their imports.
+    let suffix = &config.defaults.type_suffix;
+    for (domain_name, domain_entry) in &config.domains {
+        for entity_title in &domain_entry.entities {
+            let entity_name = codegraph_naming::strip_suffix(entity_title, suffix);
+            let module_name = codegraph_naming::to_snake_case(&entity_name);
+            let base = || -> Vec<String> {
+                vec!["crate".into(), "domain".into(), domain_name.clone(), module_name.clone()]
+            };
+            type_registry::register_type(
+                &format!("{}Response", entity_name),
+                [base(), vec!["dto_response".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("{}LinkedResponse", entity_name),
+                [base(), vec!["dto_response".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("{}Repository", entity_name),
+                [base(), vec!["repository".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("Create{}Request", entity_name),
+                [base(), vec!["dto_create".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("Update{}Request", entity_name),
+                [base(), vec!["dto_update".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("{}WithIncludeResponse", entity_name),
+                [base(), vec!["dto_included".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("{}IncludedData", entity_name),
+                [base(), vec!["dto_included".into()]].concat(),
+            );
+        }
+    }
+
     // Whether webhook generators are active.  Derived from build_plan when available;
     // defaults to true for backward compatibility (all existing profiles include
     // webhook_dispatch and webhook_endpoint_api).
@@ -486,6 +528,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 .with_parent_candidates(parent_candidates.clone()),
         ) as Box<dyn EntityGenerator>,
         Box::new(ddd::event::EventGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
+        Box::new(ddd::dto::DtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         Box::new(
             api::handler::HandlerGenerator::new(output_dir)
                 .with_parent_candidates(parent_candidates.clone()),
@@ -535,7 +578,6 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             ),
         ) as Box<dyn EntityGenerator>,
         Box::new(cli::command::CliCommandGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
-        Box::new(ddd::dto::DtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         // gRPC entity generators
         Box::new(grpc::proto::GrpcProtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         Box::new(grpc::service::GrpcServiceGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
