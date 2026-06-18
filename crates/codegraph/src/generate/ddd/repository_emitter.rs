@@ -1355,12 +1355,19 @@ async fn build_columns_and_children(
             } else {
                 let codelist_type =
                     crate::generate::ddd::dto::codelist_enum_name_from_ref(&prop.ref_target);
-                // rust_field_name is sanitized at ingestion (no _code suffix),
-                // so it matches the DTO field name directly.
+                // rust_field_name at ingestion may retain _code suffix for some
+                // classifier paths. The DTO field name strips _code — set
+                // dto_field_name so col.dto_name() returns the correct DTO name.
+                let stripped = crate::generate::ddd::dto::strip_code_suffix_safe(&field_def.rust_field_name);
+                let dto_name = if stripped != field_def.rust_field_name {
+                    Some(stripped)
+                } else {
+                    None // same as field_name, no override needed
+                };
                 direct_columns.push(TreeColumn {
                     field_name: field_def.rust_field_name.clone(),
                     pg_column_name: field_def.column_name.clone(),
-                    dto_field_name: None, // same as field_name
+                    dto_field_name: dto_name,
                     rust_type: "String".to_string(),
                     is_nullable: !prop.is_required,
                     is_entity_ref: false,
@@ -2069,32 +2076,33 @@ impl RepositoryImplEmitter {
         let op = CrudOp::CreateActiveModel;
         for col in op.columns(tree) {
             let entity_field = &col.field_name;
+            let dto_field = col.dto_name();
             if col.dto_rust_type.is_some() {
                 if col.is_array {
                     // Vec<CodelistEnum> → Vec<String>
                     if col.is_nullable {
                         writeln!(
                             code,
-                            "            {entity_field}: Set(cmd.{entity_field}.map(|v| v.into_iter().map(|x| x.to_string()).collect())),",
+                            "            {entity_field}: Set(cmd.{dto_field}.map(|v| v.into_iter().map(|x| x.to_string()).collect())),",
                         )
                         .unwrap();
                     } else {
                         writeln!(
                             code,
-                            "            {entity_field}: Set(cmd.{entity_field}.into_iter().map(|v| v.to_string()).collect()),",
+                            "            {entity_field}: Set(cmd.{dto_field}.into_iter().map(|v| v.to_string()).collect()),",
                         )
                         .unwrap();
                     }
                 } else if col.is_nullable {
                     writeln!(
                         code,
-                        "            {entity_field}: Set(cmd.{entity_field}.map(|v| v.to_string())),",
+                        "            {entity_field}: Set(cmd.{dto_field}.map(|v| v.to_string())),",
                     )
                     .unwrap();
                 } else {
                     writeln!(
                         code,
-                        "            {entity_field}: Set(cmd.{entity_field}.to_string()),",
+                        "            {entity_field}: Set(cmd.{dto_field}.to_string()),",
                     )
                     .unwrap();
                 }
@@ -2104,25 +2112,25 @@ impl RepositoryImplEmitter {
                     if col.is_array {
                         writeln!(
                             code,
-                            "            {entity_field}: Set(cmd.{entity_field}.map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))),",
+                            "            {entity_field}: Set(cmd.{dto_field}.map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))),",
                         ).unwrap();
                     } else {
                         writeln!(
                             code,
-                            "            {entity_field}: Set(cmd.{entity_field}.as_ref().and_then(|v| serde_json::to_value(v).ok())),",
+                            "            {entity_field}: Set(cmd.{dto_field}.as_ref().and_then(|v| serde_json::to_value(v).ok())),",
                         ).unwrap();
                     }
                 } else {
                     writeln!(
                         code,
-                        "            {entity_field}: Set(serde_json::to_value(cmd.{entity_field}).unwrap_or(serde_json::Value::Null)),",
+                        "            {entity_field}: Set(serde_json::to_value(cmd.{dto_field}).unwrap_or(serde_json::Value::Null)),",
                     ).unwrap();
                 }
             } else {
                 writeln!(
                     code,
                     "            {}: Set(cmd.{}),",
-                    entity_field, entity_field
+                    entity_field, dto_field
                 )
                 .unwrap();
             }
@@ -2191,7 +2199,7 @@ impl RepositoryImplEmitter {
         }
 
         for col in &insert_cols {
-            let dto_field = &col.field_name;
+            let dto_field = col.dto_name();
             let has_enum = col.dto_rust_type.is_some();
             let clone_suffix = if is_copy_type(&col.rust_type) {
                 ""
@@ -2515,12 +2523,8 @@ impl RepositoryImplEmitter {
             .unwrap();
             for col in &range_cols {
                 let cast = col.pg_cast.as_deref().unwrap();
-            // DTO field names may differ from entity column names for codelist
-            // references — the DTO strips the _code suffix (e.g. "assignment_reason"
-            // vs "assignment_reason_code"). Apply strip_code_suffix_safe to match.
-            let base_field = &col.field_name;
-            let dto_field = crate::generate::ddd::dto::strip_code_suffix_safe(base_field);
-                let pg_col = q(&col.pg_column_name);
+            let dto_field = col.dto_name();
+            let pg_col = q(&col.pg_column_name);
                 let typed_value = typed_value_expr(&col.rust_type, "v");
                 writeln!(code, "            if let Some(v) = cmd.{dto_field} {{").unwrap();
                 let set_expr = if crate::generate::is_geometry_cast(cast) {
