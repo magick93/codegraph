@@ -1540,6 +1540,11 @@ impl RepositoryImplEmitter {
                 if let Some(props) = all_props.get(&seg.schema_title) {
                     let mut seen = std::collections::HashSet::new();
                     for prop in props {
+                        // Skip properties that don't map to database columns —
+                        // the entity Model won't have them as Rust fields.
+                        if prop.pg_column_name.is_empty() {
+                            continue;
+                        }
                         if prop.rust_field_name == "id"
                             || prop.rust_field_name == "created_at"
                             || prop.rust_field_name == "updated_at"
