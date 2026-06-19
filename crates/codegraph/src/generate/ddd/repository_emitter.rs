@@ -285,19 +285,9 @@ struct ChildColumn {
     /// When the DTO uses a different type than the entity column (e.g. codelist enum
     /// `GenderCodeList` vs entity `String`), this holds the DTO type name.
     dto_rust_type: Option<String>,
-    /// DTO field name when it differs from field_name (e.g. "assignment_reason"
-    /// vs "assignment_reason_code"). None means same as field_name.
-    dto_field_name: Option<String>,
     /// When this column is a PostgreSQL range type, holds the lowercased PG cast
     /// (e.g. `"tstzrange"`) so INSERT SQL can include `$N::tstzrange`.
     pg_cast: Option<String>,
-}
-
-impl ChildColumn {
-    /// Returns the DTO field name (falls back to `field_name`).
-    fn dto_name(&self) -> &str {
-        self.dto_field_name.as_deref().unwrap_or(&self.field_name)
-    }
 }
 
 /// Returns the sea_orm `Value::*` expression for a typed NULL, based on the Rust type.
@@ -704,7 +694,6 @@ async fn build_child_table_info(
             rust_type: "String".to_string(),
             is_nullable: true,
             dto_rust_type: None,
-            dto_field_name: None,
             pg_cast: pg_cast_for_type(&range.pg_type),
         });
     }
@@ -776,7 +765,6 @@ async fn build_child_table_info(
                     rust_type: c.rust_field_type.clone(),
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
-            dto_field_name: None,
                     pg_cast,
                 });
             }
@@ -787,7 +775,6 @@ async fn build_child_table_info(
                     rust_type: "Uuid".to_string(),
                     is_nullable: true,
                     dto_rust_type: None,
-            dto_field_name: None,
                     pg_cast: None,
                 });
             }
@@ -823,7 +810,6 @@ async fn build_child_table_info(
                     rust_type: "serde_json::Value".to_string(),
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
-            dto_field_name: None,
                     pg_cast: None,
                 });
             }
@@ -860,7 +846,6 @@ async fn build_child_table_info(
                         rust_type: t.clone(),
                         is_nullable: !c.is_required,
                         dto_rust_type: None,
-            dto_field_name: None,
                         pg_cast: None,
                     });
                 }
@@ -1249,7 +1234,6 @@ async fn build_columns_and_children(
             is_nullable: true,
             is_entity_ref: false,
             dto_rust_type: None,
-            dto_field_name: None,
             is_workflow_managed: false,
             is_array: false,
             pg_cast: pg_cast_for_type(&range.pg_type),
@@ -1322,7 +1306,6 @@ async fn build_columns_and_children(
                 is_nullable: !prop.is_required,
                 is_entity_ref: false,
                 dto_rust_type: None,
-            dto_field_name: None,
                 is_workflow_managed: is_workflow_field,
                 is_array: prop.is_array,
                 pg_cast,
@@ -1406,7 +1389,6 @@ async fn build_columns_and_children(
                 is_nullable: !prop.is_required,
                 is_entity_ref: false,
                 dto_rust_type: None,
-            dto_field_name: None,
                 is_workflow_managed: is_workflow_field,
                 is_array: prop.is_array,
                 pg_cast: None,
@@ -1423,7 +1405,6 @@ async fn build_columns_and_children(
                 is_nullable: true,
                 is_entity_ref: true,
                 dto_rust_type: None,
-            dto_field_name: None,
                 is_workflow_managed: is_workflow_field,
                 is_array: false,
                 pg_cast: None,
@@ -1451,7 +1432,6 @@ async fn build_columns_and_children(
                     is_nullable: true,
                     is_entity_ref: true,
                     dto_rust_type: None,
-            dto_field_name: None,
                     is_workflow_managed: is_workflow_field,
                     is_array: false,
                     pg_cast: None,
@@ -1804,7 +1784,6 @@ impl RepositoryImplEmitter {
                     is_nullable: true,
                     is_entity_ref: false,
                     dto_rust_type: None,
-            dto_field_name: None,
                     is_workflow_managed: false,
                     is_array: false,
                     pg_cast: None,
