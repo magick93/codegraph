@@ -698,6 +698,7 @@ async fn build_child_table_info(
             rust_type: "String".to_string(),
             is_nullable: true,
             dto_rust_type: None,
+            dto_field_name: None,
             pg_cast: pg_cast_for_type(&range.pg_type),
         });
     }
@@ -780,6 +781,7 @@ async fn build_child_table_info(
                     rust_type: c.rust_field_type.clone(),
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
+            dto_field_name: None,
                     pg_cast,
                 });
             }
@@ -789,6 +791,7 @@ async fn build_child_table_info(
                     pg_column_name: field_def.column_name,
                     rust_type: "Uuid".to_string(),
                     is_nullable: true,
+            dto_field_name: None,
                     dto_rust_type: None,
                     pg_cast: None,
                 });
@@ -823,6 +826,7 @@ async fn build_child_table_info(
                     field_name: field_def.rust_field_name.clone(),
                     pg_column_name: field_def.column_name.clone(),
                     rust_type: "serde_json::Value".to_string(),
+            dto_field_name: None,
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
                     pg_cast: None,
@@ -858,6 +862,7 @@ async fn build_child_table_info(
                     child_columns.push(ChildColumn {
                         field_name: field_def.rust_field_name.clone(),
                         pg_column_name: field_def.column_name.clone(),
+            dto_field_name: None,
                         rust_type: t.clone(),
                         is_nullable: !c.is_required,
                         dto_rust_type: None,
@@ -1358,6 +1363,7 @@ async fn build_columns_and_children(
                         is_array: true,
                         columns: vec![ChildColumn {
                             field_name: "code".to_string(),
+            dto_field_name: None,
                             pg_column_name: "code".to_string(),
                             rust_type: "String".to_string(),
                             is_nullable: false,
