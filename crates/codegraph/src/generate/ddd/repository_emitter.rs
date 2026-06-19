@@ -285,9 +285,19 @@ struct ChildColumn {
     /// When the DTO uses a different type than the entity column (e.g. codelist enum
     /// `GenderCodeList` vs entity `String`), this holds the DTO type name.
     dto_rust_type: Option<String>,
+    /// DTO field name when it differs from field_name (e.g. "assignment_reason"
+    /// vs "assignment_reason_code"). None means same as field_name.
+    dto_field_name: Option<String>,
     /// When this column is a PostgreSQL range type, holds the lowercased PG cast
     /// (e.g. `"tstzrange"`) so INSERT SQL can include `$N::tstzrange`.
     pg_cast: Option<String>,
+}
+
+impl ChildColumn {
+    /// Returns the DTO field name (falls back to `field_name`).
+    fn dto_name(&self) -> &str {
+        self.dto_field_name.as_deref().unwrap_or(&self.field_name)
+    }
 }
 
 /// Returns the sea_orm `Value::*` expression for a typed NULL, based on the Rust type.
@@ -694,6 +704,7 @@ async fn build_child_table_info(
             rust_type: "String".to_string(),
             is_nullable: true,
             dto_rust_type: None,
+            dto_field_name: None,
             pg_cast: pg_cast_for_type(&range.pg_type),
         });
     }
@@ -734,19 +745,21 @@ async fn build_child_table_info(
                             pg_column_name: "code".to_string(),
                             rust_type: "String".to_string(),
                             is_nullable: false,
-                            dto_rust_type: enum_name,
-                            pg_cast: None,
-                        }],
-                        child_tables: vec![],
-                    });
-                } else {
-                    child_columns.push(ChildColumn {
+                        dto_rust_type: enum_name,
+                        dto_field_name: None,
+                        pg_cast: None,
+                    }],
+                    child_tables: vec![],
+                });
+            } else {
+                child_columns.push(ChildColumn {
                         field_name: field_def.rust_field_name.clone(),
                         pg_column_name: field_def.column_name.clone(),
                         rust_type: "String".to_string(),
                         is_nullable: !c.is_required,
                         dto_rust_type: enum_name,
                         pg_cast: None,
+                        dto_field_name: None,
                     });
                 }
             }
@@ -765,6 +778,7 @@ async fn build_child_table_info(
                     rust_type: c.rust_field_type.clone(),
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
+            dto_field_name: None,
                     pg_cast,
                 });
             }
@@ -775,6 +789,7 @@ async fn build_child_table_info(
                     rust_type: "Uuid".to_string(),
                     is_nullable: true,
                     dto_rust_type: None,
+            dto_field_name: None,
                     pg_cast: None,
                 });
             }
@@ -809,6 +824,7 @@ async fn build_child_table_info(
                     pg_column_name: field_def.column_name.clone(),
                     rust_type: "serde_json::Value".to_string(),
                     is_nullable: !c.is_required,
+            dto_field_name: None,
                     dto_rust_type: None,
                     pg_cast: None,
                 });
@@ -844,6 +860,7 @@ async fn build_child_table_info(
                         field_name: field_def.rust_field_name.clone(),
                         pg_column_name: field_def.column_name.clone(),
                         rust_type: t.clone(),
+            dto_field_name: None,
                         is_nullable: !c.is_required,
                         dto_rust_type: None,
                         pg_cast: None,
@@ -1348,6 +1365,7 @@ async fn build_columns_and_children(
                             is_nullable: false,
                             dto_rust_type: enum_name,
                             pg_cast: None,
+                            dto_field_name: None,
                         }],
                         child_tables: vec![],
                     });
