@@ -1177,7 +1177,7 @@ fn emit_child_col_read_value(code: &mut String, col: &ChildColumn, pad: &str) {
             writeln!(
                 code,
                 "{pad}{field}: Option::<String>::try_get_by(child_row, \"{pg}\").ok().flatten().and_then(|v| v.parse().ok()),",
-                field = dto_field,
+                field = col.field_name,
                 pg = col.pg_column_name,
             )
             .unwrap();
@@ -1185,7 +1185,7 @@ fn emit_child_col_read_value(code: &mut String, col: &ChildColumn, pad: &str) {
             writeln!(
                 code,
                 "{pad}{field}: String::try_get_by(child_row, \"{pg}\").map_err(|e| format!(\"{{e:?}}\"))?.parse().unwrap_or_default(),",
-                field = dto_field,
+                field = col.field_name,
                 pg = col.pg_column_name,
             )
             .unwrap();
@@ -1194,7 +1194,7 @@ fn emit_child_col_read_value(code: &mut String, col: &ChildColumn, pad: &str) {
         writeln!(
             code,
             "{pad}{field}: Option::<{typ}>::try_get_by(child_row, \"{pg}\").ok().flatten(),",
-            field = dto_field,
+            field = col.field_name,
             typ = col.rust_type,
             pg = col.pg_column_name,
         )
@@ -1203,7 +1203,7 @@ fn emit_child_col_read_value(code: &mut String, col: &ChildColumn, pad: &str) {
         writeln!(
             code,
             "{pad}{field}: {typ}::try_get_by(child_row, \"{pg}\").map_err(|e| format!(\"{{e:?}}\"))?,",
-            field = dto_field,
+            field = col.field_name,
             typ = turbofish(&col.rust_type),
             pg = col.pg_column_name,
         )
