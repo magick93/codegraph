@@ -234,13 +234,16 @@ pub async fn get_by_id(
         
     };
     
-    let db = &state.db;
+    use sea_orm::TransactionTrait;
+    let tx = state.db.begin().await
+        .map_err(|e| AppError::internal(format!("Failed to begin transaction: {e}")
+            .with_correlation_id(correlation_id)))?;
     let repo = crate::domain::recruiting::candidate::repository_impl::CandidateRepositoryImpl;
     for path in &include_paths {
         match path.as_str() {
         
             "application" => {
-                included.application = repo.fetch_application_for_candidate(&db, id).await
+                included.application = repo.fetch_application_for_candidate(&tx, id).await
                     .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include application: {e}"))
                         .with_correlation_id(correlation_id))?;
             }
@@ -248,6 +251,9 @@ pub async fn get_by_id(
             _ => {}
         }
     }
+    tx.commit().await
+        .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}")
+            .with_correlation_id(correlation_id)))?;
     
     Ok(Json(CandidateWithIncludeResponse {
         data: linked,

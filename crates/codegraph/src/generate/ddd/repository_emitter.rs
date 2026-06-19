@@ -1578,12 +1578,22 @@ impl RepositoryImplEmitter {
             let mut per_seg_dto: Vec<Vec<String>> = Vec::new();
             let mut per_seg_col: Vec<Vec<String>> = Vec::new();
             for seg in &path.segments {
-                let mut dto_fields: Vec<String> = Vec::new();
-                let mut col_fields: Vec<String> = Vec::new();
                 // Use schema_title directly — include_path.rs already resolves
                 // it to the canonical title for each segment. The fallback graph
                 // query could return the wrong properties from a shared parent
                 // when schema inheritance is involved.
+                // Query consumed fields once per segment — fields consumed by
+                // composite range columns (e.g. start/end) that don't exist as
+                // direct columns on the entity Model.
+                let consumed_fields: std::collections::HashSet<String> = db
+                    .get_consumed_fields(&seg.schema_title)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(p, _)| p.name)
+                    .collect();
+                let mut dto_fields: Vec<String> = Vec::new();
+                let mut col_fields: Vec<String> = Vec::new();
                 if let Some(props) = all_props.get(&seg.schema_title) {
                     let mut seen = std::collections::HashSet::new();
                     for prop in props {
@@ -1597,15 +1607,6 @@ impl RepositoryImplEmitter {
                         if prop.is_array {
                             continue;
                         }
-                        // Skip consumed fields — composite range columns consume
-                        // start/end that don't exist as direct Model fields.
-                        let consumed_fields: std::collections::HashSet<String> = db
-                            .get_consumed_fields(&seg.schema_title)
-                            .await
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|(p, _)| p.name)
-                            .collect();
                         if consumed_fields.contains(&prop.name) {
                             continue;
                         }
@@ -1626,8 +1627,11 @@ impl RepositoryImplEmitter {
                         // Deduplicate by rust_field_name — list_all_properties()
                         // can return duplicate entries from interface inheritance.
                         if seen.insert(fd.rust_field_name.clone()) {
+                            // DTO side uses rust_field_name (stripped, with _id for entity refs)
                             dto_fields.push(fd.rust_field_name.clone());
-                            col_fields.push(fd.rust_field_name.clone());
+                            // Entity Model side uses column_name so it matches
+                            // config-specified FK column names (e.g. person_type_id)
+                            col_fields.push(fd.column_name.clone());
                         }
                     }
                 }
