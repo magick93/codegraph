@@ -551,7 +551,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             write!(
                 code,
                 ", item.{field}.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))).unwrap_or({null})",
-                field = col.field_name,
+                field = dto_field,
                 null = null_value_for_type("Vec<String>"),
             )
             .unwrap();
@@ -561,14 +561,14 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             write!(
                 code,
                 ", item.{field}.clone().map(|v| sea_orm::Value::Array({array_type}, Some(Box::new(v.into_iter().map(|s| {value_ctor}).collect())))).unwrap_or(sea_orm::Value::Array({array_type}, None))",
-                field = col.field_name,
+                field = dto_field,
             )
             .unwrap();
         } else if has_enum {
             write!(
                 code,
                 ", item.{field}.as_ref().map(|v| sea_orm::Value::String(Some(Box::new(v.to_string())))).unwrap_or({null})",
-                field = col.field_name,
+                field = dto_field,
                 null = null_value_for_type(&col.rust_type),
             )
             .unwrap();
@@ -577,7 +577,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             write!(
                 code,
                 ", item.{field}{clone}.map(|v| {typed_value}).unwrap_or({null})",
-                field = col.field_name,
+                field = dto_field,
                 clone = clone_suffix,
                 typed_value = typed_value,
                 null = null_value_for_type(&col.rust_type),
@@ -593,7 +593,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         write!(
             code,
             ", sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(item.{field}.clone().into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))",
-            field = col.field_name,
+            field = dto_field,
         )
         .unwrap();
     } else if is_vec_type(&col.rust_type) {
@@ -601,18 +601,18 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         write!(
             code,
             ", sea_orm::Value::Array({array_type}, Some(Box::new(item.{field}.clone().into_iter().map(|s| {value_ctor}).collect())))",
-            field = col.field_name,
+            field = dto_field,
         )
         .unwrap();
     } else if has_enum {
         write!(
             code,
             ", sea_orm::Value::String(Some(Box::new(item.{field}.to_string())))",
-            field = col.field_name,
+            field = dto_field,
         )
         .unwrap();
     } else {
-        let item_expr = format!("item.{}{}", col.field_name, clone_suffix);
+        let item_expr = format!("item.{}{}", dto_field, clone_suffix);
         let typed_value = typed_value_expr(&col.rust_type, &item_expr);
         write!(code, ", {}", typed_value).unwrap();
     }
@@ -751,15 +751,21 @@ async fn build_child_table_info(
                     }],
                     child_tables: vec![],
                 });
-            } else {
-                child_columns.push(ChildColumn {
+                } else {
+                    let child_dto_stripped = crate::generate::ddd::dto::strip_code_suffix_safe(&field_def.rust_field_name);
+                    let child_dto_field = if child_dto_stripped != field_def.rust_field_name {
+                        Some(child_dto_stripped)
+                    } else {
+                        None
+                    };
+                    child_columns.push(ChildColumn {
                         field_name: field_def.rust_field_name.clone(),
                         pg_column_name: field_def.column_name.clone(),
                         rust_type: "String".to_string(),
                         is_nullable: !c.is_required,
                         dto_rust_type: enum_name,
                         pg_cast: None,
-                        dto_field_name: None,
+                        dto_field_name: child_dto_field,
                     });
                 }
             }
@@ -1170,7 +1176,7 @@ fn emit_child_col_read_value(code: &mut String, col: &ChildColumn, pad: &str) {
             writeln!(
                 code,
                 "{pad}{field}: Option::<String>::try_get_by(child_row, \"{pg}\").ok().flatten().and_then(|v| v.parse().ok()),",
-                field = col.field_name,
+                field = dto_field,
                 pg = col.pg_column_name,
             )
             .unwrap();
@@ -1178,7 +1184,7 @@ fn emit_child_col_read_value(code: &mut String, col: &ChildColumn, pad: &str) {
             writeln!(
                 code,
                 "{pad}{field}: String::try_get_by(child_row, \"{pg}\").map_err(|e| format!(\"{{e:?}}\"))?.parse().unwrap_or_default(),",
-                field = col.field_name,
+                field = dto_field,
                 pg = col.pg_column_name,
             )
             .unwrap();
@@ -1187,7 +1193,7 @@ fn emit_child_col_read_value(code: &mut String, col: &ChildColumn, pad: &str) {
         writeln!(
             code,
             "{pad}{field}: Option::<{typ}>::try_get_by(child_row, \"{pg}\").ok().flatten(),",
-            field = col.field_name,
+            field = dto_field,
             typ = col.rust_type,
             pg = col.pg_column_name,
         )
@@ -1196,7 +1202,7 @@ fn emit_child_col_read_value(code: &mut String, col: &ChildColumn, pad: &str) {
         writeln!(
             code,
             "{pad}{field}: {typ}::try_get_by(child_row, \"{pg}\").map_err(|e| format!(\"{{e:?}}\"))?,",
-            field = col.field_name,
+            field = dto_field,
             typ = turbofish(&col.rust_type),
             pg = col.pg_column_name,
         )
@@ -1614,6 +1620,22 @@ impl RepositoryImplEmitter {
                         // Skip array properties — the entity generator expands
                         // these into separate child tables, not direct Model fields.
                         if prop.is_array {
+                            continue;
+                        }
+                        // Skip consumed fields — composite range columns consume
+                        // start/end that don't exist as direct Model fields.
+                        let consumed_fields: std::collections::HashSet<String> = db
+                            .get_consumed_fields(&seg.schema_title)
+                            .await
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|(p, _)| p.name)
+                            .collect();
+                        if consumed_fields.contains(&prop.name) {
+                            continue;
+                        }
+                        // Skip composite/media wrappers — expanded into sub-columns.
+                        if matches!(prop.effective_kind(), Some(RefClassificationKind::CompositeWrapper | RefClassificationKind::MediaWrapper)) {
                             continue;
                         }
                         if prop.rust_field_name == "id"
@@ -2219,7 +2241,8 @@ impl RepositoryImplEmitter {
 
         for col in &insert_cols {
             let dto_field = col.dto_name();
-            let has_enum = col.dto_rust_type.is_some();
+    let has_enum = col.dto_rust_type.is_some();
+    let dto_field = col.dto_name();
             let clone_suffix = if is_copy_type(&col.rust_type) {
                 ""
             } else {
