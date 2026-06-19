@@ -285,9 +285,19 @@ struct ChildColumn {
     /// When the DTO uses a different type than the entity column (e.g. codelist enum
     /// `GenderCodeList` vs entity `String`), this holds the DTO type name.
     dto_rust_type: Option<String>,
+    /// DTO field name when it differs from field_name (e.g. "assignment_reason"
+    /// vs "assignment_reason_code"). None means same as field_name.
+    dto_field_name: Option<String>,
     /// When this column is a PostgreSQL range type, holds the lowercased PG cast
     /// (e.g. `"tstzrange"`) so INSERT SQL can include `$N::tstzrange`.
     pg_cast: Option<String>,
+}
+
+impl ChildColumn {
+    /// Returns the DTO field name (falls back to `field_name`).
+    fn dto_name(&self) -> &str {
+        self.dto_field_name.as_deref().unwrap_or(&self.field_name)
+    }
 }
 
 /// Returns the sea_orm `Value::*` expression for a typed NULL, based on the Rust type.
@@ -529,6 +539,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         ".clone()"
     };
     let has_enum = col.dto_rust_type.is_some();
+    let dto_field = col.dto_name();
 
     if col.is_nullable {
         if is_vec_string(&col.rust_type) || (is_vec_type(&col.rust_type) && has_enum) {
@@ -541,7 +552,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             write!(
                 code,
                 ", item.{field}.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))).unwrap_or({null})",
-                field = col.field_name,
+                field = dto_field,
                 null = null_value_for_type("Vec<String>"),
             )
             .unwrap();
@@ -551,14 +562,14 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             write!(
                 code,
                 ", item.{field}.clone().map(|v| sea_orm::Value::Array({array_type}, Some(Box::new(v.into_iter().map(|s| {value_ctor}).collect())))).unwrap_or(sea_orm::Value::Array({array_type}, None))",
-                field = col.field_name,
+                field = dto_field,
             )
             .unwrap();
         } else if has_enum {
             write!(
                 code,
                 ", item.{field}.as_ref().map(|v| sea_orm::Value::String(Some(Box::new(v.to_string())))).unwrap_or({null})",
-                field = col.field_name,
+                field = dto_field,
                 null = null_value_for_type(&col.rust_type),
             )
             .unwrap();
@@ -567,7 +578,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             write!(
                 code,
                 ", item.{field}{clone}.map(|v| {typed_value}).unwrap_or({null})",
-                field = col.field_name,
+                field = dto_field,
                 clone = clone_suffix,
                 typed_value = typed_value,
                 null = null_value_for_type(&col.rust_type),
@@ -583,7 +594,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         write!(
             code,
             ", sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(item.{field}.clone().into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))",
-            field = col.field_name,
+            field = dto_field,
         )
         .unwrap();
     } else if is_vec_type(&col.rust_type) {
@@ -591,18 +602,18 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         write!(
             code,
             ", sea_orm::Value::Array({array_type}, Some(Box::new(item.{field}.clone().into_iter().map(|s| {value_ctor}).collect())))",
-            field = col.field_name,
+            field = dto_field,
         )
         .unwrap();
     } else if has_enum {
         write!(
             code,
             ", sea_orm::Value::String(Some(Box::new(item.{field}.to_string())))",
-            field = col.field_name,
+            field = dto_field,
         )
         .unwrap();
     } else {
-        let item_expr = format!("item.{}{}", col.field_name, clone_suffix);
+        let item_expr = format!("item.{}{}", dto_field, clone_suffix);
         let typed_value = typed_value_expr(&col.rust_type, &item_expr);
         write!(code, ", {}", typed_value).unwrap();
     }
@@ -694,6 +705,7 @@ async fn build_child_table_info(
             rust_type: "String".to_string(),
             is_nullable: true,
             dto_rust_type: None,
+            dto_field_name: None,
             pg_cast: pg_cast_for_type(&range.pg_type),
         });
     }
@@ -735,17 +747,25 @@ async fn build_child_table_info(
                             rust_type: "String".to_string(),
                             is_nullable: false,
                             dto_rust_type: enum_name,
+                            dto_field_name: None,
                             pg_cast: None,
                         }],
                         child_tables: vec![],
                     });
                 } else {
+                    let child_stripped = crate::generate::ddd::dto::strip_code_suffix_safe(&field_def.rust_field_name);
+                    let child_dto_field = if child_stripped != field_def.rust_field_name {
+                        Some(child_stripped)
+                    } else {
+                        None
+                    };
                     child_columns.push(ChildColumn {
                         field_name: field_def.rust_field_name.clone(),
                         pg_column_name: field_def.column_name.clone(),
                         rust_type: "String".to_string(),
                         is_nullable: !c.is_required,
                         dto_rust_type: enum_name,
+                        dto_field_name: child_dto_field,
                         pg_cast: None,
                     });
                 }
@@ -765,6 +785,7 @@ async fn build_child_table_info(
                     rust_type: c.rust_field_type.clone(),
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
+                    dto_field_name: None,
                     pg_cast,
                 });
             }
@@ -775,6 +796,7 @@ async fn build_child_table_info(
                     rust_type: "Uuid".to_string(),
                     is_nullable: true,
                     dto_rust_type: None,
+                    dto_field_name: None,
                     pg_cast: None,
                 });
             }
@@ -797,6 +819,7 @@ async fn build_child_table_info(
                             rust_type: col.rust_type.clone(),
                             is_nullable: !c.is_required,
                             dto_rust_type,
+                            dto_field_name: None,
                             pg_cast,
                         });
                     }
@@ -810,6 +833,7 @@ async fn build_child_table_info(
                     rust_type: "serde_json::Value".to_string(),
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
+                    dto_field_name: None,
                     pg_cast: None,
                 });
             }
@@ -846,6 +870,7 @@ async fn build_child_table_info(
                         rust_type: t.clone(),
                         is_nullable: !c.is_required,
                         dto_rust_type: None,
+                        dto_field_name: None,
                         pg_cast: None,
                     });
                 }
@@ -1347,6 +1372,7 @@ async fn build_columns_and_children(
                             rust_type: "String".to_string(),
                             is_nullable: false,
                             dto_rust_type: enum_name,
+                            dto_field_name: None,
                             pg_cast: None,
                         }],
                         child_tables: vec![],
