@@ -285,19 +285,9 @@ struct ChildColumn {
     /// When the DTO uses a different type than the entity column (e.g. codelist enum
     /// `GenderCodeList` vs entity `String`), this holds the DTO type name.
     dto_rust_type: Option<String>,
-    /// When the DTO field name differs from the entity field name (e.g. codelist
-    /// references with `_code` suffix stripped), holds the DTO-side field name.
-    /// `None` means the DTO field name matches `field_name`.
-    dto_field_name: Option<String>,
     /// When this column is a PostgreSQL range type, holds the lowercased PG cast
     /// (e.g. `"tstzrange"`) so INSERT SQL can include `$N::tstzrange`.
     pg_cast: Option<String>,
-}
-
-impl ChildColumn {
-    fn dto_name(&self) -> &str {
-        self.dto_field_name.as_deref().unwrap_or(&self.field_name)
-    }
 }
 
 /// Returns the sea_orm `Value::*` expression for a typed NULL, based on the Rust type.
@@ -539,7 +529,6 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         ".clone()"
     };
     let has_enum = col.dto_rust_type.is_some();
-    let field = col.dto_name();
 
     if col.is_nullable {
         if is_vec_string(&col.rust_type) || (is_vec_type(&col.rust_type) && has_enum) {
@@ -552,7 +541,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             write!(
                 code,
                 ", item.{field}.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))).unwrap_or({null})",
-                field = field,
+                field = col.field_name,
                 null = null_value_for_type("Vec<String>"),
             )
             .unwrap();
@@ -562,14 +551,14 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             write!(
                 code,
                 ", item.{field}.clone().map(|v| sea_orm::Value::Array({array_type}, Some(Box::new(v.into_iter().map(|s| {value_ctor}).collect())))).unwrap_or(sea_orm::Value::Array({array_type}, None))",
-                field = field,
+                field = col.field_name,
             )
             .unwrap();
         } else if has_enum {
             write!(
                 code,
                 ", item.{field}.as_ref().map(|v| sea_orm::Value::String(Some(Box::new(v.to_string())))).unwrap_or({null})",
-                field = field,
+                field = col.field_name,
                 null = null_value_for_type(&col.rust_type),
             )
             .unwrap();
@@ -578,7 +567,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             write!(
                 code,
                 ", item.{field}{clone}.map(|v| {typed_value}).unwrap_or({null})",
-                field = field,
+                field = col.field_name,
                 clone = clone_suffix,
                 typed_value = typed_value,
                 null = null_value_for_type(&col.rust_type),
@@ -594,7 +583,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         write!(
             code,
             ", sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(item.{field}.clone().into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))",
-            field = field,
+            field = col.field_name,
         )
         .unwrap();
     } else if is_vec_type(&col.rust_type) {
@@ -602,18 +591,18 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         write!(
             code,
             ", sea_orm::Value::Array({array_type}, Some(Box::new(item.{field}.clone().into_iter().map(|s| {value_ctor}).collect())))",
-            field = field,
+            field = col.field_name,
         )
         .unwrap();
     } else if has_enum {
         write!(
             code,
             ", sea_orm::Value::String(Some(Box::new(item.{field}.to_string())))",
-            field = field,
+            field = col.field_name,
         )
         .unwrap();
     } else {
-        let item_expr = format!("item.{}{}", field, clone_suffix);
+        let item_expr = format!("item.{}{}", col.field_name, clone_suffix);
         let typed_value = typed_value_expr(&col.rust_type, &item_expr);
         write!(code, ", {}", typed_value).unwrap();
     }
@@ -705,7 +694,6 @@ async fn build_child_table_info(
             rust_type: "String".to_string(),
             is_nullable: true,
             dto_rust_type: None,
-            dto_field_name: None,
             pg_cast: pg_cast_for_type(&range.pg_type),
         });
     }
@@ -747,20 +735,17 @@ async fn build_child_table_info(
                             rust_type: "String".to_string(),
                             is_nullable: false,
                             dto_rust_type: enum_name,
-                            dto_field_name: None,
                             pg_cast: None,
                         }],
                         child_tables: vec![],
                     });
                 } else {
-                    let dto_col_name = crate::generate::ddd::dto::strip_code_suffix_safe(&field_def.rust_field_name);
                     child_columns.push(ChildColumn {
                         field_name: field_def.rust_field_name.clone(),
                         pg_column_name: field_def.column_name.clone(),
                         rust_type: "String".to_string(),
                         is_nullable: !c.is_required,
                         dto_rust_type: enum_name,
-                        dto_field_name: (dto_col_name != field_def.rust_field_name).then_some(dto_col_name),
                         pg_cast: None,
                     });
                 }
@@ -774,64 +759,60 @@ async fn build_child_table_info(
                 } else {
                     None
                 };
-                    child_columns.push(ChildColumn {
-                        field_name: field_def.rust_field_name.clone(),
-                        pg_column_name: field_def.column_name.clone(),
-                        rust_type: c.rust_field_type.clone(),
-                        is_nullable: !c.is_required,
-                        dto_rust_type: None,
-                        dto_field_name: None,
-                        pg_cast,
-                    });
-                }
-                Some(RefClassificationKind::EntityReference) => {
-                    child_columns.push(ChildColumn {
-                        field_name: field_def.rust_field_name,
-                        pg_column_name: field_def.column_name,
-                        rust_type: "Uuid".to_string(),
-                        is_nullable: true,
-                        dto_rust_type: None,
-                        dto_field_name: None,
-                        pg_cast: None,
-                    });
-                }
-                Some(RefClassificationKind::CompositeWrapper)
-                | Some(RefClassificationKind::MediaWrapper) => {
-                    if let Ok(comp_cols) = db
-                        .get_composite_columns(&c.name, &target_schema.title)
-                        .await
-                    {
-                        for col in &comp_cols {
-                            let dto_rust_type = col
-                                .dto_rust_type
-                                .as_ref()
-                                .filter(|dt| *dt != &col.rust_type)
-                                .cloned();
-                            let pg_cast = pg_cast_for_type(&col.pg_type);
-                            child_columns.push(ChildColumn {
-                                field_name: format!("{}{}", field_def.rust_field_name, col.suffix),
-                                pg_column_name: format!("{}{}", field_def.column_name, col.suffix),
-                                rust_type: col.rust_type.clone(),
-                                is_nullable: !c.is_required,
-                                dto_rust_type,
-                                dto_field_name: None,
-                                pg_cast,
-                            });
-                        }
+                child_columns.push(ChildColumn {
+                    field_name: field_def.rust_field_name.clone(),
+                    pg_column_name: field_def.column_name.clone(),
+                    rust_type: c.rust_field_type.clone(),
+                    is_nullable: !c.is_required,
+                    dto_rust_type: None,
+                    pg_cast,
+                });
+            }
+            Some(RefClassificationKind::EntityReference) => {
+                child_columns.push(ChildColumn {
+                    field_name: field_def.rust_field_name,
+                    pg_column_name: field_def.column_name,
+                    rust_type: "Uuid".to_string(),
+                    is_nullable: true,
+                    dto_rust_type: None,
+                    pg_cast: None,
+                });
+            }
+            Some(RefClassificationKind::CompositeWrapper)
+            | Some(RefClassificationKind::MediaWrapper) => {
+                if let Ok(comp_cols) = db
+                    .get_composite_columns(&c.name, &target_schema.title)
+                    .await
+                {
+                    for col in &comp_cols {
+                        let dto_rust_type = col
+                            .dto_rust_type
+                            .as_ref()
+                            .filter(|dt| *dt != &col.rust_type)
+                            .cloned();
+                        let pg_cast = pg_cast_for_type(&col.pg_type);
+                        child_columns.push(ChildColumn {
+                            field_name: format!("{}{}", field_def.rust_field_name, col.suffix),
+                            pg_column_name: format!("{}{}", field_def.column_name, col.suffix),
+                            rust_type: col.rust_type.clone(),
+                            is_nullable: !c.is_required,
+                            dto_rust_type,
+                            pg_cast,
+                        });
                     }
                 }
-                Some(RefClassificationKind::StructuredWrapper) => {
-                    // StructuredWrappers are stored as a single JSONB column inline.
-                    child_columns.push(ChildColumn {
-                        field_name: field_def.rust_field_name.clone(),
-                        pg_column_name: field_def.column_name.clone(),
-                        rust_type: "serde_json::Value".to_string(),
-                        is_nullable: !c.is_required,
-                        dto_rust_type: None,
-                        dto_field_name: None,
-                        pg_cast: None,
-                    });
-                }
+            }
+            Some(RefClassificationKind::StructuredWrapper) => {
+                // StructuredWrappers are stored as a single JSONB column inline.
+                child_columns.push(ChildColumn {
+                    field_name: field_def.rust_field_name.clone(),
+                    pg_column_name: field_def.column_name.clone(),
+                    rust_type: "serde_json::Value".to_string(),
+                    is_nullable: !c.is_required,
+                    dto_rust_type: None,
+                    pg_cast: None,
+                });
+            }
             Some(RefClassificationKind::ValueObject) => {
                 // Recurse: nested ValueObjects become nested child tables
                 let nested = Box::pin(build_child_table_info(
@@ -865,7 +846,6 @@ async fn build_child_table_info(
                         rust_type: t.clone(),
                         is_nullable: !c.is_required,
                         dto_rust_type: None,
-                        dto_field_name: None,
                         pg_cast: None,
                     });
                 }
@@ -1367,7 +1347,6 @@ async fn build_columns_and_children(
                             rust_type: "String".to_string(),
                             is_nullable: false,
                             dto_rust_type: enum_name,
-                            dto_field_name: None,
                             pg_cast: None,
                         }],
                         child_tables: vec![],
@@ -1599,16 +1578,6 @@ impl RepositoryImplEmitter {
             let mut per_seg_dto: Vec<Vec<String>> = Vec::new();
             let mut per_seg_col: Vec<Vec<String>> = Vec::new();
             for seg in &path.segments {
-                // Query consumed fields for this segment's entity — these are fields
-                // consumed by composite range columns (e.g., start/end → EffectiveTimePeriod)
-                // and don't exist as direct columns on the entity Model.
-                let consumed_fields: std::collections::HashSet<String> = db
-                    .get_consumed_fields(&seg.schema_title)
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(prop, _role)| prop.name)
-                    .collect();
                 let mut dto_fields: Vec<String> = Vec::new();
                 let mut col_fields: Vec<String> = Vec::new();
                 // Use schema_title directly — include_path.rs already resolves
@@ -1637,18 +1606,6 @@ impl RepositoryImplEmitter {
                         if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
                             continue;
                         }
-                        // Skip consumed fields — composite range columns consume start/end
-                        // which don't exist as direct Model fields.
-                        // Commented out pending graph query investigation:
-                        // if consumed_fields.contains(&prop.name) {
-                        //     continue;
-                        // }
-                        // Skip composite/media wrappers — expanded into sub-columns
-                        // (e.g. AmountType → amount_type + amount_type_currency).
-                        // Commented out pending graph query investigation:
-                        // if matches!(prop.effective_kind(), Some(RefClassificationKind::CompositeWrapper | RefClassificationKind::MediaWrapper)) {
-                        //     continue;
-                        // }
                         let fd = codegraph_core::types::resolve_field(prop);
                         // Deduplicate by rust_field_name — list_all_properties()
                         // can return duplicate entries from interface inheritance.

@@ -104,10 +104,25 @@ async fn resolve_explicit_paths(
         for &seg in &segment_strs {
             // Resolve the target schema title from the segment string.
             let target_title = resolve_target_title(db, current_source_title, seg).await?;
-            let target_schema = db
+            let mut target_schema = db
                 .get_schema(&target_title)
                 .await?
                 .ok_or_else(|| crate::error::Error::SchemaNotFound(target_title.clone()))?;
+
+            // Prefer entity schemas over inline definitions or VOs when multiple
+            // schemas share the same title across domains (e.g. "PositionType").
+            if target_schema.parent_schema.is_some() || !target_schema.is_entity {
+                if let Ok(schemas) = db.list_schemas(None).await {
+                    if let Some(better) = schemas.into_iter().find(|s| {
+                        s.title == target_title
+                            && s.is_entity
+                            && !s.pg_table_name.is_empty()
+                            && s.parent_schema.is_none()
+                    }) {
+                        target_schema = better;
+                    }
+                }
+            }
 
             // Skip force_value_objects — they don't have standalone entity or DTO
             // generation, so fetch methods referencing {Entity}Response would fail.
