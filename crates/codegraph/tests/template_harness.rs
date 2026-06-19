@@ -4321,6 +4321,52 @@ entities = ["WorkerType"]
 
 // ── Include Feature Tests (E4 + E5) ──────────────────────────────────────────
 
+/// Like a plain `PropertyNode` builder but allows a split
+/// `rust_field_name` ≠ `pg_column_name`, matching real ingestion where
+/// `strip_code_suffix_safe` strips `_code` from `rust_field_name` while
+/// `pg_column_name` retains it.
+#[allow(clippy::too_many_arguments)]
+fn prop_split(
+    name: &str,
+    rust_field_name: &str,
+    pg_column_name: &str,
+    rust_type: &str,
+    pg_type: &str,
+    required: bool,
+    classification_kind: Option<codegraph_type_contracts::RefClassificationKind>,
+    ref_target: Option<&str>,
+    is_array: bool,
+) -> PropertyNode {
+    PropertyNode {
+        name: name.to_string(),
+        prop_type: "string".to_string(),
+        description: None,
+        format: None,
+        is_required: required,
+        is_nullable: !required,
+        is_array,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: pg_column_name.to_string(),
+        pg_column_type: pg_type.to_string(),
+        rust_field_name: rust_field_name.to_string(),
+        rust_field_type: rust_type.to_string(),
+        sea_orm_type: "Text".to_string(),
+        render_strategy: "direct_column".to_string(),
+        ref_target: ref_target.map(|s| s.to_string()),
+        classification: None,
+        projection: None,
+        classification_kind,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    }
+}
+
 fn worker_schema() -> SchemaNode {
     SchemaNode {
         schema_id: "hr/json/WorkerType.json".to_string(),
@@ -5011,6 +5057,205 @@ allow_include = ["deployment.position"]
     );
 }
 
+/// TDD: the include-path enriched DTO (`dto_included.rs`) must use the
+/// stripped `rust_field_name` for codelist fields on the intermediate entity,
+/// never the `_code`-suffixed `pg_column_name`. `build_include_dtos` reads the
+/// intermediate entity's properties and emits `field.name` from `rust_field_name`
+/// (see dto.rs enriched base_fields), so a split prop where
+/// `rust_field_name` ≠ `pg_column_name` proves the stripped name is used.
+#[tokio::test]
+async fn dto_included_enriched_codelist_fields_use_stripped_names() {
+    let position_schema = SchemaNode {
+        schema_id: "hr/json/PositionType.json".to_string(),
+        title: "PositionType".to_string(),
+        description: Some("A position".to_string()),
+        schema_type: "object".to_string(),
+        classification: "entity_reference".to_string(),
+        domain: Some("hr".to_string()),
+        rel_path: "hr/json/PositionType.json".to_string(),
+        pg_type: "UUID".to_string(),
+        rust_type: "Uuid".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: "Position".to_string(),
+        pg_table_name: "position".to_string(),
+        api_path_segment: "positions".to_string(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+    };
+
+    let deployment_schema = SchemaNode {
+        schema_id: "hr/json/DeploymentType.json".to_string(),
+        title: "DeploymentType".to_string(),
+        description: Some("A deployment".to_string()),
+        schema_type: "object".to_string(),
+        classification: "entity_reference".to_string(),
+        domain: Some("hr".to_string()),
+        rel_path: "hr/json/DeploymentType.json".to_string(),
+        pg_type: "UUID".to_string(),
+        rust_type: "Uuid".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: "Deployment".to_string(),
+        pg_table_name: "deployment".to_string(),
+        api_path_segment: "deployments".to_string(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+    };
+
+    use codegraph_type_contracts::RefClassificationKind;
+
+    // Worker → Deployment FK (the first segment of the include path).
+    let worker_deployment_fk = prop_split(
+        "deployment",
+        "deployment",
+        "deployment_id",
+        "Vec<Uuid>",
+        "UUID",
+        false,
+        Some(RefClassificationKind::EntityReference),
+        Some("DeploymentType"),
+        true,
+    );
+
+    // Deployment → Position FK (the leaf segment, emitted as a nested field).
+    let deployment_position_fk = prop_split(
+        "position",
+        "position",
+        "position_id",
+        "Uuid",
+        "UUID",
+        false,
+        Some(RefClassificationKind::EntityReference),
+        Some("PositionType"),
+        false,
+    );
+
+    // Codelist props on Deployment: rust_field_name stripped (no _code),
+    // pg_column_name retains the _code suffix. These should land in the
+    // enriched struct's base_fields using the STRIPPED name.
+    let assignment_reason_codelist = prop_split(
+        "assignment_reason",
+        "assignment_reason",
+        "assignment_reason_code",
+        "Option<AssignmentReasonCodeList>",
+        "TEXT",
+        false,
+        Some(RefClassificationKind::CodelistReference),
+        Some("AssignmentReasonCodeList"),
+        false,
+    );
+    let status_codelist = prop_split(
+        "status",
+        "status",
+        "status_code",
+        "Option<DeploymentStatusCodeList>",
+        "TEXT",
+        false,
+        Some(RefClassificationKind::CodelistReference),
+        Some("DeploymentStatusCodeList"),
+        false,
+    );
+
+    let mock = MockEngine::builder()
+        .with_schema(position_schema)
+        .with_schema(deployment_schema)
+        .with_schema(worker_schema())
+        .with_properties("WorkerType", vec![worker_deployment_fk])
+        .with_properties(
+            "DeploymentType",
+            vec![
+                assignment_reason_codelist,
+                status_codelist,
+                deployment_position_fk,
+            ],
+        )
+        .build();
+
+    let tera = test_tera();
+    let output_dir =
+        std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-stripped");
+
+    let config = codegraph_config::config::parse_domain_config_str(
+        r#"
+[defaults]
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType", "DeploymentType", "PositionType"]
+
+[domains.hr.entity_config.WorkerType]
+operations = ["create", "read", "update", "list"]
+allow_include = ["deployment.position"]
+"#,
+    )
+    .unwrap();
+
+    let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let included_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_included"))
+        .expect("Should have a dto_included.rs file");
+
+    let content = &included_file.content;
+
+    // The enriched struct is generated for the dot-notation path.
+    assert!(
+        content.contains("struct DeploymentWithPositionResponse"),
+        "Should contain enriched type for dot-notation path. Got:\n{content}"
+    );
+    // Leaf entity reference is a nested field.
+    assert!(
+        content.contains("position: Option<PositionResponse>"),
+        "Should contain nested position field. Got:\n{content}"
+    );
+
+    // Codelist base_fields must use the STRIPPED rust_field_name.
+    assert!(
+        content.contains("assignment_reason:"),
+        "Enriched struct must use stripped codelist field name. Got:\n{content}"
+    );
+    assert!(
+        content.contains("status:"),
+        "Enriched struct must use stripped status field name. Got:\n{content}"
+    );
+
+    // It must NEVER leak the _code-suffixed pg_column_name into struct fields.
+    assert!(
+        !content.contains("assignment_reason_code"),
+        "Enriched struct leaked _code-suffixed pg_column_name. Got:\n{content}"
+    );
+    assert!(
+        !content.contains("status_code"),
+        "Enriched struct leaked _code-suffixed pg_column_name. Got:\n{content}"
+    );
+}
+
 #[tokio::test]
 async fn ui_e2e_include_test_generated_when_allow_include_configured() {
     let dep_schema = SchemaNode {
@@ -5160,4 +5405,98 @@ role = "root"
         content.contains("test.afterAll"),
         "Should include cleanup"
     );
+}
+
+/// Verify handler-generated filter keys use stripped rust_field_name,
+/// not pg_column_name with _code suffix.
+#[tokio::test]
+async fn handler_filter_keys_use_stripped_codelist_names() {
+    let deployment_schema = SchemaNode {
+        schema_id: "recruiting/json/DeploymentType.json".to_string(),
+        title: "DeploymentType".to_string(),
+        description: Some("Deployment type".to_string()),
+        schema_type: "object".to_string(),
+        classification: "entity_reference".to_string(),
+        domain: Some("recruiting".to_string()),
+        rel_path: "recruiting/json/DeploymentType.json".to_string(),
+        pg_type: "UUID".to_string(),
+        rust_type: "Uuid".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: "DeploymentType".to_string(),
+        pg_table_name: "deployment".to_string(),
+        api_path_segment: "deployments".to_string(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: true,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: true,
+    };
+
+    // Codelist reference — rust_field_name stripped (no _code),
+    // pg_column_name retains _code suffix.
+    let codelist_prop = PropertyNode {
+        name: "assignment_reason".to_string(),
+        prop_type: "string".to_string(),
+        description: None,
+        format: None,
+        is_required: false,
+        is_nullable: true,
+        is_array: false,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: "assignment_reason_code".to_string(),
+        pg_column_type: "TEXT".to_string(),
+        rust_field_name: "assignment_reason".to_string(),
+        rust_field_type: "AssignmentReasonCodeList".to_string(),
+        sea_orm_type: "Text".to_string(),
+        render_strategy: "codelist_reference".to_string(),
+        ref_target: None,
+        classification: Some("codelist_reference".to_string()),
+        projection: None,
+        classification_kind: Some(
+            codegraph_type_contracts::RefClassificationKind::CodelistReference,
+        ),
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    };
+
+    let mock = MockEngine::builder()
+        .with_schema(deployment_schema)
+        .with_properties("DeploymentType", vec![codelist_prop])
+        .build();
+
+    let config = test_domain_config();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-handler-code");
+    let tera = test_tera();
+
+    let gen = codegraph::generate::api::handler::HandlerGenerator::new(&output_dir);
+    let files = gen
+        .generate(&mock, "DeploymentType", "recruiting", &config, &tera, &test_project_config())
+        .await
+        .unwrap();
+
+    let handler = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("_handler.rs"))
+        .expect("should generate handler file");
+
+    // Filter keys must use stripped rust_field_name, not the _code-suffixed
+    // pg_column_name. If the _code suffix appears without the stripped form,
+    // the handler is leaking the pg_column_name into filter keys.
+    if handler.content.contains("assignment_reason_code")
+        && !handler.content.contains("assignment_reason\"")
+    {
+        panic!(
+            "handler uses _code suffix for codelist filter key! Content:\n{}",
+            &handler.content[..handler.content.len().min(2000)]
+        );
+    }
 }
