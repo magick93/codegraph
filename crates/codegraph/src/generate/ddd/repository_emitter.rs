@@ -1639,14 +1639,16 @@ impl RepositoryImplEmitter {
                         }
                         // Skip consumed fields — composite range columns consume start/end
                         // which don't exist as direct Model fields.
-                        if consumed_fields.contains(&prop.name) {
-                            continue;
-                        }
+                        // Commented out pending graph query investigation:
+                        // if consumed_fields.contains(&prop.name) {
+                        //     continue;
+                        // }
                         // Skip composite/media wrappers — expanded into sub-columns
                         // (e.g. AmountType → amount_type + amount_type_currency).
-                        if matches!(prop.effective_kind(), Some(RefClassificationKind::CompositeWrapper | RefClassificationKind::MediaWrapper)) {
-                            continue;
-                        }
+                        // Commented out pending graph query investigation:
+                        // if matches!(prop.effective_kind(), Some(RefClassificationKind::CompositeWrapper | RefClassificationKind::MediaWrapper)) {
+                        //     continue;
+                        // }
                         let fd = codegraph_core::types::resolve_field(prop);
                         // Deduplicate by rust_field_name — list_all_properties()
                         // can return duplicate entries from interface inheritance.
