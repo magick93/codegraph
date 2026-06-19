@@ -285,9 +285,19 @@ struct ChildColumn {
     /// When the DTO uses a different type than the entity column (e.g. codelist enum
     /// `GenderCodeList` vs entity `String`), this holds the DTO type name.
     dto_rust_type: Option<String>,
+    /// DTO field name when it differs from field_name (e.g. "assignment_reason"
+    /// vs "assignment_reason_code"). None means same as field_name.
+    dto_field_name: Option<String>,
     /// When this column is a PostgreSQL range type, holds the lowercased PG cast
     /// (e.g. `"tstzrange"`) so INSERT SQL can include `$N::tstzrange`.
     pg_cast: Option<String>,
+}
+
+impl ChildColumn {
+    /// Returns the DTO field name (falls back to `field_name`).
+    fn dto_name(&self) -> &str {
+        self.dto_field_name.as_deref().unwrap_or(&self.field_name)
+    }
 }
 
 /// Returns the sea_orm `Value::*` expression for a typed NULL, based on the Rust type.
@@ -529,6 +539,8 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         ".clone()"
     };
     let has_enum = col.dto_rust_type.is_some();
+    // Use dto_name() for DTO access — codelist enum fields strip _code suffix
+    let dto_field = col.dto_name();
 
     if col.is_nullable {
         if is_vec_string(&col.rust_type) || (is_vec_type(&col.rust_type) && has_enum) {
@@ -541,7 +553,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             write!(
                 code,
                 ", item.{field}.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))).unwrap_or({null})",
-                field = col.field_name,
+                field = dto_field,
                 null = null_value_for_type("Vec<String>"),
             )
             .unwrap();
@@ -551,14 +563,14 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             write!(
                 code,
                 ", item.{field}.clone().map(|v| sea_orm::Value::Array({array_type}, Some(Box::new(v.into_iter().map(|s| {value_ctor}).collect())))).unwrap_or(sea_orm::Value::Array({array_type}, None))",
-                field = col.field_name,
+                field = dto_field,
             )
             .unwrap();
         } else if has_enum {
             write!(
                 code,
                 ", item.{field}.as_ref().map(|v| sea_orm::Value::String(Some(Box::new(v.to_string())))).unwrap_or({null})",
-                field = col.field_name,
+                field = dto_field,
                 null = null_value_for_type(&col.rust_type),
             )
             .unwrap();
@@ -567,7 +579,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             write!(
                 code,
                 ", item.{field}{clone}.map(|v| {typed_value}).unwrap_or({null})",
-                field = col.field_name,
+                field = dto_field,
                 clone = clone_suffix,
                 typed_value = typed_value,
                 null = null_value_for_type(&col.rust_type),
@@ -583,7 +595,7 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         write!(
             code,
             ", sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(item.{field}.clone().into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))",
-            field = col.field_name,
+            field = dto_field,
         )
         .unwrap();
     } else if is_vec_type(&col.rust_type) {
@@ -591,18 +603,18 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         write!(
             code,
             ", sea_orm::Value::Array({array_type}, Some(Box::new(item.{field}.clone().into_iter().map(|s| {value_ctor}).collect())))",
-            field = col.field_name,
+            field = dto_field,
         )
         .unwrap();
     } else if has_enum {
         write!(
             code,
             ", sea_orm::Value::String(Some(Box::new(item.{field}.to_string())))",
-            field = col.field_name,
+            field = dto_field,
         )
         .unwrap();
     } else {
-        let item_expr = format!("item.{}{}", col.field_name, clone_suffix);
+        let item_expr = format!("item.{}{}", dto_field, clone_suffix);
         let typed_value = typed_value_expr(&col.rust_type, &item_expr);
         write!(code, ", {}", typed_value).unwrap();
     }
@@ -694,6 +706,7 @@ async fn build_child_table_info(
             rust_type: "String".to_string(),
             is_nullable: true,
             dto_rust_type: None,
+            dto_field_name: None,
             pg_cast: pg_cast_for_type(&range.pg_type),
         });
     }
@@ -735,17 +748,25 @@ async fn build_child_table_info(
                             rust_type: "String".to_string(),
                             is_nullable: false,
                             dto_rust_type: enum_name,
+            dto_field_name: None,
                             pg_cast: None,
                         }],
                         child_tables: vec![],
                     });
                 } else {
+                    let child_stripped = crate::generate::ddd::dto::strip_code_suffix_safe(&field_def.rust_field_name);
+                    let child_dto_field = if child_stripped != field_def.rust_field_name {
+                        Some(child_stripped)
+                    } else {
+                        None
+                    };
                     child_columns.push(ChildColumn {
                         field_name: field_def.rust_field_name.clone(),
                         pg_column_name: field_def.column_name.clone(),
                         rust_type: "String".to_string(),
                         is_nullable: !c.is_required,
                         dto_rust_type: enum_name,
+                        dto_field_name: child_dto_field,
                         pg_cast: None,
                     });
                 }
@@ -765,6 +786,7 @@ async fn build_child_table_info(
                     rust_type: c.rust_field_type.clone(),
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
+            dto_field_name: None,
                     pg_cast,
                 });
             }
@@ -775,6 +797,7 @@ async fn build_child_table_info(
                     rust_type: "Uuid".to_string(),
                     is_nullable: true,
                     dto_rust_type: None,
+            dto_field_name: None,
                     pg_cast: None,
                 });
             }
@@ -797,6 +820,7 @@ async fn build_child_table_info(
                             rust_type: col.rust_type.clone(),
                             is_nullable: !c.is_required,
                             dto_rust_type,
+                            dto_field_name: None,
                             pg_cast,
                         });
                     }
@@ -810,6 +834,7 @@ async fn build_child_table_info(
                     rust_type: "serde_json::Value".to_string(),
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
+            dto_field_name: None,
                     pg_cast: None,
                 });
             }
@@ -846,6 +871,7 @@ async fn build_child_table_info(
                         rust_type: t.clone(),
                         is_nullable: !c.is_required,
                         dto_rust_type: None,
+            dto_field_name: None,
                         pg_cast: None,
                     });
                 }
@@ -1229,11 +1255,11 @@ async fn build_columns_and_children(
         direct_columns.push(TreeColumn {
             field_name: range.pg_column_name.clone(),
             pg_column_name: range.pg_column_name.clone(),
-            dto_field_name: None,
             rust_type: "String".to_string(),
             is_nullable: true,
             is_entity_ref: false,
             dto_rust_type: None,
+            dto_field_name: None,
             is_workflow_managed: false,
             is_array: false,
             pg_cast: pg_cast_for_type(&range.pg_type),
@@ -1301,11 +1327,11 @@ async fn build_columns_and_children(
             direct_columns.push(TreeColumn {
                 field_name: field_def.rust_field_name.clone(),
                 pg_column_name: field_def.column_name.clone(),
-                dto_field_name: None,
                 rust_type: prop.rust_field_type.clone(),
                 is_nullable: !prop.is_required,
                 is_entity_ref: false,
                 dto_rust_type: None,
+                dto_field_name: None,
                 is_workflow_managed: is_workflow_field,
                 is_array: prop.is_array,
                 pg_cast,
@@ -1347,6 +1373,7 @@ async fn build_columns_and_children(
                             rust_type: "String".to_string(),
                             is_nullable: false,
                             dto_rust_type: enum_name,
+            dto_field_name: None,
                             pg_cast: None,
                         }],
                         child_tables: vec![],
@@ -1367,11 +1394,11 @@ async fn build_columns_and_children(
                 direct_columns.push(TreeColumn {
                     field_name: field_def.rust_field_name.clone(),
                     pg_column_name: field_def.column_name.clone(),
-                    dto_field_name: dto_name,
                     rust_type: "String".to_string(),
                     is_nullable: !prop.is_required,
                     is_entity_ref: false,
                     dto_rust_type: codelist_type,
+            dto_field_name: None,
                     is_workflow_managed: is_workflow_field,
                     is_array: false,
                     pg_cast: None,
@@ -1384,11 +1411,11 @@ async fn build_columns_and_children(
             direct_columns.push(TreeColumn {
                 field_name: field_def.rust_field_name.clone(),
                 pg_column_name: field_def.column_name.clone(),
-                dto_field_name: None,
                 rust_type: "serde_json::Value".to_string(),
                 is_nullable: !prop.is_required,
                 is_entity_ref: false,
                 dto_rust_type: None,
+                dto_field_name: None,
                 is_workflow_managed: is_workflow_field,
                 is_array: prop.is_array,
                 pg_cast: None,
@@ -1400,11 +1427,11 @@ async fn build_columns_and_children(
             direct_columns.push(TreeColumn {
                 field_name: field_def.rust_field_name,
                 pg_column_name: field_def.column_name,
-                dto_field_name: None,
                 rust_type: "Uuid".to_string(),
                 is_nullable: true,
                 is_entity_ref: true,
                 dto_rust_type: None,
+            dto_field_name: None,
                 is_workflow_managed: is_workflow_field,
                 is_array: false,
                 pg_cast: None,
@@ -1427,11 +1454,11 @@ async fn build_columns_and_children(
                 direct_columns.push(TreeColumn {
                     field_name: format!("{}_id", field_def.rust_field_name),
                     pg_column_name: format!("{}_id", field_def.column_name),
-                    dto_field_name: None,
                     rust_type: "Uuid".to_string(),
                     is_nullable: true,
                     is_entity_ref: true,
                     dto_rust_type: None,
+            dto_field_name: None,
                     is_workflow_managed: is_workflow_field,
                     is_array: false,
                     pg_cast: None,
@@ -1586,6 +1613,15 @@ impl RepositoryImplEmitter {
                 // when schema inheritance is involved.
                 if let Some(props) = all_props.get(&seg.schema_title) {
                     let mut seen = std::collections::HashSet::new();
+                    // Query consumed fields (e.g. start/end consumed by composite
+                    // ranges) — the entity generator skips these, so we must too.
+                    let consumed_fields: std::collections::HashSet<String> = db
+                        .get_consumed_fields(&seg.schema_title)
+                        .await
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(p, _)| p.name)
+                        .collect();
                     for prop in props {
                         // Skip properties that don't map to database columns —
                         // the entity Model won't have them as Rust fields.
@@ -1595,6 +1631,15 @@ impl RepositoryImplEmitter {
                         // Skip array properties — the entity generator expands
                         // these into separate child tables, not direct Model fields.
                         if prop.is_array {
+                            continue;
+                        }
+                        // Skip composite range consumed fields
+                        if consumed_fields.contains(&prop.name) {
+                            continue;
+                        }
+                        // Skip composite/media wrappers — expanded into
+                        // multiple sub-columns by the entity generator.
+                        if matches!(prop.effective_kind(), Some(RefClassificationKind::CompositeWrapper | RefClassificationKind::MediaWrapper)) {
                             continue;
                         }
                         if prop.rust_field_name == "id"
@@ -1779,11 +1824,11 @@ impl RepositoryImplEmitter {
                 direct_columns.push(TreeColumn {
                     field_name: hf.to_string(),
                     pg_column_name: hf.to_string(),
-                    dto_field_name: None,
                     rust_type: "Uuid".to_string(),
                     is_nullable: true,
                     is_entity_ref: false,
                     dto_rust_type: None,
+            dto_field_name: None,
                     is_workflow_managed: false,
                     is_array: false,
                     pg_cast: None,
@@ -3860,11 +3905,11 @@ mod tests {
         TreeColumn {
             field_name: field.to_string(),
             pg_column_name: field.to_string(),
-            dto_field_name: None,
             rust_type: rust_type.to_string(),
             is_nullable: nullable,
             is_entity_ref: false,
             dto_rust_type: dto_rust_type.map(|s| s.to_string()),
+            dto_field_name: None,
             is_workflow_managed: false,
             is_array,
             pg_cast: None,
