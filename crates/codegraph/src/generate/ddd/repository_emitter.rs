@@ -812,6 +812,7 @@ async fn build_child_table_info(
                             rust_type: col.rust_type.clone(),
                             is_nullable: !c.is_required,
                             dto_rust_type,
+                            dto_field_name: None,
                             pg_cast,
                         });
                     }
