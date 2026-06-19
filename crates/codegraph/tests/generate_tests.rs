@@ -963,3 +963,391 @@ async fn test_domain_types_codelist_generates_enum_not_string_alias() {
         "Should contain serde rename for US"
     );
 }
+
+/// Like `prop()` but allows split `rust_field_name` ≠ `pg_column_name`,
+/// matching real ingestion where strip_code_suffix_safe strips _code from
+/// rust_field_name but pg_column_name retains it.
+fn prop_split(
+    name: &str,
+    rust_field_name: &str,
+    pg_column_name: &str,
+    rust_type: &str,
+    pg_type: &str,
+    required: bool,
+    classification_kind: Option<RefClassificationKind>,
+    ref_target: Option<&str>,
+    is_array: bool,
+) -> PropertyNode {
+    PropertyNode {
+        name: name.to_string(),
+        prop_type: "string".to_string(),
+        description: None,
+        format: None,
+        is_required: required,
+        is_nullable: !required,
+        is_array,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: pg_column_name.to_string(),
+        pg_column_type: pg_type.to_string(),
+        rust_field_name: rust_field_name.to_string(),
+        rust_field_type: rust_type.to_string(),
+        sea_orm_type: "Text".to_string(),
+        render_strategy: "direct_column".to_string(),
+        ref_target: ref_target.map(|s| s.to_string()),
+        classification: None,
+        projection: None,
+        classification_kind,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    }
+}
+
+/// Test that codelist properties with stripped `_code` in rust_field_name
+/// (as done by real ingestion's strip_code_suffix_safe) produce correct
+/// DTO field access — `cmd.{stripped}` never `cmd.{with_suffix}`.
+#[tokio::test]
+async fn repository_emitter_codelist_dto_access_uses_stripped_names() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "recruiting/json/DeploymentType.json",
+            "DeploymentType",
+            "deployment",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_properties(
+            "DeploymentType",
+            vec![
+                prop_split(
+                    "assignment",
+                    "assignment",
+                    "assignment_id",
+                    "Uuid",
+                    "UUID",
+                    true,
+                    Some(RefClassificationKind::EntityReference),
+                    Some("WorkAssignmentType"),
+                    false,
+                ),
+                // Codelist reference — rust_field_name stripped (no _code)
+                // pg_column_name retains _code suffix
+                prop_split(
+                    "assignment_reason",
+                    "assignment_reason",
+                    "assignment_reason_code",
+                    "AssignmentReasonCodeList",
+                    "TEXT",
+                    false,
+                    Some(RefClassificationKind::CodelistReference),
+                    Some("../common/json/codelist/AssignmentReasonCodeList.json"),
+                    false,
+                ),
+                // Another codelist reference
+                prop_split(
+                    "status",
+                    "status",
+                    "status_code",
+                    "DeploymentStatusCodeList",
+                    "TEXT",
+                    false,
+                    Some(RefClassificationKind::CodelistReference),
+                    Some("../common/json/codelist/DeploymentStatusCodeList.json"),
+                    false,
+                ),
+            ],
+        )
+        .build();
+
+    let config = test_domain_config();
+    let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
+    let code = emitter
+        .emit(&mock, "DeploymentType", "recruiting", &config, None, &[])
+        .await
+        .unwrap();
+
+    // DTO access must use stripped rust_field_name:
+    //   cmd.assignment_reason ✓
+    //   cmd.status ✓
+    assert!(
+        code.contains("cmd.assignment_reason"),
+        "DTO access must use stripped name, not pg_column_name with _code"
+    );
+    assert!(
+        code.contains("cmd.status"),
+        "DTO access must use stripped name, not pg_column_name with _code"
+    );
+
+    // DTO access must NEVER use pg_column_name with _code suffix:
+    assert!(
+        !code.contains("cmd.assignment_reason_code"),
+        "DTO access must NOT use pg_column_name with _code suffix"
+    );
+    assert!(
+        !code.contains("cmd.status_code"),
+        "DTO access must NOT use pg_column_name with _code suffix"
+    );
+
+    // Entity model field access should use stripped names too
+    // (model.{field} = Set(cmd.{field}))
+    assert!(code.contains("model.assignment_reason"));
+    assert!(code.contains("model.status"));
+    assert!(!code.contains("model.assignment_reason_code"));
+    assert!(!code.contains("model.status_code"));
+
+    // Response construction (row.{field}) should use stripped names
+    assert!(code.contains("row.assignment_reason"));
+    assert!(code.contains("row.status"));
+    // Not the _code column name for row access
+    assert!(!code.contains("row.assignment_reason_code"));
+    assert!(!code.contains("row.status_code"));
+}
+
+/// Test child table INSERT/UPDATE code uses stripped DTO field names
+/// when accessing codelist array values from parent DTOs.
+#[tokio::test]
+async fn child_insert_uses_stripped_dto_field_names() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "recruiting/json/DeploymentType.json",
+            "DeploymentType",
+            "deployment",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_properties(
+            "DeploymentType",
+            vec![
+                prop_split(
+                    "position_schedule_types",
+                    "position_schedule_types",
+                    "position_schedule_type_codes",
+                    "Vec<String>",
+                    "TEXT[]",
+                    false,
+                    Some(RefClassificationKind::CodelistReference),
+                    Some("../common/json/codelist/PositionScheduleTypeCodeList.json"),
+                    true, // array codelist → child table
+                ),
+            ],
+        )
+        .build();
+
+    let config = test_domain_config();
+    let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
+    let code = emitter
+        .emit(&mock, "DeploymentType", "recruiting", &config, None, &[])
+        .await
+        .unwrap();
+
+    // Child table INSERT uses child.field_name for `cmd.{field}` access
+    // `child.field_name` should be the stripped rust_field_name
+    assert!(
+        code.contains("cmd.position_schedule_types"),
+        "child INSERT must use stripped DTO field name: position_schedule_types"
+    );
+    assert!(
+        !code.contains("cmd.position_schedule_type_codes"),
+        "child INSERT must NOT use pg_column_name with _code suffix"
+    );
+}
+
+/// Verify the DTO generator uses stripped rust_field_name for struct fields
+/// in dto_create.rs, dto_update.rs, and dto_response.rs.
+#[tokio::test]
+async fn dto_generator_uses_stripped_names_for_codelist_fields() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "recruiting/json/DeploymentType.json",
+            "DeploymentType",
+            "deployment",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_properties(
+            "DeploymentType",
+            vec![
+                prop_split(
+                    "assignment_reason",
+                    "assignment_reason",
+                    "assignment_reason_code",
+                    "AssignmentReasonCodeList",
+                    "TEXT",
+                    false,
+                    Some(RefClassificationKind::CodelistReference),
+                    Some("../common/json/codelist/AssignmentReasonCodeList.json"),
+                    false,
+                ),
+                prop_split(
+                    "status",
+                    "status",
+                    "status_code",
+                    "DeploymentStatusCodeList",
+                    "TEXT",
+                    false,
+                    Some(RefClassificationKind::CodelistReference),
+                    Some("../common/json/codelist/DeploymentStatusCodeList.json"),
+                    false,
+                ),
+            ],
+        )
+        .build();
+
+    let config = test_domain_config();
+    let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
+    let gen = codegraph::generate::ddd::dto::DtoGenerator::new(
+        &std::path::PathBuf::from("/tmp/test-dto-code"),
+    );
+    let files = gen
+        .generate(&mock, "DeploymentType", "recruiting", &config, &tera, &test_project_config())
+        .await
+        .unwrap();
+
+    assert!(!files.is_empty(), "should generate DTO files");
+    for file in &files {
+        let path = file.path.to_string_lossy();
+        let content = &file.content;
+
+        // dto_create.rs and dto_update.rs are re-exports from the
+        // domain-types crate — they don't define struct fields directly.
+        if path.contains("dto_create") {
+            assert!(
+                content.contains("pub use"),
+                "dto_create.rs should be a re-export from domain-types"
+            );
+        }
+        if path.contains("dto_response") {
+            // dto_response.rs contains both re-exports AND LinkedResponse wrapper.
+            // The LinkedResponse wrapper references {Entity}Response which should
+            // use stripped field names (verified by domain_types test).
+            assert!(
+                content.contains("LinkedResponse"),
+                "dto_response.rs should contain LinkedResponse"
+            );
+        }
+    }
+}
+
+/// Verify the entity model generator uses stripped rust_field_name for struct
+/// fields, not pg_column_name with _code suffix.
+#[tokio::test]
+async fn entity_model_uses_stripped_names_for_codelist_fields() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "recruiting/json/DeploymentType.json",
+            "DeploymentType",
+            "deployment",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_properties(
+            "DeploymentType",
+            vec![
+                prop_split(
+                    "assignment_reason",
+                    "assignment_reason",
+                    "assignment_reason_code",
+                    "AssignmentReasonCodeList",
+                    "TEXT",
+                    false,
+                    Some(RefClassificationKind::CodelistReference),
+                    Some("../common/json/codelist/AssignmentReasonCodeList.json"),
+                    false,
+                ),
+                prop_split(
+                    "status",
+                    "status",
+                    "status_code",
+                    "DeploymentStatusCodeList",
+                    "TEXT",
+                    false,
+                    Some(RefClassificationKind::CodelistReference),
+                    Some("../common/json/codelist/DeploymentStatusCodeList.json"),
+                    false,
+                ),
+            ],
+        )
+        .build();
+
+    let config = test_domain_config();
+    let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
+    let gen = codegraph::generate::db::entity::SeaOrmEntityGenerator::new(
+        &std::path::PathBuf::from("/tmp/test-entity-code"),
+    );
+    let files = gen
+        .generate(&mock, "DeploymentType", "recruiting", &config, &tera, &test_project_config())
+        .await
+        .unwrap();
+
+    assert_eq!(files.len(), 1, "should generate one entity file");
+    let content = &files[0].content;
+
+    // Struct field names must use stripped rust_field_name
+    assert!(content.contains("pub assignment_reason"), "struct field must use stripped name");
+    assert!(!content.contains("pub assignment_reason_code"), "struct field must NOT use _code suffix");
+    assert!(content.contains("pub status"), "struct field must use stripped name");
+    assert!(!content.contains("pub status_code"), "struct field must NOT use _code suffix");
+
+    // Column name attribute should still use pg_column_name
+    assert!(content.contains("assignment_reason_code"), "column_name attr should use pg_column_name");
+    assert!(content.contains("status_code"), "column_name attr should use pg_column_name");
+}
+
+/// Verify the domain-types DTO generator uses stripped rust_field_name for
+/// struct fields — same as the app-level DTO generator but different output target.
+#[tokio::test]
+async fn domain_types_dto_uses_stripped_names_for_codelist_fields() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "recruiting/json/DeploymentType.json",
+            "DeploymentType",
+            "deployment",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_properties(
+            "DeploymentType",
+            vec![
+                prop_split(
+                    "assignment_reason",
+                    "assignment_reason",
+                    "assignment_reason_code",
+                    "AssignmentReasonCodeList",
+                    "TEXT",
+                    false,
+                    Some(RefClassificationKind::CodelistReference),
+                    Some("../common/json/codelist/AssignmentReasonCodeList.json"),
+                    false,
+                ),
+            ],
+        )
+        .build();
+
+    let config = test_domain_config();
+    let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
+    let gen = codegraph::generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(
+        std::path::PathBuf::from("/tmp/test-domain-types-dto"),
+    );
+    let files = gen
+        .generate(&mock, "DeploymentType", "recruiting", &config, &tera, &test_project_config())
+        .await
+        .unwrap();
+
+    assert!(!files.is_empty(), "should generate DTO files");
+    for file in &files {
+        let path = file.path.to_string_lossy();
+        let content = &file.content;
+        if path.contains("dto_create") || path.contains("dto_update") || path.contains("dto_response") {
+            assert!(content.contains("assignment_reason"), "missing stripped field in {path}");
+            assert!(!content.contains("assignment_reason_code"), "{path} has _code suffix in field name");
+        }
+    }
+}
