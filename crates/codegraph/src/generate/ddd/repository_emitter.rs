@@ -1662,10 +1662,13 @@ impl RepositoryImplEmitter {
                         // Deduplicate by rust_field_name — list_all_properties()
                         // can return duplicate entries from interface inheritance.
                         if seen.insert(fd.rust_field_name.clone()) {
-                            // DTO side uses rust_field_name (stripped, with _id for entity refs)
-                            dto_fields.push(fd.rust_field_name.clone());
-                            // Entity Model side uses column_name so it matches
-                            // config-specified FK column names (e.g. person_type_id)
+                            // DTO side uses the property's rust_field_name directly — FK
+                            // columns use the original name (e.g. "certification") matching
+                            // the include-path enriched DTO struct, not the _id-suffixed
+                            // column name from resolve_field.
+                            dto_fields.push(prop.rust_field_name.clone());
+                            // Entity Model side uses resolve_field column_name so it matches
+                            // config-specified FK column names (e.g. person_type_id).
                             col_fields.push(fd.column_name.clone());
                         }
                     }
