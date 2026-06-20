@@ -376,7 +376,7 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::ReferencesSchema => {
                 let (prop_name, schema_title) = split_compound_id(from_id, "ReferencesSchema")?;
                 format!(
-                    "MATCH (a:Property {{name: '{}', _schema_title: '{}'}}), (b:Schema {{title: '{}'}})",
+                    "MATCH (a:Property {{name: '{}', _schema_title: '{}'}}), (b:Schema {{schema_id: '{}'}})",
                     escape_gql(prop_name),
                     escape_gql(schema_title),
                     escape_gql(to_id),
@@ -394,7 +394,7 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::ItemsOf => {
                 let (prop_name, schema_title) = split_compound_id(from_id, "ItemsOf")?;
                 format!(
-                    "MATCH (a:Property {{name: '{}', _schema_title: '{}'}}), (b:Schema {{title: '{}'}})",
+                    "MATCH (a:Property {{name: '{}', _schema_title: '{}'}}), (b:Schema {{schema_id: '{}'}})",
                     escape_gql(prop_name),
                     escape_gql(schema_title),
                     escape_gql(to_id),

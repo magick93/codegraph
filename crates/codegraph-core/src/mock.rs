@@ -515,6 +515,23 @@ impl GraphQuerier for MockEngine {
         Ok(self.schemas.lock().unwrap().get(title).cloned())
     }
 
+    async fn get_schema_by_id(&self, schema_id: &str) -> Result<Option<SchemaNode>, GraphError> {
+        let schemas = self.schemas.lock().unwrap();
+        Ok(schemas.values().find(|s| s.schema_id == schema_id).cloned())
+    }
+
+    async fn get_schema_in_domain(
+        &self,
+        title: &str,
+        domain: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        let schemas = self.schemas.lock().unwrap();
+        Ok(schemas
+            .values()
+            .find(|s| s.title == title && s.domain.as_deref() == Some(domain))
+            .cloned())
+    }
+
     async fn list_schemas(&self, domain: Option<&str>) -> Result<Vec<SchemaNode>, GraphError> {
         let schemas = self.schemas.lock().unwrap();
         let result: Vec<_> = schemas
@@ -682,8 +699,16 @@ impl GraphQuerier for MockEngine {
         Ok(vec![])
     }
 
-    async fn get_referenced_schemas(&self, _schema_title: &str) -> Result<Vec<String>, GraphError> {
-        Ok(vec![])
+    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+        let ref_targets = self.ref_targets.lock().unwrap();
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for ((_prop_name, st), schema) in ref_targets.iter() {
+            if st == schema_title && seen.insert(schema.schema_id.clone()) {
+                result.push(schema.clone());
+            }
+        }
+        Ok(result)
     }
 
     async fn get_property_ref_target(

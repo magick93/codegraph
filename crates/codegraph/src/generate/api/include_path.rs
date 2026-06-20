@@ -1,5 +1,6 @@
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::resolve_field;
+use codegraph_core::types::SchemaNode;
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
@@ -102,27 +103,9 @@ async fn resolve_explicit_paths(
         let mut current_source_title: &str = schema_title;
 
         for &seg in &segment_strs {
-            // Resolve the target schema title from the segment string.
-            let target_title = resolve_target_title(db, current_source_title, seg).await?;
-            let mut target_schema = db
-                .get_schema(&target_title)
-                .await?
-                .ok_or_else(|| crate::error::Error::SchemaNotFound(target_title.clone()))?;
-
-            // Prefer entity schemas over inline definitions or VOs when multiple
-            // schemas share the same title across domains (e.g. "PositionType").
-            if target_schema.parent_schema.is_some() || !target_schema.is_entity {
-                if let Ok(schemas) = db.list_schemas(None).await {
-                    if let Some(better) = schemas.into_iter().find(|s| {
-                        s.title == target_title
-                            && s.is_entity
-                            && !s.pg_table_name.is_empty()
-                            && s.parent_schema.is_none()
-                    }) {
-                        target_schema = better;
-                    }
-                }
-            }
+            // Resolve the target schema via graph identity (schema_id).
+            let target_schema = resolve_schema_target(db, current_source_title, seg).await?;
+            let target_title = target_schema.title.clone();
 
             // Skip force_value_objects — they don't have standalone entity or DTO
             // generation, so fetch methods referencing {Entity}Response would fail.
@@ -316,7 +299,8 @@ async fn resolve_auto_paths(
                 .map(|s| s.schema_title.clone())
         }).collect();
 
-    for ref_title in &referenced {
+    for ref_schema in &referenced {
+        let ref_title = &ref_schema.title;
         if ref_title == schema_title {
             continue;
         }
@@ -399,29 +383,36 @@ async fn resolve_auto_paths(
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-/// Resolve a segment string to a target schema title.
+/// Resolve a segment string to a target schema node using graph identity
+/// (schema_id) for cross-domain collision safety.
 ///
 /// Primary path: query the graph for schemas referenced by the current source
 /// via `HasProperty → ReferencesSchema` edges. This is authoritative because
 /// the graph stores the actual `$ref` relationships from ingestion.
 ///
 /// Fallback: PascalCase naming convention for schemas not yet linked by refs.
-async fn resolve_target_title(
+async fn resolve_schema_target(
     db: &dyn GraphQuerier,
     current_source_title: &str,
     seg: &str,
-) -> Result<String> {
+) -> Result<SchemaNode> {
     let seg_lower = seg.to_lowercase();
 
     // 1. Query the graph for schemas the current source actually references.
     if let Ok(refs) = db.get_referenced_schemas(current_source_title).await {
-        for ref_title in &refs {
-            let stripped = ref_title
+        for ref_schema in &refs {
+            let stripped = ref_schema
+                .title
                 .strip_suffix("Type")
-                .unwrap_or(ref_title)
+                .unwrap_or(&ref_schema.title)
                 .to_lowercase();
             if stripped == seg_lower {
-                return Ok(ref_title.clone());
+                if let Some(node) = db.get_schema(&ref_schema.title).await? {
+                    if let Some(auth_node) = db.get_schema_by_id(&node.schema_id).await? {
+                        return Ok(auth_node);
+                    }
+                    return Ok(node);
+                }
             }
         }
     }
@@ -436,7 +427,12 @@ async fn resolve_target_title(
                     .unwrap_or(&pc.child_title)
                     .to_lowercase();
                 if child_stripped == seg_lower {
-                    return Ok(pc.child_title.clone());
+                    if let Some(node) = db.get_schema(&pc.child_title).await? {
+                        if let Some(auth_node) = db.get_schema_by_id(&node.schema_id).await? {
+                            return Ok(auth_node);
+                        }
+                        return Ok(node);
+                    }
                 }
             }
         }
@@ -446,8 +442,11 @@ async fn resolve_target_title(
     let pascal = codegraph_naming::to_pascal_case(seg);
     let candidates = [format!("{pascal}Type"), pascal.clone()];
     for title in &candidates {
-        if let Ok(Some(_)) = db.get_schema(title).await {
-            return Ok(title.clone());
+        if let Ok(Some(node)) = db.get_schema(title).await {
+            if let Some(auth_node) = db.get_schema_by_id(&node.schema_id).await? {
+                return Ok(auth_node);
+            }
+            return Ok(node);
         }
     }
 

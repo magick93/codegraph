@@ -10,6 +10,18 @@ use std::collections::HashMap;
 #[async_trait]
 pub trait GraphQuerier: Send + Sync {
     async fn get_schema(&self, title: &str) -> Result<Option<SchemaNode>, GraphError>;
+    async fn get_schema_by_id(&self, schema_id: &str) -> Result<Option<SchemaNode>, GraphError> {
+        Ok(None)
+    }
+
+    async fn get_schema_in_domain(
+        &self,
+        title: &str,
+        domain: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        self.get_schema(title).await
+    }
+
     async fn list_schemas(&self, domain: Option<&str>) -> Result<Vec<SchemaNode>, GraphError>;
     async fn get_properties(&self, schema_title: &str) -> Result<Vec<PropertyNode>, GraphError>;
 
@@ -68,7 +80,7 @@ pub trait GraphQuerier: Send + Sync {
         -> Result<CompositionTree, GraphError>;
     async fn get_allof_targets(&self, schema_title: &str) -> Result<Vec<String>, GraphError>;
     async fn get_referencing_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError>;
-    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError>;
+    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError>;
     async fn get_property_ref_target(
         &self,
         property_name: &str,
@@ -93,8 +105,8 @@ pub trait GraphQuerier: Send + Sync {
         let mut refs = Vec::new();
         for s in &schemas {
             if let Ok(targets) = self.get_referenced_schemas(&s.title).await {
-                for t in targets {
-                    refs.push((s.title.clone(), t));
+                for t in &targets {
+                    refs.push((s.title.clone(), t.title.clone()));
                 }
             }
         }

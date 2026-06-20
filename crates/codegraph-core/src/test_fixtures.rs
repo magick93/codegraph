@@ -189,7 +189,7 @@ pub fn person_edges() -> Vec<(String, String, EdgeType, Option<EdgeProperties>)>
         // gender -[ReferencesSchema]-> GenderCodeList
         (
             "gender::PersonType".into(),
-            "GenderCodeList".into(),
+            "common/GenderCodeList".into(),
             EdgeType::ReferencesSchema,
             Some(EdgeProperties {
                 ref_path: Some("common/GenderCodeList.json".into()),
@@ -290,5 +290,5 @@ pub async fn assert_conformance_queries(querier: &dyn crate::traits::GraphQuerie
 
     // get_referenced_schemas
     let refs = querier.get_referenced_schemas("PersonType").await.unwrap();
-    assert!(refs.contains(&"GenderCodeList".to_string()));
+    assert!(refs.iter().any(|s| s.title == "GenderCodeList"));
 }

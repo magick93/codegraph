@@ -364,7 +364,8 @@ impl DomainGenerator for RouterGenerator {
                     .map(|c| c.entity_name.as_str())
                     .collect();
 
-                for ref_title in &referenced {
+                for ref_schema_node in &referenced {
+                    let ref_title = &ref_schema_node.title;
                     let ref_entity_name = strip_suffix(ref_title, &config.defaults.type_suffix);
 
                     // Skip self

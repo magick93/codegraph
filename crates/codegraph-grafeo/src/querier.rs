@@ -92,6 +92,46 @@ impl GraphQuerier for GrafeoEngine {
         Ok(schemas.into_iter().next())
     }
 
+    async fn get_schema_by_id(&self, schema_id: &str) -> Result<Option<SchemaNode>, GraphError> {
+        let params =
+            HashMap::from([("sid".to_string(), grafeo::Value::String(schema_id.into()))]);
+        let result = query_gql_params(
+            self,
+            &format!(
+                "MATCH (s:Schema {{schema_id: $sid}}) RETURN {SCHEMA_RETURN_COLS}"
+            ),
+            params,
+        )?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
+    }
+
+    async fn get_schema_in_domain(
+        &self,
+        title: &str,
+        domain: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        let params = HashMap::from([
+            ("title".to_string(), grafeo::Value::String(title.into())),
+            ("domain".to_string(), grafeo::Value::String(domain.into())),
+        ]);
+        let result = query_gql_params(
+            self,
+            &format!(
+                "MATCH (s:Schema {{title: $title, domain: $domain}}) RETURN {SCHEMA_RETURN_COLS}"
+            ),
+            params,
+        )?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
+    }
+
     async fn list_schemas(&self, domain: Option<&str>) -> Result<Vec<SchemaNode>, GraphError> {
         let result = match domain {
             Some(d) => {
@@ -638,22 +678,24 @@ impl GraphQuerier for GrafeoEngine {
             .collect()
     }
 
-    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError> {
+    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
         let params = HashMap::from([(
             "title".to_string(),
             grafeo::Value::String(schema_title.into()),
         )]);
         let result = query_gql_params(
             self,
-            "MATCH (:Schema {title: $title})-[:HasProperty]->(p:Property)-[:ReferencesSchema]->(t:Schema) \
-             RETURN DISTINCT t.title",
+            &format!(
+                "MATCH (:Schema {{title: $title}})-[:HasProperty]->(p:Property)-[:ReferencesSchema]->(s:Schema) \
+                 RETURN DISTINCT {SCHEMA_RETURN_COLS}"
+            ),
             params,
         )?;
         let reader = RowReader::from_columns(&result.columns);
         result
             .rows
             .iter()
-            .map(|row| reader.get_string(row, "t.title"))
+            .map(|row| row_to_schema_node(&reader, row))
             .collect()
     }
 

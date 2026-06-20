@@ -81,6 +81,17 @@ pub async fn ingest_schemas(
         ingest_codelist_values(db, &loader, uri, suffix).await?;
     }
 
+    // Build stem → schema_id map for $ref resolution.
+    // This maps each stem (filename without .json) to all schema rel_paths
+    // that share it. A Vec is used because stems can collide across domains.
+    let mut stem_to_schema_ids: HashMap<String, Vec<String>> = HashMap::new();
+    for (_uri, entry) in loader.iter_top_level() {
+        stem_to_schema_ids
+            .entry(entry.stem.clone())
+            .or_default()
+            .push(entry.rel_path.clone());
+    }
+
     // Pass 2: Ingest inline definitions
     let mut inline_uris: Vec<String> = Vec::new();
     for uri in &uris {
@@ -102,6 +113,7 @@ pub async fn ingest_schemas(
             ui_overrides,
             suffix,
             &mut result,
+            &stem_to_schema_ids,
         )
         .await?;
     }
@@ -242,6 +254,7 @@ async fn ingest_properties(
     ui_overrides: &UiOverrideConfig,
     suffix: &str,
     result: &mut IngestResult,
+    stem_to_schema_ids: &HashMap<String, Vec<String>>,
 ) -> Result<()> {
     let entry = loader
         .get(uri)
@@ -294,6 +307,7 @@ async fn ingest_properties(
                     ui_overrides,
                     suffix,
                     result,
+                    stem_to_schema_ids,
                 )
                 .await;
             }
@@ -313,6 +327,7 @@ async fn ingest_properties(
         ui_overrides,
         suffix,
         result,
+        stem_to_schema_ids,
     )
     .await
 }
@@ -334,6 +349,7 @@ async fn ingest_properties_from_schema(
     ui_overrides: &UiOverrideConfig,
     suffix: &str,
     result: &mut IngestResult,
+    stem_to_schema_ids: &HashMap<String, Vec<String>>,
 ) -> Result<()> {
     // Collect property blocks: top-level properties + allOf inline/ref properties
     let mut prop_blocks: Vec<(serde_json::Map<String, serde_json::Value>, HashSet<String>)> =
@@ -523,6 +539,18 @@ async fn ingest_properties_from_schema(
             // - ReferencesSchema for scalar $ref properties
             if let Some(ref ref_path) = prop.ref_target {
                 let target_stem = extract_ref_stem(ref_path);
+                // Resolve stem to schema_id using the map built during Pass 1b.
+                // If the stem maps to exactly one schema_id, use it. Otherwise fall back to the stem.
+                let target_id = stem_to_schema_ids
+                    .get(target_stem)
+                    .and_then(|ids| {
+                        if ids.len() == 1 {
+                            ids.first().cloned()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| target_stem.to_string());
                 let edge_type = if prop.is_array {
                     EdgeType::ItemsOf
                 } else {
@@ -534,7 +562,7 @@ async fn ingest_properties_from_schema(
                 };
                 db.ingest_edge(
                     &format!("{}::{}", name, schema_title),
-                    target_stem,
+                    &target_id,
                     edge_type,
                     Some(&edge_props),
                 )

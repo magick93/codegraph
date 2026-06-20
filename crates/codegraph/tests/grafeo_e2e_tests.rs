@@ -1397,7 +1397,7 @@ async fn grafeo_references_schema_edge_created_for_scalar_ref() {
     );
     // personName refs NameType
     assert!(
-        refs.contains(&"NameType".to_string()),
+        refs.iter().any(|s| s.title == "NameType"),
         "should reference NameType via personName"
     );
 }

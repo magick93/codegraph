@@ -228,7 +228,7 @@ async fn test_get_property_ref_target() {
     engine
         .ingest_edge(
             "address::PersonType",
-            "AddressType",
+            "common/AddressType",
             EdgeType::ReferencesSchema,
             Some(&EdgeProperties {
                 ref_path: Some("#/definitions/AddressType".to_string()),
@@ -309,7 +309,7 @@ async fn test_get_array_item_schema() {
     engine
         .ingest_edge(
             "names::PersonType",
-            "PersonNameType",
+            "common/PersonNameType",
             EdgeType::ItemsOf,
             None,
         )
@@ -474,7 +474,7 @@ async fn test_get_referencing_and_referenced_schemas() {
     engine
         .ingest_edge(
             "address::PersonType",
-            "AddressType",
+            "common/AddressType",
             EdgeType::ReferencesSchema,
             Some(&EdgeProperties {
                 ref_path: Some("AddressType".to_string()),
@@ -485,7 +485,8 @@ async fn test_get_referencing_and_referenced_schemas() {
         .unwrap();
 
     let referenced = engine.get_referenced_schemas("PersonType").await.unwrap();
-    assert_eq!(referenced, vec!["AddressType"]);
+    assert_eq!(referenced.len(), 1);
+    assert_eq!(referenced[0].title, "AddressType");
 
     let referencing = engine.get_referencing_schemas("AddressType").await.unwrap();
     assert_eq!(referencing, vec!["PersonType"]);
@@ -547,7 +548,7 @@ async fn test_get_parent_candidates() {
     engine
         .ingest_edge(
             "person::PersonNameType",
-            "PersonType",
+            "common/PersonType",
             EdgeType::ReferencesSchema,
             Some(&EdgeProperties {
                 ref_path: Some("PersonType".to_string()),

@@ -191,3 +191,5 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS HasConditionalExpr",
     ]
 }
+
+
