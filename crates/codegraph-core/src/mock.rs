@@ -18,6 +18,8 @@ pub struct MockEngine {
     /// Maps (property_name, schema_title) -> target SchemaNode for $ref resolution
     ref_targets: Mutex<HashMap<(String, String), SchemaNode>>,
     parent_candidates: Mutex<Vec<ParentCandidate>>,
+    extends_map: Mutex<HashMap<String, Vec<SchemaNode>>>,
+    allof_targets: Mutex<HashMap<String, Vec<String>>>,
     view_containers: Mutex<HashMap<String, ViewContainerNode>>,
     view_components: Mutex<HashMap<String, ViewComponentNode>>,
     events: Mutex<HashMap<String, EventNode>>,
@@ -39,6 +41,8 @@ impl MockEngine {
             consumed_fields: Mutex::new(HashMap::new()),
             ref_targets: Mutex::new(HashMap::new()),
             parent_candidates: Mutex::new(Vec::new()),
+            extends_map: Mutex::new(HashMap::new()),
+            allof_targets: Mutex::new(HashMap::new()),
             view_containers: Mutex::new(HashMap::new()),
             view_components: Mutex::new(HashMap::new()),
             events: Mutex::new(HashMap::new()),
@@ -69,6 +73,8 @@ pub struct MockEngineBuilder {
     consumed_fields: HashMap<String, Vec<(PropertyNode, String)>>,
     ref_targets: HashMap<(String, String), SchemaNode>,
     parent_candidates: Vec<ParentCandidate>,
+    extends_map: HashMap<String, Vec<SchemaNode>>,
+    allof_targets: HashMap<String, Vec<String>>,
 }
 
 impl MockEngineBuilder {
@@ -115,6 +121,24 @@ impl MockEngineBuilder {
             (property_name.to_string(), schema_title.to_string()),
             target,
         );
+        self
+    }
+
+    /// Register a schema that extends (allOf-includes) a parent definition.
+    /// When `get_schemas_that_extend(parent_title)` is called, this schema
+    /// will be included in the result.
+    pub fn with_extending_schema(mut self, parent_title: &str, schema: SchemaNode) -> Self {
+        self.extends_map
+            .entry(parent_title.to_string())
+            .or_default()
+            .push(schema);
+        self
+    }
+
+    /// Register allOf targets for a schema. When `get_allof_targets(schema_title)`
+    /// is called, these parent titles are returned.
+    pub fn with_allof_targets(mut self, schema_title: &str, targets: Vec<String>) -> Self {
+        self.allof_targets.insert(schema_title.to_string(), targets);
         self
     }
 
@@ -185,6 +209,18 @@ impl MockEngineBuilder {
             let mut pcs = engine.parent_candidates.lock().unwrap();
             for pc in &self.parent_candidates {
                 pcs.push(pc.clone());
+            }
+        }
+        {
+            let mut extends_map = engine.extends_map.lock().unwrap();
+            for (k, v) in &self.extends_map {
+                extends_map.insert(k.clone(), v.clone());
+            }
+        }
+        {
+            let mut allof_targets = engine.allof_targets.lock().unwrap();
+            for (k, v) in &self.allof_targets {
+                allof_targets.insert(k.clone(), v.clone());
             }
         }
         engine
@@ -685,8 +721,27 @@ impl GraphQuerier for MockEngine {
             .ok_or_else(|| GraphError::NotFound(format!("composition tree for {schema_title}")))
     }
 
-    async fn get_allof_targets(&self, _schema_title: &str) -> Result<Vec<String>, GraphError> {
-        Ok(vec![])
+    async fn get_allof_targets(&self, schema_title: &str) -> Result<Vec<String>, GraphError> {
+        Ok(self
+            .allof_targets
+            .lock()
+            .unwrap()
+            .get(schema_title)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn get_schemas_that_extend(
+        &self,
+        parent_title: &str,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
+        Ok(self
+            .extends_map
+            .lock()
+            .unwrap()
+            .get(parent_title)
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn list_all_properties(&self) -> Result<HashMap<String, Vec<PropertyNode>>, GraphError> {

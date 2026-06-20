@@ -395,7 +395,11 @@ async fn resolve_auto_paths(
 /// via `HasProperty → ReferencesSchema` edges. This is authoritative because
 /// the graph stores the actual `$ref` relationships from ingestion.
 ///
-/// Fallback: PascalCase naming convention for schemas not yet linked by refs.
+/// Tiers:
+///   1 — Property-name match via graph (authoritative, follows $ref edges)
+///   1.5 — VO→entity resolution via allOf composition chain
+///   2 — ItemsOf / parent_candidates (one-to-many direction)
+///   3 — PascalCase naming convention (only with graph evidence)
 async fn resolve_schema_target(
     db: &dyn GraphQuerier,
     current_source_schema_id: &str,
@@ -407,42 +411,55 @@ async fn resolve_schema_target(
 
     tracing::debug!(target: "resolve_schema", seg=%seg, source=%current_source_title, domain=%domain, "resolving include segment");
 
-    // 1. Direct referenced-schema resolution via the graph.
-    //    Uses get_referenced_schemas() which traverses all $ref edges
-    //    including through allOf composition chains. This correctly
-    //    resolves segments like "person" → PersonLegalType (VO) →
-    //    PersonType (entity) through the allOf chain.
-    //    Domain-scoped to prevent cross-domain title collisions.
-    if let Ok(refs) = db.get_referenced_schemas(current_source_title).await {
-        tracing::debug!(target: "resolve_schema", count=refs.len(), source=%current_source_title, "Tier 1: referenced schemas found");
-        for ref_schema in &refs {
-            let stripped = ref_schema.title
-                .strip_suffix("Type")
-                .unwrap_or(&ref_schema.title)
+    // 1. Property-name match via the graph.
+    //    Queries properties of the source schema by schema_id, matches by name
+    //    or rust_field_name (with _id suffix stripped), follows ReferencesSchema
+    //    edges to find the target. VOs are skipped — Tier 1.5 follows the allOf
+    //    chain to find the entity behind a VO.
+    let mut vo_titles: Vec<String> = Vec::new();
+    if let Ok(props) = db.get_properties_by_schema_id(current_source_schema_id).await {
+        for prop in &props {
+            let prop_stem = prop.name.to_lowercase();
+            let rust_stem = prop.rust_field_name
+                .strip_suffix("_id")
+                .unwrap_or(&prop.rust_field_name)
                 .to_lowercase();
-            if stripped == seg_lower {
-                tracing::debug!(target: "resolve_schema",
-                    ref_title=%ref_schema.title,
-                    ref_id=%ref_schema.schema_id,
-                    is_entity=%ref_schema.is_entity,
-                    "Tier 1: referenced schema matched segment"
-                );
-                if let Some(auth) = db.get_schema_by_id(&ref_schema.schema_id).await? {
-                    if !auth.is_entity || auth.pg_table_name.is_empty() {
-                        tracing::debug!(target: "resolve_schema", tier=1, title=%ref_schema.title, "skipped: VO — continuing search");
-                        continue;
-                    }
-                    tracing::debug!(target: "resolve_schema", tier=1, target=%auth.title, "resolved via referenced schemas");
+            if prop_stem != seg_lower && rust_stem != seg_lower {
+                continue;
+            }
+            // Property matches — follow ReferencesSchema edge
+            if let Ok(Some(target)) = db.get_property_ref_target_by_id(&prop.name, current_source_schema_id).await {
+                if !target.is_entity || target.pg_table_name.is_empty() {
+                    tracing::debug!(target: "resolve_schema", tier=1, prop=%prop.name, target=%target.title, "found VO — queuing for Tier 1.5");
+                    vo_titles.push(target.title.clone());
+                    continue;
+                }
+                tracing::debug!(target: "resolve_schema", tier=1, target=%target.title, "resolved via property-name match");
+                if let Some(auth) = db.get_schema_by_id(&target.schema_id).await? {
                     return Ok(auth);
                 }
+                return Ok(target);
             }
         }
     }
 
-    tracing::debug!(target: "resolve_schema", source=%current_source_title, "Tier 1: no matching property found, falling to Tier 2");
+    // 1.5 VO → entity via allOf composition chain.
+    //    A VO like PersonLegalType allOf-composes shared definitions (PersonBaseType,
+    //    PersonLegalInclusion) that an entity (PersonType) also composes. Follow the
+    //    chain: VO → allOf target → schemas extending that target → filter to entity.
+    if !vo_titles.is_empty() {
+        for vo_title in &vo_titles {
+            if let Some(entity) = find_entity_through_vo(db, vo_title).await? {
+                tracing::debug!(target: "resolve_schema", tier=1.5, vo=%vo_title, entity=%entity.title, "resolved VO → entity via allOf chain");
+                return Ok(entity);
+            }
+        }
+    }
 
-    // 2. Also check ItemsOf references (array items the source holds).
-    //    These are discovered via the parent_candidates query (one-to-many direction).
+    tracing::debug!(target: "resolve_schema", source=%current_source_title, "Tier 1/1.5: no match, falling to Tier 2");
+
+    // 2. ItemsOf references (array items the source holds).
+    //    Discovered via parent_candidates query (one-to-many direction).
     if let Ok(candidates) = db.get_parent_candidates().await {
         for pc in &candidates {
             if pc.parent_title == current_source_title {
@@ -463,16 +480,26 @@ async fn resolve_schema_target(
         }
     }
 
-    // 3. Fallback: try PascalCase naming convention.
-    // Only match entity schemas — skip VOs (same constraint as Tier 1).
+    // 3. PascalCase naming convention — only with graph evidence.
+    //    Checks that the source has a property whose $ref target matches the
+    //    PascalCase candidate, or there is an ItemsOf edge to it. This prevents
+    //    false positives where a naming-convention match has no actual graph
+    //    relationship (e.g., WorkerType.person → PersonLegalType but Tier 3
+    //    would incorrectly match PersonType by name).
     let pascal = codegraph_naming::to_pascal_case(seg);
     let candidates = [format!("{pascal}Type"), pascal.clone()];
     for title in &candidates {
         if let Ok(Some(node)) = db.get_schema_in_domain(title, domain).await {
             if !node.is_entity || node.pg_table_name.is_empty() {
-                continue; // Skip VOs — not a valid include target
+                continue;
             }
-            tracing::debug!(target: "resolve_schema", tier=3, title=%title, "resolved via PascalCase fallback");
+            // Verify graph evidence: the source must have a property referencing
+            // this schema, or an ItemsOf edge to it.
+            if !has_graph_evidence(db, current_source_schema_id, current_source_title, &node).await {
+                tracing::debug!(target: "resolve_schema", tier=3, candidate=%title, "no graph evidence — skipping");
+                continue;
+            }
+            tracing::debug!(target: "resolve_schema", tier=3, title=%title, "resolved via PascalCase with graph evidence");
             if let Some(auth_node) = db.get_schema_by_id(&node.schema_id).await? {
                 return Ok(auth_node);
             }
@@ -485,6 +512,62 @@ async fn resolve_schema_target(
     Err(crate::error::Error::RefResolution(format!(
         "cannot resolve include segment '{seg}' from '{current_source_title}'"
     )))
+}
+
+/// Follow the allOf composition chain from a VO to find an entity that shares
+/// the same parent definitions. The chain: VO → allOf target → schemas extending
+/// that target → filter to the first entity (excluding the VO itself).
+async fn find_entity_through_vo(
+    db: &dyn GraphQuerier,
+    vo_title: &str,
+) -> Result<Option<SchemaNode>> {
+    let allof_targets = db.get_allof_targets(vo_title).await?;
+    for parent_def in &allof_targets {
+        if let Ok(extenders) = db.get_schemas_that_extend(parent_def).await {
+            for extender in &extenders {
+                if extender.title != vo_title
+                    && extender.is_entity
+                    && !extender.pg_table_name.is_empty()
+                {
+                    if let Some(auth) = db.get_schema_by_id(&extender.schema_id).await? {
+                        return Ok(Some(auth));
+                    }
+                    return Ok(Some(extender.clone()));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Check that the source schema has a graph relationship (property $ref or
+/// ItemsOf edge) with the candidate entity. Prevents PascalCase from matching
+/// entities that share a naming convention but have no actual relationship.
+async fn has_graph_evidence(
+    db: &dyn GraphQuerier,
+    source_schema_id: &str,
+    source_title: &str,
+    candidate: &SchemaNode,
+) -> bool {
+    // Check property $ref: does the source have a property referencing this candidate?
+    if let Ok(props) = db.get_properties_by_schema_id(source_schema_id).await {
+        for prop in &props {
+            if let Ok(Some(target)) = db.get_property_ref_target_by_id(&prop.name, source_schema_id).await {
+                if target.schema_id == candidate.schema_id || target.title == candidate.title {
+                    return true;
+                }
+            }
+        }
+    }
+    // Check ItemsOf: does the source have an ItemsOf edge to this candidate?
+    if let Ok(candidates_list) = db.get_parent_candidates().await {
+        for pc in &candidates_list {
+            if pc.parent_title == source_title && pc.child_title == candidate.title {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Resolve the FK column and array flag for a source→target relationship

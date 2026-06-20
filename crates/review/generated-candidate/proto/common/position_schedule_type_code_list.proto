@@ -1,0 +1,103 @@
+syntax = "proto3";
+package common;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "common/;common";
+
+
+
+
+/// PositionScheduleTypeCodeList entity
+message PositionScheduleTypeCodeList {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for PositionScheduleTypeCodeList
+message CreatePositionScheduleTypeCodeListRequest {
+  
+}
+
+/// Update request for PositionScheduleTypeCodeList
+message UpdatePositionScheduleTypeCodeListRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+}
+
+/// Get request for PositionScheduleTypeCodeList
+message GetPositionScheduleTypeCodeListRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for PositionScheduleTypeCodeList
+message DeletePositionScheduleTypeCodeListRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for PositionScheduleTypeCodeList
+message ListPositionScheduleTypeCodeListRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for PositionScheduleTypeCodeList
+message ListPositionScheduleTypeCodeListResponse {
+  
+  
+  repeated PositionScheduleTypeCodeList data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── PositionScheduleTypeCodeList Service ──────────────────────────────────────────
+service PositionScheduleTypeCodeListService {
+  
+  // Create a new entity
+  rpc Create(CreatePositionScheduleTypeCodeListRequest) returns (PositionScheduleTypeCodeList);
+  
+  // Get an entity by ID
+  rpc Get(GetPositionScheduleTypeCodeListRequest) returns (PositionScheduleTypeCodeList);
+  
+  // Update an existing entity
+  rpc Update(UpdatePositionScheduleTypeCodeListRequest) returns (PositionScheduleTypeCodeList);
+  
+  // Delete an entity by ID
+  rpc Delete(DeletePositionScheduleTypeCodeListRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListPositionScheduleTypeCodeListRequest) returns (ListPositionScheduleTypeCodeListResponse);
+  
+}

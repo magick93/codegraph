@@ -1,0 +1,127 @@
+syntax = "proto3";
+package common;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "common/;common";
+
+
+
+
+/// ProcessHistory entity
+message ProcessHistory {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+    // The date the action was executed.
+  optional google.protobuf.Timestamp actionDate = 2;
+  
+    // Additional details about the history item.
+  repeated string descriptions = 3;
+  
+    // The identifier for the history item.
+  optional string id = 4;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for ProcessHistory
+message CreateProcessHistoryRequest {
+  
+    // The date the action was executed.
+  optional google.protobuf.Timestamp actionDate = 2;
+  
+    // Additional details about the history item.
+  repeated string descriptions = 3;
+  
+}
+
+/// Update request for ProcessHistory
+message UpdateProcessHistoryRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+    // The date the action was executed.
+  optional google.protobuf.Timestamp actionDate = 2;
+  
+    // Additional details about the history item.
+  repeated string descriptions = 3;
+  
+    // The identifier for the history item.
+  optional string id = 4;
+  
+}
+
+/// Get request for ProcessHistory
+message GetProcessHistoryRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for ProcessHistory
+message DeleteProcessHistoryRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for ProcessHistory
+message ListProcessHistoryRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for ProcessHistory
+message ListProcessHistoryResponse {
+  
+  
+  repeated ProcessHistory data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── ProcessHistory Service ──────────────────────────────────────────
+service ProcessHistoryService {
+  
+  // Create a new entity
+  rpc Create(CreateProcessHistoryRequest) returns (ProcessHistory);
+  
+  // Get an entity by ID
+  rpc Get(GetProcessHistoryRequest) returns (ProcessHistory);
+  
+  // Update an existing entity
+  rpc Update(UpdateProcessHistoryRequest) returns (ProcessHistory);
+  
+  // Delete an entity by ID
+  rpc Delete(DeleteProcessHistoryRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListProcessHistoryRequest) returns (ListProcessHistoryResponse);
+  
+}

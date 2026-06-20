@@ -197,17 +197,7 @@ pub async fn get_by_id(
 
 
 
-    let linked = linked.with_related("process_history", format!("{}/{}", self_href, "process-history"));
-
-    let linked = linked.with_related("amount", format!("{}/{}", self_href, "amount"));
-
     let linked = linked.with_related("distribution_guidelines", format!("{}/{}", self_href, "distribution-guidelines"));
-
-    let linked = linked.with_related("identifier", format!("{}/{}", self_href, "identifier"));
-
-    let linked = linked.with_related("gender_code_list", format!("{}/{}", self_href, "gender-code-list"));
-
-    let linked = linked.with_related("name", format!("{}/{}", self_href, "name"));
 
     let linked = linked.with_related("application", format!("{}/{}", self_href, "application"));
 

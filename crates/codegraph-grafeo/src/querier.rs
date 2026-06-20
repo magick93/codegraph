@@ -659,6 +659,27 @@ impl GraphQuerier for GrafeoEngine {
             .collect()
     }
 
+    async fn get_schemas_that_extend(&self, parent_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+        let params = HashMap::from([(
+            "title".to_string(),
+            grafeo::Value::String(parent_title.into()),
+        )]);
+        let result = query_gql_params(
+            self,
+            &format!(
+                "MATCH (s:Schema)-[:ExtendsSchema]->(:Schema {{title: $title}}) RETURN {}",
+                SCHEMA_RETURN_COLS
+            ),
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_schema_node(&reader, row))
+            .collect()
+    }
+
     async fn get_referencing_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError> {
         let params = HashMap::from([(
             "title".to_string(),

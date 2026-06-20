@@ -38,6 +38,7 @@ pub struct CachingQuerier<'a> {
     extensions_cache: RwLock<HashMap<String, Vec<Extension>>>,
     composition_tree_cache: RwLock<HashMap<String, CompositionTree>>,
     allof_targets_cache: RwLock<HashMap<String, Vec<String>>>,
+    schemas_that_extend_cache: RwLock<HashMap<String, Vec<SchemaNode>>>,
     referencing_cache: RwLock<HashMap<String, Vec<String>>>,
     referenced_cache: RwLock<HashMap<String, Vec<SchemaNode>>>,
     property_ref_target_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
@@ -63,6 +64,7 @@ impl<'a> CachingQuerier<'a> {
             extensions_cache: RwLock::new(HashMap::new()),
             composition_tree_cache: RwLock::new(HashMap::new()),
             allof_targets_cache: RwLock::new(HashMap::new()),
+            schemas_that_extend_cache: RwLock::new(HashMap::new()),
             referencing_cache: RwLock::new(HashMap::new()),
             referenced_cache: RwLock::new(HashMap::new()),
             property_ref_target_cache: RwLock::new(HashMap::new()),
@@ -392,6 +394,15 @@ impl GraphQuerier for CachingQuerier<'_> {
             referencing_cache,
             schema_title,
             self.inner.get_referencing_schemas(schema_title)
+        )
+    }
+
+    async fn get_schemas_that_extend(&self, parent_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+        cached_single!(
+            self,
+            schemas_that_extend_cache,
+            parent_title,
+            self.inner.get_schemas_that_extend(parent_title)
         )
     }
 

@@ -1,0 +1,103 @@
+syntax = "proto3";
+package common;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "common/;common";
+
+
+
+
+/// GenderCodeList entity
+message GenderCodeList {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for GenderCodeList
+message CreateGenderCodeListRequest {
+  
+}
+
+/// Update request for GenderCodeList
+message UpdateGenderCodeListRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+}
+
+/// Get request for GenderCodeList
+message GetGenderCodeListRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for GenderCodeList
+message DeleteGenderCodeListRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for GenderCodeList
+message ListGenderCodeListRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for GenderCodeList
+message ListGenderCodeListResponse {
+  
+  
+  repeated GenderCodeList data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── GenderCodeList Service ──────────────────────────────────────────
+service GenderCodeListService {
+  
+  // Create a new entity
+  rpc Create(CreateGenderCodeListRequest) returns (GenderCodeList);
+  
+  // Get an entity by ID
+  rpc Get(GetGenderCodeListRequest) returns (GenderCodeList);
+  
+  // Update an existing entity
+  rpc Update(UpdateGenderCodeListRequest) returns (GenderCodeList);
+  
+  // Delete an entity by ID
+  rpc Delete(DeleteGenderCodeListRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListGenderCodeListRequest) returns (ListGenderCodeListResponse);
+  
+}

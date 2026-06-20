@@ -1,0 +1,130 @@
+syntax = "proto3";
+package common;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "common/;common";
+
+
+
+
+/// PersonBase entity
+message PersonBase {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional google.protobuf.Timestamp birthDate = 2;
+  
+    // Last name
+  string familyName = 3;
+  
+    // First name
+  string givenName = 4;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for PersonBase
+message CreatePersonBaseRequest {
+  
+  
+  optional google.protobuf.Timestamp birthDate = 2;
+  
+    // Last name
+  string familyName = 3;
+  
+    // First name
+  string givenName = 4;
+  
+}
+
+/// Update request for PersonBase
+message UpdatePersonBaseRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional google.protobuf.Timestamp birthDate = 2;
+  
+    // Last name
+  optional string familyName = 3;
+  
+    // First name
+  optional string givenName = 4;
+  
+}
+
+/// Get request for PersonBase
+message GetPersonBaseRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for PersonBase
+message DeletePersonBaseRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for PersonBase
+message ListPersonBaseRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for PersonBase
+message ListPersonBaseResponse {
+  
+  
+  repeated PersonBase data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── PersonBase Service ──────────────────────────────────────────
+service PersonBaseService {
+  
+  // Create a new entity
+  rpc Create(CreatePersonBaseRequest) returns (PersonBase);
+  
+  // Get an entity by ID
+  rpc Get(GetPersonBaseRequest) returns (PersonBase);
+  
+  // Update an existing entity
+  rpc Update(UpdatePersonBaseRequest) returns (PersonBase);
+  
+  // Delete an entity by ID
+  rpc Delete(DeletePersonBaseRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListPersonBaseRequest) returns (ListPersonBaseResponse);
+  
+}

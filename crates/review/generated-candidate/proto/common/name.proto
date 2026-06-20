@@ -1,0 +1,130 @@
+syntax = "proto3";
+package common;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "common/;common";
+
+
+
+
+/// Name entity
+message Name {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional string familyName = 2;
+  
+  
+  optional string formattedName = 3;
+  
+  
+  optional string givenName = 4;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for Name
+message CreateNameRequest {
+  
+  
+  optional string familyName = 2;
+  
+  
+  optional string formattedName = 3;
+  
+  
+  optional string givenName = 4;
+  
+}
+
+/// Update request for Name
+message UpdateNameRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional string familyName = 2;
+  
+  
+  optional string formattedName = 3;
+  
+  
+  optional string givenName = 4;
+  
+}
+
+/// Get request for Name
+message GetNameRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for Name
+message DeleteNameRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for Name
+message ListNameRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for Name
+message ListNameResponse {
+  
+  
+  repeated Name data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── Name Service ──────────────────────────────────────────
+service NameService {
+  
+  // Create a new entity
+  rpc Create(CreateNameRequest) returns (Name);
+  
+  // Get an entity by ID
+  rpc Get(GetNameRequest) returns (Name);
+  
+  // Update an existing entity
+  rpc Update(UpdateNameRequest) returns (Name);
+  
+  // Delete an entity by ID
+  rpc Delete(DeleteNameRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListNameRequest) returns (ListNameResponse);
+  
+}

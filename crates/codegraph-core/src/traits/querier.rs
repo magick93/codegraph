@@ -79,6 +79,15 @@ pub trait GraphQuerier: Send + Sync {
     async fn get_composition_tree(&self, schema_title: &str)
         -> Result<CompositionTree, GraphError>;
     async fn get_allof_targets(&self, schema_title: &str) -> Result<Vec<String>, GraphError>;
+    /// Get all schemas that have an ExtendsSchema edge pointing to the given parent
+    /// title — the reverse of `get_allof_targets`. Returns full SchemaNode objects
+    /// so callers can inspect `is_entity`, `pg_table_name`, etc.
+    ///
+    /// For example, if both PersonType (entity) and PersonLegalType (VO) allOf-compose
+    /// PersonBaseType, then `get_schemas_that_extend("PersonBaseType")` returns both.
+    async fn get_schemas_that_extend(&self, parent_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+        Ok(Vec::new())
+    }
     async fn get_referencing_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError>;
     async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError>;
     async fn get_property_ref_target(

@@ -4207,6 +4207,16 @@ entities = ["WorkerType"]
             .with_schema(schema_node("WorkerType", "hr", "worker", true))
             .with_schema(schema_node("DeploymentType", "hr", "deployment", true))
             .with_schema(schema_node("PositionType", "hr", "position", true))
+            .with_ref_target(
+                "deployment_id",
+                "WorkerType",
+                schema_node("DeploymentType", "hr", "deployment", true),
+            )
+            .with_ref_target(
+                "position_id",
+                "DeploymentType",
+                schema_node("PositionType", "hr", "position", true),
+            )
             .with_properties(
                 "WorkerType",
                 vec![ref_property(
@@ -4273,6 +4283,57 @@ entities = ["WorkerType"]
             paths[0].response_rust_type,
             "DeploymentTypeWithPositionTypeResponse",
             "multi-segment path should produce enriched response type"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_vo_through_allof_to_entity() {
+        let legal_type = SchemaNode {
+            pg_table_name: String::new(),
+            is_entity: false,
+            classification: "value_object".to_string(),
+            ..schema_node("PersonLegalType", "hr", "", false)
+        };
+        let person_type = schema_node("PersonType", "common", "person", true);
+        let engine = MockEngine::builder()
+            .with_schema(schema_node("WorkerType", "hr", "worker", true))
+            .with_schema(legal_type.clone())
+            .with_schema(person_type.clone())
+            .with_ref_target("person", "WorkerType", legal_type.clone())
+            .with_properties(
+                "WorkerType",
+                vec![
+                    ref_property("person", "person", "PersonLegalType", false),
+                ],
+            )
+            // PersonLegalType allOf → [PersonBaseType, PersonLegalInclusion]
+            .with_allof_targets("PersonLegalType", vec![
+                "PersonBaseType".to_string(),
+                "PersonLegalInclusion".to_string(),
+            ])
+            // Both PersonLegalType and PersonType extend PersonBaseType
+            .with_extending_schema("PersonBaseType", legal_type.clone())
+            .with_extending_schema("PersonBaseType", person_type.clone())
+            // Both also extend PersonLegalInclusion
+            .with_extending_schema("PersonLegalInclusion", legal_type.clone())
+            .with_extending_schema("PersonLegalInclusion", person_type.clone())
+            .build();
+
+        let config = hr_domain_config();
+        let paths = resolve_include_paths(
+            &engine,
+            &config,
+            "hr",
+            "WorkerType",
+            Some(&vec!["person".to_string()]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(paths.len(), 1, "should resolve 1 include path");
+        assert_eq!(
+            paths[0].segments[0].entity_name, "PersonType",
+            "VO→entity resolution should return PersonType, not PersonLegalType"
         );
     }
 
@@ -4463,6 +4524,15 @@ fn setup_include_mock() -> MockEngine {
         .build()
 }
 
+fn setup_include_mock_with_refs() -> MockEngine {
+    MockEngine::builder()
+        .with_schema(worker_schema())
+        .with_schema(person_schema())
+        .with_ref_target("person", "WorkerType", person_schema())
+        .with_properties("WorkerType", worker_properties_with_person_ref())
+        .build()
+}
+
 fn include_domain_config() -> codegraph_config::DomainConfig {
     let toml_str = r#"
 [defaults]
@@ -4502,7 +4572,7 @@ operations = ["create", "read", "update", "list"]
 
 #[tokio::test]
 async fn handler_with_include_produces_include_code() {
-    let mock = setup_include_mock();
+    let mock = setup_include_mock_with_refs();
     let config = include_domain_config();
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-handler-include");
@@ -4736,7 +4806,7 @@ async fn repository_emitter_omits_fetch_methods_without_include() {
 
 #[tokio::test]
 async fn dto_include_single_level() {
-    let mock = setup_include_mock();
+    let mock = setup_include_mock_with_refs();
     let config = include_domain_config();
     let tera = test_tera();
     let output_dir =
@@ -4990,9 +5060,11 @@ async fn dto_include_dot_notation() {
     ];
 
     let mock = MockEngine::builder()
-        .with_schema(position_schema)
-        .with_schema(deployment_schema)
+        .with_schema(position_schema.clone())
+        .with_schema(deployment_schema.clone())
         .with_schema(worker_schema)
+        .with_ref_target("deployment", "WorkerType", deployment_schema)
+        .with_ref_target("position", "DeploymentType", position_schema)
         .with_properties("WorkerType", vec![deployment_prop])
         .with_properties("DeploymentType", {
             let mut all = scalar_deployment_props;
@@ -5173,9 +5245,11 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
     );
 
     let mock = MockEngine::builder()
-        .with_schema(position_schema)
-        .with_schema(deployment_schema)
+        .with_schema(position_schema.clone())
+        .with_schema(deployment_schema.clone())
         .with_schema(worker_schema())
+        .with_ref_target("deployment", "WorkerType", deployment_schema)
+        .with_ref_target("position", "DeploymentType", position_schema)
         .with_properties("WorkerType", vec![worker_deployment_fk])
         .with_properties(
             "DeploymentType",
@@ -5341,8 +5415,9 @@ async fn ui_e2e_include_test_generated_when_allow_include_configured() {
     }];
 
     let mock = MockEngine::builder()
-        .with_schema(dep_schema)
+        .with_schema(dep_schema.clone())
         .with_schema(worker_schema)
+        .with_ref_target("dep_entity_id", "WorkerType", dep_schema)
         .with_properties("WorkerType", worker_props)
         .build();
 

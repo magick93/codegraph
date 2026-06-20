@@ -186,11 +186,7 @@ pub async fn get_by_id(
     let linked = PayRunLinkedResponse::root(response, "compensation", "pay-run");
 
 
-    let self_href = linked.links.self_link.clone();
 
-
-
-    let linked = linked.with_related("amount", format!("{}/{}", self_href, "amount"));
 
 
     Ok(Json(serde_json::json!({

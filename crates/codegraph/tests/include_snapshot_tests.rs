@@ -97,6 +97,7 @@ fn setup_include_mock() -> MockEngine {
     MockEngine::builder()
         .with_schema(worker_schema())
         .with_schema(person_schema())
+        .with_ref_target("person", "WorkerType", person_schema())
         .with_properties("WorkerType", worker_properties_with_person_ref())
         .build()
 }
@@ -185,6 +186,8 @@ fn setup_dot_notation_mock() -> MockEngine {
         .with_schema(dot_notation_schema_for("WorkerType", "worker", "Worker"))
         .with_schema(deployment_schema)
         .with_schema(position_schema)
+        .with_ref_target("deployment", "WorkerType", dot_notation_schema_for("DeploymentType", "deployment", "Deployment"))
+        .with_ref_target("position", "DeploymentType", dot_notation_schema_for("PositionType", "position", "Position"))
         .with_properties(
             "WorkerType",
             vec![PropertyNode {

@@ -1,0 +1,121 @@
+syntax = "proto3";
+package common;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "common/;common";
+
+
+
+
+/// EffectiveDate entity
+message EffectiveDate {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional google.protobuf.Timestamp validFrom = 2;
+  
+  
+  optional google.protobuf.Timestamp validTo = 3;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for EffectiveDate
+message CreateEffectiveDateRequest {
+  
+  
+  optional google.protobuf.Timestamp validFrom = 2;
+  
+  
+  optional google.protobuf.Timestamp validTo = 3;
+  
+}
+
+/// Update request for EffectiveDate
+message UpdateEffectiveDateRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional google.protobuf.Timestamp validFrom = 2;
+  
+  
+  optional google.protobuf.Timestamp validTo = 3;
+  
+}
+
+/// Get request for EffectiveDate
+message GetEffectiveDateRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for EffectiveDate
+message DeleteEffectiveDateRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for EffectiveDate
+message ListEffectiveDateRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for EffectiveDate
+message ListEffectiveDateResponse {
+  
+  
+  repeated EffectiveDate data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── EffectiveDate Service ──────────────────────────────────────────
+service EffectiveDateService {
+  
+  // Create a new entity
+  rpc Create(CreateEffectiveDateRequest) returns (EffectiveDate);
+  
+  // Get an entity by ID
+  rpc Get(GetEffectiveDateRequest) returns (EffectiveDate);
+  
+  // Update an existing entity
+  rpc Update(UpdateEffectiveDateRequest) returns (EffectiveDate);
+  
+  // Delete an entity by ID
+  rpc Delete(DeleteEffectiveDateRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListEffectiveDateRequest) returns (ListEffectiveDateResponse);
+  
+}
