@@ -402,7 +402,7 @@ async fn resolve_schema_target(
     // 1. Direct property $ref resolution — only follows the DIRECT
     //    ReferencesSchema edge, not allOf composition chains. If a property's
     //    direct $ref target is a VO (not is_entity, empty pg_table_name), do
-    //    NOT traverse allOf chains to find an entity.
+    //    NOT traverse allOf chains or PascalCase fallback to find an entity.
     if let Ok(props) = db.get_properties(current_source_title).await {
         for prop in &props {
             // Match on property name or rust_field_name (stripped of _id)
@@ -416,9 +416,13 @@ async fn resolve_schema_target(
             if prop_stem == seg_lower || rust_stem == seg_lower {
                 if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, current_source_title).await {
                     if !target.is_entity || target.pg_table_name.is_empty() {
+                        // The direct $ref target is a VO — this include path
+                        // cannot resolve through this property. Return an error
+                        // to prevent falling through to Tier 2/3 which could
+                        // match a different entity via PascalCase convention.
                         return Err(crate::error::Error::RefResolution(format!(
-                            "include segment '{seg}' points to force_value_object '{}' via direct $ref",
-                            target.title
+                            "include segment '{}' from '{}' targets force_value_object '{}.{}' — not resolvable",
+                            seg, current_source_title, target.domain.as_deref().unwrap_or("?"), target.title,
                         )));
                     }
                     if let Some(auth) = db.get_schema_by_id(&target.schema_id).await? {
@@ -452,10 +456,14 @@ async fn resolve_schema_target(
     }
 
     // 3. Fallback: try PascalCase naming convention.
+    // Only match entity schemas — skip VOs (same constraint as Tier 1).
     let pascal = codegraph_naming::to_pascal_case(seg);
     let candidates = [format!("{pascal}Type"), pascal.clone()];
     for title in &candidates {
         if let Ok(Some(node)) = db.get_schema_in_domain(title, domain).await {
+            if !node.is_entity || node.pg_table_name.is_empty() {
+                continue; // Skip VOs — not a valid include target
+            }
             if let Some(auth_node) = db.get_schema_by_id(&node.schema_id).await? {
                 return Ok(auth_node);
             }
