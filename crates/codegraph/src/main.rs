@@ -25,6 +25,13 @@ struct RunArgs<'a> {
 
 #[tokio::main]
 async fn main() -> codegraph::error::Result<()> {
+    if let Ok(filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::io::stderr)
+            .try_init();
+    }
+
     let cli = cli::Cli::parse();
 
     match cli.command {

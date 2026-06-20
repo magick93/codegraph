@@ -399,11 +399,14 @@ async fn resolve_schema_target(
 ) -> Result<SchemaNode> {
     let seg_lower = seg.to_lowercase();
 
+    tracing::debug!(target: "resolve_schema", seg=%seg, source=%current_source_title, domain=%domain, "resolving include segment");
+
     // 1. Direct property $ref resolution — only follows the DIRECT
     //    ReferencesSchema edge, not allOf composition chains. If a property's
     //    direct $ref target is a VO (not is_entity, empty pg_table_name), do
     //    NOT traverse allOf chains or PascalCase fallback to find an entity.
     if let Ok(props) = db.get_properties(current_source_title).await {
+        tracing::debug!(target: "resolve_schema", count=props.len(), source=%current_source_title, "Tier 1: properties found");
         for prop in &props {
             // Match on property name or rust_field_name (stripped of _id)
             // EntityReference properties have _id appended to rust_field_name
@@ -414,8 +417,17 @@ async fn resolve_schema_target(
                 .unwrap_or(&prop.rust_field_name)
                 .to_lowercase();
             if prop_stem == seg_lower || rust_stem == seg_lower {
+                tracing::debug!(target: "resolve_schema", prop_name=%prop.name, rust_field=%prop.rust_field_name, "Tier 1: property matched segment");
                 if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, current_source_title).await {
+                    tracing::debug!(target: "resolve_schema",
+                        target_title=%target.title,
+                        target_schema_id=%target.schema_id,
+                        is_entity=%target.is_entity,
+                        pg_table=%target.pg_table_name,
+                        "Tier 1: direct $ref target found"
+                    );
                     if !target.is_entity || target.pg_table_name.is_empty() {
+                        tracing::debug!(target: "resolve_schema", tier=1, target=%target.title, "rejected: force_value_object");
                         // The direct $ref target is a VO — this include path
                         // cannot resolve through this property. Return an error
                         // to prevent falling through to Tier 2/3 which could
@@ -425,6 +437,7 @@ async fn resolve_schema_target(
                             seg, current_source_title, target.domain.as_deref().unwrap_or("?"), target.title,
                         )));
                     }
+                    tracing::debug!(target: "resolve_schema", tier=1, target=%target.title, "resolved via direct property $ref");
                     if let Some(auth) = db.get_schema_by_id(&target.schema_id).await? {
                         return Ok(auth);
                     }
@@ -433,6 +446,8 @@ async fn resolve_schema_target(
             }
         }
     }
+
+    tracing::debug!(target: "resolve_schema", source=%current_source_title, "Tier 1: no matching property found, falling to Tier 2");
 
     // 2. Also check ItemsOf references (array items the source holds).
     //    These are discovered via the parent_candidates query (one-to-many direction).
@@ -445,6 +460,7 @@ async fn resolve_schema_target(
                     .to_lowercase();
                 if child_stripped == seg_lower {
                     if let Some(node) = db.get_schema_in_domain(&pc.child_title, domain).await? {
+                        tracing::debug!(target: "resolve_schema", tier=2, child=%node.title, "resolved via parent_candidates");
                         if let Some(auth_node) = db.get_schema_by_id(&node.schema_id).await? {
                             return Ok(auth_node);
                         }
@@ -464,12 +480,15 @@ async fn resolve_schema_target(
             if !node.is_entity || node.pg_table_name.is_empty() {
                 continue; // Skip VOs — not a valid include target
             }
+            tracing::debug!(target: "resolve_schema", tier=3, title=%title, "resolved via PascalCase fallback");
             if let Some(auth_node) = db.get_schema_by_id(&node.schema_id).await? {
                 return Ok(auth_node);
             }
             return Ok(node);
         }
     }
+
+    tracing::debug!(target: "resolve_schema", seg=%seg, source=%current_source_title, "include segment not resolvable via any tier");
 
     Err(crate::error::Error::RefResolution(format!(
         "cannot resolve include segment '{seg}' from '{current_source_title}'"
