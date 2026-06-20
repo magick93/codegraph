@@ -156,11 +156,11 @@ async fn test_get_properties() {
         .await
         .unwrap();
     engine
-        .ingest_property("PersonType", &make_property("givenName", true))
+        .ingest_property("PersonType", "test/PersonType", &make_property("givenName", true))
         .await
         .unwrap();
     engine
-        .ingest_property("PersonType", &make_property("familyName", true))
+        .ingest_property("PersonType", "test/PersonType", &make_property("familyName", true))
         .await
         .unwrap();
 
@@ -223,7 +223,7 @@ async fn test_get_property_ref_target() {
 
     let mut prop = make_property("address", true);
     prop.ref_target = Some("AddressType".to_string());
-    engine.ingest_property("PersonType", &prop).await.unwrap();
+    engine.ingest_property("PersonType", "test/PersonType", &prop).await.unwrap();
 
     engine
         .ingest_edge(
@@ -254,7 +254,7 @@ async fn test_get_codelist_for_property() {
         .await
         .unwrap();
     engine
-        .ingest_property("PersonType", &make_property("gender", true))
+        .ingest_property("PersonType", "test/PersonType", &make_property("gender", true))
         .await
         .unwrap();
 
@@ -304,7 +304,7 @@ async fn test_get_array_item_schema() {
 
     let mut prop = make_property("names", false);
     prop.is_array = true;
-    engine.ingest_property("PersonType", &prop).await.unwrap();
+    engine.ingest_property("PersonType", "test/PersonType", &prop).await.unwrap();
 
     engine
         .ingest_edge(
@@ -332,7 +332,7 @@ async fn test_get_composite_columns() {
         .await
         .unwrap();
     engine
-        .ingest_property("PersonType", &make_property("name", true))
+        .ingest_property("PersonType", "test/PersonType", &make_property("name", true))
         .await
         .unwrap();
 
@@ -375,11 +375,11 @@ async fn test_get_composite_range_and_consumed_fields() {
         .await
         .unwrap();
     engine
-        .ingest_property("EffectivePeriod", &make_property("startDate", true))
+        .ingest_property("EffectivePeriod", "test/EffectivePeriod", &make_property("startDate", true))
         .await
         .unwrap();
     engine
-        .ingest_property("EffectivePeriod", &make_property("endDate", false))
+        .ingest_property("EffectivePeriod", "test/EffectivePeriod", &make_property("endDate", false))
         .await
         .unwrap();
 
@@ -467,7 +467,7 @@ async fn test_get_referencing_and_referenced_schemas() {
         .await
         .unwrap();
     engine
-        .ingest_property("PersonType", &make_property("address", true))
+        .ingest_property("PersonType", "test/PersonType", &make_property("address", true))
         .await
         .unwrap();
 
@@ -541,7 +541,7 @@ async fn test_get_parent_candidates() {
 
     let prop = make_property("person", true);
     engine
-        .ingest_property("PersonNameType", &prop)
+        .ingest_property("PersonNameType", "test/PersonNameType", &prop)
         .await
         .unwrap();
 
@@ -597,11 +597,11 @@ async fn test_get_classification_data() {
         .await
         .unwrap();
     engine
-        .ingest_property("PersonType", &make_property("givenName", true))
+        .ingest_property("PersonType", "test/PersonType", &make_property("givenName", true))
         .await
         .unwrap();
     engine
-        .ingest_property("PersonType", &make_property("familyName", false))
+        .ingest_property("PersonType", "test/PersonType", &make_property("familyName", false))
         .await
         .unwrap();
 
@@ -630,7 +630,7 @@ async fn test_get_composition_tree_simple() {
     let schema = make_schema("PersonType", "common", true);
     engine.ingest_schema(&schema).await.unwrap();
     engine
-        .ingest_property("PersonType", &make_property("givenName", true))
+        .ingest_property("PersonType", "test/PersonType", &make_property("givenName", true))
         .await
         .unwrap();
 
