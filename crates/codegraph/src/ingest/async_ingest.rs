@@ -104,6 +104,23 @@ pub async fn ingest_schemas(
     // Pass 3: Ingest properties for all schemas (top-level + inline defs)
     let mut all_uris = uris.clone();
     all_uris.extend(inline_uris);
+
+    // Build a title → schema_id (URI) map so property ingestion can record the
+    // owning schema's URI alongside its title. Covers top-level schemas and
+    // inline definitions.
+    let mut title_to_schema_id: HashMap<String, String> = HashMap::new();
+    for uri in &all_uris {
+        if let Some(entry) = loader.get(uri) {
+            let title = entry
+                .schema
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&entry.stem)
+                .to_string();
+            title_to_schema_id.insert(title, uri.to_string());
+        }
+    }
+
     for uri in &all_uris {
         ingest_properties(
             db,
@@ -115,6 +132,7 @@ pub async fn ingest_schemas(
             suffix,
             &mut result,
             &stem_to_schema_ids,
+            &title_to_schema_id,
         )
         .await?;
     }
@@ -246,6 +264,7 @@ async fn ingest_inline_defs(
     Ok(created_uris)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn ingest_properties(
     db: &dyn GraphIngestor,
     loader: &SchemaLoader,
@@ -256,6 +275,7 @@ async fn ingest_properties(
     suffix: &str,
     result: &mut IngestResult,
     stem_to_schema_ids: &HashMap<String, Vec<String>>,
+    title_to_schema_id: &HashMap<String, String>,
 ) -> Result<()> {
     let entry = loader
         .get(uri)
@@ -309,6 +329,7 @@ async fn ingest_properties(
                     suffix,
                     result,
                     stem_to_schema_ids,
+                    title_to_schema_id,
                 )
                 .await;
             }
@@ -329,6 +350,7 @@ async fn ingest_properties(
         suffix,
         result,
         stem_to_schema_ids,
+        title_to_schema_id,
     )
     .await
 }
@@ -351,6 +373,7 @@ async fn ingest_properties_from_schema(
     suffix: &str,
     result: &mut IngestResult,
     stem_to_schema_ids: &HashMap<String, Vec<String>>,
+    title_to_schema_id: &HashMap<String, String>,
 ) -> Result<()> {
     // Collect property blocks: top-level properties + allOf inline/ref properties
     let mut prop_blocks: Vec<(serde_json::Map<String, serde_json::Value>, HashSet<String>)> =
@@ -530,7 +553,11 @@ async fn ingest_properties_from_schema(
                 }
             }
 
-            db.ingest_property(schema_title, &prop)
+            let schema_uri = title_to_schema_id
+                .get(schema_title)
+                .map(|s| s.as_str())
+                .unwrap_or(base_uri);
+            db.ingest_property(schema_title, schema_uri, &prop)
                 .await
                 .map_err(Error::Graph)?;
             result.properties_created += 1;

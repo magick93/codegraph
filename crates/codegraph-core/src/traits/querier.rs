@@ -86,6 +86,26 @@ pub trait GraphQuerier: Send + Sync {
         property_name: &str,
         schema_title: &str,
     ) -> Result<Option<SchemaNode>, GraphError>;
+
+    /// Like get_property_ref_target but matches by _schema_id (unique) instead of _schema_title.
+    async fn get_property_ref_target_by_id(
+        &self,
+        property_name: &str,
+        schema_id: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        // Default: delegate to title-based version
+        self.get_property_ref_target(property_name, schema_id).await
+    }
+
+    /// Get properties associated with a schema by its unique schema_id (not title).
+    async fn get_properties_by_schema_id(
+        &self,
+        schema_id: &str,
+    ) -> Result<Vec<PropertyNode>, GraphError> {
+        // Default: return empty
+        Ok(Vec::new())
+    }
+
     async fn get_array_item_schema(
         &self,
         property_name: &str,

@@ -41,6 +41,7 @@ pub struct CachingQuerier<'a> {
     referencing_cache: RwLock<HashMap<String, Vec<String>>>,
     referenced_cache: RwLock<HashMap<String, Vec<SchemaNode>>>,
     property_ref_target_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
+    property_ref_target_by_id_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
     array_item_schema_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
 }
 
@@ -65,6 +66,7 @@ impl<'a> CachingQuerier<'a> {
             referencing_cache: RwLock::new(HashMap::new()),
             referenced_cache: RwLock::new(HashMap::new()),
             property_ref_target_cache: RwLock::new(HashMap::new()),
+            property_ref_target_by_id_cache: RwLock::new(HashMap::new()),
             array_item_schema_cache: RwLock::new(HashMap::new()),
         }
     }
@@ -415,6 +417,28 @@ impl GraphQuerier for CachingQuerier<'_> {
             self.inner
                 .get_property_ref_target(property_name, schema_title)
         )
+    }
+
+    async fn get_property_ref_target_by_id(
+        &self,
+        property_name: &str,
+        schema_id: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        cached_pair!(
+            self,
+            property_ref_target_by_id_cache,
+            property_name,
+            schema_id,
+            self.inner
+                .get_property_ref_target_by_id(property_name, schema_id)
+        )
+    }
+
+    async fn get_properties_by_schema_id(
+        &self,
+        schema_id: &str,
+    ) -> Result<Vec<PropertyNode>, GraphError> {
+        self.inner.get_properties_by_schema_id(schema_id).await
     }
 
     async fn get_array_item_schema(

@@ -357,6 +357,7 @@ impl GraphIngestor for MockEngine {
     async fn ingest_property(
         &self,
         schema_title: &str,
+        _schema_id: &str,
         prop: &PropertyNode,
     ) -> Result<(), GraphError> {
         self.properties
@@ -720,6 +721,50 @@ impl GraphQuerier for MockEngine {
         Ok(ref_targets
             .get(&(property_name.to_string(), schema_title.to_string()))
             .cloned())
+    }
+
+    async fn get_property_ref_target_by_id(
+        &self,
+        property_name: &str,
+        schema_id: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        let title = {
+            let schemas = self.schemas.lock().unwrap();
+            schemas
+                .values()
+                .find(|s| s.schema_id == schema_id)
+                .map(|s| s.title.clone())
+        };
+        let Some(title) = title else {
+            return Ok(None);
+        };
+        let ref_targets = self.ref_targets.lock().unwrap();
+        Ok(ref_targets
+            .get(&(property_name.to_string(), title))
+            .cloned())
+    }
+
+    async fn get_properties_by_schema_id(
+        &self,
+        schema_id: &str,
+    ) -> Result<Vec<PropertyNode>, GraphError> {
+        let title = {
+            let schemas = self.schemas.lock().unwrap();
+            schemas
+                .values()
+                .find(|s| s.schema_id == schema_id)
+                .map(|s| s.title.clone())
+        };
+        let Some(title) = title else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .properties
+            .lock()
+            .unwrap()
+            .get(&title)
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn get_array_item_schema(

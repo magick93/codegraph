@@ -66,7 +66,7 @@ pub async fn resolve_include_paths(
     match allow_include {
         Some(paths) if paths.is_empty() => Ok(Vec::new()),
         Some(paths) => {
-            resolve_explicit_paths(db, config, domain, schema_title, source_entity_name, source_module, paths).await
+            resolve_explicit_paths(db, config, domain, schema_title, &source_schema.schema_id, source_entity_name, source_module, paths).await
         }
         None => {
             resolve_auto_paths(db, config, domain, schema_title, source_entity_name, source_module).await
@@ -81,6 +81,7 @@ async fn resolve_explicit_paths(
     config: &codegraph_config::DomainConfig,
     domain: &str,
     schema_title: &str,
+    source_schema_id: &str,
     _source_entity_name: &str,
     source_module: &str,
     paths: &[String],
@@ -101,10 +102,11 @@ async fn resolve_explicit_paths(
         // graph queries (get_referenced_schemas, get_properties) work correctly
         // at every depth level.
         let mut current_source_title: &str = schema_title;
+        let mut current_source_schema_id: String = source_schema_id.to_string();
 
         for &seg in &segment_strs {
             // Resolve the target schema via graph identity (schema_id).
-            let target_schema = resolve_schema_target(db, current_source_title, seg, domain).await?;
+            let target_schema = resolve_schema_target(db, &current_source_schema_id, current_source_title, seg, domain).await?;
             let target_title = target_schema.title.clone();
 
             // Skip force_value_objects — they don't have standalone entity or DTO
@@ -173,6 +175,9 @@ async fn resolve_explicit_paths(
             // Use the canonical schema title for the next iteration so graph
             // queries at depth ≥ 2 resolve correctly.
             current_source_title = &segments.last().unwrap().schema_title;
+            // Advance the schema_id to the target's identity for the next
+            // segment's identity-native property lookup.
+            current_source_schema_id = target_schema.schema_id.clone();
         }
 
         let alias_snake = path.replace('.', "_");
@@ -393,6 +398,7 @@ async fn resolve_auto_paths(
 /// Fallback: PascalCase naming convention for schemas not yet linked by refs.
 async fn resolve_schema_target(
     db: &dyn GraphQuerier,
+    current_source_schema_id: &str,
     current_source_title: &str,
     seg: &str,
     domain: &str,
@@ -405,44 +411,44 @@ async fn resolve_schema_target(
     //    ReferencesSchema edge, not allOf composition chains. If a property's
     //    direct $ref target is a VO (not is_entity, empty pg_table_name), do
     //    NOT traverse allOf chains or PascalCase fallback to find an entity.
-    if let Ok(props) = db.get_properties(current_source_title).await {
-        tracing::debug!(target: "resolve_schema", count=props.len(), source=%current_source_title, "Tier 1: properties found");
-        for prop in &props {
-            // Match on property name or rust_field_name (stripped of _id)
-            // EntityReference properties have _id appended to rust_field_name
-            // during ingestion via resolve_field(). Strip it for matching.
-            let prop_stem = prop.name.to_lowercase();
-            let rust_stem = prop.rust_field_name
-                .strip_suffix("_id")
-                .unwrap_or(&prop.rust_field_name)
-                .to_lowercase();
-            if prop_stem == seg_lower || rust_stem == seg_lower {
-                tracing::debug!(target: "resolve_schema", prop_name=%prop.name, rust_field=%prop.rust_field_name, "Tier 1: property matched segment");
-                if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, current_source_title).await {
-                    tracing::debug!(target: "resolve_schema",
-                        target_title=%target.title,
-                        target_schema_id=%target.schema_id,
-                        is_entity=%target.is_entity,
-                        pg_table=%target.pg_table_name,
-                        "Tier 1: direct $ref target found"
-                    );
-                    if !target.is_entity || target.pg_table_name.is_empty() {
-                        tracing::debug!(target: "resolve_schema", tier=1, target=%target.title, "rejected: force_value_object");
-                        // The direct $ref target is a VO — this include path
-                        // cannot resolve through this property. Return an error
-                        // to prevent falling through to Tier 2/3 which could
-                        // match a different entity via PascalCase convention.
-                        return Err(crate::error::Error::RefResolution(format!(
-                            "include segment '{}' from '{}' targets force_value_object '{}.{}' — not resolvable",
-                            seg, current_source_title, target.domain.as_deref().unwrap_or("?"), target.title,
-                        )));
-                    }
-                    tracing::debug!(target: "resolve_schema", tier=1, target=%target.title, "resolved via direct property $ref");
-                    if let Some(auth) = db.get_schema_by_id(&target.schema_id).await? {
-                        return Ok(auth);
-                    }
-                    return Ok(target);
+    //    Identity-native: properties are looked up by the source schema_id.
+    let props = db.get_properties_by_schema_id(current_source_schema_id).await?;
+    tracing::debug!(target: "resolve_schema", count=props.len(), source=%current_source_title, "Tier 1: properties found");
+    for prop in &props {
+        // Match on property name or rust_field_name (stripped of _id)
+        // EntityReference properties have _id appended to rust_field_name
+        // during ingestion via resolve_field(). Strip it for matching.
+        let prop_stem = prop.name.to_lowercase();
+        let rust_stem = prop.rust_field_name
+            .strip_suffix("_id")
+            .unwrap_or(&prop.rust_field_name)
+            .to_lowercase();
+        if prop_stem == seg_lower || rust_stem == seg_lower {
+            tracing::debug!(target: "resolve_schema", prop_name=%prop.name, rust_field=%prop.rust_field_name, "Tier 1: property matched segment");
+            if let Ok(Some(target)) = db.get_property_ref_target_by_id(&prop.name, current_source_schema_id).await {
+                tracing::debug!(target: "resolve_schema",
+                    target_title=%target.title,
+                    target_schema_id=%target.schema_id,
+                    is_entity=%target.is_entity,
+                    pg_table=%target.pg_table_name,
+                    "Tier 1: direct $ref target found"
+                );
+                if !target.is_entity || target.pg_table_name.is_empty() {
+                    tracing::debug!(target: "resolve_schema", tier=1, target=%target.title, "rejected: force_value_object");
+                    // The direct $ref target is a VO — this include path
+                    // cannot resolve through this property. Return an error
+                    // to prevent falling through to Tier 2/3 which could
+                    // match a different entity via PascalCase convention.
+                    return Err(crate::error::Error::RefResolution(format!(
+                        "include segment '{}' from '{}' targets force_value_object '{}.{}' — not resolvable",
+                        seg, current_source_title, target.domain.as_deref().unwrap_or("?"), target.title,
+                    )));
                 }
+                tracing::debug!(target: "resolve_schema", tier=1, target=%target.title, "resolved via direct property $ref");
+                if let Some(auth) = db.get_schema_by_id(&target.schema_id).await? {
+                    return Ok(auth);
+                }
+                return Ok(target);
             }
         }
     }

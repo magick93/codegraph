@@ -169,6 +169,7 @@ impl GraphIngestor for GrafeoEngine {
     async fn ingest_property(
         &self,
         schema_title: &str,
+        schema_id: &str,
         prop: &PropertyNode,
     ) -> Result<(), GraphError> {
         let session = self.db().session();
@@ -183,7 +184,7 @@ impl GraphIngestor for GrafeoEngine {
                 sea_orm_type: '{sea_orm_type}', render_strategy: '{render_strategy}', \
                 ref_target: {ref_target}, classification: {classification}, \
                 classification_kind: {classification_kind}, \
-                _schema_title: '{schema_title}'\
+                _schema_title: '{schema_title}', _schema_id: '{schema_id}'\
             }})",
             name = escape_gql(&prop.name),
             prop_type = escape_gql(&prop.prop_type),
@@ -208,15 +209,17 @@ impl GraphIngestor for GrafeoEngine {
                     .map(classification_kind_to_str)
             ),
             schema_title = escape_gql(schema_title),
+            schema_id = escape_gql(schema_id),
         );
         session
             .execute(&gql)
             .map_err(|e| GraphError::Ingest(format!("ingest_property INSERT failed: {e}")))?;
 
         let edge_gql = format!(
-            "MATCH (s:Schema {{title: '{st}'}}), (p:Property {{name: '{pn}', _schema_title: '{st}'}}) \
+            "MATCH (s:Schema {{title: '{st}'}}), (p:Property {{name: '{pn}', _schema_title: '{st2}'}}) \
              INSERT (s)-[:HasProperty]->(p)",
             st = escape_gql(schema_title),
+            st2 = escape_gql(schema_title),
             pn = escape_gql(&prop.name),
         );
         session.execute(&edge_gql).map_err(|e| {

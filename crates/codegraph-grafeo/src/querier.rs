@@ -729,6 +729,54 @@ impl GraphQuerier for GrafeoEngine {
         Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
     }
 
+    async fn get_property_ref_target_by_id(
+        &self,
+        property_name: &str,
+        schema_id: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        let params = HashMap::from([
+            (
+                "pname".to_string(),
+                grafeo::Value::String(property_name.into()),
+            ),
+            ("sid".to_string(), grafeo::Value::String(schema_id.into())),
+        ]);
+        let result = query_gql_params(
+            self,
+            &format!(
+                "MATCH (:Property {{name: $pname, _schema_id: $sid}})-[:ReferencesSchema]->(s:Schema) \
+                 RETURN {SCHEMA_RETURN_COLS}"
+            ),
+            params,
+        )?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
+    }
+
+    async fn get_properties_by_schema_id(
+        &self,
+        schema_id: &str,
+    ) -> Result<Vec<PropertyNode>, GraphError> {
+        let params =
+            HashMap::from([("sid".to_string(), grafeo::Value::String(schema_id.into()))]);
+        let result = query_gql_params(
+            self,
+            &format!(
+                "MATCH (p:Property {{_schema_id: $sid}}) RETURN {PROPERTY_RETURN_COLS}"
+            ),
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_property_node(&reader, row))
+            .collect()
+    }
+
     async fn get_array_item_schema(
         &self,
         property_name: &str,

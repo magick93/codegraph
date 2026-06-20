@@ -13,6 +13,7 @@ pub fn indexed_properties() -> Vec<&'static str> {
         "title",
         "schema_id",
         "_schema_title",
+        "_schema_id",
         "name",
         "_codelist_name",
     ]
@@ -62,7 +63,8 @@ fn node_type_ddl() -> Vec<&'static str> {
             render_strategy STRING NOT NULL,
             ref_target STRING,
             classification STRING,
-            _schema_title STRING NOT NULL
+            _schema_title STRING NOT NULL,
+            _schema_id STRING
         )",
         // CodeList — 5 fields
         "CREATE NODE TYPE IF NOT EXISTS CodeList (
