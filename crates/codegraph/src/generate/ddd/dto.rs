@@ -392,7 +392,7 @@ pub async fn build_dto_context(
     config: &DomainConfig,
 ) -> Result<DtoContext> {
     let schema = db
-        .get_schema(schema_title)
+        .get_schema_in_domain(schema_title, domain)
         .await?
         .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -1014,7 +1014,7 @@ impl DtoGenerator {
         include_paths: &[ResolvedIncludePath],
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -1098,11 +1098,11 @@ impl DtoGenerator {
                     // entity_name may use rust_type_name (e.g. "Deployment").
                     // Use schema_title (canonical graph key) for property lookup.
                     // Resolved include paths always set this correctly.
-                    let props_key = match db.get_schema(&intermediate.schema_title).await? {
+                    let props_key = match db.get_schema_in_domain(&intermediate.schema_title, domain).await? {
                         Some(s) => Some(s.title),
                         None => {
                             let with_type = format!("{}Type", intermediate.entity_name);
-                            db.get_schema(&with_type).await?.map(|s| s.title)
+                            db.get_schema_in_domain(&with_type, domain).await?.map(|s| s.title)
                         }
                     };
                     if let Some(ref key) = props_key {

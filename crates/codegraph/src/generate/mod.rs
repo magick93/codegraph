@@ -131,7 +131,7 @@ pub async fn resolve_parent_fk_column_same_domain(
                 .unwrap_or(false);
             let in_same_domain = in_explicit_list
                 || db
-                    .get_schema(&pc.parent_title)
+                    .get_schema_in_domain(&pc.parent_title, domain)
                     .await
                     .ok()
                     .flatten()

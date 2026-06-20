@@ -31,8 +31,9 @@ fn q(name: &str) -> String {
 async fn resolve_worker_detail_joins(
     db: &dyn GraphQuerier,
     parent_entity_name: &str,
+    domain: &str,
 ) -> Vec<(String, String, String)> {
-    let parent_schema = match db.get_schema(parent_entity_name).await {
+    let parent_schema = match db.get_schema_in_domain(parent_entity_name, domain).await {
         Ok(Some(s)) => s,
         _ => return Vec::new(),
     };
@@ -1705,7 +1706,7 @@ impl RepositoryImplEmitter {
         parent_ref: Option<&str>,
     ) -> Result<EntityTree> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -1883,12 +1884,12 @@ impl RepositoryImplEmitter {
                     }
 
                     // Get via entity's schema for table name
-                    let via_schema = db.get_schema(&entry.via_entity).await?
+                    let via_schema = db.get_schema_in_domain(&entry.via_entity, domain).await?
                         .ok_or_else(|| crate::error::Error::SchemaNotFound(entry.via_entity.clone()))?;
 
                     // Get parent entity's schema for table name
                     let parent_schema = if let Some(ref name) = parent_entity_name {
-                        db.get_schema(name).await.ok().flatten()
+                        db.get_schema_in_domain(name, domain).await.ok().flatten()
                     } else {
                         None
                     };
@@ -1896,7 +1897,7 @@ impl RepositoryImplEmitter {
                     // Resolve worker detail JOINs from the parent entity's composition tree.
                     // Walks child tables to find person name columns (given, family) and avatar_url.
                     let worker_detail_joins = if let Some(ref parent_name) = parent_entity_name {
-                        resolve_worker_detail_joins(db, parent_name).await
+                        resolve_worker_detail_joins(db, parent_name, domain).await
                     } else {
                         Vec::new()
                     };

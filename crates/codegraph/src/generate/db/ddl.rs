@@ -933,7 +933,7 @@ impl DdlGenerator {
         config: &DomainConfig,
     ) -> Result<DdlContext> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -997,7 +997,7 @@ impl DdlGenerator {
             if let Some(ec) = entity_cfg {
                 if ec.role.as_deref() == Some("child") {
                     if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) = db.get_schema(parent_title).await {
+                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, domain).await {
                             let parent_domain = if config
                                 .domains
                                 .get(domain)
@@ -1026,7 +1026,7 @@ impl DdlGenerator {
                 if let Some(pc) = self.parent_candidates.iter().find(|pc| {
                     crate::generate::api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix) == stripped
                 }) {
-                    if let Ok(Some(parent_schema)) = db.get_schema(&pc.parent_title).await {
+                    if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, domain).await {
                         let parent_domain = if config
                             .domains
                             .get(domain)

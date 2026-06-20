@@ -97,7 +97,7 @@ impl EntityGenerator for WorkflowActionGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -175,7 +175,7 @@ impl EntityGenerator for WorkflowActionGenerator {
                         .map(|d| d.entities.contains(&pc.parent_title))
                         .unwrap_or(false)
                         || db
-                            .get_schema(&pc.parent_title)
+                            .get_schema_in_domain(&pc.parent_title, &domain)
                             .await
                             .ok()
                             .flatten()
@@ -244,7 +244,7 @@ impl EntityGenerator for WorkflowActionGenerator {
                 })
             });
             if let Some(ref pt) = pt {
-                if let Ok(Some(parent_schema)) = db.get_schema(pt).await {
+                if let Ok(Some(parent_schema)) = db.get_schema_in_domain(pt, &domain).await {
                     let seg = if !parent_schema.api_path_segment.is_empty() {
                         parent_schema.api_path_segment.clone()
                     } else {

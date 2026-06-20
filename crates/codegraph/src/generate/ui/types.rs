@@ -81,7 +81,7 @@ impl GlobalGenerator for UiTypeGenerator {
         let mut entities = Vec::new();
 
         for entry in generation_order {
-            let schema = match db.get_schema(&entry.schema_title).await? {
+            let schema = match db.get_schema_in_domain(&entry.schema_title, &entry.domain).await? {
                 Some(s) => s,
                 None => continue,
             };

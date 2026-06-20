@@ -236,7 +236,7 @@ pub async fn collect_ui_fields(
                 // the same type name exists in multiple domains (e.g., OrderType
                 // in both assessments and screening).
                 let mut resolved = None;
-                if let Ok(Some(ref_schema)) = db.get_schema(ref_schema_title).await {
+                if let Ok(Some(ref_schema)) = db.get_schema_in_domain(ref_schema_title, current_domain.unwrap_or("")).await {
                     resolved = Some(ref_schema);
                 }
                 // If the resolved schema is in a different domain, check if
@@ -311,7 +311,7 @@ pub async fn collect_child_sections(
             }
 
             // Resolve the child schema from the graph
-            let child_schema = match db.get_schema(config_key).await? {
+            let child_schema = match db.get_schema_in_domain(config_key, current_domain).await? {
                 Some(s) => s,
                 None => continue,
             };

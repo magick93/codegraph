@@ -169,7 +169,7 @@ impl DomainGenerator for RouterGenerator {
         let mut title_to_entity_idx: HashMap<String, usize> = HashMap::new();
 
         for title in entity_titles {
-            if let Ok(Some(schema)) = db.get_schema(title).await {
+            if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain).await {
                 if !schema.pg_table_name.is_empty() {
                     // Dedup by module name to prevent duplicate route functions
                     if let Some(&existing_idx) = module_to_idx.get(&schema.pg_table_name) {

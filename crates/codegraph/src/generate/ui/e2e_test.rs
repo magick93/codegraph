@@ -148,7 +148,7 @@ impl UiE2eTestGenerator {
         {
             if parent_ec.role.as_deref() == Some("child") {
                 if let Some(ref gp_title) = parent_ec.parent {
-                    if let Ok(Some(gp_schema)) = db.get_schema(gp_title).await {
+                    if let Ok(Some(gp_schema)) = db.get_schema_in_domain(gp_title, parent_domain).await {
                         let gp_domain = if config
                             .domains
                             .get(parent_domain)
@@ -181,7 +181,7 @@ impl UiE2eTestGenerator {
         for gpc in &self.parent_candidates {
             let gpc_child = crate::generate::api::router::strip_suffix(&gpc.child_title, &config.defaults.type_suffix);
             if gpc_child == parent_stripped {
-                if let Ok(Some(gp_schema)) = db.get_schema(&gpc.parent_title).await {
+                if let Ok(Some(gp_schema)) = db.get_schema_in_domain(&gpc.parent_title, parent_domain).await {
                     let gp_domain = if config
                         .domains
                         .get(parent_domain)
@@ -228,7 +228,7 @@ impl EntityGenerator for UiE2eTestGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -393,7 +393,7 @@ impl EntityGenerator for UiE2eTestGenerator {
             {
                 if ec.role.as_deref() == Some("child") {
                     if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) = db.get_schema(parent_title).await {
+                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, &domain).await {
                             let parent_domain = if config
                                 .domains
                                 .get(&domain)
@@ -442,16 +442,16 @@ impl EntityGenerator for UiE2eTestGenerator {
                             .unwrap_or(false);
                         let parent_in_domain = in_explicit
                             || db
-                                .get_schema(&pc.parent_title)
-                                .await
-                                .ok()
-                                .flatten()
-                                .and_then(|s| s.domain.as_ref().map(|d| d == &domain))
-                                .unwrap_or(false);
+                            .get_schema_in_domain(&pc.parent_title, &domain)
+                            .await
+                            .ok()
+                            .flatten()
+                            .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
+                            .unwrap_or(false);
                         if !parent_in_domain {
                             break;
                         }
-                        if let Ok(Some(parent_schema)) = db.get_schema(&pc.parent_title).await {
+                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, &domain).await {
                             let parent_domain = domain.clone();
 
                             let grandparent = self
@@ -666,7 +666,7 @@ async fn build_dep_test_data(
         .unwrap_or(last_segment);
 
     // Resolve the referenced schema to find its domain
-    let dep_domain = match db.get_schema(ref_schema_title).await {
+    let dep_domain = match db.get_schema_in_domain(ref_schema_title, current_domain.unwrap_or("")).await {
         Ok(Some(s)) => s.domain.clone(),
         _ => current_domain.map(|s| s.to_string()),
     };
@@ -811,7 +811,7 @@ async fn resolve_e2e_include_config(
 
             // Resolve the target schema for api_path using the canonical schema_title.
             let target_schema = db
-                .get_schema(&seg.schema_title)
+                .get_schema_in_domain(&seg.schema_title, domain)
                 .await?
                 .ok_or_else(|| crate::error::Error::SchemaNotFound(seg.schema_title.clone()))?;
             let api_path = format!("/api/{}/{}", seg.domain, target_schema.api_path_segment);
@@ -868,7 +868,7 @@ async fn resolve_e2e_include_config(
 
     // Add main entity as the LAST setup step
     let source_schema = db
-        .get_schema(schema_title)
+        .get_schema_in_domain(schema_title, domain)
         .await?
         .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
     let main_dep_id = source_schema.pg_table_name.clone();

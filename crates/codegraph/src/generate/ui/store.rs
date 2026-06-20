@@ -68,7 +68,7 @@ pub async fn resolve_grandparent(
     {
         if parent_cfg.role.as_deref() == Some("child") {
             if let Some(ref gp_title) = parent_cfg.parent {
-                if let Ok(Some(gp_schema)) = db.get_schema(gp_title).await {
+                if let Ok(Some(gp_schema)) = db.get_schema_in_domain(gp_title, domain).await {
                     let gp_domain = if config
                         .domains
                         .get(domain)
@@ -108,7 +108,7 @@ pub async fn resolve_grandparent(
                 .unwrap_or(false);
             let in_same_domain = in_explicit
                 || db
-                    .get_schema(&pc.parent_title)
+                    .get_schema_in_domain(&pc.parent_title, domain)
                     .await
                     .ok()
                     .flatten()
@@ -117,7 +117,7 @@ pub async fn resolve_grandparent(
             if !in_same_domain {
                 return None;
             }
-            if let Ok(Some(gp_schema)) = db.get_schema(&pc.parent_title).await {
+            if let Ok(Some(gp_schema)) = db.get_schema_in_domain(&pc.parent_title, domain).await {
                 return Some(UiGrandparentInfo {
                     param_name: crate::generate::api::router::param_name_from_path_segment(
                         &gp_schema.api_path_segment,
@@ -168,7 +168,7 @@ impl EntityGenerator for UiStoreGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -209,7 +209,7 @@ impl EntityGenerator for UiStoreGenerator {
             {
                 if ec.role.as_deref() == Some("child") {
                     if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) = db.get_schema(parent_title).await {
+                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, &domain).await {
                             let parent_domain = if config
                                 .domains
                                 .get(&domain)
@@ -261,7 +261,7 @@ impl EntityGenerator for UiStoreGenerator {
                             .unwrap_or(false);
                         let parent_in_domain = in_explicit
                             || db
-                                .get_schema(&pc.parent_title)
+                                .get_schema_in_domain(&pc.parent_title, &domain)
                                 .await
                                 .ok()
                                 .flatten()
@@ -270,7 +270,7 @@ impl EntityGenerator for UiStoreGenerator {
                         if !parent_in_domain {
                             break;
                         }
-                        if let Ok(Some(parent_schema)) = db.get_schema(&pc.parent_title).await {
+                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, &domain).await {
                             let gp = resolve_grandparent(
                                 &pc.parent_title,
                                 &domain,

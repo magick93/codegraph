@@ -135,7 +135,7 @@ impl EntityGenerator for UiPageGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -229,7 +229,7 @@ impl EntityGenerator for UiPageGenerator {
             {
                 if ec.role.as_deref() == Some("child") {
                     if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) = db.get_schema(parent_title).await {
+                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, &domain).await {
                             let parent_domain = if config
                                 .domains
                                 .get(&domain)
@@ -281,16 +281,16 @@ impl EntityGenerator for UiPageGenerator {
                             .unwrap_or(false);
                         let parent_in_domain = in_explicit
                             || db
-                                .get_schema(&pc.parent_title)
-                                .await
-                                .ok()
-                                .flatten()
-                                .and_then(|s| s.domain.as_ref().map(|d| d == &domain))
-                                .unwrap_or(false);
+                            .get_schema_in_domain(&pc.parent_title, &domain)
+                            .await
+                            .ok()
+                            .flatten()
+                            .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
+                            .unwrap_or(false);
                         if !parent_in_domain {
                             break;
                         }
-                        if let Ok(Some(parent_schema)) = db.get_schema(&pc.parent_title).await {
+                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, &domain).await {
                             let gp = super::store::resolve_grandparent(
                                 &pc.parent_title,
                                 &domain,

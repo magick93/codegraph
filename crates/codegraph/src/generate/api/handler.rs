@@ -115,7 +115,7 @@ impl EntityGenerator for HandlerGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -190,7 +190,7 @@ impl EntityGenerator for HandlerGenerator {
                     if parent_ref.is_none() {
                         parent_ref = Some(format!("{}_id", codegraph_naming::to_snake_case(parent_name)));
                     }
-                    if let Ok(Some(parent_schema)) = db.get_schema(parent_title).await {
+                    if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, &domain).await {
                         resolved_parent_path_segment = Some(parent_schema.api_path_segment.clone());
                         resolved_parent_module_name = Some(parent_schema.pg_table_name.clone());
                         resolved_parent_domain = if config
@@ -230,7 +230,7 @@ impl EntityGenerator for HandlerGenerator {
                         .map(|d| d.entities.contains(&pc.parent_title))
                         .unwrap_or(false)
                         || db
-                            .get_schema(&pc.parent_title)
+                            .get_schema_in_domain(&pc.parent_title, &domain)
                             .await
                             .ok()
                             .flatten()
@@ -247,7 +247,7 @@ impl EntityGenerator for HandlerGenerator {
                     if parent_ref.is_none() {
                         parent_ref = Some(crate::generate::fk_column_for_candidate(pc, &config.defaults.type_suffix));
                     }
-                    if let Ok(Some(parent_schema)) = db.get_schema(&pc.parent_title).await {
+                    if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, &domain).await {
                         resolved_parent_path_segment = Some(parent_schema.api_path_segment.clone());
                         resolved_parent_module_name = Some(parent_schema.pg_table_name.clone());
                         resolved_parent_domain = Some(domain.clone());
@@ -267,7 +267,7 @@ impl EntityGenerator for HandlerGenerator {
             let parent_name = super::router::strip_suffix(&pc.parent_title, &config.defaults.type_suffix);
             if parent_name == stripped_title {
                 let child_name = super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
-                if let Ok(Some(child_schema)) = db.get_schema(&pc.child_title).await {
+                if let Ok(Some(child_schema)) = db.get_schema_in_domain(&pc.child_title, &domain).await {
                     resolved_children.push(ChildInfo {
                         entity_name: child_schema.rust_type_name.clone(),
                         module_name: child_schema.pg_table_name.clone(),
@@ -294,7 +294,7 @@ impl EntityGenerator for HandlerGenerator {
                                 if super::router::strip_suffix(parent_title, &config.defaults.type_suffix) == stripped_title
                                 {
                                     let child_name = super::router::strip_suffix(other_title, &config.defaults.type_suffix);
-                                    if let Ok(Some(child_schema)) = db.get_schema(other_title).await
+                                    if let Ok(Some(child_schema)) = db.get_schema_in_domain(other_title, &domain).await
                                     {
                                         resolved_children.push(ChildInfo {
                                             entity_name: child_schema.rust_type_name.clone(),
@@ -342,7 +342,7 @@ impl EntityGenerator for HandlerGenerator {
                     }
 
                     // Only include refs that are entities in any domain
-                    if let Ok(Some(ref_schema)) = db.get_schema(ref_title).await {
+                    if let Ok(Some(ref_schema)) = db.get_schema_in_domain(ref_title, &domain).await {
                         if ref_schema.pg_table_name.is_empty() {
                             continue;
                         }
@@ -453,7 +453,7 @@ impl EntityGenerator for HandlerGenerator {
                         })
                 });
                 if let Some(ref gpt) = gp_title {
-                    if let Ok(Some(gp_schema)) = db.get_schema(gpt).await {
+                    if let Ok(Some(gp_schema)) = db.get_schema_in_domain(gpt, &domain).await {
                         let gp_seg = if !gp_schema.api_path_segment.is_empty() {
                             gp_schema.api_path_segment.clone()
                         } else {

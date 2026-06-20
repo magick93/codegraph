@@ -341,7 +341,7 @@ pub async fn resolve_nested_filter_fields(
             }
 
             // Resolve the child entity's schema from the graph.
-            let child_schema = db.get_schema(config_key).await.ok().flatten();
+            let child_schema = db.get_schema_in_domain(config_key, schema_name).await.ok().flatten();
             let Some(child_schema) = child_schema else {
                 continue;
             };
