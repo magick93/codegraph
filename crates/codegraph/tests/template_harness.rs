@@ -4429,6 +4429,159 @@ operations = ["create", "read", "update", "list"]
             content.contains("DeriveEntityModel"),
             "Entity model should contain DeriveEntityModel"
         );
+        // Verify the FK column has the correct Rust field name (not a mismatched name)
+        assert!(
+            content.contains("pub person_id:"),
+            "FK column must declare pub person_id: with _id suffix. Got:\n{content}"
+        );
+    }
+
+    /// Shared setup: WorkerType → PersonLegalType (VO) → PersonType (entity) via allOf.
+    fn setup_vo_entity_mock() -> MockEngine {
+        let legal_type = SchemaNode {
+            pg_table_name: String::new(),
+            is_entity: false,
+            classification: "value_object".to_string(),
+            ..schema_node("PersonLegalType", "hr", "", false)
+        };
+        let person_type = schema_node("PersonType", "common", "person", true);
+        MockEngine::builder()
+            .with_schema(schema_node("WorkerType", "hr", "worker", true))
+            .with_schema(legal_type.clone())
+            .with_schema(person_type.clone())
+            .with_ref_target("person", "WorkerType", legal_type.clone())
+            .with_properties(
+                "WorkerType",
+                vec![PropertyNode {
+                    name: "person".to_string(),
+                    pg_column_name: "person".to_string(),
+                    rust_field_name: "person".to_string(),
+                    ref_target: Some("PersonLegalType".to_string()),
+                    rust_field_type: "Uuid".to_string(),
+                    sea_orm_type: "Uuid".to_string(),
+                    pg_column_type: "UUID".to_string(),
+                    render_strategy: "entity_reference".to_string(),
+                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::ValueObject),
+                    is_required: false,
+                    is_nullable: true,
+                    is_array: false,
+                    prop_type: "string".to_string(),
+                    description: None,
+                    format: None,
+                    pattern: None,
+                    min_length: None,
+                    max_length: None,
+                    minimum: None,
+                    maximum: None,
+                    classification: None,
+                    projection: None,
+                    ui_override_detail: None,
+                    ui_override_list_cell: None,
+                    ui_override_form: None,
+                    ui_override_inline: None,
+                }],
+            )
+            .with_allof_targets("PersonLegalType", vec![
+                "PersonBaseType".to_string(),
+                "PersonLegalInclusion".to_string(),
+            ])
+            .with_extending_schema("PersonBaseType", legal_type.clone())
+            .with_extending_schema("PersonBaseType", person_type.clone())
+            .with_extending_schema("PersonLegalInclusion", legal_type.clone())
+            .with_extending_schema("PersonLegalInclusion", person_type.clone())
+            .build()
+    }
+
+    fn vo_entity_domain_config() -> codegraph_config::DomainConfig {
+        let toml_str = r#"
+[defaults]
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType", "PersonType"]
+
+[domains.hr.entity_config.WorkerType]
+allow_include = ["person"]
+operations = ["create", "read", "update", "list"]
+"#;
+        parse_domain_config_str(toml_str).unwrap()
+    }
+
+    /// Test 3+4: Include path resolution produces correct FK column name.
+    /// The `person` include on WorkerType resolves to PersonType (via Tier 1.5
+    /// allOf chain), and the resolved FK column must be `person_id`, matching
+    /// the entity model emitted by the entity generator.
+    #[tokio::test]
+    async fn include_path_fk_column_is_person_id() {
+        let mock = setup_vo_entity_mock();
+        let config = vo_entity_domain_config();
+        let paths = resolve_include_paths(
+            &mock,
+            &config,
+            "hr",
+            "WorkerType",
+            Some(&vec!["person".to_string()]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(paths.len(), 1, "should resolve 1 include path");
+        assert_eq!(
+            paths[0].segments[0].entity_name, "PersonType",
+            "should resolve to PersonType through Tier 1.5 allOf chain"
+        );
+        assert_eq!(
+            paths[0].segments[0].fk_column, "person_id",
+            "fk_column must be person_id with _id suffix, matching entity model"
+        );
+    }
+
+    /// Test 5: Repository emitter uses source.person_id not source.person.
+    /// The repository code generated for fetch_person_for_worker must access
+    /// the FK column by its correct entity-model field name (person_id).
+    #[tokio::test]
+    async fn repository_uses_person_id_not_person() {
+        use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
+
+        let mock = setup_vo_entity_mock();
+        let config = vo_entity_domain_config();
+
+        let path = codegraph::generate::api::include_path::ResolvedIncludePath {
+            alias: "person".to_string(),
+            segments: vec![codegraph::generate::api::include_path::IncludeSegment {
+                entity_name: "PersonType".to_string(),
+                schema_title: "PersonType".to_string(),
+                module_name: "person".to_string(),
+                domain: "common".to_string(),
+                table: "\"common\".\"person\"".to_string(),
+                fk_column: "person_id".to_string(),
+                reverse_fk_column: "worker_id".to_string(),
+                is_array: false,
+            }],
+            response_rust_type: "PersonResponse".to_string(),
+            fetch_method: "fetch_person_for_worker".to_string(),
+            batch_fetch_method: "fetch_person_batch_for_worker".to_string(),
+        };
+
+        let emitter = RepositoryImplEmitter;
+        let code = emitter
+            .emit(&mock, "WorkerType", "hr", &config, None, &[path])
+            .await
+            .unwrap();
+
+        // Must access the FK column by its entity-model field name
+        assert!(
+            code.contains("source.person_id"),
+            "Repository must access fk_column=person_id on the entity model. Got:\n{code}"
+        );
+        // Must NOT use the property name without _id suffix
+        assert!(
+            !code.contains("source.person\n") && !code.contains("source.person\r"),
+            "Repository must NOT access source.person (missing _id). Got:\n{code}"
+        );
     }
 
     #[tokio::test]

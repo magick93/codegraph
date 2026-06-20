@@ -591,18 +591,25 @@ async fn resolve_fk_via_graph(
         {
             let fd = resolve_field(prop);
             let mut col_name = fd.column_name;
-            // If this is a VO property whose allOf chain reaches an entity,
-            // the FK column on the entity model uses _id suffix (matching the
-            // entity generator's VO→entity FK emission).
-            if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
-                if let Some(ref_vo_title) = prop.ref_target.as_deref().map(|rt| {
+            // If the property's $ref target is an entity (directly or via allOf),
+            // the FK column on the entity model uses _id suffix. This mirrors the
+            // entity generator's resolve_fk_column_name logic but uses graph data
+            // (is_entity flag) instead of domain config (entity_titles).
+            if !col_name.ends_with("_id") {
+                if let Some(ref_title) = prop.ref_target.as_deref().map(|rt| {
                     rt.rsplit('/').next().unwrap_or(rt)
                         .strip_suffix(".json#").or_else(|| rt.strip_suffix(".json"))
                         .unwrap_or(rt)
                 }) {
-                    if let Ok(Some(_entity)) = codegraph_core::traits::find_entity_extended_by_vo(db, ref_vo_title).await {
-                        if !col_name.ends_with("_id") {
-                            col_name = format!("{}_id", col_name);
+                    if let Ok(Some(target)) =
+                        db.get_property_ref_target(&prop.name, source_title).await
+                    {
+                        if target.is_entity && !target.pg_table_name.is_empty() {
+                            col_name = codegraph_core::types::ensure_id_suffix(&col_name);
+                        } else if let Ok(Some(_entity)) =
+                            codegraph_core::traits::find_entity_extended_by_vo(db, ref_title).await
+                        {
+                            col_name = codegraph_core::types::ensure_id_suffix(&col_name);
                         }
                     }
                 }

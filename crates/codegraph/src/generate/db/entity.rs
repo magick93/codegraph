@@ -353,75 +353,31 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     }
                 }
                 Some(RefClassificationKind::ValueObject) => {
-                    // When a non-array VO property targets a known entity, emit an FK
-                    // column on this entity model instead of a child table (the DDL
-                    // generates a FK reference, not a child table).
+                    // When a non-array VO property targets a known entity (directly
+                    // or through an allOf composition chain), emit an FK column on
+                    // this entity model. Uses the shared resolve_fk_column_name utility
+                    // — single source of truth for FK column naming across layers.
                     if !prop.is_array {
-                        if let Some(true) = db
-                            .get_property_ref_target(&prop.name, schema_title)
-                            .await
-                            .ok()
-                            .flatten()
-                            .map(|t| entity_titles.contains(&t.title))
-                        {
+                        let (fk_field, fk_col) = codegraph_core::types::resolve_fk_column_name(
+                            db, prop, schema_title, &entity_titles,
+                        )
+                        .await?;
+                        if fk_field.ends_with("_id") {
                             let is_nullable = !prop.is_required;
                             columns.push(EntityColumn {
-                                field_name: field_def.rust_field_name,
+                                field_name: fk_field,
                                 rust_type: if is_nullable {
                                     "Option<Uuid>".to_string()
                                 } else {
                                     "Uuid".to_string()
                                 },
                                 sea_orm_type: "Uuid".to_string(),
-                                column_name: field_def.column_name,
+                                column_name: fk_col,
                                 is_primary_key: false,
                                 is_nullable,
                                 pg_cast: None,
                                 sea_orm_attr: None,
                             });
-                        }
-                        // If the VO's direct $ref target is not in entity_titles,
-                        // check if the VO's allOf chain reaches a known entity.
-                        // E.g., WorkerType.person → PersonLegalType (VO) which allOf-
-                        // composes PersonBaseType and PersonLegalInclusion, shared by
-                        // PersonType (entity). Emit a FK column in that case.
-                        if let Ok(Some(target)) = db
-                            .get_property_ref_target(&prop.name, schema_title)
-                            .await
-                        {
-                            if !entity_titles.contains(&target.title) {
-                                if let Ok(Some(entity)) =
-                                    codegraph_core::traits::find_entity_extended_by_vo(db, &target.title).await
-                                {
-                                    if entity_titles.contains(&entity.title) {
-                                        let is_nullable = !prop.is_required;
-                                        let fk_field = if prop.rust_field_name.ends_with("_id") {
-                                            prop.rust_field_name.clone()
-                                        } else {
-                                            format!("{}_id", prop.rust_field_name)
-                                        };
-                                        let fk_col = if prop.pg_column_name.ends_with("_id") {
-                                            prop.pg_column_name.clone()
-                                        } else {
-                                            format!("{}_id", prop.pg_column_name)
-                                        };
-                                        columns.push(EntityColumn {
-                                            field_name: fk_field,
-                                            rust_type: if is_nullable {
-                                                "Option<Uuid>".to_string()
-                                            } else {
-                                                "Uuid".to_string()
-                                            },
-                                            sea_orm_type: "Uuid".to_string(),
-                                            column_name: fk_col,
-                                            is_primary_key: false,
-                                            is_nullable,
-                                            pg_cast: None,
-                                            sea_orm_attr: None,
-                                        });
-                                    }
-                                }
-                            }
                         }
                     }
                     // Child tables for non-entity VO targets are generated below
