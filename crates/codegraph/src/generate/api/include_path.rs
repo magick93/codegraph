@@ -416,7 +416,10 @@ async fn resolve_schema_target(
             if prop_stem == seg_lower || rust_stem == seg_lower {
                 if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, current_source_title).await {
                     if !target.is_entity || target.pg_table_name.is_empty() {
-                        break;
+                        return Err(crate::error::Error::RefResolution(format!(
+                            "include segment '{seg}' points to force_value_object '{}' via direct $ref",
+                            target.title
+                        )));
                     }
                     if let Some(auth) = db.get_schema_by_id(&target.schema_id).await? {
                         return Ok(auth);
