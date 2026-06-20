@@ -83,9 +83,10 @@ pub async fn ingest_schemas(
 
     // Build stem → schema_id map for $ref resolution.
     // This maps each stem (filename without .json) to all schema rel_paths
-    // that share it. A Vec is used because stems can collide across domains.
+    // that share it. Covers both top-level schemas and inline definitions
+    // (#/$defs/...). A Vec is used because stems can collide across domains.
     let mut stem_to_schema_ids: HashMap<String, Vec<String>> = HashMap::new();
-    for (_uri, entry) in loader.iter_top_level() {
+    for entry in loader.iter_all_unique() {
         stem_to_schema_ids
             .entry(entry.stem.clone())
             .or_default()

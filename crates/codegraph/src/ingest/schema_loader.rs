@@ -225,6 +225,21 @@ impl SchemaLoader {
             .iter()
             .filter_map(move |uri| self.cache.get(uri).map(|e| (uri.as_str(), e)))
     }
+
+    /// Iterate all unique schema entries (top-level + inline definitions),
+    /// deduplicating by stem. Each entry appears once even though the cache
+    /// indexes it under multiple aliases (stem, rel_path, uri).
+    pub fn iter_all_unique(&self) -> Vec<&SchemaEntry> {
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for entry in self.cache.values() {
+            let stem = &entry.stem;
+            if seen.insert(stem.clone()) {
+                result.push(entry);
+            }
+        }
+        result
+    }
 }
 
 /// Extract the domain name from a relative schema path.
