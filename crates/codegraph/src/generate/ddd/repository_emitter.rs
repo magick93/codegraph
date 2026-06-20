@@ -1644,6 +1644,20 @@ impl RepositoryImplEmitter {
                                 | RefClassificationKind::InlineEnum) => {}
                             _ => continue,
                         }
+                        // Skip properties whose direct $ref target is a
+                        // force_value_object — the entity generator skips
+                        // composed/inherited properties from allOf chains,
+                        // so the Model doesn't have these columns.
+                        if prop.effective_kind().is_some() {
+                            if let Ok(Some(target)) = db
+                                .get_property_ref_target(&prop.name, &seg.schema_title)
+                                .await
+                            {
+                                if !target.is_entity || target.pg_table_name.is_empty() {
+                                    continue;
+                                }
+                            }
+                        }
                         let fd = codegraph_core::types::resolve_field(prop);
                         // Deduplicate by rust_field_name — list_all_properties()
                         // can return duplicate entries from interface inheritance.

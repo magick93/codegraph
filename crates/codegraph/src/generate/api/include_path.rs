@@ -399,17 +399,29 @@ async fn resolve_schema_target(
 ) -> Result<SchemaNode> {
     let seg_lower = seg.to_lowercase();
 
-    // 1. Query the graph for schemas the current source actually references.
-    if let Ok(refs) = db.get_referenced_schemas(current_source_title).await {
-        for ref_schema in &refs {
-            let stripped = ref_schema
-                .title
-                .strip_suffix("Type")
-                .unwrap_or(&ref_schema.title)
+    // 1. Direct property $ref resolution — only follows the DIRECT
+    //    ReferencesSchema edge, not allOf composition chains. If a property's
+    //    direct $ref target is a VO (not is_entity, empty pg_table_name), do
+    //    NOT traverse allOf chains to find an entity.
+    if let Ok(props) = db.get_properties(current_source_title).await {
+        for prop in &props {
+            // Match on property name or rust_field_name (stripped of _id)
+            // EntityReference properties have _id appended to rust_field_name
+            // during ingestion via resolve_field(). Strip it for matching.
+            let prop_stem = prop.name.to_lowercase();
+            let rust_stem = prop.rust_field_name
+                .strip_suffix("_id")
+                .unwrap_or(&prop.rust_field_name)
                 .to_lowercase();
-            if stripped == seg_lower {
-                if let Some(auth_node) = db.get_schema_by_id(&ref_schema.schema_id).await? {
-                    return Ok(auth_node);
+            if prop_stem == seg_lower || rust_stem == seg_lower {
+                if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, current_source_title).await {
+                    if !target.is_entity || target.pg_table_name.is_empty() {
+                        break;
+                    }
+                    if let Some(auth) = db.get_schema_by_id(&target.schema_id).await? {
+                        return Ok(auth);
+                    }
+                    return Ok(target);
                 }
             }
         }
