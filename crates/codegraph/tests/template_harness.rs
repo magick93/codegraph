@@ -4338,6 +4338,100 @@ entities = ["WorkerType"]
     }
 
     #[tokio::test]
+    async fn entity_model_emits_fk_for_vo_that_extends_entity() {
+        let legal_type = SchemaNode {
+            pg_table_name: String::new(),
+            is_entity: false,
+            classification: "value_object".to_string(),
+            ..schema_node("PersonLegalType", "hr", "", false)
+        };
+        let person_type = schema_node("PersonType", "common", "person", true);
+        let mock = MockEngine::builder()
+            .with_schema(schema_node("WorkerType", "hr", "worker", true))
+            .with_schema(legal_type.clone())
+            .with_schema(person_type.clone())
+            .with_ref_target("person", "WorkerType", legal_type.clone())
+            .with_properties(
+                "WorkerType",
+                vec![PropertyNode {
+                    name: "person".to_string(),
+                    pg_column_name: "person".to_string(),
+                    rust_field_name: "person".to_string(),
+                    ref_target: Some("PersonLegalType".to_string()),
+                    rust_field_type: "Uuid".to_string(),
+                    sea_orm_type: "Uuid".to_string(),
+                    pg_column_type: "UUID".to_string(),
+                    render_strategy: "entity_reference".to_string(),
+                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::ValueObject),
+                    is_required: false,
+                    is_nullable: true,
+                    is_array: false,
+                    prop_type: "string".to_string(),
+                    description: None,
+                    format: None,
+                    pattern: None,
+                    min_length: None,
+                    max_length: None,
+                    minimum: None,
+                    maximum: None,
+                    classification: None,
+                    projection: None,
+                    ui_override_detail: None,
+                    ui_override_list_cell: None,
+                    ui_override_form: None,
+                    ui_override_inline: None,
+                }],
+            )
+            .with_allof_targets("PersonLegalType", vec![
+                "PersonBaseType".to_string(),
+                "PersonLegalInclusion".to_string(),
+            ])
+            .with_extending_schema("PersonBaseType", legal_type.clone())
+            .with_extending_schema("PersonBaseType", person_type.clone())
+            .with_extending_schema("PersonLegalInclusion", legal_type.clone())
+            .with_extending_schema("PersonLegalInclusion", person_type.clone())
+            .build();
+
+        let config = {
+            let toml_str = r#"
+[defaults]
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType", "PersonType"]
+
+[domains.hr.entity_config.WorkerType]
+operations = ["create", "read", "update", "list"]
+"#;
+            parse_domain_config_str(toml_str).unwrap()
+        };
+        let tera = test_tera();
+        let output_dir = tempfile::TempDir::new().unwrap();
+
+        let gen = generate::db::entity::SeaOrmEntityGenerator::new(output_dir.path());
+        let files = gen
+            .generate(&mock, "WorkerType", "hr", &config, &tera, &test_project_config())
+            .await
+            .unwrap();
+
+        let worker_file = files.iter()
+            .find(|f| f.path.to_string_lossy().contains("hr_worker"))
+            .expect("Should have a main entity file for WorkerType");
+        let content = &worker_file.content;
+        assert!(
+            content.contains("person_id"),
+            "VO→entity property should emit person_id FK column. Got:\n{content}"
+        );
+        assert!(
+            content.contains("DeriveEntityModel"),
+            "Entity model should contain DeriveEntityModel"
+        );
+    }
+
+    #[tokio::test]
     async fn resolve_auto_discovered_include() {
         let engine = MockEngine::builder()
             .with_schema(schema_node("WorkerType", "hr", "worker", true))

@@ -1214,22 +1214,41 @@ impl GrafeoEngine {
                         // cannot be represented by a single UUID FK on the parent. The FK
                         // lives on the child entity's table instead (configured via
                         // parent_ref in domains.toml).
-                        if target_schema.is_entity && !prop.is_array {
+                        let vo_entity = if !target_schema.is_entity {
+                            codegraph_core::traits::find_entity_extended_by_vo(self, &target_schema.title)
+                                .await
+                                .ok()
+                                .flatten()
+                        } else {
+                            None
+                        };
+
+                        if (target_schema.is_entity || vo_entity.is_some()) && !prop.is_array {
                             let mut entity_col = col;
                             entity_col.classification =
                                 Some(codegraph_type_contracts::RefClassificationKind::EntityReference);
-                            entity_col.fk_target = self
-                                .resolve_fk_target(
-                                    &prop.name,
-                                    schema_title,
-                                    &default_schema,
-                                    prop.ref_target.as_deref(),
-                                    "id",
-                                    "SET NULL",
-                                )
-                                .await;
+                            if let Some(entity) = &vo_entity {
+                                entity_col.fk_target = Some(FkTarget {
+                                    schema: entity.domain.clone().unwrap_or_else(|| default_schema.to_string()),
+                                    table: entity.pg_table_name.clone(),
+                                    column: "id".to_string(),
+                                    on_delete: "SET NULL".to_string(),
+                                });
+                            } else {
+                                entity_col.fk_target = self
+                                    .resolve_fk_target(
+                                        &prop.name,
+                                        schema_title,
+                                        &default_schema,
+                                        prop.ref_target.as_deref(),
+                                        "id",
+                                        "SET NULL",
+                                    )
+                                    .await;
+                            }
                             columns.push(entity_col);
-                        } else if !target_schema.is_entity
+                        }
+                        if !target_schema.is_entity
                             && !visited.contains(&target_schema.title)
                         {
                             // Recurse into ValueObject as a child node.

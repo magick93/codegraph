@@ -380,6 +380,49 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                                 sea_orm_attr: None,
                             });
                         }
+                        // If the VO's direct $ref target is not in entity_titles,
+                        // check if the VO's allOf chain reaches a known entity.
+                        // E.g., WorkerType.person → PersonLegalType (VO) which allOf-
+                        // composes PersonBaseType and PersonLegalInclusion, shared by
+                        // PersonType (entity). Emit a FK column in that case.
+                        if let Ok(Some(target)) = db
+                            .get_property_ref_target(&prop.name, schema_title)
+                            .await
+                        {
+                            if !entity_titles.contains(&target.title) {
+                                if let Ok(Some(entity)) =
+                                    codegraph_core::traits::find_entity_extended_by_vo(db, &target.title).await
+                                {
+                                    if entity_titles.contains(&entity.title) {
+                                        let is_nullable = !prop.is_required;
+                                        let fk_field = if prop.rust_field_name.ends_with("_id") {
+                                            prop.rust_field_name.clone()
+                                        } else {
+                                            format!("{}_id", prop.rust_field_name)
+                                        };
+                                        let fk_col = if prop.pg_column_name.ends_with("_id") {
+                                            prop.pg_column_name.clone()
+                                        } else {
+                                            format!("{}_id", prop.pg_column_name)
+                                        };
+                                        columns.push(EntityColumn {
+                                            field_name: fk_field,
+                                            rust_type: if is_nullable {
+                                                "Option<Uuid>".to_string()
+                                            } else {
+                                                "Uuid".to_string()
+                                            },
+                                            sea_orm_type: "Uuid".to_string(),
+                                            column_name: fk_col,
+                                            is_primary_key: false,
+                                            is_nullable,
+                                            pg_cast: None,
+                                            sea_orm_attr: None,
+                                        });
+                                    }
+                                }
+                            }
+                        }
                     }
                     // Child tables for non-entity VO targets are generated below
                 }

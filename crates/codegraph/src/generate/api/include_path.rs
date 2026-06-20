@@ -515,29 +515,12 @@ async fn resolve_schema_target(
 }
 
 /// Follow the allOf composition chain from a VO to find an entity that shares
-/// the same parent definitions. The chain: VO → allOf target → schemas extending
-/// that target → filter to the first entity (excluding the VO itself).
+/// the same parent definitions. Delegates to the shared utility in codegraph-core.
 async fn find_entity_through_vo(
     db: &dyn GraphQuerier,
     vo_title: &str,
 ) -> Result<Option<SchemaNode>> {
-    let allof_targets = db.get_allof_targets(vo_title).await?;
-    for parent_def in &allof_targets {
-        if let Ok(extenders) = db.get_schemas_that_extend(parent_def).await {
-            for extender in &extenders {
-                if extender.title != vo_title
-                    && extender.is_entity
-                    && !extender.pg_table_name.is_empty()
-                {
-                    if let Some(auth) = db.get_schema_by_id(&extender.schema_id).await? {
-                        return Ok(Some(auth));
-                    }
-                    return Ok(Some(extender.clone()));
-                }
-            }
-        }
-    }
-    Ok(None)
+    Ok(codegraph_core::traits::find_entity_extended_by_vo(db, vo_title).await?)
 }
 
 /// Check that the source schema has a graph relationship (property $ref or
@@ -607,7 +590,24 @@ async fn resolve_fk_via_graph(
             || prop.rust_field_name.to_lowercase() == seg_snake
         {
             let fd = resolve_field(prop);
-            return Ok((fd.column_name, prop.is_array));
+            let mut col_name = fd.column_name;
+            // If this is a VO property whose allOf chain reaches an entity,
+            // the FK column on the entity model uses _id suffix (matching the
+            // entity generator's VO→entity FK emission).
+            if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
+                if let Some(ref_vo_title) = prop.ref_target.as_deref().map(|rt| {
+                    rt.rsplit('/').next().unwrap_or(rt)
+                        .strip_suffix(".json#").or_else(|| rt.strip_suffix(".json"))
+                        .unwrap_or(rt)
+                }) {
+                    if let Ok(Some(_entity)) = codegraph_core::traits::find_entity_extended_by_vo(db, ref_vo_title).await {
+                        if !col_name.ends_with("_id") {
+                            col_name = format!("{}_id", col_name);
+                        }
+                    }
+                }
+            }
+            return Ok((col_name, prop.is_array));
         }
     }
 

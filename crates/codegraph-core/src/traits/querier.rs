@@ -204,3 +204,33 @@ pub trait GraphQuerier: Send + Sync {
         Ok(Vec::new())
     }
 }
+
+/// Check if a VO (value object) schema extends an entity through its allOf
+/// composition chain. Traverses: VO → its allOf parents → schemas that extend
+/// those parents → first entity found (excluding the VO itself).
+///
+/// Example: PersonLegalType (VO) allOf → [PersonBaseType, PersonLegalInclusion].
+/// PersonType (entity) also allOf → PersonBaseType and PersonLegalInclusion.
+/// `find_entity_extended_by_vo(db, "PersonLegalType")` returns PersonType.
+pub async fn find_entity_extended_by_vo(
+    db: &dyn GraphQuerier,
+    vo_title: &str,
+) -> Result<Option<SchemaNode>, GraphError> {
+    let allof_targets = db.get_allof_targets(vo_title).await?;
+    for parent_def in &allof_targets {
+        if let Ok(extenders) = db.get_schemas_that_extend(parent_def).await {
+            for extender in &extenders {
+                if extender.title != vo_title
+                    && extender.is_entity
+                    && !extender.pg_table_name.is_empty()
+                {
+                    if let Some(auth) = db.get_schema_by_id(&extender.schema_id).await? {
+                        return Ok(Some(auth));
+                    }
+                    return Ok(Some(extender.clone()));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
