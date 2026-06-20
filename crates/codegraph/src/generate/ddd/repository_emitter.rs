@@ -1611,8 +1611,18 @@ impl RepositoryImplEmitter {
                         {
                             continue;
                         }
-                        if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
-                            continue;
+                        // Only include properties that produce a single direct
+                        // column on the entity Model — matching the entity
+                        // generator's match arm logic.
+                        match prop.effective_kind() {
+                            Some(RefClassificationKind::PrimitiveWrapper
+                                | RefClassificationKind::StructuredWrapper
+                                | RefClassificationKind::CodelistReference
+                                | RefClassificationKind::CodelistCheck
+                                | RefClassificationKind::EntityReference
+                                | RefClassificationKind::RangeWrapper
+                                | RefClassificationKind::InlineEnum) => {}
+                            _ => continue,
                         }
                         let fd = codegraph_core::types::resolve_field(prop);
                         // Deduplicate by rust_field_name — list_all_properties()
