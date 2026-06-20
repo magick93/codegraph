@@ -265,11 +265,10 @@ async fn resolve_auto_paths(
 
         // Resolve FK column from the child entity's domain config (parent_ref)
         // or from graph properties, falling back to convention-based naming.
+        // Both fk_column and reverse_fk_column resolve to the same FK on the
+        // child entity that references the parent.
         let fk_column = resolve_child_fk_column(config, domain, target_title, schema_title, db).await?;
-        let parent_entity_name = super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
-        let (reverse_fk_column, _) = resolve_fk_via_graph(
-            db, &target_title, schema_title, &parent_entity_name,
-        ).await?;
+        let reverse_fk_column = fk_column.clone();
 
         let alias_seg = codegraph_naming::to_snake_case(super::router::strip_suffix(
             target_title,
@@ -484,7 +483,7 @@ async fn resolve_fk_via_graph(
         }).unwrap_or(false);
         if matches {
             let fd = resolve_field(prop);
-            return Ok((fd.rust_field_name, prop.is_array));
+            return Ok((fd.column_name, prop.is_array));
         }
     }
 
@@ -494,7 +493,7 @@ async fn resolve_fk_via_graph(
             || prop.rust_field_name.to_lowercase() == seg_snake
         {
             let fd = resolve_field(prop);
-            return Ok((fd.rust_field_name, prop.is_array));
+            return Ok((fd.column_name, prop.is_array));
         }
     }
 
@@ -503,7 +502,7 @@ async fn resolve_fk_via_graph(
     for prop in &source_props {
         if prop.pg_column_name.to_lowercase() == seg_id {
             let fd = resolve_field(prop);
-            return Ok((fd.rust_field_name, prop.is_array));
+            return Ok((fd.column_name, prop.is_array));
         }
     }
 

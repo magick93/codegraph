@@ -1352,22 +1352,13 @@ async fn build_columns_and_children(
                         child_tables: vec![],
                     });
                 }
-            } else {
+                } else {
                 let codelist_type =
                     crate::generate::ddd::dto::codelist_enum_name_from_ref(&prop.ref_target);
-                // rust_field_name at ingestion may retain _code suffix for some
-                // classifier paths. The DTO field name strips _code — set
-                // dto_field_name so col.dto_name() returns the correct DTO name.
-                let stripped = crate::generate::ddd::dto::strip_code_suffix_safe(&field_def.rust_field_name);
-                let dto_name = if stripped != field_def.rust_field_name {
-                    Some(stripped)
-                } else {
-                    None // same as field_name, no override needed
-                };
                 direct_columns.push(TreeColumn {
                     field_name: field_def.rust_field_name.clone(),
                     pg_column_name: field_def.column_name.clone(),
-                    dto_field_name: dto_name,
+                    dto_field_name: None,
                     rust_type: "String".to_string(),
                     is_nullable: !prop.is_required,
                     is_entity_ref: false,
