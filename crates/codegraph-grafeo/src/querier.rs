@@ -353,7 +353,7 @@ impl GraphQuerier for GrafeoEngine {
     }
 
     async fn get_parent_candidates(&self) -> Result<Vec<ParentCandidate>, GraphError> {
-        let gql = "MATCH (child:Schema)-[:HasProperty]->(p:Property {is_required: true, is_array: false})-[:ReferencesSchema]->(parent:Schema {is_entity: true}) \
+        let gql = "MATCH (child:Schema)-[:HasProperty]->(p:Property {is_array: false})-[:ReferencesSchema]->(parent:Schema {is_entity: true}) \
                    RETURN DISTINCT child.title, parent.title, p.name";
         let result = query_gql(self, gql)?;
         let reader = RowReader::from_columns(&result.columns);

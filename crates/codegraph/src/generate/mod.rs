@@ -755,42 +755,39 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         std::collections::HashSet::new();
     let mut entity_seq = 500;
     for (entity_files, errors) in entity_results.into_iter() {
-        if errors.is_empty() {
-            for file in entity_files {
-                // Check for duplicate migration base names before assigning seq number.
-                let is_migration = file
-                    .path
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .is_some_and(|d| d == "migrations");
-                if is_migration {
-                    if let Some(name) = file.path.file_name().and_then(|n| n.to_str()) {
-                        let base = name
-                            .trim_start_matches(|c: char| c.is_ascii_digit() || c == '_')
-                            .to_string();
-                        if !seen_migration_names.insert(base.clone()) {
-                            // Two different schema titles produced the same pg_table_name
-                            // (e.g. "AssessmentAccessType" and a cross-domain ref
-                            // "AssessmentAccess" both produce assessments_assessment_access.sql).
-                            // Keep the first occurrence; skip subsequent ones.
-                            tracing::warn!(
-                                migration = %name,
-                                base = %base,
-                                "skipping duplicate migration — same pg_table_name produced by \
-                                 multiple schema titles; first occurrence wins"
-                            );
-                            continue;
-                        }
+        for file in entity_files {
+            // Check for duplicate migration base names before assigning seq number.
+            let is_migration = file
+                .path
+                .parent()
+                .and_then(|p| p.file_name())
+                .is_some_and(|d| d == "migrations");
+            if is_migration {
+                if let Some(name) = file.path.file_name().and_then(|n| n.to_str()) {
+                    let base = name
+                        .trim_start_matches(|c: char| c.is_ascii_digit() || c == '_')
+                        .to_string();
+                    if !seen_migration_names.insert(base.clone()) {
+                        // Two different schema titles produced the same pg_table_name
+                        // (e.g. "AssessmentAccessType" and a cross-domain ref
+                        // "AssessmentAccess" both produce assessments_assessment_access.sql).
+                        // Keep the first occurrence; skip subsequent ones.
+                        tracing::warn!(
+                            migration = %name,
+                            base = %base,
+                            "skipping duplicate migration — same pg_table_name produced by \
+                             multiple schema titles; first occurrence wins"
+                        );
+                        continue;
                     }
                 }
-                let file = prefix_migration_path(file, entity_seq);
-                entity_seq += 1;
-                write_output(&file)?;
-                report.files.push(file);
             }
-        } else {
-            report.errors.extend(errors);
+            let file = prefix_migration_path(file, entity_seq);
+            entity_seq += 1;
+            write_output(&file)?;
+            report.files.push(file);
         }
+        report.errors.extend(errors);
     }
 
     // Codelist SQL migration generators (codelists are not entities, run separately)

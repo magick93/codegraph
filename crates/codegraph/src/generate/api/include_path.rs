@@ -460,7 +460,7 @@ async fn resolve_schema_target(
 
     // 2. ItemsOf references (array items the source holds).
     //    Discovered via parent_candidates query (one-to-many direction).
-    if let Ok(candidates) = db.get_parent_candidates().await {
+     if let Ok(candidates) = db.get_parent_candidates().await {
         for pc in &candidates {
             if pc.parent_title == current_source_title {
                 let child_stripped = pc.child_title
