@@ -171,9 +171,10 @@ async fn resolve_explicit_paths(
             let (fk_column, is_array) =
                 resolve_fk_via_graph(db, current_source_title, &target_title, seg).await?;
 
-            let reverse_fk_column = format!("{}_id", codegraph_naming::to_snake_case(
-                super::router::strip_suffix(current_source_title, &config.defaults.type_suffix),
-            ));
+            let source_entity_name = super::router::strip_suffix(current_source_title, &config.defaults.type_suffix);
+            let (reverse_fk_column, _) = resolve_fk_via_graph(
+                db, &target_title, current_source_title, &source_entity_name,
+            ).await?;
 
             segments.push(IncludeSegment {
                 entity_name: target_entity_name,
@@ -265,13 +266,10 @@ async fn resolve_auto_paths(
         // Resolve FK column from the child entity's domain config (parent_ref)
         // or from graph properties, falling back to convention-based naming.
         let fk_column = resolve_child_fk_column(config, domain, target_title, schema_title, db).await?;
-        let reverse_fk_column = format!(
-            "{}_id",
-            codegraph_naming::to_snake_case(super::router::strip_suffix(
-                schema_title,
-                &config.defaults.type_suffix,
-            ))
-        );
+        let parent_entity_name = super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
+        let (reverse_fk_column, _) = resolve_fk_via_graph(
+            db, &target_title, schema_title, &parent_entity_name,
+        ).await?;
 
         let alias_seg = codegraph_naming::to_snake_case(super::router::strip_suffix(
             target_title,
@@ -372,9 +370,10 @@ async fn resolve_auto_paths(
             &codegraph_naming::to_snake_case(ref_entity_name),
         ).await?;
 
-        let reverse_fk_column = format!("{}_id", codegraph_naming::to_snake_case(
-            super::router::strip_suffix(schema_title, &config.defaults.type_suffix),
-        ));
+        let source_entity_name = super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
+        let (reverse_fk_column, _) = resolve_fk_via_graph(
+            db, ref_title, schema_title, &source_entity_name,
+        ).await?;
 
         let alias_seg = codegraph_naming::to_snake_case(ref_entity_name);
 
