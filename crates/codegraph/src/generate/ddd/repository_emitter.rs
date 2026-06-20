@@ -1380,7 +1380,7 @@ async fn build_columns_and_children(
                 rust_type: "serde_json::Value".to_string(),
                 is_nullable: !prop.is_required,
                 is_entity_ref: false,
-                dto_rust_type: Some(prop.rust_field_type.clone()),
+                dto_rust_type: None,
                 is_workflow_managed: is_workflow_field,
                 is_array: prop.is_array,
                 pg_cast: None,
