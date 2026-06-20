@@ -3568,6 +3568,7 @@ impl RepositoryImplEmitter {
             Self::emit_field_assignments(code, "row", dto_fields, col_fields);
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
+            writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }});").unwrap();
             writeln!(code, "        }}").unwrap();
             writeln!(code, "        Ok(results)").unwrap();
@@ -3622,6 +3623,7 @@ impl RepositoryImplEmitter {
             Self::emit_field_assignments(code, "target", dto_fields, col_fields);
             writeln!(code, "            created_at: target.created_at,").unwrap();
             writeln!(code, "            updated_at: target.updated_at,").unwrap();
+            writeln!(code, "            ..Default::default()").unwrap();
             writeln!(code, "        }}))").unwrap();
         }
 
@@ -3713,6 +3715,7 @@ impl RepositoryImplEmitter {
             Self::emit_field_assignments(code, "row", dto_fields, col_fields);
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
+            writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }});").unwrap();
             writeln!(code, "        }}").unwrap();
         } else {
@@ -3769,6 +3772,7 @@ impl RepositoryImplEmitter {
             Self::emit_field_assignments(code, "t", dto_fields, col_fields);
             writeln!(code, "            created_at: t.created_at,").unwrap();
             writeln!(code, "            updated_at: t.updated_at,").unwrap();
+            writeln!(code, "            ..Default::default()").unwrap();
             writeln!(
                 code,
                 "        }})).collect();"
@@ -3881,6 +3885,7 @@ impl RepositoryImplEmitter {
         Self::emit_field_assignments(code, "l", leaf_dto, leaf_col);
         writeln!(code, "            created_at: l.created_at,").unwrap();
         writeln!(code, "            updated_at: l.updated_at,").unwrap();
+        writeln!(code, "            ..Default::default()").unwrap();
         writeln!(code, "        }});").unwrap();
 
         writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
@@ -3890,6 +3895,7 @@ impl RepositoryImplEmitter {
         writeln!(code, "            created_at: intermediate.created_at,").unwrap();
         writeln!(code, "            updated_at: intermediate.updated_at,").unwrap();
         writeln!(code, "            {}: leaf_dto,", seg1.module_name).unwrap();
+        writeln!(code, "            ..Default::default()").unwrap();
         writeln!(code, "        }}))").unwrap();
 
         writeln!(code, "    }}").unwrap();
