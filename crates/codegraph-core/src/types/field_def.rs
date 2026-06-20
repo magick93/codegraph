@@ -90,3 +90,28 @@ pub fn ensure_id_suffix(name: &str) -> String {
         format!("{}_id", name)
     }
 }
+
+/// Extract the codelist enum name from a property's `ref_target` path.
+///
+/// Handles both clean names (`"GenderCodeList"`) and path-style references
+/// (`"common/json/codelist/GenderCodeList.json"`).
+///
+/// Returns `None` when `ref_target` is `None` or empty — the caller should
+/// fall back to `"String"`.
+pub fn codelist_enum_name_from_ref(ref_target: &Option<String>) -> Option<String> {
+    let target = ref_target.as_deref()?.trim();
+    if target.is_empty() {
+        return None;
+    }
+    // Take the last path segment and strip .json or .json# extension
+    let filename = target.rsplit('/').next().unwrap_or(target);
+    let name = filename
+        .strip_suffix(".json#")
+        .or_else(|| filename.strip_suffix(".json"))
+        .unwrap_or(filename);
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}

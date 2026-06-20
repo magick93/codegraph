@@ -660,7 +660,9 @@ pub async fn build_dto_context(
         fields.push(DtoField {
             name: field_def.rust_field_name.clone(),
             rust_type,
-            is_required: prop.is_required,
+            // FK columns on entity models are always nullable — entity references
+            // in DTOs must use Option<uuid::Uuid> regardless of schema required/optional.
+            is_required: if is_entity_ref { false } else { prop.is_required },
             is_array: prop.is_array,
             description: prop.description.as_deref().unwrap_or("").to_string(),
             render_strategy: prop.render_strategy.clone(),
@@ -1291,19 +1293,12 @@ pub(crate) fn strip_code_suffix_safe(name: &str) -> String {
 /// (`"common/json/codelist/GenderCodeList.json"`).
 /// Returns `None` when `ref_target` is `None` or empty.
 pub(crate) fn codelist_enum_name_from_ref(ref_target: &Option<String>) -> Option<String> {
-    let target = ref_target.as_deref()?.trim();
-    if target.is_empty() {
-        return None;
-    }
-    // Take the last path segment and strip .json or .json# extension
-    let filename = target.rsplit('/').next().unwrap_or(target);
-    let name = filename
-        .strip_suffix(".json#")
-        .or_else(|| filename.strip_suffix(".json"))
-        .unwrap_or(filename);
-    if name.is_empty() {
-        None
-    } else {
-        Some(name.to_string())
-    }
+    codegraph_core::types::codelist_enum_name_from_ref(ref_target)
+}
+
+/// Return the Rust type for a codelist property — the enum name if available,
+/// otherwise `"String"`.
+pub(crate) fn resolve_codelist_rust_type(prop: &codegraph_core::types::PropertyNode) -> String {
+    codegraph_core::types::codelist_enum_name_from_ref(&prop.ref_target)
+        .unwrap_or_else(|| "String".to_string())
 }
