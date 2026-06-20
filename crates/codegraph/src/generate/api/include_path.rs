@@ -407,48 +407,34 @@ async fn resolve_schema_target(
 
     tracing::debug!(target: "resolve_schema", seg=%seg, source=%current_source_title, domain=%domain, "resolving include segment");
 
-    // 1. Direct property $ref resolution — only follows the DIRECT
-    //    ReferencesSchema edge, not allOf composition chains. If a property's
-    //    direct $ref target is a VO (not is_entity, empty pg_table_name), do
-    //    NOT traverse allOf chains or PascalCase fallback to find an entity.
-    //    Identity-native: properties are looked up by the source schema_id.
-    let props = db.get_properties_by_schema_id(current_source_schema_id).await?;
-    tracing::debug!(target: "resolve_schema", count=props.len(), source=%current_source_title, "Tier 1: properties found");
-    for prop in &props {
-        // Match on property name or rust_field_name (stripped of _id)
-        // EntityReference properties have _id appended to rust_field_name
-        // during ingestion via resolve_field(). Strip it for matching.
-        let prop_stem = prop.name.to_lowercase();
-        let rust_stem = prop.rust_field_name
-            .strip_suffix("_id")
-            .unwrap_or(&prop.rust_field_name)
-            .to_lowercase();
-        if prop_stem == seg_lower || rust_stem == seg_lower {
-            tracing::debug!(target: "resolve_schema", prop_name=%prop.name, rust_field=%prop.rust_field_name, "Tier 1: property matched segment");
-            if let Ok(Some(target)) = db.get_property_ref_target_by_id(&prop.name, current_source_schema_id).await {
+    // 1. Direct referenced-schema resolution via the graph.
+    //    Uses get_referenced_schemas() which traverses all $ref edges
+    //    including through allOf composition chains. This correctly
+    //    resolves segments like "person" → PersonLegalType (VO) →
+    //    PersonType (entity) through the allOf chain.
+    //    Domain-scoped to prevent cross-domain title collisions.
+    if let Ok(refs) = db.get_referenced_schemas(current_source_title).await {
+        tracing::debug!(target: "resolve_schema", count=refs.len(), source=%current_source_title, "Tier 1: referenced schemas found");
+        for ref_schema in &refs {
+            let stripped = ref_schema.title
+                .strip_suffix("Type")
+                .unwrap_or(&ref_schema.title)
+                .to_lowercase();
+            if stripped == seg_lower {
                 tracing::debug!(target: "resolve_schema",
-                    target_title=%target.title,
-                    target_schema_id=%target.schema_id,
-                    is_entity=%target.is_entity,
-                    pg_table=%target.pg_table_name,
-                    "Tier 1: direct $ref target found"
+                    ref_title=%ref_schema.title,
+                    ref_id=%ref_schema.schema_id,
+                    is_entity=%ref_schema.is_entity,
+                    "Tier 1: referenced schema matched segment"
                 );
-                if !target.is_entity || target.pg_table_name.is_empty() {
-                    tracing::debug!(target: "resolve_schema", tier=1, target=%target.title, "rejected: force_value_object");
-                    // The direct $ref target is a VO — this include path
-                    // cannot resolve through this property. Return an error
-                    // to prevent falling through to Tier 2/3 which could
-                    // match a different entity via PascalCase convention.
-                    return Err(crate::error::Error::RefResolution(format!(
-                        "include segment '{}' from '{}' targets force_value_object '{}.{}' — not resolvable",
-                        seg, current_source_title, target.domain.as_deref().unwrap_or("?"), target.title,
-                    )));
-                }
-                tracing::debug!(target: "resolve_schema", tier=1, target=%target.title, "resolved via direct property $ref");
-                if let Some(auth) = db.get_schema_by_id(&target.schema_id).await? {
+                if let Some(auth) = db.get_schema_by_id(&ref_schema.schema_id).await? {
+                    if !auth.is_entity || auth.pg_table_name.is_empty() {
+                        tracing::debug!(target: "resolve_schema", tier=1, title=%ref_schema.title, "skipped: VO — continuing search");
+                        continue;
+                    }
+                    tracing::debug!(target: "resolve_schema", tier=1, target=%auth.title, "resolved via referenced schemas");
                     return Ok(auth);
                 }
-                return Ok(target);
             }
         }
     }
