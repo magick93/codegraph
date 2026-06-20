@@ -56,7 +56,7 @@ pub async fn resolve_include_paths(
     allow_include: Option<&Vec<String>>,
 ) -> Result<Vec<ResolvedIncludePath>> {
     let source_schema = db
-        .get_schema(schema_title)
+        .get_schema_in_domain(schema_title, domain)
         .await?
         .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -104,7 +104,7 @@ async fn resolve_explicit_paths(
 
         for &seg in &segment_strs {
             // Resolve the target schema via graph identity (schema_id).
-            let target_schema = resolve_schema_target(db, current_source_title, seg).await?;
+            let target_schema = resolve_schema_target(db, current_source_title, seg, domain).await?;
             let target_title = target_schema.title.clone();
 
             // Skip force_value_objects — they don't have standalone entity or DTO
@@ -211,7 +211,7 @@ async fn resolve_auto_paths(
             continue;
         }
         let target_title = &pc.child_title;
-        let Some(target_schema) = db.get_schema(target_title).await? else {
+        let Some(target_schema) = db.get_schema_in_domain(target_title, domain).await? else {
             continue;
         };
         // Skip child entities and inline definitions — they don't have standalone
@@ -307,7 +307,7 @@ async fn resolve_auto_paths(
         if existing_entity_names.contains(ref_title) {
             continue;
         }
-        let Some(target_schema) = db.get_schema(ref_title).await? else {
+        let Some(target_schema) = db.get_schema_in_domain(ref_title, domain).await? else {
             continue;
         };
         if target_schema.pg_table_name.is_empty() {
@@ -395,6 +395,7 @@ async fn resolve_schema_target(
     db: &dyn GraphQuerier,
     current_source_title: &str,
     seg: &str,
+    domain: &str,
 ) -> Result<SchemaNode> {
     let seg_lower = seg.to_lowercase();
 
@@ -407,11 +408,8 @@ async fn resolve_schema_target(
                 .unwrap_or(&ref_schema.title)
                 .to_lowercase();
             if stripped == seg_lower {
-                if let Some(node) = db.get_schema(&ref_schema.title).await? {
-                    if let Some(auth_node) = db.get_schema_by_id(&node.schema_id).await? {
-                        return Ok(auth_node);
-                    }
-                    return Ok(node);
+                if let Some(auth_node) = db.get_schema_by_id(&ref_schema.schema_id).await? {
+                    return Ok(auth_node);
                 }
             }
         }
@@ -427,7 +425,7 @@ async fn resolve_schema_target(
                     .unwrap_or(&pc.child_title)
                     .to_lowercase();
                 if child_stripped == seg_lower {
-                    if let Some(node) = db.get_schema(&pc.child_title).await? {
+                    if let Some(node) = db.get_schema_in_domain(&pc.child_title, domain).await? {
                         if let Some(auth_node) = db.get_schema_by_id(&node.schema_id).await? {
                             return Ok(auth_node);
                         }
@@ -442,7 +440,7 @@ async fn resolve_schema_target(
     let pascal = codegraph_naming::to_pascal_case(seg);
     let candidates = [format!("{pascal}Type"), pascal.clone()];
     for title in &candidates {
-        if let Ok(Some(node)) = db.get_schema(title).await {
+        if let Ok(Some(node)) = db.get_schema_in_domain(title, domain).await {
             if let Some(auth_node) = db.get_schema_by_id(&node.schema_id).await? {
                 return Ok(auth_node);
             }

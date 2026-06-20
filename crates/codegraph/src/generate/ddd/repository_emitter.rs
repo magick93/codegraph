@@ -1507,6 +1507,25 @@ impl CrudOp {
 pub struct RepositoryImplEmitter;
 
 impl RepositoryImplEmitter {
+    /// Resolve whether `find_tree` returns JOINed `serde_json::Value` rows
+    /// (tree_include configured AND resolvable) versus typed `{Entity}Response`
+    /// rows. The repository trait generator calls this so the trait's
+    /// `find_tree` return type stays in sync with the emitted implementation,
+    /// which derives the same boolean from `!tree.tree_include.is_empty()`.
+    pub async fn resolve_tree_include(
+        &self,
+        db: &dyn GraphQuerier,
+        schema_title: &str,
+        domain: &str,
+        config: &DomainConfig,
+        parent_ref: Option<&str>,
+    ) -> Result<bool> {
+        let tree = self
+            .query_entity_tree(db, schema_title, domain, config, parent_ref)
+            .await?;
+        Ok(!tree.tree_include.is_empty())
+    }
+
     pub async fn emit(
         &self,
         db: &dyn GraphQuerier,

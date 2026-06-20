@@ -88,7 +88,7 @@ impl EntityGenerator for RepositoryTraitGenerator {
         let entity_cfg = config
             .domains
             .get(&domain)
-            .and_then(|d| d.get_entity_config(&entity_name));
+            .and_then(|d| d.get_entity_config(schema_title));
 
         let operations = entity_cfg
             .and_then(|ec| ec.operations.clone())
@@ -127,10 +127,15 @@ impl EntityGenerator for RepositoryTraitGenerator {
             .and_then(|ec| ec.hierarchy_field.as_ref())
             .cloned();
 
-        let tree_include = entity_cfg
-            .and_then(|ec| ec.tree_include.as_ref())
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
+        // Derive tree_include from the emitter's resolved state rather than the
+        // raw config. The emitter's resolution loop silently drops entries that
+        // fail its FK/parent-ref guard, so checking the raw config can leave the
+        // trait's `find_tree` return type (serde_json::Value vs typed Response)
+        // out of sync with the emitted impl. Resolving via the emitter keeps both
+        // sides agreeing on the same boolean.
+        let tree_include = RepositoryImplEmitter
+            .resolve_tree_include(db, schema_title, &domain, config, parent_ref.as_deref())
+            .await?;
 
         // Skip non-root entities unless they have explicit allow_include.
         let has_explicit_include = entity_cfg

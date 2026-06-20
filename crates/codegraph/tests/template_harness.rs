@@ -4150,6 +4150,11 @@ entities = ["WorkerType"]
         let engine = MockEngine::builder()
             .with_schema(schema_node("WorkerType", "hr", "worker", true))
             .with_schema(schema_node("PersonType", "common", "person", true))
+            .with_ref_target(
+                "person_id",
+                "WorkerType",
+                schema_node("PersonType", "common", "person", true),
+            )
             .with_properties(
                 "WorkerType",
                 vec![ref_property("person_id", "person_id", "PersonType", false)],
@@ -4275,7 +4280,7 @@ entities = ["WorkerType"]
     async fn resolve_auto_discovered_include() {
         let engine = MockEngine::builder()
             .with_schema(schema_node("WorkerType", "hr", "worker", true))
-            .with_schema(schema_node("PersonType", "common", "person", true))
+            .with_schema(schema_node("PersonType", "hr", "person", true))
             .with_properties(
                 "WorkerType",
                 vec![ref_property("person_id", "person_id", "PersonType", false)],
