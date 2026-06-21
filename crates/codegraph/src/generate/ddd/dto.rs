@@ -1150,8 +1150,13 @@ impl DtoGenerator {
                                 } else {
                                     prop.rust_field_type.clone()
                                 };
+                                // Use resolve_field().rust_field_name for consistency with the
+                                // base entity DTO (build_dto_context), which appends _id for
+                                // EntityReference properties. This aligns the include-path
+                                // compound DTO field names with the base DTO field names.
+                                let fd = codegraph_core::types::resolve_field(prop);
                                 base_fields.push(serde_json::json!({
-                                    "name": prop.rust_field_name,
+                                    "name": fd.rust_field_name,
                                     "rust_type": field_type,
                                     "is_optional": is_optional,
                                 }));
