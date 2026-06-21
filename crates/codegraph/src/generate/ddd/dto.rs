@@ -1131,8 +1131,6 @@ impl DtoGenerator {
                                 }
                                 let is_optional = prop.is_nullable || !prop.is_required;
                                 let field_type = if matches!(prop.effective_kind(), Some(RefClassificationKind::StructuredWrapper)) {
-                                    // Structured wrappers (e.g. IdentifierType) are stored as JSONB
-                                    // and use serde_json::Value in DTOs — not custom Response types.
                                     let base = if prop.is_array { "Vec<serde_json::Value>" } else { "serde_json::Value" };
                                     if is_optional { format!("Option<{base}>") } else { base.to_string() }
                                 } else if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference)) {
@@ -1147,6 +1145,10 @@ impl DtoGenerator {
                                         let stripped = prop.rust_field_type.strip_suffix("Type").unwrap_or(&prop.rust_field_type);
                                         format!("{}Response", stripped)
                                     }
+                                } else if matches!(prop.effective_kind(), Some(RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck)) {
+                                    let enum_type = codelist_enum_name_from_ref(&prop.ref_target)
+                                        .unwrap_or_else(|| "String".to_string());
+                                    if is_optional { format!("Option<{}>", enum_type) } else { enum_type }
                                 } else {
                                     prop.rust_field_type.clone()
                                 };

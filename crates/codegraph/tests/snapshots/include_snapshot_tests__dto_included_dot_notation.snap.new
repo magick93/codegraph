@@ -1,5 +1,6 @@
 ---
 source: crates/codegraph/tests/include_snapshot_tests.rs
+assertion_line: 382
 expression: content
 ---
 //! Included DTO for Worker eager-loading via `?include=`.

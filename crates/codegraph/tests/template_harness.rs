@@ -4797,11 +4797,14 @@ operations = ["create", "read", "update", "list"]
     #[tokio::test]
     async fn dto_field_types_match_repository_assignment_types() {
         // --- Setup: target entity with various property types ---
-        // OrderType references TestEntityType via FK; include path resolves to TestEntityType.
+        // OrderType references TestEntityType via FK; include paths resolve to TestEntityType.
+        // TestEntityType references ChildType via FK — dot-notation: test_entity.child.
         let mock = MockEngine::builder()
             .with_schema(schema_node("OrderType", "test", "order", true))
             .with_schema(schema_node("TestEntityType", "test", "test_entity", true))
+            .with_schema(schema_node("ChildType", "test", "child", true))
             .with_ref_target("test_entity_id", "OrderType", schema_node("TestEntityType", "test", "test_entity", true))
+            .with_ref_target("child_id", "TestEntityType", schema_node("ChildType", "test", "child", true))
             .with_properties("OrderType", vec![
                 PropertyNode {
                     name: "test_entity_id".to_string(),
@@ -4871,6 +4874,18 @@ operations = ["create", "read", "update", "list"]
                     rust_field_type: "Option<String>".to_string(),
                     ..prop_defaults()
                 },
+                PropertyNode {
+                    name: "child_id".to_string(),
+                    rust_field_name: "child_id".to_string(),
+                    pg_column_name: "child_id".to_string(),
+                    pg_column_type: "UUID".to_string(),
+                    rust_field_type: "Uuid".to_string(),
+                    sea_orm_type: "Uuid".to_string(),
+                    ref_target: Some("ChildType".to_string()),
+                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::EntityReference),
+                    render_strategy: "entity_reference".to_string(),
+                    ..prop_defaults()
+                },
             ])
             .build();
 
@@ -4883,10 +4898,10 @@ operations = ["create", "read", "update", "list"]
 label = "Test"
 schema_dir = "test"
 postgres_schema = "test"
-entities = ["OrderType", "TestEntityType"]
+entities = ["OrderType", "TestEntityType", "ChildType"]
 
 [domains.test.entity_config.OrderType]
-allow_include = ["test_entity"]
+allow_include = ["test_entity", "test_entity.child"]
 operations = ["create", "read", "update", "list"]
 "#;
             parse_domain_config_str(toml).unwrap()
@@ -4904,21 +4919,44 @@ operations = ["create", "read", "update", "list"]
             .map(|f| &f.content)
             .expect("DTO generator should produce dto_response.rs");
 
+        // Also generate include-path compound DTOs for OrderType (dot-notation)
+        let dto_include_gen = generate::ddd::dto::DtoGenerator::new(dto_output.path());
+        let dto_include_files = dto_include_gen
+            .generate(&mock, "OrderType", "test", &config, &test_tera(), &test_project_config())
+            .await
+            .unwrap();
+        let dto_included_source = dto_include_files.iter()
+            .find(|f| f.path.to_string_lossy().contains("dto_included"))
+            .map(|f| f.content.as_str())
+            .unwrap_or("");
+
         // --- Step 2: Parse DTO field types ---
-        let dto_fields = parse_dto_fields(dto_source);
+        let mut dto_fields = parse_dto_fields(dto_source);
+        if !dto_included_source.is_empty() {
+            let included_fields = parse_dto_fields(dto_included_source);
+            for (k, v) in included_fields {
+                dto_fields.entry(k).or_insert(v);
+            }
+        }
 
         // --- Step 3: Generate repository code ---
         use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
         let include_paths = resolve_include_paths(
             &mock, &config, "test", "OrderType",
-            Some(&vec!["test_entity".to_string()]),
+            Some(&vec!["test_entity".to_string(), "test_entity.child".to_string()]),
         ).await.unwrap();
 
         let emitter = RepositoryImplEmitter;
-        let repo_code = emitter
+        // Run for both TestEntityType (single-seg target) and OrderType (source with includes)
+        let repo_code_test = emitter
             .emit(&mock, "TestEntityType", "test", &config, None, &include_paths)
             .await
             .unwrap();
+        let repo_code_order = emitter
+            .emit(&mock, "OrderType", "test", &config, None, &include_paths)
+            .await
+            .unwrap();
+        let repo_code = format!("{}\n{}", repo_code_test, repo_code_order);
 
         // --- Step 4: Parse repository assignment expressions ---
         let repo_assignments = parse_repo_assignments(&repo_code);
