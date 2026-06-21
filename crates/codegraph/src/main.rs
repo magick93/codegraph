@@ -274,7 +274,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             type_contracts_base: meta.type_contracts_base.clone().unwrap_or_default(),
             database_target: database_target_str,
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
-            codegraph_rev: String::new(),
+            codegraph_rev: current_git_rev(),
         });
 
         println!(
@@ -700,4 +700,15 @@ async fn cmd_lsp(
         .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
 
     Ok(())
+}
+
+/// Return the current Git revision hash, or an empty string if unavailable.
+fn current_git_rev() -> String {
+    std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
