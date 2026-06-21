@@ -23,7 +23,7 @@ pub struct WorkerIncludedData {
 
 
 /// Enriched response type for dot-notation include path.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct DeploymentWithPositionResponse {
 
     pub id: Uuid,
