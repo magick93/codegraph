@@ -287,7 +287,7 @@ pub async fn get_by_id(
     
     use sea_orm::TransactionTrait;
     let tx = state.db.begin().await
-        .map_err(|e| AppError::internal(format!("Failed to begin transaction: {e}")
+        .map_err(|e| AppError::internal(format!("Failed to begin transaction: {e}"))
             .with_correlation_id(correlation_id)))?;
     let repo = crate::domain::{{ domain }}::{{ module_name }}::repository_impl::{{ entity_name }}RepositoryImpl;
     for path in &include_paths {
@@ -303,7 +303,7 @@ pub async fn get_by_id(
         }
     }
     tx.commit().await
-        .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}")
+        .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}"))
             .with_correlation_id(correlation_id)))?;
     
     Ok(Json({{ entity_name }}WithIncludeResponse {

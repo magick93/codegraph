@@ -1588,7 +1588,7 @@ impl RepositoryImplEmitter {
         for path in &include_paths {
             let mut per_seg_dto: Vec<Vec<String>> = Vec::new();
             let mut per_seg_col: Vec<Vec<String>> = Vec::new();
-            for seg in &path.segments {
+            for (seg_idx, seg) in path.segments.iter().enumerate() {
                 // Use schema_title directly — include_path.rs already resolves
                 // it to the canonical title for each segment. The fallback graph
                 // query could return the wrong properties from a shared parent
@@ -1608,6 +1608,19 @@ impl RepositoryImplEmitter {
                 if let Some(props) = all_props.get(&seg.schema_title) {
                     let mut seen = std::collections::HashSet::new();
                     for prop in props {
+                        // Skip entity reference properties that match the next
+                        // segment's module_name — the nested field (e.g.,
+                        // {position: leaf_dto}) is added separately in the
+                        // dot-fetch method.  Matches DTO builder's skip at
+                        // build_include_dtos (dto.rs:1127-1131).
+                        if seg_idx < path.segments.len() - 1 {
+                            let next_module = &path.segments[seg_idx + 1].module_name;
+                            if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference))
+                                && prop.rust_field_name == *next_module
+                            {
+                                continue;
+                            }
+                        }
                         // Skip properties that don't map to database columns —
                         // the entity Model won't have them as Rust fields.
                         if prop.pg_column_name.is_empty() {
