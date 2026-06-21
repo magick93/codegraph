@@ -164,7 +164,22 @@ impl TreeColumn {
 fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_var: &str, pad: &str) {
     let dto_field = col.dto_name();
     let entity_field = &col.field_name;
-    if col.dto_rust_type.is_some() {
+    // StructuredWrapper must take priority over dto_rust_type — it uses
+    // serde_json::from_value() rather than .parse().
+    if col.is_structured_wrapper {
+        // Both array and scalar StructuredWrapper use the same serde_json conversion.
+        if col.is_nullable {
+            writeln!(
+                code,
+                "{pad}{dto_field}: {row_var}.{entity_field}.and_then(|v| serde_json::from_value(v).ok()),",
+            ).unwrap();
+        } else {
+            writeln!(
+                code,
+                "{pad}{dto_field}: serde_json::from_value({row_var}.{entity_field}).unwrap_or_default(),",
+            ).unwrap();
+        }
+    } else if col.dto_rust_type.is_some() {
         if col.is_array {
             if col.is_nullable {
                 writeln!(
@@ -189,19 +204,6 @@ fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_var: &str, 
                 "{pad}{dto_field}: {row_var}.{entity_field}.parse().unwrap_or_default(),",
             )
             .unwrap();
-        }
-    } else if col.is_structured_wrapper {
-        // Both array and scalar StructuredWrapper use the same serde_json conversion.
-        if col.is_nullable {
-            writeln!(
-                code,
-                "{pad}{dto_field}: {row_var}.{entity_field}.and_then(|v| serde_json::from_value(v).ok()),",
-            ).unwrap();
-        } else {
-            writeln!(
-                code,
-                "{pad}{dto_field}: serde_json::from_value({row_var}.{entity_field}).unwrap_or_default(),",
-            ).unwrap();
         }
     } else {
         writeln!(code, "{pad}{dto_field}: {row_var}.{entity_field},").unwrap();
@@ -1380,7 +1382,7 @@ async fn build_columns_and_children(
                 rust_type: "serde_json::Value".to_string(),
                 is_nullable: !prop.is_required,
                 is_entity_ref: false,
-                dto_rust_type: None,
+                dto_rust_type: Some(prop.rust_field_type.clone()),
                 is_workflow_managed: is_workflow_field,
                 is_array: prop.is_array,
                 pg_cast: None,
@@ -2148,7 +2150,28 @@ impl RepositoryImplEmitter {
         for col in op.columns(tree) {
             let entity_field = &col.field_name;
             let dto_field = col.dto_name();
-            if col.dto_rust_type.is_some() {
+            // StructuredWrapper must take priority — serde_json::to_value(), not .to_string().
+            if col.is_structured_wrapper {
+                // StructuredWrapper (scalar or array): DTO has typed struct/Vec, entity needs JSONB.
+                if col.is_nullable {
+                    if col.is_array {
+                        writeln!(
+                            code,
+                            "            {entity_field}: Set(cmd.{dto_field}.map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))),",
+                        ).unwrap();
+                    } else {
+                        writeln!(
+                            code,
+                            "            {entity_field}: Set(cmd.{dto_field}.as_ref().and_then(|v| serde_json::to_value(v).ok())),",
+                        ).unwrap();
+                    }
+                } else {
+                    writeln!(
+                        code,
+                        "            {entity_field}: Set(serde_json::to_value(cmd.{dto_field}).unwrap_or(serde_json::Value::Null)),",
+                    ).unwrap();
+                }
+            } else if col.dto_rust_type.is_some() {
                 if col.is_array {
                     // Vec<CodelistEnum> → Vec<String>
                     if col.is_nullable {
@@ -2176,26 +2199,6 @@ impl RepositoryImplEmitter {
                         "            {entity_field}: Set(cmd.{dto_field}.to_string()),",
                     )
                     .unwrap();
-                }
-            } else if col.is_structured_wrapper {
-                // StructuredWrapper (scalar or array): DTO has typed struct/Vec, entity needs JSONB.
-                if col.is_nullable {
-                    if col.is_array {
-                        writeln!(
-                            code,
-                            "            {entity_field}: Set(cmd.{dto_field}.map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))),",
-                        ).unwrap();
-                    } else {
-                        writeln!(
-                            code,
-                            "            {entity_field}: Set(cmd.{dto_field}.as_ref().and_then(|v| serde_json::to_value(v).ok())),",
-                        ).unwrap();
-                    }
-                } else {
-                    writeln!(
-                        code,
-                        "            {entity_field}: Set(serde_json::to_value(cmd.{dto_field}).unwrap_or(serde_json::Value::Null)),",
-                    ).unwrap();
                 }
             } else {
                 writeln!(
