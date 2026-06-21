@@ -1587,9 +1587,13 @@ impl RepositoryImplEmitter {
         let all_props = db.list_all_properties().await?;
         let mut include_segment_dto_fields: Vec<Vec<Vec<String>>> = Vec::new();
         let mut include_segment_col_fields: Vec<Vec<Vec<String>>> = Vec::new();
+        let mut include_segment_is_structured: Vec<Vec<Vec<bool>>> = Vec::new();
+        let mut include_segment_is_codelist: Vec<Vec<Vec<bool>>> = Vec::new();
         for path in &include_paths {
             let mut per_seg_dto: Vec<Vec<String>> = Vec::new();
             let mut per_seg_col: Vec<Vec<String>> = Vec::new();
+            let mut per_seg_is_structured: Vec<Vec<bool>> = Vec::new();
+            let mut per_seg_is_codelist: Vec<Vec<bool>> = Vec::new();
             for (seg_idx, seg) in path.segments.iter().enumerate() {
                 // Use schema_title directly — include_path.rs already resolves
                 // it to the canonical title for each segment. The fallback graph
@@ -1607,6 +1611,8 @@ impl RepositoryImplEmitter {
                     .collect();
                 let mut dto_fields: Vec<String> = Vec::new();
                 let mut col_fields: Vec<String> = Vec::new();
+                let mut is_structured: Vec<bool> = Vec::new();
+                let mut is_codelist: Vec<bool> = Vec::new();
                 if let Some(props) = all_props.get(&seg.schema_title) {
                     let mut seen = std::collections::HashSet::new();
                     for prop in props {
@@ -1685,14 +1691,28 @@ impl RepositoryImplEmitter {
                             // Entity Model side uses column_name so it matches
                             // config-specified FK column names (e.g. person_type_id).
                             col_fields.push(fd.column_name.clone());
+                            // Type conversion flags for emit_field_assignments_typed.
+                            is_structured.push(matches!(
+                                prop.effective_kind(),
+                                Some(RefClassificationKind::StructuredWrapper)
+                            ));
+                            is_codelist.push(matches!(
+                                prop.effective_kind(),
+                                Some(RefClassificationKind::CodelistReference)
+                                    | Some(RefClassificationKind::CodelistCheck)
+                            ));
                         }
                     }
                 }
                 per_seg_dto.push(dto_fields);
                 per_seg_col.push(col_fields);
+                per_seg_is_structured.push(is_structured);
+                per_seg_is_codelist.push(is_codelist);
             }
             include_segment_dto_fields.push(per_seg_dto);
             include_segment_col_fields.push(per_seg_col);
+            include_segment_is_structured.push(per_seg_is_structured);
+            include_segment_is_codelist.push(per_seg_is_codelist);
         }
 
         if !include_paths.is_empty() {
@@ -1741,7 +1761,7 @@ impl RepositoryImplEmitter {
                 tree.entity_name
             )
             .unwrap();
-            self.emit_include_fetch_methods(&tree, &mut code, &include_paths, &include_segment_dto_fields, &include_segment_col_fields);
+            self.emit_include_fetch_methods(&tree, &mut code, &include_paths, &include_segment_dto_fields, &include_segment_col_fields, &include_segment_is_structured, &include_segment_is_codelist);
             writeln!(code, "}}").unwrap();
         }
 
@@ -3492,21 +3512,33 @@ impl RepositoryImplEmitter {
         include_paths: &[ResolvedIncludePath],
         include_segment_dto_fields: &[Vec<Vec<String>>],
         include_segment_col_fields: &[Vec<Vec<String>>],
+        include_segment_is_structured: &[Vec<Vec<bool>>],
+        include_segment_is_codelist: &[Vec<Vec<bool>>],
     ) {
         for (idx, path) in include_paths.iter().enumerate() {
             let per_seg_dto = include_segment_dto_fields.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
             let per_seg_col = include_segment_col_fields.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+            let per_seg_structured = include_segment_is_structured.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+            let per_seg_codelist = include_segment_is_codelist.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
             if path.segments.len() == 1 {
                 let dto_fields = per_seg_dto.first().map(|v| v.as_slice()).unwrap_or(&[]);
                 let col_fields = per_seg_col.first().map(|v| v.as_slice()).unwrap_or(&[]);
-                self.emit_single_fetch_method(tree, code, path, dto_fields, col_fields);
-                self.emit_batch_fetch_method(tree, code, path, dto_fields, col_fields);
+                let is_structured = per_seg_structured.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let is_codelist = per_seg_codelist.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                self.emit_single_fetch_method(tree, code, path, dto_fields, col_fields, is_structured, is_codelist);
+                self.emit_batch_fetch_method(tree, code, path, dto_fields, col_fields, is_structured, is_codelist);
             } else {
                 let intermediate_dto = per_seg_dto.first().map(|v| v.as_slice()).unwrap_or(&[]);
                 let leaf_dto = per_seg_dto.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
                 let intermediate_col = per_seg_col.first().map(|v| v.as_slice()).unwrap_or(&[]);
                 let leaf_col = per_seg_col.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
-                self.emit_dot_fetch_method(tree, code, path, intermediate_dto, intermediate_col, leaf_dto, leaf_col);
+                let intermediate_structured = per_seg_structured.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let intermediate_codelist = per_seg_codelist.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let leaf_structured = per_seg_structured.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
+                let leaf_codelist = per_seg_codelist.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
+                self.emit_dot_fetch_method(tree, code, path,
+                    intermediate_dto, intermediate_col, intermediate_structured, intermediate_codelist,
+                    leaf_dto, leaf_col, leaf_structured, leaf_codelist);
             }
         }
     }
@@ -3521,6 +3553,39 @@ impl RepositoryImplEmitter {
         }
     }
 
+    /// Like emit_field_assignments but applies the same type conversions as
+    /// emit_entity_to_dto_field — serde_json::from_value() for structured
+    /// wrappers, .parse() for codelists, direct assignment otherwise.
+    fn emit_field_assignments_typed(
+        code: &mut String,
+        row_var: &str,
+        dto_fields: &[String],
+        col_fields: &[String],
+        is_structured: &[bool],
+        is_codelist: &[bool],
+        dto_rust_types: &[Option<String>],
+    ) {
+        for i in 0..dto_fields.len() {
+            let dto_name = &dto_fields[i];
+            let col_name = &col_fields[i];
+            if i < is_structured.len() && is_structured[i] {
+                // StructuredWrapper: serde_json::from_value()
+                writeln!(
+                    code,
+                    "                {dto_name}: serde_json::from_value({row_var}.{col_name}).unwrap_or_default(),",
+                ).unwrap();
+            } else if i < dto_rust_types.len() && dto_rust_types[i].is_some() {
+                // Codelist: .parse()
+                writeln!(
+                    code,
+                    "                {dto_name}: {row_var}.{col_name}.and_then(|v| v.parse().ok()),",
+                ).unwrap();
+            } else {
+                writeln!(code, "                {dto_name}: {row_var}.{col_name},").unwrap();
+            }
+        }
+    }
+
     fn emit_single_fetch_method(
         &self,
         tree: &EntityTree,
@@ -3528,6 +3593,8 @@ impl RepositoryImplEmitter {
         path: &ResolvedIncludePath,
         dto_fields: &[String],
         col_fields: &[String],
+        is_structured: &[bool],
+        is_codelist: &[bool],
     ) {
         let seg = &path.segments[0];
         let src_module = &tree.entity_module;
@@ -3584,7 +3651,7 @@ impl RepositoryImplEmitter {
             writeln!(code, "        for row in rows {{").unwrap();
             writeln!(code, "            results.push({} {{", resp_type).unwrap();
             writeln!(code, "                id: row.id,").unwrap();
-            Self::emit_field_assignments(code, "row", dto_fields, col_fields);
+            Self::emit_field_assignments_typed(code, "row", dto_fields, col_fields, is_structured, is_codelist, &[]);
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
             writeln!(code, "                ..Default::default()").unwrap();
@@ -3639,7 +3706,7 @@ impl RepositoryImplEmitter {
             writeln!(code, "        }};").unwrap();
             writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
             writeln!(code, "            id: target.id,").unwrap();
-            Self::emit_field_assignments(code, "target", dto_fields, col_fields);
+            Self::emit_field_assignments_typed(code, "target", dto_fields, col_fields, is_structured, is_codelist, &[]);
             writeln!(code, "            created_at: target.created_at,").unwrap();
             writeln!(code, "            updated_at: target.updated_at,").unwrap();
             writeln!(code, "            ..Default::default()").unwrap();
@@ -3656,6 +3723,8 @@ impl RepositoryImplEmitter {
         path: &ResolvedIncludePath,
         dto_fields: &[String],
         col_fields: &[String],
+        is_structured: &[bool],
+        is_codelist: &[bool],
     ) {
         let seg = &path.segments[0];
         let src_module = &tree.entity_module;
@@ -3731,7 +3800,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code, "                id: row.id,").unwrap();
-            Self::emit_field_assignments(code, "row", dto_fields, col_fields);
+            Self::emit_field_assignments_typed(code, "row", dto_fields, col_fields, is_structured, is_codelist, &[]);
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
             writeln!(code, "                ..Default::default()").unwrap();
@@ -3788,7 +3857,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code, "            id: t.id,").unwrap();
-            Self::emit_field_assignments(code, "t", dto_fields, col_fields);
+            Self::emit_field_assignments_typed(code, "t", dto_fields, col_fields, is_structured, is_codelist, &[]);
             writeln!(code, "            created_at: t.created_at,").unwrap();
             writeln!(code, "            updated_at: t.updated_at,").unwrap();
             writeln!(code, "            ..Default::default()").unwrap();
@@ -3829,8 +3898,12 @@ impl RepositoryImplEmitter {
         path: &ResolvedIncludePath,
         intermediate_dto: &[String],
         intermediate_col: &[String],
+        intermediate_structured: &[bool],
+        intermediate_codelist: &[bool],
         leaf_dto: &[String],
         leaf_col: &[String],
+        leaf_structured: &[bool],
+        leaf_codelist: &[bool],
     ) {
         let seg0 = &path.segments[0];
         let seg1 = &path.segments[1];
@@ -3901,7 +3974,7 @@ impl RepositoryImplEmitter {
         // Build enriched response: base fields from intermediate, nested leaf from leaf
         writeln!(code, "        let leaf_dto = leaf.map(|l| {} {{", leaf_resp_type).unwrap();
         writeln!(code, "            id: l.id,").unwrap();
-        Self::emit_field_assignments(code, "l", leaf_dto, leaf_col);
+        Self::emit_field_assignments_typed(code, "l", leaf_dto, leaf_col, leaf_structured, leaf_codelist, &[]);
         writeln!(code, "            created_at: l.created_at,").unwrap();
         writeln!(code, "            updated_at: l.updated_at,").unwrap();
         writeln!(code, "            ..Default::default()").unwrap();
@@ -3910,7 +3983,7 @@ impl RepositoryImplEmitter {
         writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
         writeln!(code, "            id: intermediate.id,").unwrap();
         // Intermediate entity fields go into the enriched struct base
-        Self::emit_field_assignments(code, "intermediate", intermediate_dto, intermediate_col);
+        Self::emit_field_assignments_typed(code, "intermediate", intermediate_dto, intermediate_col, intermediate_structured, intermediate_codelist, &[]);
         writeln!(code, "            created_at: intermediate.created_at,").unwrap();
         writeln!(code, "            updated_at: intermediate.updated_at,").unwrap();
         writeln!(code, "            {}: leaf_dto,", seg1.module_name).unwrap();
