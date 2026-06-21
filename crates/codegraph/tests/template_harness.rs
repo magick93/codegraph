@@ -4630,6 +4630,336 @@ operations = ["create", "read", "update", "list"]
             );
         }
     }
+
+    /// Build a PropertyNode with test defaults. Only key fields are explicitly set;
+    /// all others get sensible defaults.
+    fn prop_defaults() -> PropertyNode {
+        PropertyNode {
+            name: String::new(),
+            prop_type: "string".to_string(),
+            description: None,
+            format: None,
+            is_required: false,
+            is_nullable: true,
+            is_array: false,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: String::new(),
+            pg_column_type: "TEXT".to_string(),
+            rust_field_name: String::new(),
+            rust_field_type: "Option<String>".to_string(),
+            sea_orm_type: "Text".to_string(),
+            render_strategy: "direct_column".to_string(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    }
+
+    /// Simple struct/field parser using string matching (no regex dependency).
+    /// Returns map of struct_name → (field_name → rust_type).
+    fn parse_dto_fields(source: &str) -> std::collections::HashMap<String, std::collections::HashMap<String, String>> {
+        let mut result = std::collections::HashMap::new();
+        let mut current_struct: Option<String> = None;
+        let mut current_fields: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("pub struct ") {
+                if let Some(name) = current_struct.take() {
+                    result.insert(name, std::mem::take(&mut current_fields));
+                }
+                current_struct = trimmed
+                    .strip_prefix("pub struct ")
+                    .and_then(|s| s.split(&[' ', '{'][..]).next())
+                    .map(|s| s.to_string());
+            } else if let Some(stripped) = trimmed.strip_prefix("pub ") {
+                if let Some(colon) = stripped.find(':') {
+                    let field_name = stripped[..colon].trim().to_string();
+                    let field_type = stripped[colon + 1..].trim().trim_end_matches(',').to_string();
+                    if !field_name.is_empty() && !field_type.is_empty() {
+                        current_fields.insert(field_name, field_type);
+                    }
+                }
+            }
+        }
+        if let Some(name) = current_struct {
+            result.insert(name, current_fields);
+        }
+        result
+    }
+
+    /// Simple struct initializer parser using string matching.
+    /// Returns map of struct_name → (field_name → expression).
+    fn parse_repo_assignments(source: &str) -> std::collections::HashMap<String, std::collections::HashMap<String, String>> {
+        let mut result = std::collections::HashMap::new();
+        let mut in_struct: Option<String> = None;
+        let mut current_fields: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for line in source.lines() {
+            let trimmed = line.trim();
+            // Detect struct construction: "    SomeType {" or "    Ok(Some(TypeName {"
+            if (trimmed.ends_with('{') || trimmed.ends_with(" {"))
+                && (trimmed.contains("Ok(Some(") || trimmed.starts_with("let ") || trimmed.contains("results.push")
+                    || trimmed.contains("leaf_dto") || trimmed.contains("}});") || trimmed.contains(".push("))
+            {
+                // Extract type name
+                let name = if let Some(start) = trimmed.find("Ok(Some(") {
+                    trimmed[start + 8..].trim_end_matches(" {").trim().to_string()
+                } else if let Some(start) = trimmed.find(".push(") {
+                    let rest = &trimmed[start + 6..];
+                    rest.split('{').next().unwrap_or("").trim().to_string()
+                } else if trimmed.ends_with(" {") {
+                    trimmed.trim_end_matches(" {").trim().to_string()
+                } else {
+                    continue;
+                };
+                if let Some(prev) = in_struct.take() {
+                    result.insert(prev, std::mem::take(&mut current_fields));
+                }
+                in_struct = Some(name);
+            } else if trimmed == "});" || trimmed == "}))" || trimmed.starts_with("..Default") {
+                if let Some(prev) = in_struct.take() {
+                    result.insert(prev, std::mem::take(&mut current_fields));
+                }
+            } else if let Some(ref _struct_name) = in_struct {
+                // Parse field assignment: "    field_name: expression,"
+                if let Some(colon) = trimmed.find(':') {
+                    let key = trimmed[..colon].trim().to_string();
+                    let val = trimmed[colon + 1..].trim().trim_end_matches(',').to_string();
+                    if !key.is_empty() && !val.is_empty()
+                        && key != "created_at" && key != "updated_at" && key != "id"
+                        && !key.starts_with("..")
+                    {
+                        current_fields.insert(key, val);
+                    }
+                }
+            }
+        }
+        if let Some(prev) = in_struct {
+            result.insert(prev, current_fields);
+        }
+        result
+    }
+
+    #[derive(Debug)]
+    enum ExprPattern {
+        Direct,         // row.field
+        Parse,          // field.and_then(|v| v.parse().ok())
+        SerdeFromValue, // serde_json::from_value(field).unwrap_or_default()
+        SerdeAndThen,   // field.and_then(|v| serde_json::from_value(v).ok())
+        ParseUnwrap,    // field.parse().unwrap_or_default()
+    }
+
+    /// Classify a single field assignment expression into its pattern.
+    fn classify_expr(expr: &str) -> ExprPattern {
+        let expr = expr.trim();
+        if expr.contains("serde_json::from_value") && expr.contains(".and_then(") {
+            ExprPattern::SerdeAndThen
+        } else if expr.contains("serde_json::from_value") {
+            ExprPattern::SerdeFromValue
+        } else if expr.contains(".and_then(") && expr.contains(".parse()") {
+            ExprPattern::Parse
+        } else if expr.contains(".parse()") {
+            ExprPattern::ParseUnwrap
+        } else {
+            ExprPattern::Direct
+        }
+    }
+
+    /// Check if a DTO field type is compatible with a repository assignment expression pattern.
+    fn is_compatible(dto_type: &str, pattern: &ExprPattern) -> bool {
+        let dto = dto_type.trim();
+        if dto == "Uuid" || dto == "Option<Uuid>" || dto == "uuid::Uuid" || dto == "Option<uuid::Uuid>" {
+            return matches!(pattern, ExprPattern::Direct);
+        }
+        if dto.contains("IdentifierType") {
+            return matches!(pattern, ExprPattern::SerdeFromValue | ExprPattern::SerdeAndThen);
+        }
+        if dto.ends_with("CodeList") || dto.ends_with("CodeList>") {
+            return matches!(pattern, ExprPattern::Parse | ExprPattern::ParseUnwrap);
+        }
+        if dto == "String" || dto == "Option<String>" || dto == "bool" || dto == "Option<bool>"
+            || dto == "i32" || dto == "Option<i32>" || dto == "i64" || dto == "Option<i64>"
+            || dto == "f64" || dto == "Option<f64>" || dto.starts_with("chrono::") || dto.starts_with("rust_decimal::")
+        {
+            return matches!(pattern, ExprPattern::Direct);
+        }
+        true
+    }
+
+    #[tokio::test]
+    async fn dto_field_types_match_repository_assignment_types() {
+        // --- Setup: target entity with various property types ---
+        // OrderType references TestEntityType via FK; include path resolves to TestEntityType.
+        let mock = MockEngine::builder()
+            .with_schema(schema_node("OrderType", "test", "order", true))
+            .with_schema(schema_node("TestEntityType", "test", "test_entity", true))
+            .with_ref_target("test_entity_id", "OrderType", schema_node("TestEntityType", "test", "test_entity", true))
+            .with_properties("OrderType", vec![
+                PropertyNode {
+                    name: "test_entity_id".to_string(),
+                    rust_field_name: "test_entity_id".to_string(),
+                    pg_column_name: "test_entity_id".to_string(),
+                    pg_column_type: "UUID".to_string(),
+                    rust_field_type: "Uuid".to_string(),
+                    sea_orm_type: "Uuid".to_string(),
+                    ref_target: Some("TestEntityType".to_string()),
+                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::EntityReference),
+                    render_strategy: "entity_reference".to_string(),
+                    ..prop_defaults()
+                },
+            ])
+            .with_properties("TestEntityType", vec![
+                PropertyNode {
+                    name: "language".to_string(),
+                    rust_field_name: "language".to_string(),
+                    pg_column_name: "language_code".to_string(),
+                    rust_field_type: "Option<String>".to_string(),
+                    ref_target: Some("LanguageCodeList".to_string()),
+                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::CodelistReference),
+                    render_strategy: "codelist_reference".to_string(),
+                    ..prop_defaults()
+                },
+                PropertyNode {
+                    name: "package_id".to_string(),
+                    rust_field_name: "package_id".to_string(),
+                    pg_column_name: "package_id".to_string(),
+                    pg_column_type: "JSONB".to_string(),
+                    rust_field_type: "IdentifierType".to_string(),
+                    sea_orm_type: "Json".to_string(),
+                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::StructuredWrapper),
+                    render_strategy: "structured_wrapper".to_string(),
+                    prop_type: "object".to_string(),
+                    ..prop_defaults()
+                },
+                PropertyNode {
+                    name: "assessment_status".to_string(),
+                    rust_field_name: "assessment_status".to_string(),
+                    pg_column_name: "status_code".to_string(),
+                    rust_field_type: "String".to_string(),
+                    ref_target: Some("AssessmentStatusCodeList".to_string()),
+                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::CodelistCheck),
+                    render_strategy: "codelist_check".to_string(),
+                    is_required: true,
+                    is_nullable: false,
+                    ..prop_defaults()
+                },
+                PropertyNode {
+                    name: "person_id".to_string(),
+                    rust_field_name: "person_id".to_string(),
+                    pg_column_name: "person_id".to_string(),
+                    pg_column_type: "UUID".to_string(),
+                    rust_field_type: "Uuid".to_string(),
+                    sea_orm_type: "Uuid".to_string(),
+                    ref_target: Some("PersonType".to_string()),
+                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::EntityReference),
+                    render_strategy: "entity_reference".to_string(),
+                    ..prop_defaults()
+                },
+                PropertyNode {
+                    name: "name".to_string(),
+                    rust_field_name: "name".to_string(),
+                    pg_column_name: "name".to_string(),
+                    pg_column_type: "TEXT".to_string(),
+                    rust_field_type: "Option<String>".to_string(),
+                    ..prop_defaults()
+                },
+            ])
+            .build();
+
+        let config = {
+            let toml = r#"
+[defaults]
+operations = ["create", "read", "update", "list"]
+
+[domains.test]
+label = "Test"
+schema_dir = "test"
+postgres_schema = "test"
+entities = ["OrderType", "TestEntityType"]
+
+[domains.test.entity_config.OrderType]
+allow_include = ["test_entity"]
+operations = ["create", "read", "update", "list"]
+"#;
+            parse_domain_config_str(toml).unwrap()
+        };
+
+        // --- Step 1: Generate DTO code (use DomainTypesDtoGenerator for actual structs) ---
+        let dto_output = tempfile::TempDir::new().unwrap();
+        let dto_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(dto_output.path().to_path_buf());
+        let dto_files = dto_gen
+            .generate(&mock, "TestEntityType", "test", &config, &test_tera(), &test_project_config())
+            .await
+            .unwrap();
+        let dto_source = dto_files.iter()
+            .find(|f| f.path.to_string_lossy().contains("dto_response"))
+            .map(|f| &f.content)
+            .expect("DTO generator should produce dto_response.rs");
+
+        // --- Step 2: Parse DTO field types ---
+        let dto_fields = parse_dto_fields(dto_source);
+
+        // --- Step 3: Generate repository code ---
+        use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
+        let include_paths = resolve_include_paths(
+            &mock, &config, "test", "OrderType",
+            Some(&vec!["test_entity".to_string()]),
+        ).await.unwrap();
+
+        let emitter = RepositoryImplEmitter;
+        let repo_code = emitter
+            .emit(&mock, "TestEntityType", "test", &config, None, &include_paths)
+            .await
+            .unwrap();
+
+        // --- Step 4: Parse repository assignment expressions ---
+        let repo_assignments = parse_repo_assignments(&repo_code);
+
+        // --- Step 5: Assert compatibility ---
+        let mut mismatches = Vec::new();
+        for (struct_name, fields) in &repo_assignments {
+            let lookup = struct_name
+                .strip_suffix("Response")
+                .unwrap_or(struct_name);
+            let lookup_with_type = format!("{}Type", lookup);
+            // Try both naming conventions
+            let dto_struct = dto_fields.get(struct_name)
+                .or_else(|| dto_fields.get(&lookup_with_type));
+
+            if let Some(dto_struct) = dto_struct {
+                for (field_name, expr) in fields {
+                    if let Some(dto_type) = dto_struct.get(field_name) {
+                        let pattern = classify_expr(expr);
+                        if !is_compatible(dto_type, &pattern) {
+                            mismatches.push(format!(
+                                "Struct '{}' field '{}': DTO type '{}' vs expr '{}' (pattern {:?})",
+                                struct_name, field_name, dto_type,
+                                expr.chars().take(80).collect::<String>(),
+                                pattern
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        if !mismatches.is_empty() {
+            panic!(
+                "Type mismatches found in generated code ({} total):\n{}",
+                mismatches.len(),
+                mismatches.iter().map(|m| format!("  - {}", m)).collect::<Vec<_>>().join("\n")
+            );
+        }
+    }
+
 }
 
 // ── Include Feature Tests (E4 + E5) ──────────────────────────────────────────
