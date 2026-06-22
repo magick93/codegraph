@@ -1142,8 +1142,9 @@ impl DtoGenerator {
                                         let stripped = inner.strip_suffix("Type").unwrap_or(inner);
                                         format!("Vec<{}Response>", stripped)
                                     } else {
-                                        let stripped = prop.rust_field_type.strip_suffix("Type").unwrap_or(&prop.rust_field_type);
-                                        format!("{}Response", stripped)
+                                        // Non-target FK columns get Option<uuid::Uuid> — the
+                                        // entity model stores FK values, not response objects.
+                                        "Option<uuid::Uuid>".to_string()
                                     }
                                 } else if matches!(prop.effective_kind(), Some(RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck)) {
                                     let enum_type = codelist_enum_name_from_ref(&prop.ref_target)
