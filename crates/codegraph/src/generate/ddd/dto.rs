@@ -1241,6 +1241,27 @@ impl DtoGenerator {
         ];
         let imports = type_registry::resolve_imports(&ref_type_names, &caller_module);
 
+        // Collect codelist enum types referenced by compound DTO base fields.
+        let mut codelist_imports: Vec<String> = Vec::new();
+        for et in &enriched_types {
+            if let Some(base_fields) = et["base_fields"].as_array() {
+                for bf in base_fields {
+                    if let Some(rust_type) = bf["rust_type"].as_str() {
+                        let ty = rust_type
+                            .strip_prefix("Option<")
+                            .and_then(|s| s.strip_suffix('>'))
+                            .unwrap_or(rust_type);
+                        // Codelist enum types end with "CodeList" and are not generic
+                        if ty.ends_with("CodeList") && !ty.contains('<') {
+                            if !codelist_imports.contains(&ty.to_string()) {
+                                codelist_imports.push(ty.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let ctx = serde_json::json!({
             "entity_name": entity_name,
             "module_name": module_name,
@@ -1250,6 +1271,7 @@ impl DtoGenerator {
             "include_fields": include_fields,
             "enriched_types": enriched_types,
             "imports": imports,
+            "codelist_imports": codelist_imports,
         });
 
         let content =

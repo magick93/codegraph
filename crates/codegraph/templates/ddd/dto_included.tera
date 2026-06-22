@@ -6,6 +6,11 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 {% if imports %}{% for import in imports %}{{ import }}
 {% endfor %}{% endif -%}
+{%- if codelist_imports %}
+{% for import in codelist_imports %}
+pub use crate::codelist::{{ import }};
+{% endfor %}
+{%- endif %}
 {% if has_includes %}
 /// Included data for `?include=` eager-loading.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
