@@ -1251,8 +1251,8 @@ impl DtoGenerator {
                             .strip_prefix("Option<")
                             .and_then(|s| s.strip_suffix('>'))
                             .unwrap_or(rust_type);
-                        // Codelist enum types end with "CodeList" and are not generic
-                        if ty.ends_with("CodeList") && !ty.contains('<') {
+                        // Codelist enum types end with "CodeList" or "StatusCode" etc.
+                        if (ty.ends_with("CodeList") || ty.ends_with("Code")) && !ty.contains('<') {
                             if !codelist_imports.contains(&ty.to_string()) {
                                 codelist_imports.push(ty.to_string());
                             }

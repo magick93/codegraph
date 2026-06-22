@@ -294,9 +294,15 @@ pub async fn get_by_id(
         match path.as_str() {
         {% for ipath in include_paths %}
             "{{ ipath.alias }}" => {
+{% if ipath.segments | length == 1 and ipath.segments[0].is_array %}
+                included.{{ ipath.alias | replace(from=".", to="_") }} = Some(repo.{{ ipath.fetch_method }}(&tx, id).await
+                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
+                        .with_correlation_id(correlation_id))?);
+{% else %}
                 included.{{ ipath.alias | replace(from=".", to="_") }} = repo.{{ ipath.fetch_method }}(&tx, id).await
                     .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id))?;
+{% endif %}
             }
         {% endfor %}
             _ => {}
