@@ -1051,9 +1051,9 @@ impl DtoGenerator {
                     }
                 } else {
                     (
-                        format!("Option<Vec<{}>>", path.response_rust_type),
+                        format!("Option<{}>", path.response_rust_type),
                         path.response_rust_type.clone(),
-                        true,
+                        false,
                     )
                 };
 

@@ -19,7 +19,7 @@ pub use crate::codelist::AssignmentReasonCodeList;
 pub struct WorkerIncludedData {
 
     #[serde(skip_serializing_if = "Option::is_none", rename = "deployment.position")]
-    pub deployment_position: Option<Vec<DeploymentWithPositionResponse>>,
+    pub deployment_position: Option<DeploymentWithPositionResponse>,
 
 }
 
