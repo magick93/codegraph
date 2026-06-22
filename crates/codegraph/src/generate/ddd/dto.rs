@@ -1151,7 +1151,12 @@ impl DtoGenerator {
                                         .unwrap_or_else(|| "String".to_string());
                                     if is_optional { format!("Option<{}>", enum_type) } else { enum_type }
                                 } else {
-                                    prop.rust_field_type.clone()
+                                    let raw = prop.rust_field_type.clone();
+                                    if is_optional && !raw.starts_with("Option<") && !raw.starts_with("Vec<Option<") {
+                                        format!("Option<{}>", raw)
+                                    } else {
+                                        raw
+                                    }
                                 };
                                 // Use resolve_field().rust_field_name for consistency with the
                                 // base entity DTO (build_dto_context), which appends _id for
