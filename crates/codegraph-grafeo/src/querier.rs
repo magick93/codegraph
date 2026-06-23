@@ -1466,9 +1466,16 @@ impl GrafeoEngine {
         let schema_name = if is_codelist_ref {
             "common".to_string()
         } else {
-            extract_ref_domain(ref_str)
-                .unwrap_or(default_schema)
-                .to_string()
+            let domain = extract_ref_domain(ref_str)
+                .unwrap_or(default_schema);
+            // If the "domain" looks like a JSON schema filename (contains `.json`),
+            // the ref_target is a bare filename without path (no domain prefix).
+            // Use the default schema instead of the filename.
+            if domain.contains(".json") || domain.contains(".json#") {
+                default_schema.to_string()
+            } else {
+                domain.to_string()
+            }
         };
         let table = extract_ref_table(ref_str)?;
         Some(FkTarget {
