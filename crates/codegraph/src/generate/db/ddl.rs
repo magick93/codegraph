@@ -476,6 +476,7 @@ pub struct DdlContext {
     pub embeddings: Vec<EmbeddingContext>,
     /// Whether this entity tracks soft deletes and audit columns.
     pub is_auditable: bool,
+    pub is_codelist: bool,
     /// Whether this entity supports demo data flagging.
     pub has_demo_flag: bool,
 }
@@ -1242,6 +1243,7 @@ impl DdlGenerator {
             embeddings,
             is_auditable,
             has_demo_flag: is_auditable,
+            is_codelist: schema.is_codelist,
         })
     }
 }
@@ -1543,8 +1545,8 @@ impl EntityGenerator for DdlGenerator {
             content: table_sql,
         });
 
-        // RLS policy — only on dialects that support it
-        if ctx.is_tenant_scoped && self.dialect.has_rls() {
+        // RLS policy — only on tenant-scoped non-codelist tables with RLS support
+        if ctx.is_tenant_scoped && !ctx.is_codelist && self.dialect.has_rls() {
             let rls_sql = render_template_with_project(
                 tera,
                 &db_template_for(&*self.dialect, "rls"),

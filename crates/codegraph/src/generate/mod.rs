@@ -1042,7 +1042,9 @@ pub async fn compute_generation_order(
             }
         }
         for title in &graph_entities {
-            domain_titles.insert(title.clone());
+            if !exclude.contains(title.as_str()) && !force_vo.contains(title.as_str()) {
+                domain_titles.insert(title.clone());
+            }
         }
 
         for title in &domain_titles {
