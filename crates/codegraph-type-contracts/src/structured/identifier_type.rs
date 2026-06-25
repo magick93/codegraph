@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use utoipa::ToSchema;
 
 /// HR Open Standards IdentifierType — a character string used to uniquely
@@ -7,7 +8,10 @@ use utoipa::ToSchema;
 ///
 /// Use this type when the list or values are controlled by an external entity,
 /// the list or values are public and could be referenced or validated.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+///
+/// Accepts both a JSON object with fields (value, schemeId, etc.) and a plain
+/// JSON string (mapped to the `value` field with defaults for the rest).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, ToSchema)]
 pub struct IdentifierType {
     /// The identifier value.
     pub value: String,
@@ -47,6 +51,28 @@ pub struct IdentifierType {
     /// The URI that identifies where the identification scheme is located.
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "agencyUri")]
     pub agency_uri: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for IdentifierType {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Accept both a plain JSON string (backward compat for test data)
+        // and the full JSON object.
+        let value = Value::deserialize(deserializer)?;
+        match value {
+            Value::String(s) => Ok(IdentifierType {
+                value: s,
+                ..Default::default()
+            }),
+            Value::Object(map) => {
+                let id: IdentifierType = serde_json::from_value(Value::Object(map))
+                    .map_err(serde::de::Error::custom)?;
+                Ok(id)
+            }
+            _ => Err(serde::de::Error::custom(format!(
+                "expected IdentifierType object or string, got {value}"
+            ))),
+        }
+    }
 }
 
 #[cfg(test)]
