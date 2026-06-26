@@ -3978,13 +3978,24 @@ impl RepositoryImplEmitter {
             intermediate_module
         )
         .unwrap();
-        writeln!(
-            code,
-            "            .filter(crate::entity::{}::Column::Id.eq(source_id))",
-            intermediate_module
-        )
-        .unwrap();
-        writeln!(code, "            .one(db)").unwrap();
+        if seg0.is_array {
+            let rev_fk_pascal = codegraph_naming::to_pascal_case(&seg0.reverse_fk_column);
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::{}.eq(source_id))",
+                intermediate_module, rev_fk_pascal
+            )
+            .unwrap();
+            writeln!(code, "            .one(db)").unwrap();
+        } else {
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.eq(source_id))",
+                intermediate_module
+            )
+            .unwrap();
+            writeln!(code, "            .one(db)").unwrap();
+        }
         writeln!(code, "            .await?;").unwrap();
         writeln!(code, "        let intermediate = match intermediate {{").unwrap();
         writeln!(code, "            Some(s) => s,").unwrap();
