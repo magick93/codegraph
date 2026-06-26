@@ -608,7 +608,7 @@ pub async fn list(
                 "{{ ipath.alias }}".to_string(),
                 serde_json::to_value(repo.{{ ipath.batch_fetch_method }}(&tx, &ids).await
                     .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
-                        .with_correlation_id(correlation_id)))?).unwrap_or_default(),
+                        .with_correlation_id(correlation_id))?).unwrap_or_default(),
             );
         }
         {% endif %}
