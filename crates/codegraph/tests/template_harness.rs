@@ -4998,8 +4998,85 @@ operations = ["create", "read", "update", "list"]
         }
     }
 
-}
+    /// Test that include path resolution uses config parent_ref for reverse FK
+    /// column when no graph $ref property exists on the child entity.
+    #[tokio::test]
+    async fn resolve_reverse_fk_uses_config_parent_ref() {
+        let mock = MockEngine::builder()
+            .with_schema(schema_node("WorkerType", "hr", "worker", true))
+            .with_schema(schema_node("DeploymentType", "hr", "deployment", true))
+            // Only WorkerType has a graph property referencing DeploymentType (ItemsOf).
+            // DeploymentType has NO $ref property back to WorkerType — the FK column
+            // comes from config parent_ref = "worker_type_id".
+            .with_ref_target("deployment_id", "WorkerType", schema_node("DeploymentType", "hr", "deployment", true))
+            .with_properties("WorkerType", vec![
+                PropertyNode {
+                    name: "deployment_id".to_string(),
+                    rust_field_name: "deployment_id".to_string(),
+                    pg_column_name: "deployment_id".to_string(),
+                    pg_column_type: "UUID".to_string(),
+                    rust_field_type: "Uuid".to_string(),
+                    sea_orm_type: "Uuid".to_string(),
+                    ref_target: Some("DeploymentType".to_string()),
+                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::EntityReference),
+                    render_strategy: "entity_reference".to_string(),
+                    ..prop_defaults()
+                },
+            ])
+            .with_parent_candidate(ParentCandidate {
+                child_title: "DeploymentType".to_string(),
+                parent_title: "WorkerType".to_string(),
+                field_name: "worker_type_id".to_string(),
+                source: DetectionSource::ScalarRef,
+            })
+            .build();
 
+        let config = {
+            let toml = r#"
+[defaults]
+type_suffix = "Type"
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType", "DeploymentType"]
+
+[domains.hr.entity_config.WorkerType]
+allow_include = ["deployment"]
+operations = ["create", "read", "update", "list"]
+
+[domains.hr.entity_config.DeploymentType]
+role = "child"
+parent = "WorkerType"
+parent_ref = "worker_type_id"
+"#;
+            parse_domain_config_str(toml).unwrap()
+        };
+
+        let paths = resolve_include_paths(
+            &mock,
+            &config,
+            "hr",
+            "WorkerType",
+            Some(&vec!["deployment".to_string()]),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(paths.len(), 1, "should resolve 1 include path");
+        assert_eq!(
+            paths[0].segments[0].fk_column, "deployment_id",
+            "forward FK column should come from graph property"
+        );
+        assert_eq!(
+            paths[0].segments[0].reverse_fk_column, "worker_type_id",
+            "reverse FK column should come from config parent_ref, not graph fallback"
+        );
+    }
+
+}
 // ── Include Feature Tests (E4 + E5) ──────────────────────────────────────────
 
 /// Like a plain `PropertyNode` builder but allows a split

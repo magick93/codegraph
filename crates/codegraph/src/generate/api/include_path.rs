@@ -156,9 +156,9 @@ async fn resolve_explicit_paths(
             let (fk_column, is_array) =
                 resolve_fk_via_graph(db, current_source_title, &target_title, seg).await?;
 
-            let source_entity_name = super::router::strip_suffix(current_source_title, &config.defaults.type_suffix);
-            let (reverse_fk_column, _) = resolve_fk_via_graph(
-                db, &target_title, current_source_title, &source_entity_name,
+            // Reverse FK: check config parent_ref first, then graph.
+            let reverse_fk_column = resolve_child_fk_column(
+                config, domain, &target_title, current_source_title, db,
             ).await?;
 
             segments.push(IncludeSegment {
