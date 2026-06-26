@@ -590,8 +590,8 @@ pub async fn list(
     let mut included = if !include_paths.is_empty() {
         use sea_orm::TransactionTrait;
         let tx = state.db.begin().await
-            .map_err(|e| AppError::internal(format!("Failed to begin transaction for includes: {e}")
-                .with_correlation_id(correlation_id)))?;
+            .map_err(|e| AppError::internal(format!("Failed to begin transaction for includes: {e}"))
+                .with_correlation_id(correlation_id))?;
         let repo = crate::domain::{{ domain }}::{{ module_name }}::repository_impl::{{ entity_name }}RepositoryImpl;
         let ids: Vec<Uuid> = results.iter().map(|r| r.id).collect();
         let mut included_map = std::collections::HashMap::<String, serde_json::Value>::new();
@@ -602,18 +602,20 @@ pub async fn list(
             }
         }
         {% for ipath in include_paths %}
+        {% if ipath.segments | length == 1 %}
         if include_paths.contains(&"{{ ipath.alias }}".to_string()) {
             included_map.insert(
                 "{{ ipath.alias }}".to_string(),
                 serde_json::to_value(repo.{{ ipath.batch_fetch_method }}(&tx, &ids).await
-                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}")
+                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id)))?).unwrap_or_default(),
             );
         }
+        {% endif %}
         {% endfor %}
         tx.commit().await
-            .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}")
-                .with_correlation_id(correlation_id)))?;
+            .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}"))
+                .with_correlation_id(correlation_id))?;
         included_map
     } else {
         std::collections::HashMap::new()
