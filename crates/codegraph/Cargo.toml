@@ -41,3 +41,5 @@ tokio = { version = "1", features = ["full"] }
 codegraph-grafeo = { path = "../codegraph-grafeo" }
 tempfile = "3"
 insta = { version = "1", features = ["glob"] }
+syn = { version = "2", features = ["full", "parsing"] }
+proc-macro2 = "1"

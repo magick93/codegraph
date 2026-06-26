@@ -5076,6 +5076,97 @@ parent_ref = "worker_type_id"
         );
     }
 
+    /// Verify generated repository + DTO code parses as syntactically valid Rust.
+    /// Catches template bugs like unbalanced parens, missing closes,
+    /// malformed expressions — without needing the full dependency tree.
+    #[tokio::test]
+    async fn generated_code_parses_as_valid_rust() {
+        let mock = setup_vo_entity_mock();
+        let config = vo_entity_domain_config();
+
+        let mut all_sources: Vec<(String, String)> = Vec::new();
+
+        // Generate DTO code
+        let dto_output = tempfile::TempDir::new().unwrap();
+        let dto_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(dto_output.path().to_path_buf());
+        if let Ok(files) = dto_gen
+            .generate(&mock, "WorkerType", "hr", &config, &test_tera(), &test_project_config())
+            .await
+        {
+            for f in files {
+                all_sources.push((f.path.to_string_lossy().to_string(), f.content));
+            }
+        }
+
+        // Generate include-path DTO for OrderType
+        let dto_include_gen = generate::ddd::dto::DtoGenerator::new(dto_output.path());
+        if let Ok(files) = dto_include_gen
+            .generate(&mock, "OrderType", "test", &config, &test_tera(), &test_project_config())
+            .await
+        {
+            for f in files {
+                if f.path.to_string_lossy().contains("dto_included") {
+                    all_sources.push((f.path.to_string_lossy().to_string(), f.content));
+                }
+            }
+        }
+
+        // Generate handler
+        let handler_gen = generate::api::handler::HandlerGenerator::new(dto_output.path());
+        if let Ok(files) = handler_gen
+            .generate(&mock, "WorkerType", "hr", &config, &test_tera(), &test_project_config())
+            .await
+        {
+            for f in files {
+                all_sources.push((f.path.to_string_lossy().to_string(), f.content));
+            }
+        }
+
+        // Generate repository
+        use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
+        let include_paths = resolve_include_paths(
+            &mock, &config, "hr", "WorkerType",
+            Some(&vec!["person".to_string()]),
+        ).await.unwrap();
+        let emitter = RepositoryImplEmitter;
+        if let Ok(code) = emitter
+            .emit(&mock, "WorkerType", "hr", &config, None, &include_paths)
+            .await
+        {
+            all_sources.push(("repository_impl.rs".to_string(), code));
+        }
+
+        // Parse all sources
+        let mut errors = Vec::new();
+        for (path, content) in &all_sources {
+            if path.contains("mod.rs") || content.is_empty() {
+                continue;
+            }
+            if let Err(e) = syn::parse_str::<syn::File>(content) {
+                // Skip errors about unresolved imports — those are expected
+                // since we don't have the full workspace. Only fail on actual
+                // syntax errors.
+                let msg = e.to_string();
+                if !msg.contains("unresolved") && !msg.contains("cannot find") {
+                    errors.push(format!("{}: {}", path, e));
+                }
+            }
+        }
+
+        assert!(
+            !all_sources.is_empty(),
+            "Should have generated at least some code to parse"
+        );
+
+        if !errors.is_empty() {
+            panic!(
+                "Generated code has {} syntax error(s):\n{}",
+                errors.len(),
+                errors.iter().map(|e| format!("  - {}", e)).collect::<Vec<_>>().join("\n")
+            );
+        }
+    }
+
 }
 // ── Include Feature Tests (E4 + E5) ──────────────────────────────────────────
 
