@@ -540,6 +540,17 @@ impl EntityGenerator for HandlerGenerator {
         if has_include {
             handler_refs.push(format!("{}WithIncludeResponse", entity_name));
             handler_refs.push(format!("{}IncludedData", entity_name));
+            // Add combined response types for dot-notation paths and VO response
+            // types for child_table_override paths — the handler's match arms
+            // reference these types directly in merge patterns.
+            for path in &include_paths {
+                if path.segments.len() > 1 {
+                    handler_refs.push(format!("{}CombinedResponse", path.segments[0].entity_name));
+                }
+                if let Some(over) = path.segments.first().and_then(|s| s.child_table_override.as_ref()) {
+                    handler_refs.push(over.response_type.clone());
+                }
+            }
         }
         // Note: Create{entity_name}Body and {entity_name}BulkCreateResponse are
         // defined inline by handler.tera and must NOT be registered in the type

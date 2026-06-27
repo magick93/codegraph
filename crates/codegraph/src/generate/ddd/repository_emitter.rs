@@ -1657,8 +1657,14 @@ impl RepositoryImplEmitter {
                         // build_include_dtos (dto.rs:1127-1131).
                         if seg_idx < path.segments.len() - 1 {
                             let next_module = &path.segments[seg_idx + 1].module_name;
+                            // Skip entity reference FK columns that match a leaf
+                            // segment — the combined DTO excludes these since the
+                            // enriched type has a nested field for the leaf entity
+                            // instead. Match both raw rust_field_name and with _id
+                            // suffix, since entity generators may differ in naming.
                             if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference))
-                                && prop.rust_field_name == *next_module
+                                && (prop.rust_field_name == *next_module
+                                    || prop.rust_field_name == format!("{}_id", next_module))
                             {
                                 continue;
                             }

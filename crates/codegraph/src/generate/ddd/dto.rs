@@ -966,6 +966,12 @@ impl EntityGenerator for DtoGenerator {
                 &child.struct_name,
                 [module_path(), vec!["dto_response".into()]].concat(),
             );
+            // Also register the Response variant — child DTOs are used as
+            // Option<{struct_name}Response> in include-path fields.
+            type_registry::register_type(
+                &format!("{}Response", child.struct_name),
+                [module_path(), vec!["dto_response".into()]].concat(),
+            );
         }
 
         // Generate include DTOs if allow_include is configured.
@@ -1119,10 +1125,6 @@ impl DtoGenerator {
                 let first_path = group_paths[0];
                 let intermediate = &first_path.segments[0];
 
-                // Collect all leaf module_names for skip detection.
-                let leaf_names: std::collections::HashSet<&str> = group_paths.iter()
-                    .map(|p| p.segments[1].module_name.as_str())
-                    .collect();
 
                 // Build the combined type name: DeploymentCombinedResponse
                 let combined_name = format!("{}CombinedResponse", intermediate.entity_name);
@@ -1146,13 +1148,8 @@ impl DtoGenerator {
                             {
                                 continue;
                             }
+                            // Skip ValueObject properties (not direct columns).
                             if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
-                                continue;
-                            }
-                            // Skip entity reference fields matching ANY leaf segment.
-                            if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference))
-                                && leaf_names.contains(prop.rust_field_name.as_str())
-                            {
                                 continue;
                             }
                             let is_optional = prop.is_nullable || !prop.is_required;

@@ -36,6 +36,8 @@ pub struct DeploymentCombinedResponse {
 
     pub full_time_equivalent_ratio: Option<rust_decimal::Decimal>,
 
+    pub position_id: Option<uuid::Uuid>,
+
     pub created_at: chrono::DateTime<chrono::Utc>,
 
     pub updated_at: chrono::DateTime<chrono::Utc>,
