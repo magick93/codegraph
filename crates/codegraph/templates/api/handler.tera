@@ -280,9 +280,14 @@ pub async fn get_by_id(
     }
     
     let mut included = {{ entity_name }}IncludedData { 
-        {% for ipath in include_paths %}
-        {{ ipath.alias | replace(from=".", to="_") }}: None,
-        {% endfor %}
+        {%- set seen = [] %}
+        {%- for ipath in include_paths %}
+        {%- set field = ipath.segments[0].module_name %}
+        {%- if field not in seen %}
+        {%- set_global seen = seen | concat(with=[field]) %}
+        {{ field }}: None,
+        {%- endif %}
+        {%- endfor %}
     };
     
     use sea_orm::TransactionTrait;
@@ -295,11 +300,11 @@ pub async fn get_by_id(
         {% for ipath in include_paths %}
             "{{ ipath.alias }}" => {
 {% if ipath.segments | length == 1 and ipath.segments[0].is_array %}
-                included.{{ ipath.alias | replace(from=".", to="_") }} = Some(repo.{{ ipath.fetch_method }}(&tx, id).await
+                included.{{ ipath.segments[0].module_name }} = Some(repo.{{ ipath.fetch_method }}(&tx, id).await
                     .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id))?);
 {% else %}
-                included.{{ ipath.alias | replace(from=".", to="_") }} = repo.{{ ipath.fetch_method }}(&tx, id).await
+                included.{{ ipath.segments[0].module_name }} = repo.{{ ipath.fetch_method }}(&tx, id).await
                     .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id))?;
 {% endif %}
@@ -605,7 +610,7 @@ pub async fn list(
         {% if ipath.segments | length == 1 %}
         if include_paths.contains(&"{{ ipath.alias }}".to_string()) {
             included_map.insert(
-                "{{ ipath.alias }}".to_string(),
+                "{{ ipath.segments[0].module_name }}".to_string(),
                 serde_json::to_value(repo.{{ ipath.batch_fetch_method }}(&tx, &ids).await
                     .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id))?).unwrap_or_default(),

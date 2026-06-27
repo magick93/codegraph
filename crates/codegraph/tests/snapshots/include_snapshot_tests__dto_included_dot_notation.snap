@@ -18,8 +18,8 @@ pub use crate::codelist::AssignmentReasonCodeList;
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WorkerIncludedData {
 
-    #[serde(skip_serializing_if = "Option::is_none", rename = "deployment.position")]
-    pub deployment_position: Option<DeploymentWithPositionResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deployment: Option<DeploymentCombinedResponse>,
 
 }
 
@@ -28,7 +28,7 @@ pub struct WorkerIncludedData {
 
 /// Enriched response type for dot-notation include path.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
-pub struct DeploymentWithPositionResponse {
+pub struct DeploymentCombinedResponse {
 
     pub id: Uuid,
 

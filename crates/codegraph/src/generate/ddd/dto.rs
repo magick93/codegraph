@@ -1028,11 +1028,24 @@ impl DtoGenerator {
 
         // Build include_fields for the template, deduplicating by alias to prevent
         // duplicate struct field names when multiple include paths resolve to the same alias.
+        // Dot-notation paths are grouped by their first segment key (e.g. "deployment.position"
+        // and "deployment.organization" both become "deployment") — only the first path per
+        // group contributes an IncludedData field, matching UI access patterns.
         let include_fields: Vec<serde_json::Value> = {
+            // Resolve the field alias for an include path: for dot-notation paths use the
+            // first segment (e.g. "deployment" for "deployment.position"), otherwise the
+            // single-segment alias directly.
+            fn field_alias_for(path: &ResolvedIncludePath) -> String {
+                if path.segments.len() > 1 {
+                    path.segments[0].module_name.clone()
+                } else {
+                    path.alias.clone()
+                }
+            }
             let mut seen_aliases = std::collections::HashSet::new();
             include_paths
             .iter()
-            .filter(|path| seen_aliases.insert(path.alias.clone()))
+            .filter(|path| seen_aliases.insert(field_alias_for(path)))
             .map(|path| {
                 let (rust_type, inner_type, is_vec) = if path.segments.len() == 1 {
                     let seg = &path.segments[0];
@@ -1050,15 +1063,21 @@ impl DtoGenerator {
                         )
                     }
                 } else {
+                    // Dot-notation paths use the combined DTO type name.
+                    let combined_name = format!("{}CombinedResponse", path.segments[0].entity_name);
                     (
-                        format!("Option<{}>", path.response_rust_type),
-                        path.response_rust_type.clone(),
+                        format!("Option<{}>", combined_name),
+                        combined_name,
                         false,
                     )
                 };
 
-                let field_alias = path.alias.replace('.', "_");
-                let needs_serde_rename = field_alias != path.alias;
+                let field_alias = field_alias_for(path);
+                // For dot-notation paths, field_alias is the first segment (e.g. "deployment")
+                // which doesn't need serde renaming — the Rust field name is the JSON key.
+                // Only apply rename when field_alias has underscore-for-dot substitution
+                // that changes the Rust identifier from the API key (single-segment paths).
+                let needs_serde_rename = path.segments.len() == 1 && field_alias != path.alias;
                 serde_json::json!({
                     "alias": path.alias,
                     "field_alias": field_alias,
@@ -1075,119 +1094,109 @@ impl DtoGenerator {
         // Query all properties for dot-notation intermediate entity fields
         let all_props = db.list_all_properties().await?;
 
-        // Build enriched_types for dot-notation paths
+        // Build enriched_types for dot-notation paths, grouped by first segment.
+        // Paths like "deployment.position" and "deployment.organization" share the same
+        // intermediate entity and produce a single combined DTO (DeploymentCombinedResponse)
+        // with one optional nested field per leaf.
         let enriched_types: Vec<serde_json::Value> = if has_dot_paths {
-            let mut enriched = Vec::new();
-            let mut seen_type_names = std::collections::HashSet::new();
-
+            // Group dot-notation paths by first segment.
+            let mut by_first_seg: std::collections::HashMap<String, Vec<&ResolvedIncludePath>> = std::collections::HashMap::new();
             for path in include_paths {
                 if path.segments.len() > 1 {
-                    if !seen_type_names.insert(path.response_rust_type.clone()) {
-                        continue;
+                    let key = path.segments[0].module_name.clone();
+                    by_first_seg.entry(key).or_default().push(path);
+                }
+            }
+
+            let mut enriched = Vec::new();
+            for (first_seg, group_paths) in &by_first_seg {
+                let first_path = group_paths[0];
+                let intermediate = &first_path.segments[0];
+
+                // Collect all leaf module_names for skip detection.
+                let leaf_names: std::collections::HashSet<&str> = group_paths.iter()
+                    .map(|p| p.segments[1].module_name.as_str())
+                    .collect();
+
+                // Build the combined type name: DeploymentCombinedResponse
+                let combined_name = format!("{}CombinedResponse", intermediate.entity_name);
+
+                let mut base_fields: Vec<serde_json::Value> = Vec::new();
+                base_fields.push(serde_json::json!({"name": "id", "rust_type": "Uuid", "is_optional": false}));
+
+                let props_key = match db.get_schema_in_domain(&intermediate.schema_title, domain).await? {
+                    Some(s) => Some(s.title),
+                    None => {
+                        let with_type = format!("{}Type", intermediate.entity_name);
+                        db.get_schema_in_domain(&with_type, domain).await?.map(|s| s.title)
                     }
-
-                    let intermediate = &path.segments[0];
-                    let leaf = &path.segments[path.segments.len() - 1];
-
-                    // Query all scalar properties of the intermediate entity from the graph.
-                    // Properties are keyed by schema title (e.g. "DeploymentType"), but
-                    // entity_name may use rust_type_name (e.g. "Deployment"). Try both.
-                    let mut base_fields: Vec<serde_json::Value> = Vec::new();
-                    base_fields.push(serde_json::json!({"name": "id", "rust_type": "Uuid", "is_optional": false}));
-
-                    // Determine the property lookup key by checking the schema title.
-                    // Properties are keyed by schema title (e.g. "DeploymentType"), but
-                    // entity_name may use rust_type_name (e.g. "Deployment").
-                    // Use schema_title (canonical graph key) for property lookup.
-                    // Resolved include paths always set this correctly.
-                    let props_key = match db.get_schema_in_domain(&intermediate.schema_title, domain).await? {
-                        Some(s) => Some(s.title),
-                        None => {
-                            let with_type = format!("{}Type", intermediate.entity_name);
-                            db.get_schema_in_domain(&with_type, domain).await?.map(|s| s.title)
-                        }
-                    };
-                    if let Some(ref key) = props_key {
-                        if let Some(props) = all_props.get(key) {
-                            for prop in props {
-                                // Skip synthetic/generated fields — handled separately
-                                if prop.rust_field_name == "id"
-                                    || prop.rust_field_name == "created_at"
-                                    || prop.rust_field_name == "updated_at"
-                                {
-                                    continue;
-                                }
-                                // Skip value objects / child tables (separate child DTOs, not flat columns)
-                                if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
-                                    continue;
-                                }
-                                // Skip entity reference fields whose name matches the leaf segment —
-                                // they will be added as a nested field (e.g., {position: Option<PositionResponse>})
-                                // and would cause error[E0062]: field specified more than once.
-                                if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference))
-                                    && prop.rust_field_name == leaf.module_name
-                                {
-                                    continue;
-                                }
-                                let is_optional = prop.is_nullable || !prop.is_required;
-                                let field_type = if matches!(prop.effective_kind(), Some(RefClassificationKind::StructuredWrapper)) {
-                                    let base = if prop.is_array { "Vec<serde_json::Value>" } else { "serde_json::Value" };
-                                    if is_optional { format!("Option<{base}>") } else { base.to_string() }
-                                } else if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference)) {
-                                    if prop.is_array {
-                                        let inner = prop.rust_field_type
-                                            .strip_prefix("Vec<")
-                                            .and_then(|s| s.strip_suffix('>'))
-                                            .unwrap_or(&prop.rust_field_type);
-                                        let stripped = inner.strip_suffix("Type").unwrap_or(inner);
-                                        format!("Vec<{}Response>", stripped)
-                                    } else {
-                                        // Non-target FK columns get Option<uuid::Uuid> — the
-                                        // entity model stores FK values, not response objects.
-                                        "Option<uuid::Uuid>".to_string()
-                                    }
-                                } else if matches!(prop.effective_kind(), Some(RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck)) {
-                                    let enum_type = codelist_enum_name_from_ref(&prop.ref_target)
-                                        .unwrap_or_else(|| "String".to_string());
-                                    if is_optional { format!("Option<{}>", enum_type) } else { enum_type }
-                                } else {
-                                    let raw = prop.rust_field_type.clone();
-                                    if is_optional && !raw.starts_with("Option<") && !raw.starts_with("Vec<Option<") {
-                                        format!("Option<{}>", raw)
-                                    } else {
-                                        raw
-                                    }
-                                };
-                                // Use resolve_field().rust_field_name for consistency with the
-                                // base entity DTO (build_dto_context), which appends _id for
-                                // EntityReference properties. This aligns the include-path
-                                // compound DTO field names with the base DTO field names.
-                                let fd = codegraph_core::types::resolve_field(prop);
-                                base_fields.push(serde_json::json!({
-                                    "name": fd.rust_field_name,
-                                    "rust_type": field_type,
-                                    "is_optional": is_optional,
-                                }));
+                };
+                if let Some(ref key) = props_key {
+                    if let Some(props) = all_props.get(key) {
+                        for prop in props {
+                            if prop.rust_field_name == "id"
+                                || prop.rust_field_name == "created_at"
+                                || prop.rust_field_name == "updated_at"
+                            {
+                                continue;
                             }
+                            if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
+                                continue;
+                            }
+                            // Skip entity reference fields matching ANY leaf segment.
+                            if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference))
+                                && leaf_names.contains(prop.rust_field_name.as_str())
+                            {
+                                continue;
+                            }
+                            let is_optional = prop.is_nullable || !prop.is_required;
+                            let field_type = if matches!(prop.effective_kind(), Some(RefClassificationKind::StructuredWrapper)) {
+                                let base = if prop.is_array { "Vec<serde_json::Value>" } else { "serde_json::Value" };
+                                if is_optional { format!("Option<{base}>") } else { base.to_string() }
+                            } else if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference)) {
+                                "Option<uuid::Uuid>".to_string()
+                            } else if matches!(prop.effective_kind(), Some(RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck)) {
+                                let enum_type = codelist_enum_name_from_ref(&prop.ref_target)
+                                    .unwrap_or_else(|| "String".to_string());
+                                if is_optional { format!("Option<{}>", enum_type) } else { enum_type }
+                            } else {
+                                let raw = prop.rust_field_type.clone();
+                                if is_optional && !raw.starts_with("Option<") && !raw.starts_with("Vec<Option<") {
+                                    format!("Option<{}>", raw)
+                                } else {
+                                    raw
+                                }
+                            };
+                            let fd = codegraph_core::types::resolve_field(prop);
+                            base_fields.push(serde_json::json!({
+                                "name": fd.rust_field_name,
+                                "rust_type": field_type,
+                                "is_optional": is_optional,
+                            }));
                         }
                     }
+                }
 
-                    base_fields.push(serde_json::json!({"name": "created_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}));
-                    base_fields.push(serde_json::json!({"name": "updated_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}));
+                base_fields.push(serde_json::json!({"name": "created_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}));
+                base_fields.push(serde_json::json!({"name": "updated_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}));
 
-                    let nested_fields: Vec<serde_json::Value> = vec![serde_json::json!({
+                // Add one nested field per leaf in the group.
+                let mut nested_fields: Vec<serde_json::Value> = Vec::new();
+                for leaf_path in group_paths {
+                    let leaf = &leaf_path.segments[leaf_path.segments.len() - 1];
+                    nested_fields.push(serde_json::json!({
                         "alias": leaf.module_name,
                         "rust_type": format!("Option<{}Response>", leaf.entity_name),
                         "inner_type": format!("{}Response", leaf.entity_name),
                         "is_vec": false,
-                    })];
-
-                    enriched.push(serde_json::json!({
-                        "type_name": path.response_rust_type,
-                        "base_fields": base_fields,
-                        "nested_fields": nested_fields,
                     }));
                 }
+
+                enriched.push(serde_json::json!({
+                    "type_name": combined_name,
+                    "base_fields": base_fields,
+                    "nested_fields": nested_fields,
+                }));
             }
             enriched
         } else {
@@ -1201,7 +1210,12 @@ impl DtoGenerator {
         type_registry::register_type(&format!("{}WithIncludeResponse", entity_name), module_path.clone());
         type_registry::register_type(&format!("{}IncludedData", entity_name), module_path.clone());
         for path in include_paths {
-            type_registry::register_type(&path.response_rust_type, module_path.clone());
+            let type_name = if path.segments.len() > 1 {
+                format!("{}CombinedResponse", path.segments[0].entity_name)
+            } else {
+                path.response_rust_type.clone()
+            };
+            type_registry::register_type(&type_name, module_path.clone());
         }
 
         // Collect all type names referenced by include fields for cross-entity import resolution.

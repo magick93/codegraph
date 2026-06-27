@@ -5899,7 +5899,7 @@ allow_include = ["deployment.position"]
     let content = &included_file.content;
 
     assert!(
-        content.contains("struct DeploymentWithPositionResponse"),
+        content.contains("struct DeploymentCombinedResponse"),
         "Should contain enriched type for dot-notation path. Got:\n{content}"
     );
     assert!(
@@ -6088,7 +6088,7 @@ allow_include = ["deployment.position"]
 
     // The enriched struct is generated for the dot-notation path.
     assert!(
-        content.contains("struct DeploymentWithPositionResponse"),
+        content.contains("struct DeploymentCombinedResponse"),
         "Should contain enriched type for dot-notation path. Got:\n{content}"
     );
     // Leaf entity reference is a nested field.

@@ -351,8 +351,8 @@ fn snapshot_dto_included_dot_notation() {
     let content = &included_file.content;
 
     assert!(
-        content.contains("struct DeploymentWithPositionResponse"),
-        "should contain enriched struct for deployment.position"
+        content.contains("struct DeploymentCombinedResponse"),
+        "should contain combined enriched struct for deployment.* paths"
     );
     assert!(
         content.contains("assignment_reason_code:"),
@@ -367,16 +367,8 @@ fn snapshot_dto_included_dot_notation() {
         "should contain nested leaf include field"
     );
     assert!(
-        content.contains("deployment_position"),
-        "should use deployment_position alias for the dot-notation path"
-    );
-    assert!(
-        content.contains("deployment.position"),
-        "should have serde rename for the original dot-notation"
-    );
-    assert!(
-        content.contains(r#"is_none", rename"#),
-        "comma and rename must be inside serde() parens, not after the closing ')'"
+        content.contains("pub deployment: Option<DeploymentCombinedResponse>"),
+        "should use first-segment alias 'deployment' for the dot-notation path"
     );
 
     insta::assert_snapshot!("dto_included_dot_notation", content);
