@@ -441,8 +441,23 @@ fn typed_value_expr(rust_type: &str, value_expr: &str) -> String {
 /// Uuid, i32, i64, f32, f64, bool, Decimal, NaiveDate, DateTime<Utc>, and String fallback.
 fn emit_nested_filter_parse(code: &mut String, nf: &NestedFilterFieldInfo) -> &'static str {
     let key = &nf.filter_key;
-    match nf.rust_type.as_str() {
+    // Strip Option<> wrapper for type matching — all FK columns are nullable.
+    let rust_type = nf.rust_type.as_str();
+    let base_type = rust_type
+        .strip_prefix("Option<")
+        .and_then(|s| s.strip_suffix('>'))
+        .unwrap_or(rust_type);
+    match base_type {
         "Uuid" | "uuid::Uuid" => {
+            writeln!(
+                code,
+                "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{key}': {{e}}\")))?;",
+            )
+            .unwrap();
+            "parsed"
+        }
+        // Entity reference types (e.g. "OrganizationType") — always UUID FK columns.
+        ty if ty.ends_with("Type") && ty.chars().next().map_or(false, |c| c.is_uppercase()) => {
             writeln!(
                 code,
                 "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{key}': {{e}}\")))?;",
