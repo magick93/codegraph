@@ -3711,10 +3711,7 @@ impl RepositoryImplEmitter {
             writeln!(code, "            None => return Ok(None),").unwrap();
             writeln!(code, "        }};").unwrap();
             writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
-            writeln!(code, "            id: target.id,").unwrap();
             Self::emit_field_assignments_typed(code, "target", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
-            writeln!(code, "            created_at: target.created_at,").unwrap();
-            writeln!(code, "            updated_at: target.updated_at,").unwrap();
             writeln!(code, "            ..Default::default()").unwrap();
             writeln!(code, "        }}))").unwrap();
         } else if seg.is_array {
@@ -3882,10 +3879,7 @@ impl RepositoryImplEmitter {
                 resp_type,
             )
             .unwrap();
-            writeln!(code, "                id: row.id,").unwrap();
             Self::emit_field_assignments_typed(code, "row", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
-            writeln!(code, "                created_at: row.created_at,").unwrap();
-            writeln!(code, "                updated_at: row.updated_at,").unwrap();
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }}));").unwrap();
             writeln!(code, "        }}").unwrap();
