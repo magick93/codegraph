@@ -248,9 +248,11 @@ pub async fn get_by_id(
         
             "application" => {
 
+
                 included.application = Some(repo.fetch_application_for_candidate(&tx, id).await
                     .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include application: {e}"))
                         .with_correlation_id(correlation_id))?);
+
 
             }
         

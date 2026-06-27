@@ -1049,16 +1049,22 @@ impl DtoGenerator {
             .map(|path| {
                 let (rust_type, inner_type, is_vec) = if path.segments.len() == 1 {
                     let seg = &path.segments[0];
+                    // When the segment has a child_table_override (VO→entity),
+                    // the response type is the child DTO (e.g. WorkerPersonLegalResponse),
+                    // not the entity's response type (PersonResponse).
+                    let resp_type = seg.child_table_override.as_ref()
+                        .map(|o| o.response_type.clone())
+                        .unwrap_or_else(|| format!("{}Response", seg.entity_name));
                     if seg.is_array {
                         (
-                            format!("Option<Vec<{}Response>>", seg.entity_name),
-                            format!("{}Response", seg.entity_name),
+                            format!("Option<Vec<{}>>", resp_type),
+                            resp_type,
                             true,
                         )
                     } else {
                         (
-                            format!("Option<{}Response>", seg.entity_name),
-                            format!("{}Response", seg.entity_name),
+                            format!("Option<{}>", resp_type),
+                            resp_type,
                             false,
                         )
                     }

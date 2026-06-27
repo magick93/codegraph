@@ -299,7 +299,8 @@ pub async fn get_by_id(
         match path.as_str() {
         {% for ipath in include_paths %}
             "{{ ipath.alias }}" => {
-{% if ipath.segments | length == 1 and ipath.segments[0].is_array %}
+{% if ipath.segments | length == 1 %}
+{% if ipath.segments[0].is_array %}
                 included.{{ ipath.segments[0].module_name }} = Some(repo.{{ ipath.fetch_method }}(&tx, id).await
                     .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id))?);
@@ -307,6 +308,22 @@ pub async fn get_by_id(
                 included.{{ ipath.segments[0].module_name }} = repo.{{ ipath.fetch_method }}(&tx, id).await
                     .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id))?;
+{% endif %}
+{% else %}
+                // Dot-notation path: merge into combined response
+                let leaf_resp = repo.{{ ipath.fetch_method }}(&tx, id).await
+                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
+                        .with_correlation_id(correlation_id))?;
+                if let Some(val) = leaf_resp {
+                    if let Some(ref mut combined) = included.{{ ipath.segments[0].module_name }} {
+                        combined.{{ ipath.segments[1].module_name }} = Some(val);
+                    } else {
+                        included.{{ ipath.segments[0].module_name }} = Some({{ ipath.response_rust_type }} {
+                            {{ ipath.segments[1].module_name }}: Some(val),
+                            ..Default::default()
+                        });
+                    }
+                }
 {% endif %}
             }
         {% endfor %}

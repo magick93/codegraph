@@ -1782,11 +1782,12 @@ impl RepositoryImplEmitter {
                 writeln!(code, "{}", import).unwrap();
             }
             // Also add direct imports for enriched types from dto_included module.
-            // These types (e.g. DeploymentWithPositionResponse) are generated in the
+            // These types (e.g. DeploymentCombinedResponse) are generated in the
             // current entity's dto_included.rs but may not yet be registered in the
             // type registry when the repository emitter runs (DTO generator runs later).
+            let mut seen_enriched = std::collections::HashSet::new();
             for path in &include_paths {
-                if path.segments.len() > 1 {
+                if path.segments.len() > 1 && seen_enriched.insert(path.response_rust_type.clone()) {
                     writeln!(
                         code,
                         "use super::dto_included::{};",

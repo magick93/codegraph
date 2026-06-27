@@ -14,9 +14,9 @@ pub struct ResolvedIncludePath {
     pub alias: String,
     /// Dot-delimited segments, resolved against the graph
     pub segments: Vec<IncludeSegment>,
-    /// Generated DTO type name for this path's response, e.g. "DeploymentWithPositionResponse".
+    /// Generated DTO type name for this path's response, e.g. "DeploymentCombinedResponse".
     /// For single-segment paths this matches the target entity's Response type.
-    /// For multi-segment paths this is a generated enriched type name.
+    /// For multi-segment paths this is the combined enriched type name.
     pub response_rust_type: String,
     /// The method name generated in the repository, e.g. "fetch_person_for_worker"
     pub fetch_method: String,
@@ -711,16 +711,12 @@ async fn resolve_fk_via_graph(
 /// Derive the response Rust type name for a resolved include path.
 ///
 /// - Single segment: `{TargetEntity}Response`
-/// - Multi segment:  `{FirstEntity}With{LastEntity}Response`
+/// - Multi segment:  `{FirstEntity}CombinedResponse`
 fn derive_response_type(segments: &[IncludeSegment]) -> String {
     if segments.len() == 1 {
         format!("{}Response", segments[0].entity_name)
     } else {
-        format!(
-            "{}With{}Response",
-            segments[0].entity_name,
-            segments.last().unwrap().entity_name,
-        )
+        format!("{}CombinedResponse", segments[0].entity_name)
     }
 }
 

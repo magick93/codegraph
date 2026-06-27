@@ -4281,7 +4281,7 @@ entities = ["WorkerType"]
 
         assert_eq!(
             paths[0].response_rust_type,
-            "DeploymentTypeWithPositionTypeResponse",
+            "DeploymentTypeCombinedResponse",
             "multi-segment path should produce enriched response type"
         );
     }

@@ -456,17 +456,17 @@ export const CandidateDescriptor: EntityDescriptor = {
 
       { from: 'interviewing', to: 'withdrawn', label: 'Withdrawn', confirm: true },
 
-      { from: 'offer', to: 'hired', label: 'Hired', confirm: true },
-
-      { from: 'offer', to: 'rejected', label: 'Rejected', confirm: true },
-
-      { from: 'offer', to: 'withdrawn', label: 'Withdrawn', confirm: true },
-
       { from: 'new', to: 'screening', label: 'Screening', confirm: true },
 
       { from: 'new', to: 'rejected', label: 'Rejected', confirm: true },
 
       { from: 'new', to: 'withdrawn', label: 'Withdrawn', confirm: true },
+
+      { from: 'offer', to: 'hired', label: 'Hired', confirm: true },
+
+      { from: 'offer', to: 'rejected', label: 'Rejected', confirm: true },
+
+      { from: 'offer', to: 'withdrawn', label: 'Withdrawn', confirm: true },
 
     ],
   },
