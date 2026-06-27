@@ -4123,7 +4123,7 @@ impl RepositoryImplEmitter {
         writeln!(code, "            created_at: l.created_at,").unwrap();
         writeln!(code, "            updated_at: l.updated_at,").unwrap();
         writeln!(code, "            ..Default::default()").unwrap();
-            writeln!(code, "        }})").unwrap();
+            writeln!(code, "        }});").unwrap();
 
         writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
         writeln!(code, "            id: intermediate.id,").unwrap();
