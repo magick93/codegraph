@@ -272,6 +272,10 @@ struct ChildTableInfo {
     parent_fk_column: String,
     /// Whether this child is an array (Vec) or single (Option)
     is_array: bool,
+    /// When the child VO's allOf chain reaches an entity, the parent entity's
+    /// FK column that should reference the child row's id (e.g. "person_id").
+    /// Set during tree building; used by emit_child_inserts to emit FK update.
+    vo_fk_parent_column: Option<String>,
     /// Columns in the child table (excluding id and parent FK)
     columns: Vec<ChildColumn>,
     /// Nested child tables (ValueObject properties within this child table)
@@ -747,6 +751,7 @@ async fn build_child_table_info(
                             child_table_name
                         )),
                         is_array: true,
+                        vo_fk_parent_column: None,
                         columns: vec![ChildColumn {
                             field_name: "code".to_string(),
                             pg_column_name: "code".to_string(),
@@ -877,6 +882,23 @@ async fn build_child_table_info(
         child_columns.retain(|c| seen_fields.insert(c.field_name.clone()));
     }
 
+    // Check if this ValueObject property's allOf chain reaches a known entity.
+    // If so, the parent entity has a FK column that should reference the child
+    // row's id after insertion (e.g. worker_person.id → worker.person_id).
+    let vo_fk_parent_column: Option<String> = if let Some(ref vo_ref) = prop.ref_target {
+        let vo_title = vo_ref.rsplit('/').next().unwrap_or(vo_ref)
+            .strip_suffix(".json#").or_else(|| vo_ref.strip_suffix(".json"))
+            .unwrap_or(vo_ref);
+        if let Ok(Some(_entity)) = codegraph_core::traits::find_entity_extended_by_vo(db, vo_title).await {
+            let field = prop.rust_field_name.clone();
+            if field.ends_with("_id") { Some(field) } else { Some(format!("{}_id", field)) }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     Some(ChildTableInfo {
         field_name: prop_field_def.rust_field_name.clone(),
         struct_name: child_struct_name,
@@ -884,6 +906,7 @@ async fn build_child_table_info(
         sql_schema_name: schema_name.to_string(),
         parent_fk_column: codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name)),
         is_array: prop.is_array,
+        vo_fk_parent_column,
         columns: child_columns,
         child_tables: nested_child_tables,
     })
@@ -992,6 +1015,31 @@ fn emit_child_inserts(
             writeln!(code, "],").unwrap();
             writeln!(code, "{pad}    );").unwrap();
             writeln!(code, "{pad}    tx.execute(stmt).await?;").unwrap();
+            // If this VO property extends a known entity, update the parent row's FK.
+            if let Some(ref fk_col) = child.vo_fk_parent_column {
+                let parent_table = child.parent_fk_column
+                    .strip_suffix("_id")
+                    .unwrap_or(&child.parent_fk_column);
+                writeln!(code, "{pad}    // Update parent FK (VO→entity relationship)").unwrap();
+                writeln!(
+                    code,
+                    "{pad}    tx.execute(Statement::from_sql_and_values("
+                )
+                .unwrap();
+                writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
+                writeln!(
+                    code,
+                    "{pad}        \"UPDATE \\\"{}\\\".\\\"{parent_table}\\\" SET \\\"{fk_col}\\\" = $1 WHERE \\\"id\\\" = $2\",",
+                    child.sql_schema_name,
+                )
+                .unwrap();
+                writeln!(
+                    code,
+                    "{pad}        vec![{row_id_var}.into(), {parent_id_var}.into()],"
+                )
+                .unwrap();
+                writeln!(code, "{pad}    )).await?;").unwrap();
+            }
             emit_child_inserts(code, &child.child_tables, &row_id_var, "item", indent + 1);
             writeln!(code, "{pad}}}").unwrap();
         } else {
@@ -1027,6 +1075,28 @@ fn emit_child_inserts(
             writeln!(code, "],").unwrap();
             writeln!(code, "{pad}    );").unwrap();
             writeln!(code, "{pad}    tx.execute(stmt).await?;").unwrap();
+            // If this VO property extends a known entity, update the parent row's FK.
+            if let Some(ref fk_col) = child.vo_fk_parent_column {
+                let parent_table = child.parent_fk_column
+                    .strip_suffix("_id")
+                    .unwrap_or(&child.parent_fk_column);
+                writeln!(code, "{pad}    // Update parent FK (VO→entity relationship)").unwrap();
+                writeln!(code, "{pad}    tx.execute(").unwrap();
+                writeln!(code, "{pad}        Statement::from_sql_and_values(").unwrap();
+                writeln!(code, "{pad}            DatabaseBackend::Postgres,").unwrap();
+                writeln!(
+                    code,
+                    "{pad}            \"UPDATE \\\"{}\\\".\\\"{parent_table}\\\" SET \\\"{fk_col}\\\" = $1 WHERE \\\"id\\\" = $2\",",
+                    child.sql_schema_name,
+                )
+                .unwrap();
+                writeln!(
+                    code,
+                    "{pad}            vec![{row_id_var}.into(), {parent_id_var}.into()],"
+                )
+                .unwrap();
+                writeln!(code, "{pad}        )).await?;").unwrap();
+            }
             emit_child_inserts(code, &child.child_tables, &row_id_var, "item", indent + 1);
             writeln!(code, "{pad}}}").unwrap();
         }
@@ -1359,6 +1429,7 @@ async fn build_columns_and_children(
                             module_name
                         )),
                         is_array: true,
+                        vo_fk_parent_column: None,
                         columns: vec![ChildColumn {
                             field_name: "code".to_string(),
                             pg_column_name: "code".to_string(),
@@ -4210,6 +4281,7 @@ mod tests {
             sql_schema_name: "recruiting".to_string(),
             parent_fk_column: "candidate_id".to_string(),
             is_array: true,
+            vo_fk_parent_column: None,
             columns: vec![],
             child_tables: vec![],
         }];
@@ -4227,6 +4299,7 @@ mod tests {
             sql_schema_name: "recruiting".to_string(),
             parent_fk_column: "candidate_id".to_string(),
             is_array: false,
+            vo_fk_parent_column: None,
             columns: vec![],
             child_tables: vec![],
         }];
