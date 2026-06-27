@@ -904,24 +904,6 @@ async fn build_child_entity(
         columns.retain(|c| seen_fields.insert(c.field_name.clone()));
     }
 
-    // Add platform_organization_id for tenant-scoped entities
-    let is_tenant_scoped = !is_global_entity(&child_table_name, config);
-    if is_tenant_scoped {
-        columns.insert(
-            1, // After id, before other columns
-            EntityColumn {
-                field_name: "platform_organization_id".to_string(),
-                rust_type: "Uuid".to_string(),
-                sea_orm_type: "Uuid".to_string(),
-                column_name: "platform_organization_id".to_string(),
-                is_primary_key: false,
-                is_nullable: false,
-                pg_cast: None,
-                sea_orm_attr: None,
-            },
-        );
-    }
-
     // Add timestamp columns
     columns.push(EntityColumn {
         field_name: "created_at".to_string(),
@@ -1058,24 +1040,6 @@ fn build_codelist_child_entity(
             sea_orm_attr: None,
         },
     ];
-
-    // Add platform_organization_id for tenant-scoped entities
-    let is_tenant_scoped = !is_global_entity(&child_table_name, config);
-    if is_tenant_scoped {
-        columns.insert(
-            1,
-            EntityColumn {
-                field_name: "platform_organization_id".to_string(),
-                rust_type: "Uuid".to_string(),
-                sea_orm_type: "Uuid".to_string(),
-                column_name: "platform_organization_id".to_string(),
-                is_primary_key: false,
-                is_nullable: false,
-                pg_cast: None,
-                sea_orm_attr: None,
-            },
-        );
-    }
 
     // Timestamp columns
     columns.push(EntityColumn {
