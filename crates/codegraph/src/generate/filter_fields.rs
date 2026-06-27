@@ -208,6 +208,14 @@ pub async fn resolve_nested_filter_fields(
         if entity_titles.contains(&target.title) {
             continue;
         }
+        // Also skip VO→entity — data lives in entity table, not child table.
+        if !target.is_entity || target.pg_table_name.is_empty() {
+            if codegraph_core::traits::find_entity_extended_by_vo(db, &target.title).await
+                .map(|e| e.is_some()).unwrap_or(false)
+            {
+                continue;
+            }
+        }
 
         let prop_def = resolve_field(prop);
         let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
@@ -254,6 +262,14 @@ pub async fn resolve_nested_filter_fields(
                 if let Some(gc_schema) = gc_target {
                     if entity_titles.contains(&gc_schema.title) {
                         continue;
+                    }
+                    // Also skip VO→entity for grandchild.
+                    if !gc_schema.is_entity || gc_schema.pg_table_name.is_empty() {
+                        if codegraph_core::traits::find_entity_extended_by_vo(db, &gc_schema.title).await
+                            .map(|e| e.is_some()).unwrap_or(false)
+                        {
+                            continue;
+                        }
                     }
                     let gc_table_name = codegraph_naming::truncate_pg_identifier(&format!(
                         "{}_{}",
