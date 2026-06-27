@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS recruiting.candidate (
     platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
 
 
+    referred_by_application_id UUID,
+
+
     birth_date DATE,
 
 
@@ -40,9 +43,6 @@ CREATE TABLE IF NOT EXISTS recruiting.candidate (
     position_titles TEXT[],
 
 
-    referred_by_application_id UUID,
-
-
     status TEXT,
 
 
@@ -66,6 +66,15 @@ CREATE TABLE IF NOT EXISTS recruiting.candidate (
     is_demo_data BOOLEAN NOT NULL DEFAULT false
 
 );
+
+
+DO $$ BEGIN
+  ALTER TABLE recruiting.candidate ADD CONSTRAINT fk_candidate_referred_by_application_id FOREIGN KEY (referred_by_application_id) REFERENCES recruiting.application(id) ON DELETE CASCADE;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;  -- constraint already exists
+  WHEN undefined_table OR invalid_schema_name THEN
+    RAISE NOTICE 'FK target not yet created: recruiting.application — will be added by deferred_fks migration';
+END $$;
 
 
 DO $$ BEGIN

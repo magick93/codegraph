@@ -15,14 +15,14 @@ export const load: PageServerLoad = async ({ params, locals, fetch: skFetch }) =
 	};
 
 
-	const res = await skFetch(`${BASE_URL}/api/recruiting/candidate/${params.candidate_id}`, { headers });
+	const res = await skFetch(`${BASE_URL}/api/recruiting/application/${params.application_id}/candidate/${params.candidate_id}/application/${params.application_id}`, { headers });
 
 
 	if (!res.ok) {
 		const body = await res.text().catch(() => '');
-		console.error(`[ssr] Candidate edit load ${res.status}: ${body}`);
-		if (res.status === 404) throw error(404, 'Candidate not found');
-		throw error(res.status, `Failed to load Candidate for edit: ${res.statusText}`);
+		console.error(`[ssr] Application edit load ${res.status}: ${body}`);
+		if (res.status === 404) throw error(404, 'Application not found');
+		throw error(res.status, `Failed to load Application for edit: ${res.statusText}`);
 	}
 
 	const json = await res.json();

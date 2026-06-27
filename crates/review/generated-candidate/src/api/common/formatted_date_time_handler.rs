@@ -354,6 +354,7 @@ pub async fn list(
     let (results, total) = state.common_formatted_date_time_queries.list_filtered(params.page, params.page_size, &filters, api_key_info.api_key_id, api_key_info.organization_id).await
         .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to list FormattedDateTime: {e}"))
             .with_correlation_id(correlation_id))?;
+
     Ok(Json(serde_json::json!({
         "data": results,
         "total": total,
@@ -361,6 +362,7 @@ pub async fn list(
         "page_size": params.page_size,
         "meta": { "correlation_id": correlation_id.to_string() }
     })))
+
 }
 
 

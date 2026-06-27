@@ -5,12 +5,27 @@ import { test, expect } from '../../e2e/fixtures/personas';
 import { createEntityAsAcme, waitForHydration } from '../../e2e/helpers';
 
 
-const BASE_PATH = '/recruiting/candidate';
-const NEW_URL = `${BASE_PATH}/new`;
+
+const PARENT_API_PATH = '/recruiting/application';
+
+let BASE_PATH: string;
+
+let NEW_URL: string;
 
 
 
 test.describe('Candidate Validation', () => {
+
+  test.beforeAll(async ({ orgContext }) => {
+
+    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'applied_date': '2025-01-15', 'status': 'Applied' });
+    const parentId = parentEntity['id'] as string;
+    BASE_PATH = `${PARENT_API_PATH}/${parentId}/candidate`;
+
+
+    NEW_URL = `${BASE_PATH}/new`;
+
+  });
 
 
   test('submit empty form shows errors', async ({ ownerPage }) => {

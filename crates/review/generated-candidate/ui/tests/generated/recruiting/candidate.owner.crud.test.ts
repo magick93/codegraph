@@ -3,7 +3,11 @@ import { createEntityAsAcme, createEntityViaApi, deleteEntityViaApi, expectToast
 import type { OrgContext } from '../../e2e/fixtures/personas';
 
 
-const BASE_PATH = '/recruiting/candidate';
+
+const PARENT_API_PATH = '/recruiting/application';
+
+let BASE_PATH: string;
+
 
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
@@ -60,6 +64,12 @@ test.describe.serial('Candidate Owner CRUD', () => {
 
 
   test.beforeAll(async ({ orgContext }) => {
+
+
+    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'applied_date': '2025-01-15', 'status': 'Applied' });
+    const parentId = parentEntity['id'] as string;
+    BASE_PATH = `${PARENT_API_PATH}/${parentId}/candidate`;
+
 
 
     try {
@@ -159,7 +169,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
     await expectToast(ownerPage, 'created', 'success');
     // Wait for SvelteKit goto() navigation to complete after toast
 
-    await ownerPage.waitForURL(/\/recruiting\/candidate\/[0-9a-f-]+$/, { timeout: 20_000 });
+    await ownerPage.waitForURL(/\/recruiting\/application\/[0-9a-f-]+\/candidate\/[0-9a-f-]+$/, { timeout: 20_000 });
 
     createdId = ownerPage.url().split('/').pop()!;
   });

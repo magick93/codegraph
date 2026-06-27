@@ -42,7 +42,9 @@
 	let { data }: Props = $props();
 	let item = $state(data.item);
 
-	const basePath = '/recruiting/application';
+	const grandparentId = $derived($page.params.application_id);
+	const parentId = $derived($page.params.candidate_id);
+	const basePath = $derived(`/recruiting/application/${grandparentId}/candidate/${parentId}/application`);
 
 
 	let deleteDialogOpen = $state(false);
@@ -56,7 +58,7 @@
 		deleting = true;
 		try {
 
-			await deleteApplication(item.id);
+			await deleteApplication(grandparentId, parentId, item.id);
 
 			toast.success(m.common_entity_deleted({ entity: 'Application' }));
 			goto(basePath);

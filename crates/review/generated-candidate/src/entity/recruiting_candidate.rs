@@ -16,6 +16,9 @@ pub struct Model {
     pub platform_organization_id: Uuid,
 
 
+    pub referred_by_application_id: Option<Uuid>,
+
+
     pub birth_date: Option<chrono::NaiveDate>,
 
 
@@ -43,9 +46,6 @@ pub struct Model {
 
 
     pub position_titles: Option<Vec<String>>,
-
-
-    pub referred_by_application_id: Option<Uuid>,
 
 
     pub status: Option<String>,

@@ -88,10 +88,6 @@ struct EntityTree {
     entity_module: String,
     direct_columns: Vec<TreeColumn>,
     child_tables: Vec<ChildTableInfo>,
-    /// ValueObject properties whose allOf chain resolves to a known entity.
-    /// The INSERT targets the entity table (not a child table), and the generated
-    /// entity ID becomes the parent FK value.
-    vo_entity_inserts: Vec<VoEntityInsertInfo>,
     has_create: bool,
     has_update: bool,
     has_delete: bool,
@@ -295,34 +291,6 @@ struct ChildColumn {
     /// When this column is a PostgreSQL range type, holds the lowercased PG cast
     /// (e.g. `"tstzrange"`) so INSERT SQL can include `$N::tstzrange`.
     pg_cast: Option<String>,
-}
-
-/// Information for inserting into an entity table when a ValueObject property
-/// allOf-extends a known entity (e.g. PersonLegalType → PersonType).
-/// The data is stored in the entity's table (common.person) instead of a
-/// VO-specific child table. The generated entity ID becomes the FK value on
-/// the parent entity.
-#[allow(dead_code)]
-#[derive(Debug)]
-struct VoEntityInsertInfo {
-    /// Rust field name on parent DTO (e.g. "person")
-    field_name: String,
-    /// DTO struct name prefix (e.g. "WorkerPersonLegal")
-    struct_name: String,
-    /// SQL entity table name (e.g. "person")
-    sql_table_name: String,
-    /// SQL schema name (e.g. "common")
-    sql_schema_name: String,
-    /// SeaORM entity module (e.g. "common_person")
-    entity_module: String,
-    /// FK column on parent to set (e.g. "person_id")
-    parent_fk_column: String,
-    /// Whether this is an array (Vec) or single (Option)
-    is_array: bool,
-    /// Columns from the VO that map to entity table columns
-    columns: Vec<ChildColumn>,
-    /// Entity's own child tables (recursed via emit_child_inserts)
-    child_tables: Vec<ChildTableInfo>,
 }
 
 /// Returns the sea_orm `Value::*` expression for a typed NULL, based on the Rust type.
@@ -1072,121 +1040,6 @@ fn emit_child_inserts(
 /// 2. INSERTS into the entity table with the VO's columns
 /// 3. Recursively handles the entity's own child tables (e.g. person_name)
 /// 4. UPDATEs the parent entity's FK column with the new entity ID
-fn emit_entity_inserts(
-    code: &mut String,
-    inserts: &[VoEntityInsertInfo],
-    parent_schema: &str,
-    parent_table: &str,
-    cmd_var: &str,
-    indent: usize,
-) {
-    let pad = "    ".repeat(indent);
-    for ins in inserts {
-        if ins.columns.is_empty() && ins.child_tables.is_empty() {
-            continue;
-        }
-
-        let col_names: Vec<String> = ins.columns.iter().map(|c| q(&c.pg_column_name)).collect();
-        let placeholders: Vec<String> = (0..ins.columns.len())
-            .map(|i| format!("${}", i + 2))
-            .collect();
-
-        let sql = if col_names.is_empty() {
-            format!(
-                "INSERT INTO {}.{} (id) VALUES ($1)",
-                ins.sql_schema_name,
-                q(&ins.sql_table_name),
-            )
-        } else {
-            format!(
-                "INSERT INTO {}.{} (id, {}) VALUES ($1, {})",
-                ins.sql_schema_name,
-                q(&ins.sql_table_name),
-                col_names.join(", "),
-                placeholders.join(", "),
-            )
-        };
-
-        let entity_id_var = format!("entity_id_{}", ins.sql_table_name.replace('.', "_"));
-
-        writeln!(code).unwrap();
-        writeln!(
-            code,
-            "{pad}// Insert into entity table for inline {}.{}",
-            ins.sql_schema_name, ins.sql_table_name
-        )
-        .unwrap();
-        writeln!(
-            code,
-            "{pad}if let Some(ref item) = {cmd_var}.{field} {{",
-            field = ins.field_name,
-        )
-        .unwrap();
-        writeln!(code, "{pad}    let {entity_id_var} = Uuid::new_v4();").unwrap();
-        writeln!(code, "{pad}    let stmt = Statement::from_sql_and_values(").unwrap();
-        writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
-        writeln!(code, "{pad}        \"{sql}\",").unwrap();
-        write!(
-            code,
-            "{pad}        vec![{entity_id_var}.into()",
-        )
-        .unwrap();
-        for col in &ins.columns {
-            emit_child_col_write_value(code, col);
-        }
-        writeln!(code, "],").unwrap();
-        writeln!(code, "{pad}    );").unwrap();
-        writeln!(code, "{pad}    tx.execute(stmt).await?;").unwrap();
-
-        // Recursively handle the entity's own child tables
-        // (e.g. INSERT into person_name with person_id = entity_id)
-        if !ins.child_tables.is_empty() {
-            let child_code = create_entity_child_inserts(
-                &ins.child_tables,
-                &entity_id_var,
-                "item",
-                indent + 1,
-            );
-            write!(code, "{child_code}").unwrap();
-        }
-
-        // UPDATE the parent entity's FK column
-        writeln!(
-            code,
-            "{pad}    tx.execute(Statement::from_sql_and_values("
-        )
-        .unwrap();
-        writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
-        writeln!(
-            code,
-            "{pad}        \"UPDATE \\\"{parent_schema}\\\".\\\"{parent_table}\\\" SET \\\"{fk_col}\\\" = $1 WHERE \\\"id\\\" = $2\",",
-            fk_col = ins.parent_fk_column,
-        )
-        .unwrap();
-        writeln!(
-            code,
-            "{pad}        vec![{entity_id_var}.into(), id.into()],"
-        )
-        .unwrap();
-        writeln!(code, "{pad}    )).await?;").unwrap();
-        writeln!(code, "{pad}}}").unwrap();
-    }
-}
-
-/// Helper to create child insert code for entity child tables.
-/// This generates the same pattern as emit_child_inserts but the
-/// child_data_var references items from the entity's child DTO.
-fn create_entity_child_inserts(
-    children: &[ChildTableInfo],
-    parent_id_var: &str,
-    item_accessor: &str,
-    indent: usize,
-) -> String {
-    let mut code = String::new();
-    emit_child_inserts(&mut code, children, parent_id_var, item_accessor, indent);
-    code
-}
-
 /// Recursively emit SELECT + Response-building code for child tables.
 ///
 /// For each child table, emits code that:
@@ -1381,7 +1234,7 @@ async fn build_columns_and_children(
     db: &dyn GraphQuerier,
     props: &[codegraph_core::types::PropertyNode],
     ctx: &ClassificationContext<'_>,
-) -> Result<(Vec<TreeColumn>, Vec<ChildTableInfo>, Vec<VoEntityInsertInfo>)> {
+) -> Result<(Vec<TreeColumn>, Vec<ChildTableInfo>)> {
     use crate::generate::pg_cast_for_type;
 
     let schema_title = ctx.schema_title;
@@ -1394,7 +1247,6 @@ async fn build_columns_and_children(
     let workflow_managed = ctx.workflow_managed;
 
     let mut direct_columns = Vec::new();
-    let mut vo_entity_inserts = Vec::new();
 
     // Add composite range column (if present) so DDL has it, but mark as
     // composite so create/update/response code skips DTO references.
@@ -1577,27 +1429,13 @@ async fn build_columns_and_children(
                 is_media: false,
             });
         } else if prop.effective_kind() == Some(RefClassificationKind::ValueObject) {
-            // Track whether this is a VO→entity (vs direct entity ref) so we
-            // can emit entity INSERT code in the create method.
-            let mut vo_entity_target: Option<(String, codegraph_core::types::SchemaNode)> = None;
             let is_entity_fk = if !prop.is_array {
-                if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, schema_title).await {
-                    if entity_titles.contains(&target.title) {
-                        true  // direct entity ref
-                    } else if !target.is_entity || target.pg_table_name.is_empty() {
-                        // VO — check if it extends an entity via allOf chain
-                        if let Ok(Some(entity)) = codegraph_core::traits::find_entity_extended_by_vo(db, &target.title).await {
-                            vo_entity_target = Some((target.title.clone(), entity));
-                            true
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
+                db.get_property_ref_target(&prop.name, schema_title)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|t| entity_titles.contains(&t.title))
+                    .unwrap_or(false)
             } else {
                 false
             };
@@ -1617,85 +1455,6 @@ async fn build_columns_and_children(
                     is_structured_wrapper: false,
                     is_media: false,
                 });
-                // For VO→entity, build VoEntityInsertInfo so the create method
-                // knows to INSERT into the entity table.
-                if let Some((vo_title, entity_schema)) = vo_entity_target {
-                    // Build columns from the VO's properties (subset of entity columns)
-                    let vo_props = db.get_properties(&vo_title).await.unwrap_or_default();
-                    let mut vo_cols = Vec::new();
-                    for vp in &vo_props {
-                        if vp.name == "id" || vp.name == "created_at" || vp.name == "updated_at" {
-                            continue;
-                        }
-                        let vfd = codegraph_core::types::resolve_field(vp);
-                        vo_cols.push(ChildColumn {
-                            field_name: vfd.rust_field_name.clone(),
-                            pg_column_name: vfd.column_name.clone(),
-                            rust_type: vp.rust_field_type.clone(),
-                            is_nullable: !vp.is_required,
-                            dto_rust_type: crate::generate::ddd::dto::codelist_enum_name_from_ref(&vp.ref_target),
-                            pg_cast: None,
-                        });
-                    }
-                    // Build entity's child tables for nested VOs within the entity
-                    let entity_table_name = entity_schema.pg_table_name.clone();
-                    let entity_module = format!("{}_{}",
-                        entity_schema.domain.as_deref().unwrap_or("common"),
-                        entity_table_name,
-                    );
-                    let entity_schema_name = entity_schema.domain.as_deref().unwrap_or("public").to_string();
-                    let entity_props = db.get_properties(&entity_schema.title).await.unwrap_or_default();
-                    let mut entity_child_tables = Vec::new();
-                    let mut seen = std::collections::HashSet::new();
-                    // Query all entity properties to find nested VOs that become child tables
-                    for ep in &entity_props {
-                        if ep.name == "id" || ep.name == "created_at" || ep.name == "updated_at" {
-                            continue;
-                        }
-                        if ep.effective_kind() == Some(RefClassificationKind::ValueObject) && !ep.is_array
-                            && !ep.pg_column_name.is_empty()
-                        {
-                            // Check if this VO's target is NOT an entity (regular nested child)
-                            if let Ok(Some(ep_target)) = db.get_property_ref_target(&ep.name, &entity_schema.title).await {
-                                if !entity_titles.contains(&ep_target.title) {
-                                    let mut visited = std::collections::HashSet::new();
-                                    visited.insert(entity_schema.title.clone());
-                                    if let Some(child_info) = Box::pin(build_child_table_info(
-                                        db,
-                                        ep,
-                                        &entity_schema.title,
-                                        &entity_table_name,
-                                        &entity_schema_name,
-                                        &entity_schema.rust_type_name,
-                                        &mut visited,
-                                        0,
-                                        ctx.suffix,
-                                    )).await {
-                                        if seen.insert(child_info.struct_name.clone()) {
-                                            entity_child_tables.push(child_info);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    let child_struct_name = format!(
-                        "{}{}",
-                        entity_name,
-                        codegraph_naming::to_pascal_case(&prop.rust_field_name),
-                    );
-                    vo_entity_inserts.push(VoEntityInsertInfo {
-                        field_name: prop.rust_field_name.clone(),
-                        struct_name: child_struct_name,
-                        sql_table_name: entity_table_name,
-                        sql_schema_name: entity_schema_name,
-                        entity_module,
-                        parent_fk_column: format!("{}_id", field_def.rust_field_name),
-                        is_array: false,
-                        columns: vo_cols,
-                        child_tables: entity_child_tables,
-                    });
-                }
             } else {
                 let mut visited = std::collections::HashSet::new();
                 visited.insert(schema_title.to_string());
@@ -1727,7 +1486,7 @@ async fn build_columns_and_children(
         direct_columns.retain(|c| seen_fields.insert(c.field_name.clone()));
     }
 
-    Ok((direct_columns, child_tables, vo_entity_inserts))
+    Ok((direct_columns, child_tables))
 }
 
 /// Which CRUD operation is being emitted.
@@ -1882,7 +1641,13 @@ impl RepositoryImplEmitter {
                 let mut is_codelist: Vec<bool> = Vec::new();
                 let mut dto_rust_types: Vec<Option<String>> = Vec::new();
                 let mut is_nullable: Vec<bool> = Vec::new();
-                if let Some(props) = all_props.get(&seg.schema_title) {
+                // When the segment has a child table override (VO→entity), use
+                // the VO's properties instead of the entity's properties.
+                let props_key = seg.child_table_override.as_ref().map_or(
+                    &seg.schema_title,
+                    |over| &over.vo_title,
+                );
+                if let Some(props) = all_props.get(props_key) {
                     let mut seen = std::collections::HashSet::new();
                     for prop in props {
                         // Skip entity reference properties that match the next
@@ -2140,7 +1905,7 @@ impl RepositoryImplEmitter {
             workflow_managed: &workflow_managed,
             suffix: &config.defaults.type_suffix,
         };
-        let (mut direct_columns, child_tables, vo_entity_inserts) =
+        let (mut direct_columns, child_tables) =
             build_columns_and_children(db, &props, &cls_ctx).await?;
 
         // Add synthetic hierarchy column (self-referential FK) when configured.
@@ -2273,7 +2038,6 @@ impl RepositoryImplEmitter {
             entity_module,
             direct_columns,
             child_tables,
-            vo_entity_inserts,
             has_create,
             has_update,
             has_delete,
@@ -2419,9 +2183,6 @@ impl RepositoryImplEmitter {
 
         // Insert child table rows (recursively handles nested children).
         emit_child_inserts(code, &tree.child_tables, "id", "cmd", 2);
-
-        // Insert entity rows for VO→entity properties (inline data → entity table).
-        emit_entity_inserts(code, &tree.vo_entity_inserts, &tree.schema_name, &tree.table_name, "cmd", 2);
 
         writeln!(code).unwrap();
         writeln!(code, "        Ok(id)").unwrap();
@@ -3928,7 +3689,35 @@ impl RepositoryImplEmitter {
             .unwrap();
         }
 
-        if seg.is_array {
+        if let Some(ref over) = seg.child_table_override {
+            // VO→entity: query child table directly by parent FK
+            let over_fk_pascal = codegraph_naming::to_pascal_case(&over.parent_fk_column);
+            writeln!(
+                code,
+                "        let target = crate::entity::{}::Entity::find()",
+                over.child_module,
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::{}.eq(source_id))",
+                over.child_module, over_fk_pascal,
+            )
+            .unwrap();
+            writeln!(code, "            .one(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(code, "        let target = match target {{").unwrap();
+            writeln!(code, "            Some(t) => t,").unwrap();
+            writeln!(code, "            None => return Ok(None),").unwrap();
+            writeln!(code, "        }};").unwrap();
+            writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
+            writeln!(code, "            id: target.id,").unwrap();
+            Self::emit_field_assignments_typed(code, "target", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            writeln!(code, "            created_at: target.created_at,").unwrap();
+            writeln!(code, "            updated_at: target.updated_at,").unwrap();
+            writeln!(code, "            ..Default::default()").unwrap();
+            writeln!(code, "        }}))").unwrap();
+        } else if seg.is_array {
             let reverse_fk_pascal = codegraph_naming::to_pascal_case(&seg.reverse_fk_column);
             writeln!(
                 code,
@@ -4060,7 +3849,47 @@ impl RepositoryImplEmitter {
             .unwrap();
         }
 
-        if seg.is_array {
+        if let Some(ref over) = seg.child_table_override {
+            let over_fk_pascal = codegraph_naming::to_pascal_case(&over.parent_fk_column);
+            writeln!(
+                code,
+                "        let rows = crate::entity::{}::Entity::find()",
+                over.child_module,
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::{}.is_in(source_ids.to_vec()))",
+                over.child_module, over_fk_pascal,
+            )
+            .unwrap();
+            writeln!(code, "            .all(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(
+                code,
+                "        let mut result: std::collections::HashMap<Uuid, Option<{}>> = std::collections::HashMap::new();",
+                resp_type
+            )
+            .unwrap();
+            writeln!(code, "        for id in source_ids {{").unwrap();
+            writeln!(code, "            result.entry(*id).or_insert(None);").unwrap();
+            writeln!(code, "        }}").unwrap();
+            writeln!(code, "        for row in rows {{").unwrap();
+            writeln!(
+                code,
+                "            result.insert(row.{}, Some({} {{",
+                over.parent_fk_column,
+                resp_type,
+            )
+            .unwrap();
+            writeln!(code, "                id: row.id,").unwrap();
+            Self::emit_field_assignments_typed(code, "row", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            writeln!(code, "                created_at: row.created_at,").unwrap();
+            writeln!(code, "                updated_at: row.updated_at,").unwrap();
+            writeln!(code, "                ..Default::default()").unwrap();
+            writeln!(code, "            }}));").unwrap();
+            writeln!(code, "        }}").unwrap();
+        } else if seg.is_array {
             let reverse_fk_pascal = codegraph_naming::to_pascal_case(&seg.reverse_fk_column);
             writeln!(
                 code,
@@ -4299,7 +4128,7 @@ impl RepositoryImplEmitter {
         writeln!(code, "            created_at: l.created_at,").unwrap();
         writeln!(code, "            updated_at: l.updated_at,").unwrap();
         writeln!(code, "            ..Default::default()").unwrap();
-        writeln!(code, "        }});").unwrap();
+            writeln!(code, "            }}));").unwrap();
 
         writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
         writeln!(code, "            id: intermediate.id,").unwrap();

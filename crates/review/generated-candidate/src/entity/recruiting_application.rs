@@ -16,13 +16,13 @@ pub struct Model {
     pub platform_organization_id: Uuid,
 
 
+    pub candidate_id: Option<Uuid>,
+
+
     pub application_id: String,
 
 
     pub applied_date: Option<chrono::NaiveDate>,
-
-
-    pub candidate_id: Option<Uuid>,
 
 
     pub status: Option<String>,

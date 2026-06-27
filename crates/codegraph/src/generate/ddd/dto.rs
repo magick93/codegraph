@@ -536,33 +536,22 @@ pub async fn build_dto_context(
         }
 
         if prop.effective_kind() == Some(RefClassificationKind::ValueObject) {
-            // When a non-array VO targets a known entity (directly or via allOf
-            // composition chain), the DDL emits an FK column. Emit both the FK
-            // field AND the child DTO for create/response inline data.
+            // When a non-array VO targets a known entity, the DDL emits an
+            // FK column instead of a child table. Emit a UUID field to match.
             let is_entity_fk = if !prop.is_array {
-                if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, schema_title).await {
-                    if entity_titles.contains(&target.title) {
-                        true
-                    } else if !target.is_entity || target.pg_table_name.is_empty() {
-                        // VO — check if it extends an entity via allOf chain
-                        codegraph_core::traits::find_entity_extended_by_vo(db, &target.title).await
-                            .map(|e| e.is_some())
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
+                db.get_property_ref_target(&prop.name, schema_title)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|t| entity_titles.contains(&t.title))
+                    .unwrap_or(false)
             } else {
                 false
             };
             if is_entity_fk {
                 let fd = codegraph_core::types::resolve_field(prop);
-                // Add entity_ref FK field (person_id for response DTO)
-                let fk_field_name = format!("{}_id", fd.rust_field_name);
                 fields.push(DtoField {
-                    name: fk_field_name,
+                    name: fd.rust_field_name.clone(),
                     rust_type: "Uuid".to_string(),
                     is_required: false,
                     is_array: false,
@@ -577,24 +566,6 @@ pub async fn build_dto_context(
                     pattern: None,
                     format: None,
                 });
-                // Also add child DTO for create/update inline data (keeps nested DTO)
-                let mut visited = std::collections::HashSet::new();
-                visited.insert(schema_title.to_string());
-                if let Some(child_dto) = Box::pin(build_child_dto(
-                    db,
-                    prop,
-                    schema_title,
-                    &entity_name,
-                    &mut visited,
-                    0,
-                    &config.defaults.type_suffix,
-                ))
-                .await
-                {
-                    if seen_child_structs.insert(child_dto.struct_name.clone()) {
-                        child_dtos.push(child_dto);
-                    }
-                }
             } else {
                 let mut visited = std::collections::HashSet::new();
                 visited.insert(schema_title.to_string());

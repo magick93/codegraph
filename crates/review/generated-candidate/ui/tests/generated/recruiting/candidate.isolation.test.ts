@@ -3,7 +3,11 @@ import { createEntityAsAcme, createEntityViaApi, deleteEntityViaApi } from '../.
 import type { OrgContext } from '../../e2e/fixtures/personas';
 
 
-const BASE_PATH = '/recruiting/candidate';
+
+const PARENT_API_PATH = '/recruiting/application';
+
+let BASE_PATH: string;
+
 
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
@@ -38,6 +42,12 @@ test.describe.serial('Candidate Cross-Org Isolation', () => {
   const data = testData();
 
   test.beforeAll(async ({ orgContext }) => {
+
+
+    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'applied_date': '2025-01-15', 'status': 'Applied' });
+    const parentId = parentEntity['id'] as string;
+    BASE_PATH = `${PARENT_API_PATH}/${parentId}/candidate`;
+
 
 
     try {

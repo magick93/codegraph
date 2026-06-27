@@ -62,8 +62,8 @@ impl ApplicationCommandHandler {
 
 
 
-    pub async fn create(&self, cmd: CreateApplicationRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid) -> Result<Uuid, Box<dyn std::error::Error>> {
-        self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id).await
+    pub async fn create(&self, cmd: CreateApplicationRequest, parent_id: Uuid, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid) -> Result<Uuid, Box<dyn std::error::Error>> {
+        self.create_single_in_tx(cmd, Some(parent_id), &source, correlation_id, api_key_id, organization_id).await
     }
 
 
@@ -72,6 +72,8 @@ impl ApplicationCommandHandler {
     pub async fn bulk_create(
         &self,
         items: Vec<CreateApplicationRequest>,
+
+        parent_id: Uuid,
 
         source: domain_types::SourceContext,
         correlation_id: Uuid,
@@ -98,7 +100,7 @@ impl ApplicationCommandHandler {
             }
 
 
-            match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id).await {
+            match self.create_single_in_tx(item, Some(parent_id), &source, correlation_id, api_key_id, organization_id).await {
 
                 Ok(id) => results.push(Ok(id)),
                 Err(e) => results.push(Err(crate::error::BulkItemError {
@@ -119,6 +121,8 @@ impl ApplicationCommandHandler {
         &self,
         cmd: CreateApplicationRequest,
 
+        parent_id: Option<Uuid>,
+
         source: &domain_types::SourceContext,
         correlation_id: Uuid,
         api_key_id: Uuid,
@@ -130,7 +134,7 @@ impl ApplicationCommandHandler {
         
 
 
-        let id = self.repo.create(&tx, cmd).await?;
+        let id = self.repo.create(&tx, cmd, parent_id.expect("parent_id required for child entity")).await?;
 
 
         

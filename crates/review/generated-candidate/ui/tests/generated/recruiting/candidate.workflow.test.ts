@@ -12,7 +12,11 @@ import {
 } from '../../e2e/helpers';
 
 
-const BASE_PATH = '/recruiting/candidate';
+
+const PARENT_API_PATH = '/recruiting/application';
+
+let BASE_PATH: string;
+
 
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
@@ -101,6 +105,12 @@ test.describe('Candidate Workflow', () => {
 
 
   test.beforeAll(async ({ orgContext }) => {
+
+
+    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'applied_date': '2025-01-15', 'status': 'Applied' });
+    const parentId = parentEntity['id'] as string;
+    BASE_PATH = `${PARENT_API_PATH}/${parentId}/candidate`;
+
 
 
     try {

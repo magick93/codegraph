@@ -8,12 +8,13 @@ use crate::domain::recruiting::candidate::dto_response::CandidateResponse;
 use crate::domain::recruiting::application::dto_response::ApplicationLinkedResponse;
 use crate::api::meta::Meta;
 
+
 /// Included data for `?include=` eager-loading.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ApplicationIncludedData {
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub candidate: Option<CandidateResponse>,
+    pub candidate: Option<Vec<CandidateResponse>>,
 
 }
 

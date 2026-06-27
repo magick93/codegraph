@@ -21,6 +21,8 @@ pub trait CandidateRepository: Send + Sync {
         tx: &DatabaseTransaction,
         cmd: CreateCandidateRequest,
 
+        parent_id: Uuid,
+
     ) -> Result<Uuid, Box<dyn std::error::Error>>;
 
 
@@ -29,6 +31,15 @@ pub trait CandidateRepository: Send + Sync {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+    ) -> Result<Option<CandidateResponse>, Box<dyn std::error::Error>>;
+
+
+    /// Find by ID scoped to a parent entity (verifies ownership).
+    async fn find_by_id_scoped(
+        &self,
+        db: &DatabaseTransaction,
+        id: Uuid,
+        parent_id: Uuid,
     ) -> Result<Option<CandidateResponse>, Box<dyn std::error::Error>>;
 
 

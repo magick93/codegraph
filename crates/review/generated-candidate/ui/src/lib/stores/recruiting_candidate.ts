@@ -17,7 +17,9 @@ import type {
 } from '$lib/api/types';
 
 
-const API_PATH = '/recruiting/candidate';
+function apiPath(grandparentId: string, parentId: string): string {
+	return '/recruiting/candidate/' + grandparentId + '/application/' + parentId + '/candidate';
+}
 
 
 export interface CandidateListState {
@@ -34,12 +36,12 @@ export const candidateList = writable<CandidateListState>({
 
 
 
-export async function listCandidate(page = 0, pageSize = 20): Promise<CandidateResponse[]> {
+export async function listCandidate(grandparentId: string, parentId: string, page = 0, pageSize = 20): Promise<CandidateResponse[]> {
 
 	candidateList.update(s => ({ ...s, loading: true, error: null }));
 	try {
 
-		const items = await apiGet<CandidateResponse[]>(API_PATH, { page, page_size: pageSize });
+		const items = await apiGet<CandidateResponse[]>(apiPath(grandparentId, parentId), { page, page_size: pageSize });
 
 		candidateList.set({ items, loading: false, error: null });
 		return items;
@@ -53,16 +55,16 @@ export async function listCandidate(page = 0, pageSize = 20): Promise<CandidateR
 
 
 
-export async function getCandidate(id: string): Promise<CandidateResponse> {
-	return apiGet<CandidateResponse>(`${API_PATH}/${id}`);
+export async function getCandidate(grandparentId: string, parentId: string, id: string): Promise<CandidateResponse> {
+	return apiGet<CandidateResponse>(`${apiPath(grandparentId, parentId)}/${id}`);
 
 }
 
 
 
 
-export async function createCandidate(data: CreateCandidateRequest): Promise<CandidateResponse> {
-	const result = await apiPost<CandidateResponse>(API_PATH, data);
+export async function createCandidate(grandparentId: string, parentId: string, data: CreateCandidateRequest): Promise<CandidateResponse> {
+	const result = await apiPost<CandidateResponse>(apiPath(grandparentId, parentId), data);
 
 	candidateList.update(s => ({ ...s, items: [...s.items, result] }));
 	return result;
@@ -71,8 +73,8 @@ export async function createCandidate(data: CreateCandidateRequest): Promise<Can
 
 
 
-export async function updateCandidate(id: string, data: UpdateCandidateRequest): Promise<CandidateResponse> {
-	const result = await apiPut<CandidateResponse>(`${API_PATH}/${id}`, data);
+export async function updateCandidate(grandparentId: string, parentId: string, id: string, data: UpdateCandidateRequest): Promise<CandidateResponse> {
+	const result = await apiPut<CandidateResponse>(`${apiPath(grandparentId, parentId)}/${id}`, data);
 
 	candidateList.update(s => ({
 		...s,
@@ -85,8 +87,8 @@ export async function updateCandidate(id: string, data: UpdateCandidateRequest):
 
 
 
-export async function transitionCandidate(id: string, targetState: string): Promise<WorkflowState> {
-	return apiPost<WorkflowState>(`${API_PATH}/${id}/actions/transition`, { target_state: targetState });
+export async function transitionCandidate(grandparentId: string, parentId: string, id: string, targetState: string): Promise<WorkflowState> {
+	return apiPost<WorkflowState>(`${apiPath(grandparentId, parentId)}/${id}/actions/transition`, { target_state: targetState });
 
 }
 

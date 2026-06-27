@@ -9,11 +9,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
 
 
-        .nest("/application", application_routes())
 
-
-
-        .nest("/candidate", candidate_routes())
 
 
 }
@@ -35,6 +31,8 @@ fn application_routes() -> Router<AppState> {
 
 
 
+
+        .nest("/{application_id}/candidate", candidate_routes())
 
 }
 
@@ -63,6 +61,8 @@ fn candidate_routes() -> Router<AppState> {
         .route("/{candidate_id}/workflow/history", axum::routing::get(candidate_workflow::get_process_history))
 
 
+
+        .nest("/{candidate_id}/application", application_routes())
 
 }
 

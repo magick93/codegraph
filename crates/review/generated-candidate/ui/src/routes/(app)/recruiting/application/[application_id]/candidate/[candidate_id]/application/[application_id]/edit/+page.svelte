@@ -3,6 +3,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
+	import { page } from '$app/stores';
+
 	import ApplicationForm from '$lib/components/forms/ApplicationForm.svelte';
 	import { updateApplication } from '$lib/stores/recruiting_application';
 	import { toast } from 'svelte-sonner';
@@ -11,7 +13,9 @@
 	import type { ApplicationResponse, UpdateApplicationRequest } from '$lib/api/types';
 
 
-	const basePath = '/recruiting/application';
+	const grandparentId = $derived($page.params.application_id);
+	const parentId = $derived($page.params.candidate_id);
+	const basePath = $derived(`/recruiting/application/${grandparentId}/candidate/${parentId}/application`);
 
 
 	interface Props {
@@ -29,7 +33,7 @@
 		error = '';
 		try {
 
-			await updateApplication(data.item.id, formData);
+			await updateApplication(grandparentId, parentId, data.item.id, formData);
 
 			toast.success(m.common_entity_updated({ entity: 'Application' }));
 			goto(`${basePath}/${data.item.id}`);

@@ -1,6 +1,7 @@
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::resolve_field;
 use codegraph_core::types::SchemaNode;
+use codegraph_naming::strip_suffix;
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
@@ -44,6 +45,29 @@ pub struct IncludeSegment {
     pub reverse_fk_column: String,
     /// Whether this is a one-to-many relationship (Vec) vs one-to-one (Option)
     pub is_array: bool,
+    /// When the target entity is reached via a VO→entity allOf chain (Tier 1.5),
+    /// the data is stored in a VO child table (not the entity table). This override
+    /// tells the fetch method to query the child table directly by parent FK.
+    pub child_table_override: Option<ChildTableOverride>,
+}
+
+/// Metadata for querying a VO child table instead of the entity table
+/// when the include path resolves through a VO→entity allOf chain.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChildTableOverride {
+    /// The VO's schema title (e.g. "PersonLegalType") — used for property lookup
+    pub vo_title: String,
+    /// Child table name (e.g. "worker_person")
+    pub child_table_name: String,
+    /// SeaORM entity module (e.g. "common_worker_person")
+    pub child_module: String,
+    /// Schema name (e.g. "common")
+    pub child_schema: String,
+    /// Parent FK column name in snake_case (e.g. "worker_id").
+    /// Use for Model field access; wrap in to_pascal_case() for Column filters.
+    pub parent_fk_column: String,
+    /// Response type for the include path e.g. "WorkerPersonLegalResponse"
+    pub response_type: String,
 }
 
 /// Resolve include paths from configuration against graph data.
@@ -82,7 +106,7 @@ async fn resolve_explicit_paths(
     domain: &str,
     schema_title: &str,
     source_schema_id: &str,
-    _source_entity_name: &str,
+    source_entity_name: &str,
     source_module: &str,
     paths: &[String],
 ) -> Result<Vec<ResolvedIncludePath>> {
@@ -161,6 +185,50 @@ async fn resolve_explicit_paths(
                 config, domain, &target_title, current_source_title, db,
             ).await?;
 
+            // Detect VO→entity: when the segment resolves to an entity via a VO
+            // allOf chain, the data lives in a child table, not the entity table.
+            let mut child_table_override = None;
+            let seg_lower_detect = seg.to_lowercase();
+            if let Ok(props) = db.get_properties_by_schema_id(&current_source_schema_id).await {
+                for prop in &props {
+                    let p_stem = prop.name.to_lowercase();
+                    let r_stem = prop.rust_field_name
+                        .strip_suffix("_id")
+                        .unwrap_or(&prop.rust_field_name)
+                        .to_lowercase();
+                    if p_stem != seg_lower_detect && r_stem != seg_lower_detect {
+                        continue;
+                    }
+                    if let Ok(Some(ref_target)) = db.get_property_ref_target_by_id(&prop.name, &current_source_schema_id).await {
+                        if !ref_target.is_entity || ref_target.pg_table_name.is_empty() {
+                            // It's a VO — does it extend the resolved entity?
+                            if let Ok(Some(entity)) = find_entity_through_vo(db, &ref_target.title).await {
+                                if entity.schema_id == target_schema.schema_id {
+                                    let ct_name = codegraph_naming::truncate_pg_identifier(
+                                        &format!("{}_{}", source_module, prop.rust_field_name),
+                                    );
+                                    let ct_module = format!("{}_{}", domain, ct_name);
+                                    let p_fk = format!("{}_id", source_module);
+                                    let child_struct = format!("{}{}",
+                                        strip_suffix(source_entity_name, &config.defaults.type_suffix),
+                                        strip_suffix(&ref_target.rust_type_name, &config.defaults.type_suffix),
+                                    );
+                                    child_table_override = Some(ChildTableOverride {
+                                        vo_title: ref_target.title.clone(),
+                                        child_table_name: ct_name,
+                                        child_module: ct_module,
+                                        child_schema: domain.to_string(),
+                                        parent_fk_column: p_fk,
+                                        response_type: format!("{}Response", child_struct),
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             segments.push(IncludeSegment {
                 entity_name: target_entity_name,
                 schema_title: target_schema_title,
@@ -170,6 +238,7 @@ async fn resolve_explicit_paths(
                 fk_column,
                 reverse_fk_column,
                 is_array,
+                child_table_override,
             });
 
             // Use the canonical schema title for the next iteration so graph
@@ -181,7 +250,13 @@ async fn resolve_explicit_paths(
         }
 
         let alias_snake = path.replace('.', "_");
-        let response_rust_type = derive_response_type(&segments);
+        // When the segment has a child table override (VO→entity), use its
+        // response type (child DTO) instead of the entity's response DTO.
+        let response_rust_type = if let Some(over) = segments.first().and_then(|s| s.child_table_override.as_ref()) {
+            over.response_type.clone()
+        } else {
+            derive_response_type(&segments)
+        };
         let fetch_method = format!("fetch_{alias_snake}_for_{source_module}");
         let batch_fetch_method = format!("fetch_{alias_snake}_batch_for_{source_module}");
 
@@ -282,6 +357,7 @@ async fn resolve_auto_paths(
                 fk_column,
                 reverse_fk_column,
                 is_array,
+                child_table_override: None,
             }],
             response_rust_type: format!("{}Response", target_schema.rust_type_name),
             fetch_method: format!("fetch_{alias_seg}_for_{source_module}"),
@@ -376,6 +452,7 @@ async fn resolve_auto_paths(
                 fk_column,
                 reverse_fk_column,
                 is_array,
+                child_table_override: None,
             }],
             response_rust_type: format!("{}Response", target_schema.rust_type_name),
             fetch_method: format!("fetch_{alias_seg}_for_{source_module}"),

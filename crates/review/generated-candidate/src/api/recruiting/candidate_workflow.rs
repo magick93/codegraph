@@ -77,8 +77,11 @@ fn extract_correlation_id(headers: &HeaderMap, body_correlation_id: Option<Uuid>
 #[utoipa::path(
     post,
 
-    path = "/api/recruiting/candidate/{candidate_id}/actions/transition",
-    params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
+    path = "/api/recruiting/application/{application_id}/candidate/{candidate_id}/actions/transition",
+    params(
+        ("application_id" = Uuid, Path, description = "Parent ID"),
+        ("candidate_id" = Uuid, Path, description = "Candidate ID"),
+    ),
 
     tag = "Candidate",
     request_body = TransitionRequest,
@@ -95,7 +98,9 @@ pub async fn transition(
     Extension(api_key_info): Extension<crate::middleware::ApiKeyInfo>,
     headers: HeaderMap,
 
-    Path(id): Path<Uuid>,
+
+    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
+
 
     Json(body): Json<TransitionRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -146,8 +151,11 @@ pub async fn transition(
 #[utoipa::path(
     post,
 
-    path = "/api/recruiting/candidate/{candidate_id}/actions/delegate",
-    params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
+    path = "/api/recruiting/application/{application_id}/candidate/{candidate_id}/actions/delegate",
+    params(
+        ("application_id" = Uuid, Path, description = "Parent ID"),
+        ("candidate_id" = Uuid, Path, description = "Candidate ID"),
+    ),
 
     tag = "Candidate",
     request_body = DelegateRequest,
@@ -162,7 +170,9 @@ pub async fn delegate(
     Extension(api_key_info): Extension<crate::middleware::ApiKeyInfo>,
     headers: HeaderMap,
 
-    Path(id): Path<Uuid>,
+
+    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
+
 
     Json(body): Json<DelegateRequest>,
 ) -> Result<axum::http::StatusCode, AppError> {
@@ -187,8 +197,11 @@ pub async fn delegate(
 #[utoipa::path(
     get,
 
-    path = "/api/recruiting/candidate/{candidate_id}/workflow",
-    params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
+    path = "/api/recruiting/application/{application_id}/candidate/{candidate_id}/workflow",
+    params(
+        ("application_id" = Uuid, Path, description = "Parent ID"),
+        ("candidate_id" = Uuid, Path, description = "Candidate ID"),
+    ),
 
     tag = "Candidate",
     responses(
@@ -201,7 +214,9 @@ pub async fn get_workflow_state(
     Extension(api_key_info): Extension<crate::middleware::ApiKeyInfo>,
     headers: HeaderMap,
 
-    Path(id): Path<Uuid>,
+
+    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
+
 
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = headers
@@ -230,8 +245,11 @@ pub async fn get_workflow_state(
 #[utoipa::path(
     get,
 
-    path = "/api/recruiting/candidate/{candidate_id}/workflow/history",
-    params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
+    path = "/api/recruiting/application/{application_id}/candidate/{candidate_id}/workflow/history",
+    params(
+        ("application_id" = Uuid, Path, description = "Parent ID"),
+        ("candidate_id" = Uuid, Path, description = "Candidate ID"),
+    ),
 
     tag = "Candidate",
     responses(
@@ -244,7 +262,9 @@ pub async fn get_process_history(
     Extension(api_key_info): Extension<crate::middleware::ApiKeyInfo>,
     headers: HeaderMap,
 
-    Path(id): Path<Uuid>,
+
+    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
+
 
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = headers

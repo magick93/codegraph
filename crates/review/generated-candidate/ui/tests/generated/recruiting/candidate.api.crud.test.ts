@@ -16,7 +16,12 @@ import {
 } from '../../e2e/helpers';
 
 
-const BASE_PATH = '/recruiting/candidate';
+
+const PARENT_API_PATH = '/recruiting/application';
+
+let parentId: string;
+let BASE_PATH: string;
+
 
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
@@ -183,6 +188,13 @@ test.describe.serial('Candidate CRUD', () => {
   test.beforeAll(async ({ orgContext }) => {
 
 
+    // Create parent entity for nested route
+    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'applied_date': '2025-01-15', 'status': 'Applied' });
+    parentId = parentEntity['id'] as string;
+    BASE_PATH = `${PARENT_API_PATH}/${parentId}/candidate`;
+
+
+
     try {
       const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/application', {  });
       depIds['referred_by_application_id_id'] = dep_1['id'] as string;
@@ -204,6 +216,15 @@ test.describe.serial('Candidate CRUD', () => {
       } catch { /* best effort */ }
     }
 
+
+    if (parentId) {
+      try {
+        await fetch(`${baseUrl}/api${PARENT_API_PATH}/${parentId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
+        });
+      } catch { /* best effort */ }
+    }
 
   });
 
@@ -339,7 +360,7 @@ test.describe.serial('Candidate CRUD', () => {
 
     // Should redirect to detail page
 
-    await expect(page).toHaveURL(/\/recruiting\/candidate\/[0-9a-f-]+/);
+    await expect(page).toHaveURL(/\/recruiting\/application\/[0-9a-f-]+\/candidate\/[0-9a-f-]+/);
 
 
     // Capture the created entity ID from the URL
@@ -695,7 +716,7 @@ test.describe.serial('Candidate CRUD', () => {
 
     // Should redirect to detail page
 
-    await expect(page).toHaveURL(/\/recruiting\/candidate\/[0-9a-f-]+$/);
+    await expect(page).toHaveURL(/\/recruiting\/application\/[0-9a-f-]+\/candidate\/[0-9a-f-]+$/);
 
 
     // Verify updated values (only check fields present on the page)

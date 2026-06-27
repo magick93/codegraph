@@ -47,7 +47,9 @@
 	let { data }: Props = $props();
 	let item = $state(data.item);
 
-	const basePath = '/recruiting/candidate';
+	const grandparentId = $derived($page.params.candidate_id);
+	const parentId = $derived($page.params.application_id);
+	const basePath = $derived(`/recruiting/candidate/${grandparentId}/application/${parentId}/candidate`);
 
 
 
@@ -135,7 +137,7 @@
 		transitioning = true;
 		try {
 
-			const ws = await transitionCandidate(item.id, targetState);
+			const ws = await transitionCandidate(grandparentId, parentId, item.id, targetState);
 
 			item.workflow_state = {
 				current_state: ws.current_state,

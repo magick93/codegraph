@@ -22,15 +22,16 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         cmd: CreateApplicationRequest,
+        parent_id: Uuid,
     ) -> Result<Uuid, Box<dyn std::error::Error>> {
         let id = Uuid::new_v4();
 
         // Insert into recruiting.application (direct columns)
         let model = crate::entity::recruiting_application::ActiveModel {
             id: Set(id),
+            candidate_id: Set(Some(parent_id)),
             application_id: Set(cmd.application_id),
             applied_date: Set(cmd.applied_date),
-            candidate_id: Set(cmd.candidate_id),
             status: Set(cmd.status.map(|v| v.to_string())),
             ..Default::default()
         };
@@ -47,6 +48,36 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
     ) -> Result<Option<ApplicationResponse>, Box<dyn std::error::Error>> {
         let row = crate::entity::recruiting_application::Entity::find()
             .filter(crate::entity::recruiting_application::Column::Id.eq(id))
+            .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
+            .one(db)
+            .await?;
+
+        let row = match row {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        Ok(Some(ApplicationResponse {
+            id: row.id,
+            application_id: row.application_id,
+            applied_date: row.applied_date,
+            candidate_id: row.candidate_id,
+            status: row.status.and_then(|v| v.parse().ok()),
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }))
+    }
+
+    #[tracing::instrument(skip(self, db), fields(db.operation = "select_scoped", db.table = "recruiting.application"))]
+    async fn find_by_id_scoped(
+        &self,
+        db: &DatabaseTransaction,
+        id: Uuid,
+        parent_id: Uuid,
+    ) -> Result<Option<ApplicationResponse>, Box<dyn std::error::Error>> {
+        let row = crate::entity::recruiting_application::Entity::find()
+            .filter(crate::entity::recruiting_application::Column::Id.eq(id))
+            .filter(crate::entity::recruiting_application::Column::CandidateId.eq(parent_id))
             .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
             .one(db)
             .await?;
@@ -132,6 +163,10 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
         if let Some(val) = filters.get("status") {
             condition = condition.add(crate::entity::recruiting_application::Column::Status.eq(val.clone()));
         }
+        if let Some(val) = filters.get("candidate_id") {
+            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid UUID for filter 'candidate_id': {e}")))?;
+            condition = condition.add(crate::entity::recruiting_application::Column::CandidateId.eq(parsed));
+        }
         let query = crate::entity::recruiting_application::Entity::find()
             .filter(condition)
             .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
@@ -165,76 +200,61 @@ impl ApplicationRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         source_id: Uuid,
-    ) -> Result<Option<CandidateResponse>, Box<dyn std::error::Error>> {
-        let source = crate::entity::recruiting_application::Entity::find()
-            .filter(crate::entity::recruiting_application::Column::Id.eq(source_id))
-            .one(db)
+    ) -> Result<Vec<CandidateResponse>, Box<dyn std::error::Error>> {
+        let rows = crate::entity::recruiting_candidate::Entity::find()
+            .filter(crate::entity::recruiting_candidate::Column::ReferredByApplicationId.eq(source_id))
+            .all(db)
             .await?;
-        let source = match source {
-            Some(s) => s,
-            None => return Ok(None),
-        };
-        let fk_value = match source.candidate_id {
-            Some(v) => v,
-            None => return Ok(None),
-        };
-        let target = crate::entity::recruiting_candidate::Entity::find()
-            .filter(crate::entity::recruiting_candidate::Column::Id.eq(fk_value))
-            .one(db)
-            .await?;
-        let target = match target {
-            Some(t) => t,
-            None => return Ok(None),
-        };
-        Ok(Some(CandidateResponse {
-            id: target.id,
-                birth_date: target.birth_date,
-                family_name: target.family_name,
-                given_name: target.given_name,
-                candidate_id: target.candidate_id,
-                referred_by_application_id: target.referred_by_application_id,
-                status: target.status,
-                uri: target.uri,
-            created_at: target.created_at,
-            updated_at: target.updated_at,
-        }))
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            results.push(CandidateResponse {
+                id: row.id,
+                birth_date: row.birth_date,
+                family_name: row.family_name,
+                given_name: row.given_name,
+                candidate_id: row.candidate_id,
+                referred_by_application_id: row.referred_by_application_id,
+                status: row.status.and_then(|v| v.parse().ok()),
+                uri: row.uri,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                ..Default::default()
+            });
+        }
+        Ok(results)
     }
 
     pub(crate) async fn fetch_candidate_batch_for_application(
         &self,
         db: &DatabaseTransaction,
         source_ids: &[Uuid],
-    ) -> Result<std::collections::HashMap<Uuid, Option<CandidateResponse>>, Box<dyn std::error::Error>> {
-        let sources = crate::entity::recruiting_application::Entity::find()
-            .filter(crate::entity::recruiting_application::Column::Id.is_in(source_ids.to_vec()))
+    ) -> Result<std::collections::HashMap<Uuid, Vec<CandidateResponse>>, Box<dyn std::error::Error>> {
+        let rows = crate::entity::recruiting_candidate::Entity::find()
+            .filter(crate::entity::recruiting_candidate::Column::ReferredByApplicationId.is_in(source_ids.to_vec()))
             .all(db)
             .await?;
-        let mut fk_values: Vec<Uuid> = Vec::new();
-        for source in &sources {
-            if let Some(fk) = source.candidate_id {
-                fk_values.push(fk);
-            }
-        }
-        let targets = crate::entity::recruiting_candidate::Entity::find()
-            .filter(crate::entity::recruiting_candidate::Column::Id.is_in(fk_values))
-            .all(db)
-            .await?;
-        let target_by_id: std::collections::HashMap<Uuid, CandidateResponse> = targets.into_iter().map(|t| (t.id, CandidateResponse {
-            id: t.id,
-                birth_date: t.birth_date,
-                family_name: t.family_name,
-                given_name: t.given_name,
-                candidate_id: t.candidate_id,
-                referred_by_application_id: t.referred_by_application_id,
-                status: t.status,
-                uri: t.uri,
-            created_at: t.created_at,
-            updated_at: t.updated_at,
-        })).collect();
-        let mut result: std::collections::HashMap<Uuid, Option<CandidateResponse>> = std::collections::HashMap::new();
+        let mut result: std::collections::HashMap<Uuid, Vec<CandidateResponse>> = std::collections::HashMap::new();
         for id in source_ids {
-            let found = sources.iter().find(|s| s.id == *id).and_then(|s| s.candidate_id.and_then(|fk| target_by_id.get(&fk).cloned()));
-            result.insert(*id, found);
+            result.entry(*id).or_insert_with(Vec::new);
+        }
+        for row in rows {
+            let key = match row.referred_by_application_id {
+                Some(v) => v,
+                None => continue,
+            };
+            result.entry(key).or_default().push(CandidateResponse {
+                id: row.id,
+                birth_date: row.birth_date,
+                family_name: row.family_name,
+                given_name: row.given_name,
+                candidate_id: row.candidate_id,
+                referred_by_application_id: row.referred_by_application_id,
+                status: row.status.and_then(|v| v.parse().ok()),
+                uri: row.uri,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                ..Default::default()
+            });
         }
         Ok(result)
     }
