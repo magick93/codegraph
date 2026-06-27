@@ -316,10 +316,10 @@ pub async fn get_by_id(
                         .with_correlation_id(correlation_id))?;
                 if let Some(val) = leaf_resp {
                     if let Some(ref mut combined) = included.{{ ipath.segments[0].module_name }} {
-                        combined.{{ ipath.segments[1].module_name }} = Some(val);
+                        combined.{{ ipath.segments[1].module_name }} = val.{{ ipath.segments[1].module_name }};
                     } else {
                         included.{{ ipath.segments[0].module_name }} = Some({{ ipath.response_rust_type }} {
-                            {{ ipath.segments[1].module_name }}: Some(val),
+                            {{ ipath.segments[1].module_name }}: val.{{ ipath.segments[1].module_name }},
                             ..Default::default()
                         });
                     }
