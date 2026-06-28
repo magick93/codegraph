@@ -799,43 +799,40 @@ async fn build_child_entity(
                     sea_orm_attr,
                 });
             }
-            Some(RefClassificationKind::CodelistReference) => {
-                let is_nullable = !child_prop.is_required;
-                let rust_type = if is_nullable {
-                    "Option<String>".to_string()
+            Some(RefClassificationKind::CodelistReference)
+            | Some(RefClassificationKind::CodelistCheck) => {
+                if child_prop.is_array {
+                    // Array codelist → synthetic child entity with single "code" column.
+                    // Same logic as root entity generator (lines 597-616).
+                    let child_files = build_codelist_child_entity(
+                        child_prop,
+                        &child_table_name,
+                        schema_name,
+                        &child_struct_name,
+                        output_dir,
+                        tera,
+                        config,
+                        project,
+                    )?;
+                    nested_files.extend(child_files);
                 } else {
-                    "String".to_string()
-                };
-
-                columns.push(EntityColumn {
-                    field_name: child_field_def.rust_field_name,
-                    rust_type,
-                    sea_orm_type: "String".to_string(),
-                    column_name: child_field_def.column_name,
-                    is_primary_key: false,
-                    is_nullable,
-                    pg_cast: None,
-                    sea_orm_attr: None,
-                });
-            }
-            Some(RefClassificationKind::CodelistCheck) => {
-                let is_nullable = !child_prop.is_required;
-                let rust_type = if is_nullable {
-                    "Option<String>".to_string()
-                } else {
-                    "String".to_string()
-                };
-
-                columns.push(EntityColumn {
-                    field_name: child_field_def.rust_field_name,
-                    rust_type,
-                    sea_orm_type: "String".to_string(),
-                    column_name: child_field_def.column_name,
-                    is_primary_key: false,
-                    is_nullable,
-                    pg_cast: None,
-                    sea_orm_attr: None,
-                });
+                    let is_nullable = !child_prop.is_required;
+                    let rust_type = if is_nullable {
+                        "Option<String>".to_string()
+                    } else {
+                        "String".to_string()
+                    };
+                    columns.push(EntityColumn {
+                        field_name: child_field_def.rust_field_name,
+                        rust_type,
+                        sea_orm_type: "String".to_string(),
+                        column_name: child_field_def.column_name,
+                        is_primary_key: false,
+                        is_nullable,
+                        pg_cast: None,
+                        sea_orm_attr: None,
+                    });
+                }
             }
             Some(RefClassificationKind::EntityReference) => {
                 columns.push(EntityColumn {
