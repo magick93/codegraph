@@ -19,7 +19,9 @@ const BASE_PATH = '/{{ domain }}/{{ path_segment }}';
 function searchTestData(): Record<string, unknown> {
   return {
 {%- for field in required_create_fields %}
-{%- if field.name == fts_search_field %}
+{%- if field.nested_type_name %}
+    // {{ field.name }} omitted — ValueObject
+{%- elif field.name == fts_search_field %}
     '{{ field.name }}': 'UniqueSearchTerm2025',
 {%- elif field.input_type == "number" %}
     '{{ field.name }}': 42,
