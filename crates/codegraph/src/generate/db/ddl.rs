@@ -1545,8 +1545,8 @@ impl EntityGenerator for DdlGenerator {
             content: table_sql,
         });
 
-        // RLS policy — only on tenant-scoped non-codelist tables with RLS support
-        if ctx.is_tenant_scoped && !ctx.is_codelist && self.dialect.has_rls() {
+        // RLS policy — only on tenant-scoped tables with RLS support
+        if ctx.is_tenant_scoped && self.dialect.has_rls() {
             let rls_sql = render_template_with_project(
                 tera,
                 &db_template_for(&*self.dialect, "rls"),
