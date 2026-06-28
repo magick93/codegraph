@@ -25,7 +25,9 @@ const depIds: Record<string, string> = {};
 function testData(): Record<string, unknown> {
   return {
 {%- for field in create_fields %}
-{%- if field.input_type == "date-range" %}
+{%- if field.nested_type_name %}
+    // {{ field.name }} omitted — ValueObject, provide nested object in manual test
+{%- elif field.input_type == "date-range" %}
     '{{ field.name }}': '[2025-01-15T00:00:00Z,2025-12-31T23:59:59Z)',
 {%- elif field.input_type == "number" %}
     '{{ field.name }}': 42,
@@ -65,7 +67,9 @@ function testData(): Record<string, unknown> {
 function updatedData(): Record<string, unknown> {
   return {
 {%- for field in update_fields %}
-{%- if field.input_type == "date-range" %}
+{%- if field.nested_type_name %}
+    // {{ field.name }} omitted — ValueObject, provide nested object in manual test
+{%- elif field.input_type == "date-range" %}
     '{{ field.name }}': '[2025-06-01T00:00:00Z,2025-12-31T23:59:59Z)',
 {%- elif field.input_type == "number" %}
     '{{ field.name }}': 99,
@@ -163,7 +167,9 @@ test.describe.serial('{{ entity_name }} Owner CRUD', () => {
     // Wait for Svelte 5 to hydrate the form's submit handler.
     await waitForHydration(ownerPage, '[data-testid="{{ module_name }}-submit-btn"]');
 {%- for field in create_fields %}
-{%- if field.input_type == "checkbox" %}
+{%- if field.nested_type_name %}
+    // {{ field.name }} omitted — ValueObject, provide nested object in manual test
+{%- elif field.input_type == "checkbox" %}
     if (data['{{ field.name }}'] && await ownerPage.locator('#{{ field.name }}').isVisible()) {
       await ownerPage.locator('#{{ field.name }}').click();
     }
@@ -270,7 +276,9 @@ test.describe.serial('{{ entity_name }} Owner CRUD', () => {
     // Wait for Svelte 5 to hydrate the form's submit handler.
     await waitForHydration(ownerPage, '[data-testid="{{ module_name }}-submit-btn"]');
 {%- for field in update_fields %}
-{%- if field.input_type == "checkbox" %}
+{%- if field.nested_type_name %}
+    // {{ field.name }} omitted — ValueObject, provide nested object in manual test
+{%- elif field.input_type == "checkbox" %}
     if (await ownerPage.locator('#{{ field.name }}').isVisible()) {
       const isChecked = await ownerPage.locator('#{{ field.name }}').getAttribute('aria-checked') === 'true';
       if (Boolean(updated['{{ field.name }}']) !== isChecked) {
