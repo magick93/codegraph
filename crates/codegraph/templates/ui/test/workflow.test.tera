@@ -36,7 +36,9 @@ function testData(): Record<string, unknown> {
 {% endraw %}
   return {
 {% for field in create_fields %}
-{% if field.input_type == "number" %}
+{% if field.nested_type_name %}
+    // '{{ field.name }}' omitted — ValueObject, provide nested object in manual test
+{% elif field.input_type == "number" %}
     '{{ field.name }}': 42,
 {% elif field.input_type == "checkbox" %}
     '{{ field.name }}': true,
