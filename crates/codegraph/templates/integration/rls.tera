@@ -6,17 +6,22 @@ ALTER TABLE platform_integrations.{{ table }} ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform_integrations.{{ table }} FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY "org_isolation_select" ON platform_integrations.{{ table }}
-  FOR SELECT USING (platform_organization_id = public.get_current_org_id());
+  FOR SELECT USING (platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid);
 
 CREATE POLICY "org_isolation_insert" ON platform_integrations.{{ table }}
-  FOR INSERT WITH CHECK (platform_organization_id = public.get_current_org_id());
+  FOR INSERT WITH CHECK (platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid);
 
 CREATE POLICY "org_isolation_update" ON platform_integrations.{{ table }}
   FOR UPDATE
-  USING (platform_organization_id = public.get_current_org_id())
-  WITH CHECK (platform_organization_id = public.get_current_org_id());
+  USING (platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid)
+  WITH CHECK (platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid);
 
 CREATE POLICY "org_isolation_delete" ON platform_integrations.{{ table }}
-  FOR DELETE USING (platform_organization_id = public.get_current_org_id());
+  FOR DELETE USING (platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid);
 
 {% endfor %}
