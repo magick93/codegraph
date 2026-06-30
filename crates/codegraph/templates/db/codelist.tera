@@ -4,7 +4,8 @@
 CREATE SCHEMA IF NOT EXISTS {{ schema_name }};
 
 CREATE TABLE IF NOT EXISTS {{ schema_name }}.{{ table_name | quote_pg }} (
-    code TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
     platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
@@ -13,8 +14,8 @@ CREATE TABLE IF NOT EXISTS {{ schema_name }}.{{ table_name | quote_pg }} (
 );
 {%- if values | length > 0 %}
 
-INSERT INTO {{ schema_name }}.{{ table_name | quote_pg }} (code, display_name, sort_order, platform_organization_id, created_at, updated_at) VALUES
+INSERT INTO {{ schema_name }}.{{ table_name | quote_pg }} (id, code, display_name, sort_order, platform_organization_id, created_at, updated_at) VALUES
 {%- for val in values %}
-    ({{ val.code | dollar_quote }}, {{ val.display_name | dollar_quote }}, {{ val.sort_order }}, '00000000-0000-0000-0000-000000000000', now(), now()){% if not loop.last %},{% else %};{% endif %}
+    (gen_random_uuid(), {{ val.code | dollar_quote }}, {{ val.display_name | dollar_quote }}, {{ val.sort_order }}, '00000000-0000-0000-0000-000000000000', now(), now()){% if not loop.last %},{% else %};{% endif %}
 {%- endfor %}
 {%- endif %}

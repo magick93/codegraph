@@ -1235,7 +1235,7 @@ impl DdlGenerator {
             display_name,
             domain,
             columns,
-            primary_key: if has_codelist_seed { "code" } else { "id" }.to_string(),
+            primary_key: "id".to_string(),
             foreign_keys,
             check_constraints,
             indexes,
