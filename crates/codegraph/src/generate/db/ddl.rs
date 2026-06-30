@@ -1099,6 +1099,53 @@ impl DdlGenerator {
             check_constraints.retain(|chk| seen.insert(chk.name.clone()));
         }
 
+        // Query graph properties for entity-reference columns that the composition
+        // tree may have missed (e.g. cross-domain references where the target schema
+        // can't be resolved). The entity model generator includes these columns,
+        // so the DDL must match to avoid "column does not exist" at runtime.
+        if let Ok(props) = db.get_properties(schema_title).await {
+            let existing_names: std::collections::HashSet<String> =
+                columns.iter().map(|c| c.name.clone()).collect();
+            for prop in &props {
+                let kind = prop.effective_kind();
+                let is_fk_candidate = kind == Some(RefClassificationKind::EntityReference)
+                    || (kind == Some(RefClassificationKind::ValueObject) && !prop.is_array);
+                if !is_fk_candidate {
+                    continue;
+                }
+                let base = prop.rust_field_name.strip_prefix("r#").unwrap_or(&prop.rust_field_name);
+                let col_name = if base.ends_with("_id") {
+                    base.to_string()
+                } else {
+                    format!("{}_id", base)
+                };
+                if !existing_names.contains(col_name.as_str()) {
+                    columns.push(ColumnDef {
+                        name: col_name.clone(),
+                        pg_type: "UUID".to_string(),
+                        nullable: true,
+                        default: None,
+                        is_primary_key: false,
+                        is_array: false,
+                    });
+                    // Try to resolve the FK target for the constraint
+                    if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, schema_title).await {
+                        if !target.pg_table_name.is_empty() {
+                            let fk_schema = target.domain.as_deref().unwrap_or(&schema_name);
+                            foreign_keys.push(ForeignKeyDef {
+                                column_name: prop.rust_field_name.clone(),
+                                column: col_name,
+                                references_schema: fk_schema.to_string(),
+                                references_table: target.pg_table_name.clone(),
+                                references_column: "id".to_string(),
+                                on_delete: "SET NULL".to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         // Convert child CompositionNodes → ChildTableDefs
         let child_tables: Vec<ChildTableDef> = root
             .children
