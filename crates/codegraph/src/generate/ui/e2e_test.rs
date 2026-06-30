@@ -739,6 +739,12 @@ async fn build_test_data_json(
             entries.push(format!("'{}': {}", f.name, value));
         }
     }
+    if entries.is_empty() && !schema_title.is_empty() {
+        // Fallback: if no UI fields were found (e.g. codelist entities whose
+        // properties aren't in the graph), generate a minimal payload with a
+        // code placeholder to satisfy NOT NULL constraints.
+        entries.push("'code': 'TestCode'".to_string());
+    }
     entries.join(", ")
 }
 

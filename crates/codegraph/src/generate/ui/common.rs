@@ -54,9 +54,15 @@ pub async fn collect_ui_fields(
                 );
                 // Schema title for the type generator to resolve sub-fields, e.g. "PersonLegalType"
                 let schema_title_for_ref = target.title.clone();
+                // Strip Rust r# prefix — it is only needed for Rust identifiers,
+                // not for TypeScript / Svelte property access.
+                let ts_name = prop.rust_field_name
+                    .strip_prefix("r#")
+                    .unwrap_or(&prop.rust_field_name)
+                    .to_string();
                 fields.push(UiField {
-                    name: prop.rust_field_name.clone(),
-                    label: field_name_to_label(&prop.rust_field_name),
+                    name: ts_name.clone(),
+                    label: field_name_to_label(&ts_name),
                     ts_type: ts_type_name,
                     input_type: "text".to_string(),
                     is_required: prop.is_required,
@@ -82,7 +88,10 @@ pub async fn collect_ui_fields(
         if prop.effective_kind() == Some(RefClassificationKind::CompositeWrapper) {
             if let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await {
                 for col in &comp_cols {
-                    let field_name = format!("{}{}", prop.rust_field_name, col.suffix);
+                    let base_name = prop.rust_field_name
+                        .strip_prefix("r#")
+                        .unwrap_or(&prop.rust_field_name);
+                    let field_name = format!("{}{}", base_name, col.suffix);
                     let label = super::form::field_name_to_label(&field_name);
                     let is_codelist = col.dto_rust_type.is_some();
                     let codelist_values = if is_codelist {
