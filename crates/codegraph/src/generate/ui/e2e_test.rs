@@ -719,7 +719,15 @@ async fn build_test_data_json(
 ) -> String {
     let fields = match collect_ui_fields(db, schema_title, &[], domain).await {
         Ok(f) => f,
-        Err(_) => return String::new(),
+        Err(_) => {
+            // Fallback: if collect_ui_fields failed (e.g. codelist entities with
+            // no UI fields in the graph), generate a minimal payload with a
+            // code placeholder to satisfy NOT NULL constraints.
+            if !schema_title.is_empty() {
+                return "'code': 'TestCode'".to_string();
+            }
+            return String::new();
+        }
     };
     let mut entries = Vec::new();
     for f in &fields {
@@ -738,12 +746,6 @@ async fn build_test_data_json(
         if !value.is_empty() {
             entries.push(format!("'{}': {}", f.name, value));
         }
-    }
-    if entries.is_empty() && !schema_title.is_empty() {
-        // Fallback: if no UI fields were found (e.g. codelist entities whose
-        // properties aren't in the graph), generate a minimal payload with a
-        // code placeholder to satisfy NOT NULL constraints.
-        entries.push("'code': 'TestCode'".to_string());
     }
     entries.join(", ")
 }
