@@ -729,6 +729,11 @@ async fn build_test_data_json(
         if f.name.ends_with("_id") && !f.is_codelist {
             continue;
         }
+        // Skip ValueObject fields — they require nested object structures
+        // that can't be represented as simple string literals.
+        if f.nested_type_name.is_some() {
+            continue;
+        }
         let value = test_value_for_field(f);
         if !value.is_empty() {
             entries.push(format!("'{}': {}", f.name, value));
