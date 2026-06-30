@@ -1221,13 +1221,21 @@ impl DdlGenerator {
             .and_then(|d| d.auditable)
             .unwrap_or(true);
 
+        // Detect whether this entity has a _codelist.sql migration (codelist seed data).
+        // The codelist generator only creates these for codelist entities in the
+        // 'common' domain. Entities outside 'common' are always created by the entity
+        // DDL generator with id UUID PRIMARY KEY, even if classified as codelists.
+        let has_codelist_seed = schema.is_codelist
+            && domain == "common"
+            && !db.get_enum_values(schema_title).await.unwrap_or_default().is_empty();
+
         Ok(DdlContext {
             schema_name,
             table_name,
             display_name,
             domain,
             columns,
-            primary_key: if schema.is_codelist { "code" } else { "id" }.to_string(),
+            primary_key: if has_codelist_seed { "code" } else { "id" }.to_string(),
             foreign_keys,
             check_constraints,
             indexes,
