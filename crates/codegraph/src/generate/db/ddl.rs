@@ -536,6 +536,13 @@ pub struct ForeignKeyDef {
     pub on_delete: String,
 }
 
+/// Strip the Rust `r#` keyword escaping prefix from a SQL identifier.
+/// This prevents `#` characters from leaking into constraint names
+/// (e.g. fk_certification_r#type → fk_certification_type).
+fn strip_rsharp(name: &str) -> String {
+    name.strip_prefix("r#").unwrap_or(name).to_string()
+}
+
 #[derive(Debug, Serialize)]
 pub struct CheckConstraint {
     pub name: String,
@@ -666,7 +673,7 @@ fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts
             });
             if let Some(ref fk) = col.fk_target {
                 foreign_keys.push(ForeignKeyDef {
-                    column_name: raw_name.to_string(),
+                    column_name: strip_rsharp(raw_name),
                     column: col_name,
                     references_schema: fk.schema.clone(),
                     references_table: fk.table.clone(),
@@ -693,7 +700,7 @@ fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts
             });
             if let Some(ref fk) = col.fk_target {
                 foreign_keys.push(ForeignKeyDef {
-                    column_name: col_name.clone(),
+                    column_name: strip_rsharp(&col_name),
                     column: col_name,
                     references_schema: fk.schema.clone(),
                     references_table: fk.table.clone(),
@@ -1010,7 +1017,7 @@ impl DdlGenerator {
                                 parent_schema.domain.as_deref().unwrap_or(domain)
                             };
                             foreign_keys.push(ForeignKeyDef {
-                                column_name: fk_col.clone(),
+                                column_name: strip_rsharp(&fk_col),
                                 column: fk_col.clone(),
                                 references_schema: parent_domain.to_string(),
                                 references_table: parent_schema.pg_table_name.clone(),
@@ -1039,7 +1046,7 @@ impl DdlGenerator {
                             parent_schema.domain.as_deref().unwrap_or(domain)
                         };
                         foreign_keys.push(ForeignKeyDef {
-                            column_name: fk_col.clone(),
+                            column_name: strip_rsharp(&fk_col),
                             column: fk_col,
                             references_schema: parent_domain.to_string(),
                             references_table: parent_schema.pg_table_name.clone(),
@@ -1065,7 +1072,7 @@ impl DdlGenerator {
                 });
                 foreign_keys.push(ForeignKeyDef {
                     column: hierarchy_field.clone(),
-                    column_name: hierarchy_field.clone(),
+                    column_name: strip_rsharp(hierarchy_field),
                     references_schema: schema_name.clone(),
                     references_table: table_name.clone(),
                     references_column: "id".to_string(),
@@ -1133,7 +1140,7 @@ impl DdlGenerator {
                         if !target.pg_table_name.is_empty() {
                             let fk_schema = target.domain.as_deref().unwrap_or(&schema_name);
                             foreign_keys.push(ForeignKeyDef {
-                                column_name: prop.rust_field_name.clone(),
+                                column_name: strip_rsharp(&prop.rust_field_name),
                                 column: col_name,
                                 references_schema: fk_schema.to_string(),
                                 references_table: target.pg_table_name.clone(),
