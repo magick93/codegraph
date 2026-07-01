@@ -83,7 +83,7 @@ test.describe('{{ entity_name }} Validation', () => {
 {% set has_typed_fields = false %}
 {% for field in create_fields %}
 {% if field.nested_type_name %}
-    '{{ field.name }}': {}
+    '{{ field.name }}': {},
 {% elif field.input_type == "number" %}
     // Number fields: browsers natively reject non-numeric input, skip
 {% endif %}

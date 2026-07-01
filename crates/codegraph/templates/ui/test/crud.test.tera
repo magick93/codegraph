@@ -42,7 +42,7 @@ function testData(): Record<string, unknown> {
   return {
 {% for field in create_fields %}
 {% if field.nested_type_name %}
-    '{{ field.name }}': {}
+    '{{ field.name }}': {},
 {% elif field.input_type == "date-range" %}
     '{{ field.name }}': '[2025-01-15T00:00:00Z,2025-12-31T23:59:59Z)',
 {% elif field.input_type == "number" %}
@@ -88,7 +88,7 @@ function updatedData(): Record<string, unknown> {
   return {
 {% for field in update_fields %}
 {% if field.nested_type_name %}
-    '{{ field.name }}': {}
+    '{{ field.name }}': {},
 {% elif field.input_type == "date-range" %}
     '{{ field.name }}': '[2025-06-01T00:00:00Z,2025-12-31T23:59:59Z)',
 {% elif field.input_type == "number" %}

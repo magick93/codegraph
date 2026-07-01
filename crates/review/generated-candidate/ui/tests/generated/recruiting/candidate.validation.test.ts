@@ -84,7 +84,7 @@ test.describe('Candidate Validation', () => {
 
 
 
-    'application_process_history': {}
+    'application_process_history': {},
 
 
 
@@ -100,7 +100,7 @@ test.describe('Candidate Validation', () => {
 
 
 
-    'distribution_guidelines': {}
+    'distribution_guidelines': {},
 
 
 
@@ -111,7 +111,7 @@ test.describe('Candidate Validation', () => {
 
 
 
-    'person_name': {}
+    'person_name': {},
 
 
 
@@ -122,7 +122,7 @@ test.describe('Candidate Validation', () => {
 
 
 
-    'qualifications': {}
+    'qualifications': {},
 
 
 
