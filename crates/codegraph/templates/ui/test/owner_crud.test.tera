@@ -172,7 +172,7 @@ test.describe.serial('{{ entity_name }} Owner CRUD', () => {
     await waitForHydration(ownerPage, '[data-testid="{{ module_name }}-submit-btn"]');
 {%- for field in create_fields %}
 {%- if field.nested_type_name %}
-    '{{ field.name }}': {},
+    // '{{ field.name }}' is a ValueObject — provide nested structure in testData()
 {%- elif field.input_type == "checkbox" %}
     if (data['{{ field.name }}'] && await ownerPage.locator('#{{ field.name }}').isVisible()) {
       await ownerPage.locator('#{{ field.name }}').click();
@@ -281,7 +281,7 @@ test.describe.serial('{{ entity_name }} Owner CRUD', () => {
     await waitForHydration(ownerPage, '[data-testid="{{ module_name }}-submit-btn"]');
 {%- for field in update_fields %}
 {%- if field.nested_type_name %}
-    '{{ field.name }}': {},
+    // '{{ field.name }}' is a ValueObject — provide nested structure in testData()
 {%- elif field.input_type == "checkbox" %}
     if (await ownerPage.locator('#{{ field.name }}').isVisible()) {
       const isChecked = await ownerPage.locator('#{{ field.name }}').getAttribute('aria-checked') === 'true';

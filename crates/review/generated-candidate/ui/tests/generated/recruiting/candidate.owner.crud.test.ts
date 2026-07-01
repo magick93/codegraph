@@ -119,7 +119,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
     if (await ownerPage.locator('#given_name').isVisible()) {
       await ownerPage.locator('#given_name').fill(String(data['given_name']));
     }
-    'application_process_history': {},
+    // 'application_process_history' is a ValueObject — provide nested structure in testData()
     if (await ownerPage.locator('#candidate_id').isVisible()) {
       await ownerPage.locator('#candidate_id').fill(String(data['candidate_id']));
     }
@@ -129,14 +129,14 @@ test.describe.serial('Candidate Owner CRUD', () => {
     if (await ownerPage.locator('#compensation_expectation_currency').isVisible()) {
       await ownerPage.locator('#compensation_expectation_currency').selectOption(String(data['compensation_expectation_currency']));
     }
-    'distribution_guidelines': {},
+    // 'distribution_guidelines' is a ValueObject — provide nested structure in testData()
     if (await ownerPage.locator('[data-testid="external_identifier-value"]').isVisible()) {
       await ownerPage.locator('[data-testid="external_identifier-value"]').fill(String((data['external_identifier'] as Record<string, unknown>)?.['value'] ?? ''));
     }
     if (await ownerPage.locator('#gender').isVisible()) {
       await ownerPage.locator('#gender').selectOption(String(data['gender']));
     }
-    'person_name': {},
+    // 'person_name' is a ValueObject — provide nested structure in testData()
     if (await ownerPage.locator('#position_schedule_type_codes').isVisible()) {
       await ownerPage.locator('#position_schedule_type_codes').selectOption('FullTime');
     }
@@ -147,7 +147,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
         await ownerPage.locator(`[data-testid="position_titles-row-${i}"] input`).fill(vals[i]);
       }
     }
-    'qualifications': {},
+    // 'qualifications' is a ValueObject — provide nested structure in testData()
     if (data['referred_by_application_id_id'] && await ownerPage.locator('#referred_by_application_id_id').isVisible()) {
       await ownerPage.locator('#referred_by_application_id_id').fill(String(data['referred_by_application_id_id']));
     }
@@ -222,7 +222,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
       await ownerPage.locator('#given_name').clear();
       await ownerPage.locator('#given_name').fill(String(updated['given_name']));
     }
-    'application_process_history': {},
+    // 'application_process_history' is a ValueObject — provide nested structure in testData()
     if (await ownerPage.locator('#candidate_id').isVisible()) {
       await ownerPage.locator('#candidate_id').clear();
       await ownerPage.locator('#candidate_id').fill(String(updated['candidate_id']));
@@ -234,7 +234,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
     if (await ownerPage.locator('#compensation_expectation_currency').isVisible()) {
       await ownerPage.locator('#compensation_expectation_currency').selectOption('AUD');
     }
-    'distribution_guidelines': {},
+    // 'distribution_guidelines' is a ValueObject — provide nested structure in testData()
     if (await ownerPage.locator('[data-testid="external_identifier-value"]').isVisible()) {
       await ownerPage.locator('[data-testid="external_identifier-value"]').clear();
       await ownerPage.locator('[data-testid="external_identifier-value"]').fill(String((updated['external_identifier'] as Record<string, unknown>)?.['value'] ?? ''));
@@ -242,7 +242,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
     if (await ownerPage.locator('#gender').isVisible()) {
       await ownerPage.locator('#gender').selectOption('Other');
     }
-    'person_name': {},
+    // 'person_name' is a ValueObject — provide nested structure in testData()
     if (await ownerPage.locator('#position_schedule_type_codes').isVisible()) {
       await ownerPage.locator('#position_schedule_type_codes').selectOption('SharedTime');
     }
@@ -260,7 +260,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
         await ownerPage.locator(`[data-testid="position_titles-row-${i}"] input`).fill(vals[i]);
       }
     }
-    'qualifications': {},
+    // 'qualifications' is a ValueObject — provide nested structure in testData()
     if (updated['referred_by_application_id_id'] && await ownerPage.locator('#referred_by_application_id_id').isVisible()) {
       await ownerPage.locator('#referred_by_application_id_id').clear();
       await ownerPage.locator('#referred_by_application_id_id').fill(String(updated['referred_by_application_id_id']));

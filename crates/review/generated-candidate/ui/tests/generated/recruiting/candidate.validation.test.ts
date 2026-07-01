@@ -84,7 +84,7 @@ test.describe('Candidate Validation', () => {
 
 
 
-    'application_process_history': {},
+    // 'application_process_history' is a ValueObject — skip in validation test
 
 
 
@@ -100,7 +100,7 @@ test.describe('Candidate Validation', () => {
 
 
 
-    'distribution_guidelines': {},
+    // 'distribution_guidelines' is a ValueObject — skip in validation test
 
 
 
@@ -111,7 +111,7 @@ test.describe('Candidate Validation', () => {
 
 
 
-    'person_name': {},
+    // 'person_name' is a ValueObject — skip in validation test
 
 
 
@@ -122,7 +122,7 @@ test.describe('Candidate Validation', () => {
 
 
 
-    'qualifications': {},
+    // 'qualifications' is a ValueObject — skip in validation test
 
 
 

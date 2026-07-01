@@ -444,18 +444,6 @@ export const CandidateDescriptor: EntityDescriptor = {
     field: 'candidate_status_code',
     transitions: [
 
-      { from: 'new', to: 'screening', label: 'Screening', confirm: true },
-
-      { from: 'new', to: 'rejected', label: 'Rejected', confirm: true },
-
-      { from: 'new', to: 'withdrawn', label: 'Withdrawn', confirm: true },
-
-      { from: 'screening', to: 'interviewing', label: 'Interviewing', confirm: true },
-
-      { from: 'screening', to: 'rejected', label: 'Rejected', confirm: true },
-
-      { from: 'screening', to: 'withdrawn', label: 'Withdrawn', confirm: true },
-
       { from: 'interviewing', to: 'offer', label: 'Offer', confirm: true },
 
       { from: 'interviewing', to: 'rejected', label: 'Rejected', confirm: true },
@@ -467,6 +455,18 @@ export const CandidateDescriptor: EntityDescriptor = {
       { from: 'offer', to: 'rejected', label: 'Rejected', confirm: true },
 
       { from: 'offer', to: 'withdrawn', label: 'Withdrawn', confirm: true },
+
+      { from: 'screening', to: 'interviewing', label: 'Interviewing', confirm: true },
+
+      { from: 'screening', to: 'rejected', label: 'Rejected', confirm: true },
+
+      { from: 'screening', to: 'withdrawn', label: 'Withdrawn', confirm: true },
+
+      { from: 'new', to: 'screening', label: 'Screening', confirm: true },
+
+      { from: 'new', to: 'rejected', label: 'Rejected', confirm: true },
+
+      { from: 'new', to: 'withdrawn', label: 'Withdrawn', confirm: true },
 
     ],
   },
