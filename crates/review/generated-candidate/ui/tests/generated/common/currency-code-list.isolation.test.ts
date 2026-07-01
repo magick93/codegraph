@@ -14,6 +14,8 @@ const depIds: Record<string, string> = {};
 function testData(): Record<string, unknown> {
   return {
     'code': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    'display_name': 'ACME Isolation Display Name',
+    'sort_order': 77,
   };
 }
 
@@ -44,10 +46,7 @@ test.describe.serial('CurrencyCodeList Cross-Org Isolation', () => {
     // Either the table is visible (without ACME data) or empty state is shown
     const tableVisible = await table.isVisible().catch(() => false);
     if (tableVisible) {
-      const firstField = Object.values(data)[0];
-      if (typeof firstField !== 'boolean') {
-        await expect(table).not.toContainText(String(firstField));
-      }
+      await expect(table).not.toContainText(String(data['code'] ?? ''));
     } else {
       await expect(empty).toBeVisible();
     }

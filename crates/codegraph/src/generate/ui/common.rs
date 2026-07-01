@@ -278,6 +278,43 @@ pub async fn collect_ui_fields(
     let mut seen = std::collections::HashSet::new();
     fields.retain(|f| seen.insert(f.name.clone()));
 
+    // If no UI fields were found from graph properties, check if this is a
+    // codelist entity (enum-only schema with no properties). Inject synthetic
+    // fields for code, display_name, and sort_order so the form renders inputs
+    // and the CRUD tests can create the entity.
+    if fields.is_empty() {
+        if let Some(domain) = current_domain {
+            if let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, domain).await {
+                if schema.is_codelist {
+                    let mut inject = |name: &str, label: &str, input_type: &str, is_required: bool| {
+                        fields.push(UiField {
+                            name: name.to_string(),
+                            label: label.to_string(),
+                            ts_type: "string".to_string(),
+                            input_type: input_type.to_string(),
+                            is_required,
+                            is_array: false,
+                            is_entity_ref: false,
+                            is_immutable: false,
+                            is_codelist: false,
+                            is_range: false,
+                            codelist_values: vec![],
+                            description: String::new(),
+                            pg_type: "TEXT".to_string(),
+                            open_end: false,
+                            ref_api_path: None,
+                            structured_sub_fields: vec![],
+                            nested_type_name: None,
+                        });
+                    };
+                    inject("code", "Code", "code", true);
+                    inject("display_name", "Display Name", "text", true);
+                    inject("sort_order", "Sort Order", "number", false);
+                }
+            }
+        }
+    }
+
     Ok(fields)
 }
 

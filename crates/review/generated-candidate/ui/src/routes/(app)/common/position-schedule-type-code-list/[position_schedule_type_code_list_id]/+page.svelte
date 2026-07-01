@@ -111,6 +111,33 @@
 			<dl class="divide-y divide-border">
 
 				<div class="grid grid-cols-1 gap-1 px-4 py-3 sm:grid-cols-3 sm:gap-4">
+					<dt class="text-sm font-medium text-muted-foreground">{m.common_position_schedule_type_code_list_field_code()}</dt>
+					<dd class="text-sm sm:col-span-2" data-testid="position_schedule_type_code_list-field-code">
+
+						{item.code ?? '—'}
+
+					</dd>
+				</div>
+
+				<div class="grid grid-cols-1 gap-1 px-4 py-3 sm:grid-cols-3 sm:gap-4">
+					<dt class="text-sm font-medium text-muted-foreground">{m.common_position_schedule_type_code_list_field_display_name()}</dt>
+					<dd class="text-sm sm:col-span-2" data-testid="position_schedule_type_code_list-field-display_name">
+
+						{item.display_name ?? '—'}
+
+					</dd>
+				</div>
+
+				<div class="grid grid-cols-1 gap-1 px-4 py-3 sm:grid-cols-3 sm:gap-4">
+					<dt class="text-sm font-medium text-muted-foreground">{m.common_position_schedule_type_code_list_field_sort_order()}</dt>
+					<dd class="text-sm sm:col-span-2" data-testid="position_schedule_type_code_list-field-sort_order">
+
+						{item.sort_order ?? '—'}
+
+					</dd>
+				</div>
+
+				<div class="grid grid-cols-1 gap-1 px-4 py-3 sm:grid-cols-3 sm:gap-4">
 					<dt class="text-sm font-medium text-muted-foreground">{m.common_created_at()}</dt>
 					<dd class="text-sm sm:col-span-2">{#if item.created_at}<TimeAgo value={item.created_at} />{:else}—{/if}</dd>
 				</div>

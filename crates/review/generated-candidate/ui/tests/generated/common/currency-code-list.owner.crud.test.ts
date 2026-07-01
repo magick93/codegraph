@@ -14,11 +14,16 @@ const depIds: Record<string, string> = {};
 function testData(): Record<string, unknown> {
   return {
     'code': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    'display_name': 'Test Display Name',
+    'sort_order': 42,
   };
 }
 
 function updatedData(): Record<string, unknown> {
   return {
+    'code': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    'display_name': 'Updated Display Name',
+    'sort_order': 99,
   };
 }
 
@@ -41,6 +46,12 @@ test.describe.serial('CurrencyCodeList Owner CRUD', () => {
     await waitForHydration(ownerPage, '[data-testid="currency_code_list-submit-btn"]');
     if (await ownerPage.locator('#code').isVisible()) {
       await ownerPage.locator('#code').fill(String(data['code']));
+    }
+    if (await ownerPage.locator('#display_name').isVisible()) {
+      await ownerPage.locator('#display_name').fill(String(data['display_name']));
+    }
+    if (await ownerPage.locator('#sort_order').isVisible()) {
+      await ownerPage.locator('#sort_order').fill(String(data['sort_order']));
     }
     await ownerPage.locator('[data-testid="currency_code_list-submit-btn"]').click();
     await expectToast(ownerPage, 'created', 'success');
@@ -67,13 +78,35 @@ test.describe.serial('CurrencyCodeList Owner CRUD', () => {
 
     await ownerPage.goto(`${BASE_PATH}/${createdId}`);
 
+    await expect(ownerPage.locator('[data-testid="currency_code_list-field-code"]')).toBeVisible();
+    await expect(ownerPage.locator('[data-testid="currency_code_list-field-display_name"]')).toBeVisible();
+    await expect(ownerPage.locator('[data-testid="currency_code_list-field-sort_order"]')).toBeVisible();
   });
 
 
 
 
-  // All properties are complex types — no simple form fields to edit.
-  // Edit-via-form test skipped; CRUD coverage provided by API create + detail + delete tests.
+  test('owner can edit CurrencyCodeList', async ({ ownerPage }) => {
+
+    await ownerPage.goto(`${BASE_PATH}/${createdId}/edit`);
+
+    // Wait for Svelte 5 to hydrate the form's submit handler.
+    await waitForHydration(ownerPage, '[data-testid="currency_code_list-submit-btn"]');
+    if (await ownerPage.locator('#code').isVisible()) {
+      await ownerPage.locator('#code').clear();
+      await ownerPage.locator('#code').fill(String(updated['code']));
+    }
+    if (await ownerPage.locator('#display_name').isVisible()) {
+      await ownerPage.locator('#display_name').clear();
+      await ownerPage.locator('#display_name').fill(String(updated['display_name']));
+    }
+    if (await ownerPage.locator('#sort_order').isVisible()) {
+      await ownerPage.locator('#sort_order').clear();
+      await ownerPage.locator('#sort_order').fill(String(updated['sort_order']));
+    }
+    await ownerPage.locator('[data-testid="currency_code_list-submit-btn"]').click();
+    await expectToast(ownerPage, 'updated', 'success');
+  });
 
 
 

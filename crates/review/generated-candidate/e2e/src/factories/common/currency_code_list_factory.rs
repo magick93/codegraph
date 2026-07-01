@@ -10,6 +10,18 @@ impl CurrencyCodeListFactory {
     pub fn default_data() -> HashMap<&'static str, Value> {
         let mut m: HashMap<&'static str, Value> = HashMap::new();
 
+
+        m.insert("code", json!("Test Code"));
+
+
+
+        m.insert("display_name", json!("Test Display Name"));
+
+
+
+        m.insert("sort_order", json!(42));
+
+
         m
     }
 }

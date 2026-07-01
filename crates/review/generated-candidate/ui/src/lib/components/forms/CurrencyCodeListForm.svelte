@@ -27,14 +27,50 @@
 	// Form state
 
 
+	let code = $state(String(initialData['code'] ?? ''));
+
+
+
+	let display_name = $state(String(initialData['display_name'] ?? ''));
+
+
+
+	let sort_order = $state<number | undefined>(initialData['sort_order'] != null ? Number(initialData['sort_order']) : undefined);
+
+
+
 	function handleSubmit(e: Event) {
 		e.preventDefault();
 		const data: Record<string, unknown> = {};
 
 		if (mode === 'create') {
 
+
+			data['code'] = code;
+
+
+
+			data['display_name'] = display_name;
+
+
+
+			if (sort_order !== undefined && sort_order !== null) data['sort_order'] = sort_order;
+
+
 		} else {
 			// Edit mode: only send changed fields
+
+
+			if (code !== String(initialData['code'] ?? '')) data['code'] = code;
+
+
+
+			if (display_name !== String(initialData['display_name'] ?? '')) data['display_name'] = display_name;
+
+
+
+			if (sort_order !== Number(initialData['sort_order'])) data['sort_order'] = sort_order;
+
 
 		}
 
@@ -44,6 +80,51 @@
 
 <form onsubmit={handleSubmit} class="space-y-6" aria-label={mode === 'create' ? m.common_currency_code_list_new() : m.common_edit() + ' ' + m.common_currency_code_list_title()} data-testid="currency_code_list-form">
 	<Field.Group>
+
+
+		<Field.Field>
+			<Field.Label for="code">{m.common_currency_code_list_field_code()} <span class="text-destructive">*</span></Field.Label>
+			<Input
+				id="code"
+				type="text"
+				bind:value={code}
+				required aria-required="true"
+				
+				disabled={mode === 'edit' && false}
+			/>
+
+		</Field.Field>
+
+
+
+		<Field.Field>
+			<Field.Label for="display_name">{m.common_currency_code_list_field_display_name()} <span class="text-destructive">*</span></Field.Label>
+			<Input
+				id="display_name"
+				type="text"
+				bind:value={display_name}
+				required aria-required="true"
+				
+				disabled={mode === 'edit' && false}
+			/>
+
+		</Field.Field>
+
+
+
+		<Field.Field>
+			<Field.Label for="sort_order">{m.common_currency_code_list_field_sort_order()}</Field.Label>
+			<Input
+				id="sort_order"
+				type="number"
+				bind:value={sort_order}
+				
+				step="any"
+				disabled={mode === 'edit' && false}
+			/>
+
+		</Field.Field>
+
 
 	</Field.Group>
 

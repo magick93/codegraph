@@ -445,6 +445,18 @@ export interface UpdateCodeRequest {
 export interface CurrencyCodeListResponse {
 	id: string;
 
+
+	code: string;
+
+
+
+	display_name: string;
+
+
+
+	sort_order?: string | null;
+
+
 	created_at: string;
 	updated_at: string;
 
@@ -454,12 +466,30 @@ export interface CurrencyCodeListResponse {
 /** Create request for CurrencyCodeList. */
 export interface CreateCurrencyCodeListRequest {
 
+
+	code: string;
+
+
+
+	display_name: string;
+
+
+
+	sort_order?: string | null;
+
+
 }
 
 
 
 /** Update request for CurrencyCodeList. All fields optional (partial update). */
 export interface UpdateCurrencyCodeListRequest {
+
+	code?: string | null;
+
+	display_name?: string | null;
+
+	sort_order?: string | null;
 
 }
 
@@ -618,6 +648,18 @@ export interface UpdateFormattedDateTimeRequest {
 export interface GenderCodeListResponse {
 	id: string;
 
+
+	code: string;
+
+
+
+	display_name: string;
+
+
+
+	sort_order?: string | null;
+
+
 	created_at: string;
 	updated_at: string;
 
@@ -627,12 +669,30 @@ export interface GenderCodeListResponse {
 /** Create request for GenderCodeList. */
 export interface CreateGenderCodeListRequest {
 
+
+	code: string;
+
+
+
+	display_name: string;
+
+
+
+	sort_order?: string | null;
+
+
 }
 
 
 
 /** Update request for GenderCodeList. All fields optional (partial update). */
 export interface UpdateGenderCodeListRequest {
+
+	code?: string | null;
+
+	display_name?: string | null;
+
+	sort_order?: string | null;
 
 }
 
@@ -880,6 +940,18 @@ export interface UpdatePersonBaseRequest {
 export interface PositionScheduleTypeCodeListResponse {
 	id: string;
 
+
+	code: string;
+
+
+
+	display_name: string;
+
+
+
+	sort_order?: string | null;
+
+
 	created_at: string;
 	updated_at: string;
 
@@ -889,12 +961,30 @@ export interface PositionScheduleTypeCodeListResponse {
 /** Create request for PositionScheduleTypeCodeList. */
 export interface CreatePositionScheduleTypeCodeListRequest {
 
+
+	code: string;
+
+
+
+	display_name: string;
+
+
+
+	sort_order?: string | null;
+
+
 }
 
 
 
 /** Update request for PositionScheduleTypeCodeList. All fields optional (partial update). */
 export interface UpdatePositionScheduleTypeCodeListRequest {
+
+	code?: string | null;
+
+	display_name?: string | null;
+
+	sort_order?: string | null;
 
 }
 

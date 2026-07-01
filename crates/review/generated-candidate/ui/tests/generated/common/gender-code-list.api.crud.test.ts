@@ -33,6 +33,14 @@ function testData(): Record<string, unknown> {
     'code': `TestCode-$ {Date.now()}-$ {Math.random().toString(36).slice(2, 8)}`
 
 
+
+    'display_name': 'Test Display Name',
+
+
+
+    'sort_order': 42,
+
+
   };
 }
 
@@ -40,6 +48,18 @@ function testData(): Record<string, unknown> {
 function updatedData(): Record<string, unknown> {
 
   return {
+
+
+    'code': `TestCode-$ {Date.now()}-$ {Math.random().toString(36).slice(2, 8)}`
+
+
+
+    'display_name': 'Updated Display Name',
+
+
+
+    'sort_order': 99,
+
 
   };
 }
@@ -75,6 +95,18 @@ test.describe.serial('GenderCodeList CRUD', () => {
 
 
 
+    if (await page.locator('#display_name').isVisible()) {
+      await page.locator('#display_name').fill(String(data['display_name']));
+    }
+
+
+
+    if (await page.locator('#sort_order').isVisible()) {
+      await page.locator('#sort_order').fill(String(data['sort_order']));
+    }
+
+
+
     await page.locator('[data-testid="gender_code_list-submit-btn"]').click();
     await expectToast(page, 'success', 'success');
 
@@ -92,6 +124,18 @@ test.describe.serial('GenderCodeList CRUD', () => {
 
     if (await page.locator('[data-testid="gender_code_list-field-code"]').count() > 0) {
       await expect(page.locator('[data-testid="gender_code_list-field-code"]')).toBeVisible();
+    }
+
+
+
+    if (await page.locator('[data-testid="gender_code_list-field-display_name"]').count() > 0) {
+      await expect(page.locator('[data-testid="gender_code_list-field-display_name"]')).toBeVisible();
+    }
+
+
+
+    if (await page.locator('[data-testid="gender_code_list-field-sort_order"]').count() > 0) {
+      await expect(page.locator('[data-testid="gender_code_list-field-sort_order"]')).toBeVisible();
     }
 
 
@@ -153,6 +197,12 @@ test.describe.serial('GenderCodeList CRUD', () => {
     await expect(page.getByRole('heading', { name: 'Gender Code List' })).toBeVisible();
 
 
+    await expect(page.locator('[data-testid="gender_code_list-field-code"]')).toBeVisible();
+
+    await expect(page.locator('[data-testid="gender_code_list-field-display_name"]')).toBeVisible();
+
+    await expect(page.locator('[data-testid="gender_code_list-field-sort_order"]')).toBeVisible();
+
 
     // Timestamps should be present
     await expect(page.getByText('Created At')).toBeVisible();
@@ -162,8 +212,70 @@ test.describe.serial('GenderCodeList CRUD', () => {
 
 
 
-  // All properties are complex types — no simple form fields to edit.
-  // Edit-via-form test skipped; CRUD coverage provided by API create + detail + delete tests.
+  test('edit entity via form', async ({ ownerPage: page, orgContext }) => {
+    if (!createdId) {
+      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+      createdId = entity['id'] as string;
+    }
+
+
+    await page.goto(`${BASE_PATH}/${createdId}/edit`);
+
+    await waitForHydration(page, '[data-testid="gender_code_list-submit-btn"]');
+    const data = updatedData();
+
+
+
+    if (await page.locator('#code').isVisible()) {
+      await page.locator('#code').clear();
+      await page.locator('#code').fill(String(data['code']));
+    }
+
+
+
+    if (await page.locator('#display_name').isVisible()) {
+      await page.locator('#display_name').clear();
+      await page.locator('#display_name').fill(String(data['display_name']));
+    }
+
+
+
+    if (await page.locator('#sort_order').isVisible()) {
+      await page.locator('#sort_order').clear();
+      await page.locator('#sort_order').fill(String(data['sort_order']));
+    }
+
+
+
+    await page.locator('[data-testid="gender_code_list-submit-btn"]').click();
+    await expectToast(page, 'success', 'success');
+
+    // Should redirect to detail page
+
+    await expect(page).toHaveURL(/\/common\/gender-code-list\/[0-9a-f-]+$/);
+
+
+    // Verify updated values (only check fields present on the page)
+
+
+    if (await page.locator('[data-testid="gender_code_list-field-code"]').count() > 0) {
+      await expect(page.locator('[data-testid="gender_code_list-field-code"]')).toBeVisible();
+    }
+
+
+
+    if (await page.locator('[data-testid="gender_code_list-field-display_name"]').count() > 0) {
+      await expect(page.locator('[data-testid="gender_code_list-field-display_name"]')).toBeVisible();
+    }
+
+
+
+    if (await page.locator('[data-testid="gender_code_list-field-sort_order"]').count() > 0) {
+      await expect(page.locator('[data-testid="gender_code_list-field-sort_order"]')).toBeVisible();
+    }
+
+
+  });
 
 
 

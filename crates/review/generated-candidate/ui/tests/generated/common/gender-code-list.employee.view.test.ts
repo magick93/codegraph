@@ -14,6 +14,8 @@ const depIds: Record<string, string> = {};
 function testData(): Record<string, unknown> {
   return {
     'code': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    'display_name': 'Test Display Name',
+    'sort_order': 42,
   };
 }
 
@@ -44,6 +46,9 @@ test.describe.serial('GenderCodeList Employee View', () => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
 
+    await expect(employeePage.locator('[data-testid="gender_code_list-field-code"]')).toBeVisible();
+    await expect(employeePage.locator('[data-testid="gender_code_list-field-display_name"]')).toBeVisible();
+    await expect(employeePage.locator('[data-testid="gender_code_list-field-sort_order"]')).toBeVisible();
   });
 
 

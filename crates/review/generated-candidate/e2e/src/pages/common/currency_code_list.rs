@@ -47,6 +47,30 @@ impl<'a> CurrencyCodeListPage<'a> {
 
 
 
+    pub async fn fill_code(&self, value: &str) -> Result<()> {
+        self.page.fill_builder("#code", value).fill().await?;
+        Ok(())
+    }
+
+
+
+
+    pub async fn fill_display_name(&self, value: &str) -> Result<()> {
+        self.page.fill_builder("#display_name", value).fill().await?;
+        Ok(())
+    }
+
+
+
+
+    pub async fn fill_sort_order(&self, value: &str) -> Result<()> {
+        self.page.fill_builder("#sort_order", value).fill().await?;
+        Ok(())
+    }
+
+
+
+
     // ── Actions ──────────────────────────────────────────────────────────────
 
 
@@ -82,6 +106,24 @@ impl<'a> CurrencyCodeListPage<'a> {
     /// and extract the entity ID from the post-redirect URL.
     pub async fn create(&self, data: &HashMap<&str, Value>) -> Result<String> {
         self.goto_create().await?;
+
+
+        if let Some(v) = data.get("code").and_then(|v| v.as_str()) {
+            self.fill_code(v).await.ok();
+        }
+
+
+
+        if let Some(v) = data.get("display_name").and_then(|v| v.as_str()) {
+            self.fill_display_name(v).await.ok();
+        }
+
+
+
+        if let Some(v) = data.get("sort_order").and_then(|v| v.as_str()) {
+            self.fill_sort_order(v).await.ok();
+        }
+
 
         self.submit().await?;
         let url: String = self.page.url()?;

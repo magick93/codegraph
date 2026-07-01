@@ -33,8 +33,12 @@
 
 	const columns = [
 
+		{ key: 'code', label: m.common_position_schedule_type_code_list_field_code() },
 
-		{ key: 'id', label: 'ID' },
+		{ key: 'display_name', label: m.common_position_schedule_type_code_list_field_display_name() },
+
+		{ key: 'sort_order', label: m.common_position_schedule_type_code_list_field_sort_order() },
+
 
 	];
 

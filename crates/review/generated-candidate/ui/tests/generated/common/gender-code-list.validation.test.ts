@@ -33,6 +33,14 @@ test.describe('GenderCodeList Validation', () => {
     }
 
 
+
+    if (await ownerPage.locator('#display_name').count() > 0) {
+      const field = ownerPage.locator('#display_name');
+      const isInvalid = await field.evaluate((el: HTMLInputElement) => !el.validity.valid);
+      expect(isInvalid).toBeTruthy();
+    }
+
+
   });
 
 
@@ -41,6 +49,14 @@ test.describe('GenderCodeList Validation', () => {
 
 
 
+
+
+
+
+
+
+
+    // Number fields: browsers natively reject non-numeric input, skip
 
 
 
