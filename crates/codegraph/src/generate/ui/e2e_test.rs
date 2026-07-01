@@ -279,11 +279,38 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         let fields = collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain)).await?;
 
-        let create_fields: Vec<UiField> = fields
+        let mut create_fields: Vec<UiField> = fields
             .iter()
             .filter(|f| !all_excluded.contains(&f.name))
             .cloned()
             .collect();
+        // For codelist entities with no UI fields (enum-only schemas), inject a
+        // synthetic code field so testData() produces a valid create payload.
+        if create_fields.is_empty() {
+            if let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, &domain).await {
+                if schema.is_codelist {
+                    create_fields.push(UiField {
+                        name: "code".to_string(),
+                        label: "Code".to_string(),
+                        ts_type: "string".to_string(),
+                        input_type: "text".to_string(),
+                        is_required: true,
+                        is_array: false,
+                        is_entity_ref: false,
+                        is_immutable: false,
+                        is_codelist: false,
+                        is_range: false,
+                        codelist_values: vec![],
+                        description: String::new(),
+                        pg_type: "TEXT".to_string(),
+                        open_end: false,
+                        ref_api_path: None,
+                        structured_sub_fields: vec![],
+                        nested_type_name: None,
+                    });
+                }
+            }
+        }
 
         let required_create_fields: Vec<UiField> = create_fields
             .iter()
@@ -729,6 +756,11 @@ async fn build_test_data_json(
             return String::new();
         }
     };
+    // Also handle empty-success: collect_ui_fields may return Ok(vec![]) when
+    // the schema has no properties (e.g. enum-only code-list schemas).
+    if fields.is_empty() && !schema_title.is_empty() {
+        return "'code': 'TestCode'".to_string();
+    }
     let mut entries = Vec::new();
     for f in &fields {
         if f.is_entity_ref || f.name == "id" {
@@ -737,9 +769,11 @@ async fn build_test_data_json(
         if f.name.ends_with("_id") && !f.is_codelist {
             continue;
         }
-        // Skip ValueObject fields — they require nested object structures
-        // that can't be represented as simple string literals.
+        // ValueObject fields need nested object structures. Generate an empty
+        // object placeholder — since ValueObject fields are always Option<T>,
+        // an empty object deserializes as None (all sub-fields are optional too).
         if f.nested_type_name.is_some() {
+            entries.push(format!("'{}': {{}}", f.name));
             continue;
         }
         let value = test_value_for_field(f);

@@ -26,7 +26,7 @@ function testData(): Record<string, unknown> {
   return {
 {%- for field in create_fields %}
 {%- if field.nested_type_name %}
-    // {{ field.name }} omitted — ValueObject, provide nested object in manual test
+    '{{ field.name }}': {}
 {%- elif field.input_type == "date-range" %}
     '{{ field.name }}': '[2025-03-10T00:00:00Z,2025-09-30T23:59:59Z)',
 {%- elif field.input_type == "number" %}

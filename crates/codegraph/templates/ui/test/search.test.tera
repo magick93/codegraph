@@ -20,7 +20,7 @@ function searchTestData(): Record<string, unknown> {
   return {
 {%- for field in required_create_fields %}
 {%- if field.nested_type_name %}
-    // {{ field.name }} omitted — ValueObject
+    '{{ field.name }}': {}
 {%- elif field.name == fts_search_field %}
     '{{ field.name }}': 'UniqueSearchTerm2025',
 {%- elif field.input_type == "number" %}
