@@ -42,7 +42,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'application_process_history': 'Test Application Process History',
+    'application_process_history': {}
 
 
 
@@ -58,7 +58,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'distribution_guidelines': 'Test Distribution Guidelines',
+    'distribution_guidelines': {}
 
 
 
@@ -70,7 +70,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'person_name': 'Test Person Name',
+    'person_name': {}
 
 
 
@@ -82,7 +82,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'qualifications': ['Test Qualifications'],
+    'qualifications': {}
 
 
 

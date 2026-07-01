@@ -29,6 +29,10 @@ function testData(): Record<string, unknown> {
 
   return {
 
+
+    'code': `TestCode-$ {Date.now()}-$ {Math.random().toString(36).slice(2, 8)}`
+
+
   };
 }
 
@@ -55,23 +59,53 @@ test.describe.serial('CurrencyCodeList CRUD', () => {
 
 
 
-  test('create entity via API', async ({ orgContext }) => {
-    // All properties are complex types (value objects / child tables) — no simple form fields.
-    // Create via API instead of form fill.
-    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-    createdId = entity['id'] as string;
-    expect(createdId).toBeTruthy();
+  test('create entity via form', async ({ ownerPage: page }) => {
+
+    await page.goto(`${BASE_PATH}/new`);
+
+    // Wait for SvelteKit to hydrate so the form's onsubmit handler is attached
+    await waitForHydration(page, '[data-testid="currency_code_list-submit-btn"]');
+    const data = testData();
+
+
+
+    if (await page.locator('#code').isVisible()) {
+      await page.locator('#code').fill(String(data['code']));
+    }
+
+
+
+    await page.locator('[data-testid="currency_code_list-submit-btn"]').click();
+    await expectToast(page, 'success', 'success');
+
+    // Should redirect to detail page
+
+    await expect(page).toHaveURL(/\/common\/currency-code-list\/[0-9a-f-]+/);
+
+
+    // Capture the created entity ID from the URL
+    const url = page.url();
+    createdId = url.split('/').pop()!;
+
+    // Verify field values on detail page (only check fields present on the page)
+
+
+    if (await page.locator('[data-testid="currency_code_list-field-code"]').count() > 0) {
+      await expect(page.locator('[data-testid="currency_code_list-field-code"]')).toBeVisible();
+    }
+
+
   });
 
-  test('entity appears in list after create', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+  test('entity appears in list after create', async ({ ownerPage: page }) => {
     await page.goto(BASE_PATH);
     const table = page.locator('[data-testid="currency_code_list-table"]');
     const empty = page.locator('[data-testid="currency_code_list-empty"]');
     await expect(table.or(empty)).toBeVisible();
+    // If we created an entity, the table should be visible (not empty state)
+    if (createdId) {
+      await expect(table).toBeVisible();
+    }
   });
 
 

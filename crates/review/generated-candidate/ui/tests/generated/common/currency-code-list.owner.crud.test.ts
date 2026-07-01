@@ -13,6 +13,7 @@ const depIds: Record<string, string> = {};
 
 function testData(): Record<string, unknown> {
   return {
+    'code': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   };
 }
 
@@ -31,12 +32,23 @@ test.describe.serial('CurrencyCodeList Owner CRUD', () => {
 
 
 
-  test('owner can create CurrencyCodeList via API', async ({ orgContext }) => {
-    // All properties are complex types (value objects / child tables) — no simple form fields.
-    // Use direct API call via orgContext (authenticated as ACME owner).
-    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-    createdId = entity['id'] as string;
-    expect(createdId).toBeTruthy();
+  test('owner can create CurrencyCodeList via form', async ({ ownerPage }) => {
+
+    await ownerPage.goto(`${BASE_PATH}/new`);
+
+    // Wait for SvelteKit to hydrate so the form's onsubmit handler is attached
+    // Wait for Svelte 5 to hydrate the form's submit handler.
+    await waitForHydration(ownerPage, '[data-testid="currency_code_list-submit-btn"]');
+    if (await ownerPage.locator('#code').isVisible()) {
+      await ownerPage.locator('#code').fill(String(data['code']));
+    }
+    await ownerPage.locator('[data-testid="currency_code_list-submit-btn"]').click();
+    await expectToast(ownerPage, 'created', 'success');
+    // Wait for SvelteKit goto() navigation to complete after toast
+
+    await ownerPage.waitForURL(/\/common\/currency-code-list\/[0-9a-f-]+$/, { timeout: 20_000 });
+
+    createdId = ownerPage.url().split('/').pop()!;
   });
 
 

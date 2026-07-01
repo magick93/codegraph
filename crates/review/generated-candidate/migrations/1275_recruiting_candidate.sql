@@ -49,6 +49,15 @@ CREATE TABLE IF NOT EXISTS recruiting.candidate (
     uri TEXT,
 
 
+    application_process_history_id UUID,
+
+
+    distribution_guidelines_id UUID,
+
+
+    person_name_id UUID,
+
+
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
 
@@ -92,6 +101,33 @@ EXCEPTION
   WHEN duplicate_object THEN NULL;  -- constraint already exists
   WHEN undefined_table OR invalid_schema_name THEN
     RAISE NOTICE 'FK target not yet created: recruiting.application — will be added by deferred_fks migration';
+END $$;
+
+
+DO $$ BEGIN
+  ALTER TABLE recruiting.candidate ADD CONSTRAINT fk_candidate_application_process_history FOREIGN KEY (application_process_history_id) REFERENCES common.process_history(id) ON DELETE SET NULL;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;  -- constraint already exists
+  WHEN undefined_table OR invalid_schema_name THEN
+    RAISE NOTICE 'FK target not yet created: common.process_history — will be added by deferred_fks migration';
+END $$;
+
+
+DO $$ BEGIN
+  ALTER TABLE recruiting.candidate ADD CONSTRAINT fk_candidate_distribution_guidelines FOREIGN KEY (distribution_guidelines_id) REFERENCES recruiting.distribution_guidelines(id) ON DELETE SET NULL;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;  -- constraint already exists
+  WHEN undefined_table OR invalid_schema_name THEN
+    RAISE NOTICE 'FK target not yet created: recruiting.distribution_guidelines — will be added by deferred_fks migration';
+END $$;
+
+
+DO $$ BEGIN
+  ALTER TABLE recruiting.candidate ADD CONSTRAINT fk_candidate_person_name FOREIGN KEY (person_name_id) REFERENCES common.name(id) ON DELETE SET NULL;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;  -- constraint already exists
+  WHEN undefined_table OR invalid_schema_name THEN
+    RAISE NOTICE 'FK target not yet created: common.name — will be added by deferred_fks migration';
 END $$;
 
 

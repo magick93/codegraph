@@ -20,17 +20,17 @@ function testData(): Record<string, unknown> {
     'birth_date': '2025-03-10',
     'family_name': 'ACME Isolation Family Name',
     'given_name': 'ACME Isolation Given Name',
-    'application_process_history': 'ACME Isolation Application Process History',
+    'application_process_history': {}
     'candidate_id': 'ACME Isolation Candidate Id',
     'compensation_expectation': 77,
     'compensation_expectation_currency': 'USD',
-    'distribution_guidelines': 'ACME Isolation Distribution Guidelines',
+    'distribution_guidelines': {}
     'external_identifier': { value: 'ACME Isolation External Identifier' },
     'gender': 'Male',
-    'person_name': 'ACME Isolation Person Name',
+    'person_name': {}
     'position_schedule_type_codes': [{ code: 'FullTime' }],
     'position_titles': ['ACME Isolation Position Titles'],
-    'qualifications': ['ACME Isolation Qualifications'],
+    'qualifications': {}
     ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
     'status': 'active',
     'uri': 'ACME Isolation Uri',

@@ -264,7 +264,7 @@ RETURNS uuid AS $$
   FROM basejump.account_user au
   JOIN basejump.accounts a ON a.id = au.account_id
   WHERE au.user_id = p_user_id
-    AND (NOT a.personal_account OR current_setting('app.allow_personal_org', true) = 'true')
+    AND (NOT a.personal_account OR coalesce(current_setting('app.allow_personal_org', true), 'true') = 'true')
   ORDER BY
     CASE WHEN a.personal_account THEN 1 ELSE 0 END,
     CASE WHEN au.account_role = 'member' THEN 0 ELSE 1 END,

@@ -20,23 +20,28 @@ END $$;
 -- Org isolation: SELECT
 CREATE POLICY "org_isolation_select" ON common.process_history_item
   FOR SELECT
-  USING (platform_organization_id = public.get_current_org_id());
+  USING (platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid);
 
 -- Org isolation: INSERT
 CREATE POLICY "org_isolation_insert" ON common.process_history_item
   FOR INSERT
-  WITH CHECK (platform_organization_id = public.get_current_org_id());
+  WITH CHECK (platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid);
 
 -- Org isolation: UPDATE
 CREATE POLICY "org_isolation_update" ON common.process_history_item
   FOR UPDATE
-  USING (platform_organization_id = public.get_current_org_id())
-  WITH CHECK (platform_organization_id = public.get_current_org_id());
+  USING (platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid)
+  WITH CHECK (platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid);
 
 -- Org isolation: DELETE
 CREATE POLICY "org_isolation_delete" ON common.process_history_item
   FOR DELETE
-  USING (platform_organization_id = public.get_current_org_id());
+  USING (platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid);
 
 
 -- API key scope-aware policies

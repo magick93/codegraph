@@ -20,17 +20,17 @@ function testData(): Record<string, unknown> {
     'birth_date': '2025-01-15',
     'family_name': 'Test Family Name',
     'given_name': 'Test Given Name',
-    'application_process_history': 'Test Application Process History',
+    'application_process_history': {}
     'candidate_id': 'Test Candidate Id',
     'compensation_expectation': 42,
     'compensation_expectation_currency': 'USD',
-    'distribution_guidelines': 'Test Distribution Guidelines',
+    'distribution_guidelines': {}
     'external_identifier': { value: 'Test External Identifier' },
     'gender': 'Male',
-    'person_name': 'Test Person Name',
+    'person_name': {}
     'position_schedule_type_codes': [{ code: 'FullTime' }],
     'position_titles': ['Test Position Titles'],
-    'qualifications': ['Test Qualifications'],
+    'qualifications': {}
     ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
     'status': 'active',
     'uri': 'Test Uri',

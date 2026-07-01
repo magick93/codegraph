@@ -4,13 +4,21 @@
 CREATE SCHEMA IF NOT EXISTS common;
 
 CREATE TABLE IF NOT EXISTS common.position_schedule_type_code_list (
-    code TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
-    sort_order INTEGER NOT NULL DEFAULT 0
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ NULL,
+    deleted_by UUID NULL,
+    updated_by UUID NULL,
+    is_demo_data BOOLEAN NOT NULL DEFAULT false
 );
 
-INSERT INTO common.position_schedule_type_code_list (code, display_name, sort_order) VALUES
-    ('FullTime', '', 0),
-    ('PartTime', '', 1),
-    ('FlexTime', '', 2),
-    ('SharedTime', '', 3);
+INSERT INTO common.position_schedule_type_code_list (id, code, display_name, sort_order, platform_organization_id, created_at, updated_at, deleted_at, deleted_by, updated_by, is_demo_data) VALUES
+    (gen_random_uuid(), 'FullTime', '', 0, '00000000-0000-0000-0000-000000000000', now(), now(), NULL, NULL, NULL, false),
+    (gen_random_uuid(), 'PartTime', '', 1, '00000000-0000-0000-0000-000000000000', now(), now(), NULL, NULL, NULL, false),
+    (gen_random_uuid(), 'FlexTime', '', 2, '00000000-0000-0000-0000-000000000000', now(), now(), NULL, NULL, NULL, false),
+    (gen_random_uuid(), 'SharedTime', '', 3, '00000000-0000-0000-0000-000000000000', now(), now(), NULL, NULL, NULL, false);

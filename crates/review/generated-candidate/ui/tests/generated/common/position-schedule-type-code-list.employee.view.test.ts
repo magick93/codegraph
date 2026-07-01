@@ -13,6 +13,7 @@ const depIds: Record<string, string> = {};
 
 function testData(): Record<string, unknown> {
   return {
+    'code': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   };
 }
 

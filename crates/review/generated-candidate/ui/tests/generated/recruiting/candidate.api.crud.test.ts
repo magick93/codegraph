@@ -47,7 +47,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'application_process_history': 'Test Application Process History',
+    'application_process_history': {}
 
 
 
@@ -63,7 +63,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'distribution_guidelines': 'Test Distribution Guidelines',
+    'distribution_guidelines': {}
 
 
 
@@ -75,7 +75,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'person_name': 'Test Person Name',
+    'person_name': {}
 
 
 
@@ -87,7 +87,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'qualifications': ['Test Qualifications'],
+    'qualifications': {}
 
 
 
@@ -123,7 +123,7 @@ function updatedData(): Record<string, unknown> {
 
 
 
-    'application_process_history': 'Updated Application Process History',
+    'application_process_history': {}
 
 
 
@@ -139,7 +139,7 @@ function updatedData(): Record<string, unknown> {
 
 
 
-    'distribution_guidelines': 'Updated Distribution Guidelines',
+    'distribution_guidelines': {}
 
 
 
@@ -151,7 +151,7 @@ function updatedData(): Record<string, unknown> {
 
 
 
-    'person_name': 'Updated Person Name',
+    'person_name': {}
 
 
 
@@ -163,7 +163,7 @@ function updatedData(): Record<string, unknown> {
 
 
 
-    'qualifications': ['Updated Qualifications'],
+    'qualifications': {}
 
 
 

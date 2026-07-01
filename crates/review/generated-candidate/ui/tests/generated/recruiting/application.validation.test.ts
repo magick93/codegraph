@@ -18,7 +18,7 @@ test.describe('Application Validation', () => {
 
   test.beforeAll(async ({ orgContext }) => {
 
-    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'birth_date': '2025-01-15', 'family_name': 'Test Family Name', 'given_name': 'Test Given Name', 'application_process_history': 'Test Application Process History', 'compensation_expectation': 42, 'compensation_expectation_currency': 'USD', 'distribution_guidelines': 'Test Distribution Guidelines', 'external_identifier': { value: 'Test External Identifier' }, 'gender': 'Male', 'person_name': 'Test Person Name', 'position_schedule_type_codes': [{ code: 'FullTime' }], 'position_titles': ['Test Position Titles'], 'qualifications': ['Test Qualifications'], 'status': 'active', 'uri': 'Test Uri' });
+    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'birth_date': '2025-01-15', 'family_name': 'Test Family Name', 'given_name': 'Test Given Name', 'application_process_history': {}, 'compensation_expectation': 42, 'compensation_expectation_currency': 'USD', 'distribution_guidelines': {}, 'external_identifier': { value: 'Test External Identifier' }, 'gender': 'Male', 'person_name': {}, 'position_schedule_type_codes': [{ code: 'FullTime' }], 'position_titles': ['Test Position Titles'], 'qualifications': {}, 'status': 'active', 'uri': 'Test Uri' });
     const parentId = parentEntity['id'] as string;
     BASE_PATH = `${PARENT_API_PATH}/${parentId}/application`;
 

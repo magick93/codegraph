@@ -20,17 +20,17 @@ function testData(): Record<string, unknown> {
     'birth_date': '2025-01-15',
     'family_name': 'Test Family Name',
     'given_name': 'Test Given Name',
-    'application_process_history': 'Test Application Process History',
+    'application_process_history': {}
     'candidate_id': 'Test Candidate Id',
     'compensation_expectation': 42,
     'compensation_expectation_currency': 'USD',
-    'distribution_guidelines': 'Test Distribution Guidelines',
+    'distribution_guidelines': {}
     'external_identifier': { value: 'Test External Identifier' },
     'gender': 'Male',
-    'person_name': 'Test Person Name',
+    'person_name': {}
     'position_schedule_type_codes': [{ code: 'FullTime' }],
     'position_titles': ['Test Position Titles'],
-    'qualifications': ['Test Qualifications'],
+    'qualifications': {}
     ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
     'status': 'active',
     'uri': 'Test Uri',
@@ -42,17 +42,17 @@ function updatedData(): Record<string, unknown> {
     'birth_date': '2025-06-20',
     'family_name': 'Updated Family Name',
     'given_name': 'Updated Given Name',
-    'application_process_history': 'Updated Application Process History',
+    'application_process_history': {}
     'candidate_id': 'Updated Candidate Id',
     'compensation_expectation': 99,
     'compensation_expectation_currency': 'AUD',
-    'distribution_guidelines': 'Updated Distribution Guidelines',
+    'distribution_guidelines': {}
     'external_identifier': { value: 'Updated External Identifier' },
     'gender': 'Other',
-    'person_name': 'Updated Person Name',
+    'person_name': {}
     'position_schedule_type_codes': [{ code: 'SharedTime' }],
     'position_titles': ['Updated Position Titles'],
-    'qualifications': ['Updated Qualifications'],
+    'qualifications': {}
     ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
     'status': 'withdrawn',
     'uri': 'Updated Uri',
@@ -119,9 +119,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
     if (await ownerPage.locator('#given_name').isVisible()) {
       await ownerPage.locator('#given_name').fill(String(data['given_name']));
     }
-    if (await ownerPage.locator('#application_process_history').isVisible()) {
-      await ownerPage.locator('#application_process_history').fill(String(data['application_process_history']));
-    }
+    'application_process_history': {}
     if (await ownerPage.locator('#candidate_id').isVisible()) {
       await ownerPage.locator('#candidate_id').fill(String(data['candidate_id']));
     }
@@ -131,18 +129,14 @@ test.describe.serial('Candidate Owner CRUD', () => {
     if (await ownerPage.locator('#compensation_expectation_currency').isVisible()) {
       await ownerPage.locator('#compensation_expectation_currency').selectOption(String(data['compensation_expectation_currency']));
     }
-    if (await ownerPage.locator('#distribution_guidelines').isVisible()) {
-      await ownerPage.locator('#distribution_guidelines').fill(String(data['distribution_guidelines']));
-    }
+    'distribution_guidelines': {}
     if (await ownerPage.locator('[data-testid="external_identifier-value"]').isVisible()) {
       await ownerPage.locator('[data-testid="external_identifier-value"]').fill(String((data['external_identifier'] as Record<string, unknown>)?.['value'] ?? ''));
     }
     if (await ownerPage.locator('#gender').isVisible()) {
       await ownerPage.locator('#gender').selectOption(String(data['gender']));
     }
-    if (await ownerPage.locator('#person_name').isVisible()) {
-      await ownerPage.locator('#person_name').fill(String(data['person_name']));
-    }
+    'person_name': {}
     if (await ownerPage.locator('#position_schedule_type_codes').isVisible()) {
       await ownerPage.locator('#position_schedule_type_codes').selectOption('FullTime');
     }
@@ -153,9 +147,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
         await ownerPage.locator(`[data-testid="position_titles-row-${i}"] input`).fill(vals[i]);
       }
     }
-    if (await ownerPage.locator('#qualifications').isVisible()) {
-      await ownerPage.locator('#qualifications').fill(String(data['qualifications']));
-    }
+    'qualifications': {}
     if (data['referred_by_application_id_id'] && await ownerPage.locator('#referred_by_application_id_id').isVisible()) {
       await ownerPage.locator('#referred_by_application_id_id').fill(String(data['referred_by_application_id_id']));
     }
@@ -230,10 +222,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
       await ownerPage.locator('#given_name').clear();
       await ownerPage.locator('#given_name').fill(String(updated['given_name']));
     }
-    if (await ownerPage.locator('#application_process_history').isVisible()) {
-      await ownerPage.locator('#application_process_history').clear();
-      await ownerPage.locator('#application_process_history').fill(String(updated['application_process_history']));
-    }
+    'application_process_history': {}
     if (await ownerPage.locator('#candidate_id').isVisible()) {
       await ownerPage.locator('#candidate_id').clear();
       await ownerPage.locator('#candidate_id').fill(String(updated['candidate_id']));
@@ -245,10 +234,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
     if (await ownerPage.locator('#compensation_expectation_currency').isVisible()) {
       await ownerPage.locator('#compensation_expectation_currency').selectOption('AUD');
     }
-    if (await ownerPage.locator('#distribution_guidelines').isVisible()) {
-      await ownerPage.locator('#distribution_guidelines').clear();
-      await ownerPage.locator('#distribution_guidelines').fill(String(updated['distribution_guidelines']));
-    }
+    'distribution_guidelines': {}
     if (await ownerPage.locator('[data-testid="external_identifier-value"]').isVisible()) {
       await ownerPage.locator('[data-testid="external_identifier-value"]').clear();
       await ownerPage.locator('[data-testid="external_identifier-value"]').fill(String((updated['external_identifier'] as Record<string, unknown>)?.['value'] ?? ''));
@@ -256,10 +242,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
     if (await ownerPage.locator('#gender').isVisible()) {
       await ownerPage.locator('#gender').selectOption('Other');
     }
-    if (await ownerPage.locator('#person_name').isVisible()) {
-      await ownerPage.locator('#person_name').clear();
-      await ownerPage.locator('#person_name').fill(String(updated['person_name']));
-    }
+    'person_name': {}
     if (await ownerPage.locator('#position_schedule_type_codes').isVisible()) {
       await ownerPage.locator('#position_schedule_type_codes').selectOption('SharedTime');
     }
@@ -277,10 +260,7 @@ test.describe.serial('Candidate Owner CRUD', () => {
         await ownerPage.locator(`[data-testid="position_titles-row-${i}"] input`).fill(vals[i]);
       }
     }
-    if (await ownerPage.locator('#qualifications').isVisible()) {
-      await ownerPage.locator('#qualifications').clear();
-      await ownerPage.locator('#qualifications').fill(String(updated['qualifications']));
-    }
+    'qualifications': {}
     if (updated['referred_by_application_id_id'] && await ownerPage.locator('#referred_by_application_id_id').isVisible()) {
       await ownerPage.locator('#referred_by_application_id_id').clear();
       await ownerPage.locator('#referred_by_application_id_id').fill(String(updated['referred_by_application_id_id']));

@@ -293,7 +293,7 @@ impl EntityGenerator for UiE2eTestGenerator {
                         name: "code".to_string(),
                         label: "Code".to_string(),
                         ts_type: "string".to_string(),
-                        input_type: "text".to_string(),
+                        input_type: "code".to_string(),
                         is_required: true,
                         is_array: false,
                         is_entity_ref: false,
@@ -751,7 +751,7 @@ async fn build_test_data_json(
             // no UI fields in the graph), generate a minimal payload with a
             // code placeholder to satisfy NOT NULL constraints.
             if !schema_title.is_empty() {
-                return "'code': 'TestCode'".to_string();
+                return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`".to_string();
             }
             return String::new();
         }
@@ -759,7 +759,7 @@ async fn build_test_data_json(
     // Also handle empty-success: collect_ui_fields may return Ok(vec![]) when
     // the schema has no properties (e.g. enum-only code-list schemas).
     if fields.is_empty() && !schema_title.is_empty() {
-        return "'code': 'TestCode'".to_string();
+        return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`".to_string();
     }
     let mut entries = Vec::new();
     for f in &fields {
@@ -806,6 +806,12 @@ fn test_value_for_field(field: &UiField) -> String {
         "date" => "'2025-01-15'".to_string(),
         "datetime-local" => "'2025-01-15T10:30:00Z'".to_string(),
         "date-range" => "'[2025-01-15T00:00:00Z,2025-12-31T23:59:59Z)'".to_string(),
+        "code" => {
+            // code column in codelist entities: must be globally unique at
+            // runtime across parallel test invocations. Use a TS template
+            // literal with Date.now() + random suffix.
+            "`TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`".to_string()
+        }
         _ => {
             if field.pg_type.contains("GEOMETRY") {
                 // Geometry fields omitted — plain WKT strings are not accepted without ST_GeomFromText
@@ -814,6 +820,11 @@ fn test_value_for_field(field: &UiField) -> String {
                 format!("['Test {}']", field.label)
             } else if field.is_range {
                 "'[2025-01-01T00:00:00Z,2025-12-31T23:59:59Z]'".to_string()
+            } else if field.name == "code" && !field.is_codelist {
+                // code column in codelist entities: must be globally unique at
+                // runtime across parallel test invocations. Use a TS template
+                // literal with Date.now() + random suffix.
+                "`TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`".to_string()
             } else {
                 format!("'Test {}'", field.label)
             }

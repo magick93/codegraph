@@ -13,18 +13,34 @@ const NEW_URL = `${BASE_PATH}/new`;
 test.describe('CurrencyCodeList Validation', () => {
 
 
-  test('submit empty form succeeds (no required fields)', async ({ ownerPage }) => {
+  test('submit empty form shows errors', async ({ ownerPage }) => {
     await ownerPage.goto(NEW_URL);
     await waitForHydration(ownerPage, '[data-testid="currency_code_list-submit-btn"]');
-    // No required fields — submitting an empty form should succeed
+
+    // Click submit without filling any fields
     await ownerPage.locator('[data-testid="currency_code_list-submit-btn"]').click();
-    // Should redirect away from the new page on success
-    await expect(ownerPage).not.toHaveURL(NEW_URL, { timeout: 20_000 });
+
+    // Form should still be on the same page (not submitted)
+    await expect(ownerPage).toHaveURL(NEW_URL);
+
+    // HTML5 validation should prevent submission — check that required fields are invalid
+
+
+    if (await ownerPage.locator('#code').count() > 0) {
+      const field = ownerPage.locator('#code');
+      const isInvalid = await field.evaluate((el: HTMLInputElement) => !el.validity.valid);
+      expect(isInvalid).toBeTruthy();
+    }
+
+
   });
 
 
   test('invalid field types rejected', async ({ ownerPage }) => {
     await ownerPage.goto(NEW_URL);
+
+
+
 
 
 

@@ -4,14 +4,22 @@
 CREATE SCHEMA IF NOT EXISTS common;
 
 CREATE TABLE IF NOT EXISTS common.currency_code_list (
-    code TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
-    sort_order INTEGER NOT NULL DEFAULT 0
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ NULL,
+    deleted_by UUID NULL,
+    updated_by UUID NULL,
+    is_demo_data BOOLEAN NOT NULL DEFAULT false
 );
 
-INSERT INTO common.currency_code_list (code, display_name, sort_order) VALUES
-    ('USD', '', 0),
-    ('EUR', '', 1),
-    ('GBP', '', 2),
-    ('JPY', '', 3),
-    ('AUD', '', 4);
+INSERT INTO common.currency_code_list (id, code, display_name, sort_order, platform_organization_id, created_at, updated_at, deleted_at, deleted_by, updated_by, is_demo_data) VALUES
+    (gen_random_uuid(), 'USD', '', 0, '00000000-0000-0000-0000-000000000000', now(), now(), NULL, NULL, NULL, false),
+    (gen_random_uuid(), 'EUR', '', 1, '00000000-0000-0000-0000-000000000000', now(), now(), NULL, NULL, NULL, false),
+    (gen_random_uuid(), 'GBP', '', 2, '00000000-0000-0000-0000-000000000000', now(), now(), NULL, NULL, NULL, false),
+    (gen_random_uuid(), 'JPY', '', 3, '00000000-0000-0000-0000-000000000000', now(), now(), NULL, NULL, NULL, false),
+    (gen_random_uuid(), 'AUD', '', 4, '00000000-0000-0000-0000-000000000000', now(), now(), NULL, NULL, NULL, false);
