@@ -30,7 +30,7 @@ function testData(): Record<string, unknown> {
   return {
 
 
-    'code': `TestCode-$ {Date.now()}-$ {Math.random().toString(36).slice(2, 8)}`
+    'code': `TestCode-$ {Date.now()}-$ {Math.random().toString(36).slice(2, 8)}`,
 
 
 
@@ -50,7 +50,7 @@ function updatedData(): Record<string, unknown> {
   return {
 
 
-    'code': `TestCode-$ {Date.now()}-$ {Math.random().toString(36).slice(2, 8)}`
+    'code': `TestCode-$ {Date.now()}-$ {Math.random().toString(36).slice(2, 8)}`,
 
 
 

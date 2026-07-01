@@ -58,7 +58,7 @@ function testData(): Record<string, unknown> {
 {%- elif field.input_type == "geometry" %}
     '{{ field.name }}': '{"type":"Point","coordinates":[0,0]}',
 {%- elif field.input_type == "code" %}
-    '{{ field.name }}': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    '{{ field.name }}': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 {%- else %}
     '{{ field.name }}': 'Test {{ field.label }}',
 {%- endif %}
@@ -102,7 +102,7 @@ function updatedData(): Record<string, unknown> {
 {%- elif field.input_type == "geometry" %}
     '{{ field.name }}': '{"type":"Point","coordinates":[1,1]}',
 {%- elif field.input_type == "code" %}
-    '{{ field.name }}': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    '{{ field.name }}': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 {%- else %}
     '{{ field.name }}': 'Updated {{ field.label }}',
 {%- endif %}
