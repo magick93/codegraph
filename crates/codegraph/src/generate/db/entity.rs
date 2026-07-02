@@ -127,7 +127,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
         };
         // For codelist entities with no graph properties (enum-only JSON schema),
         // inject the three columns created by the codelist DDL template.
-        codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist);
+        codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist, domain);
 
         // Composite range: collapse start/end fields into a single range column
         let composite_range = db.get_composite_range(schema_title).await.ok().flatten();

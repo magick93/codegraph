@@ -8,8 +8,11 @@ use codegraph_type_contracts::{DddFieldProjection, RefClassificationKind};
 ///
 /// This ensures entity model, DTO, and repository generators produce the same
 /// columns that exist in the actual database table.
-pub fn inject_codelist_properties(props: &mut Vec<PropertyNode>, is_codelist: bool) {
-    if !props.is_empty() || !is_codelist {
+pub fn inject_codelist_properties(props: &mut Vec<PropertyNode>, is_codelist: bool, domain: &str) {
+    // Only inject for common-domain codelists that have _codelist.sql migrations
+    // with actual code/display_name/sort_order columns. Non-common-domain codelists
+    // are created by the entity DDL generator with id UUID PRIMARY KEY and no code column.
+    if !props.is_empty() || !is_codelist || domain != "common" {
         return;
     }
     // Helper to create a synthetic PropertyNode for a codelist column.

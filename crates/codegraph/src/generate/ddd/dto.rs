@@ -455,7 +455,7 @@ pub async fn build_dto_context(
     };
     // For codelist entities with no graph properties (enum-only JSON schema),
     // inject the three columns created by the codelist DDL template.
-    codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist);
+    codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist, &domain);
 
     // Media fields are excluded from Create/Update DTOs — uploads happen via
     // separate media endpoints, not the JSON CRUD body.

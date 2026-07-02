@@ -1880,7 +1880,7 @@ impl RepositoryImplEmitter {
         };
         // For codelist entities with no graph properties (enum-only JSON schema),
         // inject the three columns created by the codelist DDL template.
-        codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist);
+        codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist, domain);
 
         // Consumed fields from composite range collapsing — skip these in all operations
         let consumed_fields: std::collections::HashSet<String> = db
