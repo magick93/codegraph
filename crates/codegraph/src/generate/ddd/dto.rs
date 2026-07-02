@@ -446,13 +446,16 @@ pub async fn build_dto_context(
 
     // Deduplicate properties by field name — allOf composition can produce
     // duplicate HasProperty edges (parent + child both contribute the same field).
-    let props = {
+    let mut props = {
         let mut seen = std::collections::HashSet::new();
         all_props
             .into_iter()
             .filter(|p| seen.insert(p.rust_field_name.clone()))
             .collect::<Vec<_>>()
     };
+    // For codelist entities with no graph properties (enum-only JSON schema),
+    // inject the three columns created by the codelist DDL template.
+    codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist);
 
     // Media fields are excluded from Create/Update DTOs — uploads happen via
     // separate media endpoints, not the JSON CRUD body.

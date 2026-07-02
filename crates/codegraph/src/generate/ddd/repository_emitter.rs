@@ -1871,13 +1871,16 @@ impl RepositoryImplEmitter {
         }
 
         let all_props = db.get_properties(schema_title).await?;
-        let props = {
+        let mut props = {
             let mut seen = std::collections::HashSet::new();
             all_props
                 .into_iter()
                 .filter(|p| seen.insert(p.rust_field_name.clone()))
                 .collect::<Vec<_>>()
         };
+        // For codelist entities with no graph properties (enum-only JSON schema),
+        // inject the three columns created by the codelist DDL template.
+        codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist);
 
         // Consumed fields from composite range collapsing — skip these in all operations
         let consumed_fields: std::collections::HashSet<String> = db

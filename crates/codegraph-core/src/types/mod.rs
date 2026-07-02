@@ -19,6 +19,6 @@ pub use ifml::{
     ActionNode, DataBindingNode, DataFlowData, EventNode, NavigationFlowData,
     ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
 };
-pub use property::PropertyNode;
+pub use property::{inject_codelist_properties, PropertyNode};
 pub use schema::{SchemaClassificationData, SchemaNode};
 pub use stats::IngestStats;

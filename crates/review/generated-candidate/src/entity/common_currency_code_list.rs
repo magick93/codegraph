@@ -16,6 +16,15 @@ pub struct Model {
     pub platform_organization_id: Uuid,
 
 
+    pub code: String,
+
+
+    pub display_name: String,
+
+
+    pub sort_order: Option<i32>,
+
+
     pub created_at: chrono::DateTime<chrono::Utc>,
 
 

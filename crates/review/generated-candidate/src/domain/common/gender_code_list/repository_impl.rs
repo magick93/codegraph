@@ -28,6 +28,9 @@ impl GenderCodeListRepository for GenderCodeListRepositoryImpl {
         // Insert into common.gender_code_list (direct columns)
         let model = crate::entity::common_gender_code_list::ActiveModel {
             id: Set(id),
+            code: Set(cmd.code),
+            display_name: Set(cmd.display_name),
+            sort_order: Set(cmd.sort_order),
             ..Default::default()
         };
         model.insert(tx).await?;
@@ -54,6 +57,9 @@ impl GenderCodeListRepository for GenderCodeListRepositoryImpl {
 
         Ok(Some(GenderCodeListResponse {
             id: row.id,
+            code: row.code,
+            display_name: row.display_name,
+            sort_order: row.sort_order,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }))
@@ -67,10 +73,13 @@ impl GenderCodeListRepository for GenderCodeListRepositoryImpl {
         cmd: UpdateGenderCodeListRequest,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Update common.gender_code_list — only set fields present in the update request
-        let model = crate::entity::common_gender_code_list::ActiveModel {
+        let mut model = crate::entity::common_gender_code_list::ActiveModel {
             id: Set(id),
             ..Default::default()
         };
+        if let Some(v) = cmd.code { model.code = Set(v); }
+        if let Some(v) = cmd.display_name { model.display_name = Set(v); }
+        if let Some(v) = cmd.sort_order { model.sort_order = Set(Some(v)); }
         match model.update(tx).await {
             Ok(_) => {}
             Err(sea_orm::DbErr::RecordNotUpdated) => { /* RLS hid the row — find_by_id will return 404 */ }
@@ -122,6 +131,9 @@ impl GenderCodeListRepository for GenderCodeListRepositoryImpl {
         for row in rows {
             results.push(GenderCodeListResponse {
                 id: row.id,
+                code: row.code,
+                display_name: row.display_name,
+                sort_order: row.sort_order,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
             });
