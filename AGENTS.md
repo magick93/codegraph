@@ -375,6 +375,56 @@ cargo run -- classify --schemas <dir> --classifier classifier.toml \
   --config domains.toml
 ```
 
+## Template Overrides
+
+### The `--template-dir` flag
+
+Available on both `generate` and `run` commands. May be specified multiple times; later directories take precedence.
+
+```
+Paths to additional template directories. Templates in these directories
+shadow codegraph's built-in templates by name. May be specified multiple
+times; later directories take precedence.
+```
+
+### How template shadowing works
+
+Implemented in `crates/codegraph/src/generate/template_engine.rs`:
+
+1. **`create_tera_with_overrides()`** at line 30 loads all built-in templates from `crates/codegraph/templates/` first
+2. It then iterates override directories in order, calling `merge_tera_dir()` for each
+3. **`merge_tera_dir()`** at line 45 walks each directory, reading `.tera` files and registering them by their relative path name
+4. A template with the same relative path from a later directory **shadows** the earlier one — no merging, full replacement
+
+### Available Tera custom filters
+
+| Filter | Description |
+|--------|-------------|
+| `snake_case` | Converts a string to `snake_case` |
+| `upper_camel` | Converts to UpperCamelCase (strips trailing `Type` suffix first) |
+| `pascal_case` | Converts to PascalCase |
+| `kebab_case` | Converts to `kebab-case` |
+| `pluralize` | Pluralizes a word (simple rules: `s`/`es`/`ies`) |
+| `truncate_pg` | Truncates to PostgreSQL max identifier length (63 chars) |
+| `dollar_quote` | Wraps a string in single quotes with proper escaping |
+| `strip_pg_quotes` | Removes double-quote characters from PostgreSQL identifiers |
+| `quote_pg` | Double-quotes a PostgreSQL identifier if it is a reserved word |
+
+### Example: overriding SQLite templates
+
+```bash
+# Override the SQLite table template with a custom version
+cargo run -- run --schemas schemas/ --classifier classifier.toml \
+  --config domains.toml --output out/ \
+  --template-dir ./my-overrides/
+
+# Multiple override directories; later ones win
+cargo run -- generate --config domains.toml --output out/ \
+  --template-dir ./team-templates/ --template-dir ./local-tweaks/
+```
+
+Place a `.tera` file at the matching relative path to shadow it. For example, `my-overrides/db/sqlite/table.tera` shadows `crates/codegraph/templates/db/sqlite/table.tera`.
+
 ## Database Dialect Support (feat/sqlite-support)
 
 ### Overview

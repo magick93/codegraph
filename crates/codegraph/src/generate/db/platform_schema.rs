@@ -43,6 +43,10 @@ impl GlobalGenerator for PlatformSchemaGenerator {
         "platform_schema"
     }
 
+    fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {
+        Some(vec![DatabaseTarget::Postgres])
+    }
+
     async fn generate(
         &self,
         _db: &dyn GraphQuerier,

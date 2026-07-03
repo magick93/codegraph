@@ -6,6 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use crate::error::Result;
 use codegraph_config::DomainConfig;
 
+use super::db::dialect::DatabaseTarget;
 use super::{GenerationEntry, ProjectConfig};
 
 /// A target file to render from a template.
@@ -30,6 +31,12 @@ pub struct GeneratedFile {
 #[async_trait]
 pub trait EntityGenerator: Send + Sync {
     fn name(&self) -> &str;
+
+    /// Returns the database targets this generator supports.
+    /// Returns `None` to indicate all targets are supported.
+    fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {
+        None
+    }
 
     async fn generate(
         &self,
@@ -67,6 +74,12 @@ pub trait DomainGenerator: Send + Sync {
 #[async_trait]
 pub trait GlobalGenerator: Send + Sync {
     fn name(&self) -> &str;
+
+    /// Returns the database targets this generator supports.
+    /// Returns `None` to indicate all targets are supported.
+    fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {
+        None
+    }
 
     async fn generate(
         &self,

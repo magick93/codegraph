@@ -75,6 +75,7 @@ pub struct MockEngineBuilder {
     parent_candidates: Vec<ParentCandidate>,
     extends_map: HashMap<String, Vec<SchemaNode>>,
     allof_targets: HashMap<String, Vec<String>>,
+    enum_values: HashMap<String, Vec<EnumValue>>,
 }
 
 impl MockEngineBuilder {
@@ -124,9 +125,6 @@ impl MockEngineBuilder {
         self
     }
 
-    /// Register a schema that extends (allOf-includes) a parent definition.
-    /// When `get_schemas_that_extend(parent_title)` is called, this schema
-    /// will be included in the result.
     pub fn with_extending_schema(mut self, parent_title: &str, schema: SchemaNode) -> Self {
         self.extends_map
             .entry(parent_title.to_string())
@@ -144,6 +142,11 @@ impl MockEngineBuilder {
 
     pub fn with_parent_candidate(mut self, pc: ParentCandidate) -> Self {
         self.parent_candidates.push(pc);
+        self
+    }
+
+    pub fn with_enum_values(mut self, schema_title: &str, values: Vec<EnumValue>) -> Self {
+        self.enum_values.insert(schema_title.to_string(), values);
         self
     }
 
@@ -206,6 +209,7 @@ impl MockEngineBuilder {
             }
         }
         {
+        {
             let mut pcs = engine.parent_candidates.lock().unwrap();
             for pc in &self.parent_candidates {
                 pcs.push(pc.clone());
@@ -221,6 +225,12 @@ impl MockEngineBuilder {
             let mut allof_targets = engine.allof_targets.lock().unwrap();
             for (k, v) in &self.allof_targets {
                 allof_targets.insert(k.clone(), v.clone());
+            }
+        }
+        {
+            let mut enum_values = engine.enum_values.lock().unwrap();
+            for (k, v) in self.enum_values {
+                enum_values.insert(k, v);
             }
         }
         engine
