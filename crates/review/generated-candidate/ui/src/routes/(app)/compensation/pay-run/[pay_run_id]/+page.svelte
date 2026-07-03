@@ -163,7 +163,7 @@
 
 
 
-<AlertDialog.Root bind:open={deleteDialogOpen}>
+<AlertDialog.Root open={deleteDialogOpen} onOpenChange={(v) => deleteDialogOpen = v}>
 	<AlertDialog.Content data-testid="confirm-dialog">
 		<AlertDialog.Header>
 			<AlertDialog.Title>{m.common_confirm_delete_title({ entity: 'PayRun' })}</AlertDialog.Title>

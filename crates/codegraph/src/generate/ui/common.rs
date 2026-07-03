@@ -285,7 +285,7 @@ pub async fn collect_ui_fields(
     if fields.is_empty() {
         if let Some(domain) = current_domain {
             if let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, domain).await {
-                if schema.is_codelist {
+                if schema.is_codelist && domain == "common" {
                     let mut inject = |name: &str, label: &str, input_type: &str, is_required: bool| {
                         fields.push(UiField {
                             name: name.to_string(),

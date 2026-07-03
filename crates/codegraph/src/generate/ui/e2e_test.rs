@@ -288,7 +288,7 @@ impl EntityGenerator for UiE2eTestGenerator {
         // synthetic code field so testData() produces a valid create payload.
         if create_fields.is_empty() {
             if let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, &domain).await {
-                if schema.is_codelist {
+                if schema.is_codelist && domain == "common" {
                     create_fields.push(UiField {
                         name: "code".to_string(),
                         label: "Code".to_string(),
@@ -750,7 +750,8 @@ async fn build_test_data_json(
             // Fallback: if collect_ui_fields failed (e.g. codelist entities with
             // no UI fields in the graph), generate a minimal payload with a
             // code placeholder to satisfy NOT NULL constraints.
-            if !schema_title.is_empty() {
+            // Only common-domain codelists have code columns.
+            if !schema_title.is_empty() && domain.map_or(false, |d| d == "common") {
                 return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`".to_string();
             }
             return String::new();
@@ -758,7 +759,8 @@ async fn build_test_data_json(
     };
     // Also handle empty-success: collect_ui_fields may return Ok(vec![]) when
     // the schema has no properties (e.g. enum-only code-list schemas).
-    if fields.is_empty() && !schema_title.is_empty() {
+    // Only common-domain codelists have code columns.
+    if fields.is_empty() && !schema_title.is_empty() && domain.map_or(false, |d| d == "common") {
         return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`".to_string();
     }
     let mut entries = Vec::new();
