@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
 	import CandidateForm from '$lib/components/forms/CandidateForm.svelte';
 	import { createCandidate } from '$lib/stores/recruiting_candidate';
@@ -13,8 +13,8 @@
 	import type { CreateCandidateRequest } from '$lib/api/types';
 
 
-	const grandparentId = $derived($page.params.candidate_id);
-	const parentId = $derived($page.params.application_id);
+	const grandparentId = $derived(page.params.candidate_id);
+	const parentId = $derived(page.params.application_id);
 	const basePath = $derived(`/recruiting/candidate/${grandparentId}/application/${parentId}/candidate`);
 
 

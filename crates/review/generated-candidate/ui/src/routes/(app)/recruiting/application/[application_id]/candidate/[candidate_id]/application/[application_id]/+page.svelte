@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
@@ -42,8 +42,8 @@
 	let { data }: Props = $props();
 	let item = $state(data.item);
 
-	const grandparentId = $derived($page.params.application_id);
-	const parentId = $derived($page.params.candidate_id);
+	const grandparentId = $derived(page.params.application_id);
+	const parentId = $derived(page.params.candidate_id);
 	const basePath = $derived(`/recruiting/application/${grandparentId}/candidate/${parentId}/application`);
 
 
@@ -87,7 +87,7 @@
 		</div>
 		<div class="flex gap-2">
 
-{#if $page.data.organization?.role === 'owner'}
+{#if page.data.organization?.role === 'owner'}
 			<Button variant="outline" href={`${basePath}/${item.id}/edit`} data-testid="application-edit-btn">
 				{m.common_edit()}
 			</Button>
@@ -95,7 +95,7 @@
 
 
 
-			{#if $page.data.organization?.role === 'owner'}
+			{#if page.data.organization?.role === 'owner'}
 				<Button variant="destructive" onclick={() => deleteDialogOpen = true} data-testid="application-delete-btn">
 					{m.common_delete()}
 				</Button>

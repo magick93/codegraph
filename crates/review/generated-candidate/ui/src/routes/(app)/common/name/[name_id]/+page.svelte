@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
@@ -85,7 +85,7 @@
 		</div>
 		<div class="flex gap-2">
 
-{#if $page.data.organization?.role === 'owner'}
+{#if page.data.organization?.role === 'owner'}
 			<Button variant="outline" href={`${basePath}/${item.id}/edit`} data-testid="name-edit-btn">
 				{m.common_edit()}
 			</Button>
@@ -93,7 +93,7 @@
 
 
 
-			{#if $page.data.organization?.role === 'owner'}
+			{#if page.data.organization?.role === 'owner'}
 				<Button variant="destructive" onclick={() => deleteDialogOpen = true} data-testid="name-delete-btn">
 					{m.common_delete()}
 				</Button>

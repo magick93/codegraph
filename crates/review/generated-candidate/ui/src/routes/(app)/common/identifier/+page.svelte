@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -105,7 +105,7 @@
 
 		</div>
 
-{#if $page.data.organization?.role === 'owner'}
+{#if page.data.organization?.role === 'owner'}
 		<Button href={`${basePath}/new`} data-testid="identifier-create-btn">
 			+ {m.common_identifier_new()}
 		</Button>
@@ -125,7 +125,7 @@
 			</Empty.Header>
 
 
-{#if $page.data.organization?.role === 'owner'}
+{#if page.data.organization?.role === 'owner'}
 			<Empty.Content>
 				<Button href={`${basePath}/new`}>+ {m.common_identifier_new()}</Button>
 			</Empty.Content>

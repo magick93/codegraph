@@ -3,7 +3,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -14,8 +14,8 @@
 	import * as m from '$lib/paraglide/messages.js';
 
 
-	const grandparentId = $derived($page.params.candidate_id);
-	const parentId = $derived($page.params.application_id);
+	const grandparentId = $derived(page.params.candidate_id);
+	const parentId = $derived(page.params.application_id);
 	const basePath = $derived(`/recruiting/candidate/${grandparentId}/application/${parentId}/candidate`);
 
 
@@ -105,7 +105,7 @@
 
 		</div>
 
-{#if $page.data.organization?.role === 'owner'}
+{#if page.data.organization?.role === 'owner'}
 		<Button href={`${basePath}/new`} data-testid="candidate-create-btn">
 			+ {m.recruiting_candidate_new()}
 		</Button>
@@ -125,7 +125,7 @@
 			</Empty.Header>
 
 
-{#if $page.data.organization?.role === 'owner'}
+{#if page.data.organization?.role === 'owner'}
 			<Empty.Content>
 				<Button href={`${basePath}/new`}>+ {m.recruiting_candidate_new()}</Button>
 			</Empty.Content>

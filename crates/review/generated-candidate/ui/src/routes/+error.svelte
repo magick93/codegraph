@@ -2,19 +2,19 @@
 <!-- SvelteKit error boundary page. -->
 
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button/index.js';
 </script>
 
 <div class="flex min-h-[50vh] flex-col items-center justify-center text-center">
-	<h1 class="text-6xl font-bold text-gray-300">{$page.status}</h1>
+	<h1 class="text-6xl font-bold text-gray-300">{page.status}</h1>
 	<p class="mt-4 text-lg text-gray-600">
-		{#if $page.status === 404}
+		{#if page.status === 404}
 			The page you're looking for doesn't exist.
-		{:else if $page.status === 500}
+		{:else if page.status === 500}
 			Something went wrong on our end.
 		{:else}
-			{$page.error?.message ?? 'An unexpected error occurred.'}
+			{page.error?.message ?? 'An unexpected error occurred.'}
 		{/if}
 	</p>
 	<div class="mt-6 flex gap-3">
