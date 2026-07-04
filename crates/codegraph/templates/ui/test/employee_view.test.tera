@@ -26,7 +26,11 @@ function testData(): Record<string, unknown> {
   return {
 {%- for field in create_fields %}
 {%- if field.nested_type_name %}
+    {%- if field.is_array %}
+    '{{ field.name }}': [],
+    {%- else %}
     '{{ field.name }}': {},
+    {%- endif %}
 {%- elif field.input_type == "number" %}
     '{{ field.name }}': 42,
 {%- elif field.input_type == "checkbox" %}
