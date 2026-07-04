@@ -216,7 +216,7 @@
 		</div>
 		<div class="flex gap-2">
 {% if has_update %}
-{% raw %}{#if page.data.organization?.role === 'owner'}{% endraw %}
+{% raw %}{#if !page.data.organization || page.data.organization?.role === 'owner'}{% endraw %}
 			<Button variant="outline" href={`${basePath}/${item.id}/edit`} data-testid="{{ module_name }}-edit-btn">
 				{% raw %}{m.common_edit()}{% endraw %}
 			</Button>
@@ -224,7 +224,7 @@
 {% endif %}
 {% if has_delete %}
 {% raw %}
-			{#if page.data.organization?.role === 'owner'}
+			{#if !page.data.organization || page.data.organization?.role === 'owner'}
 				<Button variant="destructive" onclick={() => deleteDialogOpen = true} data-testid="{% endraw %}{{ module_name }}{% raw %}-delete-btn">
 					{m.common_delete()}
 				</Button>
