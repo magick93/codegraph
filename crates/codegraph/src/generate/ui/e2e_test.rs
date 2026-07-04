@@ -775,7 +775,11 @@ async fn build_test_data_json(
         // object placeholder — since ValueObject fields are always Option<T>,
         // an empty object deserializes as None (all sub-fields are optional too).
         if f.nested_type_name.is_some() {
-            entries.push(format!("'{}': {{}}", f.name));
+            if f.is_array {
+                entries.push(format!("'{}': []", f.name));
+            } else {
+                entries.push(format!("'{}': {{}}", f.name));
+            }
             continue;
         }
         let value = test_value_for_field(f);
