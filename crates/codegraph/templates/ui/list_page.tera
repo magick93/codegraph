@@ -133,7 +133,7 @@
 {% endraw %}
 		</div>
 {% if has_create %}
-{% raw %}{#if page.data.organization?.role === 'owner'}{% endraw %}
+{% raw %}{#if !page.data.organization || page.data.organization?.role === 'owner'}{% endraw %}
 		<Button href={`${basePath}/new`} data-testid="{{ module_name }}-create-btn">
 			+ {% raw %}{{% endraw %}m.{{ domain }}_{{ module_name }}_new(){% raw %}}{% endraw %}
 		</Button>
@@ -153,7 +153,7 @@
 			</Empty.Header>
 {% endraw %}
 {% if has_create %}
-{% raw %}{#if page.data.organization?.role === 'owner'}{% endraw %}
+{% raw %}{#if !page.data.organization || page.data.organization?.role === 'owner'}{% endraw %}
 			<Empty.Content>
 				<Button href={`${basePath}/new`}>+ {% raw %}{{% endraw %}m.{{ domain }}_{{ module_name }}_new(){% raw %}}{% endraw %}</Button>
 			</Empty.Content>
