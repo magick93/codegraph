@@ -256,7 +256,7 @@ impl DomainGenerator for RouterGenerator {
                                 title_to_entity_idx.get(title.as_str()),
                                 title_to_entity_idx.get(parent_title.as_str()),
                             ) {
-                                if entities[ci].parent.is_none() {
+                    if entities[ci].parent.is_none() && entities[ci].role != "root" {
                                     let parent_name = strip_suffix(parent_title, &config.defaults.type_suffix);
                                     let fk_column = ec.parent_ref.clone().unwrap_or_else(|| {
                                         format!("{}_id", codegraph_naming::to_snake_case(parent_name))
