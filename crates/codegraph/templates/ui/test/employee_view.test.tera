@@ -29,7 +29,7 @@ function testData(): Record<string, unknown> {
     {%- if field.is_array %}
     '{{ field.name }}': [],
     {%- else %}
-    '{{ field.name }}': {},
+    // '{{ field.name }}': ValueObject — omit, serde default
     {%- endif %}
 {%- elif field.input_type == "number" %}
     '{{ field.name }}': 42,

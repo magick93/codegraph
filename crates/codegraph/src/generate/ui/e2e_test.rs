@@ -771,14 +771,14 @@ async fn build_test_data_json(
         if f.name.ends_with("_id") && !f.is_codelist {
             continue;
         }
-        // ValueObject fields need nested object structures. Generate an empty
-        // object placeholder — since ValueObject fields are always Option<T>,
-        // an empty object deserializes as None (all sub-fields are optional too).
+        // ValueObject fields: omit non-array nested types entirely.
+        // All are Option<T> or Vec<T> with #[serde(default)] — omitting
+        // the key lets serde use None / empty vec.  Only emit [] for arrays.
         if f.nested_type_name.is_some() {
             if f.is_array {
                 entries.push(format!("'{}': []", f.name));
             } else {
-                entries.push(format!("'{}': {{}}", f.name));
+                // Omitted — serde uses #[serde(default)] → None
             }
             continue;
         }
