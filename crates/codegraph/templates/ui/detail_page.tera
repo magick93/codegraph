@@ -294,6 +294,10 @@
 						{:else}
 							—
 						{/if}{% endraw %}
+{% elif field.is_array %}
+						{% raw %}{#if Array.isArray(item.{% endraw %}{{ field.name }}{% raw %})}
+							{item.{% endraw %}{{ field.name }}{% raw %}.length} items
+						{:else}—{/if}{% endraw %}
 {% else %}
 						{% raw %}{{% endraw %}item.{{ field.name }} ?? '—'{% raw %}}{% endraw %}
 {% endif %}
