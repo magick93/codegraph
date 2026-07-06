@@ -43,6 +43,8 @@ function isolationTestData(): Record<string, unknown> {
     '{{ field.name }}': { value: 'ACME Isolation {{ field.label }}' },
 {%- elif field.is_array %}
     '{{ field.name }}': ['ACME Isolation {{ field.label }}'],
+{%- elif field.nested_type_name %}
+    // '{{ field.name }}': ValueObject — omit, serde default
 {%- elif field.pg_type is containing("GEOMETRY") %}
     // geometry field omitted — plain WKT strings are not accepted by the API without ST_GeomFromText
 {%- elif field.input_type == "geometry" %}
@@ -71,7 +73,7 @@ function isolationTestData(): Record<string, unknown> {
     find and assert on AcmeSearchSecret2025 there.  The control test (`ownerPage` can find own data)
     relies solely on the FTS column being visible, so missing a display field only means one fewer
     assertion column, not a false pass. #}
-{%- if not display_field_set and field.name != fts_search_field and not field.is_required and not field.is_entity_ref and not field.is_codelist and not field.is_array and not field.is_range and field.input_type != "number" and field.input_type != "checkbox" and field.input_type != "date" and field.input_type != "datetime-local" and field.input_type != "geometry" and not (field.pg_type is containing("GEOMETRY")) %}
+{%- if not display_field_set and field.name != fts_search_field and not field.is_required and not field.is_entity_ref and not field.is_codelist and not field.is_array and not field.is_range and field.input_type != "number" and field.input_type != "checkbox" and field.input_type != "date" and field.input_type != "datetime-local" and field.input_type != "geometry" and not (field.pg_type is containing("GEOMETRY")) and not field.nested_type_name %}
     '{{ field.name }}': 'AcmeSearchSecret2025',
 {%- set_global display_field_set = true %}
 {%- endif %}
