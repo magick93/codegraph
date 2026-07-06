@@ -456,8 +456,12 @@ impl EntityGenerator for UiE2eTestGenerator {
                 }
             }
 
-            // 2. Fall back to graph parent_candidates (only if parent is in same domain)
-            if result.is_none() {
+            // 2. Fall back to graph parent_candidates (only if parent is in same domain,
+            //    and the entity is not explicitly/implicitly configured as root).
+            let effective_role = entity_cfg
+                .and_then(|ec| ec.role.as_deref())
+                .unwrap_or("root");
+            if result.is_none() && effective_role != "root" {
                 for pc in &self.parent_candidates {
                     let child_name =
                         crate::generate::api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
