@@ -258,8 +258,10 @@ test.describe.serial('{{ entity_name }} CRUD', () => {
     }
 {% elif field.pg_type is containing("GEOMETRY") %}
     // geometry field omitted from form fill — requires ST_GeomFromText wrapper
+{% elif field.nested_type_name %}
+    // '{{ field.name }}': ValueObject — form uses structured sub-fields, skip fill
 {% else %}
-    if (await page.locator('#{{ field.name }}').isVisible()) {
+    if (data['{{ field.name }}'] != null && await page.locator('#{{ field.name }}').isVisible()) {
       await page.locator('#{{ field.name }}').fill(String(data['{{ field.name }}']));
     }
 {% endif %}
@@ -453,8 +455,10 @@ test.describe.serial('{{ entity_name }} CRUD', () => {
     }
 {% elif field.pg_type is containing("GEOMETRY") %}
     // geometry field omitted from form fill — requires ST_GeomFromText wrapper
+{% elif field.nested_type_name %}
+    // '{{ field.name }}': ValueObject — form uses structured sub-fields, skip fill
 {% else %}
-    if (await page.locator('#{{ field.name }}').isVisible()) {
+    if (data['{{ field.name }}'] != null && await page.locator('#{{ field.name }}').isVisible()) {
       await page.locator('#{{ field.name }}').clear();
       await page.locator('#{{ field.name }}').fill(String(data['{{ field.name }}']));
     }
