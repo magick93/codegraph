@@ -161,7 +161,7 @@ use codegraph_core::traits::GraphQuerier;
 use tera::Tera;
 
 use crate::error::{Error, Result};
-use crate::generate::db::dialect::{dialect_for_target, DatabaseTarget};
+use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use codegraph_config::{DomainConfig, UiDomainConfig, UiOverrideConfig};
 
 use std::sync::OnceLock;
@@ -375,7 +375,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     type_registry::init_type_registry();
 
     // Create the database dialect based on project config.
-    let make_dialect = || dialect_for_target(DatabaseTarget::from_config(&project.database_target));
+    let current_target = DatabaseTarget::from_config(&project.database_target);
+    let make_dialect = || dialect_for_target(current_target);
 
     // Wrap the querier in a caching layer to avoid redundant graph queries
     // across the 15+ generators that each independently query the same schemas.
@@ -590,6 +591,11 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     ]
     .into_iter()
     .filter(|gen| plan_has_entity(gen.name()))
+    .filter(|gen| {
+        gen.supported_targets()
+            .map(|targets| targets.contains(&current_target))
+            .unwrap_or(true)
+    })
     .collect::<Vec<_>>();
 
     let domain_gens: Vec<Box<dyn DomainGenerator>> = vec![
@@ -676,6 +682,11 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     ]
     .into_iter()
     .filter(|gen| plan_has_global(gen.name()))
+    .filter(|gen| {
+        gen.supported_targets()
+            .map(|targets| targets.contains(&current_target))
+            .unwrap_or(true)
+    })
     .collect::<Vec<_>>();
 
     let mut global_gens = global_gens;
@@ -1256,6 +1267,19 @@ pub fn render_template_with_project<C: serde::Serialize>(
     context.insert("project", project);
     tera.render(template_name, &context)
         .map_err(|e| Error::Template(format!("'{}': {}", template_name, e)))
+}
+
+/// Render a template with project context, resolving the template name
+/// through the dialect's template path mapping.
+pub fn render_template_with_project_and_dialect<C: serde::Serialize>(
+    tera: &Tera,
+    template_name: &str,
+    ctx: &C,
+    project: &ProjectConfig,
+    dialect: &dyn SqlDialect,
+) -> Result<String> {
+    let resolved = db_template_for(dialect, template_name);
+    render_template_with_project(tera, &resolved, ctx, project)
 }
 
 /// Add a numeric prefix to migration file paths so alphabetical order matches
