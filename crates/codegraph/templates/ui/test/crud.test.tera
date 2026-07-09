@@ -136,7 +136,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe('{{ entity_name }} CRUD', () => {
+test.describe.serial('{{ entity_name }} CRUD', () => {
   let createdId: string | undefined;
 
 {% if parent or has_entity_ref_deps %}
