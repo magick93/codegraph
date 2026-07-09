@@ -128,7 +128,7 @@ impl GlobalGenerator for OpenApiGenerator {
                 if !domain_entities.contains(entity_name.as_str()) {
                     continue;
                 }
-                if let Ok(Some(schema)) = db.get_schema(entity_name).await {
+                if let Ok(Some(schema)) = db.get_schema_in_domain(entity_name, domain_name).await {
                     let entity_cfg = domain_entry.get_entity_config(entity_name);
                     let operations = entity_cfg
                         .and_then(|ec| ec.operations.clone())
@@ -144,7 +144,7 @@ impl GlobalGenerator for OpenApiGenerator {
                     let (parent_path_segment, parent_entity, parent_domain) =
                         if let Some(ref pname) = parent_name {
                             // Look up parent schema for accurate path segment and domain
-                            if let Ok(Some(parent_schema)) = db.get_schema(pname).await {
+                            if let Ok(Some(parent_schema)) = db.get_schema_in_domain(pname, domain_name).await {
                                 (
                                     Some(parent_schema.api_path_segment.clone()),
                                     Some(parent_schema.rust_type_name.clone()),

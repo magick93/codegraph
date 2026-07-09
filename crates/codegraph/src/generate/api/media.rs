@@ -49,7 +49,7 @@ impl EntityGenerator for MediaRouteGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let schema = match db.get_schema(schema_title).await? {
+        let schema = match db.get_schema_in_domain(schema_title, domain).await? {
             Some(s) => s,
             None => return Ok(Vec::new()),
         };

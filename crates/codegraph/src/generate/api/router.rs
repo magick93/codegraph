@@ -169,7 +169,7 @@ impl DomainGenerator for RouterGenerator {
         let mut title_to_entity_idx: HashMap<String, usize> = HashMap::new();
 
         for title in entity_titles {
-            if let Ok(Some(schema)) = db.get_schema(title).await {
+            if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain).await {
                 if !schema.pg_table_name.is_empty() {
                     // Dedup by module name to prevent duplicate route functions
                     if let Some(&existing_idx) = module_to_idx.get(&schema.pg_table_name) {
@@ -256,7 +256,7 @@ impl DomainGenerator for RouterGenerator {
                                 title_to_entity_idx.get(title.as_str()),
                                 title_to_entity_idx.get(parent_title.as_str()),
                             ) {
-                                if entities[ci].parent.is_none() {
+                    if entities[ci].parent.is_none() {
                                     let parent_name = strip_suffix(parent_title, &config.defaults.type_suffix);
                                     let fk_column = ec.parent_ref.clone().unwrap_or_else(|| {
                                         format!("{}_id", codegraph_naming::to_snake_case(parent_name))
@@ -295,7 +295,7 @@ impl DomainGenerator for RouterGenerator {
                 let parent_idx = title_to_entity_idx.get(pc.parent_title.as_str()).copied();
 
                 if let (Some(ci), Some(pi)) = (child_idx, parent_idx) {
-                    if entities[ci].parent.is_none() {
+                    if entities[ci].parent.is_none() && entities[ci].role != "root" {
                         let fk_column = crate::generate::fk_column_for_candidate(pc, &config.defaults.type_suffix);
                         let parent_module = entities[pi].module_name.clone();
                         let parent_path = entities[pi].path_segment.clone();
@@ -364,7 +364,8 @@ impl DomainGenerator for RouterGenerator {
                     .map(|c| c.entity_name.as_str())
                     .collect();
 
-                for ref_title in &referenced {
+                for ref_schema_node in &referenced {
+                    let ref_title = &ref_schema_node.title;
                     let ref_entity_name = strip_suffix(ref_title, &config.defaults.type_suffix);
 
                     // Skip self

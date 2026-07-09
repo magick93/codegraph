@@ -60,7 +60,7 @@ impl DomainGenerator for UiDomainLayoutGenerator {
 
         let mut entities = Vec::new();
         for title in entity_titles {
-            if let Ok(Some(schema)) = db.get_schema(title).await {
+            if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain).await {
                 if !schema.pg_table_name.is_empty() {
                     let name = schema.rust_type_name.clone();
                     let label = codegraph_naming::to_display_name(&name);

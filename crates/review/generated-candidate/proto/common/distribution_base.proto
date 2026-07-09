@@ -1,0 +1,130 @@
+syntax = "proto3";
+package common;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "common/;common";
+
+
+
+
+/// DistributionBase entity
+message DistributionBase {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+    // Distribution description
+  optional string description = 2;
+  
+    // Distribution end date
+  optional google.protobuf.Timestamp endDate = 3;
+  
+    // Distribution start date
+  google.protobuf.Timestamp startDate = 4;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for DistributionBase
+message CreateDistributionBaseRequest {
+  
+    // Distribution description
+  optional string description = 2;
+  
+    // Distribution end date
+  optional google.protobuf.Timestamp endDate = 3;
+  
+    // Distribution start date
+  google.protobuf.Timestamp startDate = 4;
+  
+}
+
+/// Update request for DistributionBase
+message UpdateDistributionBaseRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+    // Distribution description
+  optional string description = 2;
+  
+    // Distribution end date
+  optional google.protobuf.Timestamp endDate = 3;
+  
+    // Distribution start date
+  optional google.protobuf.Timestamp startDate = 4;
+  
+}
+
+/// Get request for DistributionBase
+message GetDistributionBaseRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for DistributionBase
+message DeleteDistributionBaseRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for DistributionBase
+message ListDistributionBaseRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for DistributionBase
+message ListDistributionBaseResponse {
+  
+  
+  repeated DistributionBase data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── DistributionBase Service ──────────────────────────────────────────
+service DistributionBaseService {
+  
+  // Create a new entity
+  rpc Create(CreateDistributionBaseRequest) returns (DistributionBase);
+  
+  // Get an entity by ID
+  rpc Get(GetDistributionBaseRequest) returns (DistributionBase);
+  
+  // Update an existing entity
+  rpc Update(UpdateDistributionBaseRequest) returns (DistributionBase);
+  
+  // Delete an entity by ID
+  rpc Delete(DeleteDistributionBaseRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListDistributionBaseRequest) returns (ListDistributionBaseResponse);
+  
+}

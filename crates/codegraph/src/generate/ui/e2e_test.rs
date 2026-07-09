@@ -1,4 +1,5 @@
 use crate::generate::ProjectConfig;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -23,6 +24,47 @@ pub struct EntityRefDep {
     /// JSON object literal (without outer braces) for minimal valid creation payload
     /// e.g. `'language': 'aa', 'name': 'Test Dep'`
     pub test_data_json: String,
+}
+
+/// Configuration for generated include E2E tests.
+#[derive(Debug, Serialize)]
+pub struct E2eIncludeConfig {
+    /// Entity creation steps, ordered by dependency (deps first, main last).
+    pub setup_steps: Vec<IncludeSetupStep>,
+    /// depIds key of the main entity (last step).
+    pub main_entity_id_ref: String,
+    /// Include paths to test via get_by_id.
+    pub test_paths: Vec<IncludeTestPath>,
+    /// Whether multiple single-segment paths exist (for multi-include test).
+    pub has_multi_include: bool,
+    /// Whether to generate list-with-include tests.
+    pub test_list_include: bool,
+}
+
+/// One entity creation step for include test setup.
+#[derive(Debug, Serialize)]
+pub struct IncludeSetupStep {
+    /// depIds key, e.g. "person" or "candidate"
+    pub dep_id: String,
+    /// API path for createEntityAsAcme, e.g. "/api/common/person"
+    pub api_path: String,
+    /// JS object entries for required fields (without outer braces)
+    pub fields_json: String,
+    /// FK mappings: (field_on_this_entity, depId_of_target)
+    pub fk_map: Vec<[String; 2]>,
+}
+
+/// An include path to test.
+#[derive(Debug, Serialize)]
+pub struct IncludeTestPath {
+    /// Query parameter value, e.g. "person" or "deployment.position"
+    pub alias: String,
+    /// depIds key of the target (last segment) entity
+    pub target_dep_id: String,
+    /// Whether this is a dot-notation path
+    pub is_dot_path: bool,
+    /// Whether the relationship is 1:many
+    pub is_array: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,6 +104,8 @@ pub struct UiE2eTestContext {
     pub parent_test_data_json: String,
     /// JS object literal for creating the grandparent entity (only set for depth-2 nesting)
     pub grandparent_test_data_json: String,
+    /// Include E2E test configuration. None when include is not configured.
+    pub e2e_include: Option<E2eIncludeConfig>,
 }
 
 pub struct UiE2eTestGenerator {
@@ -104,7 +148,7 @@ impl UiE2eTestGenerator {
         {
             if parent_ec.role.as_deref() == Some("child") {
                 if let Some(ref gp_title) = parent_ec.parent {
-                    if let Ok(Some(gp_schema)) = db.get_schema(gp_title).await {
+                    if let Ok(Some(gp_schema)) = db.get_schema_in_domain(gp_title, parent_domain).await {
                         let gp_domain = if config
                             .domains
                             .get(parent_domain)
@@ -137,7 +181,7 @@ impl UiE2eTestGenerator {
         for gpc in &self.parent_candidates {
             let gpc_child = crate::generate::api::router::strip_suffix(&gpc.child_title, &config.defaults.type_suffix);
             if gpc_child == parent_stripped {
-                if let Ok(Some(gp_schema)) = db.get_schema(&gpc.parent_title).await {
+                if let Ok(Some(gp_schema)) = db.get_schema_in_domain(&gpc.parent_title, parent_domain).await {
                     let gp_domain = if config
                         .domains
                         .get(parent_domain)
@@ -184,7 +228,7 @@ impl EntityGenerator for UiE2eTestGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -235,11 +279,38 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         let fields = collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain)).await?;
 
-        let create_fields: Vec<UiField> = fields
+        let mut create_fields: Vec<UiField> = fields
             .iter()
             .filter(|f| !all_excluded.contains(&f.name))
             .cloned()
             .collect();
+        // For codelist entities with no UI fields (enum-only schemas), inject a
+        // synthetic code field so testData() produces a valid create payload.
+        if create_fields.is_empty() {
+            if let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, &domain).await {
+                if schema.is_codelist && domain == "common" {
+                    create_fields.push(UiField {
+                        name: "code".to_string(),
+                        label: "Code".to_string(),
+                        ts_type: "string".to_string(),
+                        input_type: "code".to_string(),
+                        is_required: true,
+                        is_array: false,
+                        is_entity_ref: false,
+                        is_immutable: false,
+                        is_codelist: false,
+                        is_range: false,
+                        codelist_values: vec![],
+                        description: String::new(),
+                        pg_type: "TEXT".to_string(),
+                        open_end: false,
+                        ref_api_path: None,
+                        structured_sub_fields: vec![],
+                        nested_type_name: None,
+                    });
+                }
+            }
+        }
 
         let required_create_fields: Vec<UiField> = create_fields
             .iter()
@@ -316,6 +387,20 @@ impl EntityGenerator for UiE2eTestGenerator {
         }
         let has_entity_ref_deps = !entity_ref_deps.is_empty();
 
+        // Resolve include test config
+        let e2e_include = if let Some(ec) = entity_cfg {
+            if ec.allow_include.as_ref().map_or(false, |v| !v.is_empty()) {
+                let resolved = crate::generate::api::include_path::resolve_include_paths(
+                    db, config, &domain, schema_title, ec.allow_include.as_ref(),
+                ).await?;
+                resolve_e2e_include_config(db, config, &domain, schema_title, &resolved, has_list).await?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Collect child sections for detail page testing
         let child_sections = collect_child_sections(db, schema_title, config, &domain).await?;
         let has_child_sections = !child_sections.is_empty();
@@ -335,7 +420,7 @@ impl EntityGenerator for UiE2eTestGenerator {
             {
                 if ec.role.as_deref() == Some("child") {
                     if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) = db.get_schema(parent_title).await {
+                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, &domain).await {
                             let parent_domain = if config
                                 .domains
                                 .get(&domain)
@@ -371,8 +456,12 @@ impl EntityGenerator for UiE2eTestGenerator {
                 }
             }
 
-            // 2. Fall back to graph parent_candidates (only if parent is in same domain)
-            if result.is_none() {
+            // 2. Fall back to graph parent_candidates (only if parent is in same domain,
+            //    and the entity is not explicitly/implicitly configured as root).
+            let effective_role = entity_cfg
+                .and_then(|ec| ec.role.as_deref())
+                .unwrap_or("root");
+            if result.is_none() && effective_role != "root" {
                 for pc in &self.parent_candidates {
                     let child_name =
                         crate::generate::api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
@@ -384,16 +473,16 @@ impl EntityGenerator for UiE2eTestGenerator {
                             .unwrap_or(false);
                         let parent_in_domain = in_explicit
                             || db
-                                .get_schema(&pc.parent_title)
-                                .await
-                                .ok()
-                                .flatten()
-                                .and_then(|s| s.domain.as_ref().map(|d| d == &domain))
-                                .unwrap_or(false);
+                            .get_schema_in_domain(&pc.parent_title, &domain)
+                            .await
+                            .ok()
+                            .flatten()
+                            .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
+                            .unwrap_or(false);
                         if !parent_in_domain {
                             break;
                         }
-                        if let Ok(Some(parent_schema)) = db.get_schema(&pc.parent_title).await {
+                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, &domain).await {
                             let parent_domain = domain.clone();
 
                             let grandparent = self
@@ -485,6 +574,7 @@ impl EntityGenerator for UiE2eTestGenerator {
             parent,
             parent_test_data_json,
             grandparent_test_data_json,
+            e2e_include,
         };
 
         let tests_dir = self
@@ -565,6 +655,15 @@ impl EntityGenerator for UiE2eTestGenerator {
             });
         }
 
+        // Include test
+        if ctx.e2e_include.is_some() && has_read {
+            let content = render_template_with_project(tera, "ui/test/include.test.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.include.test.ts", path_segment)),
+                content,
+            });
+        }
+
         Ok(files)
     }
 }
@@ -598,7 +697,7 @@ async fn build_dep_test_data(
         .unwrap_or(last_segment);
 
     // Resolve the referenced schema to find its domain
-    let dep_domain = match db.get_schema(ref_schema_title).await {
+    let dep_domain = match db.get_schema_in_domain(ref_schema_title, current_domain.unwrap_or("")).await {
         Ok(Some(s)) => s.domain.clone(),
         _ => current_domain.map(|s| s.to_string()),
     };
@@ -651,14 +750,40 @@ async fn build_test_data_json(
 ) -> String {
     let fields = match collect_ui_fields(db, schema_title, &[], domain).await {
         Ok(f) => f,
-        Err(_) => return String::new(),
+        Err(_) => {
+            // Fallback: if collect_ui_fields failed (e.g. codelist entities with
+            // no UI fields in the graph), generate a minimal payload with a
+            // code placeholder to satisfy NOT NULL constraints.
+            // Only common-domain codelists have code columns.
+            if !schema_title.is_empty() && domain.map_or(false, |d| d == "common") {
+                return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`".to_string();
+            }
+            return String::new();
+        }
     };
+    // Also handle empty-success: collect_ui_fields may return Ok(vec![]) when
+    // the schema has no properties (e.g. enum-only code-list schemas).
+    // Only common-domain codelists have code columns.
+    if fields.is_empty() && !schema_title.is_empty() && domain.map_or(false, |d| d == "common") {
+        return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`".to_string();
+    }
     let mut entries = Vec::new();
     for f in &fields {
         if f.is_entity_ref || f.name == "id" {
             continue;
         }
         if f.name.ends_with("_id") && !f.is_codelist {
+            continue;
+        }
+        // ValueObject fields: omit non-array nested types entirely.
+        // All are Option<T> or Vec<T> with #[serde(default)] — omitting
+        // the key lets serde use None / empty vec.  Only emit [] for arrays.
+        if f.nested_type_name.is_some() {
+            if f.is_array {
+                entries.push(format!("'{}': []", f.name));
+            } else {
+                // Omitted — serde uses #[serde(default)] → None
+            }
             continue;
         }
         let value = test_value_for_field(f);
@@ -691,6 +816,12 @@ fn test_value_for_field(field: &UiField) -> String {
         "date" => "'2025-01-15'".to_string(),
         "datetime-local" => "'2025-01-15T10:30:00Z'".to_string(),
         "date-range" => "'[2025-01-15T00:00:00Z,2025-12-31T23:59:59Z)'".to_string(),
+        "code" => {
+            // code column in codelist entities: must be globally unique at
+            // runtime across parallel test invocations. Use a TS template
+            // literal with Date.now() + random suffix.
+            "`TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`".to_string()
+        }
         _ => {
             if field.pg_type.contains("GEOMETRY") {
                 // Geometry fields omitted — plain WKT strings are not accepted without ST_GeomFromText
@@ -699,9 +830,136 @@ fn test_value_for_field(field: &UiField) -> String {
                 format!("['Test {}']", field.label)
             } else if field.is_range {
                 "'[2025-01-01T00:00:00Z,2025-12-31T23:59:59Z]'".to_string()
+            } else if field.name == "code" && !field.is_codelist {
+                // code column in codelist entities: must be globally unique at
+                // runtime across parallel test invocations. Use a TS template
+                // literal with Date.now() + random suffix.
+                "`TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`".to_string()
             } else {
                 format!("'Test {}'", field.label)
             }
         }
     }
+}
+
+/// Build E2E include test configuration from resolved include paths.
+/// Creates setup steps (entity creation in dependency order) and test path info.
+async fn resolve_e2e_include_config(
+    db: &dyn GraphQuerier,
+    _config: &DomainConfig,
+    domain: &str,
+    schema_title: &str,
+    include_paths: &[crate::generate::api::include_path::ResolvedIncludePath],
+    has_list: bool,
+) -> Result<Option<E2eIncludeConfig>> {
+    let mut all_steps: Vec<IncludeSetupStep> = Vec::new();
+    let mut test_paths: Vec<IncludeTestPath> = Vec::new();
+    let mut seen_deps: HashSet<String> = HashSet::new();
+
+    // Collect FK map for the main entity, deduplicated by FK column name
+    let mut main_fk_map: Vec<[String; 2]> = Vec::new();
+    let mut seen_main_fk_cols: HashSet<String> = HashSet::new();
+
+    for path in include_paths {
+        let mut prev_dep_id: Option<String> = None;
+        // fk_column of the previously processed (deeper) segment — this is the FK
+        // column on the CURRENT segment's entity pointing to the deeper entity.
+        let mut prev_fk_column: Option<String> = None;
+
+        // Process segments in REVERSE order (leaf entity first)
+        for (seg_idx, seg) in path.segments.iter().enumerate().rev() {
+            let dep_id = format!("{}_{}", seg.module_name, seg_idx);
+
+            if seen_deps.contains(&dep_id) {
+                prev_dep_id = Some(dep_id);
+                prev_fk_column = Some(seg.fk_column.clone());
+                continue;
+            }
+            seen_deps.insert(dep_id.clone());
+
+            // Resolve the target schema for api_path using the canonical schema_title.
+            let target_schema = db
+                .get_schema_in_domain(&seg.schema_title, domain)
+                .await?
+                .ok_or_else(|| crate::error::Error::SchemaNotFound(seg.schema_title.clone()))?;
+            let api_path = format!("/api/{}/{}", seg.domain, target_schema.api_path_segment);
+
+            let fields_json = build_test_data_json(db, &seg.schema_title, Some(&seg.domain)).await;
+
+            // FK map: this entity has a FK to the previously created (deeper) entity.
+            // The FK column is the fk_column of the deeper segment — it describes
+            // the column on this entity's table that references the deeper entity.
+            let mut fk_map: Vec<[String; 2]> = Vec::new();
+            if let Some(ref prev_id) = prev_dep_id {
+                if let Some(ref fk_col) = prev_fk_column {
+                    fk_map.push([fk_col.clone(), prev_id.clone()]);
+                }
+            }
+
+            all_steps.push(IncludeSetupStep {
+                dep_id: dep_id.clone(),
+                api_path,
+                fields_json,
+                fk_map,
+            });
+
+            prev_dep_id = Some(dep_id);
+            prev_fk_column = Some(seg.fk_column.clone());
+        }
+
+        // Record the test path
+        if let Some(_first_seg) = path.segments.first() {
+            let last_idx = path.segments.len() - 1;
+            let last_seg = &path.segments[last_idx];
+            let target_dep_id = format!("{}_{}", last_seg.module_name, last_idx);
+
+            test_paths.push(IncludeTestPath {
+                alias: path.alias.clone(),
+                target_dep_id,
+                is_dot_path: path.segments.len() > 1,
+                is_array: last_seg.is_array,
+            });
+        }
+
+        // Add main entity FK to the first segment of this path (deduplicated)
+        if let Some(ref first_seg) = path.segments.first() {
+            let first_dep_id = format!("{}_{}", first_seg.module_name, 0);
+            if seen_main_fk_cols.insert(first_seg.fk_column.clone()) {
+                main_fk_map.push([first_seg.fk_column.clone(), first_dep_id]);
+            }
+        }
+    }
+
+    if test_paths.is_empty() {
+        return Ok(None);
+    }
+
+    // Add main entity as the LAST setup step
+    let source_schema = db
+        .get_schema_in_domain(schema_title, domain)
+        .await?
+        .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
+    let main_dep_id = source_schema.pg_table_name.clone();
+
+    if !seen_deps.contains(&main_dep_id) {
+        let main_api_path = format!("/api/{}/{}", domain, source_schema.api_path_segment);
+        let main_fields = build_test_data_json(db, schema_title, Some(domain)).await;
+
+        all_steps.push(IncludeSetupStep {
+            dep_id: main_dep_id.clone(),
+            api_path: main_api_path,
+            fields_json: main_fields,
+            fk_map: main_fk_map,
+        });
+    }
+
+    let has_multi = test_paths.len() >= 2;
+
+    Ok(Some(E2eIncludeConfig {
+        setup_steps: all_steps,
+        main_entity_id_ref: main_dep_id,
+        test_paths,
+        has_multi_include: has_multi,
+        test_list_include: has_list,
+    }))
 }

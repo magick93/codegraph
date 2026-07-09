@@ -28,15 +28,19 @@ walkdir = "2"
 async-trait = "0.1"
 futures = "0.3"
 tracing = "0.1"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rust_decimal = { version = "1", features = ["serde-with-str"] }
 uuid = { version = "1", features = ["v5"] }
 pathdiff = "0.2"
 ast-ifml = { path = "../ast-ifml" }
 tree-sitter-ifml = { path = "../tree-sitter-ifml" }
 auto-lsp = { version = "0.6", features = ["lsp_server"] }
+syn = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 codegraph-grafeo = { path = "../codegraph-grafeo" }
 tempfile = "3"
 insta = { version = "1", features = ["glob"] }
+syn = { version = "2", features = ["full", "parsing"] }
+proc-macro2 = "1"

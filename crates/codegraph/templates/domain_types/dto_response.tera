@@ -18,7 +18,7 @@ pub struct {{ entity_name }}Response {
 {%- if field.name == "id" %}{% continue %}{%- endif %}
 {%- if field.is_entity_ref %}
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub {{ field.name }}_id: Option<uuid::Uuid>,
+    pub {{ field.name }}: Option<uuid::Uuid>,
 {%- elif field.is_required %}
 {%- if field.is_array %}
     pub {{ field.name }}: Vec<{{ field.rust_type }}>,

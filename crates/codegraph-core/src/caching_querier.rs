@@ -25,6 +25,7 @@ type CodelistPropertyVal = Option<(CodeList, String)>;
 pub struct CachingQuerier<'a> {
     inner: &'a dyn GraphQuerier,
     schema_cache: RwLock<HashMap<String, Option<SchemaNode>>>,
+    schema_id_cache: RwLock<HashMap<String, Option<SchemaNode>>>,
     properties_cache: RwLock<HashMap<String, Vec<PropertyNode>>>,
     child_schemas_cache: RwLock<HashMap<String, Vec<SchemaNode>>>,
     composite_columns_cache: RwLock<HashMap<(String, String), Vec<CompositeColumn>>>,
@@ -37,9 +38,11 @@ pub struct CachingQuerier<'a> {
     extensions_cache: RwLock<HashMap<String, Vec<Extension>>>,
     composition_tree_cache: RwLock<HashMap<String, CompositionTree>>,
     allof_targets_cache: RwLock<HashMap<String, Vec<String>>>,
+    schemas_that_extend_cache: RwLock<HashMap<String, Vec<SchemaNode>>>,
     referencing_cache: RwLock<HashMap<String, Vec<String>>>,
-    referenced_cache: RwLock<HashMap<String, Vec<String>>>,
+    referenced_cache: RwLock<HashMap<String, Vec<SchemaNode>>>,
     property_ref_target_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
+    property_ref_target_by_id_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
     array_item_schema_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
 }
 
@@ -48,6 +51,7 @@ impl<'a> CachingQuerier<'a> {
         Self {
             inner,
             schema_cache: RwLock::new(HashMap::new()),
+            schema_id_cache: RwLock::new(HashMap::new()),
             properties_cache: RwLock::new(HashMap::new()),
             child_schemas_cache: RwLock::new(HashMap::new()),
             composite_columns_cache: RwLock::new(HashMap::new()),
@@ -60,9 +64,11 @@ impl<'a> CachingQuerier<'a> {
             extensions_cache: RwLock::new(HashMap::new()),
             composition_tree_cache: RwLock::new(HashMap::new()),
             allof_targets_cache: RwLock::new(HashMap::new()),
+            schemas_that_extend_cache: RwLock::new(HashMap::new()),
             referencing_cache: RwLock::new(HashMap::new()),
             referenced_cache: RwLock::new(HashMap::new()),
             property_ref_target_cache: RwLock::new(HashMap::new()),
+            property_ref_target_by_id_cache: RwLock::new(HashMap::new()),
             array_item_schema_cache: RwLock::new(HashMap::new()),
         }
     }
@@ -80,6 +86,14 @@ impl<'a> CachingQuerier<'a> {
             }
         }
 
+        // 1b. Build schema_id_cache from all_schemas
+        {
+            let mut cache = self.schema_id_cache.write().unwrap();
+            for schema in &all_schemas {
+                cache.insert(schema.schema_id.clone(), Some(schema.clone()));
+            }
+        }
+
         // 2. Bulk-load all properties → properties_cache
         let all_props = self.inner.list_all_properties().await?;
         {
@@ -94,13 +108,19 @@ impl<'a> CachingQuerier<'a> {
         }
 
         // 3. Bulk-load all schema references → referenced_cache
+        let schema_by_title: HashMap<&str, &SchemaNode> = all_schemas
+            .iter()
+            .map(|s| (s.title.as_str(), s))
+            .collect();
         let all_refs = self.inner.list_all_schema_references().await?;
         {
             let mut cache = self.referenced_cache.write().unwrap();
-            // Build per-source map
-            let mut ref_map: HashMap<String, Vec<String>> = HashMap::new();
+            // Build per-source map of SchemaNodes
+            let mut ref_map: HashMap<String, Vec<SchemaNode>> = HashMap::new();
             for (src, tgt) in &all_refs {
-                ref_map.entry(src.clone()).or_default().push(tgt.clone());
+                if let Some(schema) = schema_by_title.get(tgt.as_str()) {
+                    ref_map.entry(src.clone()).or_default().push((*schema).clone());
+                }
             }
             for (src, targets) in ref_map {
                 cache.insert(src, targets);
@@ -185,6 +205,29 @@ macro_rules! cached_pair {
 impl GraphQuerier for CachingQuerier<'_> {
     async fn get_schema(&self, title: &str) -> Result<Option<SchemaNode>, GraphError> {
         cached_single!(self, schema_cache, title, self.inner.get_schema(title))
+    }
+
+    async fn get_schema_by_id(&self, schema_id: &str) -> Result<Option<SchemaNode>, GraphError> {
+        {
+            let cache = self.schema_id_cache.read().unwrap();
+            if let Some(val) = cache.get(schema_id) {
+                return Ok(val.clone());
+            }
+        }
+        let result = self.inner.get_schema_by_id(schema_id).await?;
+        {
+            let mut cache = self.schema_id_cache.write().unwrap();
+            cache.insert(schema_id.to_string(), result.clone());
+        }
+        Ok(result)
+    }
+
+    async fn get_schema_in_domain(
+        &self,
+        title: &str,
+        domain: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        self.inner.get_schema_in_domain(title, domain).await
     }
 
     async fn list_schemas(&self, domain: Option<&str>) -> Result<Vec<SchemaNode>, GraphError> {
@@ -354,7 +397,16 @@ impl GraphQuerier for CachingQuerier<'_> {
         )
     }
 
-    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError> {
+    async fn get_schemas_that_extend(&self, parent_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+        cached_single!(
+            self,
+            schemas_that_extend_cache,
+            parent_title,
+            self.inner.get_schemas_that_extend(parent_title)
+        )
+    }
+
+    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
         cached_single!(
             self,
             referenced_cache,
@@ -376,6 +428,28 @@ impl GraphQuerier for CachingQuerier<'_> {
             self.inner
                 .get_property_ref_target(property_name, schema_title)
         )
+    }
+
+    async fn get_property_ref_target_by_id(
+        &self,
+        property_name: &str,
+        schema_id: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        cached_pair!(
+            self,
+            property_ref_target_by_id_cache,
+            property_name,
+            schema_id,
+            self.inner
+                .get_property_ref_target_by_id(property_name, schema_id)
+        )
+    }
+
+    async fn get_properties_by_schema_id(
+        &self,
+        schema_id: &str,
+    ) -> Result<Vec<PropertyNode>, GraphError> {
+        self.inner.get_properties_by_schema_id(schema_id).await
     }
 
     async fn get_array_item_schema(

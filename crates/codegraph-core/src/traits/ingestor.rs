@@ -21,6 +21,7 @@ pub trait GraphIngestor: Send + Sync {
     async fn ingest_property(
         &self,
         schema_title: &str,
+        schema_id: &str,
         prop: &PropertyNode,
     ) -> Result<(), GraphError>;
 

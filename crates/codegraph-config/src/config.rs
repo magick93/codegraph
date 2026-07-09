@@ -308,6 +308,13 @@ pub struct EntityConfig {
     /// (app)/org-chart/+page.server.ts and +page.svelte.
     #[serde(default)]
     pub has_orgchart: bool,
+    /// Allowed eager-load include paths for `?include=` query parameter.
+    /// Each entry is a relationship path like `"person"`, `"deployment"`,
+    /// or `"deployment.position"` (dot-delimited, max 3 levels).
+    /// `None` (default) = auto-discover from graph (children + entity-refs).
+    /// Explicit `[]` = disable includes for this entity.
+    #[serde(default)]
+    pub allow_include: Option<Vec<String>>,
 }
 
 /// Configuration for resolving a related entity into a tree response.
@@ -1020,5 +1027,86 @@ role = "root"
 "#;
         let config = parse_domain_config_str(toml_str).unwrap();
         assert_eq!(config.defaults.types_import_prefix, "crate::structured");
+    }
+
+    #[test]
+    fn parse_allow_include_present() {
+        let toml = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType"]
+
+[domains.hr.entity_config.WorkerType]
+role = "root"
+allow_include = ["person", "deployment", "deployment.position"]
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        let hr = &config.domains["hr"];
+        let worker = &hr.entity_config["WorkerType"];
+        assert_eq!(
+            worker.allow_include.as_deref(),
+            Some(&["person".to_string(), "deployment".to_string(), "deployment.position".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn parse_allow_include_absent() {
+        let toml = r#"
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType"]
+
+[domains.hr.entity_config.WorkerType]
+role = "root"
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        let worker = &config.domains["hr"].entity_config["WorkerType"];
+        assert!(worker.allow_include.is_none());
+    }
+
+    #[test]
+    fn parse_allow_include_empty() {
+        let toml = r#"
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType"]
+
+[domains.hr.entity_config.WorkerType]
+role = "root"
+allow_include = []
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        let worker = &config.domains["hr"].entity_config["WorkerType"];
+        assert_eq!(worker.allow_include, Some(vec![]));
+    }
+
+    #[test]
+    fn parse_allow_include_non_ascii() {
+        let toml = r#"
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType"]
+
+[domains.hr.entity_config.WorkerType]
+role = "root"
+allow_include = ["person"]
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        let worker = &config.domains["hr"].entity_config["WorkerType"];
+        assert_eq!(
+            worker.allow_include.as_deref(),
+            Some(&["person".to_string()][..])
+        );
     }
 }

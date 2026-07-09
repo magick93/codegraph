@@ -1,4 +1,3 @@
-use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -7,13 +6,16 @@ use codegraph_core::types::ParentCandidate;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template_with_project;
 use crate::generate::filter_fields::{
     resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
 };
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
+use crate::generate::type_registry;
+use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
+use super::include_path::{ResolvedIncludePath, resolve_include_paths};
 use super::router::{ChildInfo, CrossRefInfo};
 
 #[derive(Debug, Serialize)]
@@ -69,6 +71,13 @@ pub struct HandlerContext {
     /// When true, the find_tree method returns Vec<serde_json::Value> instead of Vec<Response>.
     #[serde(default)]
     pub tree_include: bool,
+    /// When true, the get_by_id handler returns typed WithIncludeResponse instead of serde_json::Value.
+    pub has_include: bool,
+    /// Resolved include paths for `?include=` query parameter.
+    pub include_paths: Vec<ResolvedIncludePath>,
+    /// Resolved `use` import statements for types referenced by this handler.
+    /// Populated via `type_registry::resolve_imports()` instead of hard-coded template paths.
+    pub handler_imports: Vec<String>,
 }
 
 pub struct HandlerGenerator {
@@ -106,7 +115,7 @@ impl EntityGenerator for HandlerGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -181,7 +190,7 @@ impl EntityGenerator for HandlerGenerator {
                     if parent_ref.is_none() {
                         parent_ref = Some(format!("{}_id", codegraph_naming::to_snake_case(parent_name)));
                     }
-                    if let Ok(Some(parent_schema)) = db.get_schema(parent_title).await {
+                    if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, &domain).await {
                         resolved_parent_path_segment = Some(parent_schema.api_path_segment.clone());
                         resolved_parent_module_name = Some(parent_schema.pg_table_name.clone());
                         resolved_parent_domain = if config
@@ -209,7 +218,7 @@ impl EntityGenerator for HandlerGenerator {
 
         // 2. Fall back to graph parent_candidates if manual config didn't resolve parent.
         // Only nest when the parent is in the same domain (matching router behavior).
-        if resolved_parent_path_segment.is_none() {
+        if resolved_parent_path_segment.is_none() && resolved_role != "root" {
             for pc in &self.parent_candidates {
                 let child_name = super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
                 if child_name == stripped_title {
@@ -221,7 +230,7 @@ impl EntityGenerator for HandlerGenerator {
                         .map(|d| d.entities.contains(&pc.parent_title))
                         .unwrap_or(false)
                         || db
-                            .get_schema(&pc.parent_title)
+                            .get_schema_in_domain(&pc.parent_title, &domain)
                             .await
                             .ok()
                             .flatten()
@@ -238,7 +247,7 @@ impl EntityGenerator for HandlerGenerator {
                     if parent_ref.is_none() {
                         parent_ref = Some(crate::generate::fk_column_for_candidate(pc, &config.defaults.type_suffix));
                     }
-                    if let Ok(Some(parent_schema)) = db.get_schema(&pc.parent_title).await {
+                    if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, &domain).await {
                         resolved_parent_path_segment = Some(parent_schema.api_path_segment.clone());
                         resolved_parent_module_name = Some(parent_schema.pg_table_name.clone());
                         resolved_parent_domain = Some(domain.clone());
@@ -258,7 +267,7 @@ impl EntityGenerator for HandlerGenerator {
             let parent_name = super::router::strip_suffix(&pc.parent_title, &config.defaults.type_suffix);
             if parent_name == stripped_title {
                 let child_name = super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
-                if let Ok(Some(child_schema)) = db.get_schema(&pc.child_title).await {
+                if let Ok(Some(child_schema)) = db.get_schema_in_domain(&pc.child_title, &domain).await {
                     resolved_children.push(ChildInfo {
                         entity_name: child_schema.rust_type_name.clone(),
                         module_name: child_schema.pg_table_name.clone(),
@@ -285,7 +294,7 @@ impl EntityGenerator for HandlerGenerator {
                                 if super::router::strip_suffix(parent_title, &config.defaults.type_suffix) == stripped_title
                                 {
                                     let child_name = super::router::strip_suffix(other_title, &config.defaults.type_suffix);
-                                    if let Ok(Some(child_schema)) = db.get_schema(other_title).await
+                                    if let Ok(Some(child_schema)) = db.get_schema_in_domain(other_title, &domain).await
                                     {
                                         resolved_children.push(ChildInfo {
                                             entity_name: child_schema.rust_type_name.clone(),
@@ -318,7 +327,8 @@ impl EntityGenerator for HandlerGenerator {
                     .map(|c| c.entity_name.as_str())
                     .collect();
 
-                for ref_title in &referenced {
+                for ref_schema_node in &referenced {
+                    let ref_title = &ref_schema_node.title;
                     let ref_entity_name = super::router::strip_suffix(ref_title, &config.defaults.type_suffix);
 
                     if ref_entity_name == entity_name {
@@ -332,7 +342,7 @@ impl EntityGenerator for HandlerGenerator {
                     }
 
                     // Only include refs that are entities in any domain
-                    if let Ok(Some(ref_schema)) = db.get_schema(ref_title).await {
+                    if let Ok(Some(ref_schema)) = db.get_schema_in_domain(ref_title, &domain).await {
                         if ref_schema.pg_table_name.is_empty() {
                             continue;
                         }
@@ -443,7 +453,7 @@ impl EntityGenerator for HandlerGenerator {
                         })
                 });
                 if let Some(ref gpt) = gp_title {
-                    if let Ok(Some(gp_schema)) = db.get_schema(gpt).await {
+                    if let Ok(Some(gp_schema)) = db.get_schema_in_domain(gpt, &domain).await {
                         let gp_seg = if !gp_schema.api_path_segment.is_empty() {
                             gp_schema.api_path_segment.clone()
                         } else {
@@ -476,8 +486,84 @@ impl EntityGenerator for HandlerGenerator {
                 (None, None, None)
             };
 
+        // Resolve include paths from config. Skip non-root entities unless they
+        // have explicit allow_include configuration.
+        let has_explicit_include = entity_cfg
+            .and_then(|ec| ec.allow_include.as_ref())
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let is_root = entity_cfg
+            .and_then(|ec| ec.role.as_deref())
+            .map(|r| r == "root")
+            .unwrap_or(true);
+        let include_paths = if has_explicit_include || is_root {
+            if let Some(ec) = entity_cfg {
+                resolve_include_paths(db, config, &domain, schema_title, ec.allow_include.as_ref()).await?
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        // Deduplicate include paths by alias to prevent duplicate struct fields
+        // in the generated handler code (auto-discover can produce the same child
+        // entity through multiple FK relationships).
+        let include_paths = {
+            let mut seen = std::collections::HashSet::new();
+            include_paths
+                .into_iter()
+                .filter(|path| seen.insert(path.alias.clone()))
+                .collect::<Vec<_>>()
+        };
+
         let nested_filter_fields =
             resolve_nested_filter_fields(db, schema_title, &module_name, &domain, config).await?;
+
+        // Resolve handler imports via TypeRegistry instead of hard-coded template paths.
+        let has_include = !include_paths.is_empty();
+        let mut handler_refs: Vec<String> = vec![
+            "AppState".into(),
+            "AppError".into(),
+            "ApiKeyInfo".into(),
+            format!("{}Response", entity_name),
+            format!("{}LinkedResponse", entity_name),
+            format!("{}Repository", entity_name),
+            "BulkItemError".into(),
+        ];
+        if operations.contains(&"create".to_string()) {
+            handler_refs.push(format!("Create{}Request", entity_name));
+        }
+        if operations.contains(&"update".to_string()) {
+            handler_refs.push(format!("Update{}Request", entity_name));
+        }
+        if has_include {
+            handler_refs.push(format!("{}WithIncludeResponse", entity_name));
+            handler_refs.push(format!("{}IncludedData", entity_name));
+            // Add combined response types for dot-notation paths and VO response
+            // types for child_table_override paths — the handler's match arms
+            // reference these types directly in merge patterns.
+            for path in &include_paths {
+                if path.segments.len() > 1 {
+                    handler_refs.push(format!("{}CombinedResponse", path.segments[0].entity_name));
+                }
+                if let Some(over) = path.segments.first().and_then(|s| s.child_table_override.as_ref()) {
+                    handler_refs.push(over.response_type.clone());
+                }
+            }
+        }
+        // Note: Create{entity_name}Body and {entity_name}BulkCreateResponse are
+        // defined inline by handler.tera and must NOT be registered in the type
+        // registry or added to handler_refs. Doing so causes E0432/E0255 when
+        // multiple domains share an entity name (e.g. "Order" in screening AND
+        // assessments): the second handler's registration silently fails (name
+        // collision), resolve_imports generates wrong cross-module imports for
+        // types that should be local, producing duplicate definitions and
+        // non-existent type references in the generated code.
+        let handler_caller: Vec<String> = vec![
+            "crate".into(), "api".into(), domain.clone(), format!("{}_handler", module_name),
+        ];
+        let handler_imports = type_registry::resolve_imports(&handler_refs, &handler_caller);
 
         let ctx = HandlerContext {
             has_create: operations.contains(&"create".to_string()),
@@ -517,6 +603,9 @@ impl EntityGenerator for HandlerGenerator {
                 .and_then(|ec| ec.tree_include.as_ref())
                 .map(|v| !v.is_empty())
                 .unwrap_or(false),
+            has_include,
+            include_paths: include_paths.clone(),
+            handler_imports,
         };
 
         let content = render_template_with_project(tera, "api/handler.tera", &ctx, project)?;

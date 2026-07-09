@@ -476,6 +476,7 @@ pub struct DdlContext {
     pub embeddings: Vec<EmbeddingContext>,
     /// Whether this entity tracks soft deletes and audit columns.
     pub is_auditable: bool,
+    pub is_codelist: bool,
     /// Whether this entity supports demo data flagging.
     pub has_demo_flag: bool,
 }
@@ -533,6 +534,13 @@ pub struct ForeignKeyDef {
     pub references_table: String,
     pub references_column: String,
     pub on_delete: String,
+}
+
+/// Strip the Rust `r#` keyword escaping prefix from a SQL identifier.
+/// This prevents `#` characters from leaking into constraint names
+/// (e.g. fk_certification_r#type → fk_certification_type).
+fn strip_rsharp(name: &str) -> String {
+    name.strip_prefix("r#").unwrap_or(name).to_string()
 }
 
 #[derive(Debug, Serialize)]
@@ -665,7 +673,7 @@ fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts
             });
             if let Some(ref fk) = col.fk_target {
                 foreign_keys.push(ForeignKeyDef {
-                    column_name: raw_name.to_string(),
+                    column_name: strip_rsharp(raw_name),
                     column: col_name,
                     references_schema: fk.schema.clone(),
                     references_table: fk.table.clone(),
@@ -692,7 +700,7 @@ fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts
             });
             if let Some(ref fk) = col.fk_target {
                 foreign_keys.push(ForeignKeyDef {
-                    column_name: col_name.clone(),
+                    column_name: strip_rsharp(&col_name),
                     column: col_name,
                     references_schema: fk.schema.clone(),
                     references_table: fk.table.clone(),
@@ -933,7 +941,7 @@ impl DdlGenerator {
         config: &DomainConfig,
     ) -> Result<DdlContext> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -997,7 +1005,7 @@ impl DdlGenerator {
             if let Some(ec) = entity_cfg {
                 if ec.role.as_deref() == Some("child") {
                     if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) = db.get_schema(parent_title).await {
+                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, domain).await {
                             let parent_domain = if config
                                 .domains
                                 .get(domain)
@@ -1009,7 +1017,7 @@ impl DdlGenerator {
                                 parent_schema.domain.as_deref().unwrap_or(domain)
                             };
                             foreign_keys.push(ForeignKeyDef {
-                                column_name: fk_col.clone(),
+                                column_name: strip_rsharp(&fk_col),
                                 column: fk_col.clone(),
                                 references_schema: parent_domain.to_string(),
                                 references_table: parent_schema.pg_table_name.clone(),
@@ -1026,7 +1034,7 @@ impl DdlGenerator {
                 if let Some(pc) = self.parent_candidates.iter().find(|pc| {
                     crate::generate::api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix) == stripped
                 }) {
-                    if let Ok(Some(parent_schema)) = db.get_schema(&pc.parent_title).await {
+                    if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, domain).await {
                         let parent_domain = if config
                             .domains
                             .get(domain)
@@ -1038,7 +1046,7 @@ impl DdlGenerator {
                             parent_schema.domain.as_deref().unwrap_or(domain)
                         };
                         foreign_keys.push(ForeignKeyDef {
-                            column_name: fk_col.clone(),
+                            column_name: strip_rsharp(&fk_col),
                             column: fk_col,
                             references_schema: parent_domain.to_string(),
                             references_table: parent_schema.pg_table_name.clone(),
@@ -1064,7 +1072,7 @@ impl DdlGenerator {
                 });
                 foreign_keys.push(ForeignKeyDef {
                     column: hierarchy_field.clone(),
-                    column_name: hierarchy_field.clone(),
+                    column_name: strip_rsharp(hierarchy_field),
                     references_schema: schema_name.clone(),
                     references_table: table_name.clone(),
                     references_column: "id".to_string(),
@@ -1096,6 +1104,53 @@ impl DdlGenerator {
         {
             let mut seen = HashSet::new();
             check_constraints.retain(|chk| seen.insert(chk.name.clone()));
+        }
+
+        // Query graph properties for entity-reference columns that the composition
+        // tree may have missed (e.g. cross-domain references where the target schema
+        // can't be resolved). The entity model generator includes these columns,
+        // so the DDL must match to avoid "column does not exist" at runtime.
+        if let Ok(props) = db.get_properties(schema_title).await {
+            let existing_names: std::collections::HashSet<String> =
+                columns.iter().map(|c| c.name.clone()).collect();
+            for prop in &props {
+                let kind = prop.effective_kind();
+                let is_fk_candidate = kind == Some(RefClassificationKind::EntityReference)
+                    || (kind == Some(RefClassificationKind::ValueObject) && !prop.is_array);
+                if !is_fk_candidate {
+                    continue;
+                }
+                let base = prop.rust_field_name.strip_prefix("r#").unwrap_or(&prop.rust_field_name);
+                let col_name = if base.ends_with("_id") {
+                    base.to_string()
+                } else {
+                    format!("{}_id", base)
+                };
+                if !existing_names.contains(col_name.as_str()) {
+                    columns.push(ColumnDef {
+                        name: col_name.clone(),
+                        pg_type: "UUID".to_string(),
+                        nullable: true,
+                        default: None,
+                        is_primary_key: false,
+                        is_array: false,
+                    });
+                    // Try to resolve the FK target for the constraint
+                    if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, schema_title).await {
+                        if !target.pg_table_name.is_empty() {
+                            let fk_schema = target.domain.as_deref().unwrap_or(&schema_name);
+                            foreign_keys.push(ForeignKeyDef {
+                                column_name: strip_rsharp(&prop.rust_field_name),
+                                column: col_name,
+                                references_schema: fk_schema.to_string(),
+                                references_table: target.pg_table_name.clone(),
+                                references_column: "id".to_string(),
+                                on_delete: "SET NULL".to_string(),
+                            });
+                        }
+                    }
+                }
+            }
         }
 
         // Convert child CompositionNodes → ChildTableDefs
@@ -1220,6 +1275,14 @@ impl DdlGenerator {
             .and_then(|d| d.auditable)
             .unwrap_or(true);
 
+        // Detect whether this entity has a _codelist.sql migration (codelist seed data).
+        // The codelist generator only creates these for codelist entities in the
+        // 'common' domain. Entities outside 'common' are always created by the entity
+        // DDL generator with id UUID PRIMARY KEY, even if classified as codelists.
+        let has_codelist_seed = schema.is_codelist
+            && domain == "common"
+            && !db.get_enum_values(schema_title).await.unwrap_or_default().is_empty();
+
         Ok(DdlContext {
             schema_name,
             table_name,
@@ -1242,6 +1305,7 @@ impl DdlGenerator {
             embeddings,
             is_auditable,
             has_demo_flag: is_auditable,
+            is_codelist: schema.is_codelist,
         })
     }
 }
@@ -1547,7 +1611,7 @@ impl EntityGenerator for DdlGenerator {
             content: table_sql,
         });
 
-        // RLS policy — only on dialects that support it
+        // RLS policy — only on tenant-scoped tables with RLS support
         if ctx.is_tenant_scoped && self.dialect.has_rls() {
             let rls_sql = render_template_with_project(
                 tera,

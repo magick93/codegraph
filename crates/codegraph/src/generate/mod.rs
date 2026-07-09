@@ -4,6 +4,7 @@ pub mod ifml;
 pub mod report;
 pub mod template_engine;
 pub mod traits;
+pub mod type_registry;
 
 pub mod api;
 pub mod cli;
@@ -117,7 +118,13 @@ pub async fn resolve_parent_fk_column_same_domain(
             }
         }
     }
-    // 2. Graph fallback with same-domain check
+    // 2. Graph fallback with same-domain check (only for non-root entities)
+    let effective_role = entity_cfg
+        .and_then(|ec| ec.role.as_deref())
+        .unwrap_or("root");
+    if effective_role == "root" {
+        return None;
+    }
     let stripped = api::router::strip_suffix(schema_title, &config.defaults.type_suffix);
     for pc in parent_candidates {
         let child_name = api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
@@ -130,7 +137,7 @@ pub async fn resolve_parent_fk_column_same_domain(
                 .unwrap_or(false);
             let in_same_domain = in_explicit_list
                 || db
-                    .get_schema(&pc.parent_title)
+                    .get_schema_in_domain(&pc.parent_title, domain)
                     .await
                     .ok()
                     .flatten()
@@ -192,6 +199,11 @@ pub struct ProjectConfig {
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
     pub types_import_prefix: String,
+    /// Git revision SHA used for fallback path dependencies in generated Cargo.toml.
+    /// When domain_types_base is empty, the domain types Cargo.toml uses this rev
+    /// to reference codegraph-type-contracts as a git dependency.
+    #[serde(default)]
+    pub codegraph_rev: String,
 }
 
 impl Default for ProjectConfig {
@@ -199,7 +211,7 @@ impl Default for ProjectConfig {
         Self {
             app_name: "app".into(),
             domain_types_crate: "domain_types".into(),
-            hooks_api_crate: "hooks_api".into(),
+            hooks_api_crate: String::new(),
             api_title: "HR Open API".into(),
             generator_name: "codegraph".into(),
             domain_types_base: String::new(),
@@ -209,6 +221,7 @@ impl Default for ProjectConfig {
             decision_engine_base: String::new(),
             codegraph_workflow_base: String::new(),
             type_contracts_base: String::new(),
+            codegraph_rev: String::new(),
             database_target: "postgres".to_string(),
             types_import_prefix: "codegraph_type_contracts".into(),
         }
@@ -359,6 +372,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let default_project = ProjectConfig::default();
     let project = project_config.unwrap_or(&default_project);
     init_project_config(project.clone());
+    type_registry::init_type_registry();
 
     // Create the database dialect based on project config.
     let current_target = DatabaseTarget::from_config(&project.database_target);
@@ -372,6 +386,51 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // Pre-warm the cache with bulk queries to avoid hundreds of individual
     // graph queries during generation.
     cached_db.warm().await.map_err(Error::Graph)?;
+
+    // Register framework types so generators can resolve them without hard-coded paths.
+    type_registry::register_framework_types();
+
+    // Pre-register all expected entity types so types from entities later in
+    // the generation order (e.g. CertificationResponse referenced by Person's
+    // include DTOs) are resolvable when earlier entities process their imports.
+    let suffix = &config.defaults.type_suffix;
+    for (domain_name, domain_entry) in &config.domains {
+        for entity_title in &domain_entry.entities {
+            let entity_name = codegraph_naming::strip_suffix(entity_title, suffix);
+            let module_name = codegraph_naming::to_snake_case(&entity_name);
+            let base = || -> Vec<String> {
+                vec!["crate".into(), "domain".into(), domain_name.clone(), module_name.clone()]
+            };
+            type_registry::register_type(
+                &format!("{}Response", entity_name),
+                [base(), vec!["dto_response".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("{}LinkedResponse", entity_name),
+                [base(), vec!["dto_response".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("{}Repository", entity_name),
+                [base(), vec!["repository".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("Create{}Request", entity_name),
+                [base(), vec!["dto_create".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("Update{}Request", entity_name),
+                [base(), vec!["dto_update".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("{}WithIncludeResponse", entity_name),
+                [base(), vec!["dto_included".into()]].concat(),
+            );
+            type_registry::register_type(
+                &format!("{}IncludedData", entity_name),
+                [base(), vec!["dto_included".into()]].concat(),
+            );
+        }
+    }
 
     // Whether webhook generators are active.  Derived from build_plan when available;
     // defaults to true for backward compatibility (all existing profiles include
@@ -476,6 +535,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 .with_parent_candidates(parent_candidates.clone()),
         ) as Box<dyn EntityGenerator>,
         Box::new(ddd::event::EventGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
+        Box::new(ddd::dto::DtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         Box::new(
             api::handler::HandlerGenerator::new(output_dir)
                 .with_parent_candidates(parent_candidates.clone()),
@@ -525,7 +585,6 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             ),
         ) as Box<dyn EntityGenerator>,
         Box::new(cli::command::CliCommandGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
-        Box::new(ddd::dto::DtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         // gRPC entity generators
         Box::new(grpc::proto::GrpcProtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         Box::new(grpc::service::GrpcServiceGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
@@ -679,32 +738,30 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
-    // Per-entity generators — run entities in parallel, generators sequentially per entity.
-    // Each entity is independent, so we can safely parallelize across entities.
-    let entity_results: Vec<_> = futures::future::join_all(order.iter().map(|entry| {
-        let entity_gens = &entity_gens;
-        async move {
-            let mut entity_files = Vec::new();
-            let mut errors = Vec::new();
-            for gen in entity_gens.iter() {
-                match gen
-                    .generate(db, &entry.schema_title, &entry.domain, config, tera, project)
-                    .await
-                {
-                    Ok(files) => entity_files.extend(files),
-                    Err(e) => {
-                        errors.push(report::GenerationError {
-                            entity: entry.schema_title.clone(),
-                            generator: gen.name().to_string(),
-                            source: e,
-                        });
-                    }
+    // Per-entity generators — run entities sequentially to ensure TypeRegistry
+    // is populated for earlier entities before later entities reference their types.
+    // Within each entity, generators run sequentially.
+    let mut entity_results: Vec<(Vec<GeneratedFile>, Vec<report::GenerationError>)> = Vec::new();
+    for entry in &order {
+        let mut entity_files = Vec::new();
+        let mut errors = Vec::new();
+        for gen in entity_gens.iter() {
+            match gen
+                .generate(db, &entry.schema_title, &entry.domain, config, tera, project)
+                .await
+            {
+                Ok(files) => entity_files.extend(files),
+                Err(e) => {
+                    errors.push(report::GenerationError {
+                        entity: entry.schema_title.clone(),
+                        generator: gen.name().to_string(),
+                        source: e,
+                    });
                 }
             }
-            (entity_files, errors)
         }
-    }))
-    .await;
+        entity_results.push((entity_files, errors));
+    }
 
     // Entity migrations start at 500 to avoid overlap with codelist range (10..200).
     // Deduplicate migration files by their unprefixed base name: two different schema
@@ -715,42 +772,39 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         std::collections::HashSet::new();
     let mut entity_seq = 500;
     for (entity_files, errors) in entity_results.into_iter() {
-        if errors.is_empty() {
-            for file in entity_files {
-                // Check for duplicate migration base names before assigning seq number.
-                let is_migration = file
-                    .path
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .is_some_and(|d| d == "migrations");
-                if is_migration {
-                    if let Some(name) = file.path.file_name().and_then(|n| n.to_str()) {
-                        let base = name
-                            .trim_start_matches(|c: char| c.is_ascii_digit() || c == '_')
-                            .to_string();
-                        if !seen_migration_names.insert(base.clone()) {
-                            // Two different schema titles produced the same pg_table_name
-                            // (e.g. "AssessmentAccessType" and a cross-domain ref
-                            // "AssessmentAccess" both produce assessments_assessment_access.sql).
-                            // Keep the first occurrence; skip subsequent ones.
-                            tracing::warn!(
-                                migration = %name,
-                                base = %base,
-                                "skipping duplicate migration — same pg_table_name produced by \
-                                 multiple schema titles; first occurrence wins"
-                            );
-                            continue;
-                        }
+        for file in entity_files {
+            // Check for duplicate migration base names before assigning seq number.
+            let is_migration = file
+                .path
+                .parent()
+                .and_then(|p| p.file_name())
+                .is_some_and(|d| d == "migrations");
+            if is_migration {
+                if let Some(name) = file.path.file_name().and_then(|n| n.to_str()) {
+                    let base = name
+                        .trim_start_matches(|c: char| c.is_ascii_digit() || c == '_')
+                        .to_string();
+                    if !seen_migration_names.insert(base.clone()) {
+                        // Two different schema titles produced the same pg_table_name
+                        // (e.g. "AssessmentAccessType" and a cross-domain ref
+                        // "AssessmentAccess" both produce assessments_assessment_access.sql).
+                        // Keep the first occurrence; skip subsequent ones.
+                        tracing::warn!(
+                            migration = %name,
+                            base = %base,
+                            "skipping duplicate migration — same pg_table_name produced by \
+                             multiple schema titles; first occurrence wins"
+                        );
+                        continue;
                     }
                 }
-                let file = prefix_migration_path(file, entity_seq);
-                entity_seq += 1;
-                write_output(&file)?;
-                report.files.push(file);
             }
-        } else {
-            report.errors.extend(errors);
+            let file = prefix_migration_path(file, entity_seq);
+            entity_seq += 1;
+            write_output(&file)?;
+            report.files.push(file);
         }
+        report.errors.extend(errors);
     }
 
     // Codelist SQL migration generators (codelists are not entities, run separately)
@@ -952,9 +1006,18 @@ pub async fn compute_generation_order(
         .map_err(|e| Error::Config(e.to_string()))?;
 
     // Build a set of entity titles present in each domain's graph data.
+    // We include all schemas that have a pg_table_name (meaning they produce
+    // entity .rs files), not just is_entity=true schemas. This ensures that
+    // ValueObject, CompositeWrapper, and other non-root types referenced by
+    // DTO/repository code as crate::entity::<module>:: actually have files.
+    // Inline/local definitions (parent_schema.is_some()) are excluded since
+    // they are generated recursively as child entities from their parent.
     let mut graph_entities_by_domain: HashMap<String, HashSet<String>> = HashMap::new();
     for schema in &all_schemas {
-        if !schema.is_entity {
+        if schema.pg_table_name.is_empty() {
+            continue;
+        }
+        if schema.parent_schema.is_some() {
             continue;
         }
         let domain = schema.domain.as_deref().unwrap_or("");
@@ -996,7 +1059,9 @@ pub async fn compute_generation_order(
             }
         }
         for title in &graph_entities {
-            domain_titles.insert(title.clone());
+            if !exclude.contains(title.as_str()) && !force_vo.contains(title.as_str()) {
+                domain_titles.insert(title.clone());
+            }
         }
 
         for title in &domain_titles {
@@ -1725,6 +1790,11 @@ fn prune_entity_mod(src_dir: &Path) -> Result<Option<GeneratedFile>> {
     }
 
     scan_dir(&domain_dir, prefix, &mut used)?;
+    // Also scan api/ for entity references (e.g., media upload handlers).
+    let api_dir = src_dir.join("api");
+    if api_dir.is_dir() {
+        scan_dir(&api_dir, prefix, &mut used)?;
+    }
 
     if used.is_empty() {
         return Ok(None);

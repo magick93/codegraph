@@ -1,5 +1,6 @@
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::resolve_field;
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
@@ -44,13 +45,13 @@ pub async fn resolve_filter_fields(
     let mut seen = std::collections::HashSet::new();
     let props: Vec<_> = all_props
         .into_iter()
-        .filter(|p| seen.insert(p.rust_field_name.clone()))
+        .filter(|p| seen.insert(resolve_field(p).rust_field_name))
         .collect();
 
     let mut fields = Vec::new();
 
     for prop in &props {
-        if EXCLUDED_COLUMNS.contains(&prop.rust_field_name.as_str()) {
+        if EXCLUDED_COLUMNS.contains(&resolve_field(prop).rust_field_name.as_str()) {
             continue;
         }
         if prop.is_array {
@@ -64,7 +65,7 @@ pub async fn resolve_filter_fields(
             Some(list) => {
                 // Explicit list: include only named fields.
                 list.iter()
-                    .any(|f| f == &prop.name || f == &prop.rust_field_name)
+                    .any(|f| f == &prop.name || f == &resolve_field(prop).rust_field_name)
             }
             None => {
                 // Auto-discovery heuristic.
@@ -73,9 +74,10 @@ pub async fn resolve_filter_fields(
         };
 
         if dominated {
+            let field_def = resolve_field(prop);
             fields.push(FilterFieldInfo {
-                field_name: prop.rust_field_name.clone(),
-                pg_column_name: prop.pg_column_name.clone(),
+                field_name: field_def.rust_field_name,
+                pg_column_name: field_def.column_name,
                 rust_type: prop.rust_field_type.clone(),
                 is_nullable: !prop.is_required,
             });
@@ -155,7 +157,7 @@ pub async fn resolve_nested_filter_fields(
     let mut seen_props = std::collections::HashSet::new();
     let props: Vec<_> = all_props
         .into_iter()
-        .filter(|p| seen_props.insert(p.rust_field_name.clone()))
+        .filter(|p| seen_props.insert(resolve_field(p).rust_field_name))
         .collect();
 
     // Collect entity titles so we can skip entity-reference FKs (they aren't child tables).
@@ -163,7 +165,7 @@ pub async fn resolve_nested_filter_fields(
         db.get_entity_names().await?.into_iter().collect();
 
     for prop in &props {
-        if EXCLUDED_COLUMNS.contains(&prop.rust_field_name.as_str()) {
+        if EXCLUDED_COLUMNS.contains(&resolve_field(prop).rust_field_name.as_str()) {
             continue;
         }
 
@@ -207,23 +209,28 @@ pub async fn resolve_nested_filter_fields(
             continue;
         }
 
+        let prop_def = resolve_field(prop);
         let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
             "{}_{}",
-            parent_table_name, prop.pg_column_name
+            parent_table_name, prop_def.column_name
         ));
         let child_fk = format!("{}_id", parent_table_name);
-        let child_field_prefix = &prop.rust_field_name;
+        let child_field_prefix = prop_def.rust_field_name;
 
         // Get child properties and find filterable columns.
         let child_props = db.get_properties(&target.title).await.unwrap_or_default();
         let mut seen_child = std::collections::HashSet::new();
         let child_props: Vec<_> = child_props
             .into_iter()
-            .filter(|p| p.rust_field_name != "id" && seen_child.insert(p.rust_field_name.clone()))
+            .filter(|p| {
+                let p_def = resolve_field(p);
+                p_def.rust_field_name != "id" && seen_child.insert(p_def.rust_field_name)
+            })
             .collect();
 
         for cprop in &child_props {
-            if EXCLUDED_COLUMNS.contains(&cprop.rust_field_name.as_str()) {
+            let cprop_def = resolve_field(cprop);
+            if EXCLUDED_COLUMNS.contains(&cprop_def.rust_field_name.as_str()) {
                 continue;
             }
             if cprop.is_array || cprop.rust_field_type.starts_with("Vec<") {
@@ -250,7 +257,7 @@ pub async fn resolve_nested_filter_fields(
                     }
                     let gc_table_name = codegraph_naming::truncate_pg_identifier(&format!(
                         "{}_{}",
-                        child_table_name, cprop.pg_column_name
+                        child_table_name, cprop_def.column_name
                     ));
                     let gc_fk = format!(
                         "{}_id",
@@ -262,9 +269,11 @@ pub async fn resolve_nested_filter_fields(
                         .unwrap_or_default();
                     let mut seen_gc = std::collections::HashSet::new();
                     for gprop in gc_props.into_iter().filter(|p| {
-                        p.rust_field_name != "id" && seen_gc.insert(p.rust_field_name.clone())
+                        let p_def = resolve_field(p);
+                        p_def.rust_field_name != "id" && seen_gc.insert(p_def.rust_field_name)
                     }) {
-                        if EXCLUDED_COLUMNS.contains(&gprop.rust_field_name.as_str()) {
+                        let gprop_def = resolve_field(&gprop);
+                        if EXCLUDED_COLUMNS.contains(&gprop_def.rust_field_name.as_str()) {
                             continue;
                         }
                         if gprop.is_array || gprop.rust_field_type.starts_with("Vec<") {
@@ -276,13 +285,13 @@ pub async fn resolve_nested_filter_fields(
                         nested.push(NestedFilterFieldInfo {
                             filter_key: format!(
                                 "{}.{}.{}",
-                                child_field_prefix, cprop.rust_field_name, gprop.rust_field_name
+                                child_field_prefix, cprop_def.rust_field_name, gprop_def.rust_field_name
                             ),
                             sql_table: format!("\"{}\".\"{}\"", schema_name, gc_table_name),
                             sql_schema: schema_name.to_string(),
                             sql_table_name: gc_table_name.clone(),
                             parent_fk_column: gc_fk.clone(),
-                            pg_column_name: gprop.pg_column_name.clone(),
+                            pg_column_name: gprop_def.column_name,
                             rust_type: gprop.rust_field_type.clone(),
                             is_nullable: !gprop.is_required,
                             intermediate_join: Some(IntermediateJoin {
@@ -301,12 +310,12 @@ pub async fn resolve_nested_filter_fields(
             }
 
             nested.push(NestedFilterFieldInfo {
-                filter_key: format!("{}.{}", child_field_prefix, cprop.rust_field_name),
+                filter_key: format!("{}.{}", child_field_prefix, cprop_def.rust_field_name),
                 sql_table: format!("\"{}\".\"{}\"", schema_name, child_table_name),
                 sql_schema: schema_name.to_string(),
                 sql_table_name: child_table_name.clone(),
                 parent_fk_column: child_fk.clone(),
-                pg_column_name: cprop.pg_column_name.clone(),
+                pg_column_name: cprop_def.column_name,
                 rust_type: cprop.rust_field_type.clone(),
                 is_nullable: !cprop.is_required,
                 intermediate_join: None,
@@ -332,7 +341,7 @@ pub async fn resolve_nested_filter_fields(
             }
 
             // Resolve the child entity's schema from the graph.
-            let child_schema = db.get_schema(config_key).await.ok().flatten();
+            let child_schema = db.get_schema_in_domain(config_key, schema_name).await.ok().flatten();
             let Some(child_schema) = child_schema else {
                 continue;
             };
@@ -396,10 +405,10 @@ fn is_auto_filterable(prop: &codegraph_core::types::PropertyNode) -> bool {
         | Some(RefClassificationKind::CodelistCheck)
         | Some(RefClassificationKind::InlineEnum) => true,
         // Entity reference FKs are filterable (only actual FK columns, not navigation properties).
-        Some(RefClassificationKind::EntityReference) => prop.pg_column_name.ends_with("_id"),
+        Some(RefClassificationKind::EntityReference) => resolve_field(prop).column_name.ends_with("_id"),
         // Primitive fields whose name ends with `_id` are natural identifiers.
         Some(RefClassificationKind::PrimitiveWrapper) | None => {
-            prop.pg_column_name.ends_with("_id")
+            resolve_field(prop).column_name.ends_with("_id")
         }
         // Everything else (ValueObject, CompositeWrapper, ArrayWrapper, RangeWrapper) — skip.
         _ => false,

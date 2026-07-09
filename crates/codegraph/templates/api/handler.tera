@@ -6,14 +6,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use uuid::Uuid;
 
-use crate::app_state::AppState;
-use crate::error::AppError;
-use crate::middleware::ApiKeyInfo;
-use crate::domain::{{ domain }}::{{ module_name }}::dto_response::{{ entity_name }}Response;
-use crate::domain::{{ domain }}::{{ module_name }}::dto_response::{{ entity_name }}LinkedResponse;
+{% if handler_imports %}{% for import in handler_imports %}{{ import }}
+{% endfor %}{% endif -%}
 {% if has_create %}
-use crate::domain::{{ domain }}::{{ module_name }}::dto_create::Create{{ entity_name }}Request;
-use crate::error::BulkItemError;
 
 /// Accepts either a single item or an array of items for creation.
 #[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
@@ -31,9 +26,6 @@ pub struct BulkCreateResponse {
     pub failed: Vec<BulkItemError>,
     pub correlation_id: String,
 }
-{% endif %}
-{% if has_update %}
-use crate::domain::{{ domain }}::{{ module_name }}::dto_update::Update{{ entity_name }}Request;
 {% endif %}
 
 /// Extract correlation ID from the X-Correlation-ID header, generating one if absent.
@@ -173,14 +165,24 @@ pub async fn create(
     params(
         ("{{ parent_param_name }}" = Uuid, Path, description = "{{ parent_entity }} ID"),
         ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
+{% if has_include %}
+        ListParams,
+{% endif %}
     ),
 {% else %}
     path = "/api/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }",
+{% if has_include %}
+    params(
+        ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
+        ListParams,
+    ),
+{% else %}
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
+{% endif %}
 {% endif %}
     tag = "{{ tag }}",
     responses(
-        (status = 200, description = "OK", body = {{ entity_name }}LinkedResponse),
+        (status = 200, description = "OK", body = {% if has_include %}{{ entity_name }}WithIncludeResponse{% else %}{{ entity_name }}LinkedResponse{% endif %}),
         (status = 404, description = "Not found"),
     )
 )]
@@ -198,7 +200,10 @@ pub async fn get_by_id(
 {% else %}
     Path(id): Path<Uuid>,
 {% endif %}
-) -> Result<Json<serde_json::Value>, AppError> {
+{% if has_include %}
+    crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<ListParams>,
+{% endif %}
+) -> Result<Json<{% if has_include %}{{ entity_name }}WithIncludeResponse{% else %}serde_json::Value{% endif %}>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 {% if role == "child" %}
     let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id, api_key_info.api_key_id, api_key_info.organization_id).await
@@ -257,10 +262,89 @@ pub async fn get_by_id(
 {% for xref in cross_refs %}
     let linked = linked.with_related("{{ xref.link_rel }}", format!("{}/{}", self_href, "{{ xref.path_segment }}"));
 {% endfor %}
+{% if has_include %}
+    let include_paths: Vec<String> = params.include
+        .as_ref()
+        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+        .unwrap_or_default();
+    
+    for path in &include_paths {
+        if !ALLOWED_INCLUDE_KEYS.contains(&path.as_str()) {
+            return Err(AppError::bad_request(format!("Unknown include path: {path}"))
+                .with_correlation_id(correlation_id));
+        }
+        if path.split('.').count() > 3 {
+            return Err(AppError::bad_request("Max include depth is 3")
+                .with_correlation_id(correlation_id));
+        }
+    }
+    
+    let mut included = {{ entity_name }}IncludedData { 
+        {%- set seen = [] %}
+        {%- for ipath in include_paths %}
+        {%- set field = ipath.segments[0].module_name %}
+        {%- if field not in seen %}
+        {%- set_global seen = seen | concat(with=[field]) %}
+        {{ field }}: None,
+        {%- endif %}
+        {%- endfor %}
+    };
+    
+    use sea_orm::TransactionTrait;
+    let tx = state.db.begin().await
+        .map_err(|e| AppError::internal(format!("Failed to begin transaction: {e}"))
+            .with_correlation_id(correlation_id))?;
+    let repo = crate::domain::{{ domain }}::{{ module_name }}::repository_impl::{{ entity_name }}RepositoryImpl;
+    for path in &include_paths {
+        match path.as_str() {
+        {% for ipath in include_paths %}
+            "{{ ipath.alias }}" => {
+{% if ipath.segments | length == 1 %}
+{% if ipath.segments[0].is_array %}
+                included.{{ ipath.segments[0].module_name }} = Some(repo.{{ ipath.fetch_method }}(&tx, id).await
+                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
+                        .with_correlation_id(correlation_id))?);
+{% else %}
+                included.{{ ipath.segments[0].module_name }} = repo.{{ ipath.fetch_method }}(&tx, id).await
+                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
+                        .with_correlation_id(correlation_id))?;
+{% endif %}
+{% else %}
+                // Dot-notation path: merge into combined response
+                let leaf_resp = repo.{{ ipath.fetch_method }}(&tx, id).await
+                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
+                        .with_correlation_id(correlation_id))?;
+                if let Some(val) = leaf_resp {
+                    if let Some(ref mut combined) = included.{{ ipath.segments[0].module_name }} {
+                        combined.{{ ipath.segments[1].module_name }} = val.{{ ipath.segments[1].module_name }};
+                    } else {
+                        included.{{ ipath.segments[0].module_name }} = Some({{ ipath.response_rust_type }} {
+                            {{ ipath.segments[1].module_name }}: val.{{ ipath.segments[1].module_name }},
+                            ..Default::default()
+                        });
+                    }
+                }
+{% endif %}
+            }
+        {% endfor %}
+            _ => {}
+        }
+    }
+    tx.commit().await
+        .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}"))
+            .with_correlation_id(correlation_id))?;
+    
+    Ok(Json({{ entity_name }}WithIncludeResponse {
+        data: linked,
+        included: Some(included),
+        meta: crate::api::meta::Meta { correlation_id: correlation_id.to_string() },
+    }))
+{% else %}
     Ok(Json(serde_json::json!({
         "data": linked,
         "meta": { "correlation_id": correlation_id.to_string() }
     })))
+{% endif %}
 }
 {% endif %}
 {% if has_update %}
@@ -419,6 +503,13 @@ pub struct ListParams {
     #[serde(default)]
     #[param(ignore)]
     pub filter: std::collections::HashMap<String, String>,
+{% if has_include %}
+    /// Eager-load related entities, e.g. `?include=person,deployment.position`.
+    /// Comma-separated relationship paths, max depth 3.
+    #[serde(default)]
+    #[param(ignore)]
+    pub include: Option<String>,
+{% endif %}
 }
 
 fn default_page() -> u64 { 0 }
@@ -433,6 +524,14 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     "{{ nf.filter_key }}",
 {% endfor %}
 ];
+{% if has_include %}
+/// Allowed include paths for eager-loading related entities.
+const ALLOWED_INCLUDE_KEYS: &[&str] = &[
+{% for path in include_paths %}
+    "{{ path.alias }}",
+{% endfor %}
+];
+{% endif %}
 
 /// List {{ entity_name }} with pagination and JSON:API filters.
 #[utoipa::path(
@@ -505,6 +604,53 @@ pub async fn list(
     let (results, total) = state.{{ domain }}_{{ module_name }}_queries.list_filtered(params.page, params.page_size, &filters, api_key_info.api_key_id, api_key_info.organization_id).await
         .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to list {{ entity_name }}: {e}"))
             .with_correlation_id(correlation_id))?;
+{% if has_include %}
+    let include_paths: Vec<String> = params.include
+        .as_ref()
+        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+        .unwrap_or_default();
+    let mut included = if !include_paths.is_empty() {
+        use sea_orm::TransactionTrait;
+        let tx = state.db.begin().await
+            .map_err(|e| AppError::internal(format!("Failed to begin transaction for includes: {e}"))
+                .with_correlation_id(correlation_id))?;
+        let repo = crate::domain::{{ domain }}::{{ module_name }}::repository_impl::{{ entity_name }}RepositoryImpl;
+        let ids: Vec<Uuid> = results.iter().map(|r| r.id).collect();
+        let mut included_map = std::collections::HashMap::<String, serde_json::Value>::new();
+        for path in &include_paths {
+            if !ALLOWED_INCLUDE_KEYS.contains(&path.as_str()) {
+                return Err(AppError::bad_request(format!("Unknown include path: {path}"))
+                    .with_correlation_id(correlation_id));
+            }
+        }
+        {% for ipath in include_paths %}
+        {% if ipath.segments | length == 1 %}
+        if include_paths.contains(&"{{ ipath.alias }}".to_string()) {
+            included_map.insert(
+                "{{ ipath.segments[0].module_name }}".to_string(),
+                serde_json::to_value(repo.{{ ipath.batch_fetch_method }}(&tx, &ids).await
+                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
+                        .with_correlation_id(correlation_id))?).unwrap_or_default(),
+            );
+        }
+        {% endif %}
+        {% endfor %}
+        tx.commit().await
+            .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}"))
+                .with_correlation_id(correlation_id))?;
+        included_map
+    } else {
+        std::collections::HashMap::new()
+    };
+    Ok(Json(serde_json::json!({
+        "data": results,
+        "total": total,
+        "page": params.page,
+        "page_size": params.page_size,
+        "included": included,
+        "meta": { "correlation_id": correlation_id.to_string() }
+    })))
+{% else %}
     Ok(Json(serde_json::json!({
         "data": results,
         "total": total,
@@ -512,6 +658,7 @@ pub async fn list(
         "page_size": params.page_size,
         "meta": { "correlation_id": correlation_id.to_string() }
     })))
+{% endif %}
 }
 {% endif %}
 {% if has_embeddings %}

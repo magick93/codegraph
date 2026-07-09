@@ -17,6 +17,9 @@ pub struct MockEngine {
     consumed_fields: Mutex<HashMap<String, Vec<(PropertyNode, String)>>>,
     /// Maps (property_name, schema_title) -> target SchemaNode for $ref resolution
     ref_targets: Mutex<HashMap<(String, String), SchemaNode>>,
+    parent_candidates: Mutex<Vec<ParentCandidate>>,
+    extends_map: Mutex<HashMap<String, Vec<SchemaNode>>>,
+    allof_targets: Mutex<HashMap<String, Vec<String>>>,
     view_containers: Mutex<HashMap<String, ViewContainerNode>>,
     view_components: Mutex<HashMap<String, ViewComponentNode>>,
     events: Mutex<HashMap<String, EventNode>>,
@@ -37,6 +40,9 @@ impl MockEngine {
             composite_ranges: Mutex::new(HashMap::new()),
             consumed_fields: Mutex::new(HashMap::new()),
             ref_targets: Mutex::new(HashMap::new()),
+            parent_candidates: Mutex::new(Vec::new()),
+            extends_map: Mutex::new(HashMap::new()),
+            allof_targets: Mutex::new(HashMap::new()),
             view_containers: Mutex::new(HashMap::new()),
             view_components: Mutex::new(HashMap::new()),
             events: Mutex::new(HashMap::new()),
@@ -66,6 +72,9 @@ pub struct MockEngineBuilder {
     composite_ranges: HashMap<String, CompositeRange>,
     consumed_fields: HashMap<String, Vec<(PropertyNode, String)>>,
     ref_targets: HashMap<(String, String), SchemaNode>,
+    parent_candidates: Vec<ParentCandidate>,
+    extends_map: HashMap<String, Vec<SchemaNode>>,
+    allof_targets: HashMap<String, Vec<String>>,
     enum_values: HashMap<String, Vec<EnumValue>>,
 }
 
@@ -113,6 +122,26 @@ impl MockEngineBuilder {
             (property_name.to_string(), schema_title.to_string()),
             target,
         );
+        self
+    }
+
+    pub fn with_extending_schema(mut self, parent_title: &str, schema: SchemaNode) -> Self {
+        self.extends_map
+            .entry(parent_title.to_string())
+            .or_default()
+            .push(schema);
+        self
+    }
+
+    /// Register allOf targets for a schema. When `get_allof_targets(schema_title)`
+    /// is called, these parent titles are returned.
+    pub fn with_allof_targets(mut self, schema_title: &str, targets: Vec<String>) -> Self {
+        self.allof_targets.insert(schema_title.to_string(), targets);
+        self
+    }
+
+    pub fn with_parent_candidate(mut self, pc: ParentCandidate) -> Self {
+        self.parent_candidates.push(pc);
         self
     }
 
@@ -177,6 +206,24 @@ impl MockEngineBuilder {
             let mut ref_targets = engine.ref_targets.lock().unwrap();
             for (k, v) in self.ref_targets {
                 ref_targets.insert(k, v);
+            }
+        }
+        {
+            let mut pcs = engine.parent_candidates.lock().unwrap();
+            for pc in &self.parent_candidates {
+                pcs.push(pc.clone());
+            }
+        }
+        {
+            let mut extends_map = engine.extends_map.lock().unwrap();
+            for (k, v) in &self.extends_map {
+                extends_map.insert(k.clone(), v.clone());
+            }
+        }
+        {
+            let mut allof_targets = engine.allof_targets.lock().unwrap();
+            for (k, v) in &self.allof_targets {
+                allof_targets.insert(k.clone(), v.clone());
             }
         }
         {
@@ -355,6 +402,7 @@ impl GraphIngestor for MockEngine {
     async fn ingest_property(
         &self,
         schema_title: &str,
+        _schema_id: &str,
         prop: &PropertyNode,
     ) -> Result<(), GraphError> {
         self.properties
@@ -513,6 +561,23 @@ impl GraphQuerier for MockEngine {
         Ok(self.schemas.lock().unwrap().get(title).cloned())
     }
 
+    async fn get_schema_by_id(&self, schema_id: &str) -> Result<Option<SchemaNode>, GraphError> {
+        let schemas = self.schemas.lock().unwrap();
+        Ok(schemas.values().find(|s| s.schema_id == schema_id).cloned())
+    }
+
+    async fn get_schema_in_domain(
+        &self,
+        title: &str,
+        domain: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        let schemas = self.schemas.lock().unwrap();
+        Ok(schemas
+            .values()
+            .find(|s| s.title == title && s.domain.as_deref() == Some(domain))
+            .cloned())
+    }
+
     async fn list_schemas(&self, domain: Option<&str>) -> Result<Vec<SchemaNode>, GraphError> {
         let schemas = self.schemas.lock().unwrap();
         let result: Vec<_> = schemas
@@ -577,7 +642,7 @@ impl GraphQuerier for MockEngine {
     }
 
     async fn get_parent_candidates(&self) -> Result<Vec<ParentCandidate>, GraphError> {
-        Ok(vec![])
+        Ok(self.parent_candidates.lock().unwrap().clone())
     }
 
     async fn get_codelist(&self, name: &str) -> Result<Option<CodeList>, GraphError> {
@@ -665,8 +730,31 @@ impl GraphQuerier for MockEngine {
             .ok_or_else(|| GraphError::NotFound(format!("composition tree for {schema_title}")))
     }
 
-    async fn get_allof_targets(&self, _schema_title: &str) -> Result<Vec<String>, GraphError> {
-        Ok(vec![])
+    async fn get_allof_targets(&self, schema_title: &str) -> Result<Vec<String>, GraphError> {
+        Ok(self
+            .allof_targets
+            .lock()
+            .unwrap()
+            .get(schema_title)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn get_schemas_that_extend(
+        &self,
+        parent_title: &str,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
+        Ok(self
+            .extends_map
+            .lock()
+            .unwrap()
+            .get(parent_title)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn list_all_properties(&self) -> Result<HashMap<String, Vec<PropertyNode>>, GraphError> {
+        Ok(self.properties.lock().unwrap().clone())
     }
 
     async fn get_referencing_schemas(
@@ -676,8 +764,16 @@ impl GraphQuerier for MockEngine {
         Ok(vec![])
     }
 
-    async fn get_referenced_schemas(&self, _schema_title: &str) -> Result<Vec<String>, GraphError> {
-        Ok(vec![])
+    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+        let ref_targets = self.ref_targets.lock().unwrap();
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for ((_prop_name, st), schema) in ref_targets.iter() {
+            if st == schema_title && seen.insert(schema.schema_id.clone()) {
+                result.push(schema.clone());
+            }
+        }
+        Ok(result)
     }
 
     async fn get_property_ref_target(
@@ -689,6 +785,50 @@ impl GraphQuerier for MockEngine {
         Ok(ref_targets
             .get(&(property_name.to_string(), schema_title.to_string()))
             .cloned())
+    }
+
+    async fn get_property_ref_target_by_id(
+        &self,
+        property_name: &str,
+        schema_id: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        let title = {
+            let schemas = self.schemas.lock().unwrap();
+            schemas
+                .values()
+                .find(|s| s.schema_id == schema_id)
+                .map(|s| s.title.clone())
+        };
+        let Some(title) = title else {
+            return Ok(None);
+        };
+        let ref_targets = self.ref_targets.lock().unwrap();
+        Ok(ref_targets
+            .get(&(property_name.to_string(), title))
+            .cloned())
+    }
+
+    async fn get_properties_by_schema_id(
+        &self,
+        schema_id: &str,
+    ) -> Result<Vec<PropertyNode>, GraphError> {
+        let title = {
+            let schemas = self.schemas.lock().unwrap();
+            schemas
+                .values()
+                .find(|s| s.schema_id == schema_id)
+                .map(|s| s.title.clone())
+        };
+        let Some(title) = title else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .properties
+            .lock()
+            .unwrap()
+            .get(&title)
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn get_array_item_schema(

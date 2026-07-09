@@ -31,6 +31,9 @@ mod webhook_api;
 mod webhook_dispatch;
 mod webhook_router;
 {% endif %}
+{% if project.hooks_api_crate %}
+mod hooks;
+{% endif %}
 
 static START_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 

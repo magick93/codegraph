@@ -61,7 +61,7 @@ impl DomainGenerator for CliDomainGenerator {
         let mut seen_modules = std::collections::HashSet::new();
 
         for title in entity_titles {
-            if let Ok(Some(schema)) = db.get_schema(title).await {
+            if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain).await {
                 if !schema.pg_table_name.is_empty()
                     && seen_modules.insert(schema.pg_table_name.clone())
                 {

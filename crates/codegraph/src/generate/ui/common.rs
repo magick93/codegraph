@@ -9,6 +9,7 @@ use codegraph_type_contracts::RefClassificationKind;
 use super::form::{field_name_to_label, ui_field_from_property};
 use super::page::{ChildSection, UiField};
 use crate::error::Result;
+use crate::generate::api::router;
 
 /// Collects UI fields from graph properties, applying standard classification
 /// and codelist value resolution. Shared across page, form, and type generators.
@@ -36,6 +37,49 @@ pub async fn collect_ui_fields(
 
     for prop in &props {
         if prop.effective_kind() == Some(RefClassificationKind::ValueObject) {
+            // Resolve the target schema and emit a nested type reference.
+            let target_schema = if prop.is_array {
+                db.get_array_item_schema(&prop.name, schema_title).await?
+            } else {
+                db.get_property_ref_target(&prop.name, schema_title).await?
+            };
+            if let Some(target) = target_schema {
+                let source_entity_name =
+                    router::strip_suffix(schema_title, "Type");
+                // TS interface name for the parent type to reference, e.g. "WorkerPersonLegalResponse"
+                let ts_type_name = format!(
+                    "{}{}Response",
+                    codegraph_naming::to_pascal_case(source_entity_name),
+                    router::strip_suffix(&target.rust_type_name, "Type"),
+                );
+                // Schema title for the type generator to resolve sub-fields, e.g. "PersonLegalType"
+                let schema_title_for_ref = target.title.clone();
+                // Strip Rust r# prefix — it is only needed for Rust identifiers,
+                // not for TypeScript / Svelte property access.
+                let ts_name = prop.rust_field_name
+                    .strip_prefix("r#")
+                    .unwrap_or(&prop.rust_field_name)
+                    .to_string();
+                fields.push(UiField {
+                    name: ts_name.clone(),
+                    label: field_name_to_label(&ts_name),
+                    ts_type: ts_type_name,
+                    input_type: "text".to_string(),
+                    is_required: prop.is_required,
+                    is_array: prop.is_array,
+                    is_entity_ref: false,
+                    is_immutable: false,
+                    is_codelist: false,
+                    is_range: false,
+                    codelist_values: vec![],
+                    description: prop.description.clone().unwrap_or_default(),
+                    pg_type: prop.pg_column_type.clone(),
+                    open_end: false,
+                    ref_api_path: None,
+                    structured_sub_fields: vec![],
+                    nested_type_name: Some(schema_title_for_ref),
+                });
+            }
             continue;
         }
 
@@ -44,7 +88,10 @@ pub async fn collect_ui_fields(
         if prop.effective_kind() == Some(RefClassificationKind::CompositeWrapper) {
             if let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await {
                 for col in &comp_cols {
-                    let field_name = format!("{}{}", prop.rust_field_name, col.suffix);
+                    let base_name = prop.rust_field_name
+                        .strip_prefix("r#")
+                        .unwrap_or(&prop.rust_field_name);
+                    let field_name = format!("{}{}", base_name, col.suffix);
                     let label = super::form::field_name_to_label(&field_name);
                     let is_codelist = col.dto_rust_type.is_some();
                     let codelist_values = if is_codelist {
@@ -87,6 +134,7 @@ pub async fn collect_ui_fields(
                         open_end: false,
                         ref_api_path: None,
                         structured_sub_fields: vec![],
+                        nested_type_name: None,
                     });
                 }
             }
@@ -197,7 +245,7 @@ pub async fn collect_ui_fields(
                 // the same type name exists in multiple domains (e.g., OrderType
                 // in both assessments and screening).
                 let mut resolved = None;
-                if let Ok(Some(ref_schema)) = db.get_schema(ref_schema_title).await {
+                if let Ok(Some(ref_schema)) = db.get_schema_in_domain(ref_schema_title, current_domain.unwrap_or("")).await {
                     resolved = Some(ref_schema);
                 }
                 // If the resolved schema is in a different domain, check if
@@ -229,6 +277,43 @@ pub async fn collect_ui_fields(
     // a field with the same name as a direct property (e.g., "language").
     let mut seen = std::collections::HashSet::new();
     fields.retain(|f| seen.insert(f.name.clone()));
+
+    // If no UI fields were found from graph properties, check if this is a
+    // codelist entity (enum-only schema with no properties). Inject synthetic
+    // fields for code, display_name, and sort_order so the form renders inputs
+    // and the CRUD tests can create the entity.
+    if fields.is_empty() {
+        if let Some(domain) = current_domain {
+            if let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, domain).await {
+                if schema.is_codelist && domain == "common" {
+                    let mut inject = |name: &str, label: &str, input_type: &str, is_required: bool| {
+                        fields.push(UiField {
+                            name: name.to_string(),
+                            label: label.to_string(),
+                            ts_type: "string".to_string(),
+                            input_type: input_type.to_string(),
+                            is_required,
+                            is_array: false,
+                            is_entity_ref: false,
+                            is_immutable: false,
+                            is_codelist: false,
+                            is_range: false,
+                            codelist_values: vec![],
+                            description: String::new(),
+                            pg_type: "TEXT".to_string(),
+                            open_end: false,
+                            ref_api_path: None,
+                            structured_sub_fields: vec![],
+                            nested_type_name: None,
+                        });
+                    };
+                    inject("code", "Code", "code", true);
+                    inject("display_name", "Display Name", "text", true);
+                    inject("sort_order", "Sort Order", "number", false);
+                }
+            }
+        }
+    }
 
     Ok(fields)
 }
@@ -272,7 +357,7 @@ pub async fn collect_child_sections(
             }
 
             // Resolve the child schema from the graph
-            let child_schema = match db.get_schema(config_key).await? {
+            let child_schema = match db.get_schema_in_domain(config_key, current_domain).await? {
                 Some(s) => s,
                 None => continue,
             };

@@ -25,7 +25,13 @@ const depIds: Record<string, string> = {};
 function testData(): Record<string, unknown> {
   return {
 {%- for field in create_fields %}
-{%- if field.input_type == "date-range" %}
+{%- if field.nested_type_name %}
+    {%- if field.is_array %}
+    '{{ field.name }}': [],
+    {%- else %}
+    // '{{ field.name }}': ValueObject — omit, serde default
+    {%- endif %}
+{%- elif field.input_type == "date-range" %}
     '{{ field.name }}': '[2025-03-10T00:00:00Z,2025-09-30T23:59:59Z)',
 {%- elif field.input_type == "number" %}
     '{{ field.name }}': 77,
@@ -55,6 +61,8 @@ function testData(): Record<string, unknown> {
     // geometry field omitted — plain WKT strings are not accepted by the API without ST_GeomFromText
 {%- elif field.input_type == "geometry" %}
     '{{ field.name }}': '{"type":"Point","coordinates":[0,0]}',
+{%- elif field.input_type == "code" %}
+    '{{ field.name }}': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 {%- else %}
     '{{ field.name }}': 'ACME Isolation {{ field.label }}',
 {%- endif %}
@@ -62,7 +70,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('{{ entity_name }} Cross-Org Isolation', () => {
+test.describe('{{ entity_name }} Cross-Org Isolation', () => {
   let acmeEntityId: string;
   const data = testData();
 

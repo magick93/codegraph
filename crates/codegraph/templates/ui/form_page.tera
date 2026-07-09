@@ -3,9 +3,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 {% if parent and parent.grandparent %}
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 {% elif parent %}
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 {% endif %}
 	import {{ entity_name }}Form from '$lib/components/forms/{{ entity_name }}Form.svelte';
 	import { create{{ entity_name }} } from '$lib/stores/{{ domain }}_{{ module_name }}';
@@ -15,11 +15,11 @@
 	import type { Create{{ entity_name }}Request } from '$lib/api/types';
 
 {% if parent and parent.grandparent %}
-	const grandparentId = $derived($page.params.{{ parent.grandparent.param_name }});
-	const parentId = $derived($page.params.{{ parent.param_name }});
+	const grandparentId = $derived(page.params.{{ parent.grandparent.param_name }});
+	const parentId = $derived(page.params.{{ parent.param_name }});
 	const basePath = $derived(`/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}/${grandparentId}/{{ parent.path_segment }}/${parentId}/{{ path_segment }}`);
 {% elif parent %}
-	const parentId = $derived($page.params.{{ parent.param_name }});
+	const parentId = $derived(page.params.{{ parent.param_name }});
 	const basePath = $derived(`/{{ parent.domain }}/{{ parent.path_segment }}/${parentId}/{{ path_segment }}`);
 {% else %}
 	const basePath = '/{{ domain }}/{{ path_segment }}';

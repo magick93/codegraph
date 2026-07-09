@@ -10,6 +10,18 @@ use std::collections::HashMap;
 #[async_trait]
 pub trait GraphQuerier: Send + Sync {
     async fn get_schema(&self, title: &str) -> Result<Option<SchemaNode>, GraphError>;
+    async fn get_schema_by_id(&self, schema_id: &str) -> Result<Option<SchemaNode>, GraphError> {
+        Ok(None)
+    }
+
+    async fn get_schema_in_domain(
+        &self,
+        title: &str,
+        domain: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        self.get_schema(title).await
+    }
+
     async fn list_schemas(&self, domain: Option<&str>) -> Result<Vec<SchemaNode>, GraphError>;
     async fn get_properties(&self, schema_title: &str) -> Result<Vec<PropertyNode>, GraphError>;
 
@@ -67,13 +79,42 @@ pub trait GraphQuerier: Send + Sync {
     async fn get_composition_tree(&self, schema_title: &str)
         -> Result<CompositionTree, GraphError>;
     async fn get_allof_targets(&self, schema_title: &str) -> Result<Vec<String>, GraphError>;
+    /// Get all schemas that have an ExtendsSchema edge pointing to the given parent
+    /// title — the reverse of `get_allof_targets`. Returns full SchemaNode objects
+    /// so callers can inspect `is_entity`, `pg_table_name`, etc.
+    ///
+    /// For example, if both PersonType (entity) and PersonLegalType (VO) allOf-compose
+    /// PersonBaseType, then `get_schemas_that_extend("PersonBaseType")` returns both.
+    async fn get_schemas_that_extend(&self, parent_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+        Ok(Vec::new())
+    }
     async fn get_referencing_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError>;
-    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError>;
+    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError>;
     async fn get_property_ref_target(
         &self,
         property_name: &str,
         schema_title: &str,
     ) -> Result<Option<SchemaNode>, GraphError>;
+
+    /// Like get_property_ref_target but matches by _schema_id (unique) instead of _schema_title.
+    async fn get_property_ref_target_by_id(
+        &self,
+        property_name: &str,
+        schema_id: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        // Default: delegate to title-based version
+        self.get_property_ref_target(property_name, schema_id).await
+    }
+
+    /// Get properties associated with a schema by its unique schema_id (not title).
+    async fn get_properties_by_schema_id(
+        &self,
+        schema_id: &str,
+    ) -> Result<Vec<PropertyNode>, GraphError> {
+        // Default: return empty
+        Ok(Vec::new())
+    }
+
     async fn get_array_item_schema(
         &self,
         property_name: &str,
@@ -93,8 +134,8 @@ pub trait GraphQuerier: Send + Sync {
         let mut refs = Vec::new();
         for s in &schemas {
             if let Ok(targets) = self.get_referenced_schemas(&s.title).await {
-                for t in targets {
-                    refs.push((s.title.clone(), t));
+                for t in &targets {
+                    refs.push((s.title.clone(), t.title.clone()));
                 }
             }
         }
@@ -162,4 +203,34 @@ pub trait GraphQuerier: Send + Sync {
     async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
         Ok(Vec::new())
     }
+}
+
+/// Check if a VO (value object) schema extends an entity through its allOf
+/// composition chain. Traverses: VO → its allOf parents → schemas that extend
+/// those parents → first entity found (excluding the VO itself).
+///
+/// Example: PersonLegalType (VO) allOf → [PersonBaseType, PersonLegalInclusion].
+/// PersonType (entity) also allOf → PersonBaseType and PersonLegalInclusion.
+/// `find_entity_extended_by_vo(db, "PersonLegalType")` returns PersonType.
+pub async fn find_entity_extended_by_vo(
+    db: &dyn GraphQuerier,
+    vo_title: &str,
+) -> Result<Option<SchemaNode>, GraphError> {
+    let allof_targets = db.get_allof_targets(vo_title).await?;
+    for parent_def in &allof_targets {
+        if let Ok(extenders) = db.get_schemas_that_extend(parent_def).await {
+            for extender in &extenders {
+                if extender.title != vo_title
+                    && extender.is_entity
+                    && !extender.pg_table_name.is_empty()
+                {
+                    if let Some(auth) = db.get_schema_by_id(&extender.schema_id).await? {
+                        return Ok(Some(auth));
+                    }
+                    return Ok(Some(extender.clone()));
+                }
+            }
+        }
+    }
+    Ok(None)
 }

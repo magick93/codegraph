@@ -5,9 +5,11 @@ use codegraph_naming::quote_pg_column;
 use codegraph_type_contracts::RefClassificationKind;
 
 use crate::error::Result;
+use crate::generate::api::include_path::ResolvedIncludePath;
 use crate::generate::filter_fields::{
     resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
 };
+use crate::generate::type_registry;
 use codegraph_config::DomainConfig;
 
 /// Quote a SQL identifier (table or column name) if it is a PostgreSQL reserved word.
@@ -29,8 +31,9 @@ fn q(name: &str) -> String {
 async fn resolve_worker_detail_joins(
     db: &dyn GraphQuerier,
     parent_entity_name: &str,
+    domain: &str,
 ) -> Vec<(String, String, String)> {
-    let parent_schema = match db.get_schema(parent_entity_name).await {
+    let parent_schema = match db.get_schema_in_domain(parent_entity_name, domain).await {
         Ok(Some(s)) => s,
         _ => return Vec::new(),
     };
@@ -161,7 +164,22 @@ impl TreeColumn {
 fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_var: &str, pad: &str) {
     let dto_field = col.dto_name();
     let entity_field = &col.field_name;
-    if col.dto_rust_type.is_some() {
+    // StructuredWrapper must take priority over dto_rust_type — it uses
+    // serde_json::from_value() rather than .parse().
+    if col.is_structured_wrapper {
+        // Both array and scalar StructuredWrapper use the same serde_json conversion.
+        if col.is_nullable {
+            writeln!(
+                code,
+                "{pad}{dto_field}: {row_var}.{entity_field}.and_then(|v| serde_json::from_value(v).ok()),",
+            ).unwrap();
+        } else {
+            writeln!(
+                code,
+                "{pad}{dto_field}: serde_json::from_value({row_var}.{entity_field}).unwrap_or_default(),",
+            ).unwrap();
+        }
+    } else if col.dto_rust_type.is_some() {
         if col.is_array {
             if col.is_nullable {
                 writeln!(
@@ -186,19 +204,6 @@ fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_var: &str, 
                 "{pad}{dto_field}: {row_var}.{entity_field}.parse().unwrap_or_default(),",
             )
             .unwrap();
-        }
-    } else if col.is_structured_wrapper {
-        // Both array and scalar StructuredWrapper use the same serde_json conversion.
-        if col.is_nullable {
-            writeln!(
-                code,
-                "{pad}{dto_field}: {row_var}.{entity_field}.and_then(|v| serde_json::from_value(v).ok()),",
-            ).unwrap();
-        } else {
-            writeln!(
-                code,
-                "{pad}{dto_field}: serde_json::from_value({row_var}.{entity_field}).unwrap_or_default(),",
-            ).unwrap();
         }
     } else {
         writeln!(code, "{pad}{dto_field}: {row_var}.{entity_field},").unwrap();
@@ -436,8 +441,23 @@ fn typed_value_expr(rust_type: &str, value_expr: &str) -> String {
 /// Uuid, i32, i64, f32, f64, bool, Decimal, NaiveDate, DateTime<Utc>, and String fallback.
 fn emit_nested_filter_parse(code: &mut String, nf: &NestedFilterFieldInfo) -> &'static str {
     let key = &nf.filter_key;
-    match nf.rust_type.as_str() {
+    // Strip Option<> wrapper for type matching — all FK columns are nullable.
+    let rust_type = nf.rust_type.as_str();
+    let base_type = rust_type
+        .strip_prefix("Option<")
+        .and_then(|s| s.strip_suffix('>'))
+        .unwrap_or(rust_type);
+    match base_type {
         "Uuid" | "uuid::Uuid" => {
+            writeln!(
+                code,
+                "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{key}': {{e}}\")))?;",
+            )
+            .unwrap();
+            "parsed"
+        }
+        // Entity reference types (e.g. "OrganizationType") — always UUID FK columns.
+        ty if ty.ends_with("Type") && ty.chars().next().map_or(false, |c| c.is_uppercase()) => {
             writeln!(
                 code,
                 "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{key}': {{e}}\")))?;",
@@ -645,6 +665,8 @@ async fn build_child_table_info(
         return None;
     }
 
+    let prop_field_def = codegraph_core::types::resolve_field(prop);
+
     let raw_child_props = db
         .get_properties(&target_schema.title)
         .await
@@ -659,7 +681,7 @@ async fn build_child_table_info(
 
     let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
         "{}_{}",
-        parent_table_name, prop.pg_column_name
+        parent_table_name, prop_field_def.column_name
     ));
     let child_struct_name = format!(
         "{}{}",
@@ -698,6 +720,7 @@ async fn build_child_table_info(
         .iter()
         .filter(|c| c.pg_column_name != "id" && !consumed_fields.contains(&c.name))
     {
+        let field_def = codegraph_core::types::resolve_field(c);
         match c.effective_kind() {
             Some(RefClassificationKind::CodelistReference)
             | Some(RefClassificationKind::CodelistCheck) => {
@@ -715,7 +738,7 @@ async fn build_child_table_info(
                         codegraph_naming::to_pascal_case(&c.rust_field_name)
                     );
                     nested_child_tables.push(ChildTableInfo {
-                        field_name: c.rust_field_name.clone(),
+                        field_name: field_def.rust_field_name.clone(),
                         struct_name: nested_struct,
                         sql_table_name: nested_table,
                         sql_schema_name: schema_name.to_string(),
@@ -736,8 +759,8 @@ async fn build_child_table_info(
                     });
                 } else {
                     child_columns.push(ChildColumn {
-                        field_name: c.rust_field_name.clone(),
-                        pg_column_name: c.pg_column_name.clone(),
+                        field_name: field_def.rust_field_name.clone(),
+                        pg_column_name: field_def.column_name.clone(),
                         rust_type: "String".to_string(),
                         is_nullable: !c.is_required,
                         dto_rust_type: enum_name,
@@ -755,8 +778,8 @@ async fn build_child_table_info(
                     None
                 };
                 child_columns.push(ChildColumn {
-                    field_name: c.rust_field_name.clone(),
-                    pg_column_name: c.pg_column_name.clone(),
+                    field_name: field_def.rust_field_name.clone(),
+                    pg_column_name: field_def.column_name.clone(),
                     rust_type: c.rust_field_type.clone(),
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
@@ -765,8 +788,8 @@ async fn build_child_table_info(
             }
             Some(RefClassificationKind::EntityReference) => {
                 child_columns.push(ChildColumn {
-                    field_name: format!("{}_id", c.rust_field_name),
-                    pg_column_name: format!("{}_id", c.pg_column_name),
+                    field_name: field_def.rust_field_name,
+                    pg_column_name: field_def.column_name,
                     rust_type: "Uuid".to_string(),
                     is_nullable: true,
                     dto_rust_type: None,
@@ -787,8 +810,8 @@ async fn build_child_table_info(
                             .cloned();
                         let pg_cast = pg_cast_for_type(&col.pg_type);
                         child_columns.push(ChildColumn {
-                            field_name: format!("{}{}", c.rust_field_name, col.suffix),
-                            pg_column_name: format!("{}{}", c.pg_column_name, col.suffix),
+                            field_name: format!("{}{}", field_def.rust_field_name, col.suffix),
+                            pg_column_name: format!("{}{}", field_def.column_name, col.suffix),
                             rust_type: col.rust_type.clone(),
                             is_nullable: !c.is_required,
                             dto_rust_type,
@@ -800,8 +823,8 @@ async fn build_child_table_info(
             Some(RefClassificationKind::StructuredWrapper) => {
                 // StructuredWrappers are stored as a single JSONB column inline.
                 child_columns.push(ChildColumn {
-                    field_name: c.rust_field_name.clone(),
-                    pg_column_name: c.pg_column_name.clone(),
+                    field_name: field_def.rust_field_name.clone(),
+                    pg_column_name: field_def.column_name.clone(),
                     rust_type: "serde_json::Value".to_string(),
                     is_nullable: !c.is_required,
                     dto_rust_type: None,
@@ -836,8 +859,8 @@ async fn build_child_table_info(
                     )
                 {
                     child_columns.push(ChildColumn {
-                        field_name: c.rust_field_name.clone(),
-                        pg_column_name: c.pg_column_name.clone(),
+                        field_name: field_def.rust_field_name.clone(),
+                        pg_column_name: field_def.column_name.clone(),
                         rust_type: t.clone(),
                         is_nullable: !c.is_required,
                         dto_rust_type: None,
@@ -855,7 +878,7 @@ async fn build_child_table_info(
     }
 
     Some(ChildTableInfo {
-        field_name: prop.rust_field_name.clone(),
+        field_name: prop_field_def.rust_field_name.clone(),
         struct_name: child_struct_name,
         sql_table_name: child_table_name,
         sql_schema_name: schema_name.to_string(),
@@ -1010,6 +1033,13 @@ fn emit_child_inserts(
     }
 }
 
+/// Emit entity INSERT code for VO→entity properties.
+///
+/// For each entry, generates an `if let Some(ref item) = cmd.{field}` block that:
+/// 1. Creates a new UUID for the entity table
+/// 2. INSERTS into the entity table with the VO's columns
+/// 3. Recursively handles the entity's own child tables (e.g. person_name)
+/// 4. UPDATEs the parent entity's FK column with the new entity ID
 /// Recursively emit SELECT + Response-building code for child tables.
 ///
 /// For each child table, emits code that:
@@ -1248,6 +1278,7 @@ async fn build_columns_and_children(
             continue;
         }
         let is_workflow_field = workflow_managed.contains(&prop.rust_field_name);
+        let field_def = codegraph_core::types::resolve_field(prop);
         if matches!(
             prop.effective_kind(),
             Some(RefClassificationKind::CompositeWrapper)
@@ -1261,8 +1292,8 @@ async fn build_columns_and_children(
                         .as_ref()
                         .filter(|dt| *dt != &col.rust_type)
                         .cloned();
-                    let suffix_name = format!("{}{}", prop.rust_field_name, col.suffix);
-                    let suffix_pg = format!("{}{}", prop.pg_column_name, col.suffix);
+                    let suffix_name = format!("{}{}", field_def.rust_field_name, col.suffix);
+                    let suffix_pg = format!("{}{}", field_def.column_name, col.suffix);
                     direct_columns.push(TreeColumn {
                         field_name: suffix_name,
                         pg_column_name: suffix_pg,
@@ -1293,8 +1324,8 @@ async fn build_columns_and_children(
                 None
             };
             direct_columns.push(TreeColumn {
-                field_name: prop.rust_field_name.clone(),
-                pg_column_name: prop.pg_column_name.clone(),
+                field_name: field_def.rust_field_name.clone(),
+                pg_column_name: field_def.column_name.clone(),
                 dto_field_name: None,
                 rust_type: prop.rust_field_type.clone(),
                 is_nullable: !prop.is_required,
@@ -1326,7 +1357,7 @@ async fn build_columns_and_children(
                 );
                 if seen_child_structs.insert(child_struct.clone()) {
                     child_tables.push(ChildTableInfo {
-                        field_name: prop.rust_field_name.clone(),
+                        field_name: field_def.rust_field_name.clone(),
                         struct_name: child_struct,
                         sql_table_name: child_table_name,
                         sql_schema_name: schema_name.to_string(),
@@ -1346,21 +1377,13 @@ async fn build_columns_and_children(
                         child_tables: vec![],
                     });
                 }
-            } else {
+                } else {
                 let codelist_type =
                     crate::generate::ddd::dto::codelist_enum_name_from_ref(&prop.ref_target);
-                let stripped =
-                    crate::generate::ddd::dto::strip_code_suffix_safe(&prop.rust_field_name);
-                let dto_field_name =
-                    if stripped != prop.rust_field_name && all_field_names.contains(&stripped) {
-                        prop.rust_field_name.clone()
-                    } else {
-                        stripped
-                    };
                 direct_columns.push(TreeColumn {
-                    field_name: prop.rust_field_name.clone(),
-                    pg_column_name: prop.pg_column_name.clone(),
-                    dto_field_name: Some(dto_field_name),
+                    field_name: field_def.rust_field_name.clone(),
+                    pg_column_name: field_def.column_name.clone(),
+                    dto_field_name: None,
                     rust_type: "String".to_string(),
                     is_nullable: !prop.is_required,
                     is_entity_ref: false,
@@ -1375,13 +1398,13 @@ async fn build_columns_and_children(
             }
         } else if prop.effective_kind() == Some(RefClassificationKind::StructuredWrapper) {
             direct_columns.push(TreeColumn {
-                field_name: prop.rust_field_name.clone(),
-                pg_column_name: prop.pg_column_name.clone(),
+                field_name: field_def.rust_field_name.clone(),
+                pg_column_name: field_def.column_name.clone(),
                 dto_field_name: None,
                 rust_type: "serde_json::Value".to_string(),
                 is_nullable: !prop.is_required,
                 is_entity_ref: false,
-                dto_rust_type: None,
+                dto_rust_type: Some(prop.rust_field_type.clone()),
                 is_workflow_managed: is_workflow_field,
                 is_array: prop.is_array,
                 pg_cast: None,
@@ -1391,8 +1414,8 @@ async fn build_columns_and_children(
             });
         } else if prop.effective_kind() == Some(RefClassificationKind::EntityReference) {
             direct_columns.push(TreeColumn {
-                field_name: format!("{}_id", prop.rust_field_name),
-                pg_column_name: format!("{}_id", prop.pg_column_name),
+                field_name: field_def.rust_field_name,
+                pg_column_name: field_def.column_name,
                 dto_field_name: None,
                 rust_type: "Uuid".to_string(),
                 is_nullable: true,
@@ -1418,8 +1441,8 @@ async fn build_columns_and_children(
             };
             if is_entity_fk {
                 direct_columns.push(TreeColumn {
-                    field_name: format!("{}_id", prop.rust_field_name),
-                    pg_column_name: format!("{}_id", prop.pg_column_name),
+                    field_name: format!("{}_id", field_def.rust_field_name),
+                    pg_column_name: format!("{}_id", field_def.column_name),
                     dto_field_name: None,
                     rust_type: "Uuid".to_string(),
                     is_nullable: true,
@@ -1466,10 +1489,67 @@ async fn build_columns_and_children(
     Ok((direct_columns, child_tables))
 }
 
+/// Which CRUD operation is being emitted.
+/// Centralises column filtering and DTO field name resolution
+/// so all paths stay consistent — adding a new variant forces
+/// defining its filter and field name at compile time.
+#[derive(Clone, Copy)]
+enum CrudOp {
+    CreateActiveModel,
+    CreateRawSql,
+    Update,
+}
+
+impl CrudOp {
+    fn columns<'a>(&self, tree: &'a EntityTree) -> Vec<&'a TreeColumn> {
+        match self {
+            CrudOp::CreateActiveModel => tree.direct_columns.iter()
+                .filter(|c| !c.is_workflow_managed && !c.is_composite_range && !c.is_media)
+                .filter(|c| !Self::is_parent_fk(c, tree))
+                .collect(),
+            CrudOp::CreateRawSql => tree.direct_columns.iter()
+                .filter(|c| !c.is_workflow_managed && !c.is_composite_range && !c.is_media)
+                .filter(|c| !Self::is_parent_fk(c, tree))
+                .collect(),
+            CrudOp::Update => tree.direct_columns.iter()
+                .filter(|c| !c.is_workflow_managed && !c.is_media && !c.is_composite_range)
+                .filter(|c| c.pg_cast.is_none())
+                .collect(),
+        }
+    }
+
+    fn is_parent_fk(c: &TreeColumn, tree: &EntityTree) -> bool {
+        tree.parent_ref.as_ref().is_some_and(|pr| {
+            c.field_name.eq_ignore_ascii_case(pr)
+                || c.pg_column_name.eq_ignore_ascii_case(pr)
+                || c.pg_column_name == format!("{}_id", codegraph_naming::to_snake_case(pr))
+        })
+    }
+}
+
 /// Emits repository implementation Rust code by walking the entity's graph subtree.
 pub struct RepositoryImplEmitter;
 
 impl RepositoryImplEmitter {
+    /// Resolve whether `find_tree` returns JOINed `serde_json::Value` rows
+    /// (tree_include configured AND resolvable) versus typed `{Entity}Response`
+    /// rows. The repository trait generator calls this so the trait's
+    /// `find_tree` return type stays in sync with the emitted implementation,
+    /// which derives the same boolean from `!tree.tree_include.is_empty()`.
+    pub async fn resolve_tree_include(
+        &self,
+        db: &dyn GraphQuerier,
+        schema_title: &str,
+        domain: &str,
+        config: &DomainConfig,
+        parent_ref: Option<&str>,
+    ) -> Result<bool> {
+        let tree = self
+            .query_entity_tree(db, schema_title, domain, config, parent_ref)
+            .await?;
+        Ok(!tree.tree_include.is_empty())
+    }
+
     pub async fn emit(
         &self,
         db: &dyn GraphQuerier,
@@ -1477,11 +1557,24 @@ impl RepositoryImplEmitter {
         domain: &str,
         config: &DomainConfig,
         parent_ref: Option<&str>,
+        include_paths: &[ResolvedIncludePath],
     ) -> Result<String> {
         let tree = self
             .query_entity_tree(db, schema_title, domain, config, parent_ref)
             .await?;
         let mut code = String::with_capacity(4096);
+
+        // Deduplicate include paths by alias to prevent duplicate struct field
+        // emissions (auto-discover can produce the same child entity through
+        // multiple FK relationships).
+        let include_paths = {
+            let mut seen = std::collections::HashSet::new();
+            include_paths
+                .iter()
+                .filter(|path| seen.insert(path.alias.clone()))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
 
         self.emit_header(&tree, &mut code);
         if tree.has_create {
@@ -1510,6 +1603,217 @@ impl RepositoryImplEmitter {
         }
         self.emit_footer(&mut code);
 
+        // Resolve scalar fields for each include path segment using resolve_field()
+        // so that both the DTO side and entity Model side use rust_field_name.
+        // EntityReference fields get _id appended; CodelistReference fields get _code stripped.
+        let all_props = db.list_all_properties().await?;
+        let mut include_segment_dto_fields: Vec<Vec<Vec<String>>> = Vec::new();
+        let mut include_segment_col_fields: Vec<Vec<Vec<String>>> = Vec::new();
+        let mut include_segment_is_structured: Vec<Vec<Vec<bool>>> = Vec::new();
+        let mut include_segment_is_codelist: Vec<Vec<Vec<bool>>> = Vec::new();
+        let mut include_segment_dto_rust_types: Vec<Vec<Vec<Option<String>>>> = Vec::new();
+        let mut include_segment_is_nullable: Vec<Vec<Vec<bool>>> = Vec::new();
+        for path in &include_paths {
+            let mut per_seg_dto: Vec<Vec<String>> = Vec::new();
+            let mut per_seg_col: Vec<Vec<String>> = Vec::new();
+            let mut per_seg_is_structured: Vec<Vec<bool>> = Vec::new();
+            let mut per_seg_is_codelist: Vec<Vec<bool>> = Vec::new();
+            let mut per_seg_dto_rust_types: Vec<Vec<Option<String>>> = Vec::new();
+            let mut per_seg_is_nullable: Vec<Vec<bool>> = Vec::new();
+            for (seg_idx, seg) in path.segments.iter().enumerate() {
+                // Use schema_title directly — include_path.rs already resolves
+                // it to the canonical title for each segment. The fallback graph
+                // query could return the wrong properties from a shared parent
+                // when schema inheritance is involved.
+                // Query consumed fields once per segment — fields consumed by
+                // composite range columns (e.g. start/end) that don't exist as
+                // direct columns on the entity Model.
+                let consumed_fields: std::collections::HashSet<String> = db
+                    .get_consumed_fields(&seg.schema_title)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(p, _)| p.name)
+                    .collect();
+                let mut dto_fields: Vec<String> = Vec::new();
+                let mut col_fields: Vec<String> = Vec::new();
+                let mut is_structured: Vec<bool> = Vec::new();
+                let mut is_codelist: Vec<bool> = Vec::new();
+                let mut dto_rust_types: Vec<Option<String>> = Vec::new();
+                let mut is_nullable: Vec<bool> = Vec::new();
+                // When the segment has a child table override (VO→entity), use
+                // the VO's properties instead of the entity's properties.
+                let props_key = seg.child_table_override.as_ref().map_or(
+                    &seg.schema_title,
+                    |over| &over.vo_title,
+                );
+                if let Some(props) = all_props.get(props_key) {
+                    let mut seen = std::collections::HashSet::new();
+                    for prop in props {
+                        // Skip entity reference properties that match the next
+                        // segment's module_name — the nested field (e.g.,
+                        // {position: leaf_dto}) is added separately in the
+                        // dot-fetch method.  Matches DTO builder's skip at
+                        // build_include_dtos (dto.rs:1127-1131).
+                        if seg_idx < path.segments.len() - 1 {
+                            let next_module = &path.segments[seg_idx + 1].module_name;
+                            // Skip entity reference FK columns that match a leaf
+                            // segment — the combined DTO excludes these since the
+                            // enriched type has a nested field for the leaf entity
+                            // instead. Match both raw rust_field_name and with _id
+                            // suffix, since entity generators may differ in naming.
+                            if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference))
+                                && (prop.rust_field_name == *next_module
+                                    || prop.rust_field_name == format!("{}_id", next_module))
+                            {
+                                continue;
+                            }
+                        }
+                        // Skip properties that don't map to database columns —
+                        // the entity Model won't have them as Rust fields.
+                        if prop.pg_column_name.is_empty() {
+                            continue;
+                        }
+                        // Skip array properties — the entity generator expands
+                        // these into separate child tables, not direct Model fields.
+                        if prop.is_array {
+                            continue;
+                        }
+                        if consumed_fields.contains(&prop.name) {
+                            continue;
+                        }
+                        // Skip composite/media wrappers — expanded into sub-columns.
+                        if matches!(prop.effective_kind(), Some(RefClassificationKind::CompositeWrapper | RefClassificationKind::MediaWrapper)) {
+                            continue;
+                        }
+                        if prop.rust_field_name == "id"
+                            || prop.rust_field_name == "created_at"
+                            || prop.rust_field_name == "updated_at"
+                        {
+                            continue;
+                        }
+                        // Only include properties that produce a single direct
+                        // column on the entity Model — matching the entity
+                        // generator's match arm logic.
+                        match prop.effective_kind() {
+                            Some(RefClassificationKind::PrimitiveWrapper
+                                | RefClassificationKind::StructuredWrapper
+                                | RefClassificationKind::CodelistReference
+                                | RefClassificationKind::CodelistCheck
+                                | RefClassificationKind::EntityReference
+                                | RefClassificationKind::RangeWrapper
+                                | RefClassificationKind::InlineEnum) => {}
+                            _ => continue,
+                        }
+                        // Skip properties whose direct $ref target is a
+                        // force_value_object — the entity generator skips
+                        // composed/inherited properties from allOf chains,
+                        // so the Model doesn't have these columns.
+                        if prop.effective_kind().is_some() {
+                            if let Ok(Some(target)) = db
+                                .get_property_ref_target(&prop.name, &seg.schema_title)
+                                .await
+                            {
+                                if !target.is_entity || target.pg_table_name.is_empty() {
+                                    continue;
+                                }
+                            }
+                        }
+                        let fd = codegraph_core::types::resolve_field(prop);
+                        // Deduplicate by rust_field_name — list_all_properties()
+                        // can return duplicate entries from interface inheritance.
+                        if seen.insert(fd.rust_field_name.clone()) {
+                            // DTO side uses resolve_field().rust_field_name (with _id for
+                            // entity refs) — consistent with both base entity DTO
+                            // (build_dto_context) and include-path compound DTO
+                            // (build_include_dtos).
+                            dto_fields.push(fd.rust_field_name.clone());
+                            // Entity Model side uses column_name so it matches
+                            // config-specified FK column names (e.g. person_type_id).
+                            col_fields.push(fd.column_name.clone());
+                            // Type conversion flags for emit_field_assignments_typed.
+                            is_structured.push(matches!(
+                                prop.effective_kind(),
+                                Some(RefClassificationKind::StructuredWrapper)
+                            ));
+                            is_codelist.push(matches!(
+                                prop.effective_kind(),
+                                Some(RefClassificationKind::CodelistReference)
+                                    | Some(RefClassificationKind::CodelistCheck)
+                            ));
+                            dto_rust_types.push(
+                                crate::generate::ddd::dto::codelist_enum_name_from_ref(&prop.ref_target),
+                            );
+                            is_nullable.push(prop.is_nullable);
+                        }
+                    }
+                }
+                per_seg_dto.push(dto_fields);
+                per_seg_col.push(col_fields);
+                per_seg_is_structured.push(is_structured);
+                per_seg_is_codelist.push(is_codelist);
+                per_seg_dto_rust_types.push(dto_rust_types);
+                per_seg_is_nullable.push(is_nullable);
+            }
+            include_segment_dto_fields.push(per_seg_dto);
+            include_segment_col_fields.push(per_seg_col);
+            include_segment_is_structured.push(per_seg_is_structured);
+            include_segment_is_codelist.push(per_seg_is_codelist);
+            include_segment_dto_rust_types.push(per_seg_dto_rust_types);
+            include_segment_is_nullable.push(per_seg_is_nullable);
+        }
+
+        if !include_paths.is_empty() {
+            // Add import statements for cross-entity types referenced by include paths.
+            // These types (e.g. PersonResponse) live in other entity modules and need
+            // use crate::domain::{domain}::{module}::dto_response::TypeName imports.
+            let caller_base: Vec<String> = vec![
+                "crate".into(), "domain".into(), domain.into(),
+                tree.module_name.clone(), "repository_impl".into(),
+            ];
+            let mut include_type_names: Vec<String> = Vec::new();
+            for path in &include_paths {
+                include_type_names.push(path.response_rust_type.clone());
+                if path.segments.len() > 1 {
+                    if let Some(last_seg) = path.segments.last() {
+                        include_type_names.push(format!("{}Response", last_seg.entity_name));
+                    }
+                }
+            }
+            // Deduplicate while preserving order.
+            let mut seen = std::collections::HashSet::new();
+            include_type_names.retain(|n| seen.insert(n.clone()));
+            let imports = type_registry::resolve_imports(&include_type_names, &caller_base);
+            for import in &imports {
+                writeln!(code, "{}", import).unwrap();
+            }
+            // Also add direct imports for enriched types from dto_included module.
+            // These types (e.g. DeploymentCombinedResponse) are generated in the
+            // current entity's dto_included.rs but may not yet be registered in the
+            // type registry when the repository emitter runs (DTO generator runs later).
+            let mut seen_enriched = std::collections::HashSet::new();
+            for path in &include_paths {
+                if path.segments.len() > 1 && seen_enriched.insert(path.response_rust_type.clone()) {
+                    writeln!(
+                        code,
+                        "use super::dto_included::{};",
+                        path.response_rust_type
+                    )
+                    .unwrap();
+                }
+            }
+
+            writeln!(code).unwrap();
+            writeln!(
+                code,
+                "impl {}RepositoryImpl {{",
+                tree.entity_name
+            )
+            .unwrap();
+            self.emit_include_fetch_methods(&tree, &mut code, &include_paths, &include_segment_dto_fields, &include_segment_col_fields, &include_segment_is_structured, &include_segment_is_codelist, &include_segment_dto_rust_types, &include_segment_is_nullable);
+            writeln!(code, "}}").unwrap();
+        }
+
         Ok(code)
     }
 
@@ -1522,7 +1826,7 @@ impl RepositoryImplEmitter {
         parent_ref: Option<&str>,
     ) -> Result<EntityTree> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -1567,13 +1871,16 @@ impl RepositoryImplEmitter {
         }
 
         let all_props = db.get_properties(schema_title).await?;
-        let props = {
+        let mut props = {
             let mut seen = std::collections::HashSet::new();
             all_props
                 .into_iter()
                 .filter(|p| seen.insert(p.rust_field_name.clone()))
                 .collect::<Vec<_>>()
         };
+        // For codelist entities with no graph properties (enum-only JSON schema),
+        // inject the three columns created by the codelist DDL template.
+        codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist, domain);
 
         // Consumed fields from composite range collapsing — skip these in all operations
         let consumed_fields: std::collections::HashSet<String> = db
@@ -1692,7 +1999,7 @@ impl RepositoryImplEmitter {
                     for prop in &via_props {
                         if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, &entry.via_entity).await {
                             if target.title == schema_title {
-                                let col = format!("{}_id", codegraph_naming::to_snake_case(&prop.name));
+                                let col = codegraph_core::types::resolve_field(prop).column_name;
                                 via_fk = Some(col);
                                 break;
                             }
@@ -1700,12 +2007,12 @@ impl RepositoryImplEmitter {
                     }
 
                     // Get via entity's schema for table name
-                    let via_schema = db.get_schema(&entry.via_entity).await?
+                    let via_schema = db.get_schema_in_domain(&entry.via_entity, domain).await?
                         .ok_or_else(|| crate::error::Error::SchemaNotFound(entry.via_entity.clone()))?;
 
                     // Get parent entity's schema for table name
                     let parent_schema = if let Some(ref name) = parent_entity_name {
-                        db.get_schema(name).await.ok().flatten()
+                        db.get_schema_in_domain(name, domain).await.ok().flatten()
                     } else {
                         None
                     };
@@ -1713,7 +2020,7 @@ impl RepositoryImplEmitter {
                     // Resolve worker detail JOINs from the parent entity's composition tree.
                     // Walks child tables to find person name columns (given, family) and avatar_url.
                     let worker_detail_joins = if let Some(ref parent_name) = parent_entity_name {
-                        resolve_worker_detail_joins(db, parent_name).await
+                        resolve_worker_detail_joins(db, parent_name, domain).await
                     } else {
                         Vec::new()
                     };
@@ -1875,6 +2182,7 @@ impl RepositoryImplEmitter {
             .iter()
             .any(|c| c.pg_cast.is_some() && !c.is_composite_range);
 
+        // Dispatch to CrudOp::CreateActiveModel or CrudOp::CreateRawSql
         if has_range_cols {
             // Use raw SQL INSERT so range parameters get explicit casts
             self.emit_create_raw_sql(tree, code);
@@ -1910,21 +2218,32 @@ impl RepositoryImplEmitter {
             let fk_field = codegraph_naming::to_snake_case(parent_ref);
             writeln!(code, "            {fk_field}: Set(Some(parent_id)),").unwrap();
         }
-        for col in &tree.direct_columns {
-            if col.is_workflow_managed || col.is_composite_range || col.is_media {
-                continue;
-            }
-            // Skip parent FK column for child entities — it's already set above
-            if tree.parent_ref.is_some()
-                && (col.field_name == *tree.parent_ref.as_deref().unwrap()
-                    || col.field_name
-                        == format!("{}_id", codegraph_naming::to_snake_case(tree.parent_ref.as_deref().unwrap())))
-            {
-                continue;
-            }
+        let op = CrudOp::CreateActiveModel;
+        for col in op.columns(tree) {
             let entity_field = &col.field_name;
             let dto_field = col.dto_name();
-            if col.dto_rust_type.is_some() {
+            // StructuredWrapper must take priority — serde_json::to_value(), not .to_string().
+            if col.is_structured_wrapper {
+                // StructuredWrapper (scalar or array): DTO has typed struct/Vec, entity needs JSONB.
+                if col.is_nullable {
+                    if col.is_array {
+                        writeln!(
+                            code,
+                            "            {entity_field}: Set(cmd.{dto_field}.map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))),",
+                        ).unwrap();
+                    } else {
+                        writeln!(
+                            code,
+                            "            {entity_field}: Set(cmd.{dto_field}.as_ref().and_then(|v| serde_json::to_value(v).ok())),",
+                        ).unwrap();
+                    }
+                } else {
+                    writeln!(
+                        code,
+                        "            {entity_field}: Set(serde_json::to_value(cmd.{dto_field}).unwrap_or(serde_json::Value::Null)),",
+                    ).unwrap();
+                }
+            } else if col.dto_rust_type.is_some() {
                 if col.is_array {
                     // Vec<CodelistEnum> → Vec<String>
                     if col.is_nullable {
@@ -1953,26 +2272,6 @@ impl RepositoryImplEmitter {
                     )
                     .unwrap();
                 }
-            } else if col.is_structured_wrapper {
-                // StructuredWrapper (scalar or array): DTO has typed struct/Vec, entity needs JSONB.
-                if col.is_nullable {
-                    if col.is_array {
-                        writeln!(
-                            code,
-                            "            {entity_field}: Set(cmd.{dto_field}.map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))),",
-                        ).unwrap();
-                    } else {
-                        writeln!(
-                            code,
-                            "            {entity_field}: Set(cmd.{dto_field}.as_ref().and_then(|v| serde_json::to_value(v).ok())),",
-                        ).unwrap();
-                    }
-                } else {
-                    writeln!(
-                        code,
-                        "            {entity_field}: Set(serde_json::to_value(cmd.{dto_field}).unwrap_or(serde_json::Value::Null)),",
-                    ).unwrap();
-                }
             } else {
                 writeln!(
                     code,
@@ -1999,25 +2298,8 @@ impl RepositoryImplEmitter {
         // Collect non-workflow columns for the INSERT (exclude composite range
         // columns which exist in DDL but not on DTOs, and exclude parent FK
         // for child entities since it's already set from the route)
-        let insert_cols: Vec<&TreeColumn> = tree
-            .direct_columns
-            .iter()
-            .filter(|c| {
-                if c.is_workflow_managed || c.is_composite_range || c.is_media {
-                    return false;
-                }
-                // Skip parent FK column for child entities
-                if let Some(ref parent_ref) = tree.parent_ref {
-                    if c.pg_column_name == *parent_ref
-                        || c.pg_column_name
-                            == format!("{}_id", codegraph_naming::to_snake_case(parent_ref))
-                    {
-                        return false;
-                    }
-                }
-                true
-            })
-            .collect();
+        let op = CrudOp::CreateRawSql;
+        let insert_cols = op.columns(tree);
 
         // Build column names: id + optional FK + direct columns (use PG column names for SQL, quoted)
         let mut col_names = vec!["id".to_string()];
@@ -2301,36 +2583,27 @@ impl RepositoryImplEmitter {
         writeln!(code, "            id: Set(id),").unwrap();
         writeln!(code, "            ..Default::default()").unwrap();
         writeln!(code, "        }};").unwrap();
-        for col in &tree.direct_columns {
-            // Workflow-managed and media fields aren't on the update DTO.
-            if col.is_workflow_managed || col.is_media {
-                continue;
-            }
-            // Range columns are handled separately via raw SQL with explicit casts.
-            // Composite range columns don't exist on DTOs at all.
-            if col.pg_cast.is_some() || col.is_composite_range {
-                continue;
-            }
+        let op = CrudOp::Update;
+        for col in op.columns(tree) {
             let entity_field = &col.field_name;
-            let dto_field = col.dto_name();
             if col.is_structured_wrapper {
                 // StructuredWrapper (scalar or array): serialize to JSONB.
                 if col.is_nullable {
                     if col.is_array {
                         writeln!(
                             code,
-                            "        if let Some(v) = cmd.{dto_field} {{ model.{entity_field} = Set(Some(serde_json::to_value(v).unwrap_or(serde_json::Value::Null))); }}",
+                            "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set(Some(serde_json::to_value(v).unwrap_or(serde_json::Value::Null))); }}",
                         ).unwrap();
                     } else {
                         writeln!(
                             code,
-                            "        if let Some(v) = cmd.{dto_field} {{ model.{entity_field} = Set(serde_json::to_value(v).ok()); }}",
+                            "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set(serde_json::to_value(v).ok()); }}",
                         ).unwrap();
                     }
                 } else {
                     writeln!(
                         code,
-                        "        if let Some(v) = cmd.{dto_field} {{ model.{entity_field} = Set(serde_json::to_value(v).unwrap_or(serde_json::Value::Null)); }}",
+                        "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set(serde_json::to_value(v).unwrap_or(serde_json::Value::Null)); }}",
                     ).unwrap();
                 }
             } else {
@@ -2344,13 +2617,13 @@ impl RepositoryImplEmitter {
                 if col.is_nullable {
                     writeln!(
                         code,
-                        "        if let Some(v) = cmd.{dto_field} {{ model.{entity_field} = Set(Some({value_expr})); }}",
+                        "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set(Some({value_expr})); }}",
                     )
                     .unwrap();
                 } else {
                     writeln!(
                         code,
-                        "        if let Some(v) = cmd.{dto_field} {{ model.{entity_field} = Set({value_expr}); }}",
+                        "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set({value_expr}); }}",
                     )
                     .unwrap();
                 }
@@ -2396,8 +2669,8 @@ impl RepositoryImplEmitter {
             .unwrap();
             for col in &range_cols {
                 let cast = col.pg_cast.as_deref().unwrap();
-                let dto_field = col.dto_name();
-                let pg_col = q(&col.pg_column_name);
+            let dto_field = col.dto_name();
+            let pg_col = q(&col.pg_column_name);
                 let typed_value = typed_value_expr(&col.rust_type, "v");
                 writeln!(code, "            if let Some(v) = cmd.{dto_field} {{").unwrap();
                 let set_expr = if crate::generate::is_geometry_cast(cast) {
@@ -3281,6 +3554,596 @@ impl RepositoryImplEmitter {
         writeln!(code, "        }}").unwrap();
         writeln!(code).unwrap();
         writeln!(code, "        Ok(results)").unwrap();
+        writeln!(code, "    }}").unwrap();
+    }
+
+    fn emit_include_fetch_methods(
+        &self,
+        tree: &EntityTree,
+        code: &mut String,
+        include_paths: &[ResolvedIncludePath],
+        include_segment_dto_fields: &[Vec<Vec<String>>],
+        include_segment_col_fields: &[Vec<Vec<String>>],
+        include_segment_is_structured: &[Vec<Vec<bool>>],
+        include_segment_is_codelist: &[Vec<Vec<bool>>],
+        include_segment_dto_rust_types: &[Vec<Vec<Option<String>>>],
+        include_segment_is_nullable: &[Vec<Vec<bool>>],
+    ) {
+        for (idx, path) in include_paths.iter().enumerate() {
+            let per_seg_dto = include_segment_dto_fields.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+            let per_seg_col = include_segment_col_fields.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+            let per_seg_structured = include_segment_is_structured.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+            let per_seg_codelist = include_segment_is_codelist.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+            let per_seg_dto_types = include_segment_dto_rust_types.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+            let per_seg_is_nullable = include_segment_is_nullable.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+            if path.segments.len() == 1 {
+                let dto_fields = per_seg_dto.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let col_fields = per_seg_col.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let is_structured = per_seg_structured.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let is_codelist = per_seg_codelist.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let dto_rust_types = per_seg_dto_types.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let is_nullable = per_seg_is_nullable.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                self.emit_single_fetch_method(tree, code, path, dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+                self.emit_batch_fetch_method(tree, code, path, dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            } else {
+                let intermediate_dto = per_seg_dto.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let leaf_dto = per_seg_dto.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
+                let intermediate_col = per_seg_col.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let leaf_col = per_seg_col.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
+                let intermediate_structured = per_seg_structured.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let intermediate_codelist = per_seg_codelist.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let leaf_structured = per_seg_structured.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
+                let leaf_codelist = per_seg_codelist.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
+                let intermediate_dto_types = per_seg_dto_types.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let leaf_dto_types = per_seg_dto_types.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
+                let intermediate_nullable = per_seg_is_nullable.first().map(|v| v.as_slice()).unwrap_or(&[]);
+                let leaf_nullable = per_seg_is_nullable.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
+                self.emit_dot_fetch_method(tree, code, path,
+                    intermediate_dto, intermediate_col, intermediate_structured, intermediate_codelist, intermediate_dto_types, intermediate_nullable,
+                    leaf_dto, leaf_col, leaf_structured, leaf_codelist, leaf_dto_types, leaf_nullable);
+            }
+        }
+    }
+
+    /// Emit field assignments for a SeaORM entity row into a response struct.
+    /// Uses `dto_fields` for the left side (response struct field names) and
+    /// `col_fields` for the right side (entity Model field names from pg_column_name).
+    /// These differ for codelist fields: DTO uses "worker_type", entity uses "worker_type_code".
+    fn emit_field_assignments(code: &mut String, row_var: &str, dto_fields: &[String], col_fields: &[String]) {
+        for (dto_name, col_name) in dto_fields.iter().zip(col_fields.iter()) {
+            writeln!(code, "                {}: {}.{},", dto_name, row_var, col_name).unwrap();
+        }
+    }
+
+    /// Like emit_field_assignments but applies the same type conversions as
+    /// emit_entity_to_dto_field — serde_json::from_value() for structured
+    /// wrappers, .parse() for codelists, direct assignment otherwise.
+    fn emit_field_assignments_typed(
+        code: &mut String,
+        row_var: &str,
+        dto_fields: &[String],
+        col_fields: &[String],
+        is_structured: &[bool],
+        is_codelist: &[bool],
+        dto_rust_types: &[Option<String>],
+        is_nullable: &[bool],
+    ) {
+        for i in 0..dto_fields.len() {
+            let dto_name = &dto_fields[i];
+            let col_name = &col_fields[i];
+            if i < is_structured.len() && is_structured[i] {
+                // StructuredWrapper: serde_json::from_value() or .and_then() for nullable
+                if i < is_nullable.len() && is_nullable[i] {
+                    writeln!(
+                        code,
+                        "                {dto_name}: {row_var}.{col_name}.and_then(|v| serde_json::from_value(v).ok()),",
+                    ).unwrap();
+                } else {
+                    writeln!(
+                        code,
+                        "                {dto_name}: serde_json::from_value({row_var}.{col_name}).unwrap_or_default(),",
+                    ).unwrap();
+                }
+            } else if i < is_codelist.len() && is_codelist[i] && i < dto_rust_types.len() && dto_rust_types[i].is_some() {
+                // Codelist: .parse()
+                writeln!(
+                    code,
+                    "                {dto_name}: {row_var}.{col_name}.and_then(|v| v.parse().ok()),",
+                ).unwrap();
+            } else {
+                writeln!(code, "                {dto_name}: {row_var}.{col_name},").unwrap();
+            }
+        }
+    }
+
+    fn emit_single_fetch_method(
+        &self,
+        tree: &EntityTree,
+        code: &mut String,
+        path: &ResolvedIncludePath,
+        dto_fields: &[String],
+        col_fields: &[String],
+        is_structured: &[bool],
+        is_codelist: &[bool],
+        dto_rust_types: &[Option<String>],
+        is_nullable: &[bool],
+    ) {
+        let seg = &path.segments[0];
+        let src_module = &tree.entity_module;
+        let resp_type = &path.response_rust_type;
+        let target_module = format!("{}_{}", seg.domain, seg.module_name);
+
+        writeln!(code).unwrap();
+        writeln!(
+            code,
+            "    pub(crate) async fn {}(",
+            path.fetch_method
+        )
+        .unwrap();
+        writeln!(code, "        &self,").unwrap();
+        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
+        writeln!(code, "        source_id: Uuid,").unwrap();
+        if seg.is_array {
+            writeln!(
+                code,
+                "    ) -> Result<Vec<{}>, Box<dyn std::error::Error>> {{",
+                resp_type
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+                resp_type
+            )
+            .unwrap();
+        }
+
+        if let Some(ref over) = seg.child_table_override {
+            // VO→entity: query child table directly by parent FK
+            let over_fk_pascal = codegraph_naming::to_pascal_case(&over.parent_fk_column);
+            writeln!(
+                code,
+                "        let target = crate::entity::{}::Entity::find()",
+                over.child_module,
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::{}.eq(source_id))",
+                over.child_module, over_fk_pascal,
+            )
+            .unwrap();
+            writeln!(code, "            .one(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(code, "        let target = match target {{").unwrap();
+            writeln!(code, "            Some(t) => t,").unwrap();
+            writeln!(code, "            None => return Ok(None),").unwrap();
+            writeln!(code, "        }};").unwrap();
+            writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
+            Self::emit_field_assignments_typed(code, "target", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            writeln!(code, "            ..Default::default()").unwrap();
+            writeln!(code, "        }}))").unwrap();
+        } else if seg.is_array {
+            let reverse_fk_pascal = codegraph_naming::to_pascal_case(&seg.reverse_fk_column);
+            writeln!(
+                code,
+                "        let rows = crate::entity::{}::Entity::find()",
+                target_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::{}.eq(source_id))",
+                target_module, reverse_fk_pascal
+            )
+            .unwrap();
+            writeln!(code, "            .all(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(
+                code,
+                "        let mut results = Vec::with_capacity(rows.len());"
+            )
+            .unwrap();
+            writeln!(code, "        for row in rows {{").unwrap();
+            writeln!(code, "            results.push({} {{", resp_type).unwrap();
+            writeln!(code, "                id: row.id,").unwrap();
+            Self::emit_field_assignments_typed(code, "row", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            writeln!(code, "                created_at: row.created_at,").unwrap();
+            writeln!(code, "                updated_at: row.updated_at,").unwrap();
+            writeln!(code, "                ..Default::default()").unwrap();
+            writeln!(code, "            }});").unwrap();
+            writeln!(code, "        }}").unwrap();
+            writeln!(code, "        Ok(results)").unwrap();
+        } else {
+            writeln!(
+                code,
+                "        let source = crate::entity::{}::Entity::find()",
+                src_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.eq(source_id))",
+                src_module
+            )
+            .unwrap();
+            writeln!(code, "            .one(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(code, "        let source = match source {{").unwrap();
+            writeln!(code, "            Some(s) => s,").unwrap();
+            writeln!(code, "            None => return Ok(None),").unwrap();
+            writeln!(code, "        }};").unwrap();
+            writeln!(
+                code,
+                "        let fk_value = match source.{} {{",
+                seg.fk_column
+            )
+            .unwrap();
+            writeln!(code, "            Some(v) => v,").unwrap();
+            writeln!(code, "            None => return Ok(None),").unwrap();
+            writeln!(code, "        }};").unwrap();
+            writeln!(
+                code,
+                "        let target = crate::entity::{}::Entity::find()",
+                target_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.eq(fk_value))",
+                target_module
+            )
+            .unwrap();
+            writeln!(code, "            .one(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(code, "        let target = match target {{").unwrap();
+            writeln!(code, "            Some(t) => t,").unwrap();
+            writeln!(code, "            None => return Ok(None),").unwrap();
+            writeln!(code, "        }};").unwrap();
+            writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
+            writeln!(code, "            id: target.id,").unwrap();
+            Self::emit_field_assignments_typed(code, "target", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            writeln!(code, "            created_at: target.created_at,").unwrap();
+            writeln!(code, "            updated_at: target.updated_at,").unwrap();
+            writeln!(code, "            ..Default::default()").unwrap();
+            writeln!(code, "        }}))").unwrap();
+        }
+
+        writeln!(code, "    }}").unwrap();
+    }
+
+    fn emit_batch_fetch_method(
+        &self,
+        tree: &EntityTree,
+        code: &mut String,
+        path: &ResolvedIncludePath,
+        dto_fields: &[String],
+        col_fields: &[String],
+        is_structured: &[bool],
+        is_codelist: &[bool],
+        dto_rust_types: &[Option<String>],
+        is_nullable: &[bool],
+    ) {
+        let seg = &path.segments[0];
+        let src_module = &tree.entity_module;
+        let resp_type = &path.response_rust_type;
+        let target_module = format!("{}_{}", seg.domain, seg.module_name);
+
+        writeln!(code).unwrap();
+        writeln!(
+            code,
+            "    pub(crate) async fn {}(",
+            path.batch_fetch_method
+        )
+        .unwrap();
+        writeln!(code, "        &self,").unwrap();
+        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
+        writeln!(code, "        source_ids: &[Uuid],").unwrap();
+        if seg.is_array {
+            writeln!(
+                code,
+                "    ) -> Result<std::collections::HashMap<Uuid, Vec<{}>>, Box<dyn std::error::Error>> {{",
+                resp_type
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "    ) -> Result<std::collections::HashMap<Uuid, Option<{}>>, Box<dyn std::error::Error>> {{",
+                resp_type
+            )
+            .unwrap();
+        }
+
+        if let Some(ref over) = seg.child_table_override {
+            let over_fk_pascal = codegraph_naming::to_pascal_case(&over.parent_fk_column);
+            writeln!(
+                code,
+                "        let rows = crate::entity::{}::Entity::find()",
+                over.child_module,
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::{}.is_in(source_ids.to_vec()))",
+                over.child_module, over_fk_pascal,
+            )
+            .unwrap();
+            writeln!(code, "            .all(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(
+                code,
+                "        let mut result: std::collections::HashMap<Uuid, Option<{}>> = std::collections::HashMap::new();",
+                resp_type
+            )
+            .unwrap();
+            writeln!(code, "        for id in source_ids {{").unwrap();
+            writeln!(code, "            result.entry(*id).or_insert(None);").unwrap();
+            writeln!(code, "        }}").unwrap();
+            writeln!(code, "        for row in rows {{").unwrap();
+            writeln!(
+                code,
+                "            result.insert(row.{}, Some({} {{",
+                over.parent_fk_column,
+                resp_type,
+            )
+            .unwrap();
+            Self::emit_field_assignments_typed(code, "row", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            writeln!(code, "                ..Default::default()").unwrap();
+            writeln!(code, "            }}));").unwrap();
+            writeln!(code, "        }}").unwrap();
+        } else if seg.is_array {
+            let reverse_fk_pascal = codegraph_naming::to_pascal_case(&seg.reverse_fk_column);
+            writeln!(
+                code,
+                "        let rows = crate::entity::{}::Entity::find()",
+                target_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::{}.is_in(source_ids.to_vec()))",
+                target_module, reverse_fk_pascal
+            )
+            .unwrap();
+            writeln!(code, "            .all(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(
+                code,
+                "        let mut result: std::collections::HashMap<Uuid, Vec<{}>> = std::collections::HashMap::new();",
+                resp_type
+            )
+            .unwrap();
+            writeln!(code, "        for id in source_ids {{").unwrap();
+            writeln!(
+                code,
+                "            result.entry(*id).or_insert_with(Vec::new);"
+            )
+            .unwrap();
+            writeln!(code, "        }}").unwrap();
+            writeln!(code, "        for row in rows {{").unwrap();
+            writeln!(
+                code,
+                "            let key = match row.{} {{",
+                seg.reverse_fk_column
+            )
+            .unwrap();
+            writeln!(code, "                Some(v) => v,").unwrap();
+            writeln!(code, "                None => continue,").unwrap();
+            writeln!(code, "            }};").unwrap();
+            writeln!(
+                code,
+                "            result.entry(key).or_default().push({} {{",
+                resp_type
+            )
+            .unwrap();
+            writeln!(code, "                id: row.id,").unwrap();
+            Self::emit_field_assignments_typed(code, "row", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            writeln!(code, "                created_at: row.created_at,").unwrap();
+            writeln!(code, "                updated_at: row.updated_at,").unwrap();
+            writeln!(code, "                ..Default::default()").unwrap();
+            writeln!(code, "            }});").unwrap();
+            writeln!(code, "        }}").unwrap();
+        } else {
+            writeln!(
+                code,
+                "        let sources = crate::entity::{}::Entity::find()",
+                src_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.is_in(source_ids.to_vec()))",
+                src_module
+            )
+            .unwrap();
+            writeln!(code, "            .all(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(
+                code,
+                "        let mut fk_values: Vec<Uuid> = Vec::new();"
+            )
+            .unwrap();
+            writeln!(code, "        for source in &sources {{").unwrap();
+            writeln!(
+                code,
+                "            if let Some(fk) = source.{} {{",
+                seg.fk_column
+            )
+            .unwrap();
+            writeln!(code, "                fk_values.push(fk);").unwrap();
+            writeln!(code, "            }}").unwrap();
+            writeln!(code, "        }}").unwrap();
+            writeln!(
+                code,
+                "        let targets = crate::entity::{}::Entity::find()",
+                target_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.is_in(fk_values))",
+                target_module
+            )
+            .unwrap();
+            writeln!(code, "            .all(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+            writeln!(
+                code,
+                "        let target_by_id: std::collections::HashMap<Uuid, {}> = targets.into_iter().map(|t| (t.id, {} {{",
+                resp_type, resp_type
+            )
+            .unwrap();
+            writeln!(code, "            id: t.id,").unwrap();
+            Self::emit_field_assignments_typed(code, "t", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            writeln!(code, "            created_at: t.created_at,").unwrap();
+            writeln!(code, "            updated_at: t.updated_at,").unwrap();
+            writeln!(code, "            ..Default::default()").unwrap();
+            writeln!(
+                code,
+                "        }})).collect();"
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "        let mut result: std::collections::HashMap<Uuid, Option<{}>> = std::collections::HashMap::new();",
+                resp_type
+            )
+            .unwrap();
+            writeln!(code, "        for id in source_ids {{").unwrap();
+            writeln!(
+                code,
+                "            let found = sources.iter().find(|s| s.id == *id).and_then(|s| s.{}.and_then(|fk| target_by_id.get(&fk).cloned()));",
+                seg.fk_column
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            result.insert(*id, found);"
+            )
+            .unwrap();
+            writeln!(code, "        }}").unwrap();
+        }
+
+        writeln!(code, "        Ok(result)").unwrap();
+        writeln!(code, "    }}").unwrap();
+    }
+
+    fn emit_dot_fetch_method(
+        &self,
+        _tree: &EntityTree,
+        code: &mut String,
+        path: &ResolvedIncludePath,
+        intermediate_dto: &[String],
+        intermediate_col: &[String],
+        intermediate_structured: &[bool],
+        intermediate_codelist: &[bool],
+        intermediate_dto_types: &[Option<String>],
+        intermediate_nullable: &[bool],
+        leaf_dto: &[String],
+        leaf_col: &[String],
+        leaf_structured: &[bool],
+        leaf_codelist: &[bool],
+        leaf_dto_types: &[Option<String>],
+        leaf_nullable: &[bool],
+    ) {
+        let seg0 = &path.segments[0];
+        let seg1 = &path.segments[1];
+        let resp_type = &path.response_rust_type;
+        let leaf_resp_type = path.segments.last().map(|s| format!("{}Response", s.entity_name)).unwrap_or_default();
+        let intermediate_module = format!("{}_{}", seg0.domain, seg0.module_name);
+        let leaf_module = format!("{}_{}", seg1.domain, seg1.module_name);
+
+        writeln!(code).unwrap();
+        writeln!(
+            code,
+            "    pub(crate) async fn {}(",
+            path.fetch_method
+        )
+        .unwrap();
+        writeln!(code, "        &self,").unwrap();
+        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
+        writeln!(code, "        source_id: Uuid,").unwrap();
+        writeln!(
+            code,
+            "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+            resp_type
+        )
+        .unwrap();
+
+        writeln!(
+            code,
+            "        let intermediate = crate::entity::{}::Entity::find()",
+            intermediate_module
+        )
+        .unwrap();
+        if seg0.is_array {
+            let rev_fk_pascal = codegraph_naming::to_pascal_case(&seg0.reverse_fk_column);
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::{}.eq(source_id))",
+                intermediate_module, rev_fk_pascal
+            )
+            .unwrap();
+            writeln!(code, "            .one(db)").unwrap();
+        } else {
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.eq(source_id))",
+                intermediate_module
+            )
+            .unwrap();
+            writeln!(code, "            .one(db)").unwrap();
+        }
+        writeln!(code, "            .await?;").unwrap();
+        writeln!(code, "        let intermediate = match intermediate {{").unwrap();
+        writeln!(code, "            Some(s) => s,").unwrap();
+        writeln!(code, "            None => return Ok(None),").unwrap();
+        writeln!(code, "        }};").unwrap();
+        writeln!(
+            code,
+            "        let fk_value = match intermediate.{} {{",
+            seg1.fk_column
+        )
+        .unwrap();
+        writeln!(code, "            Some(v) => v,").unwrap();
+        writeln!(code, "            None => return Ok(None),").unwrap();
+        writeln!(code, "        }};").unwrap();
+        writeln!(
+            code,
+            "        let leaf = crate::entity::{}::Entity::find()",
+            leaf_module
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "            .filter(crate::entity::{}::Column::Id.eq(fk_value))",
+            leaf_module
+        )
+        .unwrap();
+        writeln!(code, "            .one(db)").unwrap();
+        writeln!(code, "            .await?;").unwrap();
+
+        // Build enriched response: base fields from intermediate, nested leaf from leaf
+        writeln!(code, "        let leaf_dto = leaf.map(|l| {} {{", leaf_resp_type).unwrap();
+        writeln!(code, "            id: l.id,").unwrap();
+        Self::emit_field_assignments_typed(code, "l", leaf_dto, leaf_col, leaf_structured, leaf_codelist, leaf_dto_types, leaf_nullable);
+        writeln!(code, "            created_at: l.created_at,").unwrap();
+        writeln!(code, "            updated_at: l.updated_at,").unwrap();
+        writeln!(code, "            ..Default::default()").unwrap();
+            writeln!(code, "        }});").unwrap();
+
+        writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
+        writeln!(code, "            id: intermediate.id,").unwrap();
+        // Intermediate entity fields go into the enriched struct base
+        Self::emit_field_assignments_typed(code, "intermediate", intermediate_dto, intermediate_col, intermediate_structured, intermediate_codelist, intermediate_dto_types, intermediate_nullable);
+        writeln!(code, "            created_at: intermediate.created_at,").unwrap();
+        writeln!(code, "            updated_at: intermediate.updated_at,").unwrap();
+        writeln!(code, "            {}: leaf_dto,", seg1.module_name).unwrap();
+        writeln!(code, "            ..Default::default()").unwrap();
+        writeln!(code, "        }}))").unwrap();
+
         writeln!(code, "    }}").unwrap();
     }
 

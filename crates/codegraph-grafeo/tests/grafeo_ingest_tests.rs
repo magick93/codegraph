@@ -79,7 +79,7 @@ async fn test_ingest_property() {
     let engine = GrafeoEngine::in_memory().unwrap();
     engine.ingest_schema(&test_schema_node()).await.unwrap();
     let prop = test_property_node();
-    engine.ingest_property("PersonType", &prop).await.unwrap();
+    engine.ingest_property("PersonType", "test/PersonType", &prop).await.unwrap();
 
     let session = engine.db().session();
     let result = session
@@ -190,7 +190,7 @@ async fn test_finalize_stats() {
     let engine = GrafeoEngine::in_memory().unwrap();
     engine.ingest_schema(&test_schema_node()).await.unwrap();
     engine
-        .ingest_property("PersonType", &test_property_node())
+        .ingest_property("PersonType", "test/PersonType", &test_property_node())
         .await
         .unwrap();
 

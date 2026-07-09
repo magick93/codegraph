@@ -25,6 +25,13 @@ struct RunArgs<'a> {
 
 #[tokio::main]
 async fn main() -> codegraph::error::Result<()> {
+    if let Ok(filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::io::stderr)
+            .try_init();
+    }
+
     let cli = cli::Cli::parse();
 
     match cli.command {
@@ -255,7 +262,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         project_config = Some(ProjectConfig {
             app_name: meta.app_name.clone().unwrap_or_else(|| "app".into()),
             domain_types_crate: meta.domain_types_crate.clone().unwrap_or_else(|| "domain_types".into()),
-            hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_else(|| "hooks_api".into()),
+            hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_default(),
             api_title: meta.api_title.clone().unwrap_or_else(|| "HR Open API".into()),
             generator_name: meta.generator_name.clone().unwrap_or_else(|| "codegraph".into()),
             domain_types_base: meta.domain_types_base.clone().unwrap_or_default(),
@@ -267,6 +274,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             type_contracts_base: meta.type_contracts_base.clone().unwrap_or_default(),
             database_target: database_target_str,
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
+            codegraph_rev: current_git_rev(),
         });
 
         println!(
@@ -692,4 +700,15 @@ async fn cmd_lsp(
         .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
 
     Ok(())
+}
+
+/// Return the current Git revision hash, or an empty string if unavailable.
+fn current_git_rev() -> String {
+    std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }

@@ -32,6 +32,7 @@ mod webhook_dispatch;
 mod webhook_router;
 
 
+
 static START_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 /// Build and version metadata exposed at `GET /version`.
@@ -69,7 +70,7 @@ fn init_tracing() -> Option<opentelemetry_sdk::trace::SdkTracerProvider> {
                 let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
                     .with_batch_exporter(exporter)
                     .build();
-                let tracer = provider.tracer("hr-app");
+                let tracer = provider.tracer("app");
                 opentelemetry::global::set_tracer_provider(provider.clone());
                 let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
                 registry.with(otel_layer).init();
@@ -204,7 +205,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .install_recorder()
         .map_err(|e| format!("Failed to install Prometheus metrics recorder: {e}"))?;
 
-    let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| "hr-app".to_string());
+    let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| "app".to_string());
 
     let db_url = std::env::var("DATABASE_URL").map_err(|_| {
         "DATABASE_URL environment variable is required. Set it to your Postgres connection string, e.g. postgres://user:pass@host:5432/dbname"
@@ -213,6 +214,143 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = sea_orm::Database::connect(&db_url).await?;
 
     let state = app_state::AppState {
+
+
+        common_code_commands: crate::domain::common::code::command::CodeCommandHandler::new(
+            Arc::new(crate::domain::common::code::repository_impl::CodeRepositoryImpl),
+            db.clone(),
+        ),
+        common_code_queries: crate::domain::common::code::query::CodeQueryHandler::new(
+            Arc::new(crate::domain::common::code::repository_impl::CodeRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_currency_code_list_commands: crate::domain::common::currency_code_list::command::CurrencyCodeListCommandHandler::new(
+            Arc::new(crate::domain::common::currency_code_list::repository_impl::CurrencyCodeListRepositoryImpl),
+            db.clone(),
+        ),
+        common_currency_code_list_queries: crate::domain::common::currency_code_list::query::CurrencyCodeListQueryHandler::new(
+            Arc::new(crate::domain::common::currency_code_list::repository_impl::CurrencyCodeListRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_date_commands: crate::domain::common::date::command::DateCommandHandler::new(
+            Arc::new(crate::domain::common::date::repository_impl::DateRepositoryImpl),
+            db.clone(),
+        ),
+        common_date_queries: crate::domain::common::date::query::DateQueryHandler::new(
+            Arc::new(crate::domain::common::date::repository_impl::DateRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_distribution_base_commands: crate::domain::common::distribution_base::command::DistributionBaseCommandHandler::new(
+            Arc::new(crate::domain::common::distribution_base::repository_impl::DistributionBaseRepositoryImpl),
+            db.clone(),
+        ),
+        common_distribution_base_queries: crate::domain::common::distribution_base::query::DistributionBaseQueryHandler::new(
+            Arc::new(crate::domain::common::distribution_base::repository_impl::DistributionBaseRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_effective_date_commands: crate::domain::common::effective_date::command::EffectiveDateCommandHandler::new(
+            Arc::new(crate::domain::common::effective_date::repository_impl::EffectiveDateRepositoryImpl),
+            db.clone(),
+        ),
+        common_effective_date_queries: crate::domain::common::effective_date::query::EffectiveDateQueryHandler::new(
+            Arc::new(crate::domain::common::effective_date::repository_impl::EffectiveDateRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_formatted_date_time_commands: crate::domain::common::formatted_date_time::command::FormattedDateTimeCommandHandler::new(
+            Arc::new(crate::domain::common::formatted_date_time::repository_impl::FormattedDateTimeRepositoryImpl),
+            db.clone(),
+        ),
+        common_formatted_date_time_queries: crate::domain::common::formatted_date_time::query::FormattedDateTimeQueryHandler::new(
+            Arc::new(crate::domain::common::formatted_date_time::repository_impl::FormattedDateTimeRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_gender_code_list_commands: crate::domain::common::gender_code_list::command::GenderCodeListCommandHandler::new(
+            Arc::new(crate::domain::common::gender_code_list::repository_impl::GenderCodeListRepositoryImpl),
+            db.clone(),
+        ),
+        common_gender_code_list_queries: crate::domain::common::gender_code_list::query::GenderCodeListQueryHandler::new(
+            Arc::new(crate::domain::common::gender_code_list::repository_impl::GenderCodeListRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_identifier_commands: crate::domain::common::identifier::command::IdentifierCommandHandler::new(
+            Arc::new(crate::domain::common::identifier::repository_impl::IdentifierRepositoryImpl),
+            db.clone(),
+        ),
+        common_identifier_queries: crate::domain::common::identifier::query::IdentifierQueryHandler::new(
+            Arc::new(crate::domain::common::identifier::repository_impl::IdentifierRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_name_commands: crate::domain::common::name::command::NameCommandHandler::new(
+            Arc::new(crate::domain::common::name::repository_impl::NameRepositoryImpl),
+            db.clone(),
+        ),
+        common_name_queries: crate::domain::common::name::query::NameQueryHandler::new(
+            Arc::new(crate::domain::common::name::repository_impl::NameRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_person_base_commands: crate::domain::common::person_base::command::PersonBaseCommandHandler::new(
+            Arc::new(crate::domain::common::person_base::repository_impl::PersonBaseRepositoryImpl),
+            db.clone(),
+        ),
+        common_person_base_queries: crate::domain::common::person_base::query::PersonBaseQueryHandler::new(
+            Arc::new(crate::domain::common::person_base::repository_impl::PersonBaseRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_position_schedule_type_code_list_commands: crate::domain::common::position_schedule_type_code_list::command::PositionScheduleTypeCodeListCommandHandler::new(
+            Arc::new(crate::domain::common::position_schedule_type_code_list::repository_impl::PositionScheduleTypeCodeListRepositoryImpl),
+            db.clone(),
+        ),
+        common_position_schedule_type_code_list_queries: crate::domain::common::position_schedule_type_code_list::query::PositionScheduleTypeCodeListQueryHandler::new(
+            Arc::new(crate::domain::common::position_schedule_type_code_list::repository_impl::PositionScheduleTypeCodeListRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_string_type_array_commands: crate::domain::common::string_type_array::command::StringTypeArrayCommandHandler::new(
+            Arc::new(crate::domain::common::string_type_array::repository_impl::StringTypeArrayRepositoryImpl),
+            db.clone(),
+        ),
+        common_string_type_array_queries: crate::domain::common::string_type_array::query::StringTypeArrayQueryHandler::new(
+            Arc::new(crate::domain::common::string_type_array::repository_impl::StringTypeArrayRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_amount_commands: crate::domain::common::amount::command::AmountCommandHandler::new(
+            Arc::new(crate::domain::common::amount::repository_impl::AmountRepositoryImpl),
+            db.clone(),
+        ),
+        common_amount_queries: crate::domain::common::amount::query::AmountQueryHandler::new(
+            Arc::new(crate::domain::common::amount::repository_impl::AmountRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_process_history_item_commands: crate::domain::common::process_history_item::command::ProcessHistoryItemCommandHandler::new(
+            Arc::new(crate::domain::common::process_history_item::repository_impl::ProcessHistoryItemRepositoryImpl),
+            db.clone(),
+        ),
+        common_process_history_item_queries: crate::domain::common::process_history_item::query::ProcessHistoryItemQueryHandler::new(
+            Arc::new(crate::domain::common::process_history_item::repository_impl::ProcessHistoryItemRepositoryImpl),
+            db.clone(),
+        ),
+
+        common_process_history_commands: crate::domain::common::process_history::command::ProcessHistoryCommandHandler::new(
+            Arc::new(crate::domain::common::process_history::repository_impl::ProcessHistoryRepositoryImpl),
+            db.clone(),
+        ),
+        common_process_history_queries: crate::domain::common::process_history::query::ProcessHistoryQueryHandler::new(
+            Arc::new(crate::domain::common::process_history::repository_impl::ProcessHistoryRepositoryImpl),
+            db.clone(),
+        ),
+
 
 
         compensation_pay_run_commands: crate::domain::compensation::pay_run::command::PayRunCommandHandler::new(
@@ -300,6 +438,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_routes = axum::Router::new()
 
 
+        .nest("/common", api::common::router::router())
+
+
+
         .nest("/compensation", api::compensation::router::router())
 
 
@@ -325,6 +467,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             SwaggerUi::new("/swagger-ui")
                 .urls(vec![
                     (Url::new("All", "/api-docs/openapi.json"), api::openapi::all::AllApiDoc::openapi()),
+
+
+                    (Url::new("Common", "/api-docs/common/openapi.json"), api::openapi::common::CommonApiDoc::openapi()),
+
 
 
                     (Url::new("Compensation", "/api-docs/compensation/openapi.json"), api::openapi::compensation::CompensationApiDoc::openapi()),

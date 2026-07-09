@@ -1,0 +1,103 @@
+syntax = "proto3";
+package common;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "common/;common";
+
+
+
+
+/// Date entity
+message Date {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for Date
+message CreateDateRequest {
+  
+}
+
+/// Update request for Date
+message UpdateDateRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+}
+
+/// Get request for Date
+message GetDateRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for Date
+message DeleteDateRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for Date
+message ListDateRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for Date
+message ListDateResponse {
+  
+  
+  repeated Date data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── Date Service ──────────────────────────────────────────
+service DateService {
+  
+  // Create a new entity
+  rpc Create(CreateDateRequest) returns (Date);
+  
+  // Get an entity by ID
+  rpc Get(GetDateRequest) returns (Date);
+  
+  // Update an existing entity
+  rpc Update(UpdateDateRequest) returns (Date);
+  
+  // Delete an entity by ID
+  rpc Delete(DeleteDateRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListDateRequest) returns (ListDateResponse);
+  
+}

@@ -1,0 +1,121 @@
+syntax = "proto3";
+package common;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "common/;common";
+
+
+
+
+/// Amount entity
+message Amount {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional string currency = 2;
+  
+  
+  optional double value = 3;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for Amount
+message CreateAmountRequest {
+  
+  
+  optional string currency = 2;
+  
+  
+  optional double value = 3;
+  
+}
+
+/// Update request for Amount
+message UpdateAmountRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional string currency = 2;
+  
+  
+  optional double value = 3;
+  
+}
+
+/// Get request for Amount
+message GetAmountRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for Amount
+message DeleteAmountRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for Amount
+message ListAmountRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for Amount
+message ListAmountResponse {
+  
+  
+  repeated Amount data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── Amount Service ──────────────────────────────────────────
+service AmountService {
+  
+  // Create a new entity
+  rpc Create(CreateAmountRequest) returns (Amount);
+  
+  // Get an entity by ID
+  rpc Get(GetAmountRequest) returns (Amount);
+  
+  // Update an existing entity
+  rpc Update(UpdateAmountRequest) returns (Amount);
+  
+  // Delete an entity by ID
+  rpc Delete(DeleteAmountRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListAmountRequest) returns (ListAmountResponse);
+  
+}

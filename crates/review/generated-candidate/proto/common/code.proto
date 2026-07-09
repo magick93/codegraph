@@ -1,0 +1,103 @@
+syntax = "proto3";
+package common;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "common/;common";
+
+
+
+
+/// Code entity
+message Code {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for Code
+message CreateCodeRequest {
+  
+}
+
+/// Update request for Code
+message UpdateCodeRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+}
+
+/// Get request for Code
+message GetCodeRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for Code
+message DeleteCodeRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for Code
+message ListCodeRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for Code
+message ListCodeResponse {
+  
+  
+  repeated Code data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── Code Service ──────────────────────────────────────────
+service CodeService {
+  
+  // Create a new entity
+  rpc Create(CreateCodeRequest) returns (Code);
+  
+  // Get an entity by ID
+  rpc Get(GetCodeRequest) returns (Code);
+  
+  // Update an existing entity
+  rpc Update(UpdateCodeRequest) returns (Code);
+  
+  // Delete an entity by ID
+  rpc Delete(DeleteCodeRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListCodeRequest) returns (ListCodeResponse);
+  
+}

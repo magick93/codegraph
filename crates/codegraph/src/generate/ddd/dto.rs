@@ -1,4 +1,3 @@
-use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -6,8 +5,11 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::api::include_path::{resolve_include_paths, ResolvedIncludePath};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
+use crate::generate::type_registry;
+use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 use codegraph_type_contracts::RefClassificationKind;
 
@@ -191,8 +193,9 @@ async fn build_child_dto(
                 }
             }
             Some(RefClassificationKind::EntityReference) => {
+                let fd = codegraph_core::types::resolve_field(c);
                 child_fields.push(DtoField {
-                    name: format!("{}_id", c.rust_field_name),
+                    name: fd.rust_field_name.clone(),
                     rust_type: "uuid::Uuid".to_string(),
                     is_required: false,
                     is_array: false,
@@ -209,9 +212,10 @@ async fn build_child_dto(
                 });
             }
             Some(RefClassificationKind::StructuredWrapper) => {
+                let fd = codegraph_core::types::resolve_field(c);
                 // StructuredWrappers are stored as a single JSONB column inline.
                 child_fields.push(DtoField {
-                    name: c.rust_field_name.clone(),
+                    name: fd.rust_field_name.clone(),
                     rust_type: "serde_json::Value".to_string(),
                     is_required: c.is_required,
                     is_array: false,
@@ -277,10 +281,11 @@ async fn build_child_dto(
                         child_dtos: vec![],
                     });
                 } else {
+                    let fd = codegraph_core::types::resolve_field(c);
                     let rust_type = codelist_enum_name_from_ref(&c.ref_target)
                         .unwrap_or_else(|| "String".to_string());
                     child_fields.push(DtoField {
-                        name: c.rust_field_name.clone(),
+                        name: fd.rust_field_name.clone(),
                         rust_type,
                         is_required: c.is_required,
                         is_array: false,
@@ -301,8 +306,9 @@ async fn build_child_dto(
             | Some(RefClassificationKind::ArrayWrapper)
             | Some(RefClassificationKind::RangeWrapper)
             | Some(RefClassificationKind::InlineEnum) => {
+                let fd = codegraph_core::types::resolve_field(c);
                 child_fields.push(DtoField {
-                    name: c.rust_field_name.clone(),
+                    name: fd.rust_field_name.clone(),
                     rust_type: c.rust_field_type.clone(),
                     is_required: c.is_required,
                     is_array: false,
@@ -327,8 +333,9 @@ async fn build_child_dto(
                         "String" | "bool" | "i16" | "i32" | "i64" | "f32" | "f64" | "u32" | "u64"
                     )
                 {
+                    let fd = codegraph_core::types::resolve_field(c);
                     child_fields.push(DtoField {
-                        name: c.rust_field_name.clone(),
+                        name: fd.rust_field_name.clone(),
                         rust_type: t.clone(),
                         is_required: c.is_required,
                         is_array: false,
@@ -385,7 +392,7 @@ pub async fn build_dto_context(
     config: &DomainConfig,
 ) -> Result<DtoContext> {
     let schema = db
-        .get_schema(schema_title)
+        .get_schema_in_domain(schema_title, domain)
         .await?
         .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -439,13 +446,16 @@ pub async fn build_dto_context(
 
     // Deduplicate properties by field name — allOf composition can produce
     // duplicate HasProperty edges (parent + child both contribute the same field).
-    let props = {
+    let mut props = {
         let mut seen = std::collections::HashSet::new();
         all_props
             .into_iter()
             .filter(|p| seen.insert(p.rust_field_name.clone()))
             .collect::<Vec<_>>()
     };
+    // For codelist entities with no graph properties (enum-only JSON schema),
+    // inject the three columns created by the codelist DDL template.
+    codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist, &domain);
 
     // Media fields are excluded from Create/Update DTOs — uploads happen via
     // separate media endpoints, not the JSON CRUD body.
@@ -542,8 +552,9 @@ pub async fn build_dto_context(
                 false
             };
             if is_entity_fk {
+                let fd = codegraph_core::types::resolve_field(prop);
                 fields.push(DtoField {
-                    name: format!("{}_id", prop.rust_field_name),
+                    name: fd.rust_field_name.clone(),
                     rust_type: "Uuid".to_string(),
                     is_required: false,
                     is_array: false,
@@ -646,33 +657,20 @@ pub async fn build_dto_context(
             rust_type
         };
 
-        // Strip _code suffix from codelist field names to match repo emitter's
-        // dto_field_name convention (e.g. language_code → language).
-        // Guard: don't strip if it would produce a Rust keyword or collide
-        // with another existing field name.
-        let field_name = match prop.effective_kind() {
-            Some(RefClassificationKind::CodelistReference)
-            | Some(RefClassificationKind::CodelistCheck) => {
-                let stripped = strip_code_suffix_safe(&prop.rust_field_name);
-                if stripped != prop.rust_field_name && all_field_names.contains(&stripped) {
-                    // Collision: another field already uses the stripped name
-                    prop.rust_field_name.clone()
-                } else {
-                    stripped
-                }
-            }
-            _ => prop.rust_field_name.clone(),
-        };
+        let field_def = codegraph_core::types::resolve_field(prop);
+        // Use field_def.rust_field_name for DTO field names
 
         fields.push(DtoField {
-            name: field_name,
+            name: field_def.rust_field_name.clone(),
             rust_type,
-            is_required: prop.is_required,
+            // FK columns on entity models are always nullable — entity references
+            // in DTOs must use Option<uuid::Uuid> regardless of schema required/optional.
+            is_required: if is_entity_ref { false } else { prop.is_required },
             is_array: prop.is_array,
             description: prop.description.as_deref().unwrap_or("").to_string(),
             render_strategy: prop.render_strategy.clone(),
             is_entity_ref,
-            is_hierarchy_field: hierarchy_field_name.as_deref() == Some(&prop.rust_field_name),
+            is_hierarchy_field: hierarchy_field_name.as_deref() == Some(&field_def.rust_field_name),
             min_length: prop.min_length,
             max_length: prop.max_length,
             minimum: prop.minimum,
@@ -941,7 +939,380 @@ impl EntityGenerator for DtoGenerator {
             content: response,
         });
 
+        // Register all DTO types produced by this generator for cross-generator import resolution.
+        let module_path = || -> Vec<String> {
+            vec!["crate".into(), "domain".into(), ctx.domain.clone(), ctx.module_name.clone()]
+        };
+        type_registry::register_type(
+            &format!("{}Response", ctx.entity_name),
+            [module_path(), vec!["dto_response".into()]].concat(),
+        );
+        type_registry::register_type(
+            &format!("{}LinkedResponse", ctx.entity_name),
+            [module_path(), vec!["dto_response".into()]].concat(),
+        );
+        if ctx.operations.contains(&"create".to_string()) {
+            type_registry::register_type(
+                &format!("Create{}Request", ctx.entity_name),
+                [module_path(), vec!["dto_create".into()]].concat(),
+            );
+        }
+        if ctx.operations.contains(&"update".to_string()) {
+            type_registry::register_type(
+                &format!("Update{}Request", ctx.entity_name),
+                [module_path(), vec!["dto_update".into()]].concat(),
+            );
+        }
+        // Register child DTO types (first-level children are referenced by parent DTOs).
+        for child in &ctx.all_child_dtos {
+            type_registry::register_type(
+                &child.struct_name,
+                [module_path(), vec!["dto_response".into()]].concat(),
+            );
+            // Also register the Response variant — child DTOs are used as
+            // Option<{struct_name}Response> in include-path fields.
+            type_registry::register_type(
+                &format!("{}Response", child.struct_name),
+                [module_path(), vec!["dto_response".into()]].concat(),
+            );
+        }
+
+        // Generate include DTOs if allow_include is configured.
+        // Skip non-root entities (child, value_object) unless they have explicit
+        // allow_include configuration — auto-discovered includes only make sense
+        // for root entities.
+        let entity_cfg = config
+            .domains
+            .get(domain)
+            .and_then(|d| d.get_entity_config(schema_title));
+        let has_explicit_include = entity_cfg
+            .and_then(|ec| ec.allow_include.as_ref())
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let is_root = entity_cfg
+            .and_then(|ec| ec.role.as_deref())
+            .map(|r| r == "root")
+            .unwrap_or(true);
+        if has_explicit_include || is_root {
+            let include_paths = if let Some(ec) = entity_cfg {
+                resolve_include_paths(db, config, domain, schema_title, ec.allow_include.as_ref()).await?
+            } else {
+                Vec::new()
+            };
+
+            if !include_paths.is_empty() {
+                let mut dto_files = self
+                    .build_include_dtos(db, schema_title, domain, config, tera, project, &include_paths)
+                    .await?;
+                files.append(&mut dto_files);
+            }
+        }
+
         Ok(files)
+    }
+}
+
+impl DtoGenerator {
+    /// Generate include DTO files for eager-loading via `?include=` query parameter.
+    async fn build_include_dtos(
+        &self,
+        db: &dyn GraphQuerier,
+        schema_title: &str,
+        domain: &str,
+        _config: &DomainConfig,
+        tera: &tera::Tera,
+        project: &ProjectConfig,
+        include_paths: &[ResolvedIncludePath],
+    ) -> Result<Vec<GeneratedFile>> {
+        let schema = db
+            .get_schema_in_domain(schema_title, domain)
+            .await?
+            .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
+
+        let entity_name = schema.rust_type_name;
+        let module_name = schema.pg_table_name;
+
+        let has_includes = !include_paths.is_empty();
+        let has_dot_paths = include_paths.iter().any(|p| p.segments.len() > 1);
+
+        // Build include_fields for the template, deduplicating by alias to prevent
+        // duplicate struct field names when multiple include paths resolve to the same alias.
+        // Dot-notation paths are grouped by their first segment key (e.g. "deployment.position"
+        // and "deployment.organization" both become "deployment") — only the first path per
+        // group contributes an IncludedData field, matching UI access patterns.
+        let include_fields: Vec<serde_json::Value> = {
+            // Resolve the field alias for an include path: for dot-notation paths use the
+            // first segment (e.g. "deployment" for "deployment.position"), otherwise the
+            // single-segment alias directly.
+            fn field_alias_for(path: &ResolvedIncludePath) -> String {
+                if path.segments.len() > 1 {
+                    path.segments[0].module_name.clone()
+                } else {
+                    path.alias.clone()
+                }
+            }
+            let mut seen_aliases = std::collections::HashSet::new();
+            include_paths
+            .iter()
+            .filter(|path| seen_aliases.insert(field_alias_for(path)))
+            .map(|path| {
+                let (rust_type, inner_type, is_vec) = if path.segments.len() == 1 {
+                    let seg = &path.segments[0];
+                    // When the segment has a child_table_override (VO→entity),
+                    // the response type is the child DTO (e.g. WorkerPersonLegalResponse),
+                    // not the entity's response type (PersonResponse).
+                    let resp_type = seg.child_table_override.as_ref()
+                        .map(|o| o.response_type.clone())
+                        .unwrap_or_else(|| format!("{}Response", seg.entity_name));
+                    if seg.is_array {
+                        (
+                            format!("Option<Vec<{}>>", resp_type),
+                            resp_type,
+                            true,
+                        )
+                    } else {
+                        (
+                            format!("Option<{}>", resp_type),
+                            resp_type,
+                            false,
+                        )
+                    }
+                } else {
+                    // Dot-notation paths use the combined DTO type name.
+                    let combined_name = format!("{}CombinedResponse", path.segments[0].entity_name);
+                    (
+                        format!("Option<{}>", combined_name),
+                        combined_name,
+                        false,
+                    )
+                };
+
+                let field_alias = field_alias_for(path);
+                // For dot-notation paths, field_alias is the first segment (e.g. "deployment")
+                // which doesn't need serde renaming — the Rust field name is the JSON key.
+                // Only apply rename when field_alias has underscore-for-dot substitution
+                // that changes the Rust identifier from the API key (single-segment paths).
+                let needs_serde_rename = path.segments.len() == 1 && field_alias != path.alias;
+                serde_json::json!({
+                    "alias": path.alias,
+                    "field_alias": field_alias,
+                    "serde_rename": if needs_serde_rename { Some(&path.alias) } else { None },
+                    "rust_type": rust_type,
+                    "inner_type": inner_type,
+                    "is_vec": is_vec,
+                    "is_dot_path": path.segments.len() > 1,
+                })
+            })
+            .collect()
+        };
+
+        // Query all properties for dot-notation intermediate entity fields
+        let all_props = db.list_all_properties().await?;
+
+        // Build enriched_types for dot-notation paths, grouped by first segment.
+        // Paths like "deployment.position" and "deployment.organization" share the same
+        // intermediate entity and produce a single combined DTO (DeploymentCombinedResponse)
+        // with one optional nested field per leaf.
+        let enriched_types: Vec<serde_json::Value> = if has_dot_paths {
+            // Group dot-notation paths by first segment.
+            let mut by_first_seg: std::collections::HashMap<String, Vec<&ResolvedIncludePath>> = std::collections::HashMap::new();
+            for path in include_paths {
+                if path.segments.len() > 1 {
+                    let key = path.segments[0].module_name.clone();
+                    by_first_seg.entry(key).or_default().push(path);
+                }
+            }
+
+            let mut enriched = Vec::new();
+            for (first_seg, group_paths) in &by_first_seg {
+                let first_path = group_paths[0];
+                let intermediate = &first_path.segments[0];
+
+
+                // Build the combined type name: DeploymentCombinedResponse
+                let combined_name = format!("{}CombinedResponse", intermediate.entity_name);
+
+                let mut base_fields: Vec<serde_json::Value> = Vec::new();
+                base_fields.push(serde_json::json!({"name": "id", "rust_type": "Uuid", "is_optional": false}));
+
+                let props_key = match db.get_schema_in_domain(&intermediate.schema_title, domain).await? {
+                    Some(s) => Some(s.title),
+                    None => {
+                        let with_type = format!("{}Type", intermediate.entity_name);
+                        db.get_schema_in_domain(&with_type, domain).await?.map(|s| s.title)
+                    }
+                };
+                if let Some(ref key) = props_key {
+                    if let Some(props) = all_props.get(key) {
+                        for prop in props {
+                            if prop.rust_field_name == "id"
+                                || prop.rust_field_name == "created_at"
+                                || prop.rust_field_name == "updated_at"
+                            {
+                                continue;
+                            }
+                            // Skip ValueObject properties (not direct columns).
+                            if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
+                                continue;
+                            }
+                            let is_optional = prop.is_nullable || !prop.is_required;
+                            let field_type = if matches!(prop.effective_kind(), Some(RefClassificationKind::StructuredWrapper)) {
+                                let base = if prop.is_array { "Vec<serde_json::Value>" } else { "serde_json::Value" };
+                                if is_optional { format!("Option<{base}>") } else { base.to_string() }
+                            } else if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference)) {
+                                "Option<uuid::Uuid>".to_string()
+                            } else if matches!(prop.effective_kind(), Some(RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck)) {
+                                let enum_type = codelist_enum_name_from_ref(&prop.ref_target)
+                                    .unwrap_or_else(|| "String".to_string());
+                                if is_optional { format!("Option<{}>", enum_type) } else { enum_type }
+                            } else {
+                                let raw = prop.rust_field_type.clone();
+                                if is_optional && !raw.starts_with("Option<") && !raw.starts_with("Vec<Option<") {
+                                    format!("Option<{}>", raw)
+                                } else {
+                                    raw
+                                }
+                            };
+                            let fd = codegraph_core::types::resolve_field(prop);
+                            base_fields.push(serde_json::json!({
+                                "name": fd.rust_field_name,
+                                "rust_type": field_type,
+                                "is_optional": is_optional,
+                            }));
+                        }
+                    }
+                }
+
+                base_fields.push(serde_json::json!({"name": "created_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}));
+                base_fields.push(serde_json::json!({"name": "updated_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}));
+
+                // Add one nested field per leaf in the group.
+                let mut nested_fields: Vec<serde_json::Value> = Vec::new();
+                for leaf_path in group_paths {
+                    let leaf = &leaf_path.segments[leaf_path.segments.len() - 1];
+                    nested_fields.push(serde_json::json!({
+                        "alias": leaf.module_name,
+                        "rust_type": format!("Option<{}Response>", leaf.entity_name),
+                        "inner_type": format!("{}Response", leaf.entity_name),
+                        "is_vec": false,
+                    }));
+                }
+
+                enriched.push(serde_json::json!({
+                    "type_name": combined_name,
+                    "base_fields": base_fields,
+                    "nested_fields": nested_fields,
+                }));
+            }
+            enriched
+        } else {
+            Vec::new()
+        };
+
+        // Register include DTO types for cross-generator import resolution.
+        let module_path: Vec<String> = vec![
+            "crate".into(), "domain".into(), domain.into(), module_name.clone(), "dto_included".into(),
+        ];
+        type_registry::register_type(&format!("{}WithIncludeResponse", entity_name), module_path.clone());
+        type_registry::register_type(&format!("{}IncludedData", entity_name), module_path.clone());
+        for path in include_paths {
+            let type_name = if path.segments.len() > 1 {
+                format!("{}CombinedResponse", path.segments[0].entity_name)
+            } else {
+                path.response_rust_type.clone()
+            };
+            type_registry::register_type(&type_name, module_path.clone());
+        }
+
+        // Collect all type names referenced by include fields for cross-entity import resolution.
+        let mut ref_type_names: Vec<String> = Vec::new();
+        for field in &include_fields {
+            if let Some(inner) = field["inner_type"].as_str() {
+                ref_type_names.push(inner.to_string());
+            }
+        }
+        for et in &enriched_types {
+            if let Some(nested) = et["nested_fields"].as_array() {
+                for nf in nested {
+                    if let Some(inner) = nf["inner_type"].as_str() {
+                        ref_type_names.push(inner.to_string());
+                    }
+                }
+            }
+            // Also add base_fields' response type references (e.g.,
+            // CertificationResponse, IdentifierResponse) so they are
+            // imported.  Strip Option<...> and Vec<...> wrappers to
+            // extract the inner type name.
+            if let Some(base) = et["base_fields"].as_array() {
+                for bf in base {
+                    if let Some(rt) = bf["rust_type"].as_str() {
+                        let inner = rt
+                            .strip_prefix("Option<")
+                            .or_else(|| rt.strip_prefix("Vec<"))
+                            .and_then(|s| s.strip_suffix('>'))
+                            .unwrap_or(rt);
+                        // Add unwrapped types (e.g. "JobResponse") and
+                        // wrapped types (e.g. "CertificationResponse" from
+                        // "Vec<CertificationResponse>") to the import list.
+                        ref_type_names.push(inner.to_string());
+                    }
+                }
+            }
+        }
+        // Also add framework types referenced by the template.
+        ref_type_names.push(format!("{}LinkedResponse", entity_name));
+        ref_type_names.push("Meta".into());
+        let caller_module: Vec<String> = vec![
+            "crate".into(), "domain".into(), domain.into(), module_name.clone(), "dto_included".into(),
+        ];
+        let imports = type_registry::resolve_imports(&ref_type_names, &caller_module);
+
+        // Collect codelist enum types referenced by compound DTO base fields.
+        let mut codelist_imports: Vec<String> = Vec::new();
+        for et in &enriched_types {
+            if let Some(base_fields) = et["base_fields"].as_array() {
+                for bf in base_fields {
+                    if let Some(rust_type) = bf["rust_type"].as_str() {
+                        let ty = rust_type
+                            .strip_prefix("Option<")
+                            .and_then(|s| s.strip_suffix('>'))
+                            .unwrap_or(rust_type);
+                        // Codelist enum types end with "CodeList" or "StatusCode" etc.
+                        if (ty.ends_with("CodeList") || ty.ends_with("Code")) && !ty.contains('<') {
+                            if !codelist_imports.contains(&ty.to_string()) {
+                                codelist_imports.push(ty.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let ctx = serde_json::json!({
+            "entity_name": entity_name,
+            "module_name": module_name,
+            "domain": domain,
+            "has_includes": has_includes,
+            "has_dot_paths": has_dot_paths,
+            "include_fields": include_fields,
+            "enriched_types": enriched_types,
+            "imports": imports,
+            "codelist_imports": codelist_imports,
+        });
+
+        let content =
+            render_template_with_project(tera, "ddd/dto_included.tera", &ctx, project)?;
+
+        Ok(vec![GeneratedFile {
+            path: self
+                .output_dir
+                .join("src")
+                .join("domain")
+                .join(domain)
+                .join(&module_name)
+                .join("dto_included.rs"),
+            content,
+        }])
     }
 }
 
@@ -977,19 +1348,12 @@ pub(crate) fn strip_code_suffix_safe(name: &str) -> String {
 /// (`"common/json/codelist/GenderCodeList.json"`).
 /// Returns `None` when `ref_target` is `None` or empty.
 pub(crate) fn codelist_enum_name_from_ref(ref_target: &Option<String>) -> Option<String> {
-    let target = ref_target.as_deref()?.trim();
-    if target.is_empty() {
-        return None;
-    }
-    // Take the last path segment and strip .json or .json# extension
-    let filename = target.rsplit('/').next().unwrap_or(target);
-    let name = filename
-        .strip_suffix(".json#")
-        .or_else(|| filename.strip_suffix(".json"))
-        .unwrap_or(filename);
-    if name.is_empty() {
-        None
-    } else {
-        Some(name.to_string())
-    }
+    codegraph_core::types::codelist_enum_name_from_ref(ref_target)
+}
+
+/// Return the Rust type for a codelist property — the enum name if available,
+/// otherwise `"String"`.
+pub(crate) fn resolve_codelist_rust_type(prop: &codegraph_core::types::PropertyNode) -> String {
+    codegraph_core::types::codelist_enum_name_from_ref(&prop.ref_target)
+        .unwrap_or_else(|| "String".to_string())
 }

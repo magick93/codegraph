@@ -36,7 +36,13 @@ function testData(): Record<string, unknown> {
 {% endraw %}
   return {
 {% for field in create_fields %}
-{% if field.input_type == "number" %}
+{% if field.nested_type_name %}
+    {%- if field.is_array %}
+    '{{ field.name }}': [],
+    {%- else %}
+    // '{{ field.name }}': ValueObject — omit, serde default
+    {%- endif %}
+{% elif field.input_type == "number" %}
     '{{ field.name }}': 42,
 {% elif field.input_type == "checkbox" %}
     '{{ field.name }}': true,
@@ -61,7 +67,9 @@ function testData(): Record<string, unknown> {
 {% elif field.pg_type is containing("GEOMETRY") %}
     // geometry field omitted — plain WKT strings are not accepted by the API without ST_GeomFromText
 {% elif field.input_type == "geometry" %}
-    '{{ field.name }}': '{"type":"Point","coordinates":[0,0]}',
+{% elif field.input_type == "code" %}
+    '{{ field.name }}': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+{% elif field.input_type == "geometry" %}
 {% else %}
     '{{ field.name }}': 'Test {{ field.label }}',
 {% endif %}

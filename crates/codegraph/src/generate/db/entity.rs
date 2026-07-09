@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::resolve_field;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
@@ -105,7 +106,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -121,13 +122,16 @@ impl EntityGenerator for SeaOrmEntityGenerator {
 
         // Deduplicate properties by field name — allOf composition can produce
         // duplicate HasProperty edges (parent + child both contribute the same field).
-        let props = {
+        let mut props = {
             let mut seen = std::collections::HashSet::new();
             all_props
                 .into_iter()
                 .filter(|p| seen.insert(p.rust_field_name.clone()))
                 .collect::<Vec<_>>()
         };
+        // For codelist entities with no graph properties (enum-only JSON schema),
+        // inject the three columns created by the codelist DDL template.
+        codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist, domain);
 
         // Composite range: collapse start/end fields into a single range column
         let composite_range = db.get_composite_range(schema_title).await.ok().flatten();
@@ -205,6 +209,13 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             });
         }
 
+        // Collect entity titles for FK-on-VO detection (used in the VO match arm below).
+        let entity_titles: std::collections::HashSet<String> = config
+            .domains
+            .values()
+            .flat_map(|d| d.entities.iter().cloned())
+            .collect();
+
         for prop in &props {
             // Skip 'id' — hardcoded above as the UUID primary key
             if prop.rust_field_name == "id" {
@@ -214,6 +225,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             if consumed_fields.contains(&prop.name) {
                 continue;
             }
+            let field_def = resolve_field(prop);
             match prop.effective_kind() {
                 Some(RefClassificationKind::PrimitiveWrapper)
                 | Some(RefClassificationKind::StructuredWrapper)
@@ -248,14 +260,14 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     };
 
                     columns.push(EntityColumn {
-                        field_name: prop.rust_field_name.clone(),
+                        field_name: field_def.rust_field_name,
                         rust_type,
                         sea_orm_type: if is_structured {
                             "JsonBinary".to_string()
                         } else {
                             prop.sea_orm_type.clone()
                         },
-                        column_name: prop.pg_column_name.clone(),
+                        column_name: field_def.column_name,
                         is_primary_key: false,
                         is_nullable,
                         pg_cast,
@@ -267,23 +279,17 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     if prop.is_array {
                         continue;
                     }
-                    // Codelist FK columns — pg_column_name already has _code suffix when
-                    // the JSON property ends in "Code" (e.g. workerTypeCode → worker_type_code).
-                    // Do NOT append _code again to avoid "worker_type_code_code" double suffix.
                     let is_nullable = !prop.is_required;
                     let rust_type = if is_nullable {
                         "Option<String>".to_string()
                     } else {
                         "String".to_string()
                     };
-                    let field_name = prop.rust_field_name.clone();
-                    let column_name = prop.pg_column_name.clone();
-
                     columns.push(EntityColumn {
-                        field_name,
+                        field_name: field_def.rust_field_name,
                         rust_type,
                         sea_orm_type: "String".to_string(),
-                        column_name,
+                        column_name: field_def.column_name,
                         is_primary_key: false,
                         is_nullable,
                         pg_cast: None,
@@ -295,7 +301,6 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     if prop.is_array {
                         continue;
                     }
-                    // CodelistCheck uses CHECK constraint, no _code suffix
                     let is_nullable = !prop.is_required;
                     let rust_type = if is_nullable {
                         "Option<String>".to_string()
@@ -304,10 +309,10 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     };
 
                     columns.push(EntityColumn {
-                        field_name: prop.rust_field_name.clone(),
+                        field_name: field_def.rust_field_name,
                         rust_type,
                         sea_orm_type: "String".to_string(),
-                        column_name: prop.pg_column_name.clone(),
+                        column_name: field_def.column_name,
                         is_primary_key: false,
                         is_nullable,
                         pg_cast: None,
@@ -315,13 +320,11 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     });
                 }
                 Some(RefClassificationKind::EntityReference) => {
-                    let field_name = format!("{}_id", prop.rust_field_name);
-                    let column_name = format!("{}_id", prop.pg_column_name);
                     columns.push(EntityColumn {
-                        field_name,
+                        field_name: field_def.rust_field_name,
                         rust_type: "Option<Uuid>".to_string(),
                         sea_orm_type: "Uuid".to_string(),
-                        column_name,
+                        column_name: field_def.column_name,
                         is_primary_key: false,
                         is_nullable: true,
                         pg_cast: None,
@@ -333,8 +336,8 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     if let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await
                     {
                         for col in &comp_cols {
-                            let field_name = format!("{}{}", prop.rust_field_name, col.suffix);
-                            let column_name = format!("{}{}", prop.pg_column_name, col.suffix);
+                            let field_name = format!("{}{}", field_def.rust_field_name, col.suffix);
+                            let column_name = format!("{}{}", field_def.column_name, col.suffix);
                             let is_nullable = !prop.is_required;
                             // Entity models always use the raw column type (e.g. String),
                             // not the DTO enum type (e.g. CurrencyCodeList).
@@ -357,7 +360,34 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     }
                 }
                 Some(RefClassificationKind::ValueObject) => {
-                    // Child tables are generated as separate entity files below
+                    // When a non-array VO property targets a known entity (directly
+                    // or through an allOf composition chain), emit an FK column on
+                    // this entity model. Uses the shared resolve_fk_column_name utility
+                    // — single source of truth for FK column naming across layers.
+                    if !prop.is_array {
+                        let (fk_field, fk_col) = codegraph_core::types::resolve_fk_column_name(
+                            db, prop, schema_title, &entity_titles,
+                        )
+                        .await?;
+                        if fk_field.ends_with("_id") {
+                            let is_nullable = !prop.is_required;
+                            columns.push(EntityColumn {
+                                field_name: fk_field,
+                                rust_type: if is_nullable {
+                                    "Option<Uuid>".to_string()
+                                } else {
+                                    "Uuid".to_string()
+                                },
+                                sea_orm_type: "Uuid".to_string(),
+                                column_name: fk_col,
+                                is_primary_key: false,
+                                is_nullable,
+                                pg_cast: None,
+                                sea_orm_attr: None,
+                            });
+                        }
+                    }
+                    // Child tables for non-entity VO targets are generated below
                 }
                 _ => {}
             }
@@ -535,25 +565,19 @@ impl EntityGenerator for SeaOrmEntityGenerator {
         }];
 
         // Generate child entity files for ValueObject properties.
-        // Skip non-array VOs that target a known entity — the DDL emits an FK
-        // column for those, so no child table/entity is needed.
-        let entity_titles: std::collections::HashSet<String> = config
-            .domains
-            .values()
-            .flat_map(|d| d.entities.iter().cloned())
-            .collect();
+        // FK columns for VO→entity references are handled in the main column loop above.
         for prop in &props {
             if prop.effective_kind() == Some(RefClassificationKind::ValueObject) {
-                // Mirror DDL's try_emit_entity_fk_for_vo: skip when target is entity and non-array
+                // Non-array VOs targeting entities are already handled as FK columns
+                // in the main column loop above — skip them here.
                 if !prop.is_array {
-                    let is_entity_target = db
+                    if let Some(true) = db
                         .get_property_ref_target(&prop.name, schema_title)
                         .await
                         .ok()
                         .flatten()
                         .map(|t| entity_titles.contains(&t.title))
-                        .unwrap_or(false);
-                    if is_entity_target {
+                    {
                         continue;
                     }
                 }
@@ -738,6 +762,7 @@ async fn build_child_entity(
         if consumed_fields.contains(&child_prop.name) {
             continue;
         }
+        let child_field_def = resolve_field(child_prop);
         match child_prop.effective_kind() {
             Some(RefClassificationKind::PrimitiveWrapper)
             | Some(RefClassificationKind::StructuredWrapper)
@@ -770,66 +795,62 @@ async fn build_child_entity(
                 };
 
                 columns.push(EntityColumn {
-                    field_name: child_prop.rust_field_name.clone(),
+                    field_name: child_field_def.rust_field_name,
                     rust_type,
                     sea_orm_type: if is_structured {
                         "JsonBinary".to_string()
                     } else {
                         child_prop.sea_orm_type.clone()
                     },
-                    column_name: child_prop.pg_column_name.clone(),
+                    column_name: child_field_def.column_name,
                     is_primary_key: false,
                     is_nullable,
                     pg_cast,
                     sea_orm_attr,
                 });
             }
-            Some(RefClassificationKind::CodelistReference) => {
-                let is_nullable = !child_prop.is_required;
-                let rust_type = if is_nullable {
-                    "Option<String>".to_string()
+            Some(RefClassificationKind::CodelistReference)
+            | Some(RefClassificationKind::CodelistCheck) => {
+                if child_prop.is_array {
+                    // Array codelist → synthetic child entity with single "code" column.
+                    // Same logic as root entity generator (lines 597-616).
+                    let child_files = build_codelist_child_entity(
+                        child_prop,
+                        &child_table_name,
+                        schema_name,
+                        &child_struct_name,
+                        output_dir,
+                        tera,
+                        config,
+                        project,
+                        dialect,
+                    )?;
+                    nested_files.extend(child_files);
                 } else {
-                    "String".to_string()
-                };
-
-                columns.push(EntityColumn {
-                    field_name: child_prop.rust_field_name.clone(),
-                    rust_type,
-                    sea_orm_type: "String".to_string(),
-                    column_name: child_prop.pg_column_name.clone(),
-                    is_primary_key: false,
-                    is_nullable,
-                    pg_cast: None,
-                    sea_orm_attr: None,
-                });
-            }
-            Some(RefClassificationKind::CodelistCheck) => {
-                let is_nullable = !child_prop.is_required;
-                let rust_type = if is_nullable {
-                    "Option<String>".to_string()
-                } else {
-                    "String".to_string()
-                };
-
-                columns.push(EntityColumn {
-                    field_name: child_prop.rust_field_name.clone(),
-                    rust_type,
-                    sea_orm_type: "String".to_string(),
-                    column_name: child_prop.pg_column_name.clone(),
-                    is_primary_key: false,
-                    is_nullable,
-                    pg_cast: None,
-                    sea_orm_attr: None,
-                });
+                    let is_nullable = !child_prop.is_required;
+                    let rust_type = if is_nullable {
+                        "Option<String>".to_string()
+                    } else {
+                        "String".to_string()
+                    };
+                    columns.push(EntityColumn {
+                        field_name: child_field_def.rust_field_name,
+                        rust_type,
+                        sea_orm_type: "String".to_string(),
+                        column_name: child_field_def.column_name,
+                        is_primary_key: false,
+                        is_nullable,
+                        pg_cast: None,
+                        sea_orm_attr: None,
+                    });
+                }
             }
             Some(RefClassificationKind::EntityReference) => {
-                let field_name = format!("{}_id", child_prop.rust_field_name);
-                let column_name = format!("{}_id", child_prop.pg_column_name);
                 columns.push(EntityColumn {
-                    field_name,
+                    field_name: child_field_def.rust_field_name,
                     rust_type: "Option<Uuid>".to_string(),
                     sea_orm_type: "Uuid".to_string(),
-                    column_name,
+                    column_name: child_field_def.column_name,
                     is_primary_key: false,
                     is_nullable: true,
                     pg_cast: None,
@@ -840,8 +861,8 @@ async fn build_child_entity(
             | Some(RefClassificationKind::MediaWrapper) => {
                 if let Ok(comp_cols) = db.get_composite_columns(&child_prop.name, &ts.title).await {
                     for col in &comp_cols {
-                        let field_name = format!("{}{}", child_prop.rust_field_name, col.suffix);
-                        let column_name = format!("{}{}", child_prop.pg_column_name, col.suffix);
+                        let field_name = format!("{}{}", child_field_def.rust_field_name, col.suffix);
+                        let column_name = format!("{}{}", child_field_def.column_name, col.suffix);
                         let is_nullable = !child_prop.is_required;
                         let rust_type = if is_nullable {
                             format!("Option<{}>", col.rust_type)
@@ -890,24 +911,6 @@ async fn build_child_entity(
     {
         let mut seen_fields = std::collections::HashSet::new();
         columns.retain(|c| seen_fields.insert(c.field_name.clone()));
-    }
-
-    // Add platform_organization_id for tenant-scoped entities
-    let is_tenant_scoped = !is_global_entity(&child_table_name, config);
-    if is_tenant_scoped {
-        columns.insert(
-            1, // After id, before other columns
-            EntityColumn {
-                field_name: "platform_organization_id".to_string(),
-                rust_type: "Uuid".to_string(),
-                sea_orm_type: "Uuid".to_string(),
-                column_name: "platform_organization_id".to_string(),
-                is_primary_key: false,
-                is_nullable: false,
-                pg_cast: None,
-                sea_orm_attr: None,
-            },
-        );
     }
 
     // Add timestamp columns
@@ -1047,6 +1050,7 @@ fn build_codelist_child_entity(
             sea_orm_attr: None,
         },
     ];
+
 
     // Add platform_organization_id for tenant-scoped entities
     let is_tenant_scoped = !is_global_entity(&child_table_name, config);

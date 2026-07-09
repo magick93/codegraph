@@ -10,10 +10,12 @@ use std::path::Path;
 use codegraph::generate::codelist::rust_enum::RustCodelistGenerator;
 use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
 use codegraph::generate::domain_types::dto::DomainTypesDtoGenerator;
+use codegraph::generate::domain_types::query_service::QueryServiceGenerator;
 use codegraph::generate::domain_types::scaffold::DomainTypesScaffoldGenerator;
 use codegraph::generate::template_engine::create_tera;
 use codegraph::generate::traits::{EntityGenerator, GlobalGenerator};
 use codegraph::generate::ProjectConfig;
+use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_grafeo::GrafeoEngine;
 use codegraph_type_contracts::RefClassificationKind;
@@ -507,7 +509,7 @@ async fn grafeo_scaffold_domain_types_has_cargo_toml() {
         "Cargo.toml should have [package] section"
     );
     assert!(
-        cargo_toml.content.contains("name = \"hr-domain-types\""),
+        cargo_toml.content.contains("name = \"domain-types\""),
         "Should use correct package name"
     );
 }
@@ -956,7 +958,7 @@ async fn grafeo_candidate_repository_impl_content() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -1136,7 +1138,6 @@ async fn grafeo_full_pipeline_run_generators() {
 
     // Clean up
     let _ = std::fs::remove_dir_all(&output_dir);
-    let _ = std::fs::remove_dir_all(&domain_types_tmp);
 }
 
 // === Task 7: Cross-layer consistency including repository ===
@@ -1158,7 +1159,7 @@ async fn grafeo_cross_layer_repository_consistency() {
 
     let emitter = RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -1396,7 +1397,7 @@ async fn grafeo_references_schema_edge_created_for_scalar_ref() {
     );
     // personName refs NameType
     assert!(
-        refs.contains(&"NameType".to_string()),
+        refs.iter().any(|s| s.title == "NameType"),
         "should reference NameType via personName"
     );
 }
@@ -1559,7 +1560,7 @@ async fn grafeo_candidate_composite_wrapper_in_repository() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -1706,7 +1707,7 @@ async fn grafeo_composite_wrapper_cross_layer_consistency() {
     // Repository (RepositoryImplEmitter::emit() → String)
     let emitter = RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -1850,7 +1851,7 @@ async fn grafeo_repository_impl_includes_child_inserts() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -1949,7 +1950,7 @@ async fn grafeo_repository_entity_ref_uses_id_suffix() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -1996,7 +1997,7 @@ async fn grafeo_entity_ref_cross_layer_consistency() {
         .await
         .unwrap();
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -2060,7 +2061,7 @@ async fn grafeo_repository_dto_field_alignment() {
 
     let emitter = RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
 
@@ -2134,7 +2135,7 @@ async fn grafeo_candidate_inspect_output() {
     // Also write repository impl (not part of run_generators template flow)
     let emitter = RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None)
+        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
         .await
         .unwrap();
     let repo_dir = output_dir
@@ -2390,4 +2391,331 @@ async fn grafeo_gender_codelist_variants_no_rename_when_pascal() {
         content.contains("    NotSpecified,"),
         "NotSpecified variant should exist"
     );
+}
+
+// === Include (`?include=`) feature E2E ===
+
+/// Helper: inline domain config with `allow_include` for CandidateType.
+fn include_domain_config() -> codegraph_config::DomainConfig {
+    let config_str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = []
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting"
+postgres_schema = "recruiting"
+depends_on = ["common"]
+entities = ["CandidateType", "ApplicationType"]
+
+[domains.recruiting.entity_config.CandidateType]
+role = "root"
+allow_include = ["application"]
+"#;
+    parse_domain_config_str(config_str).unwrap()
+}
+
+#[tokio::test]
+async fn grafeo_e2e_include_dto_generated_for_candidate() {
+    let config = include_domain_config();
+    let classifier =
+        codegraph_classifier::config::parse_classifier_config(Path::new("tests/fixtures/classifier.toml"))
+            .unwrap();
+    let entity_names = entity_names_from_config(&config);
+    let engine = GrafeoEngine::in_memory().unwrap();
+
+    codegraph::ingest::async_ingest::ingest_schemas(
+        &engine,
+        Path::new("tests/fixtures/schemas"),
+        &classifier,
+        &entity_names,
+        &codegraph_config::UiOverrideConfig::default(),
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap();
+
+    let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
+    let output_dir = std::env::temp_dir().join("grafeo-test-include-dto");
+    let _ = std::fs::remove_dir_all(&output_dir);
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    // Generate handler — has_include triggers ALLOWED_INCLUDE_KEYS and WithIncludeResponse
+    let parent_candidates = engine.get_parent_candidates().await.unwrap();
+    let handler_gen = codegraph::generate::api::handler::HandlerGenerator::new(&output_dir)
+        .with_parent_candidates(parent_candidates);
+    let handler_files = handler_gen
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .await
+        .unwrap();
+
+    let handler = handler_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("_handler.rs"))
+        .expect("handler should be generated");
+    let hc = &handler.content;
+
+    // Handler must include ALLOWED_INCLUDE_KEYS with the resolved include path
+    assert!(
+        hc.contains("ALLOWED_INCLUDE_KEYS"),
+        "handler should define ALLOWED_INCLUDE_KEYS when allow_include is configured"
+    );
+    assert!(
+        hc.contains("\"application\""),
+        "ALLOWED_INCLUDE_KEYS should contain 'application'. Generated:\n{}",
+        hc,
+    );
+
+    // Handler must use CandidateWithIncludeResponse for the get_by_id response type
+    assert!(
+        hc.contains("CandidateWithIncludeResponse"),
+        "handler should reference CandidateWithIncludeResponse. Generated:\n{}",
+        hc,
+    );
+
+    // Generate DTO — DtoGenerator (not DomainTypesDtoGenerator) produces dto_included.rs
+    let dto_gen = codegraph::generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let dto_files = dto_gen
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .await
+        .unwrap();
+
+    let included = dto_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_included"))
+        .expect("dto_included.rs should be generated when allow_include is configured");
+    let dc = &included.content;
+
+    // DTO must define CandidateIncludedData
+    assert!(
+        dc.contains("CandidateIncludedData"),
+        "DTO should define CandidateIncludedData struct. Generated:\n{}",
+        dc,
+    );
+
+    // DTO must include the resolved include field with correct entity response type
+    assert!(
+        dc.contains("pub application: Option<ApplicationResponse>"),
+        "included DTO should have 'application: Option<ApplicationResponse>'. Generated:\n{}",
+        dc,
+    );
+
+    // DTO must define CandidateWithIncludeResponse as the top-level type
+    assert!(
+        dc.contains("CandidateWithIncludeResponse"),
+        "DTO should define CandidateWithIncludeResponse. Generated:\n{}",
+        dc,
+    );
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+#[tokio::test]
+async fn grafeo_e2e_include_validates_unknown_path() {
+    let config = include_domain_config();
+    let classifier =
+        codegraph_classifier::config::parse_classifier_config(Path::new("tests/fixtures/classifier.toml"))
+            .unwrap();
+    let entity_names = entity_names_from_config(&config);
+    let engine = GrafeoEngine::in_memory().unwrap();
+
+    codegraph::ingest::async_ingest::ingest_schemas(
+        &engine,
+        Path::new("tests/fixtures/schemas"),
+        &classifier,
+        &entity_names,
+        &codegraph_config::UiOverrideConfig::default(),
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap();
+
+    let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
+    let output_dir = std::env::temp_dir().join("grafeo-test-include-validate");
+    let _ = std::fs::remove_dir_all(&output_dir);
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    let parent_candidates = engine.get_parent_candidates().await.unwrap();
+    let handler_gen = codegraph::generate::api::handler::HandlerGenerator::new(&output_dir)
+        .with_parent_candidates(parent_candidates);
+    let handler_files = handler_gen
+        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .await
+        .unwrap();
+
+    let handler = handler_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("_handler.rs"))
+        .expect("handler should be generated");
+    let hc = &handler.content;
+
+    // The generated handler must validate include paths against ALLOWED_INCLUDE_KEYS
+    assert!(
+        hc.contains("ALLOWED_INCLUDE_KEYS.contains(&path.as_str())"),
+        "handler should validate unknown include paths with ALLOWED_INCLUDE_KEYS.contains. Generated:\n{}",
+        hc,
+    );
+
+    // The handler must return a 400 error for unknown paths
+    assert!(
+        hc.contains("AppError::bad_request(format!(\"Unknown include path: {path}\")"),
+        "handler should return bad_request for unknown include paths. Generated:\n{}",
+        hc,
+    );
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+// === Compile-gate test: generated domain-types crate compiles ===
+
+#[tokio::test]
+async fn generated_app_compiles_cleanly() {
+    let (engine, config) = setup_grafeo().await;
+    let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let output_dir = tmp.path().to_path_buf();
+
+    // Compute absolute path to codegraph-type-contracts crate
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let type_contracts_path = workspace_root.join("crates").join("codegraph-type-contracts");
+
+    let project_config = ProjectConfig {
+        app_name: "test-app".into(),
+        domain_types_crate: "domain_types".into(),
+        generator_name: "codegraph-test".into(),
+        type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
+        types_import_prefix: "codegraph_type_contracts".into(),
+        ..Default::default()
+    };
+
+    codegraph::generate::init_project_config(project_config.clone());
+
+    let order = codegraph::generate::compute_generation_order(&engine, &config)
+        .await
+        .unwrap();
+
+    // 1. Generate scaffold: lib.rs, Cargo.toml, domain/entity mod.rs files
+    let scaffold_gen = DomainTypesScaffoldGenerator::new_with_base(output_dir.clone());
+    let mut all_files = scaffold_gen
+        .generate(&engine, &config, &order, &tera, &project_config)
+        .await
+        .unwrap();
+
+    // 2. Generate DTOs + query services for each entity in generation order
+    let dto_gen = DomainTypesDtoGenerator::new_with_base(output_dir.clone());
+    let qs_gen = QueryServiceGenerator::new_with_base(output_dir.clone());
+
+    for entry in &order {
+        let dto_files = dto_gen
+            .generate(
+                &engine,
+                &entry.schema_title,
+                &entry.domain,
+                &config,
+                &tera,
+                &project_config,
+            )
+            .await
+            .unwrap();
+        all_files.extend(dto_files);
+
+        let qs_files = qs_gen
+            .generate(
+                &engine,
+                &entry.schema_title,
+                &entry.domain,
+                &config,
+                &tera,
+                &project_config,
+            )
+            .await
+            .unwrap();
+        all_files.extend(qs_files);
+    }
+
+    // 3. Generate codelist enum files
+    let codelist_gen = RustCodelistGenerator::new(&output_dir);
+    let cl_files = codelist_gen
+        .generate_all(&engine, &tera, &project_config)
+        .await
+        .unwrap();
+    all_files.extend(cl_files);
+
+    // Write all generated files to disk
+    for file in &all_files {
+        if let Some(parent) = file.path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&file.path, &file.content).unwrap();
+    }
+
+    // Write stub files for context.rs and query.rs that lib.rs references
+    // but which have no dedicated generator.
+    let src_dir = output_dir.join("src");
+    std::fs::write(
+        src_dir.join("context.rs"),
+        "pub struct SourceContext;\npub enum SourceOrigin {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src_dir.join("query.rs"),
+        "pub struct ListParams;\npub struct PagedResult<T>(pub Vec<T>);\npub struct QueryError;\npub enum SortOrder {}\n",
+    )
+    .unwrap();
+
+    // Verify Cargo.toml was generated
+    let cargo_toml_path = output_dir.join("Cargo.toml");
+    assert!(
+        cargo_toml_path.exists(),
+        "Cargo.toml should be generated by DomainTypesScaffoldGenerator"
+    );
+
+    // Run cargo check with 5-minute timeout
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        tokio::process::Command::new("cargo")
+            .args([
+                "check",
+                "--manifest-path",
+                &cargo_toml_path.to_string_lossy(),
+            ])
+            .output(),
+    )
+    .await;
+
+    let output = match result {
+        Ok(Ok(output)) => output,
+        Ok(Err(e)) => panic!("failed to spawn cargo check: {e}"),
+        Err(_) => {
+            let preserved = tmp.keep();
+            panic!(
+                "cargo check timed out after 5 minutes!\n\
+                 Temp dir preserved at: {}",
+                preserved.display()
+            );
+        }
+    };
+
+    if !output.status.success() {
+        let preserved = tmp.keep();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!(
+            "cargo check failed!\n\
+             Temp dir preserved at: {}\n\
+             --- stdout ---\n{stdout}\n\
+             --- stderr ---\n{stderr}",
+            preserved.display(),
+        );
+    }
+    // On success, tmp is dropped and directory is cleaned up
 }

@@ -5,8 +5,56 @@ use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;
 
+
 #[derive(Clone)]
 pub struct AppState {
+
+
+    pub common_code_commands: crate::domain::common::code::command::CodeCommandHandler,
+    pub common_code_queries: crate::domain::common::code::query::CodeQueryHandler,
+
+    pub common_currency_code_list_commands: crate::domain::common::currency_code_list::command::CurrencyCodeListCommandHandler,
+    pub common_currency_code_list_queries: crate::domain::common::currency_code_list::query::CurrencyCodeListQueryHandler,
+
+    pub common_date_commands: crate::domain::common::date::command::DateCommandHandler,
+    pub common_date_queries: crate::domain::common::date::query::DateQueryHandler,
+
+    pub common_distribution_base_commands: crate::domain::common::distribution_base::command::DistributionBaseCommandHandler,
+    pub common_distribution_base_queries: crate::domain::common::distribution_base::query::DistributionBaseQueryHandler,
+
+    pub common_effective_date_commands: crate::domain::common::effective_date::command::EffectiveDateCommandHandler,
+    pub common_effective_date_queries: crate::domain::common::effective_date::query::EffectiveDateQueryHandler,
+
+    pub common_formatted_date_time_commands: crate::domain::common::formatted_date_time::command::FormattedDateTimeCommandHandler,
+    pub common_formatted_date_time_queries: crate::domain::common::formatted_date_time::query::FormattedDateTimeQueryHandler,
+
+    pub common_gender_code_list_commands: crate::domain::common::gender_code_list::command::GenderCodeListCommandHandler,
+    pub common_gender_code_list_queries: crate::domain::common::gender_code_list::query::GenderCodeListQueryHandler,
+
+    pub common_identifier_commands: crate::domain::common::identifier::command::IdentifierCommandHandler,
+    pub common_identifier_queries: crate::domain::common::identifier::query::IdentifierQueryHandler,
+
+    pub common_name_commands: crate::domain::common::name::command::NameCommandHandler,
+    pub common_name_queries: crate::domain::common::name::query::NameQueryHandler,
+
+    pub common_person_base_commands: crate::domain::common::person_base::command::PersonBaseCommandHandler,
+    pub common_person_base_queries: crate::domain::common::person_base::query::PersonBaseQueryHandler,
+
+    pub common_position_schedule_type_code_list_commands: crate::domain::common::position_schedule_type_code_list::command::PositionScheduleTypeCodeListCommandHandler,
+    pub common_position_schedule_type_code_list_queries: crate::domain::common::position_schedule_type_code_list::query::PositionScheduleTypeCodeListQueryHandler,
+
+    pub common_string_type_array_commands: crate::domain::common::string_type_array::command::StringTypeArrayCommandHandler,
+    pub common_string_type_array_queries: crate::domain::common::string_type_array::query::StringTypeArrayQueryHandler,
+
+    pub common_amount_commands: crate::domain::common::amount::command::AmountCommandHandler,
+    pub common_amount_queries: crate::domain::common::amount::query::AmountQueryHandler,
+
+    pub common_process_history_item_commands: crate::domain::common::process_history_item::command::ProcessHistoryItemCommandHandler,
+    pub common_process_history_item_queries: crate::domain::common::process_history_item::query::ProcessHistoryItemQueryHandler,
+
+    pub common_process_history_commands: crate::domain::common::process_history::command::ProcessHistoryCommandHandler,
+    pub common_process_history_queries: crate::domain::common::process_history::query::ProcessHistoryQueryHandler,
+
 
 
     pub compensation_pay_run_commands: crate::domain::compensation::pay_run::command::PayRunCommandHandler,
@@ -25,4 +73,5 @@ pub struct AppState {
     pub db: DatabaseConnection,
     pub jwt_secret: String,
     pub workflow_service: Arc<dyn codegraph_workflow::WorkflowService>,
+
 }

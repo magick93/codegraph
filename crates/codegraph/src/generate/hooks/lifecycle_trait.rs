@@ -50,7 +50,7 @@ impl EntityGenerator for LifecycleTraitGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -59,6 +59,11 @@ impl EntityGenerator for LifecycleTraitGenerator {
         let domain = domain.to_string();
 
         if module_name.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Skip child/inline definition schemas — they don't have standalone entity
+        // files, so the hook_registry can't reference their lifecycle traits.
+        if schema.parent_schema.is_some() {
             return Ok(Vec::new());
         }
 

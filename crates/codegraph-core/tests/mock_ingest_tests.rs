@@ -78,7 +78,7 @@ async fn ingest_and_query_properties() {
     let prop = test_property();
 
     engine.ingest_schema(&schema).await.unwrap();
-    engine.ingest_property("PersonType", &prop).await.unwrap();
+    engine.ingest_property("PersonType", "test/PersonType", &prop).await.unwrap();
 
     let props = engine.get_properties("PersonType").await.unwrap();
     assert_eq!(props.len(), 1);
@@ -118,7 +118,7 @@ async fn finalize_returns_stats() {
     let prop = test_property();
 
     engine.ingest_schema(&schema).await.unwrap();
-    engine.ingest_property("PersonType", &prop).await.unwrap();
+    engine.ingest_property("PersonType", "test/PersonType", &prop).await.unwrap();
 
     let stats = engine.finalize().await.unwrap();
     assert_eq!(stats.schema_count, 1);

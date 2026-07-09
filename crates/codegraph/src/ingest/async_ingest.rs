@@ -4,6 +4,7 @@ use std::path::Path;
 use heck::ToUpperCamelCase;
 use codegraph_classifier::classify::{classify_plain_type, classify_ref};
 use codegraph_classifier::config::ClassifierConfig;
+use codegraph_type_contracts::{DddFieldProjection, RefClassificationKind};
 use codegraph_config::UiOverrideConfig;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
@@ -13,7 +14,39 @@ use codegraph_core::types::{
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 
 use crate::error::{Error, Result};
+use crate::generate::ddd::dto::strip_code_suffix_safe;
 use crate::ingest::schema_loader::SchemaLoader;
+
+/// Sanitize a schema/property description for use in generated code doc comments.
+/// Truncates to the first line (newlines break /// doc comments), trims whitespace,
+/// and caps length to 1000 characters.
+fn sanitize_description(s: &str) -> String {
+    s.lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(1000)
+        .collect()
+}
+
+/// Sanitize a string into a valid PascalCase Rust type identifier.
+/// Removes characters that aren't alphanumeric (except underscores),
+/// converts to PascalCase, and truncates to 200 chars.
+fn sanitize_rust_type_name(s: &str) -> String {
+    // Keep only valid identifier characters and spaces (for PascalCase conversion)
+    let cleaned: String = s
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == ' ')
+        .collect();
+    // Convert to PascalCase
+    let pascal = cleaned.to_upper_camel_case();
+    // Remove leading digits
+    let trimmed: String = pascal.chars().skip_while(|c| c.is_ascii_digit()).collect();
+    let trimmed = if trimmed.is_empty() { "_".to_string() } else { trimmed };
+    // Cap length
+    trimmed.chars().take(200).collect()
+}
 
 /// Ingest all schemas from `schema_dir` into the graph via `GraphIngestor`.
 ///
@@ -48,6 +81,18 @@ pub async fn ingest_schemas(
         ingest_codelist_values(db, &loader, uri, suffix).await?;
     }
 
+    // Build stem → schema_id map for $ref resolution.
+    // This maps each stem (filename without .json) to all schema rel_paths
+    // that share it. Covers both top-level schemas and inline definitions
+    // (#/$defs/...). A Vec is used because stems can collide across domains.
+    let mut stem_to_schema_ids: HashMap<String, Vec<String>> = HashMap::new();
+    for entry in loader.iter_all_unique() {
+        stem_to_schema_ids
+            .entry(entry.stem.clone())
+            .or_default()
+            .push(entry.rel_path.clone());
+    }
+
     // Pass 2: Ingest inline definitions
     let mut inline_uris: Vec<String> = Vec::new();
     for uri in &uris {
@@ -59,6 +104,23 @@ pub async fn ingest_schemas(
     // Pass 3: Ingest properties for all schemas (top-level + inline defs)
     let mut all_uris = uris.clone();
     all_uris.extend(inline_uris);
+
+    // Build a title → schema_id (URI) map so property ingestion can record the
+    // owning schema's URI alongside its title. Covers top-level schemas and
+    // inline definitions.
+    let mut title_to_schema_id: HashMap<String, String> = HashMap::new();
+    for uri in &all_uris {
+        if let Some(entry) = loader.get(uri) {
+            let title = entry
+                .schema
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&entry.stem)
+                .to_string();
+            title_to_schema_id.insert(title, uri.to_string());
+        }
+    }
+
     for uri in &all_uris {
         ingest_properties(
             db,
@@ -69,6 +131,8 @@ pub async fn ingest_schemas(
             ui_overrides,
             suffix,
             &mut result,
+            &stem_to_schema_ids,
+            &title_to_schema_id,
         )
         .await?;
     }
@@ -124,7 +188,7 @@ async fn ingest_schema_node(
             .schema
             .get("description")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .map(|s| sanitize_description(s)),
         schema_type: entry
             .schema
             .get("type")
@@ -137,7 +201,7 @@ async fn ingest_schema_node(
         pg_type: "UUID".to_string(),
         rust_type: stripped.to_string(),
         sea_orm_type: "Uuid".to_string(),
-        rust_type_name: stripped.to_string(),
+        rust_type_name: sanitize_rust_type_name(&stripped),
         pg_table_name: to_snake_case(&stripped),
         api_path_segment: to_kebab_case(&stripped),
         parent_schema: parent_schema.map(|s| s.to_string()),
@@ -200,6 +264,7 @@ async fn ingest_inline_defs(
     Ok(created_uris)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn ingest_properties(
     db: &dyn GraphIngestor,
     loader: &SchemaLoader,
@@ -209,6 +274,8 @@ async fn ingest_properties(
     ui_overrides: &UiOverrideConfig,
     suffix: &str,
     result: &mut IngestResult,
+    stem_to_schema_ids: &HashMap<String, Vec<String>>,
+    title_to_schema_id: &HashMap<String, String>,
 ) -> Result<()> {
     let entry = loader
         .get(uri)
@@ -261,6 +328,8 @@ async fn ingest_properties(
                     ui_overrides,
                     suffix,
                     result,
+                    stem_to_schema_ids,
+                    title_to_schema_id,
                 )
                 .await;
             }
@@ -280,6 +349,8 @@ async fn ingest_properties(
         ui_overrides,
         suffix,
         result,
+        stem_to_schema_ids,
+        title_to_schema_id,
     )
     .await
 }
@@ -301,6 +372,8 @@ async fn ingest_properties_from_schema(
     ui_overrides: &UiOverrideConfig,
     suffix: &str,
     result: &mut IngestResult,
+    stem_to_schema_ids: &HashMap<String, Vec<String>>,
+    title_to_schema_id: &HashMap<String, String>,
 ) -> Result<()> {
     // Collect property blocks: top-level properties + allOf inline/ref properties
     let mut prop_blocks: Vec<(serde_json::Map<String, serde_json::Value>, HashSet<String>)> =
@@ -416,7 +489,7 @@ async fn ingest_properties_from_schema(
                 description: prop_schema
                     .get("description")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
+                    .map(|s| sanitize_description(s)),
                 format: prop_schema
                     .get("format")
                     .and_then(|v| v.as_str())
@@ -446,13 +519,21 @@ async fn ingest_properties_from_schema(
                 render_strategy: clf.render_strategy,
                 ref_target: clf.ref_target,
                 classification: None,
-                projection: None,
+                projection: clf.projection,
                 classification_kind: Some(clf.kind),
                 ui_override_detail: None,
                 ui_override_list_cell: None,
                 ui_override_form: None,
                 ui_override_inline: None,
             };
+
+            // Sanitize rust_field_name for codelist properties: strip the _code
+            // suffix so that entity model, DTO, and repository generators all see
+            // the same field name (e.g., "worker_type" instead of "worker_type_code").
+            // The pg_column_name retains the _code suffix for the actual DB column.
+            if matches!(prop.effective_kind(), Some(RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck)) {
+                prop.rust_field_name = strip_code_suffix_safe(&prop.rust_field_name);
+            }
 
             // Apply UI overrides based on ref_target
             if let Some(ref_target) = prop.ref_target.clone() {
@@ -472,7 +553,11 @@ async fn ingest_properties_from_schema(
                 }
             }
 
-            db.ingest_property(schema_title, &prop)
+            let schema_uri = title_to_schema_id
+                .get(schema_title)
+                .map(|s| s.as_str())
+                .unwrap_or(base_uri);
+            db.ingest_property(schema_title, schema_uri, &prop)
                 .await
                 .map_err(Error::Graph)?;
             result.properties_created += 1;
@@ -482,6 +567,18 @@ async fn ingest_properties_from_schema(
             // - ReferencesSchema for scalar $ref properties
             if let Some(ref ref_path) = prop.ref_target {
                 let target_stem = extract_ref_stem(ref_path);
+                // Resolve stem to schema_id using the map built during Pass 1b.
+                // If the stem maps to exactly one schema_id, use it. Otherwise fall back to the stem.
+                let target_id = stem_to_schema_ids
+                    .get(target_stem)
+                    .and_then(|ids| {
+                        if ids.len() == 1 {
+                            ids.first().cloned()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| target_stem.to_string());
                 let edge_type = if prop.is_array {
                     EdgeType::ItemsOf
                 } else {
@@ -493,7 +590,7 @@ async fn ingest_properties_from_schema(
                 };
                 db.ingest_edge(
                     &format!("{}::{}", name, schema_title),
-                    target_stem,
+                    &target_id,
                     edge_type,
                     Some(&edge_props),
                 )
@@ -676,7 +773,7 @@ async fn ingest_codelist_values(
     let description = schema
         .get("description")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(|s| sanitize_description(s));
 
     let pg_table_name = to_snake_case(&strip_suffix(title, suffix));
 
@@ -725,6 +822,7 @@ struct PropertyClassification {
     kind: codegraph_type_contracts::RefClassificationKind,
     /// Inline enum values to be ingested as a synthetic codelist.
     inline_enum_values: Vec<String>,
+    projection: Option<DddFieldProjection>,
 }
 
 /// Classify a single property and return its type mapping and classification.
@@ -752,6 +850,7 @@ fn classify_single_property(
             ref_target: Some(ref_path.to_string()),
             kind,
             inline_enum_values: vec![],
+            projection: Some(clf.projection),
         }
     } else if let Some(enum_vals) = prop_schema.get("enum").and_then(|v| v.as_array()) {
         let vals: Vec<String> = enum_vals
@@ -775,6 +874,7 @@ fn classify_single_property(
             ref_target: Some(synthetic_name),
             kind,
             inline_enum_values: vals,
+            projection: None,
         }
     } else if is_array {
         if let Some(items_ref) = prop_schema
@@ -822,6 +922,7 @@ fn classify_single_property(
                 ref_target: Some(items_ref.to_string()),
                 kind,
                 inline_enum_values: vec![],
+                projection: Some(clf.projection),
             }
         } else {
             let clf = classify_plain_type(prop_schema.get("items").unwrap_or(prop_schema));
@@ -840,6 +941,7 @@ fn classify_single_property(
                 ref_target: None,
                 kind,
                 inline_enum_values: vec![],
+                projection: Some(clf.projection),
             }
         }
     } else {
@@ -855,6 +957,7 @@ fn classify_single_property(
             ref_target: None,
             kind,
             inline_enum_values: vec![],
+            projection: Some(clf.projection),
         }
     }
 }

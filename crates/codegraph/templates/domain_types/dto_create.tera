@@ -56,7 +56,7 @@ pub struct Create{{ entity_name }}Request {
     #[garde(skip)]
 {%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub {{ field.name }}_id: Option<uuid::Uuid>,
+    pub {{ field.name }}: Option<uuid::Uuid>,
 {%- endif %}
 {%- endif %}
 {%- endfor %}

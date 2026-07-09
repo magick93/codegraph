@@ -92,6 +92,46 @@ impl GraphQuerier for GrafeoEngine {
         Ok(schemas.into_iter().next())
     }
 
+    async fn get_schema_by_id(&self, schema_id: &str) -> Result<Option<SchemaNode>, GraphError> {
+        let params =
+            HashMap::from([("sid".to_string(), grafeo::Value::String(schema_id.into()))]);
+        let result = query_gql_params(
+            self,
+            &format!(
+                "MATCH (s:Schema {{schema_id: $sid}}) RETURN {SCHEMA_RETURN_COLS}"
+            ),
+            params,
+        )?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
+    }
+
+    async fn get_schema_in_domain(
+        &self,
+        title: &str,
+        domain: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        let params = HashMap::from([
+            ("title".to_string(), grafeo::Value::String(title.into())),
+            ("domain".to_string(), grafeo::Value::String(domain.into())),
+        ]);
+        let result = query_gql_params(
+            self,
+            &format!(
+                "MATCH (s:Schema {{title: $title, domain: $domain}}) RETURN {SCHEMA_RETURN_COLS}"
+            ),
+            params,
+        )?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
+    }
+
     async fn list_schemas(&self, domain: Option<&str>) -> Result<Vec<SchemaNode>, GraphError> {
         let result = match domain {
             Some(d) => {
@@ -313,8 +353,8 @@ impl GraphQuerier for GrafeoEngine {
     }
 
     async fn get_parent_candidates(&self) -> Result<Vec<ParentCandidate>, GraphError> {
-        let gql = "MATCH (child:Schema)-[:HasProperty]->(p:Property {is_required: true, is_array: false})-[:ReferencesSchema]->(parent:Schema {is_entity: true}) \
-                   RETURN child.title, parent.title, p.name";
+        let gql = "MATCH (child:Schema)-[:HasProperty]->(p:Property {is_array: false})-[:ReferencesSchema]->(parent:Schema {is_entity: true}) \
+                   RETURN DISTINCT child.title, parent.title, p.name";
         let result = query_gql(self, gql)?;
         let reader = RowReader::from_columns(&result.columns);
         let mut candidates = Vec::new();
@@ -330,7 +370,7 @@ impl GraphQuerier for GrafeoEngine {
         // Detect one-to-many relationships: parent entity has an array property
         // whose items reference a child entity (ItemsOf edge).
         let array_gql = "MATCH (parent:Schema {is_entity: true})-[:HasProperty]->(p:Property {is_array: true})-[:ItemsOf]->(child:Schema {is_entity: true}) \
-                          RETURN child.title, parent.title, p.name";
+                          RETURN DISTINCT child.title, parent.title, p.name";
         let array_result = query_gql(self, array_gql)?;
         let array_reader = RowReader::from_columns(&array_result.columns);
         let scalar_keys: std::collections::HashSet<(String, String)> = candidates
@@ -619,6 +659,27 @@ impl GraphQuerier for GrafeoEngine {
             .collect()
     }
 
+    async fn get_schemas_that_extend(&self, parent_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+        let params = HashMap::from([(
+            "title".to_string(),
+            grafeo::Value::String(parent_title.into()),
+        )]);
+        let result = query_gql_params(
+            self,
+            &format!(
+                "MATCH (s:Schema)-[:ExtendsSchema]->(:Schema {{title: $title}}) RETURN {}",
+                SCHEMA_RETURN_COLS
+            ),
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_schema_node(&reader, row))
+            .collect()
+    }
+
     async fn get_referencing_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError> {
         let params = HashMap::from([(
             "title".to_string(),
@@ -638,22 +699,24 @@ impl GraphQuerier for GrafeoEngine {
             .collect()
     }
 
-    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError> {
+    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
         let params = HashMap::from([(
             "title".to_string(),
             grafeo::Value::String(schema_title.into()),
         )]);
         let result = query_gql_params(
             self,
-            "MATCH (:Schema {title: $title})-[:HasProperty]->(p:Property)-[:ReferencesSchema]->(t:Schema) \
-             RETURN DISTINCT t.title",
+            &format!(
+                "MATCH (:Schema {{title: $title}})-[:HasProperty]->(p:Property)-[:ReferencesSchema]->(s:Schema) \
+                 RETURN DISTINCT {SCHEMA_RETURN_COLS}"
+            ),
             params,
         )?;
         let reader = RowReader::from_columns(&result.columns);
         result
             .rows
             .iter()
-            .map(|row| reader.get_string(row, "t.title"))
+            .map(|row| row_to_schema_node(&reader, row))
             .collect()
     }
 
@@ -685,6 +748,54 @@ impl GraphQuerier for GrafeoEngine {
         }
         let reader = RowReader::from_columns(&result.columns);
         Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
+    }
+
+    async fn get_property_ref_target_by_id(
+        &self,
+        property_name: &str,
+        schema_id: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        let params = HashMap::from([
+            (
+                "pname".to_string(),
+                grafeo::Value::String(property_name.into()),
+            ),
+            ("sid".to_string(), grafeo::Value::String(schema_id.into())),
+        ]);
+        let result = query_gql_params(
+            self,
+            &format!(
+                "MATCH (:Property {{name: $pname, _schema_id: $sid}})-[:ReferencesSchema]->(s:Schema) \
+                 RETURN {SCHEMA_RETURN_COLS}"
+            ),
+            params,
+        )?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
+    }
+
+    async fn get_properties_by_schema_id(
+        &self,
+        schema_id: &str,
+    ) -> Result<Vec<PropertyNode>, GraphError> {
+        let params =
+            HashMap::from([("sid".to_string(), grafeo::Value::String(schema_id.into()))]);
+        let result = query_gql_params(
+            self,
+            &format!(
+                "MATCH (p:Property {{_schema_id: $sid}}) RETURN {PROPERTY_RETURN_COLS}"
+            ),
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_property_node(&reader, row))
+            .collect()
     }
 
     async fn get_array_item_schema(
@@ -1103,22 +1214,41 @@ impl GrafeoEngine {
                         // cannot be represented by a single UUID FK on the parent. The FK
                         // lives on the child entity's table instead (configured via
                         // parent_ref in domains.toml).
-                        if target_schema.is_entity && !prop.is_array {
+                        let vo_entity = if !target_schema.is_entity {
+                            codegraph_core::traits::find_entity_extended_by_vo(self, &target_schema.title)
+                                .await
+                                .ok()
+                                .flatten()
+                        } else {
+                            None
+                        };
+
+                        if (target_schema.is_entity || vo_entity.is_some()) && !prop.is_array {
                             let mut entity_col = col;
                             entity_col.classification =
                                 Some(codegraph_type_contracts::RefClassificationKind::EntityReference);
-                            entity_col.fk_target = self
-                                .resolve_fk_target(
-                                    &prop.name,
-                                    schema_title,
-                                    &default_schema,
-                                    prop.ref_target.as_deref(),
-                                    "id",
-                                    "SET NULL",
-                                )
-                                .await;
+                            if let Some(entity) = &vo_entity {
+                                entity_col.fk_target = Some(FkTarget {
+                                    schema: entity.domain.clone().unwrap_or_else(|| default_schema.to_string()),
+                                    table: entity.pg_table_name.clone(),
+                                    column: "id".to_string(),
+                                    on_delete: "SET NULL".to_string(),
+                                });
+                            } else {
+                                entity_col.fk_target = self
+                                    .resolve_fk_target(
+                                        &prop.name,
+                                        schema_title,
+                                        &default_schema,
+                                        prop.ref_target.as_deref(),
+                                        "id",
+                                        "SET NULL",
+                                    )
+                                    .await;
+                            }
                             columns.push(entity_col);
-                        } else if !target_schema.is_entity
+                        }
+                        if !target_schema.is_entity
                             && !visited.contains(&target_schema.title)
                         {
                             // Recurse into ValueObject as a child node.
@@ -1336,9 +1466,16 @@ impl GrafeoEngine {
         let schema_name = if is_codelist_ref {
             "common".to_string()
         } else {
-            extract_ref_domain(ref_str)
-                .unwrap_or(default_schema)
-                .to_string()
+            let domain = extract_ref_domain(ref_str)
+                .unwrap_or(default_schema);
+            // If the "domain" looks like a JSON schema filename (contains `.json`),
+            // the ref_target is a bare filename without path (no domain prefix).
+            // Use the default schema instead of the filename.
+            if domain.contains(".json") || domain.contains(".json#") {
+                default_schema.to_string()
+            } else {
+                domain.to_string()
+            }
         };
         let table = extract_ref_table(ref_str)?;
         Some(FkTarget {

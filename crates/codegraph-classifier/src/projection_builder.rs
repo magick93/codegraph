@@ -354,8 +354,15 @@ impl ProjectionBuilder {
 /// Parse a FK table reference like "schema.table" or just "table".
 fn parse_fk_table(fk_table: &str) -> FkTarget {
     if let Some((schema, table)) = fk_table.split_once('.') {
+        // Sanitize the schema name: strip .json extension and # fragment
+        // that come from JSON schema filenames (e.g. "OrderType.json#").
+        let schema = schema
+            .strip_suffix(".json#")
+            .or_else(|| schema.strip_suffix(".json"))
+            .unwrap_or(schema)
+            .to_string();
         FkTarget {
-            schema: schema.to_string(),
+            schema,
             table: table.to_string(),
             column: "id".to_string(),
         }

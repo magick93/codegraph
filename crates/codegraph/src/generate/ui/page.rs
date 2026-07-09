@@ -80,6 +80,10 @@ pub struct UiField {
     /// Non-empty when this field is a StructuredWrapper (e.g. IdentifierType).
     /// Contains sub-field definitions queried from the graph at generation time.
     pub structured_sub_fields: Vec<UiSubField>,
+    /// When set, this field is a nested ValueObject referencing another type.
+    /// The `ts_type` holds the nested interface name (e.g. "WorkerPersonLegalResponse").
+    #[serde(default)]
+    pub nested_type_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -131,7 +135,7 @@ impl EntityGenerator for UiPageGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let schema = db
-            .get_schema(schema_title)
+            .get_schema_in_domain(schema_title, domain)
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
@@ -225,7 +229,7 @@ impl EntityGenerator for UiPageGenerator {
             {
                 if ec.role.as_deref() == Some("child") {
                     if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) = db.get_schema(parent_title).await {
+                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, &domain).await {
                             let parent_domain = if config
                                 .domains
                                 .get(&domain)
@@ -264,8 +268,14 @@ impl EntityGenerator for UiPageGenerator {
                 }
             }
 
-            // 2. Fall back to graph parent_candidates
-            if result.is_none() {
+            // 2. Fall back to graph parent_candidates (only if entity is not explicitly root)
+            let page_effective_role = config
+                .domains
+                .get(&domain)
+                .and_then(|d| d.get_entity_config(schema_title))
+                .and_then(|ec| ec.role.as_deref())
+                .unwrap_or("root");
+            if result.is_none() && page_effective_role != "root" {
                 for pc in &self.parent_candidates {
                     let child_name =
                         crate::generate::api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
@@ -277,16 +287,16 @@ impl EntityGenerator for UiPageGenerator {
                             .unwrap_or(false);
                         let parent_in_domain = in_explicit
                             || db
-                                .get_schema(&pc.parent_title)
-                                .await
-                                .ok()
-                                .flatten()
-                                .and_then(|s| s.domain.as_ref().map(|d| d == &domain))
-                                .unwrap_or(false);
+                            .get_schema_in_domain(&pc.parent_title, &domain)
+                            .await
+                            .ok()
+                            .flatten()
+                            .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
+                            .unwrap_or(false);
                         if !parent_in_domain {
                             break;
                         }
-                        if let Ok(Some(parent_schema)) = db.get_schema(&pc.parent_title).await {
+                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, &domain).await {
                             let gp = super::store::resolve_grandparent(
                                 &pc.parent_title,
                                 &domain,

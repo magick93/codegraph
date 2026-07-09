@@ -44,7 +44,7 @@ impl GlobalGenerator for PlaywrightGlobalGenerator {
         // the module names declared in lib.rs match the filenames on disk.
         let mut domain_map: BTreeMap<String, Vec<PlaywrightEntitySummary>> = BTreeMap::new();
         for entry in generation_order {
-            let schema = db.get_schema(&entry.schema_title).await?;
+            let schema = db.get_schema_in_domain(&entry.schema_title, &entry.domain).await?;
             let module_name = schema
                 .as_ref()
                 .map(|s| s.pg_table_name.clone())

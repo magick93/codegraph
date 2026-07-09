@@ -3,7 +3,11 @@ import { createEntityAsAcme, createEntityViaApi, deleteEntityViaApi } from '../.
 import type { OrgContext } from '../../e2e/fixtures/personas';
 
 
-const BASE_PATH = '/recruiting/candidate';
+
+const PARENT_API_PATH = '/recruiting/application';
+
+let BASE_PATH: string;
+
 
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
@@ -16,14 +20,18 @@ function testData(): Record<string, unknown> {
     'birth_date': '2025-01-15',
     'family_name': 'Test Family Name',
     'given_name': 'Test Given Name',
+    'application_process_history': {},
     'candidate_id': 'Test Candidate Id',
     'compensation_expectation': 42,
     'compensation_expectation_currency': 'USD',
+    'distribution_guidelines': {},
     'external_identifier': { value: 'Test External Identifier' },
     'gender': 'Male',
+    'person_name': {},
     'position_schedule_type_codes': [{ code: 'FullTime' }],
     'position_titles': ['Test Position Titles'],
-    ...(depIds['referred_by_application_id'] ? { 'referred_by_application_id': depIds['referred_by_application_id'] } : {}),
+    'qualifications': {},
+    ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
     'status': 'active',
     'uri': 'Test Uri',
   };
@@ -36,9 +44,15 @@ test.describe.serial('Candidate Manager Team', () => {
   test.beforeAll(async ({ orgContext }) => {
 
 
+    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'applied_date': '2025-01-15', 'status': 'Applied' });
+    const parentId = parentEntity['id'] as string;
+    BASE_PATH = `${PARENT_API_PATH}/${parentId}/candidate`;
+
+
+
     try {
-      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/application', { 'applied_date': '2025-01-15', 'status': 'Applied' });
-      depIds['referred_by_application_id'] = dep_1['id'] as string;
+      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/application', {  });
+      depIds['referred_by_application_id_id'] = dep_1['id'] as string;
     } catch (_e) {
       // Dependency entity may already exist or have its own required fields
     }
@@ -51,9 +65,9 @@ test.describe.serial('Candidate Manager Team', () => {
   test.afterAll(async ({ orgContext }) => {
     const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
 
-    if (depIds['referred_by_application_id']) {
+    if (depIds['referred_by_application_id_id']) {
       try {
-        await fetch(`${baseUrl}/api/recruiting/application/${depIds['referred_by_application_id']}`, {
+        await fetch(`${baseUrl}/api/recruiting/application/${depIds['referred_by_application_id_id']}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
         });
@@ -80,14 +94,18 @@ test.describe.serial('Candidate Manager Team', () => {
     await expect(managerPage.locator('[data-testid="candidate-field-birth_date"]')).toBeVisible();
     await expect(managerPage.locator('[data-testid="candidate-field-family_name"]')).toBeVisible();
     await expect(managerPage.locator('[data-testid="candidate-field-given_name"]')).toBeVisible();
+    await expect(managerPage.locator('[data-testid="candidate-field-application_process_history"]')).toBeVisible();
     await expect(managerPage.locator('[data-testid="candidate-field-candidate_id"]')).toBeVisible();
     await expect(managerPage.locator('[data-testid="candidate-field-compensation_expectation"]')).toBeVisible();
     await expect(managerPage.locator('[data-testid="candidate-field-compensation_expectation_currency"]')).toBeVisible();
+    await expect(managerPage.locator('[data-testid="candidate-field-distribution_guidelines"]')).toBeVisible();
     await expect(managerPage.locator('[data-testid="candidate-field-external_identifier"]')).toBeVisible();
     await expect(managerPage.locator('[data-testid="candidate-field-gender"]')).toBeVisible();
+    await expect(managerPage.locator('[data-testid="candidate-field-person_name"]')).toBeVisible();
     await expect(managerPage.locator('[data-testid="candidate-field-position_schedule_type_codes"]')).toBeVisible();
     await expect(managerPage.locator('[data-testid="candidate-field-position_titles"]')).toBeVisible();
-    await expect(managerPage.locator('[data-testid="candidate-field-referred_by_application_id"]')).toBeVisible();
+    await expect(managerPage.locator('[data-testid="candidate-field-qualifications"]')).toBeVisible();
+    await expect(managerPage.locator('[data-testid="candidate-field-referred_by_application_id_id"]')).toBeVisible();
     await expect(managerPage.locator('[data-testid="candidate-field-status"]')).toBeVisible();
     await expect(managerPage.locator('[data-testid="candidate-field-uri"]')).toBeVisible();
   });

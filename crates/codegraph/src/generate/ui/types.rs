@@ -1,4 +1,4 @@
-use crate::generate::ProjectConfig;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -6,16 +6,24 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::ProjectConfig;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
-
 use super::common::collect_ui_fields;
+
 
 #[derive(Debug, Serialize)]
 pub struct UiTypesContext {
     pub entities: Vec<UiEntityType>,
+    pub nested_types: Vec<UiNestedType>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UiNestedType {
+    pub name: String,
+    pub fields: Vec<UiTypeField>,
 }
 
 #[derive(Debug, Serialize)]
@@ -38,6 +46,10 @@ pub struct UiTypeField {
     pub is_required: bool,
     pub is_array: bool,
     pub description: String,
+    /// When set, this field is a nested ValueObject referencing another type.
+    /// The template uses this to add created_at/updated_at timestamps to the nested interface.
+    #[serde(default)]
+    pub nested_type_name: Option<String>,
 }
 
 pub struct UiTypeGenerator {
@@ -69,7 +81,7 @@ impl GlobalGenerator for UiTypeGenerator {
         let mut entities = Vec::new();
 
         for entry in generation_order {
-            let schema = match db.get_schema(&entry.schema_title).await? {
+            let schema = match db.get_schema_in_domain(&entry.schema_title, &entry.domain).await? {
                 Some(s) => s,
                 None => continue,
             };
@@ -123,6 +135,7 @@ impl GlobalGenerator for UiTypeGenerator {
                     is_required: ui_field.is_required,
                     is_array: ui_field.is_array,
                     description: ui_field.description.clone(),
+                    nested_type_name: ui_field.nested_type_name.clone(),
                 };
 
                 response_fields.push(type_field.clone());
@@ -151,7 +164,30 @@ impl GlobalGenerator for UiTypeGenerator {
 
         entities.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let ctx = UiTypesContext { entities };
+        // Collect nested ValueObject type definitions.
+        let mut visited_types = HashSet::new();
+        let mut nested_types = Vec::new();
+        for entity in &entities {
+            for field in &entity.response_fields {
+                if let Some(ref schema_title_for_ref) = field.nested_type_name {
+                    if !visited_types.insert(schema_title_for_ref.clone()) {
+                        continue;
+                    }
+                    // Resolve the nested type's TS interface name and fields.
+                    let nested_ts_name = field.ts_type.clone();
+                    if let Some(nt_fields) = collect_nested_type_fields(
+                        db, schema_title_for_ref, Some(&entity.domain),
+                    ).await {
+                        nested_types.push(UiNestedType {
+                            name: nested_ts_name,
+                            fields: nt_fields,
+                        });
+                    }
+                }
+            }
+        }
+
+        let ctx = UiTypesContext { entities, nested_types };
         let content = render_template_with_project(tera, "ui/scaffold/types.tera", &ctx, project)?;
 
         Ok(vec![GeneratedFile {
@@ -165,4 +201,27 @@ impl GlobalGenerator for UiTypeGenerator {
             content,
         }])
     }
+}
+
+/// Collect fields for a nested ValueObject type by querying its schema from the graph.
+/// Returns `None` if the schema can't be resolved.
+async fn collect_nested_type_fields(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    domain: Option<&str>,
+) -> Option<Vec<UiTypeField>> {
+    let fields = collect_ui_fields(db, schema_title, &[], domain).await.ok()?;
+    Some(
+        fields
+            .into_iter()
+            .map(|f| UiTypeField {
+                name: f.name,
+                ts_type: f.ts_type,
+                is_required: f.is_required,
+                is_array: f.is_array,
+                description: f.description,
+                nested_type_name: f.nested_type_name,
+            })
+            .collect(),
+    )
 }

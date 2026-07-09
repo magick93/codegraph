@@ -2,6 +2,56 @@ use serde::{Deserialize, Serialize};
 
 use codegraph_type_contracts::{DddFieldProjection, RefClassificationKind};
 
+/// If props is empty and the entity is a codelist (enum-only JSON schema with
+/// zero properties), inject synthetic PropertyNodes for the three columns that
+/// the codelist DDL template creates: code, display_name, sort_order.
+///
+/// This ensures entity model, DTO, and repository generators produce the same
+/// columns that exist in the actual database table.
+pub fn inject_codelist_properties(props: &mut Vec<PropertyNode>, is_codelist: bool, domain: &str) {
+    // Only inject for common-domain codelists that have _codelist.sql migrations
+    // with actual code/display_name/sort_order columns. Non-common-domain codelists
+    // are created by the entity DDL generator with id UUID PRIMARY KEY and no code column.
+    if !props.is_empty() || !is_codelist || domain != "common" {
+        return;
+    }
+    // Helper to create a synthetic PropertyNode for a codelist column.
+    let make = |name: &str, rust_field: &str, rust_type: &str, sea_orm_type: &str,
+                pg_column: &str, pg_type: &str, is_required: bool| {
+        PropertyNode {
+            name: name.to_string(),
+            prop_type: "string".to_string(),
+            description: None,
+            format: None,
+            is_required,
+            is_nullable: !is_required,
+            is_array: false,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: pg_column.to_string(),
+            pg_column_type: pg_type.to_string(),
+            rust_field_name: rust_field.to_string(),
+            rust_field_type: rust_type.to_string(),
+            sea_orm_type: sea_orm_type.to_string(),
+            render_strategy: "scalar".to_string(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: Some(RefClassificationKind::PrimitiveWrapper),
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    };
+    props.push(make("code", "code", "String", "String", "code", "TEXT", true));
+    props.push(make("display_name", "display_name", "String", "String", "display_name", "TEXT", true));
+    props.push(make("sort_order", "sort_order", "i32", "Integer", "sort_order", "INTEGER", false));
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PropertyNode {
     pub name: String,

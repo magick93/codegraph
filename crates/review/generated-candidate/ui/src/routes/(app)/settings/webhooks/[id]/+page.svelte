@@ -1,7 +1,7 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import * as Card from '$lib/components/ui/card';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
@@ -45,7 +45,7 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
 
-  const endpointId = $derived($page.params.id);
+  const endpointId = $derived(page.params.id);
 
   onMount(() => {
     loadData();

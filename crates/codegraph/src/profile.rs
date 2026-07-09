@@ -324,7 +324,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("workflow_action",      Entity, Api,  &[], &[]),
         cap("media_route",          Entity, Api,  &[], &[]),
         cap("test",                 Entity, Api,  &[], &[]),
-        cap("lifecycle_trait",      Entity, Api,  &[], &[]),
+        cap("lifecycle_trait",      Entity, Common,  &[], &[]),
         cap("domain_types_dto",     Entity, Api,  &[], &[]),
         cap("domain_types_query_service", Entity, Api, &[], &[]),
 
