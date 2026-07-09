@@ -218,7 +218,7 @@ impl EntityGenerator for HandlerGenerator {
 
         // 2. Fall back to graph parent_candidates if manual config didn't resolve parent.
         // Only nest when the parent is in the same domain (matching router behavior).
-        if resolved_parent_path_segment.is_none() {
+        if resolved_parent_path_segment.is_none() && resolved_role != "root" {
             for pc in &self.parent_candidates {
                 let child_name = super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
                 if child_name == stripped_title {
