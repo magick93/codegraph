@@ -3,11 +3,7 @@ import { createEntityAsAcme, createEntityViaApi, deleteEntityViaApi, expectToast
 import type { OrgContext } from '../../e2e/fixtures/personas';
 
 
-
-const PARENT_API_PATH = '/recruiting/application';
-
-let BASE_PATH: string;
-
+const BASE_PATH = '/recruiting/candidate';
 
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
@@ -20,17 +16,17 @@ function testData(): Record<string, unknown> {
     'birth_date': '2025-01-15',
     'family_name': 'Test Family Name',
     'given_name': 'Test Given Name',
-    'application_process_history': {},
+    // 'application_process_history': ValueObject — omit, serde default
     'candidate_id': 'Test Candidate Id',
     'compensation_expectation': 42,
     'compensation_expectation_currency': 'USD',
-    'distribution_guidelines': {},
-    'external_identifier': { value: 'Test External Identifier' },
+    // 'distribution_guidelines': ValueObject — omit, serde default
+    'external_identifier': { value: `Test External Identifier-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` },
     'gender': 'Male',
-    'person_name': {},
+    // 'person_name': ValueObject — omit, serde default
     'position_schedule_type_codes': [{ code: 'FullTime' }],
     'position_titles': ['Test Position Titles'],
-    'qualifications': {},
+    'qualifications': [],
     ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
     'status': 'active',
     'uri': 'Test Uri',
@@ -42,34 +38,27 @@ function updatedData(): Record<string, unknown> {
     'birth_date': '2025-06-20',
     'family_name': 'Updated Family Name',
     'given_name': 'Updated Given Name',
-    'application_process_history': {},
+    // 'application_process_history': ValueObject — omit, serde default
     'candidate_id': 'Updated Candidate Id',
     'compensation_expectation': 99,
     'compensation_expectation_currency': 'AUD',
-    'distribution_guidelines': {},
-    'external_identifier': { value: 'Updated External Identifier' },
+    // 'distribution_guidelines': ValueObject — omit, serde default
+    'external_identifier': { value: `Updated External Identifier-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` },
     'gender': 'Other',
-    'person_name': {},
+    // 'person_name': ValueObject — omit, serde default
     'position_schedule_type_codes': [{ code: 'SharedTime' }],
     'position_titles': ['Updated Position Titles'],
-    'qualifications': {},
+    'qualifications': [],
     ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
     'status': 'withdrawn',
     'uri': 'Updated Uri',
   };
 }
 
-test.describe.serial('Candidate Owner CRUD', () => {
-  let createdId: string;
+test.describe('Candidate Owner CRUD', () => {
 
 
   test.beforeAll(async ({ orgContext }) => {
-
-
-    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'applied_date': '2025-01-15', 'status': 'Applied' });
-    const parentId = parentEntity['id'] as string;
-    BASE_PATH = `${PARENT_API_PATH}/${parentId}/candidate`;
-
 
 
     try {
@@ -161,9 +150,9 @@ test.describe.serial('Candidate Owner CRUD', () => {
     await expectToast(ownerPage, 'created', 'success');
     // Wait for SvelteKit goto() navigation to complete after toast
 
-    await ownerPage.waitForURL(/\/recruiting\/application\/[0-9a-f-]+\/candidate\/[0-9a-f-]+$/, { timeout: 20_000 });
+    await ownerPage.waitForURL(/\/recruiting\/candidate\/[0-9a-f-]+$/, { timeout: 20_000 });
 
-    createdId = ownerPage.url().split('/').pop()!;
+    const formCreatedId = ownerPage.url().split('/').pop()!;
   });
 
 
@@ -178,9 +167,11 @@ test.describe.serial('Candidate Owner CRUD', () => {
 
 
 
-  test('owner can view Candidate detail', async ({ ownerPage }) => {
+  test('owner can view Candidate detail', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await expect(ownerPage.locator('[data-testid="candidate-field-birth_date"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="candidate-field-family_name"]')).toBeVisible();
@@ -204,9 +195,11 @@ test.describe.serial('Candidate Owner CRUD', () => {
 
 
 
-  test('owner can edit Candidate', async ({ ownerPage }) => {
+  test('owner can edit Candidate', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}/edit`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}/edit`);
 
     // Wait for Svelte 5 to hydrate the form's submit handler.
     await waitForHydration(ownerPage, '[data-testid="candidate-submit-btn"]');

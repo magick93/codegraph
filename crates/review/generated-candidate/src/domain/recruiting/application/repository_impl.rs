@@ -22,16 +22,15 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         cmd: CreateApplicationRequest,
-        parent_id: Uuid,
     ) -> Result<Uuid, Box<dyn std::error::Error>> {
         let id = Uuid::new_v4();
 
         // Insert into recruiting.application (direct columns)
         let model = crate::entity::recruiting_application::ActiveModel {
             id: Set(id),
-            candidate_id: Set(Some(parent_id)),
             application_id: Set(cmd.application_id),
             applied_date: Set(cmd.applied_date),
+            candidate_id: Set(cmd.candidate_id),
             status: Set(cmd.status.map(|v| v.to_string())),
             ..Default::default()
         };
@@ -48,36 +47,6 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
     ) -> Result<Option<ApplicationResponse>, Box<dyn std::error::Error>> {
         let row = crate::entity::recruiting_application::Entity::find()
             .filter(crate::entity::recruiting_application::Column::Id.eq(id))
-            .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
-            .one(db)
-            .await?;
-
-        let row = match row {
-            Some(r) => r,
-            None => return Ok(None),
-        };
-
-        Ok(Some(ApplicationResponse {
-            id: row.id,
-            application_id: row.application_id,
-            applied_date: row.applied_date,
-            candidate_id: row.candidate_id,
-            status: row.status.and_then(|v| v.parse().ok()),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        }))
-    }
-
-    #[tracing::instrument(skip(self, db), fields(db.operation = "select_scoped", db.table = "recruiting.application"))]
-    async fn find_by_id_scoped(
-        &self,
-        db: &DatabaseTransaction,
-        id: Uuid,
-        parent_id: Uuid,
-    ) -> Result<Option<ApplicationResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::recruiting_application::Entity::find()
-            .filter(crate::entity::recruiting_application::Column::Id.eq(id))
-            .filter(crate::entity::recruiting_application::Column::CandidateId.eq(parent_id))
             .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
             .one(db)
             .await?;
@@ -162,10 +131,6 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
         }
         if let Some(val) = filters.get("status") {
             condition = condition.add(crate::entity::recruiting_application::Column::Status.eq(val.clone()));
-        }
-        if let Some(val) = filters.get("candidate_id") {
-            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid UUID for filter 'candidate_id': {e}")))?;
-            condition = condition.add(crate::entity::recruiting_application::Column::CandidateId.eq(parsed));
         }
         let query = crate::entity::recruiting_application::Entity::find()
             .filter(condition)

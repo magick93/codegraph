@@ -25,8 +25,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('EffectiveDate Owner CRUD', () => {
-  let createdId: string;
+test.describe('EffectiveDate Owner CRUD', () => {
 
 
 
@@ -54,7 +53,7 @@ test.describe.serial('EffectiveDate Owner CRUD', () => {
 
     await ownerPage.waitForURL(/\/common\/effective-date\/[0-9a-f-]+$/, { timeout: 20_000 });
 
-    createdId = ownerPage.url().split('/').pop()!;
+    const formCreatedId = ownerPage.url().split('/').pop()!;
   });
 
 
@@ -69,9 +68,11 @@ test.describe.serial('EffectiveDate Owner CRUD', () => {
 
 
 
-  test('owner can view EffectiveDate detail', async ({ ownerPage }) => {
+  test('owner can view EffectiveDate detail', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await expect(ownerPage.locator('[data-testid="effective_date-field-valid_from"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="effective_date-field-valid_to"]')).toBeVisible();
@@ -80,9 +81,11 @@ test.describe.serial('EffectiveDate Owner CRUD', () => {
 
 
 
-  test('owner can edit EffectiveDate', async ({ ownerPage }) => {
+  test('owner can edit EffectiveDate', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}/edit`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}/edit`);
 
     // Wait for Svelte 5 to hydrate the form's submit handler.
     await waitForHydration(ownerPage, '[data-testid="effective_date-submit-btn"]');
@@ -101,9 +104,11 @@ test.describe.serial('EffectiveDate Owner CRUD', () => {
 
 
 
-  test('owner can delete EffectiveDate', async ({ ownerPage }) => {
+  test('owner can delete EffectiveDate', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(ownerPage, '[data-testid="effective_date-delete-btn"]');
     await ownerPage.locator('[data-testid="effective_date-delete-btn"]').click();

@@ -27,8 +27,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('ProcessHistory Owner CRUD', () => {
-  let createdId: string;
+test.describe('ProcessHistory Owner CRUD', () => {
 
 
 
@@ -63,7 +62,7 @@ test.describe.serial('ProcessHistory Owner CRUD', () => {
 
     await ownerPage.waitForURL(/\/common\/process-history\/[0-9a-f-]+$/, { timeout: 20_000 });
 
-    createdId = ownerPage.url().split('/').pop()!;
+    const formCreatedId = ownerPage.url().split('/').pop()!;
   });
 
 
@@ -78,9 +77,11 @@ test.describe.serial('ProcessHistory Owner CRUD', () => {
 
 
 
-  test('owner can view ProcessHistory detail', async ({ ownerPage }) => {
+  test('owner can view ProcessHistory detail', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await expect(ownerPage.locator('[data-testid="process_history-field-action_date"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="process_history-field-descriptions"]')).toBeVisible();
@@ -90,9 +91,11 @@ test.describe.serial('ProcessHistory Owner CRUD', () => {
 
 
 
-  test('owner can edit ProcessHistory', async ({ ownerPage }) => {
+  test('owner can edit ProcessHistory', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}/edit`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}/edit`);
 
     // Wait for Svelte 5 to hydrate the form's submit handler.
     await waitForHydration(ownerPage, '[data-testid="process_history-submit-btn"]');
@@ -125,9 +128,11 @@ test.describe.serial('ProcessHistory Owner CRUD', () => {
 
 
 
-  test('owner can delete ProcessHistory', async ({ ownerPage }) => {
+  test('owner can delete ProcessHistory', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(ownerPage, '[data-testid="process_history-delete-btn"]');
     await ownerPage.locator('[data-testid="process_history-delete-btn"]').click();

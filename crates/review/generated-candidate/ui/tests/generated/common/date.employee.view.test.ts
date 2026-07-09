@@ -16,7 +16,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('Date Employee View', () => {
+test.describe('Date Employee View', () => {
   let createdId: string;
   const data = testData();
 

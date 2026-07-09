@@ -19,7 +19,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('GenderCodeList Cross-Org Isolation', () => {
+test.describe('GenderCodeList Cross-Org Isolation', () => {
   let acmeEntityId: string;
   const data = testData();
 

@@ -16,12 +16,7 @@ import {
 } from '../../e2e/helpers';
 
 
-
-const PARENT_API_PATH = '/recruiting/application';
-
-let parentId: string;
-let BASE_PATH: string;
-
+const BASE_PATH = '/recruiting/candidate';
 
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
@@ -47,7 +42,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'application_process_history': {},
+    // 'application_process_history': ValueObject — omit, serde default
 
 
 
@@ -63,11 +58,11 @@ function testData(): Record<string, unknown> {
 
 
 
-    'distribution_guidelines': {},
+    // 'distribution_guidelines': ValueObject — omit, serde default
 
 
 
-    'external_identifier': { value: 'Test External Identifier' },
+    'external_identifier': { value: `Test External Identifier-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` },
 
 
 
@@ -75,7 +70,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'person_name': {},
+    // 'person_name': ValueObject — omit, serde default
 
 
 
@@ -87,7 +82,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'qualifications': {},
+    'qualifications': [],
 
 
 
@@ -123,7 +118,7 @@ function updatedData(): Record<string, unknown> {
 
 
 
-    'application_process_history': {},
+    // 'application_process_history': ValueObject — omit, serde default
 
 
 
@@ -139,11 +134,11 @@ function updatedData(): Record<string, unknown> {
 
 
 
-    'distribution_guidelines': {},
+    // 'distribution_guidelines': ValueObject — omit, serde default
 
 
 
-    'external_identifier': { value: 'Updated External Identifier' },
+    'external_identifier': { value: `Updated External Identifier-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` },
 
 
 
@@ -151,7 +146,7 @@ function updatedData(): Record<string, unknown> {
 
 
 
-    'person_name': {},
+    // 'person_name': ValueObject — omit, serde default
 
 
 
@@ -163,7 +158,7 @@ function updatedData(): Record<string, unknown> {
 
 
 
-    'qualifications': {},
+    'qualifications': [],
 
 
 
@@ -181,18 +176,10 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('Candidate CRUD', () => {
-  let createdId: string | undefined;
+test.describe('Candidate CRUD', () => {
 
 
   test.beforeAll(async ({ orgContext }) => {
-
-
-    // Create parent entity for nested route
-    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'applied_date': '2025-01-15', 'status': 'Applied' });
-    parentId = parentEntity['id'] as string;
-    BASE_PATH = `${PARENT_API_PATH}/${parentId}/candidate`;
-
 
 
     try {
@@ -217,15 +204,6 @@ test.describe.serial('Candidate CRUD', () => {
     }
 
 
-    if (parentId) {
-      try {
-        await fetch(`${baseUrl}/api${PARENT_API_PATH}/${parentId}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
-        });
-      } catch { /* best effort */ }
-    }
-
   });
 
 
@@ -249,37 +227,35 @@ test.describe.serial('Candidate CRUD', () => {
 
 
 
-    if (await page.locator('#birth_date').isVisible()) {
+    if (data['birth_date'] != null && await page.locator('#birth_date').isVisible()) {
       await page.locator('#birth_date').fill(String(data['birth_date']));
     }
 
 
 
-    if (await page.locator('#family_name').isVisible()) {
+    if (data['family_name'] != null && await page.locator('#family_name').isVisible()) {
       await page.locator('#family_name').fill(String(data['family_name']));
     }
 
 
 
-    if (await page.locator('#given_name').isVisible()) {
+    if (data['given_name'] != null && await page.locator('#given_name').isVisible()) {
       await page.locator('#given_name').fill(String(data['given_name']));
     }
 
 
 
-    if (await page.locator('#application_process_history').isVisible()) {
-      await page.locator('#application_process_history').fill(String(data['application_process_history']));
-    }
+    // 'application_process_history': ValueObject — form uses structured sub-fields, skip fill
 
 
 
-    if (await page.locator('#candidate_id').isVisible()) {
+    if (data['candidate_id'] != null && await page.locator('#candidate_id').isVisible()) {
       await page.locator('#candidate_id').fill(String(data['candidate_id']));
     }
 
 
 
-    if (await page.locator('#compensation_expectation').isVisible()) {
+    if (data['compensation_expectation'] != null && await page.locator('#compensation_expectation').isVisible()) {
       await page.locator('#compensation_expectation').fill(String(data['compensation_expectation']));
     }
 
@@ -291,9 +267,7 @@ test.describe.serial('Candidate CRUD', () => {
 
 
 
-    if (await page.locator('#distribution_guidelines').isVisible()) {
-      await page.locator('#distribution_guidelines').fill(String(data['distribution_guidelines']));
-    }
+    // 'distribution_guidelines': ValueObject — form uses structured sub-fields, skip fill
 
 
 
@@ -309,9 +283,7 @@ test.describe.serial('Candidate CRUD', () => {
 
 
 
-    if (await page.locator('#person_name').isVisible()) {
-      await page.locator('#person_name').fill(String(data['person_name']));
-    }
+    // 'person_name': ValueObject — form uses structured sub-fields, skip fill
 
 
 
@@ -331,9 +303,7 @@ test.describe.serial('Candidate CRUD', () => {
 
 
 
-    if (await page.locator('#qualifications').isVisible()) {
-      await page.locator('#qualifications').fill(String(data['qualifications']));
-    }
+    // 'qualifications': ValueObject — form uses structured sub-fields, skip fill
 
 
 
@@ -349,7 +319,7 @@ test.describe.serial('Candidate CRUD', () => {
 
 
 
-    if (await page.locator('#uri').isVisible()) {
+    if (data['uri'] != null && await page.locator('#uri').isVisible()) {
       await page.locator('#uri').fill(String(data['uri']));
     }
 
@@ -360,12 +330,12 @@ test.describe.serial('Candidate CRUD', () => {
 
     // Should redirect to detail page
 
-    await expect(page).toHaveURL(/\/recruiting\/application\/[0-9a-f-]+\/candidate\/[0-9a-f-]+/);
+    await expect(page).toHaveURL(/\/recruiting\/candidate\/[0-9a-f-]+/);
 
 
     // Capture the created entity ID from the URL
     const url = page.url();
-    createdId = url.split('/').pop()!;
+    const formCreatedId = url.split('/').pop()!;
 
     // Verify field values on detail page (only check fields present on the page)
 
@@ -473,15 +443,13 @@ test.describe.serial('Candidate CRUD', () => {
 
   });
 
-  test('entity appears in list after create', async ({ ownerPage: page }) => {
+  test('entity appears in list after create', async ({ ownerPage: page, orgContext }) => {
+    await createEntityAsAcme(orgContext, BASE_PATH, testData());
     await page.goto(BASE_PATH);
     const table = page.locator('[data-testid="candidate-table"]');
     const empty = page.locator('[data-testid="candidate-empty"]');
     await expect(table.or(empty)).toBeVisible();
-    // If we created an entity, the table should be visible (not empty state)
-    if (createdId) {
-      await expect(table).toBeVisible();
-    }
+    await expect(table).toBeVisible();
   });
 
 
@@ -517,14 +485,11 @@ test.describe.serial('Candidate CRUD', () => {
 
 
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
-    // Create via API if we don't have one yet
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await expect(page.getByRole('heading', { name: 'Candidate' })).toBeVisible();
 
@@ -573,55 +538,50 @@ test.describe.serial('Candidate CRUD', () => {
 
 
   test('edit entity via form', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}/edit`);
+    await page.goto(`${BASE_PATH}/${myId}/edit`);
 
     await waitForHydration(page, '[data-testid="candidate-submit-btn"]');
     const data = updatedData();
 
 
 
-    if (await page.locator('#birth_date').isVisible()) {
+    if (data['birth_date'] != null && await page.locator('#birth_date').isVisible()) {
       await page.locator('#birth_date').clear();
       await page.locator('#birth_date').fill(String(data['birth_date']));
     }
 
 
 
-    if (await page.locator('#family_name').isVisible()) {
+    if (data['family_name'] != null && await page.locator('#family_name').isVisible()) {
       await page.locator('#family_name').clear();
       await page.locator('#family_name').fill(String(data['family_name']));
     }
 
 
 
-    if (await page.locator('#given_name').isVisible()) {
+    if (data['given_name'] != null && await page.locator('#given_name').isVisible()) {
       await page.locator('#given_name').clear();
       await page.locator('#given_name').fill(String(data['given_name']));
     }
 
 
 
-    if (await page.locator('#application_process_history').isVisible()) {
-      await page.locator('#application_process_history').clear();
-      await page.locator('#application_process_history').fill(String(data['application_process_history']));
-    }
+    // 'application_process_history': ValueObject — form uses structured sub-fields, skip fill
 
 
 
-    if (await page.locator('#candidate_id').isVisible()) {
+    if (data['candidate_id'] != null && await page.locator('#candidate_id').isVisible()) {
       await page.locator('#candidate_id').clear();
       await page.locator('#candidate_id').fill(String(data['candidate_id']));
     }
 
 
 
-    if (await page.locator('#compensation_expectation').isVisible()) {
+    if (data['compensation_expectation'] != null && await page.locator('#compensation_expectation').isVisible()) {
       await page.locator('#compensation_expectation').clear();
       await page.locator('#compensation_expectation').fill(String(data['compensation_expectation']));
     }
@@ -634,10 +594,7 @@ test.describe.serial('Candidate CRUD', () => {
 
 
 
-    if (await page.locator('#distribution_guidelines').isVisible()) {
-      await page.locator('#distribution_guidelines').clear();
-      await page.locator('#distribution_guidelines').fill(String(data['distribution_guidelines']));
-    }
+    // 'distribution_guidelines': ValueObject — form uses structured sub-fields, skip fill
 
 
 
@@ -654,10 +611,7 @@ test.describe.serial('Candidate CRUD', () => {
 
 
 
-    if (await page.locator('#person_name').isVisible()) {
-      await page.locator('#person_name').clear();
-      await page.locator('#person_name').fill(String(data['person_name']));
-    }
+    // 'person_name': ValueObject — form uses structured sub-fields, skip fill
 
 
 
@@ -684,10 +638,7 @@ test.describe.serial('Candidate CRUD', () => {
 
 
 
-    if (await page.locator('#qualifications').isVisible()) {
-      await page.locator('#qualifications').clear();
-      await page.locator('#qualifications').fill(String(data['qualifications']));
-    }
+    // 'qualifications': ValueObject — form uses structured sub-fields, skip fill
 
 
 
@@ -704,7 +655,7 @@ test.describe.serial('Candidate CRUD', () => {
 
 
 
-    if (await page.locator('#uri').isVisible()) {
+    if (data['uri'] != null && await page.locator('#uri').isVisible()) {
       await page.locator('#uri').clear();
       await page.locator('#uri').fill(String(data['uri']));
     }
@@ -716,7 +667,7 @@ test.describe.serial('Candidate CRUD', () => {
 
     // Should redirect to detail page
 
-    await expect(page).toHaveURL(/\/recruiting\/application\/[0-9a-f-]+\/candidate\/[0-9a-f-]+$/);
+    await expect(page).toHaveURL(/\/recruiting\/candidate\/[0-9a-f-]+$/);
 
 
     // Verify updated values (only check fields present on the page)
@@ -829,13 +780,11 @@ test.describe.serial('Candidate CRUD', () => {
 
 
   test('detail page shows child sections', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
 
     await expect(page.locator('[data-testid="child-section-distribution_guidelines"]')).toBeVisible();

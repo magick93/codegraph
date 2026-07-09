@@ -54,8 +54,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
 #[utoipa::path(
     post,
 
-    path = "/api/recruiting/candidate/{candidate_id}/application",
-    params(("candidate_id" = Uuid, Path, description = " ID")),
+    path = "/api/recruiting/application",
 
     tag = "Applications",
     request_body(
@@ -74,10 +73,6 @@ pub async fn create(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
-
-
-    Path(parent_id): Path<Uuid>,
-
 
     Json(body): Json<CreateApplicationBody>,
 ) -> Result<axum::response::Response, AppError> {
@@ -100,7 +95,7 @@ pub async fn create(
             }
 
 
-            let id = state.recruiting_application_commands.create(item, parent_id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await
+            let id = state.recruiting_application_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await
 
                 .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to create Application: {e}"))
                     .with_correlation_id(correlation_id))?;
@@ -125,7 +120,7 @@ pub async fn create(
             }
 
 
-            let result = state.recruiting_application_commands.bulk_create(items, parent_id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await;
+            let result = state.recruiting_application_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await;
 
 
             let mut success = Vec::new();
@@ -162,14 +157,13 @@ pub async fn create(
 #[utoipa::path(
     get,
 
-    path = "/api/recruiting/candidate/{candidate_id}/application/{application_id}",
+    path = "/api/recruiting/application/{application_id}",
+
     params(
-        ("candidate_id" = Uuid, Path, description = " ID"),
         ("application_id" = Uuid, Path, description = "Application ID"),
-
         ListParams,
-
     ),
+
 
     tag = "Applications",
     responses(
@@ -183,9 +177,7 @@ pub async fn get_by_id(
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
 
-
-    Path((parent_id, id)): Path<(Uuid, Uuid)>,
-
+    Path(id): Path<Uuid>,
 
 
     crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<ListParams>,
@@ -193,20 +185,12 @@ pub async fn get_by_id(
 ) -> Result<Json<ApplicationWithIncludeResponse>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    let response = state.recruiting_application_queries.find_by_id_scoped(id, parent_id, api_key_info.api_key_id, api_key_info.organization_id).await
+    let response = state.recruiting_application_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await
         .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find Application: {e}"))
             .with_correlation_id(correlation_id))?
-        .ok_or_else(|| AppError::not_found(format!("Application {id} not found under parent {parent_id}"))
+        .ok_or_else(|| AppError::not_found(format!("Application {id} not found"))
             .with_correlation_id(correlation_id))?;
-
-    let linked = ApplicationLinkedResponse::child(
-        response,
-        "recruiting",
-        "candidate",
-        parent_id,
-        "application",
-    );
-
+    let linked = ApplicationLinkedResponse::root(response, "recruiting", "application");
 
 
     let self_href = linked.links.self_link.clone();
@@ -275,11 +259,8 @@ pub async fn get_by_id(
 #[utoipa::path(
     put,
 
-    path = "/api/recruiting/candidate/{candidate_id}/application/{application_id}",
-    params(
-        ("candidate_id" = Uuid, Path, description = " ID"),
-        ("application_id" = Uuid, Path, description = "Application ID"),
-    ),
+    path = "/api/recruiting/application/{application_id}",
+    params(("application_id" = Uuid, Path, description = "Application ID")),
 
     tag = "Applications",
     request_body = UpdateApplicationRequest,
@@ -295,20 +276,11 @@ pub async fn update(
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
 
-
-    Path((parent_id, id)): Path<(Uuid, Uuid)>,
-
+    Path(id): Path<Uuid>,
 
     Json(body): Json<UpdateApplicationRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
-
-    // Verify ownership before update: entity must belong to the parent
-    state.recruiting_application_queries.find_by_id_scoped(id, parent_id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find Application: {e}"))
-            .with_correlation_id(correlation_id))?
-        .ok_or_else(|| AppError::not_found(format!("Application {id} not found under parent {parent_id}"))
-            .with_correlation_id(correlation_id))?;
 
 
     // Validate request
@@ -344,11 +316,8 @@ pub async fn update(
 #[utoipa::path(
     delete,
 
-    path = "/api/recruiting/candidate/{candidate_id}/application/{application_id}",
-    params(
-        ("candidate_id" = Uuid, Path, description = " ID"),
-        ("application_id" = Uuid, Path, description = "Application ID"),
-    ),
+    path = "/api/recruiting/application/{application_id}",
+    params(("application_id" = Uuid, Path, description = "Application ID")),
 
     tag = "Applications",
     responses(
@@ -362,19 +331,10 @@ pub async fn delete(
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
 
-
-    Path((parent_id, id)): Path<(Uuid, Uuid)>,
-
+    Path(id): Path<Uuid>,
 
 ) -> Result<StatusCode, AppError> {
     let correlation_id = extract_correlation_id(&headers);
-
-    // Verify ownership before delete: entity must belong to the parent
-    state.recruiting_application_queries.find_by_id_scoped(id, parent_id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find Application: {e}"))
-            .with_correlation_id(correlation_id))?
-        .ok_or_else(|| AppError::not_found(format!("Application {id} not found under parent {parent_id}"))
-            .with_correlation_id(correlation_id))?;
 
     state.recruiting_application_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await
         .map_err(|e: Box<dyn std::error::Error>| {
@@ -439,11 +399,8 @@ const ALLOWED_INCLUDE_KEYS: &[&str] = &[
 #[utoipa::path(
     get,
 
-    path = "/api/recruiting/candidate/{candidate_id}/application",
-    params(
-        ("candidate_id" = Uuid, Path, description = " ID"),
-        ListParams,
-    ),
+    path = "/api/recruiting/application",
+    params(ListParams),
 
     tag = "Applications",
     responses(
@@ -455,10 +412,6 @@ pub async fn list(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
-
-
-    Path(parent_id): Path<Uuid>,
-
 
     crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<ListParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -474,9 +427,6 @@ pub async fn list(
         filters.insert(key.clone(), value.clone());
     }
 
-
-    // Scope results to the parent entity
-    filters.insert("candidate_id".to_string(), parent_id.to_string());
 
     let (results, total) = state.recruiting_application_queries.list_filtered(params.page, params.page_size, &filters, api_key_info.api_key_id, api_key_info.organization_id).await
         .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to list Application: {e}"))

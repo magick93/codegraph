@@ -19,7 +19,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('CurrencyCodeList Cross-Org Isolation', () => {
+test.describe('CurrencyCodeList Cross-Org Isolation', () => {
   let acmeEntityId: string;
   const data = testData();
 

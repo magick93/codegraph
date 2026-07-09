@@ -15,9 +15,7 @@ import type {
 } from '$lib/api/types';
 
 
-function apiPath(grandparentId: string, parentId: string): string {
-	return '/recruiting/application/' + grandparentId + '/candidate/' + parentId + '/application';
-}
+const API_PATH = '/recruiting/application';
 
 
 export interface ApplicationListState {
@@ -34,12 +32,12 @@ export const applicationList = writable<ApplicationListState>({
 
 
 
-export async function listApplication(grandparentId: string, parentId: string, page = 0, pageSize = 20): Promise<ApplicationResponse[]> {
+export async function listApplication(page = 0, pageSize = 20): Promise<ApplicationResponse[]> {
 
 	applicationList.update(s => ({ ...s, loading: true, error: null }));
 	try {
 
-		const items = await apiGet<ApplicationResponse[]>(apiPath(grandparentId, parentId), { page, page_size: pageSize });
+		const items = await apiGet<ApplicationResponse[]>(API_PATH, { page, page_size: pageSize });
 
 		applicationList.set({ items, loading: false, error: null });
 		return items;
@@ -53,16 +51,16 @@ export async function listApplication(grandparentId: string, parentId: string, p
 
 
 
-export async function getApplication(grandparentId: string, parentId: string, id: string): Promise<ApplicationResponse> {
-	return apiGet<ApplicationResponse>(`${apiPath(grandparentId, parentId)}/${id}`);
+export async function getApplication(id: string): Promise<ApplicationResponse> {
+	return apiGet<ApplicationResponse>(`${API_PATH}/${id}`);
 
 }
 
 
 
 
-export async function createApplication(grandparentId: string, parentId: string, data: CreateApplicationRequest): Promise<ApplicationResponse> {
-	const result = await apiPost<ApplicationResponse>(apiPath(grandparentId, parentId), data);
+export async function createApplication(data: CreateApplicationRequest): Promise<ApplicationResponse> {
+	const result = await apiPost<ApplicationResponse>(API_PATH, data);
 
 	applicationList.update(s => ({ ...s, items: [...s.items, result] }));
 	return result;
@@ -71,8 +69,8 @@ export async function createApplication(grandparentId: string, parentId: string,
 
 
 
-export async function updateApplication(grandparentId: string, parentId: string, id: string, data: UpdateApplicationRequest): Promise<ApplicationResponse> {
-	const result = await apiPut<ApplicationResponse>(`${apiPath(grandparentId, parentId)}/${id}`, data);
+export async function updateApplication(id: string, data: UpdateApplicationRequest): Promise<ApplicationResponse> {
+	const result = await apiPut<ApplicationResponse>(`${API_PATH}/${id}`, data);
 
 	applicationList.update(s => ({
 		...s,
@@ -84,8 +82,8 @@ export async function updateApplication(grandparentId: string, parentId: string,
 
 
 
-export async function deleteApplication(grandparentId: string, parentId: string, id: string): Promise<void> {
-	await apiDelete(`${apiPath(grandparentId, parentId)}/${id}`);
+export async function deleteApplication(id: string): Promise<void> {
+	await apiDelete(`${API_PATH}/${id}`);
 
 	applicationList.update(s => ({
 		...s,

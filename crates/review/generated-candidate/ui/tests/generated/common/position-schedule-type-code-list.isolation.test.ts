@@ -19,7 +19,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('PositionScheduleTypeCodeList Cross-Org Isolation', () => {
+test.describe('PositionScheduleTypeCodeList Cross-Org Isolation', () => {
   let acmeEntityId: string;
   const data = testData();
 

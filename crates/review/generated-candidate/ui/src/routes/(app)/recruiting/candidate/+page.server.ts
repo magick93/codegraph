@@ -6,9 +6,7 @@ import type { PageServerLoad } from './$types';
 const BASE_URL = env.PUBLIC_API_URL ?? 'http://localhost:3000';
 
 
-export const load: PageServerLoad = async ({ url, params, locals, fetch: skFetch }) => {
-	const grandparentId = params.application_id;
-	const parentId = params.candidate_id;
+export const load: PageServerLoad = async ({ url, locals, fetch: skFetch }) => {
 
 	const apiKey = locals.apiKey;
 	if (!apiKey) throw error(401, 'Not authenticated');
@@ -23,7 +21,7 @@ export const load: PageServerLoad = async ({ url, params, locals, fetch: skFetch
 	};
 
 
-	const apiUrl = new URL(`${BASE_URL}/api/recruiting/application/${grandparentId}/candidate/${parentId}/application`);
+	const apiUrl = new URL(`${BASE_URL}/api/recruiting/candidate`);
 
 	apiUrl.searchParams.set('page', String(page));
 	apiUrl.searchParams.set('page_size', String(pageSize));
@@ -33,8 +31,8 @@ export const load: PageServerLoad = async ({ url, params, locals, fetch: skFetch
 
 	if (!res.ok) {
 		const body = await res.text().catch(() => '');
-		console.error(`[ssr] Application list ${res.status}: ${body}`);
-		throw error(res.status, `Failed to load Application list: ${res.statusText}`);
+		console.error(`[ssr] Candidate list ${res.status}: ${body}`);
+		throw error(res.status, `Failed to load Candidate list: ${res.statusText}`);
 	}
 
 	const json = await res.json();

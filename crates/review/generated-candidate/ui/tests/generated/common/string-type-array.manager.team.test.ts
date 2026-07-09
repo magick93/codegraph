@@ -16,7 +16,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('StringTypeArray Manager Team', () => {
+test.describe('StringTypeArray Manager Team', () => {
   let createdId: string;
   const data = testData();
 

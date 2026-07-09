@@ -47,9 +47,7 @@
 	let { data }: Props = $props();
 	let item = $state(data.item);
 
-	const grandparentId = $derived(page.params.candidate_id);
-	const parentId = $derived(page.params.application_id);
-	const basePath = $derived(`/recruiting/candidate/${grandparentId}/application/${parentId}/candidate`);
+	const basePath = '/recruiting/candidate';
 
 
 
@@ -137,7 +135,7 @@
 		transitioning = true;
 		try {
 
-			const ws = await transitionCandidate(grandparentId, parentId, item.id, targetState);
+			const ws = await transitionCandidate(item.id, targetState);
 
 			item.workflow_state = {
 				current_state: ws.current_state,
@@ -323,7 +321,9 @@
 					<dt class="text-sm font-medium text-muted-foreground">{m.recruiting_candidate_field_position_schedule_type_codes()}</dt>
 					<dd class="text-sm sm:col-span-2" data-testid="candidate-field-position_schedule_type_codes">
 
-						{item.position_schedule_type_codes ?? '—'}
+						{#if Array.isArray(item.position_schedule_type_codes)}
+							{item.position_schedule_type_codes.length} items
+						{:else}—{/if}
 
 					</dd>
 				</div>
@@ -349,7 +349,9 @@
 					<dt class="text-sm font-medium text-muted-foreground">{m.recruiting_candidate_field_qualifications()}</dt>
 					<dd class="text-sm sm:col-span-2" data-testid="candidate-field-qualifications">
 
-						{item.qualifications ?? '—'}
+						{#if Array.isArray(item.qualifications)}
+							{item.qualifications.length} items
+						{:else}—{/if}
 
 					</dd>
 				</div>

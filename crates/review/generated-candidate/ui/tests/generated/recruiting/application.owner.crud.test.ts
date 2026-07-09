@@ -3,11 +3,7 @@ import { createEntityAsAcme, createEntityViaApi, deleteEntityViaApi, expectToast
 import type { OrgContext } from '../../e2e/fixtures/personas';
 
 
-
-const PARENT_API_PATH = '/recruiting/candidate';
-
-let BASE_PATH: string;
-
+const BASE_PATH = '/recruiting/application';
 
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
@@ -33,17 +29,10 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('Application Owner CRUD', () => {
-  let createdId: string;
+test.describe('Application Owner CRUD', () => {
 
 
   test.beforeAll(async ({ orgContext }) => {
-
-
-    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'birth_date': '2025-01-15', 'family_name': 'Test Family Name', 'given_name': 'Test Given Name', 'application_process_history': {}, 'compensation_expectation': 42, 'compensation_expectation_currency': 'USD', 'distribution_guidelines': {}, 'external_identifier': { value: 'Test External Identifier' }, 'gender': 'Male', 'person_name': {}, 'position_schedule_type_codes': [{ code: 'FullTime' }], 'position_titles': ['Test Position Titles'], 'qualifications': {}, 'status': 'active', 'uri': 'Test Uri' });
-    const parentId = parentEntity['id'] as string;
-    BASE_PATH = `${PARENT_API_PATH}/${parentId}/application`;
-
 
 
     try {
@@ -100,9 +89,9 @@ test.describe.serial('Application Owner CRUD', () => {
     await expectToast(ownerPage, 'created', 'success');
     // Wait for SvelteKit goto() navigation to complete after toast
 
-    await ownerPage.waitForURL(/\/recruiting\/candidate\/[0-9a-f-]+\/application\/[0-9a-f-]+$/, { timeout: 20_000 });
+    await ownerPage.waitForURL(/\/recruiting\/application\/[0-9a-f-]+$/, { timeout: 20_000 });
 
-    createdId = ownerPage.url().split('/').pop()!;
+    const formCreatedId = ownerPage.url().split('/').pop()!;
   });
 
 
@@ -117,9 +106,11 @@ test.describe.serial('Application Owner CRUD', () => {
 
 
 
-  test('owner can view Application detail', async ({ ownerPage }) => {
+  test('owner can view Application detail', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await expect(ownerPage.locator('[data-testid="application-field-application_id"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="application-field-applied_date"]')).toBeVisible();
@@ -130,9 +121,11 @@ test.describe.serial('Application Owner CRUD', () => {
 
 
 
-  test('owner can edit Application', async ({ ownerPage }) => {
+  test('owner can edit Application', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}/edit`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}/edit`);
 
     // Wait for Svelte 5 to hydrate the form's submit handler.
     await waitForHydration(ownerPage, '[data-testid="application-submit-btn"]');
@@ -158,9 +151,11 @@ test.describe.serial('Application Owner CRUD', () => {
 
 
 
-  test('owner can delete Application', async ({ ownerPage }) => {
+  test('owner can delete Application', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(ownerPage, '[data-testid="application-delete-btn"]');
     await ownerPage.locator('[data-testid="application-delete-btn"]').click();

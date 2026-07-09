@@ -18,7 +18,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('Amount Cross-Org Isolation', () => {
+test.describe('Amount Cross-Org Isolation', () => {
   let acmeEntityId: string;
   const data = testData();
 
