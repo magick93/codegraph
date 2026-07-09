@@ -66,7 +66,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('{{ entity_name }} Manager Team', () => {
+test.describe('{{ entity_name }} Manager Team', () => {
   let createdId: string;
   const data = testData();
 
