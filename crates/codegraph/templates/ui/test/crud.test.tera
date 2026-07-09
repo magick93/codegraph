@@ -136,8 +136,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('{{ entity_name }} CRUD', () => {
-  let createdId: string | undefined;
+test.describe('{{ entity_name }} CRUD', () => {
 
 {% if parent or has_entity_ref_deps %}
   test.beforeAll(async ({ orgContext }) => {
@@ -281,7 +280,7 @@ test.describe.serial('{{ entity_name }} CRUD', () => {
 
     // Capture the created entity ID from the URL
     const url = page.url();
-    createdId = url.split('/').pop()!;
+    const formCreatedId = url.split('/').pop()!;
 
     // Verify field values on detail page (only check fields present on the page)
 {% for field in create_fields %}
@@ -293,30 +292,25 @@ test.describe.serial('{{ entity_name }} CRUD', () => {
 {% endfor %}
   });
 
-  test('entity appears in list after create', async ({ ownerPage: page }) => {
+  test('entity appears in list after create', async ({ ownerPage: page, orgContext }) => {
+    await createEntityAsAcme(orgContext, {% if parent and parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %}, testData());
     await page.goto({% if parent and parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %});
     const table = page.locator('[data-testid="{{ module_name }}-table"]');
     const empty = page.locator('[data-testid="{{ module_name }}-empty"]');
     await expect(table.or(empty)).toBeVisible();
-    // If we created an entity, the table should be visible (not empty state)
-    if (createdId) {
-      await expect(table).toBeVisible();
-    }
+    await expect(table).toBeVisible();
   });
 {% else %}
   test('create entity via API', async ({ orgContext }) => {
     // All properties are complex types (value objects / child tables) — no simple form fields.
     // Create via API instead of form fill.
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-    createdId = entity['id'] as string;
-    expect(createdId).toBeTruthy();
+    const apiCreatedId = entity['id'] as string;
+    expect(apiCreatedId).toBeTruthy();
   });
 
   test('entity appears in list after create', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    await createEntityAsAcme(orgContext, {% if parent and parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %}, testData());
     await page.goto({% if parent and parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %});
     const table = page.locator('[data-testid="{{ module_name }}-table"]');
     const empty = page.locator('[data-testid="{{ module_name }}-empty"]');
@@ -356,16 +350,13 @@ test.describe.serial('{{ entity_name }} CRUD', () => {
 
 {% if has_read %}
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
-    // Create via API if we don't have one yet
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 {% if parent and parent.grandparent %}
-    await page.goto(`${UI_PATH}/${createdId}`);
+    await page.goto(`${UI_PATH}/${myId}`);
 {% else %}
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 {% endif %}
     await expect(page.getByRole('heading', { name: '{{ entity_label }}' })).toBeVisible();
 
@@ -382,15 +373,13 @@ test.describe.serial('{{ entity_name }} CRUD', () => {
 {% if has_update %}
 {% if update_fields | length > 0 %}
   test('edit entity via form', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 {% if parent and parent.grandparent %}
-    await page.goto(`${UI_PATH}/${createdId}/edit`);
+    await page.goto(`${UI_PATH}/${myId}/edit`);
 {% else %}
-    await page.goto(`${BASE_PATH}/${createdId}/edit`);
+    await page.goto(`${BASE_PATH}/${myId}/edit`);
 {% endif %}
     await waitForHydration(page, '[data-testid="{{ module_name }}-submit-btn"]');
     const data = updatedData();
@@ -494,15 +483,13 @@ test.describe.serial('{{ entity_name }} CRUD', () => {
 
 {% if has_child_sections %}
   test('detail page shows child sections', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 {% if parent and parent.grandparent %}
-    await page.goto(`${UI_PATH}/${createdId}`);
+    await page.goto(`${UI_PATH}/${myId}`);
 {% else %}
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 {% endif %}
 {% for section in child_sections %}
     await expect(page.locator('[data-testid="child-section-{{ section.module_name }}"]')).toBeVisible();
@@ -512,15 +499,13 @@ test.describe.serial('{{ entity_name }} CRUD', () => {
 
 {% if has_delete %}
   test('delete entity', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 {% if parent and parent.grandparent %}
-    await page.goto(`${UI_PATH}/${createdId}`);
+    await page.goto(`${UI_PATH}/${myId}`);
 {% else %}
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 {% endif %}
     await waitForHydration(page, '[data-testid="{{ module_name }}-delete-btn"]');
     await page.locator('[data-testid="{{ module_name }}-delete-btn"]').click();
@@ -539,7 +524,7 @@ test.describe.serial('{{ entity_name }} CRUD', () => {
     const empty = page.locator('[data-testid="{{ module_name }}-empty"]');
     await expect(table.or(empty)).toBeVisible();
     if (await table.isVisible()) {
-      await expect(table).not.toContainText(createdId);
+      await expect(table).not.toContainText(myId);
     }
   });
 {% endif %}

@@ -118,8 +118,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('{{ entity_name }} Owner CRUD', () => {
-  let createdId: string;
+test.describe('{{ entity_name }} Owner CRUD', () => {
 
 {% if parent or has_entity_ref_deps %}
   test.beforeAll(async ({ orgContext }) => {
@@ -242,15 +241,15 @@ test.describe.serial('{{ entity_name }} Owner CRUD', () => {
 {% else %}
     await ownerPage.waitForURL(/\/{{ domain }}\/{{ path_segment }}\/[0-9a-f-]+$/, { timeout: 20_000 });
 {% endif %}
-    createdId = ownerPage.url().split('/').pop()!;
+    const formCreatedId = ownerPage.url().split('/').pop()!;
   });
 {% else %}
   test('owner can create {{ entity_name }} via API', async ({ orgContext }) => {
     // All properties are complex types (value objects / child tables) — no simple form fields.
     // Use direct API call via orgContext (authenticated as ACME owner).
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-    createdId = entity['id'] as string;
-    expect(createdId).toBeTruthy();
+    const apiCreatedId = entity['id'] as string;
+    expect(apiCreatedId).toBeTruthy();
   });
 {% endif %}
 {% endif %}
@@ -265,11 +264,13 @@ test.describe.serial('{{ entity_name }} Owner CRUD', () => {
 {% endif %}
 
 {% if has_read %}
-  test('owner can view {{ entity_name }} detail', async ({ ownerPage }) => {
+  test('owner can view {{ entity_name }} detail', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 {% if parent and parent.grandparent %}
-    await ownerPage.goto(`${UI_PATH}/${createdId}`);
+    await ownerPage.goto(`${UI_PATH}/${myId}`);
 {% else %}
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 {% endif %}
 {%- for field in fields %}
     await expect(ownerPage.locator('[data-testid="{{ module_name }}-field-{{ field.name }}"]')).toBeVisible();
@@ -279,11 +280,13 @@ test.describe.serial('{{ entity_name }} Owner CRUD', () => {
 
 {% if has_update %}
 {% if update_fields | length > 0 %}
-  test('owner can edit {{ entity_name }}', async ({ ownerPage }) => {
+  test('owner can edit {{ entity_name }}', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 {% if parent and parent.grandparent %}
-    await ownerPage.goto(`${UI_PATH}/${createdId}/edit`);
+    await ownerPage.goto(`${UI_PATH}/${myId}/edit`);
 {% else %}
-    await ownerPage.goto(`${BASE_PATH}/${createdId}/edit`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}/edit`);
 {% endif %}
     // Wait for Svelte 5 to hydrate the form's submit handler.
     await waitForHydration(ownerPage, '[data-testid="{{ module_name }}-submit-btn"]');
@@ -363,11 +366,13 @@ test.describe.serial('{{ entity_name }} Owner CRUD', () => {
 {% endif %}
 
 {% if has_delete %}
-  test('owner can delete {{ entity_name }}', async ({ ownerPage }) => {
+  test('owner can delete {{ entity_name }}', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 {% if parent and parent.grandparent %}
-    await ownerPage.goto(`${UI_PATH}/${createdId}`);
+    await ownerPage.goto(`${UI_PATH}/${myId}`);
 {% else %}
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 {% endif %}
     await waitForHydration(ownerPage, '[data-testid="{{ module_name }}-delete-btn"]');
     await ownerPage.locator('[data-testid="{{ module_name }}-delete-btn"]').click();
