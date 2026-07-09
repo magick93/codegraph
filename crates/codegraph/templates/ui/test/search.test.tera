@@ -62,7 +62,7 @@ function searchTestData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('{{ entity_name }} Full-Text Search', () => {
+test.describe('{{ entity_name }} Full-Text Search', () => {
   let createdId: string;
   const data = searchTestData();
 

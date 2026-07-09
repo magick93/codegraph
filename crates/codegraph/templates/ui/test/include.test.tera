@@ -8,7 +8,7 @@ import { createEntityAsAcme } from '../../e2e/helpers';
 const API_PATH = '/{{ domain }}/{{ path_segment }}';
 const BASE_PATH = '{{ domain }}/{{ path_segment }}';
 
-test.describe.serial('{{ entity_name }} Include', () => {
+test.describe('{{ entity_name }} Include', () => {
   let entityId: string;
   const depIds: Record<string, string> = {};
 

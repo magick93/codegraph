@@ -46,9 +46,9 @@ function testData(): Record<string, unknown> {
 {%- elif field.is_codelist and field.codelist_values | length > 0 %}
     '{{ field.name }}': '{{ field.codelist_values | first }}',
 {%- elif field.structured_sub_fields | length > 0 and field.is_array %}
-    '{{ field.name }}': [{ value: 'Test {{ field.label }}' }],
+    '{{ field.name }}': [{ value: `Test {{ field.label }}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }],
 {%- elif field.structured_sub_fields | length > 0 %}
-    '{{ field.name }}': { value: 'Test {{ field.label }}' },
+    '{{ field.name }}': { value: `Test {{ field.label }}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` },
 {%- elif field.input_type == "array" %}
     '{{ field.name }}': ['Test {{ field.label }}'],
 {%- elif field.is_range %}
@@ -94,9 +94,9 @@ function updatedData(): Record<string, unknown> {
 {%- elif field.is_codelist and field.codelist_values | length > 0 %}
     '{{ field.name }}': '{{ field.codelist_values | last }}',
 {%- elif field.structured_sub_fields | length > 0 and field.is_array %}
-    '{{ field.name }}': [{ value: 'Updated {{ field.label }}' }],
+    '{{ field.name }}': [{ value: `Updated {{ field.label }}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }],
 {%- elif field.structured_sub_fields | length > 0 %}
-    '{{ field.name }}': { value: 'Updated {{ field.label }}' },
+    '{{ field.name }}': { value: `Updated {{ field.label }}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` },
 {%- elif field.input_type == "array" %}
     '{{ field.name }}': ['Updated {{ field.label }}'],
 {%- elif field.is_range %}
@@ -118,7 +118,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('{{ entity_name }} Owner CRUD', () => {
+test.describe('{{ entity_name }} Owner CRUD', () => {
   let createdId: string;
 
 {% if parent or has_entity_ref_deps %}

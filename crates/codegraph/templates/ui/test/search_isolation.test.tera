@@ -81,7 +81,7 @@ function isolationTestData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('{{ entity_name }} Search RLS Isolation', () => {
+test.describe('{{ entity_name }} Search RLS Isolation', () => {
   let acmeEntityId: string;
   const data = isolationTestData();
 
