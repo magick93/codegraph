@@ -118,7 +118,13 @@ pub async fn resolve_parent_fk_column_same_domain(
             }
         }
     }
-    // 2. Graph fallback with same-domain check
+    // 2. Graph fallback with same-domain check (only for non-root entities)
+    let effective_role = entity_cfg
+        .and_then(|ec| ec.role.as_deref())
+        .unwrap_or("root");
+    if effective_role == "root" {
+        return None;
+    }
     let stripped = api::router::strip_suffix(schema_title, &config.defaults.type_suffix);
     for pc in parent_candidates {
         let child_name = api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
