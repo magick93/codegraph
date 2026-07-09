@@ -212,7 +212,6 @@ impl MockEngineBuilder {
             }
         }
         {
-        {
             let mut pcs = engine.parent_candidates.lock().unwrap();
             for pc in &self.parent_candidates {
                 pcs.push(pc.clone());

@@ -823,6 +823,7 @@ async fn build_child_entity(
                         tera,
                         config,
                         project,
+                        dialect,
                     )?;
                     nested_files.extend(child_files);
                 } else {
