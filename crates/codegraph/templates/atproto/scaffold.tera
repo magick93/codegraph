@@ -1,0 +1,42 @@
+{%- import "atproto/lexicon_macros.tera" as macros -%}
+{
+  "lexicon": 1,
+  "id": "{{ scaffold.nsid }}",
+  "revision": {{ scaffold.revision | default(value=1) }},
+  "description": "{{ scaffold.description }}",
+  "defs": {
+{%- for def in scaffold.defs %}
+    "{{ def.name }}": {
+      "type": "{{ def.type }}",
+{%- if def.description %}
+      "description": "{{ def.description }}",
+{%- endif %}
+{%- if def.type == "object" and def.properties %}
+      "required": [{% for f in def.required_fields %}"{{ f }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+      "properties": {
+{%- for prop in def.properties %}
+        "{{ prop.name }}": { {{ macros::render_lexicon_type(type=prop.type) }} }{% if not loop.last %},{% endif %}
+{%- endfor %}
+      }
+{%- elif def.type == "record" %}
+      "key": "{{ macros::render_key_strategy(ks=def.key_strategy) }}",
+      "record": {
+        "type": "object",
+        "required": [{% for f in def.required_fields %}"{{ f }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+        "properties": {
+{%- for prop in def.properties %}
+          "{{ prop.name }}": { {{ macros::render_lexicon_type(type=prop.type) }} }{% if not loop.last %},{% endif %}
+{%- endfor %}
+        }
+      }
+{%- elif def.type == "string" and def.values %}
+{%- if def.is_closed %}
+      "enum": [{% for v in def.values %}"{{ v }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+{%- else %}
+      "knownValues": [{% for v in def.values %}"{{ v }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+{%- endif %}
+{%- endif %}
+    }{% if not loop.last %},{% endif %}
+{%- endfor %}
+  }
+}

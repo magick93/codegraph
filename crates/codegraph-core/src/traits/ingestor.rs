@@ -1,8 +1,9 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, CodeList, CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties,
-    EdgeType, EnumValue, EventNode, IngestStats, ParameterDefinitionNode, PropertyNode,
-    SchemaNode, ViewComponentNode, ViewContainerNode,
+    ActionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, DataBindingNode,
+    EdgeProperties, EdgeType, EnumValue, EventNode, IngestStats, LexiconNode, NamespaceNode,
+    ParameterDefinitionNode, PropertyNode, RepositoryNode, SchemaNode, ViewComponentNode,
+    ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -64,6 +65,11 @@ pub trait GraphIngestor: Send + Sync {
     ) -> Result<String, GraphError>;
 
     async fn ingest_data_binding(&self, node: &DataBindingNode) -> Result<String, GraphError>;
+
+    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError>;
+    async fn ingest_lexicon(&self, node: &LexiconNode) -> Result<String, GraphError>;
+    async fn ingest_collection(&self, node: &CollectionNode) -> Result<String, GraphError>;
+    async fn ingest_repository(&self, node: &RepositoryNode) -> Result<String, GraphError>;
 
     async fn update_entity_flag(&self, title: &str, is_entity: bool) -> Result<(), GraphError>;
 

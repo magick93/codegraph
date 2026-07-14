@@ -34,6 +34,13 @@ pub enum EdgeType {
     HasModuleDefinition,
     HasViewComponentPart,
     HasConditionalExpr,
+
+    // AT Protocol edge types
+    InNamespace,
+    ProjectsToLexicon,
+    DefinesCollection,
+    LexiconReferences,
+    StoredInRepository,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

@@ -12,4 +12,6 @@ pub enum GraphError {
     Ingest(String),
     #[error("Internal error: {0}")]
     Internal(#[from] Box<dyn std::error::Error + Send + Sync>),
+    #[error("Not implemented")]
+    NotImplemented,
 }

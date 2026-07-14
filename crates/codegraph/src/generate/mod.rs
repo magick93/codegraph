@@ -7,6 +7,7 @@ pub mod traits;
 pub mod type_registry;
 
 pub mod api;
+pub mod atproto;
 pub mod cli;
 pub mod db;
 pub mod ddd;
@@ -204,6 +205,16 @@ pub struct ProjectConfig {
     /// to reference codegraph-type-contracts as a git dependency.
     #[serde(default)]
     pub codegraph_rev: String,
+    /// Whether atproto generators are enabled via profile feature flag.
+    pub has_atproto: bool,
+    /// AT Protocol namespace authority (e.g. "nz.gravy").
+    /// Read from domain config or hard-coded default. Empty string = atproto disabled.
+    pub atproto_authority: String,
+    /// AT Protocol tenancy mode: "shared_pds" or "per_org_pds".
+    pub atproto_tenancy: String,
+    /// AT Protocol float policy: what to do with JSON Schema "number" types.
+    /// "reject", "string", "integer_scaled", or "unknown"
+    pub atproto_float_policy: String,
 }
 
 impl Default for ProjectConfig {
@@ -224,6 +235,10 @@ impl Default for ProjectConfig {
             codegraph_rev: String::new(),
             database_target: "postgres".to_string(),
             types_import_prefix: "codegraph_type_contracts".into(),
+            has_atproto: false,
+            atproto_authority: String::new(),
+            atproto_tenancy: "shared_pds".to_string(),
+            atproto_float_policy: "integer_scaled".to_string(),
         }
     }
 }
@@ -442,6 +457,13 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         .map(|bp| bp.has_global_gen("report_views"))
         .unwrap_or(true)
         && std::env::current_dir().unwrap_or_default().join("reports.toml").exists();
+    let has_atproto = build_plan
+        .map(|bp| bp.has_global_gen("atproto_identity")
+            || bp.has_entity_gen("lexicon")
+            || bp.has_global_gen("lexicon_scaffold")
+            || bp.has_entity_gen("atproto_client")
+            || bp.has_global_gen("atproto_client_scaffold"))
+        .unwrap_or(false);
     let has_grpc = build_plan
         .map(|bp| bp.has_global_gen("grpc_scaffold"))
         .unwrap_or(false);
@@ -588,6 +610,11 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         // gRPC entity generators
         Box::new(grpc::proto::GrpcProtoGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         Box::new(grpc::service::GrpcServiceGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
+        // atproto entity generators
+        Box::new(atproto::lexicon_gen::LexiconEmitter::new(output_dir)) as Box<dyn EntityGenerator>,
+        Box::new(atproto::types_gen::AtprotoTypesEmitter::new(output_dir)) as Box<dyn EntityGenerator>,
+        Box::new(atproto::client_gen::AtprotoClientEmitter::new(output_dir)) as Box<dyn EntityGenerator>,
+        Box::new(atproto::xrpc_gen::AtprotoXrpcEmitter::new(output_dir)) as Box<dyn EntityGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_entity(gen.name()))
@@ -609,6 +636,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(cli::domain::CliDomainGenerator::new(output_dir)) as Box<dyn DomainGenerator>,
         // gRPC domain generator
         Box::new(grpc::router::GrpcRouterGenerator::new(output_dir)) as Box<dyn DomainGenerator>,
+        // atproto domain generators
+        Box::new(atproto::appview_gen::AtprotoAppviewEmitter::new(output_dir)) as Box<dyn DomainGenerator>,
+        Box::new(atproto::xrpc_gen::AtprotoXrpcEmitter::new(output_dir)) as Box<dyn DomainGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_domain(gen.name()))
@@ -637,6 +667,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             has_webhooks,
             has_reports,
             has_grpc,
+            has_atproto,
         )) as Box<dyn GlobalGenerator>,
         Box::new(ui::scaffold::UiScaffoldGenerator::new(
             output_dir,
@@ -678,6 +709,13 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         )) as Box<dyn GlobalGenerator>,
         // gRPC global generator
         Box::new(grpc::scaffold::GrpcScaffoldGenerator::new(output_dir))
+            as Box<dyn GlobalGenerator>,
+        // atproto global generators
+        Box::new(atproto::scaffold_gen::LexiconScaffoldEmitter::new(output_dir))
+            as Box<dyn GlobalGenerator>,
+        Box::new(atproto::client_gen::AtprotoClientScaffoldEmitter::new(output_dir))
+            as Box<dyn GlobalGenerator>,
+        Box::new(atproto::identity_gen::AtprotoIdentityEmitter::new(output_dir))
             as Box<dyn GlobalGenerator>,
     ]
     .into_iter()

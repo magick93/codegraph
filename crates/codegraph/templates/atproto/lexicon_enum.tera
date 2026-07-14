@@ -1,0 +1,19 @@
+{
+  "lexicon": 1,
+  "id": "{{ lexicon.nsid }}",
+  "revision": {{ lexicon.revision | default(value=1) }},
+  "description": "{{ lexicon.description }}",
+  "defs": {
+    "main": {
+      "type": "string",
+{%- if codelist.description %}
+      "description": "{{ codelist.description }}",
+{%- endif %}
+{%- if codelist.is_closed %}
+      "enum": [{% for val in codelist.values %}"{{ val }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+{%- else %}
+      "knownValues": [{% for val in codelist.values %}"{{ val }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+{%- endif %}
+    }
+  }
+}
