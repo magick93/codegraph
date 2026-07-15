@@ -275,6 +275,15 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             database_target: database_target_str,
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
             codegraph_rev: current_git_rev(),
+            has_atproto: plan.has_atproto,
+            atproto_authority: String::new(),
+            atproto_tenancy: plan.atproto_tenancy.clone(),
+            atproto_float_policy: resolved
+                .features
+                .get("atproto_float_policy")
+                .and_then(|v| v.as_str())
+                .unwrap_or("integer_scaled")
+                .to_string(),
         });
 
         println!(
@@ -388,6 +397,25 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         &entity_names,
     )
     .await?;
+
+    // AT Protocol projection pass — populates Lexicon/Collection/Namespace nodes
+    if let Some(ref pc) = project_config {
+        if pc.has_atproto {
+            codegraph::ingest::atproto_projection::project_atproto_lexicons(
+                be.ingestor(),
+                be.querier(),
+                &domain_config,
+                pc,
+            )
+            .await
+            .map_err(|e| {
+                codegraph::error::Error::Config(format!(
+                    "AT Protocol projection failed: {}",
+                    e
+                ))
+            })?;
+        }
+    }
 
     let override_dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
 

@@ -1,0 +1,56 @@
+{% for entity in entities %}pub mod {{ entity.module_name }}_client;
+{% endfor %}
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
+pub struct AtprotoClient {
+    pub repo: Arc<dyn RepoWriter>,
+    pub pds_endpoint: String,
+    pub did: String,
+}
+
+impl AtprotoClient {
+    pub fn new(repo: Arc<dyn RepoWriter>, pds_endpoint: &str, did: &str) -> Self {
+        Self { repo, pds_endpoint: pds_endpoint.to_string(), did: did.to_string() }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateRecordResponse {
+    pub uri: String,
+    pub cid: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListRecordsResponse<T> {
+    pub records: Vec<T>,
+    pub cursor: Option<String>,
+}
+
+pub trait RepoWriter: Send + Sync {
+    async fn create_record<T: Serialize + Send + Sync>(
+        &self, pds_endpoint: &str, collection: &str, record: &T,
+    ) -> Result<CreateRecordResponse, AtprotoError>;
+
+    async fn get_record<T: serde::de::DeserializeOwned + Send>(
+        &self, pds_endpoint: &str, collection: &str, rkey: &str,
+    ) -> Result<Option<T>, AtprotoError>;
+
+    async fn delete_record(
+        &self, pds_endpoint: &str, collection: &str, rkey: &str,
+    ) -> Result<(), AtprotoError>;
+
+    async fn list_records<T: serde::de::DeserializeOwned>(
+        &self, pds_endpoint: &str, repo_did: &str, collection: &str,
+        limit: u32, cursor: Option<&str>,
+    ) -> Result<ListRecordsResponse<T>, AtprotoError>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AtprotoError {
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("AT Protocol error: {0}")]
+    Atproto(String),
+}

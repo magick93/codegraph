@@ -1,0 +1,29 @@
+[package]
+name = "gravy-atproto"
+version = "0.1.0"
+edition = "2021"
+description = "AT Protocol adapter for codegraph-generated applications — isolates RSKY deps behind stable traits"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_bytes = "0.11"
+chrono = { version = "0.4", features = ["serde"] }
+
+# TODO: Add rsky-* crates when published on crates.io:
+#   rsky-common = "0.1.2"
+#   rsky-syntax = "0.1.0"
+#   rsky-repo = "0.0.2"
+#   rsky-crypto = "0.1.1"
+# Feature-gate behind a "rsky" feature flag.
+
+# Networking
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+
+# Error handling
+thiserror = "2"
+
+[features]
+default = []
+# rsky = [] — enable once rsky-* crates are published on crates.io
