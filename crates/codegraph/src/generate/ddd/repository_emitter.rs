@@ -1418,34 +1418,7 @@ async fn build_columns_and_children(
                 pg_column_name: field_def.column_name,
                 dto_field_name: None,
                 rust_type: "Uuid".to_string(),
-                is_nullable: true,
-                is_entity_ref: true,
-                dto_rust_type: None,
-                is_workflow_managed: is_workflow_field,
-                is_array: false,
-                pg_cast: None,
-                is_composite_range: false,
-                is_structured_wrapper: false,
-                is_media: false,
-            });
-        } else if prop.effective_kind() == Some(RefClassificationKind::ValueObject) {
-            let is_entity_fk = if !prop.is_array {
-                db.get_property_ref_target(&prop.name, schema_title)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|t| entity_titles.contains(&t.title))
-                    .unwrap_or(false)
-            } else {
-                false
-            };
-            if is_entity_fk {
-                direct_columns.push(TreeColumn {
-                    field_name: format!("{}_id", field_def.rust_field_name),
-                    pg_column_name: format!("{}_id", field_def.column_name),
-                    dto_field_name: None,
-                    rust_type: "Uuid".to_string(),
-                    is_nullable: true,
+                is_nullable: !prop.is_required,
                     is_entity_ref: true,
                     dto_rust_type: None,
                     is_workflow_managed: is_workflow_field,
