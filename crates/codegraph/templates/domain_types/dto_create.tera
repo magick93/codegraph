@@ -16,6 +16,7 @@ pub struct Create{{ entity_name }}Request {
 {%- for field in fields %}
 {%- if field.name == "id" %}{% continue %}{%- endif %}
 {%- if field.name not in workflow_excluded_fields %}
+{%- if not field.is_entity_ref %}
 {%- if field.is_required %}
 {%- if has_validate %}
 {%- if field.min_length or field.max_length %}
@@ -48,6 +49,20 @@ pub struct Create{{ entity_name }}Request {
     pub {{ field.name }}: Option<Vec<{{ field.rust_type }}>>,
 {%- else %}
     pub {{ field.name }}: Option<{{ field.rust_type }}>,
+{%- endif %}
+{%- endif %}
+{%- else %}
+{%- if field.is_required %}
+{%- if has_validate %}
+    #[garde(skip)]
+{%- endif %}
+    pub {{ field.name }}: uuid::Uuid,
+{%- else %}
+{%- if has_validate %}
+    #[garde(skip)]
+{%- endif %}
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub {{ field.name }}: Option<uuid::Uuid>,
 {%- endif %}
 {%- endif %}
 {%- endif %}
