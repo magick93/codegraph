@@ -663,9 +663,9 @@ pub async fn build_dto_context(
         fields.push(DtoField {
             name: field_def.rust_field_name.clone(),
             rust_type,
-            // FK columns on entity models are always nullable — entity references
-            // in DTOs must use Option<uuid::Uuid> regardless of schema required/optional.
-            is_required: if is_entity_ref { false } else { prop.is_required },
+            // Entity references in DTOs respect the schema's required/optional
+            // constraint — required FKs produce non-Option uuid::Uuid fields.
+            is_required: prop.is_required,
             is_array: prop.is_array,
             description: prop.description.as_deref().unwrap_or("").to_string(),
             render_strategy: prop.render_strategy.clone(),
