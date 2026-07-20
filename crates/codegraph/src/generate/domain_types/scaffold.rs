@@ -254,8 +254,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
              pub mod query;\n\
              \n\
              pub use context::{{SourceContext, SourceOrigin}};\n\
-             pub use query::{{ListParams, PagedResult, QueryError, SortOrder}};\n\
-             pub use serde_json;\
+             pub use query::{{ListParams, PagedResult, QueryError, SortOrder}};\
              {structured_re_exports}\n\
              \n\
              // --- GENERATED DOMAIN MODULES ---\n\

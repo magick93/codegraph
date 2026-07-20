@@ -805,12 +805,9 @@ pub async fn build_dto_context(
     // 1. Direct parent-level structured wrapper properties
     for p in &props {
         if p.effective_kind() == Some(RefClassificationKind::StructuredWrapper) {
-            // Strip Vec<> and Option<> wrappers for array and optional properties
-            let mut ty = strip_vec_wrapper(&p.rust_field_type);
-            ty = strip_option_wrapper(&ty);
-            if ty != "serde_json::Value" && !ty.is_empty() {
-                structured_type_names.insert(ty);
-            }
+            // Strip Vec<> wrapper for array properties
+            let ty = strip_vec_wrapper(&p.rust_field_type);
+            structured_type_names.insert(ty);
         }
     }
 
@@ -840,11 +837,7 @@ pub async fn build_dto_context(
             if let Ok(child_props) = db.get_properties(&ts.title).await {
                 for cp in &child_props {
                     if cp.effective_kind() == Some(RefClassificationKind::StructuredWrapper) {
-                        let mut ty = strip_vec_wrapper(&cp.rust_field_type);
-                        ty = strip_option_wrapper(&ty);
-                        if ty != "serde_json::Value" && !ty.is_empty() {
-                            structured_type_names.insert(ty);
-                        }
+                        structured_type_names.insert(strip_vec_wrapper(&cp.rust_field_type));
                     }
                     if cp.effective_kind() == Some(RefClassificationKind::ValueObject) {
                         vo_visit_queue.push((cp.name.clone(), ts.title.clone()));
@@ -1329,14 +1322,6 @@ impl DtoGenerator {
 /// with `Vec<`, returns it unchanged.
 pub(crate) fn strip_vec_wrapper(ty: &str) -> String {
     if let Some(inner) = ty.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
-        inner.to_string()
-    } else {
-        ty.to_string()
-    }
-}
-
-pub(crate) fn strip_option_wrapper(ty: &str) -> String {
-    if let Some(inner) = ty.strip_prefix("Option<").and_then(|s| s.strip_suffix('>')) {
         inner.to_string()
     } else {
         ty.to_string()

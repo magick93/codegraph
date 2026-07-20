@@ -320,18 +320,13 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     });
                 }
                 Some(RefClassificationKind::EntityReference) => {
-                    let is_nullable = !prop.is_required;
                     columns.push(EntityColumn {
                         field_name: field_def.rust_field_name,
-                        rust_type: if is_nullable {
-                            "Option<Uuid>".to_string()
-                        } else {
-                            "Uuid".to_string()
-                        },
+                        rust_type: "Option<Uuid>".to_string(),
                         sea_orm_type: "Uuid".to_string(),
                         column_name: field_def.column_name,
                         is_primary_key: false,
-                        is_nullable,
+                        is_nullable: true,
                         pg_cast: None,
                         sea_orm_attr: None,
                     });
