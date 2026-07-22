@@ -72,6 +72,7 @@ function testData(): Record<string, unknown> {
 
 test.describe('{{ entity_name }} Cross-Org Isolation', () => {
   let acmeEntityId: string;
+  const data = testData();
 
   test.beforeAll(async ({ orgContext }) => {
 {% if parent %}
