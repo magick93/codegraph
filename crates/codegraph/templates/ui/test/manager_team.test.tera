@@ -68,7 +68,6 @@ function testData(): Record<string, unknown> {
 
 test.describe('{{ entity_name }} Manager Team', () => {
   let createdId: string;
-  const data = testData();
 
   test.beforeAll(async ({ orgContext }) => {
 {% if parent %}
