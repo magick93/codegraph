@@ -319,7 +319,7 @@ GRANT SELECT, INSERT ON api_keys_private.api_key_logs TO app_user;
 -- Grant app_user access to domain schemas (needed for SET LOCAL ROLE in RLS)
 -- Schemas may not exist yet (created by later migrations), so check first.
 DO $$ DECLARE s TEXT; BEGIN
-  FOREACH s IN ARRAY ARRAY['common','recruiting','compensation','payroll','benefits','timecard','screening','interviewing','assessments','wellness','platform'] LOOP
+  FOREACH s IN ARRAY ARRAY['common','recruiting','compensation','payroll','benefits','timecard','screening','interviewing','assessments','wellness','platform','compliance'] LOOP
     IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = s) THEN
       EXECUTE format('GRANT USAGE ON SCHEMA %I TO app_user', s);
       EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO app_user', s);
