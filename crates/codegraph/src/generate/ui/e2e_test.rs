@@ -700,10 +700,15 @@ async fn build_dep_test_data(
         .or_else(|| last_segment.strip_suffix(".json"))
         .unwrap_or(last_segment);
 
-    // Resolve the referenced schema to find its domain
+    // Resolve the referenced schema to find its domain.
+    // Try current domain first, then fallback to cross-domain lookup
+    // (e.g., timecard.leave_request → common.WorkerType).
     let dep_domain = match db.get_schema_in_domain(ref_schema_title, current_domain.unwrap_or("")).await {
         Ok(Some(s)) => s.domain.clone(),
-        _ => current_domain.map(|s| s.to_string()),
+        _ => match db.get_schema(ref_schema_title).await {
+            Ok(Some(s)) => s.domain.clone(),
+            _ => current_domain.map(|s| s.to_string()),
+        },
     };
 
     // Collect UI fields for the dependency entity

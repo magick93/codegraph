@@ -248,6 +248,13 @@ pub async fn collect_ui_fields(
                 if let Ok(Some(ref_schema)) = db.get_schema_in_domain(ref_schema_title, current_domain.unwrap_or("")).await {
                     resolved = Some(ref_schema);
                 }
+                // Fallback: look in all domains (cross-domain references like
+                // timecard.leave_request → common.worker are common).
+                if resolved.is_none() {
+                    if let Ok(Some(ref_schema)) = db.get_schema(ref_schema_title).await {
+                        resolved = Some(ref_schema);
+                    }
+                }
                 // If the resolved schema is in a different domain, check if
                 // the same type exists in the current domain and prefer it.
                 if let (Some(cur_domain), Some(ref found)) = (current_domain, &resolved) {
