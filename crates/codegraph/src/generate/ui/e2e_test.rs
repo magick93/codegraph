@@ -375,7 +375,7 @@ impl EntityGenerator for UiE2eTestGenerator {
                 field.name, field.is_entity_ref, field.ref_api_path);
             if field.is_entity_ref {
                 if let Some(ref api_path) = field.ref_api_path {
-                    if seen_deps.insert(api_path.clone()) {
+                    if seen_deps.insert(field.name.clone()) {
                         let test_data_json =
                             build_dep_test_data(db, &all_props, &field.name, Some(&domain)).await;
                         entity_ref_deps.push(EntityRefDep {
