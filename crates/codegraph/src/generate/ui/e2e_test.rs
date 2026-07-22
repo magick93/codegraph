@@ -720,21 +720,39 @@ async fn build_dep_test_data(
         Err(_) => return String::new(),
     };
 
-    // Build test value entries — include all non-entity-ref fields to maximize
-    // the chance of passing server-side validation (NOT NULL constraints, codelist FKs).
+    // Gather the dep entity's properties so we can skip fields that have ref_target
+    // (even if not classified as entity_ref — ValueObjects and composite wrappers
+    // also reference other schemas).
+    let dep_props = match current_domain {
+        Some(d) => db.get_properties_in_domain(ref_schema_title, d).await.unwrap_or_default(),
+        None => db.get_properties(ref_schema_title).await.unwrap_or_default(),
+    };
+    let ref_target_fields: std::collections::HashSet<String> = dep_props
+        .iter()
+        .filter(|p| p.ref_target.is_some())
+        .map(|p| p.rust_field_name.clone())
+        .collect();
+
+    // Build test value entries — include only fields that are simple scalars or
+    // codelists, skipping entity refs, complex types, and fields with ref_target.
     let mut entries = Vec::new();
     for f in &dep_fields {
         // Skip entity refs in deps (would cause recursive dep creation).
-        // Also skip fields ending in _id that aren't codelists — they're likely
-        // FK references that need real UUIDs, not string test data.
         if f.is_entity_ref {
             continue;
         }
+        // Skip fields ending in _id that aren't codelists — they're likely
+        // FK references that need real UUIDs, not string test data.
         if f.name.ends_with("_id") && !f.is_codelist {
             continue;
         }
         // Skip bare "id" field — it's the primary key, auto-generated
         if f.name == "id" {
+            continue;
+        }
+        // Skip fields that have a ref_target in the graph (references to other
+        // entities, ValueObjects, etc. — we can't fabricate valid UUIDs).
+        if ref_target_fields.contains(&f.name) {
             continue;
         }
         let value = test_value_for_field(f);
