@@ -60,6 +60,29 @@ pub async fn collect_ui_fields(
                     .strip_prefix("r#")
                     .unwrap_or(&prop.rust_field_name)
                     .to_string();
+                // Query structured sub-fields so the form generator renders nested
+                // ValueObjects (e.g. JurisdictionType → city, country_code, ...)
+                // using StructuredWrapperField instead of a plain text input.
+                let raw_sub_fields = db
+                    .get_structured_sub_fields(&schema_title_for_ref)
+                    .await
+                    .unwrap_or_default();
+                let sub_fields: Vec<super::page::UiSubField> = raw_sub_fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, sf)| {
+                        let snake_name = codegraph_naming::to_snake_case(&sf.name);
+                        let label = super::form::field_name_to_label(&snake_name);
+                        super::page::UiSubField {
+                            name: sf.name.clone(),
+                            snake_name,
+                            label,
+                            is_required: sf.is_required,
+                            description: sf.description.clone(),
+                            show_by_default: sf.is_required || i < 2,
+                        }
+                    })
+                    .collect();
                 fields.push(UiField {
                     name: ts_name.clone(),
                     label: field_name_to_label(&ts_name),
@@ -76,7 +99,7 @@ pub async fn collect_ui_fields(
                     pg_type: prop.pg_column_type.clone(),
                     open_end: false,
                     ref_api_path: None,
-                    structured_sub_fields: vec![],
+                    structured_sub_fields: sub_fields,
                     nested_type_name: Some(schema_title_for_ref),
                 });
             }
