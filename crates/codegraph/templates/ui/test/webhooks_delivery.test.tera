@@ -53,7 +53,7 @@ test.describe('Webhook Delivery', () => {
 
     // 3. Create a timecard entity via the API to trigger an event
     // All timecard fields are optional, so empty {} creates a valid entity.
-    await createEntityAsAcme(orgContext, '/timecard/timecard', {}).catch(() => {});
+    await createEntityAsAcme(orgContext, '/timecard/timecard', {});
 
     // 4. Wait for dispatch worker to drain queue backlog and deliver
     await ownerPage.waitForTimeout(30000);
@@ -115,7 +115,7 @@ test.describe('Webhook Delivery', () => {
     expect(subResp.ok).toBeTruthy();
 
     // 3. Trigger an event
-    await createEntityAsAcme(orgContext, '/timecard/timecard', {}).catch(() => {});
+    await createEntityAsAcme(orgContext, '/timecard/timecard', {});
 
     // 4. Wait for dispatch worker to drain queue backlog and attempt delivery
     await ownerPage.waitForTimeout(30000);
@@ -124,5 +124,154 @@ test.describe('Webhook Delivery', () => {
     await ownerPage.goto(`/settings/webhooks/${endpointId}`);
     await waitForHydration(ownerPage, 'body.hydrated');
     await expect(ownerPage.getByText('Failed')).toBeVisible({ timeout: 60000 });
+  });
+
+  test('delivers webhook with custom headers', async ({ ownerPage, orgContext }) => {
+    test.setTimeout(180000);
+    // Create endpoint via API with custom headers
+    const createResp = await fetch(
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${orgContext.acme.apiKey}`,
+        },
+        body: JSON.stringify({
+          url: testServer.url,
+          description: 'Custom headers test',
+          headers: { 'X-Custom-Header': 'test-value', 'X-Another-Header': 'another-value' },
+        }),
+      },
+    );
+    expect(createResp.ok).toBeTruthy();
+    const endpoint = await createResp.json();
+    const endpointId = endpoint.id;
+
+    // Subscribe to timecard events
+    const subResp = await fetch(
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${orgContext.acme.apiKey}`,
+        },
+        body: JSON.stringify({ event_domain: 'timecard' }),
+      },
+    );
+    expect(subResp.ok).toBeTruthy();
+
+    // Trigger event
+    await createEntityAsAcme(orgContext, '/timecard/timecard', {}).catch(() => {});
+
+    // Wait for delivery
+    await ownerPage.waitForTimeout(30000);
+
+    // Check custom headers were sent
+    await expect.poll(async () => testServer.requests.length, {
+      timeout: 60000,
+      message: 'expected at least one webhook delivery with custom headers',
+    }).toBeGreaterThan(0);
+
+    const webhook = testServer.requests[testServer.requests.length - 1];
+    expect(webhook.headers['x-custom-header']).toBe('test-value');
+    expect(webhook.headers['x-another-header']).toBe('another-value');
+  });
+
+  test('delivers only for matching event subscription', async ({ ownerPage, orgContext }) => {
+    test.setTimeout(180000);
+    await ownerPage.goto('/settings/webhooks');
+    await waitForHydration(ownerPage, 'body.hydrated');
+
+    await ownerPage.click('text=Add Endpoint');
+    await ownerPage.waitForURL('/settings/webhooks/new');
+    await waitForHydration(ownerPage, '[data-testid="webhook-endpoint-submit-btn"]');
+    await ownerPage.fill('#url', testServer.url);
+    await ownerPage.fill('#description', 'Filter test');
+    await ownerPage.click('[data-testid="webhook-endpoint-submit-btn"]');
+    await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+$/, { timeout: 15000 });
+    const endpointId = ownerPage.url().split('/').pop();
+
+    // Subscribe with a NON-matching event type
+    const subResp = await fetch(
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${orgContext.acme.apiKey}`,
+        },
+        body: JSON.stringify({
+          event_domain: 'timecard',
+          event_entity: 'timecard',
+          event_type: 'updated',  // Only 'updated' events — not 'created'
+        }),
+      },
+    );
+    expect(subResp.ok).toBeTruthy();
+
+    // Trigger a 'created' event — should NOT be delivered
+    await createEntityAsAcme(orgContext, '/timecard/timecard', {}).catch(() => {});
+
+    await ownerPage.waitForTimeout(30000);
+
+    // Count requests before this test
+    const requestsBefore = testServer.requests.length;
+
+    // No deliveries expected because event_type doesn't match
+    // The dispatch worker uses (s.event_type IS NULL OR s.event_type = p_event_type)
+    // Since we subscribed with event_type='updated' and the event is 'created', no match
+    // Wait a bit more to be sure
+    await ownerPage.waitForTimeout(10000);
+
+    expect(testServer.requests.length).toBe(requestsBefore);
+  });
+
+  test('delivers webhooks for multiple domains', async ({ ownerPage, orgContext }) => {
+    test.setTimeout(180000);
+    await ownerPage.goto('/settings/webhooks');
+    await waitForHydration(ownerPage, 'body.hydrated');
+
+    await ownerPage.click('text=Add Endpoint');
+    await ownerPage.waitForURL('/settings/webhooks/new');
+    await waitForHydration(ownerPage, '[data-testid="webhook-endpoint-submit-btn"]');
+    await ownerPage.fill('#url', testServer.url);
+    await ownerPage.fill('#description', 'Multi-domain test');
+    await ownerPage.click('[data-testid="webhook-endpoint-submit-btn"]');
+    await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+$/, { timeout: 15000 });
+    const endpointId = ownerPage.url().split('/').pop();
+
+    // Subscribe to recruiting domain events
+    const subResp = await fetch(
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${orgContext.acme.apiKey}`,
+        },
+        body: JSON.stringify({ event_domain: 'recruiting' }),
+      },
+    );
+    expect(subResp.ok).toBeTruthy();
+
+    // Trigger a recruiting event by creating a candidate
+    // Note: The entity path may vary - this is the path for the candidate entity
+    await createEntityAsAcme(orgContext, '/recruiting/candidate', {
+      name: 'Test Candidate',
+    }).catch(() => {});
+
+    // Wait for delivery
+    await ownerPage.waitForTimeout(30000);
+
+    await expect.poll(async () => testServer.requests.length, {
+      timeout: 60000,
+      message: 'expected webhook delivery for recruiting domain',
+    }).toBeGreaterThan(0);
+
+    // Verify the last webhook is from the recruiting domain
+    const webhook = testServer.requests[testServer.requests.length - 1];
+    expect(webhook.body.domain).toBe('recruiting');
   });
 });

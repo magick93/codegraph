@@ -174,6 +174,8 @@ impl WebhookDispatcher {
                     ))
                     .await?;
 
+                let mut all_inserts_succeeded = true;
+
                 for sub in &subs {
                     let subscription_id: Uuid = sub.try_get_by_index(0)?;
                     let endpoint_id: Uuid = sub.try_get_by_index(1)?;
@@ -192,10 +194,15 @@ impl WebhookDispatcher {
                         "INSERT INTO platform.webhook_delivery (id, tenant_id, endpoint_id, subscription_id, event_payload, attempt, next_retry_at, created_at) VALUES ('{}'::uuid, '{}'::uuid, '{}'::uuid, '{}'::uuid, '{}'::jsonb, 1, now() + interval '10 seconds', now())",
                         delivery_id, tenant_id, endpoint_id, subscription_id, event_payload_json
                     );
-                    let _ = self
+                    if let Err(e) = self
                         .db
                         .execute(Statement::from_string(DatabaseBackend::Postgres, insert_sql))
-                        .await;
+                        .await
+                    {
+                        tracing::error!(delivery_id = %delivery_id, endpoint_id = %endpoint_id, error = %e, "failed to create delivery record");
+                        all_inserts_succeeded = false;
+                        continue;
+                    }
 
                     // Immediately attempt delivery
                     self.deliver(
@@ -210,18 +217,20 @@ impl WebhookDispatcher {
                     .await;
                 }
 
-                // Always delete processed messages from pgmq. Unmatched events
-                // would otherwise be re-read every visibility timeout (30s),
-                // creating an infinite queue backlog that delays legitimate
-                // webhook delivery for newly added subscriptions.
-                let _ = self
-                    .db
-                    .execute(Statement::from_sql_and_values(
-                        DatabaseBackend::Postgres,
-                        "SELECT pgmq.delete($1, $2)",
-                        [queue.as_str().into(), msg_id.into()],
-                    ))
-                .await;
+                // Delete processed messages from pgmq only when all delivery
+                // records were created successfully. If any INSERT failed, the
+                // message stays in the queue for retry. Unmatched events (no
+                // matching subscriptions) are also deleted to prevent backlog.
+                if all_inserts_succeeded {
+                    let _ = self
+                        .db
+                        .execute(Statement::from_sql_and_values(
+                            DatabaseBackend::Postgres,
+                            "SELECT pgmq.delete($1, $2)",
+                            [queue.as_str().into(), msg_id.into()],
+                        ))
+                    .await;
+                }
             }
         }
 
@@ -351,4 +360,84 @@ fn delay_for_attempt(attempt: u32) -> chrono::DateTime<chrono::Utc> {
     let base_secs = 10u64 * 2u64.pow(attempt.saturating_sub(1));
     let jitter = fastrand::u64(0..=base_secs / 4);
     chrono::Utc::now() + chrono::Duration::seconds((base_secs + jitter) as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_delay_for_attempt_1() {
+        let delay = delay_for_attempt(1);
+        let now = chrono::Utc::now();
+        let secs = (delay - now).num_seconds();
+        // Base 10s, jitter 0..=2, so range 10..=12
+        assert!(secs >= 10 && secs <= 13, "attempt 1 delay {secs}s out of range [10,13]");
+    }
+
+    #[test]
+    fn test_delay_for_attempt_2() {
+        let delay = delay_for_attempt(2);
+        let now = chrono::Utc::now();
+        let secs = (delay - now).num_seconds();
+        // Base 20s, jitter 0..=5, so range 20..=25
+        assert!(secs >= 20 && secs <= 26, "attempt 2 delay {secs}s out of range [20,26]");
+    }
+
+    #[test]
+    fn test_delay_for_attempt_3() {
+        let delay = delay_for_attempt(3);
+        let now = chrono::Utc::now();
+        let secs = (delay - now).num_seconds();
+        // Base 40s, jitter 0..=10, so range 40..=50
+        assert!(secs >= 40 && secs <= 51, "attempt 3 delay {secs}s out of range [40,51]");
+    }
+
+    #[test]
+    fn test_delay_for_attempt_0_saturates() {
+        let delay = delay_for_attempt(0);
+        let now = chrono::Utc::now();
+        let secs = (delay - now).num_seconds();
+        assert!(secs >= 10 && secs <= 13, "attempt 0 should saturate to 1, got {secs}s");
+    }
+
+    #[test]
+    fn test_delay_increases_with_attempt() {
+        let d1 = delay_for_attempt(1);
+        let d2 = delay_for_attempt(2);
+        let d3 = delay_for_attempt(3);
+        assert!(d2 > d1, "attempt 2 should be later than attempt 1");
+        assert!(d3 > d2, "attempt 3 should be later than attempt 2");
+    }
+
+    #[test]
+    fn test_hmac_sha256_signature() {
+        use hmac::Mac;
+        let secret = "test-hmac-secret-123";
+        let body = b"{\"event\":\"test\"}";
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(body);
+        let signature = hex::encode(mac.finalize().into_bytes());
+        assert!(signature.len() == 64, "SHA256 HMAC should be 64 hex chars");
+        assert!(signature.chars().all(|c| c.is_ascii_hexdigit()), "signature should be hex");
+
+        let mut mac2 = HmacSha256::new_from_slice(b"different-secret".as_slice()).unwrap();
+        mac2.update(body);
+        let sig2 = hex::encode(mac2.finalize().into_bytes());
+        assert_ne!(signature, sig2, "different secrets should produce different signatures");
+    }
+
+    #[test]
+    fn test_webhook_dispatcher_construction() {
+        use sea_orm::MockDatabase;
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .into_connection();
+
+        let dispatcher = WebhookDispatcher::new(db);
+        assert!(dispatcher.is_ok(), "WebhookDispatcher should construct successfully");
+        let d = dispatcher.unwrap();
+        assert_eq!(d.max_retries, 5, "default max_retries should be 5");
+        assert_eq!(d.poll_interval, chrono::Duration::from_secs(5));
+    }
 }

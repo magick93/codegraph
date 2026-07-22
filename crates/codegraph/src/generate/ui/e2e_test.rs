@@ -371,6 +371,8 @@ impl EntityGenerator for UiE2eTestGenerator {
             None => db.get_properties(schema_title).await?,
         };
         for field in &create_fields {
+            eprintln!("[DEBUG e2e_test] field={} is_entity_ref={} ref_api_path={:?}",
+                field.name, field.is_entity_ref, field.ref_api_path);
             if field.is_entity_ref {
                 if let Some(ref api_path) = field.ref_api_path {
                     if seen_deps.insert(api_path.clone()) {
@@ -382,6 +384,8 @@ impl EntityGenerator for UiE2eTestGenerator {
                             test_data_json,
                         });
                     }
+                } else {
+                    eprintln!("[DEBUG e2e_test] field={} is_entity_ref=true but ref_api_path=None — SKIPPED", field.name);
                 }
             }
         }
