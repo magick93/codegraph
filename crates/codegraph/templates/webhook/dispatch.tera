@@ -135,18 +135,10 @@ impl WebhookDispatcher {
                 let event_type = message["event_type"].as_str().unwrap_or("");
                 let event_domain = message["domain"].as_str().unwrap_or("");
                 let event_entity = message["entity_table"].as_str().unwrap_or("");
-                let entity_id: Uuid = message["entity_id"]
-                    .as_str()
-                    .and_then(|s| Uuid::parse_str(s).ok())
-                    .unwrap_or_default();
                 let tenant_id: Uuid = message["tenant_id"]
                     .as_str()
                     .and_then(|s| Uuid::parse_str(s).ok())
                     .unwrap_or_default();
-                let correlation_id: Uuid = message["correlation_id"]
-                    .as_str()
-                    .and_then(|s| Uuid::parse_str(s).ok())
-                    .unwrap_or_else(Uuid::new_v4);
 
                 // Find matching active subscriptions for this event.
                 // Uses SECURITY DEFINER function to bypass RLS on platform tables.

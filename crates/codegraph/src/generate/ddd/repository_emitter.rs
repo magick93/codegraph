@@ -3309,7 +3309,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
         }
-        writeln!(code, "        let sql = if let Some(depth) = max_depth {{").unwrap();
+        writeln!(code, "        let sql = if max_depth.is_some() {{").unwrap();
         writeln!(
             code,
             "            format!(\"WITH RECURSIVE tree AS (SELECT *, 0 AS _tree_depth FROM {schema}.{table} WHERE id = $1 UNION ALL SELECT c.*, t._tree_depth + 1 AS _tree_depth FROM {schema}.{table} c JOIN tree t ON c.{hf} = t.id WHERE t._tree_depth < $2) SELECT * FROM tree ORDER BY _tree_depth, created_at\",)",
