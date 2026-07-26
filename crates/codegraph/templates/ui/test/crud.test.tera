@@ -348,7 +348,7 @@ test.describe('{{ entity_name }} CRUD', () => {
   });
 {% endif %}
 
-{% if has_read %}
+{% if has_read and has_create %}
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -370,7 +370,7 @@ test.describe('{{ entity_name }} CRUD', () => {
   });
 {% endif %}
 
-{% if has_update %}
+{% if has_update and has_create %}
 {% if update_fields | length > 0 %}
   test('edit entity via form', async ({ ownerPage: page, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -481,7 +481,7 @@ test.describe('{{ entity_name }} CRUD', () => {
 {% endif %}
 {% endif %}
 
-{% if has_child_sections %}
+{% if has_child_sections and has_create %}
   test('detail page shows child sections', async ({ ownerPage: page, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -497,7 +497,7 @@ test.describe('{{ entity_name }} CRUD', () => {
   });
 {% endif %}
 
-{% if has_delete %}
+{% if has_delete and has_create %}
   test('delete entity', async ({ ownerPage: page, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;

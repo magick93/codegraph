@@ -87,7 +87,7 @@
 {% elif field.input_type == "datetime-local" %}
 			if ({{ field.name }}) data['{{ field.name }}'] = {{ field.name }}.includes('Z') ? {{ field.name }} : {{ field.name }} + ':00Z';
 {% elif field.is_required %}
-			data['{{ field.name }}'] = {{ field.name }};
+			if ({{ field.name }}) data['{{ field.name }}'] = {{ field.name }};
 {% else %}
 			if ({{ field.name }}) data['{{ field.name }}'] = {{ field.name }};
 {% endif %}
