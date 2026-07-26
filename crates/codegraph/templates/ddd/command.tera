@@ -25,16 +25,19 @@ async fn set_rls_session_vars(
     api_key_id: Uuid,
     organization_id: Uuid,
     correlation_id: Uuid,
+    user_id: Uuid,
 ) -> Result<(), Box<dyn std::error::Error>> {
     tx.execute(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.current_api_key', $1, true), \
                 set_config('app.organization_id', $2, true), \
-                set_config('app.correlation_id', $3, true)",
+                set_config('app.correlation_id', $3, true), \
+                set_config('app.user_id', $4, true)",
         [
             api_key_id.to_string().into(),
             organization_id.to_string().into(),
             correlation_id.to_string().into(),
+            user_id.to_string().into(),
         ],
     )).await?;
     tx.execute(Statement::from_string(
@@ -66,12 +69,12 @@ impl {{ entity_name }}CommandHandler {
 {% if has_create %}
 
 {% if parent_ref %}
-    pub async fn create(&self, cmd: Create{{ entity_name }}Request, parent_id: Uuid, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid) -> Result<Uuid, Box<dyn std::error::Error>> {
-        self.create_single_in_tx(cmd, Some(parent_id), &source, correlation_id, api_key_id, organization_id).await
+    pub async fn create(&self, cmd: Create{{ entity_name }}Request, parent_id: Uuid, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Uuid, Box<dyn std::error::Error>> {
+        self.create_single_in_tx(cmd, Some(parent_id), &source, correlation_id, api_key_id, organization_id, user_id).await
     }
 {% else %}
-    pub async fn create(&self, cmd: Create{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid) -> Result<Uuid, Box<dyn std::error::Error>> {
-        self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id).await
+    pub async fn create(&self, cmd: Create{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Uuid, Box<dyn std::error::Error>> {
+        self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id, user_id).await
     }
 {% endif %}
 
@@ -87,6 +90,7 @@ impl {{ entity_name }}CommandHandler {
         correlation_id: Uuid,
         api_key_id: Uuid,
         organization_id: Uuid,
+        user_id: Uuid,
     ) -> Vec<Result<Uuid, crate::error::BulkItemError>> {
         {% if project.hooks_api_crate %}
         // --- before_bulk_create hook (can reject entire batch) ---
@@ -124,9 +128,9 @@ impl {{ entity_name }}CommandHandler {
             }
 
 {% if parent_ref %}
-            match self.create_single_in_tx(item, Some(parent_id), &source, correlation_id, api_key_id, organization_id).await {
+            match self.create_single_in_tx(item, Some(parent_id), &source, correlation_id, api_key_id, organization_id, user_id).await {
 {% else %}
-            match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id).await {
+            match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id, user_id).await {
 {% endif %}
                 Ok(id) => results.push(Ok(id)),
                 Err(e) => results.push(Err(crate::error::BulkItemError {
@@ -165,9 +169,10 @@ impl {{ entity_name }}CommandHandler {
         correlation_id: Uuid,
         api_key_id: Uuid,
         organization_id: Uuid,
+        user_id: Uuid,
     ) -> Result<Uuid, Box<dyn std::error::Error>> {
         let tx = self.db.begin().await?;
-        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id).await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
         {% if project.hooks_api_crate %}
         // --- before_create hook ---
@@ -234,9 +239,9 @@ impl {{ entity_name }}CommandHandler {
 {% endif %}
 {% if has_update %}
 
-    pub async fn update(&self, id: Uuid, cmd: Update{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn update(&self, id: Uuid, cmd: Update{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), Box<dyn std::error::Error>> {
         let tx = self.db.begin().await?;
-        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id).await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
         {% if project.hooks_api_crate %}
         // --- before_update hook ---
@@ -299,9 +304,9 @@ impl {{ entity_name }}CommandHandler {
 {% endif %}
 {% if has_delete %}
 
-    pub async fn delete(&self, id: Uuid, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn delete(&self, id: Uuid, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), Box<dyn std::error::Error>> {
         let tx = self.db.begin().await?;
-        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id).await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
         {% if project.hooks_api_crate %}
         // --- before_delete hook ---
