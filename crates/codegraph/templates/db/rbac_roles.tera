@@ -38,7 +38,11 @@ BEGIN
     SELECT account_role::text INTO v_role
     FROM basejump.account_user
     WHERE account_id = v_org_id
-      AND user_id = auth.uid();
+      AND user_id = nullif(current_setting('app.user_id', true), '')::uuid;
+
+    IF v_role = 'member' THEN
+        v_role := 'employee';
+    END IF;
 
     RETURN v_role;
 END;
