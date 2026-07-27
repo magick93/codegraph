@@ -171,8 +171,8 @@ impl<'a> CandidatePage<'a> {
 
 
 
-    pub async fn fill_referred_by_application_id_id(&self, id: &str) -> Result<()> {
-        self.page.fill_builder("#referred_by_application_id_id", id).fill().await?;
+    pub async fn fill_referred_by_application_id(&self, id: &str) -> Result<()> {
+        self.page.fill_builder("#referred_by_application_id", id).fill().await?;
         Ok(())
     }
 
@@ -323,8 +323,8 @@ impl<'a> CandidatePage<'a> {
 
 
 
-        if let Some(v) = data.get("referred_by_application_id_id").and_then(|v| v.as_str()) {
-            self.fill_referred_by_application_id_id(v).await.ok();
+        if let Some(v) = data.get("referred_by_application_id").and_then(|v| v.as_str()) {
+            self.fill_referred_by_application_id(v).await.ok();
         }
 
 

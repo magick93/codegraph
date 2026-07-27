@@ -35,7 +35,7 @@
 
 
 
-	let candidate_id_id = $state(String(initialData['candidate_id_id'] ?? ''));
+	let candidate_id = $state(String(initialData['candidate_id'] ?? ''));
 
 
 
@@ -58,7 +58,7 @@
 
 
 
-			if (candidate_id_id) data['candidate_id_id'] = candidate_id_id;
+			if (candidate_id) data['candidate_id'] = candidate_id;
 
 
 
@@ -77,7 +77,7 @@
 
 
 
-			if (candidate_id_id !== String(initialData['candidate_id_id'] ?? '')) data['candidate_id_id'] = candidate_id_id;
+			if (candidate_id !== String(initialData['candidate_id'] ?? '')) data['candidate_id'] = candidate_id;
 
 
 
@@ -125,11 +125,11 @@
 
 
 		<Field.Field>
-			<Field.Label for="candidate_id_id">{m.recruiting_application_field_candidate_id_id()}</Field.Label>
+			<Field.Label for="candidate_id">{m.recruiting_application_field_candidate_id()}</Field.Label>
 			<Input
-				id="candidate_id_id"
+				id="candidate_id"
 				type="text"
-				bind:value={candidate_id_id}
+				bind:value={candidate_id}
 				
 				
 				disabled={mode === 'edit' && false}

@@ -38,7 +38,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    ...(depIds['candidate_id_id'] ? { 'candidate_id_id': depIds['candidate_id_id'] } : {}),
+    ...(depIds['candidate_id'] ? { 'candidate_id': depIds['candidate_id'] } : {}),
 
 
 
@@ -62,7 +62,7 @@ function updatedData(): Record<string, unknown> {
 
 
 
-    ...(depIds['candidate_id_id'] ? { 'candidate_id_id': depIds['candidate_id_id'] } : {}),
+    ...(depIds['candidate_id'] ? { 'candidate_id': depIds['candidate_id'] } : {}),
 
 
 
@@ -79,8 +79,8 @@ test.describe('Application CRUD', () => {
 
 
     try {
-      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/candidate', {  });
-      depIds['candidate_id_id'] = dep_1['id'] as string;
+      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/candidate', { 'birth_date': '2025-01-15', 'family_name': 'Test Family Name', 'given_name': 'Test Given Name', 'compensation_expectation_currency': 'USD', 'uri': 'Test Uri' });
+      depIds['candidate_id'] = dep_1['id'] as string;
     } catch (_e) {
       // Dependency entity may already exist or have its own required fields
     }
@@ -90,9 +90,9 @@ test.describe('Application CRUD', () => {
   test.afterAll(async ({ orgContext }) => {
     const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
 
-    if (depIds['candidate_id_id']) {
+    if (depIds['candidate_id']) {
       try {
-        await fetch(`${baseUrl}/api/recruiting/candidate/${depIds['candidate_id_id']}`, {
+        await fetch(`${baseUrl}/api/recruiting/candidate/${depIds['candidate_id']}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
         });
@@ -135,8 +135,8 @@ test.describe('Application CRUD', () => {
 
 
 
-    if (data['candidate_id_id'] && await page.locator('#candidate_id_id').isVisible()) {
-      await page.locator('#candidate_id_id').fill(String(data['candidate_id_id']));
+    if (data['candidate_id'] && await page.locator('#candidate_id').isVisible()) {
+      await page.locator('#candidate_id').fill(String(data['candidate_id']));
     }
 
 
@@ -174,8 +174,8 @@ test.describe('Application CRUD', () => {
 
 
 
-    if (await page.locator('[data-testid="application-field-candidate_id_id"]').count() > 0) {
-      await expect(page.locator('[data-testid="application-field-candidate_id_id"]')).toBeVisible();
+    if (await page.locator('[data-testid="application-field-candidate_id"]').count() > 0) {
+      await expect(page.locator('[data-testid="application-field-candidate_id"]')).toBeVisible();
     }
 
 
@@ -242,7 +242,7 @@ test.describe('Application CRUD', () => {
 
     await expect(page.locator('[data-testid="application-field-applied_date"]')).toBeVisible();
 
-    await expect(page.locator('[data-testid="application-field-candidate_id_id"]')).toBeVisible();
+    await expect(page.locator('[data-testid="application-field-candidate_id"]')).toBeVisible();
 
     await expect(page.locator('[data-testid="application-field-status"]')).toBeVisible();
 
@@ -281,9 +281,9 @@ test.describe('Application CRUD', () => {
 
 
 
-    if (data['candidate_id_id'] && await page.locator('#candidate_id_id').isVisible()) {
-      await page.locator('#candidate_id_id').clear();
-      await page.locator('#candidate_id_id').fill(String(data['candidate_id_id']));
+    if (data['candidate_id'] && await page.locator('#candidate_id').isVisible()) {
+      await page.locator('#candidate_id').clear();
+      await page.locator('#candidate_id').fill(String(data['candidate_id']));
     }
 
 
@@ -317,8 +317,8 @@ test.describe('Application CRUD', () => {
 
 
 
-    if (await page.locator('[data-testid="application-field-candidate_id_id"]').count() > 0) {
-      await expect(page.locator('[data-testid="application-field-candidate_id_id"]')).toBeVisible();
+    if (await page.locator('[data-testid="application-field-candidate_id"]').count() > 0) {
+      await expect(page.locator('[data-testid="application-field-candidate_id"]')).toBeVisible();
     }
 
 

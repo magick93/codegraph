@@ -47,6 +47,7 @@ struct VerifyResult {
     error: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct JwtClaims {
     sub: String,

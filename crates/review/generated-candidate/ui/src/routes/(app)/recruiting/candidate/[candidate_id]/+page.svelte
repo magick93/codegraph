@@ -243,7 +243,13 @@
 					<dt class="text-sm font-medium text-muted-foreground">{m.recruiting_candidate_field_application_process_history()}</dt>
 					<dd class="text-sm sm:col-span-2" data-testid="candidate-field-application_process_history">
 
-						{item.application_process_history ?? '—'}
+						{#if item.application_process_history}
+							{@const obj = item.application_process_history as Record<string, unknown>}
+							{obj.value ?? obj.code ?? obj.name ?? obj.id ?? '—'}
+							{#if obj.schemeId}
+								<span class="text-muted-foreground text-xs">({obj.schemeId})</span>
+							{/if}
+						{:else}—{/if}
 
 					</dd>
 				</div>
@@ -279,7 +285,13 @@
 					<dt class="text-sm font-medium text-muted-foreground">{m.recruiting_candidate_field_distribution_guidelines()}</dt>
 					<dd class="text-sm sm:col-span-2" data-testid="candidate-field-distribution_guidelines">
 
-						{item.distribution_guidelines ?? '—'}
+						{#if item.distribution_guidelines}
+							{@const obj = item.distribution_guidelines as Record<string, unknown>}
+							{obj.value ?? obj.code ?? obj.name ?? obj.id ?? '—'}
+							{#if obj.schemeId}
+								<span class="text-muted-foreground text-xs">({obj.schemeId})</span>
+							{/if}
+						{:else}—{/if}
 
 					</dd>
 				</div>
@@ -312,7 +324,13 @@
 					<dt class="text-sm font-medium text-muted-foreground">{m.recruiting_candidate_field_person_name()}</dt>
 					<dd class="text-sm sm:col-span-2" data-testid="candidate-field-person_name">
 
-						{item.person_name ?? '—'}
+						{#if item.person_name}
+							{@const obj = item.person_name as Record<string, unknown>}
+							{obj.value ?? obj.code ?? obj.name ?? obj.id ?? '—'}
+							{#if obj.schemeId}
+								<span class="text-muted-foreground text-xs">({obj.schemeId})</span>
+							{/if}
+						{:else}—{/if}
 
 					</dd>
 				</div>
@@ -349,18 +367,22 @@
 					<dt class="text-sm font-medium text-muted-foreground">{m.recruiting_candidate_field_qualifications()}</dt>
 					<dd class="text-sm sm:col-span-2" data-testid="candidate-field-qualifications">
 
-						{#if Array.isArray(item.qualifications)}
-							{item.qualifications.length} items
+						{#if Array.isArray(item.qualifications) && item.qualifications.length > 0}
+							<ul class="list-disc list-inside">
+								{#each (item.qualifications as Record<string, string>[]) as id}
+									<li>{id.value ?? id.code ?? id.name ?? id.id ?? '—'}{#if id.schemeId} <span class="text-muted-foreground text-xs">({id.schemeId})</span>{/if}</li>
+								{/each}
+							</ul>
 						{:else}—{/if}
 
 					</dd>
 				</div>
 
 				<div class="grid grid-cols-1 gap-1 px-4 py-3 sm:grid-cols-3 sm:gap-4">
-					<dt class="text-sm font-medium text-muted-foreground">{m.recruiting_candidate_field_referred_by_application_id_id()}</dt>
-					<dd class="text-sm sm:col-span-2" data-testid="candidate-field-referred_by_application_id_id">
+					<dt class="text-sm font-medium text-muted-foreground">{m.recruiting_candidate_field_referred_by_application_id()}</dt>
+					<dd class="text-sm sm:col-span-2" data-testid="candidate-field-referred_by_application_id">
 
-						{item.referred_by_application_id_id ?? '—'}
+						{item.referred_by_application_id ?? '—'}
 
 					</dd>
 				</div>

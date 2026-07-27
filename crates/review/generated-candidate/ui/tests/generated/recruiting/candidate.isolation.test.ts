@@ -27,7 +27,7 @@ function testData(): Record<string, unknown> {
     'position_schedule_type_codes': [{ code: 'FullTime' }],
     'position_titles': ['ACME Isolation Position Titles'],
     'qualifications': [],
-    ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
+    ...(depIds['referred_by_application_id'] ? { 'referred_by_application_id': depIds['referred_by_application_id'] } : {}),
     'status': 'active',
     'uri': 'ACME Isolation Uri',
   };
@@ -41,8 +41,8 @@ test.describe('Candidate Cross-Org Isolation', () => {
 
 
     try {
-      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/application', {  });
-      depIds['referred_by_application_id_id'] = dep_1['id'] as string;
+      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/application', { 'applied_date': '2025-01-15' });
+      depIds['referred_by_application_id'] = dep_1['id'] as string;
     } catch (_e) {
       // Dependency entity may already exist or have its own required fields
     }
@@ -60,9 +60,9 @@ test.describe('Candidate Cross-Org Isolation', () => {
   test.afterAll(async ({ orgContext }) => {
     const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
 
-    if (depIds['referred_by_application_id_id']) {
+    if (depIds['referred_by_application_id']) {
       try {
-        await fetch(`${baseUrl}/api/recruiting/application/${depIds['referred_by_application_id_id']}`, {
+        await fetch(`${baseUrl}/api/recruiting/application/${depIds['referred_by_application_id']}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
         });

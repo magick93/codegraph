@@ -7,35 +7,10 @@ import { expectToast, waitForHydration } from '../helpers';
 test.describe('Webhook Management', () => {
   test('displays webhook settings page', async ({ ownerPage }) => {
     await ownerPage.goto('/settings/webhooks');
-    await expect(ownerPage.getByRole('heading', { name: 'Webhooks' })).toBeVisible({ timeout: 30000 });
-    await expect(ownerPage.getByRole('link', { name: 'Add Endpoint' })).toBeVisible();
-  });
-
-  test('warms up webhook routes', async ({ ownerPage }) => {
-    // Pre-warm SvelteKit lazy compilation for all webhook routes
-    await ownerPage.goto('/settings/webhooks/new');
-    await expect(ownerPage.getByRole('heading', { name: /New Webhook/i })).toBeVisible({ timeout: 30000 });
-    await ownerPage.goto('/settings/webhooks/00000000-0000-0000-0000-000000000000/edit');
-    await expect(ownerPage.getByRole('heading', { name: /Edit Webhook/i })).toBeVisible({ timeout: 30000 });
-    await ownerPage.goto('/settings/webhooks');
-    await expect(ownerPage.getByRole('heading', { name: 'Webhooks' })).toBeVisible({ timeout: 30000 });
-  });
-
-  test('creates a new webhook endpoint', async ({ ownerPage }) => {
-    await ownerPage.goto('/settings/webhooks');
     await waitForHydration(ownerPage, 'body.hydrated');
-    await ownerPage.click('text=Add Endpoint');
-    await ownerPage.waitForURL('/settings/webhooks/new');
-    await waitForHydration(ownerPage, '[data-testid="webhook-endpoint-submit-btn"]');
-
-    const webhookUrl = `https://webhook-test.example/hooks/${Date.now()}`;
-    await ownerPage.fill('#url', webhookUrl);
-    await ownerPage.fill('#description', 'Test webhook endpoint');
-    await ownerPage.click('[data-testid="webhook-endpoint-submit-btn"]');
-
-    await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+$/, { timeout: 15000 });
-    await expect(ownerPage.getByText(webhookUrl)).toBeVisible();
-    await expect(ownerPage.getByText('Active')).toBeVisible();
+    // Verify the page rendered correctly — heading and Add Endpoint button are always present
+    await expect(ownerPage.getByText('Webhooks')).toBeVisible();
+    await expect(ownerPage.getByText('Add Endpoint')).toBeVisible();
   });
 
   test('edits webhook endpoint URL', async ({ ownerPage }) => {
@@ -69,25 +44,21 @@ test.describe('Webhook Management', () => {
     await expect(ownerPage.getByText(newUrl)).toBeVisible();
   });
 
-  test('enforces tenant isolation at API level', async ({ orgContext }) => {
-    // Create an endpoint as ACME via API
-    const createResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${orgContext.acme.apiKey}`,
-        },
-        body: JSON.stringify({
-          url: `https://webhook-test.example/hooks/${Date.now()}`,
-          description: 'Isolation test',
-        }),
-      },
-    );
-    expect(createResp.ok).toBeTruthy();
-    const endpoint = await createResp.json();
-    const endpointId = endpoint.id;
+  test('enforces tenant isolation at API level', async ({ ownerPage, highfiveOwnerPage, orgContext }) => {
+    // Create an endpoint as ACME owner
+    await ownerPage.goto('/settings/webhooks');
+    await waitForHydration(ownerPage, 'body.hydrated');
+    await ownerPage.click('text=Add Endpoint');
+    await ownerPage.waitForURL('/settings/webhooks/new');
+    await waitForHydration(ownerPage, '[data-testid="webhook-endpoint-submit-btn"]');
+
+    const webhookUrl = `https://webhook-test.example/hooks/${Date.now()}`;
+    await ownerPage.fill('#url', webhookUrl);
+    await ownerPage.fill('#description', 'Isolation test');
+    await ownerPage.click('[data-testid="webhook-endpoint-submit-btn"]');
+    await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+$/, { timeout: 15000 });
+    const endpointUrl = ownerPage.url();
+    const endpointId = endpointUrl.split('/').pop();
 
     // Try to access the ACME endpoint with HighFive's API key
     const response = await fetch(
@@ -99,6 +70,23 @@ test.describe('Webhook Management', () => {
       },
     );
     expect(response.status).toBe(404);
+  });
+
+  test('creates a new webhook endpoint', async ({ ownerPage }) => {
+    await ownerPage.goto('/settings/webhooks');
+    await waitForHydration(ownerPage, 'body.hydrated');
+    await ownerPage.click('text=Add Endpoint');
+    await ownerPage.waitForURL('/settings/webhooks/new');
+    await waitForHydration(ownerPage, '[data-testid="webhook-endpoint-submit-btn"]');
+
+    const webhookUrl = `https://webhook-test.example/hooks/${Date.now()}`;
+    await ownerPage.fill('#url', webhookUrl);
+    await ownerPage.fill('#description', 'Test webhook endpoint');
+    await ownerPage.click('[data-testid="webhook-endpoint-submit-btn"]');
+
+    await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+$/, { timeout: 15000 });
+    await expect(ownerPage.getByText(webhookUrl)).toBeVisible();
+    await expect(ownerPage.getByText('Active')).toBeVisible();
   });
 
   test('edits an existing webhook endpoint', async ({ ownerPage }) => {

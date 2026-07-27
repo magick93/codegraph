@@ -37,7 +37,7 @@
 
 		{ key: 'applied_date', label: m.recruiting_application_field_applied_date() },
 
-		{ key: 'candidate_id_id', label: m.recruiting_application_field_candidate_id_id() },
+		{ key: 'candidate_id', label: m.recruiting_application_field_candidate_id() },
 
 		{ key: 'status', label: m.recruiting_application_field_status() },
 

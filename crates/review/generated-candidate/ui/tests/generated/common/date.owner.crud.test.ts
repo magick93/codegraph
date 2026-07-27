@@ -25,8 +25,12 @@ test.describe('Date Owner CRUD', () => {
 
 
 
-  const data = testData();
-  const updated = updatedData();
+  let data: Record<string, unknown>;
+  let updated: Record<string, unknown>;
+  test.beforeEach(() => {
+    data = testData();
+    updated = updatedData();
+  });
 
 
 

@@ -53,7 +53,7 @@ test.describe('Webhook Delivery', () => {
 
     // 3. Create a timecard entity via the API to trigger an event
     // All timecard fields are optional, so empty {} creates a valid entity.
-    await createEntityAsAcme(orgContext, '/timecard/timecard', {}).catch(() => {});
+    await createEntityAsAcme(orgContext, '/timecard/timecard', {});
 
     // 4. Wait for dispatch worker to drain queue backlog and deliver
     await ownerPage.waitForTimeout(30000);
@@ -115,7 +115,7 @@ test.describe('Webhook Delivery', () => {
     expect(subResp.ok).toBeTruthy();
 
     // 3. Trigger an event
-    await createEntityAsAcme(orgContext, '/timecard/timecard', {}).catch(() => {});
+    await createEntityAsAcme(orgContext, '/timecard/timecard', {});
 
     // 4. Wait for dispatch worker to drain queue backlog and attempt delivery
     await ownerPage.waitForTimeout(30000);
@@ -123,7 +123,7 @@ test.describe('Webhook Delivery', () => {
     // 5. Check delivery log shows failure
     await ownerPage.goto(`/settings/webhooks/${endpointId}`);
     await waitForHydration(ownerPage, 'body.hydrated');
-    await expect(ownerPage.getByText('Failed').first()).toBeVisible({ timeout: 60000 });
+    await expect(ownerPage.getByText('Failed')).toBeVisible({ timeout: 60000 });
   });
 
   test('delivers webhook with custom headers', async ({ ownerPage, orgContext }) => {

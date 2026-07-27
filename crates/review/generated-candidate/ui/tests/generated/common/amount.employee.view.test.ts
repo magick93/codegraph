@@ -20,7 +20,6 @@ function testData(): Record<string, unknown> {
 
 test.describe('Amount Employee View', () => {
   let createdId: string;
-  const data = testData();
 
   test.beforeAll(async ({ orgContext }) => {
 

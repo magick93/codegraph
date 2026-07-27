@@ -17,6 +17,7 @@ use super::dto_update::UpdateIdentifierRequest;
 use crate::error::BulkItemError;
 
 
+
 /// Set API key + org session variables within a transaction so Postgres RLS policies
 /// can enforce tenant isolation and scope checks. Uses `set_config(..., true)` which
 /// is equivalent to `SET LOCAL` but supports parameterised values (no SQL injection).
@@ -44,6 +45,8 @@ async fn set_rls_session_vars(
     Ok(())
 }
 
+
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct IdentifierCommandHandler {
     repo: Arc<dyn IdentifierRepository>,
