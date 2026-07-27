@@ -30,7 +30,12 @@ DECLARE
     v_org_id uuid;
     v_role text;
 BEGIN
-    v_org_id := public.get_current_org_id();
+    v_org_id := COALESCE(
+        public.get_current_org_id(),
+        public.resolve_user_org(
+            nullif(current_setting('app.user_id', true), '')::uuid
+        )
+    );
     IF v_org_id IS NULL THEN
         RETURN NULL;
     END IF;
