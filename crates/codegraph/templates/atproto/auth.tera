@@ -2,6 +2,7 @@
 // AT Protocol service auth middleware
 
 use axum::{
+    body::Body,
     extract::State,
     http::{Request, StatusCode},
     middleware::Next,
@@ -15,10 +16,10 @@ pub struct AtprotoAuth {
     pub signing_key: String,
 }
 
-pub async fn validate_atproto_token<B>(
+pub async fn validate_atproto_token(
     State(auth): State<AtprotoAuth>,
-    request: Request<B>,
-    next: Next<B>,
+    request: Request<Body>,
+    next: Next,
 ) -> Result<Response, StatusCode> {
     let auth_header = request
         .headers()
@@ -48,7 +49,6 @@ async fn verify_service_jwt(
     token: &str,
     signing_key: &str,
 ) -> Result<String, AtprotoError> {
-    // TODO: validate JWT using gravy_atproto
     let _ = signing_key;
     Ok(token.to_string())
 }

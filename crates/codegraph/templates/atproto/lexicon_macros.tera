@@ -1,56 +1,30 @@
 {%- macro render_lexicon_type(type) -%}
-{%- if type.variant == "String" -%}
-{%- if type.format -%}
-{%- if type.format == "DateTime" -%}
-"type": "string", "format": "datetime"
-{%- elif type.format == "AtUri" -%}
-"type": "string", "format": "at-uri"
-{%- elif type.format == "Did" -%}
-"type": "string", "format": "did"
-{%- elif type.format == "Handle" -%}
-"type": "string", "format": "handle"
-{%- elif type.format == "Nsid" -%}
-"type": "string", "format": "nsid"
-{%- elif type.format == "LanguageTag" -%}
-"type": "string", "format": "language"
-{%- elif type.format == "Cid" -%}
-"type": "string", "format": "cid"
-{%- elif type.format == "Uri" -%}
-"type": "string", "format": "uri"
-{%- else -%}
+{%- if type.type == "string" -%}
 "type": "string"
-{%- endif -%}
-{%- else -%}
-"type": "string"
-{%- endif -%}
-{%- elif type.variant == "Integer" -%}
+{%- elif type.type == "integer" -%}
 "type": "integer"
-{%- elif type.variant == "Boolean" -%}
+{%- elif type.type == "number" -%}
+"type": "number"
+{%- elif type.type == "boolean" -%}
 "type": "boolean"
-{%- elif type.variant == "Bytes" -%}
-"type": "bytes"{%- if type.max_size %}, "maxSize": {{ type.max_size }}{%- endif -%}
-{%- elif type.variant == "CidLink" -%}
-"type": "cid-link"
-{%- elif type.variant == "Blob" -%}
-"type": "blob"{%- if type.accept and type.accept | length > 0 %}, "accept": [{% for a in type.accept %}"{{ a }}"{% if not loop.last %}, {% endif %}{% endfor %}]{%- endif %}{% if type.max_size %}, "maxSize": {{ type.max_size }}{% endif -%}
-{%- elif type.variant == "Array" -%}
+{%- elif type.type == "bytes" -%}
+"type": "bytes"
+{%- elif type.type == "datetime" -%}
+"type": "string", "format": "datetime"
+{%- elif type.type == "uri" -%}
+"type": "string", "format": "uri"
+{%- elif type.type == "ref" -%}
+"type": "ref", "ref": "{{ type.ref_name }}"
+{%- elif type.type == "union" -%}
+"type": "union", "refs": [{% for r in type.refs %}"{{ r }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+{%- elif type.type == "array" -%}
 "type": "array", "items": { {{ self::render_lexicon_type(type=type.items) }} }
-{%- elif type.variant == "Object" -%}
-"type": "object", "required": [{% for f in type.required_fields %}"{{ f }}"{% if not loop.last %}, {% endif %}{% endfor %}], "properties": {
-{%- for prop in type.properties %}
-    "{{ prop.name }}": { {{ self::render_lexicon_type(type=prop.type) }} }{% if not loop.last %},{% endif %}
-{%- endfor %}
-  }
-{%- elif type.variant == "Ref" -%}
-"type": "ref", "ref": "{{ type.nsid }}"
-{%- elif type.variant == "StrongRef" -%}
-"type": "string", "format": "at-uri"
-{%- elif type.variant == "Union" -%}
-"type": "union", "refs": [{% for r in type.refs %}"{{ r }}"{% if not loop.last %}, {% endif %}{% endfor %}], "closed": {% if type.closed %}true{% else %}false{% endif %}
-{%- elif type.variant == "Token" -%}
-"type": "token"
-{%- elif type.variant == "Unknown" -%}
+{%- elif type.type == "object" -%}
+"type": "object"
+{%- elif type.type == "unknown" -%}
 "type": "unknown"
+{%- else -%}
+"type": "string"
 {%- endif -%}
 {%- endmacro render_lexicon_type -%}
 
@@ -64,7 +38,7 @@ tid
 {%- elif ks == "Nsid" -%}
 nsid
 {%- elif ks == "Composite" -%}
-composite({{ ks.pattern }})
+composite
 {%- else -%}
 {{ ks }}
 {%- endif -%}

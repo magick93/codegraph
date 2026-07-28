@@ -91,6 +91,7 @@ impl GlobalGenerator for HookRegistryGenerator {
 
         for entry in generation_order {
             let stripped = config.defaults.strip_suffix(&entry.schema_title);
+            let entity_name_pascal = codegraph_naming::to_pascal_case(&stripped);
             let module_name = codegraph_naming::to_snake_case(&stripped);
 
             if seen_domains.insert(entry.domain.clone()) {
@@ -106,7 +107,7 @@ impl GlobalGenerator for HookRegistryGenerator {
                 .entry(entry.domain.clone())
                 .or_default()
                 .push(RegistryEntity {
-                    name: stripped,
+                    name: entity_name_pascal,
                     module_name,
                 });
         }

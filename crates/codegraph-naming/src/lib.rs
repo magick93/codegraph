@@ -15,8 +15,9 @@
 /// ```
 pub fn strip_suffix(title: &str, suffix: &str) -> String {
     let stripped = title.strip_suffix(suffix).unwrap_or(title);
+    let trimmed = stripped.trim_end();
     // Remove characters that are invalid in Rust identifiers (e.g. hyphens in "LER-RS", @ in "@context")
-    stripped.replace(['-', '@'], "").to_string()
+    trimmed.replace(['-', '@'], "").to_string()
 }
 
 /// Strip the "Type" suffix from HR Open schema titles for cleaner generated names.

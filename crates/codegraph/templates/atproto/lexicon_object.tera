@@ -7,12 +7,12 @@
   "defs": {
     "main": {
       "type": "object",
-{%- if object.description %}
-      "description": "{{ object.description }}",
+{%- if record.description %}
+      "description": "{{ record.description }}",
 {%- endif %}
-      "required": [{% for f in object.required_fields %}"{{ f }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+      "required": [{% for f in record.required_fields %}"{{ f }}"{% if not loop.last %}, {% endif %}{% endfor %}],
       "properties": {
-{%- for prop in object.properties %}
+{%- for prop in record.properties %}
         "{{ prop.name }}": { {{ macros::render_lexicon_type(type=prop.type) }} }{% if not loop.last %},{% endif %}
 {%- endfor %}
       }
