@@ -21,7 +21,7 @@ async fn set_rls_session_vars(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.current_api_key', $1, true), \
                 set_config('app.organization_id', $2, true), \
-                set_config('app.user_id', $4, true)",
+                set_config('app.user_id', $3, true)",
         [
             api_key_id.to_string().into(),
             organization_id.to_string().into(),
