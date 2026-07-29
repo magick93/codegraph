@@ -717,6 +717,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             as Box<dyn GlobalGenerator>,
         Box::new(atproto::identity_gen::AtprotoIdentityEmitter::new(output_dir))
             as Box<dyn GlobalGenerator>,
+        Box::new(atproto::types_gen::GeneratedTypesEmitter::new(output_dir))
+            as Box<dyn GlobalGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_global(gen.name()))

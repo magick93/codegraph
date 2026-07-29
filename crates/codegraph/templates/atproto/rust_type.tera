@@ -1,3 +1,12 @@
+{%- if needs_generated_types_import %}
+use crate::atproto::generated_types::*;
+{%- endif %}
+{%- if needs_atproto_syntax_imports %}
+use rsky_syntax::aturi::AtUri;
+use cosmos_domain_types::identifiers::Did;
+use rsky_syntax::nsid::Nsid;
+use cosmos_domain_types::identifiers::RecordKey;
+{%- endif %}
 /// {{ description | default(value=struct_name) }}
 ///
 /// Generated from AT Protocol lexicon: {{ nsid }}

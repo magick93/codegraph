@@ -15,6 +15,7 @@ use crate::appstate::AppState;
 {% for imp in imports %}
 use {{ imp }};
 {% endfor %}
+use crate::atproto::generated_types::*;
 
 #[derive(Debug, Deserialize)]
 pub struct {{ module_name }}QueryParams {
@@ -41,25 +42,35 @@ pub async fn get_{{ module_name }}(
 ) -> Result<Json<{{ module_name }}Collection>, AtprotoError> {
     let limit = params.limit.unwrap_or(50).min(100);
 
-    let items = {{ entity_name }}Entity::find()
-        .limit(limit)
+    let mut query = {{ entity_name }}Entity::find().limit(limit + 1);
+    if let Some(ref cursor) = params.cursor {
+        if let Ok(cursor_id) = uuid::Uuid::parse_str(cursor) {
+            query = query.filter(Column::Id.gt(cursor_id));
+        }
+    }
+    let items = query
         .all(&state.db)
         .await
-        .map_err(|e| AtprotoError::Internal(format!("Database error: {}", e)))?;
+        .map_err(|e| AtprotoError::Repo(format!("Database error: {}", e)))?;
+
+    let last_id = items.last().map(|i| i.id.to_string());
 
     let response: Vec<{{ module_name }}Response> = items
         .into_iter()
         .map(|item| {{ module_name }}Response {
             {% for field in fields %}
+            {% if field.is_optional %}
+            {{ field.name }}: item.{{ field.column }}.unwrap_or_default(),
+            {% elif field.is_composite %}
+            {{ field.name }}: Default::default(),
+            {% else %}
             {{ field.name }}: item.{{ field.column }},
+            {% endif %}
             {% endfor %}
         })
         .collect();
 
-    let cursor = response.last().map(|r| {
-        // Use the last item's index as cursor
-        r.{{ fields[0].name }}.to_string()
-    });
+    let cursor = last_id;
 
     Ok(Json({{ module_name }}Collection {
         items: response,

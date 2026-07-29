@@ -172,12 +172,12 @@ mod tests {
         let mut tera = Tera::default();
         tera.add_raw_template(
             "atproto/appview_ingestor.tera",
-            r#"use gravy_atproto::FirehoseClient;{% for l in lexicons %}"{{l.nsid}}"{% endfor %}fn handle_commit_{{domain}}(){}"#,
+            r#"use crate::atproto::firehose::{persist, FirehoseClient};{% for l in lexicons %}"{{l.nsid}}"{% endfor %}fn ingest_{{domain}}(mut firehose: FirehoseClient, db: DatabaseConnection){firehose.connect_and_consume("{{domain}}", move |event|{async move{}}).await;}"#,
         )
         .unwrap();
         tera.add_raw_template(
             "atproto/appview_index.tera",
-            r#"mod ingestor;{% for d in domains %}"{{d}}"{% endfor %}"#,
+            r#"{% for d in domains %}use crate::atproto::appview::ingest_{{d}}::ingest_{{d}};{% endfor %}use crate::atproto::firehose::FirehoseClient;"#,
         )
         .unwrap();
         tera
@@ -255,16 +255,16 @@ mod tests {
             .expect("should produce ingestor file");
 
         assert!(
-            ingestor.content.contains("use gravy_atproto::"),
-            "ingestor should contain gravy_atproto imports"
+            ingestor.content.contains("use crate::atproto::firehose::"),
+            "ingestor should contain firehose imports"
         );
         assert!(
             ingestor.content.contains("nz.gravy.grants.grant"),
             "ingestor should contain collection NSID matching"
         );
         assert!(
-            ingestor.content.contains("handle_commit_grants"),
-            "ingestor should contain handle_commit function"
+            ingestor.content.contains("ingest_grants"),
+            "ingestor should contain ingest_grants function"
         );
     }
 

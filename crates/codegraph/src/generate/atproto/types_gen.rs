@@ -5,8 +5,8 @@ use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
 use crate::generate::render_template_with_project;
-use crate::generate::traits::{EntityGenerator, GeneratedFile};
-use crate::generate::ProjectConfig;
+use crate::generate::traits::{EntityGenerator, GeneratedFile, GlobalGenerator};
+use crate::generate::{GenerationEntry, ProjectConfig};
 use codegraph_config::DomainConfig;
 
 use super::types_context::TypesContext;
@@ -77,6 +77,59 @@ impl EntityGenerator for AtprotoTypesEmitter {
             .join("atproto")
             .join(domain)
             .join(format!("{}.rs", entity_name));
+
+        Ok(vec![GeneratedFile { path, content }])
+    }
+}
+
+pub struct GeneratedTypesEmitter {
+    output_dir: PathBuf,
+}
+
+impl GeneratedTypesEmitter {
+    pub fn new(output_dir: &Path) -> Self {
+        Self {
+            output_dir: output_dir.to_path_buf(),
+        }
+    }
+}
+
+#[async_trait]
+impl GlobalGenerator for GeneratedTypesEmitter {
+    fn name(&self) -> &str {
+        "atproto_generated_types"
+    }
+
+    async fn generate(
+        &self,
+        _db: &dyn GraphQuerier,
+        _config: &DomainConfig,
+        _generation_order: &[GenerationEntry],
+        tera: &tera::Tera,
+        project: &ProjectConfig,
+    ) -> Result<Vec<GeneratedFile>> {
+        if project.atproto_authority.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let context = serde_json::json!({
+            "value_object_stubs": [],
+            "composite_stubs": [],
+            "codelist_names": <&[String]>::default(),
+        });
+
+        let content = render_template_with_project(
+            tera,
+            "atproto/generated_types.tera",
+            &context,
+            project,
+        )?;
+
+        let path = self
+            .output_dir
+            .join("src")
+            .join("atproto")
+            .join("generated_types.rs");
 
         Ok(vec![GeneratedFile { path, content }])
     }

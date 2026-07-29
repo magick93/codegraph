@@ -5,6 +5,9 @@ use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;
 {% if project.hooks_api_crate %}use crate::hooks::HookRegistry;{% endif %}
+{% if has_atproto %}
+use crate::api::auth::atproto::AtprotoAuth;
+{% endif %}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -20,5 +23,13 @@ pub struct AppState {
     pub workflow_service: Arc<dyn codegraph_workflow::WorkflowService>,
 {% if project.hooks_api_crate %}
     pub registry: HookRegistry,
+{% endif %}
+{% if has_atproto %}
+    pub identity: Option<crate::api::identity::IdentityService>,
+
+    pub atproto_auth: AtprotoAuth,
+
+    pub atproto_client: Option<crate::atproto_client::AtprotoClient>,
+
 {% endif %}
 }

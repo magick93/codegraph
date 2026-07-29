@@ -51,6 +51,36 @@ struct XrpcField {
     name: String,
     rust_type: String,
     column: String,
+    is_optional: bool,
+    is_composite: bool,
+}
+
+fn is_simple_scalar(rust_type: &str) -> bool {
+    matches!(
+        rust_type,
+        "bool"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "f32"
+            | "f64"
+            | "isize"
+            | "usize"
+            | "String"
+            | "Uuid"
+            | "Decimal"
+            | "NaiveDate"
+            | "NaiveDateTime"
+            | "DateTime"
+            | "serde_json::Value"
+    )
 }
 
 pub struct AtprotoXrpcEmitter {
@@ -104,10 +134,16 @@ impl EntityGenerator for AtprotoXrpcEmitter {
 
         let fields: Vec<XrpcField> = properties
             .iter()
-            .map(|p| XrpcField {
-                name: p.name.clone(),
-                rust_type: p.rust_field_type.clone(),
-                column: p.rust_field_name.clone(),
+            .map(|p| {
+                let is_optional = p.rust_field_type.starts_with("Option<");
+                let is_composite = !is_optional && !is_simple_scalar(&p.rust_field_type);
+                XrpcField {
+                    name: p.name.clone(),
+                    rust_type: p.rust_field_type.clone(),
+                    column: p.rust_field_name.clone(),
+                    is_optional,
+                    is_composite,
+                }
             })
             .collect();
 

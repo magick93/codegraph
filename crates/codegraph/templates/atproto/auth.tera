@@ -2,53 +2,217 @@
 // AT Protocol service auth middleware
 
 use axum::{
-    body::Body,
-    extract::State,
-    http::{Request, StatusCode},
-    middleware::Next,
+    extract::FromRequestParts,
+    http::{request::Parts, StatusCode},
     response::Response,
 };
-use gravy_atproto::AtprotoError;
+use rsky_crypto::{did::format_did_key, verify::verify_signature};
+use serde::Deserialize;
 
 const BEARER_PREFIX: &str = "Bearer ";
 
-pub struct AtprotoAuth {
-    pub signing_key: String,
+#[derive(Debug, thiserror::Error)]
+pub enum AuthError {
+    #[error("Missing authorization header")]
+    MissingHeader,
+    #[error("Invalid JWT format")]
+    InvalidJwt,
+    #[error("JWT verification failed: {0}")]
+    VerificationFailed(String),
+    #[error("Missing kid in JWT header")]
+    MissingKid,
+    #[error("Key encoding error: {0}")]
+    KeyEncoding(String),
 }
 
-pub async fn validate_atproto_token(
-    State(auth): State<AtprotoAuth>,
-    request: Request<Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    let auth_header = request
-        .headers()
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok());
-
-    match auth_header {
-        Some(header) if header.starts_with(BEARER_PREFIX) => {
-            let token = &header[BEARER_PREFIX.len()..];
-
-            match verify_service_jwt(token, &auth.signing_key).await {
-                Ok(did) => {
-                    tracing::debug!("Authenticated DID: {}", did);
-                    Ok(next.run(request).await)
-                }
-                Err(e) => {
-                    tracing::warn!("JWT verification failed: {:?}", e);
-                    Err(StatusCode::UNAUTHORIZED)
-                }
-            }
-        }
-        _ => Err(StatusCode::UNAUTHORIZED),
+impl axum::response::IntoResponse for AuthError {
+    fn into_response(self) -> Response {
+        let (status, msg) = match &self {
+            AuthError::MissingHeader => (StatusCode::UNAUTHORIZED, "Missing authorization header"),
+            AuthError::InvalidJwt => (StatusCode::UNAUTHORIZED, "Invalid JWT format"),
+            AuthError::VerificationFailed(_) => (StatusCode::UNAUTHORIZED, "JWT verification failed"),
+            AuthError::MissingKid => (StatusCode::UNAUTHORIZED, "Missing key identifier"),
+            AuthError::KeyEncoding(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Key encoding error"),
+        };
+        (status, msg).into_response()
     }
 }
 
-async fn verify_service_jwt(
-    token: &str,
-    signing_key: &str,
-) -> Result<String, AtprotoError> {
-    let _ = signing_key;
-    Ok(token.to_string())
+#[derive(Clone)]
+pub struct AtprotoAuth {
+    pub server_did: String,
+    pub signing_key: Vec<u8>,
+    pub pds_endpoint: String,
+}
+
+impl AtprotoAuth {
+    pub async fn verify_service_jwt(&self, token: &str) -> Result<String, AuthError> {
+        let parts: Vec<&str> = token.splitn(3, '.').collect();
+        if parts.len() != 3 {
+            return Err(AuthError::InvalidJwt);
+        }
+
+        let header_raw = parts[0];
+        let payload_raw = parts[1];
+        let sig_raw = parts[2];
+
+        let header = jsonwebtoken::decode_header(token).map_err(|e| {
+            AuthError::VerificationFailed(format!("Failed to decode JWT header: {}", e))
+        })?;
+
+        let kid = header.kid.ok_or(AuthError::MissingKid)?;
+        let signing_input = format!("{}.{}", header_raw, payload_raw);
+        let sig_bytes = base64_url_decode(sig_raw).map_err(|e| {
+            AuthError::VerificationFailed(format!("Failed to decode signature: {}", e))
+        })?;
+
+        let valid = verify_signature(&kid, signing_input.as_bytes(), &sig_bytes, None)
+            .map_err(|e| AuthError::VerificationFailed(format!("Signature verification error: {}", e)))?;
+
+        if !valid {
+            return Err(AuthError::VerificationFailed("Invalid signature".into()));
+        }
+
+        let payload_bytes = base64_url_decode(payload_raw).map_err(|e| {
+            AuthError::VerificationFailed(format!("Failed to decode payload: {}", e))
+        })?;
+
+        #[derive(Deserialize)]
+        struct JwtClaims {
+            sub: String,
+            #[serde(default)]
+            iss: Option<String>,
+        }
+
+        let claims: JwtClaims = serde_json::from_slice(&payload_bytes).map_err(|e| {
+            AuthError::VerificationFailed(format!("Failed to parse claims: {}", e))
+        })?;
+
+        Ok(claims.sub)
+    }
+
+    pub fn sign_service_jwt(
+        &self,
+        aud: &str,
+        expiry: std::time::Duration,
+    ) -> Result<String, AuthError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let exp = now + expiry.as_secs();
+
+        let header = serde_json::json!({
+            "alg": "ES256",
+            "typ": "JWT",
+            "kid": self.server_did,
+        });
+        let claims = serde_json::json!({
+            "iss": self.server_did,
+            "sub": self.server_did,
+            "aud": aud,
+            "iat": now,
+            "exp": exp,
+        });
+
+        let header_b64 = base64_url_encode(header.to_string().as_bytes());
+        let claims_b64 = base64_url_encode(claims.to_string().as_bytes());
+        let signing_input = format!("{}.{}", header_b64, claims_b64);
+
+        let sig = sign_p256(&self.signing_key, signing_input.as_bytes())
+            .map_err(|e| AuthError::VerificationFailed(format!("Signing failed: {}", e)))?;
+        let sig_b64 = base64_url_encode(&sig);
+
+        Ok(format!("{}.{}.{}", header_b64, claims_b64, sig_b64))
+    }
+}
+
+/// Generate a new P-256 keypair and return (DID, private_key_bytes).
+pub fn generate_service_key() -> Result<(String, Vec<u8>), AuthError> {
+    use p256::ecdsa::SigningKey;
+    use p256::elliptic_curve::rand_core::OsRng;
+
+    let signing_key = SigningKey::random(&mut OsRng);
+    let verifying_key = signing_key.verifying_key();
+    let encoded_point = verifying_key.to_encoded_point(false);
+    let key_bytes = encoded_point.as_bytes().to_vec();
+
+    let secret_bytes = signing_key.to_bytes().to_vec();
+
+    let did = format_did_key("ES256".to_string(), key_bytes)
+        .map_err(|e| AuthError::KeyEncoding(format!("Failed to format DID key: {}", e)))?;
+
+    Ok((did, secret_bytes))
+}
+
+fn sign_p256(key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
+    use p256::ecdsa::signature::Signer;
+    use p256::ecdsa::SigningKey;
+
+    let signing_key = SigningKey::from_slice(key).map_err(|e| format!("Invalid key: {}", e))?;
+    let signature: p256::ecdsa::Signature = signing_key.sign(data);
+    Ok(signature.to_bytes().to_vec())
+}
+
+fn base64_url_encode(data: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
+}
+
+fn base64_url_decode(input: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(input)
+        .map_err(|e| format!("Base64 decode error: {}", e))
+}
+
+/// Axum middleware that validates AT Protocol service JWT tokens.
+/// Extracts DID from the request extensions on success.
+pub async fn validate_atproto_token(
+    axum::extract::State(state): axum::extract::State<crate::app_state::AppState>,
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<Response, AuthError> {
+    let auth = &state.atproto_auth;
+    let token = request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix(BEARER_PREFIX));
+
+    match token {
+        Some(token) => {
+            match auth.verify_service_jwt(token).await {
+                Ok(did) => {
+                    tracing::debug!("Authenticated AT Protocol DID: {}", did);
+                    request.extensions_mut().insert(AtprotoDid(did));
+                    Ok(next.run(request).await)
+                }
+                Err(e) => {
+                    tracing::warn!("AT Protocol JWT verification failed: {:?}", e);
+                    Err(e)
+                }
+            }
+        }
+        None => {
+            tracing::debug!("No AT Protocol bearer token — unauthenticated request");
+            Ok(next.run(request).await)
+        }
+    }
+}
+
+/// Extracted DID placed in request extensions by the auth middleware.
+#[derive(Clone, Debug)]
+pub struct AtprotoDid(pub String);
+
+impl<S: Send + Sync> FromRequestParts<S> for AtprotoDid {
+    type Rejection = (StatusCode, &'static str);
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<AtprotoDid>()
+            .cloned()
+            .ok_or((StatusCode::UNAUTHORIZED, "AT Protocol authentication required"))
+    }
 }

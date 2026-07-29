@@ -31,7 +31,9 @@ struct HandleEntry {
 
 #[derive(Debug, Serialize)]
 struct AuthContext {
-    signing_key: String,
+    server_did: String,
+    signing_key_placeholder: String,
+    pds_endpoint: String,
 }
 
 pub struct AtprotoIdentityEmitter {
@@ -73,14 +75,14 @@ impl GlobalGenerator for AtprotoIdentityEmitter {
         };
 
         let did = format!("did:web:{}", host);
-        let signing_key = "z6MkhaXgBxD..." .to_string();
+        let signing_key_placeholder = "z6MkhaXgBxDY..." .to_string();
         let pds_url = format!("https://{}", host);
 
         let mut files = Vec::new();
 
         let did_ctx = DidWebContext {
             host: host.clone(),
-            signing_key: signing_key.clone(),
+            signing_key: signing_key_placeholder.clone(),
             pds_url: pds_url.clone(),
         };
 
@@ -123,7 +125,9 @@ impl GlobalGenerator for AtprotoIdentityEmitter {
         });
 
         let auth_ctx = AuthContext {
-            signing_key,
+            server_did: did.clone(),
+            signing_key_placeholder,
+            pds_endpoint: pds_url.clone(),
         };
 
         let auth_content = render_template_with_project(
@@ -186,7 +190,7 @@ mod tests {
         .unwrap();
         tera.add_raw_template(
             "atproto/auth.tera",
-            r#"pub async fn validate_atproto_token(){}"#,
+            r#"use rsky_crypto::verify::verify_signature;pub async fn validate_atproto_token(){}pub struct AtprotoAuth{}pub struct AtprotoDid(pub String);pub fn generate_service_key(){}"#,
         )
         .unwrap();
         tera

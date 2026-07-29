@@ -15,6 +15,8 @@ pub struct TypesContext {
     pub fields: Vec<RustFieldContext>,
     pub enum_defs: Vec<EnumDefContext>,
     pub needs_blob_ref: bool,
+    pub needs_generated_types_import: bool,
+    pub needs_atproto_syntax_imports: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,21 +63,43 @@ impl TypesContext {
         let mut fields = Vec::new();
         let mut enum_defs = Vec::new();
         let mut needs_blob_ref = false;
+        let mut needs_atproto_syntax_imports = false;
         let mut seen_enum_names = std::collections::HashSet::new();
+        let mut seen_field_names = std::collections::HashSet::new();
+        let atproto_field_types: std::collections::HashMap<&str, &str> = [
+            ("at_uri", "rsky_syntax::aturi::AtUri"),
+            ("did", "cosmos_domain_types::identifiers::Did"),
+            ("collection", "rsky_syntax::nsid::Nsid"),
+            ("rkey", "cosmos_domain_types::identifiers::RecordKey"),
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
         for prop in properties {
-            let kind = prop.effective_kind();
-            let (rust_type, serde_with) = field_rust_type(
-                kind.as_ref(),
-                prop,
-                db,
-                &mut needs_blob_ref,
-                &mut seen_enum_names,
-                &mut enum_defs,
-            )
-            .await;
-
             let field_name = prop.rust_field_name.clone();
+            if !seen_field_names.insert(field_name.clone()) {
+                continue;
+            }
+
+            let (rust_type, serde_with) = if let Some(atproto_type) =
+                atproto_field_types.get(field_name.as_str())
+            {
+                needs_atproto_syntax_imports = true;
+                (atproto_type.to_string(), None)
+            } else {
+                let kind = prop.effective_kind();
+                field_rust_type(
+                    kind.as_ref(),
+                    prop,
+                    db,
+                    &mut needs_blob_ref,
+                    &mut seen_enum_names,
+                    &mut enum_defs,
+                )
+                .await
+            };
+
             let is_option = !prop.is_required;
 
             fields.push(RustFieldContext {
@@ -89,6 +113,14 @@ impl TypesContext {
             });
         }
 
+        let needs_generated_types_import = fields
+            .iter()
+            .any(|f| {
+                f.rust_type == "serde_json::Value"
+                    || f.rust_type.starts_with("Codelist")
+                    || f.rust_type.starts_with("CommonJsonCodelist")
+            });
+
         Ok(Self {
             struct_name,
             description: schema.description.clone(),
@@ -97,6 +129,8 @@ impl TypesContext {
             fields,
             enum_defs,
             needs_blob_ref,
+            needs_generated_types_import,
+            needs_atproto_syntax_imports,
         })
     }
 }

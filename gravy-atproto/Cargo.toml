@@ -24,6 +24,10 @@ tokio = { version = "1", features = ["full"] }
 # Error handling
 thiserror = "2"
 
+# Web framework integration
+axum = { version = "0.8", optional = true }
+
 [features]
 default = []
+axum-integration = ["axum"]
 # rsky = [] — enable once rsky-* crates are published on crates.io

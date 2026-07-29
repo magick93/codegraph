@@ -7,15 +7,19 @@ use axum::{
 };
 
 {% for endpoint in endpoints %}
-mod {{ endpoint.module_name }}_xrpc;
+use super::get_{{ endpoint.module_name }};
+use super::create_{{ endpoint.module_name }};
+{% endfor %}
+{% for proc in procedures %}
+use super::create_{{ proc.module_name }};
 {% endfor %}
 
-pub fn atproto_routes() -> Router<crate::appstate::AppState> {
+pub fn atproto_routes() -> Router<crate::app_state::AppState> {
     Router::new()
 {% for endpoint in endpoints %}
-        .route("/xrpc/{{ endpoint.nsid }}", get({{ endpoint.module_name }}_xrpc::get_{{ endpoint.module_name }}))
+        .route("/xrpc/{{ endpoint.nsid }}", get(get_{{ endpoint.module_name }}::get_{{ endpoint.module_name }}).post(create_{{ endpoint.module_name }}::create_{{ endpoint.module_name }}))
 {% endfor %}
-{% for endpoint in procedures %}
-        .route("/xrpc/{{ endpoint.nsid }}", post({{ endpoint.module_name }}_xrpc::create_{{ endpoint.module_name }}))
+{% for proc in procedures %}
+        .route("/xrpc/{{ proc.nsid }}", post(create_{{ proc.module_name }}::create_{{ proc.module_name }}))
 {% endfor %}
 }
