@@ -21,6 +21,7 @@ use {{ project.domain_types_crate }}::{{ domain.name }}::{{ entity.module_name }
 ///
 /// Each entity has an `Option<Arc<dyn XxxLifecycle>>` field. When `None`,
 /// the generated command/query handlers skip hook calls (zero cost).
+#[derive(Clone)]
 pub struct HookRegistry {
 {% for domain in domains %}
 {% for entity in domain.entities %}

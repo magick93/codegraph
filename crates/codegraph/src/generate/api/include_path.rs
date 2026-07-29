@@ -646,6 +646,11 @@ async fn resolve_fk_via_graph(
     let source_props = db.get_properties(source_title).await.unwrap_or_default();
 
     // Priority 1: property whose ref_target matches target_title (exact).
+    // Schema titles often contain spaces while ref targets use filenames without
+    // spaces (e.g. title "Campaign Type" vs ref "CampaignType.json").
+    // Compare both the raw title and a space-stripped version.
+    let target_clean: String = target_title.replace(' ', "");
+    let target_stripped: String = codegraph_naming::strip_suffix(&target_clean, "Type");
     for prop in &source_props {
         let matches = prop.ref_target.as_deref().map(|rt| {
             // Handle both plain title refs ("PersonType") and path refs
@@ -653,7 +658,7 @@ async fn resolve_fk_via_graph(
             let rt_clean = rt.rsplit('/').next().unwrap_or(rt)
                 .strip_suffix(".json#").or_else(|| rt.strip_suffix(".json"))
                 .unwrap_or(rt);
-            rt_clean == target_title
+            rt_clean == target_title || rt_clean == target_clean || rt_clean == target_stripped
         }).unwrap_or(false);
         if matches {
             let fd = resolve_field(prop);
@@ -704,7 +709,25 @@ async fn resolve_fk_via_graph(
         }
     }
 
-    // Fallback: convention-based default.
+    // Priority 4: property whose pg_column_name is "{parent_ref_stem}_id"
+    // where parent_ref_stem is the target_title with spaces stripped and Type suffix removed.
+    // This handles array relationships where the child has a generated FK
+    // column named after the parent entity (e.g., events_app_id) instead of
+    // the schema property name (e.g., public_events_id).
+    let parent_ref_stem = codegraph_naming::to_snake_case(
+        &codegraph_naming::strip_suffix(&target_title.replace(' ', ""), "Type"),
+    );
+    if parent_ref_stem != seg_snake {
+        let parent_seg_id = format!("{parent_ref_stem}_id");
+        for prop in &source_props {
+            if prop.pg_column_name.to_lowercase() == parent_seg_id {
+                let fd = resolve_field(prop);
+                return Ok((fd.column_name, prop.is_array));
+            }
+        }
+    }
+
+    // Fallback: convention-based default using seg.
     Ok((seg_id, false))
 }
 

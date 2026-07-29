@@ -96,6 +96,7 @@ impl GlobalGenerator for ScaffoldGenerator {
         let mut seen_scaffold_entities = std::collections::HashSet::new();
         for entry in generation_order {
             let stripped = config.defaults.strip_suffix(&entry.schema_title);
+            let entity_name_pascal = codegraph_naming::to_pascal_case(&stripped);
             let module_name = codegraph_naming::to_snake_case(&stripped);
             // Dedup by (domain, module_name) to prevent cross-domain name collisions
             if !seen_scaffold_entities.insert((entry.domain.clone(), module_name.clone())) {
@@ -106,7 +107,7 @@ impl GlobalGenerator for ScaffoldGenerator {
                 .or_default()
                 .push(ScaffoldEntity {
                     module_name,
-                    name: stripped,
+                    name: entity_name_pascal,
                     domain: entry.domain.clone(),
                 });
         }
