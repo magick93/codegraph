@@ -764,18 +764,22 @@ async fn resolve_child_fk_column(
 
     // Priority 2: graph properties — find the property on the child that
     // references the parent.
-    let seg = codegraph_naming::to_snake_case(
+    let child_seg = codegraph_naming::to_snake_case(
         super::router::strip_suffix(child_title, &config.defaults.type_suffix),
     );
-    let (fk, _) = resolve_fk_via_graph(db, child_title, parent_title, &seg).await?;
-    if !fk.ends_with("_id") {
-        // The resolved column name doesn't look like an FK — fall back.
-        return Ok(format!(
-            "{}_id",
-            codegraph_naming::to_snake_case(
-                super::router::strip_suffix(child_title, &config.defaults.type_suffix),
-            )
-        ));
+    let (fk, _) = resolve_fk_via_graph(db, child_title, parent_title, &child_seg).await?;
+
+    // If the resolved FK matches the child-based convention (child_seg + "_id"),
+    // it's a fallback — the child doesn't have an explicit property referencing
+    // the parent. In this case, prefer the parent-based naming convention
+    // (parent_seg + "_id") which matches how the entity generator creates FK
+    // columns for array relationships (e.g. events_app_id for PublicEvent → EventsApp).
+    let child_based_fk = format!("{}_id", child_seg);
+    let parent_seg = codegraph_naming::to_snake_case(
+        super::router::strip_suffix(parent_title, &config.defaults.type_suffix),
+    );
+    if fk == child_based_fk && parent_seg != child_seg {
+        return Ok(format!("{}_id", parent_seg));
     }
     Ok(fk)
 }

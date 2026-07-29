@@ -225,14 +225,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {{ domain.name }}_{{ entity.module_name }}_commands: crate::domain::{{ domain.name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler::new(
             Arc::new(crate::domain::{{ domain.name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl),
             db.clone(),
+            None,
         ),
         {{ domain.name }}_{{ entity.module_name }}_queries: crate::domain::{{ domain.name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler::new(
             Arc::new(crate::domain::{{ domain.name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl),
             db.clone(),
+            None,
         ),
 {% endfor %}
 {% endfor %}
         db: db.clone(),
+{% if project.hooks_api_crate %}
+        registry: hooks::HookRegistry::default(),
+{% endif %}
         jwt_secret: std::env::var("SUPABASE_JWT_SECRET").map_err(|_| {
             "SUPABASE_JWT_SECRET environment variable is required. Set it to your Supabase project JWT secret"
         })?,
