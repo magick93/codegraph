@@ -31,7 +31,7 @@ test.describe('Webhook Management', () => {
 
     // Wait for detail page to fully load before interacting with its links.
     // The Edit button only appears after the async loadData() fetch completes.
-    await waitForHydration(ownerPage, 'text=Edit');
+    await waitForHydration(ownerPage, 'text="Edit"');
 
     // Now edit the URL
     await ownerPage.click('text=Edit');
