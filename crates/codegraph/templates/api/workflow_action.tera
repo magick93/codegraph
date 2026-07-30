@@ -212,7 +212,7 @@ pub async fn approve(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers, body.correlation_id);
     let actor_id = api_key_info.api_key_id;
-    let ctx = codegraph_workflow::ApprovalContext {
+     let ctx = codegraph_workflow::ApprovalContext {
         tenant_id: api_key_info.organization_id,
         entity_id: id,
         domain: "{{ domain }}".to_string(),
@@ -222,6 +222,8 @@ pub async fn approve(
         correlation_id,
         idempotency_key: body.idempotency_key,
         comment: body.comment,
+        session_user_id: Some(api_key_info.user_id),
+        session_api_key_id: Some(api_key_info.api_key_id),
     };
     let ws = state.workflow_service.approval_action(ctx).await
         .map_err(|e| AppError::internal(e.to_string()).with_correlation_id(correlation_id))?;
@@ -287,6 +289,8 @@ pub async fn reject(
         correlation_id,
         idempotency_key: body.idempotency_key,
         comment: body.comment,
+        session_user_id: Some(api_key_info.user_id),
+        session_api_key_id: Some(api_key_info.api_key_id),
     };
     let ws = state.workflow_service.approval_action(ctx).await
         .map_err(|e| AppError::internal(e.to_string()).with_correlation_id(correlation_id))?;
@@ -351,6 +355,8 @@ pub async fn delegate(
         to_actor_id: body.to_actor_id,
         correlation_id,
         reason: body.reason,
+        session_user_id: Some(api_key_info.user_id),
+        session_api_key_id: Some(api_key_info.api_key_id),
     };
     state.workflow_service.delegate(ctx).await
         .map_err(|e| AppError::internal(e.to_string()))?;
