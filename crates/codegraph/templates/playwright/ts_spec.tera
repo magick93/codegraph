@@ -2,7 +2,7 @@
 // E2E tests for {{ entity_name }}
 
 import { test, expect } from '@playwright/test';
-import { {{ entity_name }}Fixture } from '../fixtures/{{ domain }}/{{ module_name }}';
+import { {{ entity_name }}Fixture } from '../../fixtures/{{ domain }}/{{ module_name }}';
 
 const authToken = process.env.TEST_AUTH_TOKEN || '';
 

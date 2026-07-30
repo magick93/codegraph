@@ -116,6 +116,41 @@ impl GlobalGenerator for TsGlobalGenerator {
                     project,
                 )?,
             },
+            GeneratedFile {
+                path: e2e_dir.join("tsconfig.json"),
+                content: r#"{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist",
+    "rootDir": "."
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}"#.to_string(),
+            },
+            GeneratedFile {
+                path: e2e_dir.join("package.json"),
+                content: r#"{
+  "name": "community-os-e2e",
+  "private": true,
+  "scripts": {
+    "test": "npx playwright test --reporter=list",
+    "test:headed": "npx playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}"#.to_string(),
+            },
         ])
     }
 }

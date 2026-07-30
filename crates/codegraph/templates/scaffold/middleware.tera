@@ -20,20 +20,25 @@ use crate::app_state::AppState;
 #[derive(Clone, Debug)]
 pub struct AuthInfo {
     pub organization_id: Uuid,
-    /// API key UUID for API-key auth, or nil for JWT auth.
+    /// API key UUID for API-key auth, or nil for JWT / magic link auth.
     pub api_key_id: Uuid,
-    /// User UUID for JWT auth, or nil for API key auth.
+    /// User UUID for JWT auth, or nil for API key / magic link auth.
     /// Used to set request.jwt.claim.sub for Supabase auth.uid().
     pub user_id: Uuid,
     pub auth_mode: AuthMode,
     /// Basejump account role: "owner", "member", "manager", or "employee".
+    /// For magic link: "community_member".
+    /// For API key: "api_key".
     pub role: String,
+    /// Email for magic link auth, None otherwise.
+    pub email: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub enum AuthMode {
     Jwt { user_id: Uuid },
     ApiKey { api_key_id: Uuid, raw_key: String },
+    MagicLink { email: String },
 }
 
 /// Legacy alias for backward compatibility with handlers expecting ApiKeyInfo.
@@ -154,6 +159,7 @@ async fn verify_api_key(db: &sea_orm::DatabaseConnection, token: &str) -> Result
             raw_key: token.to_string(),
         },
         role: "api_key".to_string(),
+        email: None,
     })
 }
 
@@ -198,6 +204,24 @@ async fn verify_jwt(db: &sea_orm::DatabaseConnection, token: &str, jwt_secret: &
     let token_data = decode::<JwtClaims>(token, &decoding_key, &validation)
         .map_err(|e| reject_unauthorized(&format!("Invalid JWT: {e}")))?;
 
+    // Detect magic link JWT: sub is an email address, not a UUID
+    if token_data.claims.sub.contains('@') {
+        let email = token_data.claims.sub.clone();
+        let org_id = std::env::var("MAGIC_LINK_ORG_ID")
+            .ok()
+            .and_then(|s| Uuid::parse_str(&s).ok())
+            .unwrap_or_else(Uuid::nil);
+
+        return Ok(AuthInfo {
+            organization_id: org_id,
+            api_key_id: Uuid::nil(),
+            user_id: Uuid::nil(),
+            auth_mode: AuthMode::MagicLink { email: email.clone() },
+            role: "community_member".to_string(),
+            email: Some(email),
+        });
+    }
+
     let user_id: Uuid = token_data.claims.sub
         .parse()
         .map_err(|_| reject_unauthorized("JWT sub is not a valid UUID"))?;
@@ -235,6 +259,7 @@ async fn verify_jwt(db: &sea_orm::DatabaseConnection, token: &str, jwt_secret: &
         user_id,
         auth_mode: AuthMode::Jwt { user_id },
         role,
+        email: None,
     })
 }
 
