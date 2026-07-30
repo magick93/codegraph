@@ -94,6 +94,8 @@ impl TimerService {
                             comment: Some("auto-transition by timer".to_string()),
                             entity_data: serde_json::Value::Null,
                             trigger_source: TriggerSource::Timer,
+                            session_user_id: None,
+                            session_api_key_id: None,
                         };
                         if let Err(e) = self.workflow_service.transition(ctx).await {
                             tracing::warn!("timer transition failed for entity {entity_id}: {e}");
@@ -133,6 +135,8 @@ impl TimerService {
                                     correlation_id: Uuid::new_v4(),
                                     idempotency_key: None,
                                     comment: Some(comment.to_string()),
+                                    session_user_id: None,
+                                    session_api_key_id: None,
                                 };
                                 if let Err(e) = self.workflow_service.approval_action(ctx).await {
                                     tracing::warn!(
