@@ -59,7 +59,9 @@ pub async fn get_{{ module_name }}(
         .into_iter()
         .map(|item| {{ module_name }}Response {
             {% for field in fields %}
-            {% if field.is_optional %}
+            {% if field.is_child_table %}
+            {{ field.name }}: Default::default(),
+            {% elif field.is_optional %}
             {{ field.name }}: item.{{ field.column }}.unwrap_or_default(),
             {% elif field.is_composite %}
             {{ field.name }}: Default::default(),

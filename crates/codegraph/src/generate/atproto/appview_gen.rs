@@ -23,8 +23,14 @@ struct LexiconRef {
 }
 
 #[derive(Debug, Serialize)]
+struct DomainEntry {
+    name: String,
+    rust_name: String,
+}
+
+#[derive(Debug, Serialize)]
 struct AppviewIndexContext {
-    domains: Vec<String>,
+    domains: Vec<DomainEntry>,
 }
 
 pub struct AtprotoAppviewEmitter {
@@ -100,7 +106,7 @@ impl DomainGenerator for AtprotoAppviewEmitter {
         // The index rebuild is a global file — only emit once (when domain == first domain with lexicons).
         // However DomainGenerator runs per domain, so we emit per domain and let the file system
         // overwrite. To avoid duplicates, we only emit for the first domain with lexicons.
-        let all_domains: Vec<String> = {
+        let all_domains: Vec<DomainEntry> = {
             let schemas = db
                 .list_schemas(None)
                 .await
@@ -113,7 +119,10 @@ impl DomainGenerator for AtprotoAppviewEmitter {
                     }
                 }
             }
-            domains.into_iter().collect()
+            domains.into_iter().map(|d| DomainEntry {
+                rust_name: d.replace('-', "_"),
+                name: d,
+            }).collect()
         };
 
         let index_ctx = AppviewIndexContext {
@@ -172,12 +181,12 @@ mod tests {
         let mut tera = Tera::default();
         tera.add_raw_template(
             "atproto/appview_ingestor.tera",
-            r#"use crate::atproto::firehose::{persist, FirehoseClient};{% for l in lexicons %}"{{l.nsid}}"{% endfor %}fn ingest_{{domain}}(mut firehose: FirehoseClient, db: DatabaseConnection){firehose.connect_and_consume("{{domain}}", move |event|{async move{}}).await;}"#,
+            r#"use cosmos_extensions::firehose::{persist, FirehoseClient};{% for l in lexicons %}"{{l.nsid}}"{% endfor %}fn ingest_{{domain}}(mut firehose: FirehoseClient, db: DatabaseConnection){firehose.connect_and_consume("{{domain}}", move |event|{async move{}}).await;}"#,
         )
         .unwrap();
         tera.add_raw_template(
             "atproto/appview_index.tera",
-            r#"{% for d in domains %}use crate::atproto::appview::ingest_{{d}}::ingest_{{d}};{% endfor %}use crate::atproto::firehose::FirehoseClient;"#,
+            r#"{% for d in domains %}use crate::atproto::appview::ingest_{{d.rust_name}}::ingest_{{d.rust_name}};{% endfor %}use cosmos_extensions::firehose::FirehoseClient;"#,
         )
         .unwrap();
         tera

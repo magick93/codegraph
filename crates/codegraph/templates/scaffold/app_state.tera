@@ -7,6 +7,7 @@ use sea_orm::DatabaseConnection;
 {% if project.hooks_api_crate %}use crate::hooks::HookRegistry;{% endif %}
 {% if has_atproto %}
 use crate::api::auth::atproto::AtprotoAuth;
+use cosmos_extensions::atproto_client::AtprotoClient;
 {% endif %}
 
 #[derive(Clone)]
@@ -29,7 +30,7 @@ pub struct AppState {
 
     pub atproto_auth: AtprotoAuth,
 
-    pub atproto_client: Option<crate::atproto_client::AtprotoClient>,
+    pub atproto_client: Option<AtprotoClient>,
 
 {% endif %}
 }

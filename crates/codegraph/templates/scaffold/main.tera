@@ -36,7 +36,6 @@ mod hooks;
 {% endif %}
 {% if has_atproto %}
 mod atproto;
-mod atproto_client;
 {% endif %}
 
 static START_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
@@ -293,7 +292,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             String::new()
         });
 
-    let atproto_client = crate::atproto_client::AtprotoClient::new(
+    let atproto_client = cosmos_extensions::atproto_client::AtprotoClient::new(
         &atproto_auth.pds_endpoint,
         &atproto_auth.server_did,
         Some(auth_token),

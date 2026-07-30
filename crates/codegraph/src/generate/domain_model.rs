@@ -49,7 +49,7 @@ pub struct EntityField {
     pub column: String,
     /// snake_case Rust field name: "preferred_name"
     pub rust_field: String,
-    /// Canonical Rust type: RustType::String, RustType::Option(Box::new(RustType::Uuid)), etc.
+    /// Canonical Rust type: RustType::String, RustType::Option(...), etc.
     pub rust_type: RustType,
     /// SeaORM type string: "String", "Integer", "DateTime", etc.
     pub sea_orm_type: String,
@@ -75,6 +75,10 @@ pub struct EntityField {
     pub label: String,
     /// Is this field from an allOf parent (inherited)?
     pub inherited: bool,
+    /// Is this field stored in a separate child table (array codelist / array ValueObject)?
+    pub is_child_table: bool,
+    /// Does the SeaORM Model use Option<T> for this field?
+    pub is_model_optional: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -128,6 +132,11 @@ impl RustType {
     /// True if this type represents an Option<T>.
     pub fn is_optional(&self) -> bool {
         matches!(self, RustType::Optional { .. })
+    }
+
+    /// True if this type represents a Vec<T>.
+    pub fn is_collection(&self) -> bool {
+        matches!(self, RustType::Collection { .. })
     }
 }
 
@@ -241,7 +250,11 @@ fn resolve_fields(properties: &[PropertyNode], all_of_parents: &[String]) -> Vec
             continue; // skip system fields for DTO/API context
         }
 
-        let rust_type = parse_rust_type(&prop.rust_field_type, prop.is_required);
+        let raw_type = &prop.rust_field_type;
+        let rust_type = parse_rust_type(raw_type, prop.is_required);
+
+        // Does the SeaORM model use Option<T> for this field?
+        let is_model_optional = !prop.is_required || raw_type.starts_with("Option<") || raw_type.starts_with("Nullable<");
 
         let is_fk = prop.ref_target.is_some()
             || matches!(
@@ -250,16 +263,31 @@ fn resolve_fields(properties: &[PropertyNode], all_of_parents: &[String]) -> Vec
                     | Some(codegraph_type_contracts::RefClassificationKind::CodelistReference)
             );
 
-        let inherited = all_of_parents.iter().any(|_| {
-            // Heuristic: if this property appears in multiple schemas in the
-            // inheritance chain, it's inherited. We tracked this by dedup.
-            false // simplified: if it would have been duplicate before dedup, it's inherited
-        });
+        let kind = prop.classification_kind.as_ref();
+        // Child table = field whose data isn't a direct column on the parent Model.
+        // This covers array codelists (child table), array value objects (child table),
+        // scalar value objects (child table OR expanded columns), entity references (FK),
+        // composite wrappers (expanded columns), and structured wrappers (JSONB).
+        let is_child_table = prop.is_array && matches!(
+            kind,
+            Some(codegraph_type_contracts::RefClassificationKind::CodelistReference)
+                | Some(codegraph_type_contracts::RefClassificationKind::CodelistCheck)
+                | Some(codegraph_type_contracts::RefClassificationKind::ValueObject))
+            || matches!(
+                kind,
+                Some(codegraph_type_contracts::RefClassificationKind::ValueObject)
+                    | Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
+                    | Some(codegraph_type_contracts::RefClassificationKind::CompositeWrapper)
+                    | Some(codegraph_type_contracts::RefClassificationKind::StructuredWrapper)
+                    | Some(codegraph_type_contracts::RefClassificationKind::MediaWrapper)
+                    | Some(codegraph_type_contracts::RefClassificationKind::ArrayWrapper));
+
+        let inherited = all_of_parents.iter().any(|_| false);
 
         let classification = prop
             .classification
             .clone()
-            .or_else(|| prop.classification_kind.as_ref().map(|k| format!("{:?}", k)));
+            .or_else(|| kind.map(|k| format!("{:?}", k)));
 
         fields.push(EntityField {
             name: prop.name.clone(),
@@ -273,7 +301,7 @@ fn resolve_fields(properties: &[PropertyNode], all_of_parents: &[String]) -> Vec
             is_pk: prop.pg_column_name == "id",
             is_fk,
             fk_target: prop.ref_target.clone(),
-            fk_table: None, // resolved by DDL generator
+            fk_table: None,
             classification,
             example_value: example_for_field(&prop.name, &prop.rust_field_type),
             label: prop
@@ -281,6 +309,8 @@ fn resolve_fields(properties: &[PropertyNode], all_of_parents: &[String]) -> Vec
                 .clone()
                 .unwrap_or_else(|| humanize_field_name(&prop.name)),
             inherited,
+            is_child_table,
+            is_model_optional,
         });
     }
 

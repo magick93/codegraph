@@ -2,7 +2,7 @@
 // AppView index rebuild CLI command
 
 {% for d in domains %}
-use crate::atproto::appview::ingest_{{ d }}::ingest_{{ d }};
+use crate::atproto::appview::ingest_{{ d.rust_name }}::ingest_{{ d.rust_name }};
 {% endfor %}
 use crate::atproto::firehose::FirehoseClient;
 use tracing::info;
@@ -20,7 +20,7 @@ pub async fn run_reindex(args: ReindexArgs) -> anyhow::Result<()> {
     let domains: Vec<&str> = if args.domain.is_empty() {
         vec![
 {% for d in domains %}
-            "{{ d }}",
+            "{{ d.name }}",
 {% endfor %}
         ]
     } else {
@@ -31,12 +31,12 @@ pub async fn run_reindex(args: ReindexArgs) -> anyhow::Result<()> {
         info!("Rebuilding index for domain: {}", domain);
         match domain {
 {% for d in domains %}
-            "{{ d }}" => {
+            "{{ d.name }}" => {
                 let mut firehose = FirehoseClient::new(&args.firehose_url)?;
                 if let Some(c) = args.cursor {
-                    firehose.set_cursor("{{ d }}", c);
+                    firehose.set_cursor("{{ d.name }}", c);
                 }
-                ingest_{{ d }}(firehose, db.clone()).await;
+                ingest_{{ d.rust_name }}(firehose, db.clone()).await;
             }
 {% endfor %}
             _ => info!("Unknown domain: {}", domain),

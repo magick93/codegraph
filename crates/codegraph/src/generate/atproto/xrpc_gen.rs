@@ -54,6 +54,7 @@ struct XrpcField {
     column: String,
     is_optional: bool,
     is_composite: bool,
+    is_child_table: bool,
 }
 
 fn is_simple_scalar(rust_type: &str) -> bool {
@@ -129,9 +130,11 @@ impl EntityGenerator for AtprotoXrpcEmitter {
                 name: f.name.clone(),
                 rust_type: f.rust_type.to_rust_string(),
                 column: f.rust_field.clone(),
-                is_optional: f.rust_type.is_optional(),
-                is_composite: !f.rust_type.is_optional()
+                is_optional: f.is_model_optional,
+                is_composite: !f.is_model_optional
+                    && !f.is_child_table
                     && !is_simple_scalar(f.rust_type.inner_type()),
+                is_child_table: f.is_child_table,
             })
             .collect();
 

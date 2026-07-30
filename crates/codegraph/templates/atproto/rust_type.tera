@@ -14,7 +14,7 @@ use cosmos_domain_types::identifiers::RecordKey;
 #[serde(rename_all = "camelCase")]
 pub struct {{ struct_name }} {
 {%- if is_record %}
-    #[serde(rename = "$type", default = "type_default")]
+    #[serde(rename = "$type", default = "{{ struct_name }}::type_default")]
     pub r#type: String,
 {%- endif %}
 {%- for field in fields %}
