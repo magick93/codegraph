@@ -111,18 +111,28 @@ impl DomainGenerator for AtprotoAppviewEmitter {
                 .list_schemas(None)
                 .await
                 .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-            let mut domains = std::collections::BTreeSet::new();
+            let mut domains: std::collections::BTreeMap<String, bool> = std::collections::BTreeMap::new();
             for schema in &schemas {
+                // Only entity schemas (not codelists) with lexicons
+                if !schema.is_entity || schema.is_codelist {
+                    continue;
+                }
                 if let Some(ref d) = schema.domain {
                     if !d.is_empty() {
-                        domains.insert(d.clone());
+                        let has_lex = domains.entry(d.clone()).or_insert(false);
+                        if !*has_lex {
+                            *has_lex = db.get_lexicon_by_schema(&schema.title).await.ok().flatten().is_some();
+                        }
                     }
                 }
             }
-            domains.into_iter().map(|d| DomainEntry {
-                rust_name: d.replace('-', "_"),
-                name: d,
-            }).collect()
+            domains.into_iter()
+                .filter(|(_, has_lex)| *has_lex)
+                .map(|(name, _)| DomainEntry {
+                    rust_name: name.replace('-', "_"),
+                    name,
+                })
+                .collect()
         };
 
         let index_ctx = AppviewIndexContext {

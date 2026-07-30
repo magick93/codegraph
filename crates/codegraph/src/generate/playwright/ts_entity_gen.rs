@@ -40,7 +40,7 @@ impl EntityGenerator for TsEntityGenerator {
     ) -> Result<Vec<GeneratedFile>> {
         let model = build_entity_model(db, schema_title, domain, config, &project.atproto_authority).await?;
 
-        if model.table_name.is_empty() {
+        if model.entity_module.is_empty() {
             return Ok(Vec::new());
         }
 
@@ -68,7 +68,7 @@ impl EntityGenerator for TsEntityGenerator {
             has_delete: model.operations.delete,
             has_list: model.operations.list,
             create_fields,
-            schema_name: model.table_name.clone(),
+            schema_name: model.entity_module.clone(),
         };
 
         let e2e_dir = self.output_dir.join("e2e-tests");
@@ -78,7 +78,7 @@ impl EntityGenerator for TsEntityGenerator {
 
         Ok(vec![
             GeneratedFile {
-                path: spec_dir.join(format!("{}.spec.ts", model.table_name)),
+                path: spec_dir.join(format!("{}.spec.ts", model.entity_module)),
                 content: render_template_with_project(
                     tera,
                     "playwright/ts_spec.tera",
@@ -87,7 +87,7 @@ impl EntityGenerator for TsEntityGenerator {
                 )?,
             },
             GeneratedFile {
-                path: fixture_dir.join(format!("{}.ts", model.table_name)),
+                path: fixture_dir.join(format!("{}.ts", model.entity_module)),
                 content: render_template_with_project(
                     tera,
                     "playwright/ts_fixture.tera",
@@ -96,7 +96,7 @@ impl EntityGenerator for TsEntityGenerator {
                 )?,
             },
             GeneratedFile {
-                path: api_dir.join(format!("{}.ts", model.table_name)),
+                path: api_dir.join(format!("{}.ts", model.entity_module)),
                 content: render_template_with_project(
                     tera,
                     "playwright/ts_api_client.tera",
