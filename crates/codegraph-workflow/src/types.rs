@@ -28,6 +28,10 @@ pub struct TransitionContext {
     pub entity_data: serde_json::Value,
     /// Source of the transition. Defaults to `User`.
     pub trigger_source: TriggerSource,
+    /// Session context for RLS policy evaluation.
+    pub session_user_id: Option<Uuid>,
+    /// API key ID for RLS policy evaluation (nil for JWT).
+    pub session_api_key_id: Option<Uuid>,
 }
 
 /// Current workflow state for an entity.

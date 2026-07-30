@@ -144,6 +144,8 @@ pub async fn transition(
         comment: body.comment,
         entity_data,
         trigger_source: codegraph_workflow::TriggerSource::User,
+        session_user_id: Some(api_key_info.user_id),
+        session_api_key_id: Some(api_key_info.api_key_id),
     };
     let ws = state.workflow_service.transition(ctx).await.map_err(|e| {
         use codegraph_workflow::WorkflowError;
