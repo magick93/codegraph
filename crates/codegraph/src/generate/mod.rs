@@ -584,6 +584,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(playwright::entity_gen::PlaywrightEntityGenerator::new(
             output_dir,
         )) as Box<dyn EntityGenerator>,
+        Box::new(playwright::ts_entity_gen::TsEntityGenerator::new(
+            output_dir,
+        )) as Box<dyn EntityGenerator>,
         Box::new(ui::descriptor::UiDescriptorGenerator::new(
             output_dir,
             ui_overrides.clone(),
@@ -700,6 +703,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             .with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(playwright::global_gen::PlaywrightGlobalGenerator::new(
+            output_dir,
+        )) as Box<dyn GlobalGenerator>,
+        Box::new(playwright::ts_global_gen::TsGlobalGenerator::new(
             output_dir,
         )) as Box<dyn GlobalGenerator>,
         Box::new(webhook::dispatch::WebhookDispatchGenerator::new(output_dir))

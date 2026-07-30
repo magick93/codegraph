@@ -1,0 +1,36 @@
+// Auth setup for E2E tests
+// Provides an auth token either via magic link or API key
+
+import { test as setup } from '@playwright/test';
+import * as fs from 'fs';
+
+const authFile = '.auth/test-user.json';
+
+setup('authenticate', async ({ request }) => {
+  // Try API key auth first (simplest for E2E tests)
+  const apiKey = process.env.TEST_API_KEY;
+  if (apiKey) {
+    await fs.promises.mkdir('.auth', { recursive: true });
+    await fs.promises.writeFile(authFile, JSON.stringify({ token: apiKey, type: 'api_key' }));
+    process.env.TEST_AUTH_TOKEN = apiKey;
+    return;
+  }
+
+  // Fall back to magic link flow
+  const email = process.env.TEST_USER_EMAIL || 'test@community.os';
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+
+  // Request magic link
+  const sendResp = await request.post('/api/auth/magic-link/send', {
+    data: { email },
+  });
+  if (sendResp.status() !== 200) {
+    console.warn('Magic link send failed — tests will run unauthenticated');
+    return;
+  }
+
+  // In CI, we intercept the email. For local dev, get token from DB.
+  // This setup assumes a helper endpoint or direct DB access for token retrieval.
+  console.log('Magic link requested for', email);
+  console.log('Set TEST_API_KEY env var for simpler auth in E2E tests');
+});

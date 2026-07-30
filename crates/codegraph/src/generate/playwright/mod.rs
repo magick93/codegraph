@@ -1,6 +1,8 @@
 // hr-graph/src/generate/playwright/mod.rs
 pub mod entity_gen;
 pub mod global_gen;
+pub mod ts_entity_gen;
+pub mod ts_global_gen;
 
 use serde::Serialize;
 
@@ -46,4 +48,54 @@ pub struct PlaywrightDomainSummary {
 #[derive(Debug, Serialize)]
 pub struct PlaywrightCrateContext {
     pub domains: Vec<PlaywrightDomainSummary>,
+}
+
+/// Per-entity context for TypeScript spec + fixture + API client templates.
+#[derive(Debug, Serialize)]
+pub struct TsEntityContext {
+    pub entity_name: String,
+    pub module_name: String,
+    pub domain: String,
+    pub path_segment: String,
+    pub nsid: String,
+    pub has_create: bool,
+    pub has_read: bool,
+    pub has_update: bool,
+    pub has_delete: bool,
+    pub has_list: bool,
+    pub create_fields: Vec<TsFieldDef>,
+    pub schema_name: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TsFieldDef {
+    pub name: String,
+    pub label: String,
+    pub ts_type: String,
+    pub required: bool,
+    pub example_value: String,
+}
+
+/// Per-entity summary for global generators.
+#[derive(Debug, Serialize, Clone)]
+pub struct TsEntitySummary {
+    pub module_name: String,
+    pub domain: String,
+    pub path_segment: String,
+    pub entity_name: String,
+}
+
+/// Domain grouping for TypeScript E2E tests.
+#[derive(Debug, Serialize, Clone)]
+pub struct TsDomainSummary {
+    pub name: String,
+    pub entities: Vec<TsEntitySummary>,
+}
+
+/// Global context for playwright config, auth, docker-compose.
+#[derive(Debug, Serialize)]
+pub struct TsGlobalContext {
+    pub domains: Vec<TsDomainSummary>,
+    pub project_name: String,
+    pub api_base_url: String,
 }
