@@ -34,7 +34,7 @@ test.describe('Webhook Management', () => {
     await waitForHydration(ownerPage, 'text="Edit"');
 
     // Now edit the URL
-    await ownerPage.click('text=Edit');
+    await ownerPage.click('text="Edit"');
     await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+\/edit$/, { timeout: 15000 });
     await waitForHydration(ownerPage, '[data-testid="webhook-endpoint-submit-btn"]');
     await ownerPage.waitForFunction((expected) => {
@@ -107,7 +107,7 @@ test.describe('Webhook Management', () => {
     await ownerPage.click('[data-testid="webhook-endpoint-submit-btn"]');
     await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+$/, { timeout: 15000 });
 
-    await ownerPage.click('text=Edit');
+    await ownerPage.click('text="Edit"');
     await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+\/edit$/, { timeout: 15000 });
     await waitForHydration(ownerPage, '[data-testid="webhook-endpoint-submit-btn"]');
     // Wait for loadEndpoint() to populate form fields (races with fill() otherwise)
