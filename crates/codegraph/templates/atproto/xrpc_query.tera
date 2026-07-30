@@ -42,10 +42,10 @@ pub async fn get_{{ module_name }}(
 ) -> Result<Json<{{ module_name }}Collection>, AtprotoError> {
     let limit = params.limit.unwrap_or(50).min(100);
 
-    let mut query = {{ entity_name }}Entity::find().limit(limit + 1);
+    let mut query = {{ module_name }}::Entity::find().limit(limit + 1);
     if let Some(ref cursor) = params.cursor {
         if let Ok(cursor_id) = uuid::Uuid::parse_str(cursor) {
-            query = query.filter(Column::Id.gt(cursor_id));
+            query = query.filter({{ module_name }}::Column::Id.gt(cursor_id));
         }
     }
     let items = query

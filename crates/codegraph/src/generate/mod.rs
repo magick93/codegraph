@@ -1,4 +1,5 @@
 pub mod codelist;
+pub mod domain_model;
 pub mod filter_fields;
 pub mod ifml;
 pub mod report;

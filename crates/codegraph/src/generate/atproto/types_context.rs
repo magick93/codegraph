@@ -66,11 +66,14 @@ impl TypesContext {
         let mut needs_atproto_syntax_imports = false;
         let mut seen_enum_names = std::collections::HashSet::new();
         let mut seen_field_names = std::collections::HashSet::new();
+        // Use String (not rsky_syntax types) for AT Protocol identifier fields.
+        // rsky_syntax types lack Serialize/Deserialize, which breaks generated structs.
+        // The semantic type is preserved via docs and the `needs_atproto_syntax_imports` flag.
         let atproto_field_types: std::collections::HashMap<&str, &str> = [
-            ("at_uri", "rsky_syntax::aturi::AtUri"),
-            ("did", "cosmos_domain_types::identifiers::Did"),
-            ("collection", "rsky_syntax::nsid::Nsid"),
-            ("rkey", "cosmos_domain_types::identifiers::RecordKey"),
+            ("at_uri", "String"),    // rsky_syntax::aturi::AtUri
+            ("did", "String"),       // cosmos_domain_types::identifiers::Did
+            ("collection", "String"), // rsky_syntax::nsid::Nsid
+            ("rkey", "String"),      // cosmos_domain_types::identifiers::RecordKey
         ]
         .iter()
         .cloned()
@@ -85,7 +88,6 @@ impl TypesContext {
             let (rust_type, serde_with) = if let Some(atproto_type) =
                 atproto_field_types.get(field_name.as_str())
             {
-                needs_atproto_syntax_imports = true;
                 (atproto_type.to_string(), None)
             } else {
                 let kind = prop.effective_kind();

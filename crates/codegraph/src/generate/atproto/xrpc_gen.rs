@@ -5,6 +5,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::domain_model::{build_entity_model, EntityField};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{DomainGenerator, EntityGenerator, GeneratedFile};
 use crate::generate::ProjectConfig;
@@ -106,7 +107,7 @@ impl EntityGenerator for AtprotoXrpcEmitter {
         db: &dyn GraphQuerier,
         schema_title: &str,
         domain: &str,
-        _config: &DomainConfig,
+        config: &DomainConfig,
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
@@ -119,47 +120,32 @@ impl EntityGenerator for AtprotoXrpcEmitter {
             None => return Ok(Vec::new()),
         };
 
-        let schema = match db.get_schema_in_domain(schema_title, domain).await? {
-            Some(s) => s,
-            None => return Ok(Vec::new()),
-        };
+        let model = build_entity_model(db, schema_title, domain, config, &project.atproto_authority).await?;
 
-        let entity_name = schema.rust_type_name.clone();
-        let module_name = schema.pg_table_name.clone();
-
-        let properties = db
-            .get_properties_in_domain(schema_title, domain)
-            .await
-            .unwrap_or_default();
-
-        let fields: Vec<XrpcField> = properties
+        let fields: Vec<XrpcField> = model
+            .fields
             .iter()
-            .map(|p| {
-                let is_optional = p.rust_field_type.starts_with("Option<");
-                let is_composite = !is_optional && !is_simple_scalar(&p.rust_field_type);
-                XrpcField {
-                    name: p.name.clone(),
-                    rust_type: p.rust_field_type.clone(),
-                    column: p.rust_field_name.clone(),
-                    is_optional,
-                    is_composite,
-                }
+            .map(|f| XrpcField {
+                name: f.name.clone(),
+                rust_type: f.rust_type.to_rust_string(),
+                column: f.rust_field.clone(),
+                is_optional: f.rust_type.is_optional(),
+                is_composite: !f.rust_type.is_optional()
+                    && !is_simple_scalar(f.rust_type.inner_type()),
             })
             .collect();
 
         let imports = vec![
-            format!("crate::entity::{}", module_name),
+            format!("crate::entity::{}", model.entity_module),
         ];
-
-        let mut files = Vec::new();
 
         let query_ctx = XrpcQueryContext {
             lexicon: LexiconMeta {
                 nsid: lexicon.nsid.clone(),
                 description: lexicon.description.clone().unwrap_or_default(),
             },
-            module_name: module_name.clone(),
-            entity_name: entity_name.clone(),
+            module_name: model.entity_module.clone(),
+            entity_name: model.name.clone(),
             fields,
             imports: imports.clone(),
         };
@@ -171,23 +157,23 @@ impl EntityGenerator for AtprotoXrpcEmitter {
             project,
         )?;
 
-        files.push(GeneratedFile {
+        let mut files = vec![GeneratedFile {
             path: self
                 .output_dir
                 .join("src")
                 .join("atproto")
                 .join("xrpc")
-                .join(format!("get_{}.rs", module_name)),
+                .join(format!("get_{}.rs", model.entity_module)),
             content: query_content,
-        });
+        }];
 
         let proc_ctx = XrpcProcedureContext {
             lexicon: LexiconMeta {
                 nsid: lexicon.nsid.clone(),
                 description: lexicon.description.clone().unwrap_or_default(),
             },
-            module_name: module_name.clone(),
-            entity_name,
+            module_name: model.entity_module.clone(),
+            entity_name: model.name.clone(),
             imports,
         };
 
@@ -204,7 +190,7 @@ impl EntityGenerator for AtprotoXrpcEmitter {
                 .join("src")
                 .join("atproto")
                 .join("xrpc")
-                .join(format!("create_{}.rs", module_name)),
+                .join(format!("create_{}.rs", model.entity_module)),
             content: proc_content,
         });
 
@@ -223,13 +209,19 @@ impl DomainGenerator for AtprotoXrpcEmitter {
         db: &dyn GraphQuerier,
         domain: &str,
         entity_titles: &[String],
-        _config: &DomainConfig,
+        config: &DomainConfig,
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         if project.atproto_authority.is_empty() {
             return Ok(Vec::new());
         }
+
+        let pg_schema = config
+            .domains
+            .get(domain)
+            .map(|d| d.postgres_schema.clone())
+            .unwrap_or_else(|| domain.to_string());
 
         let mut endpoints = Vec::new();
         let mut procedures = Vec::new();
@@ -245,19 +237,19 @@ impl DomainGenerator for AtprotoXrpcEmitter {
                 _ => continue,
             };
 
-            let module_name = schema.pg_table_name.clone();
+            let entity_module = format!("{}_{}", pg_schema, schema.pg_table_name);
 
             if lexicon.lex_type == "record" || lexicon.lex_type == "query" {
                 endpoints.push(RouterEndpoint {
                     nsid: lexicon.nsid.clone(),
-                    module_name: module_name.clone(),
+                    module_name: entity_module.clone(),
                 });
             }
 
             if lexicon.lex_type == "procedure" {
                 procedures.push(RouterEndpoint {
                     nsid: lexicon.nsid.clone(),
-                    module_name: module_name.clone(),
+                    module_name: entity_module.clone(),
                 });
             }
         }

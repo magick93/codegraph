@@ -52,7 +52,7 @@ pub async fn create_{{ module_name }}(
         (response.uri, response.cid)
     } else {
         let rkey = uuid::Uuid::new_v4().to_string();
-        let uri = format!("at://{}/{}/{}", state.did.clone().unwrap_or_default(), "{{ lexicon.nsid }}", rkey);
+        let uri = format!("at://{}/{}/{}", state.atproto_auth.server_did, "{{ lexicon.nsid }}", rkey);
         (uri, String::new())
     };
 
