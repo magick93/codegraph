@@ -9,17 +9,21 @@ const authToken = process.env.TEST_AUTH_TOKEN || '';
 {% if has_create %}
 test.describe('{{ entity_name }} — Create', () => {
   test('POST /api/{{ domain }}/{{ path_segment }} creates a {{ entity_name }}', async ({ request }) => {
-    const data = {{ entity_name }}Fixture.valid();
+    const payload = {{ entity_name }}Fixture.valid();
     const response = await request.post('/api/{{ domain }}/{{ path_segment }}', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
-      data,
+      data: payload,
     });
     expect(response.status()).toBe(201);
-    const body = await response.json();
-    expect(body).toHaveProperty('id');
+    const { data } = await response.json();
+    expect(data).toHaveProperty('id');
 {% for field in create_fields %}
 {% if field.required %}
-    expect(body.{{ field.name }}).toBe(data.{{ field.name }});
+{% if field.ts_type is containing("[]") or field.ts_type is containing("any") %}
+    expect(data.{{ field.name }}).toEqual(payload.{{ field.name }});
+{% else %}
+    expect(data.{{ field.name }}).toBe(payload.{{ field.name }});
+{% endif %}
 {% endif %}
 {% endfor %}
   });
@@ -30,14 +34,16 @@ test.describe('{{ entity_name }} — Create', () => {
     expect(response.status()).toBe(401);
   });
 
-  test('POST with missing required fields rejects with 400', async ({ request }) => {
+{% if has_required_fields %}
+  test('POST with missing required fields rejects with 422', async ({ request }) => {
     const data = {{ entity_name }}Fixture.missingRequired();
     const response = await request.post('/api/{{ domain }}/{{ path_segment }}', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
       data,
     });
-    expect(response.status()).toBe(400);
+    expect(response.status()).toBe(422);
   });
+{% endif %}
 });
 {% endif %}
 
@@ -70,7 +76,8 @@ test.describe('{{ entity_name }} — Delete', () => {
       data: {{ entity_name }}Fixture.valid(),
     });
     expect(created.status()).toBe(201);
-    const { id } = await created.json();
+    const { data } = await created.json();
+    const id = data.id;
 
     const response = await request.delete(`/api/{{ domain }}/{{ path_segment }}/${id}`, {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
@@ -87,8 +94,8 @@ test.describe('{{ entity_name }} — Delete', () => {
 
 {% if has_list %}
 test.describe('{{ entity_name }} — Pagination', () => {
-  test('list supports limit and offset', async ({ request }) => {
-    const response = await request.get('/api/{{ domain }}/{{ path_segment }}?limit=5&offset=0', {
+  test('list supports page_size', async ({ request }) => {
+    const response = await request.get('/api/{{ domain }}/{{ path_segment }}?page=0&page_size=5', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
     expect(response.status()).toBe(200);

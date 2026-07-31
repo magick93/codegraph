@@ -373,6 +373,10 @@ fn vec_array_type_and_ctor(rust_type: &str) -> (&'static str, &'static str) {
             "sea_orm::sea_query::ArrayType::Bool",
             "sea_orm::Value::Bool(Some(s))",
         ),
+        "serde_json::Value" => (
+            "sea_orm::sea_query::ArrayType::Json",
+            "sea_orm::Value::Json(Some(Box::new(s)))",
+        ),
         _ => (
             "sea_orm::sea_query::ArrayType::String",
             "sea_orm::Value::String(Some(Box::new(s.to_string())))",

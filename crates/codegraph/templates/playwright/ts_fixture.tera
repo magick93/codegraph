@@ -19,7 +19,7 @@ export class {{ entity_name }}Fixture {
   }
 
   static missingRequired(): Record<string, unknown> {
-    // Returns an empty object — missing all required fields, guaranteed 400
+    // Returns an empty object — missing all required fields, guaranteed 422
     return {};
   }
 

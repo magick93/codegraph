@@ -64,7 +64,19 @@ pub struct TsEntityContext {
     pub has_delete: bool,
     pub has_list: bool,
     pub create_fields: Vec<TsFieldDef>,
+    /// True when at least one create field is required (gates the
+    /// missing-required-fields test in ts_spec.tera).
+    pub has_required_fields: bool,
     pub schema_name: String,
+    /// Whether this entity has full-text search (search.fts_* config).
+    pub has_fts: bool,
+    /// camelCase create-DTO field used to seed FTS search terms.
+    pub fts_search_field: String,
+    /// True when `fts_search_field` is a required create field.
+    pub fts_search_field_required: bool,
+    /// camelCase create-DTO field of a secondary (D-weight) search column,
+    /// usable in a create payload. Empty when no such column exists.
+    pub fts_secondary_field: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
