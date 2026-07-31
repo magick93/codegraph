@@ -26,6 +26,10 @@ pub struct ScaffoldContext {
     pub has_reports: bool,
     pub has_grpc: bool,
     pub has_atproto: bool,
+    /// Whether the cli/ sub-crate is generated (drives the [workspace] section).
+    pub has_cli: bool,
+    /// Whether the `test` generator is active (drives the [[test]] sections).
+    pub has_test_gen: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,16 +53,28 @@ pub struct ScaffoldGenerator {
     has_reports: bool,
     has_grpc: bool,
     has_atproto: bool,
+    has_cli: bool,
+    has_test_gen: bool,
 }
 
 impl ScaffoldGenerator {
-    pub fn new(output_dir: &Path, has_webhooks: bool, has_reports: bool, has_grpc: bool, has_atproto: bool) -> Self {
+    pub fn new(
+        output_dir: &Path,
+        has_webhooks: bool,
+        has_reports: bool,
+        has_grpc: bool,
+        has_atproto: bool,
+        has_cli: bool,
+        has_test_gen: bool,
+    ) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
             has_webhooks,
             has_reports,
             has_grpc,
             has_atproto,
+            has_cli,
+            has_test_gen,
         }
     }
 }
@@ -158,6 +174,8 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_reports: self.has_reports,
             has_grpc: self.has_grpc,
             has_atproto: self.has_atproto,
+            has_cli: self.has_cli,
+            has_test_gen: self.has_test_gen,
         };
 
         let mut files = Vec::new();

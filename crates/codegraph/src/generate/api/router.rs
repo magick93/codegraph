@@ -54,6 +54,8 @@ pub struct RouterEntity {
     pub has_workflow: bool,
     pub has_approval_status: bool,
     pub has_embeddings: bool,
+    /// Whether this entity has full-text search enabled.
+    pub has_fts: bool,
     pub role: String,
     /// Named path parameter for this entity's ID (e.g. `"worker_id"`).
     pub param_name: String,
@@ -197,6 +199,12 @@ impl DomainGenerator for RouterGenerator {
                         .map(|ec| !ec.search.embedding_columns.is_empty())
                         .unwrap_or(false);
 
+                    let search = entity_cfg.map(|ec| &ec.search);
+                    let has_fts = search
+                        .and_then(|s| s.fts_columns.as_ref())
+                        .map(|cols| !cols.is_empty())
+                        .unwrap_or(false);
+
                     let media_fields: Vec<String> = db
                         .get_properties(title)
                         .await
@@ -223,6 +231,7 @@ impl DomainGenerator for RouterGenerator {
                         has_workflow,
                         has_approval_status,
                         has_embeddings,
+                        has_fts,
                         role: entity_cfg
                             .and_then(|ec| ec.role.clone())
                             .unwrap_or_else(|| "root".into()),

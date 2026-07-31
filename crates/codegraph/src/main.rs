@@ -284,6 +284,9 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("integer_scaled")
                 .to_string(),
+            cargo_patch: String::new(),
+            extra_dependencies: String::new(),
+            cargo_workspace: false,
         });
 
         println!(

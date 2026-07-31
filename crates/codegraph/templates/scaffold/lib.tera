@@ -9,6 +9,9 @@ pub mod entity;
 pub mod error;
 pub mod integrations;
 pub mod middleware;
+{% if has_atproto %}
+pub mod atproto;
+{% endif %}
 {% if project.hooks_api_crate %}
 pub mod hooks;
 {% endif %}

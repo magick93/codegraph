@@ -153,11 +153,12 @@ impl DomainEntry {
                 }
             })
             .or_else(|| {
-                // Fallback: match config keys whose normalized form (hyphens removed)
-                // equals the input name. Handles LER-RSType → LERRS.
-                let normalized = name.replace('-', "");
+                // Fallback: match config keys whose normalized form (hyphens and
+                // whitespace removed) equals the input name. Handles LER-RSType → LERRS
+                // and "Volunteer Profile Type" → VolunteerProfileType.
+                let normalized = name.replace(['-', ' ', '\t'], "");
                 self.entity_config.iter().find_map(|(key, cfg)| {
-                    let key_normalized = key.replace('-', "");
+                    let key_normalized = key.replace(['-', ' ', '\t'], "");
                     if key_normalized == normalized
                         || key_normalized == format!("{}Type", normalized)
                     {

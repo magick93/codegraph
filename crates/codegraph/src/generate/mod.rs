@@ -216,6 +216,20 @@ pub struct ProjectConfig {
     /// AT Protocol float policy: what to do with JSON Schema "number" types.
     /// "reject", "string", "integer_scaled", or "unknown"
     pub atproto_float_policy: String,
+    /// Raw `[patch.'https://github.com/magick93/codegraph.git']` entries emitted
+    /// into the generated Cargo.toml (dev environments pin the local codegraph
+    /// checkout via path overrides). Empty string = no patch section.
+    #[serde(default)]
+    pub cargo_patch: String,
+    /// Raw extra lines appended to the generated Cargo.toml [dependencies]
+    /// section (e.g. `url = "2"` or local path deps).
+    #[serde(default)]
+    pub extra_dependencies: String,
+    /// Whether the generated Cargo.toml declares a `[workspace]` with a `cli/`
+    /// member (hand-maintained CLI crates that are not emitted by the
+    /// `cli_scaffold` generator). Defaults to false.
+    #[serde(default)]
+    pub cargo_workspace: bool,
 }
 
 impl Default for ProjectConfig {
@@ -240,6 +254,9 @@ impl Default for ProjectConfig {
             atproto_authority: String::new(),
             atproto_tenancy: "shared_pds".to_string(),
             atproto_float_policy: "integer_scaled".to_string(),
+            cargo_patch: String::new(),
+            extra_dependencies: String::new(),
+            cargo_workspace: false,
         }
     }
 }
@@ -468,6 +485,19 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let has_grpc = build_plan
         .map(|bp| bp.has_global_gen("grpc_scaffold"))
         .unwrap_or(false);
+    // Whether the cli/ sub-crate is generated. Legacy (no build plan) runs
+    // execute every generator, so it defaults to true.
+    let has_cli = build_plan
+        .map(|bp| {
+            bp.has_global_gen("cli_scaffold")
+                || bp.has_entity_gen("cli_command")
+                || bp.has_domain_gen("cli_domain")
+        })
+        .unwrap_or(true);
+    // Whether the entity `test` generator is active (Rust tests/ tree).
+    let has_test_gen = build_plan
+        .map(|bp| bp.has_entity_gen("test"))
+        .unwrap_or(true);
 
     let order = compute_generation_order(db, config).await?;
     let mut report = report::GenerationReport::new();
@@ -672,6 +702,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             has_reports,
             has_grpc,
             has_atproto,
+            has_cli,
+            has_test_gen,
         )) as Box<dyn GlobalGenerator>,
         Box::new(ui::scaffold::UiScaffoldGenerator::new(
             output_dir,
