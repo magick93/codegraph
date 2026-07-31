@@ -513,3 +513,171 @@ Generators select the template directory based on the dialect. The existing
 - New DB generators (or modifications to existing ones) must use the `SqlDialect` trait (see `crates/codegraph/src/generate/db/dialect.rs`) for type mapping and feature gating instead of hardcoding PostgreSQL types.
 - When adding new template files for a dialect, place them in `templates/db/<dialect>/` and the generator selects the right template path based on `database_target`.
 - The `project.database_target` variable is available in all Tera templates via `ProjectConfig`.
+
+## Cross-Domain Schema Deduplication
+
+### Problem
+
+When a JSON schema type exists in multiple domains via `allOf` extension
+(e.g., `PositionType` in `common/` and `screening/`), the ingestion step
+flattens allOf properties onto the extension schema. Both Schema nodes
+then share copies of the same properties. The graph querier's
+`get_properties(title)` returns properties from ALL Schema nodes with that
+title, producing duplicates.
+
+This causes:
+- Duplicate FK constraints and COMMENT blocks in DDL migrations (3×+)
+- Duplicate migration files (one per domain for the same entity)
+- Missing child tables when the allOf chain involves entity-like VO types
+
+### Fixed in commits `3305f8b` → `3e82ec6`
+
+Three fixes work together:
+
+1. **`querier.rs:640`** — Call `root.dedup_fields()` on the composition tree
+   root in `get_composition_tree()`. Removes duplicate columns and children
+   at the source.
+
+2. **`ddl.rs:1210-1220`** — ForeignKey and ColumnComment deduplication in
+   `query_ddl_context()`. FKs deduped by `column_name`, comments by `column`.
+
+3. **`mod.rs:1035-1078`** — `seen_titles` HashSet in `compute_generation_order()`
+   tracks entity titles across domains. A title assigned to a higher-priority
+   domain is skipped in subsequent domains.
+
+### `dedup_fields()` — Critical regression risk
+
+**File**: `crates/codegraph-core/src/types/composition.rs:126-135`
+
+The `dedup_fields()` method MUST use **independent HashSets** per category
+(columns, jsonb_columns, children). A shared set would silently remove child
+`CompositionNode`s when a column and child share the same `field_name`.
+
+This happens with VO→entity allOf patterns (commit `33240aa`), where
+`build_composition_node()` pushes both an FK column and a child node for
+the same property. With a shared HashSet, the column (processed first)
+blocks the child from being retained.
+
+Fixed in commit `3e82ec6` (independent HashSets per category).
+
+## SeaORM JSONB INSERT Workaround
+
+### Problem
+
+`Statement::from_sql_and_values()` with parameterized binding silently drops
+JSONB column values on INSERT. Returns `Ok(rows_affected=1)` but the row
+either isn't persisted or has NULL/empty JSONB columns. UUID and TEXT
+columns are unaffected.
+
+### Workaround
+
+Use `Statement::from_string()` with inline formatted SQL. The pattern:
+
+```rust
+let json_val = serde_json::to_string(&value)
+    .unwrap_or_default()
+    .replace('\'', "''");
+let sql = format!(
+    "INSERT INTO platform.webhook_endpoint (..., headers) VALUES (..., '{}'::jsonb, ...)",
+    json_val
+);
+db.execute(Statement::from_string(DatabaseBackend::Postgres, sql)).await?;
+```
+
+### Affected templates
+
+| Template | INSERTs needing workaround |
+|----------|---------------------------|
+| `templates/webhook/api_endpoints.tera` | `create_endpoint`, `create_subscription` |
+| `templates/webhook/dispatch.tera` | Delivery creation (already has workaround) |
+
+### Known issue
+
+`issue-01.md` in the hr-specs repo documents this as a general sea_orm bug.
+The workaround is SQL-injection-prone (string values must manually escape
+single quotes). A proper fix would replace sea_orm's `DatabaseConnection`
+with a direct `sqlx::PgPool` for dispatch workers.
+
+## Webhook E2E Test Patterns
+
+### Playwright selector best practices
+
+Generated E2E tests use Playwright locators. Several patterns cause flaky
+failures due to substring matching:
+
+| Problem | Bad | Good |
+|---------|-----|------|
+| Text matches URLs and nav | `getByText('Webhooks')` | `getByRole('heading', { name: 'Webhooks' })` |
+| Text matches description text | `click('text=Edit')` | `click('text="Edit"')` (exact match) |
+| Multi-element strict mode | `getByText('Failed')` | `getByText('Failed').first()` |
+
+`getByText()` and `text=` are **substring** matchers. They match nav links,
+endpoint URLs containing the search string, and description text. Use
+`getByRole()` for unique elements, exact text quotes for buttons, and
+`.first()` for delivery logs that accumulate entries from parallel tests.
+
+### Webhook delivery test flakiness
+
+The "retries failed delivery" test was flaky for two reasons:
+
+1. **Broad subscription** (`event_entity: null, event_type: null`) matched
+   all timecard events from ALL parallel tests, accumulating 42+ delivery
+   records. Fixed by narrowing to `event_entity: 'timecard', event_type: 'created'`.
+
+2. **Multi-element strict mode** — 42 delivery log badges all matched
+   `getByText('Failed')`. Fixed with `.first()`.
+
+### Template files
+
+| Template | Purpose |
+|----------|---------|
+| `templates/ui/test/webhooks_crud.test.tera` | CRUD E2E tests |
+| `templates/ui/test/webhooks_delivery.test.tera` | Delivery E2E tests |
+| `templates/ui/test/webhooks_advanced.test.tera` | Advanced E2E tests (not wired into generator) |
+| `templates/ui/scaffold/settings_webhooks.tera` | SvelteKit list page |
+| `templates/ui/scaffold/settings_webhook_detail.tera` | SvelteKit detail page |
+| `templates/ui/scaffold/settings_webhook_form.tera` | SvelteKit create/edit form |
+
+### Svelte page `data-testid` requirement
+
+The webhook form template MUST include `data-testid="webhook-endpoint-submit-btn"`
+on the submit button. Tests wait for hydration of this selector before
+interacting with the form. If the attribute is missing (from an outdated
+template), all form-submit tests fail with `waitForURL` timeouts.
+
+## DDL Code Generation Architecture
+
+### Composition tree flow
+
+```
+JSON Schema → Classifier → Graph Nodes → CompositionTree → DDL Context → Templates → SQL
+```
+
+Key files:
+
+| File | Role |
+|------|------|
+| `crates/codegraph-classifier/src/classify.rs` | Classification: ValueObject vs StructuredWrapper vs Entity vs Codelist |
+| `crates/codegraph-core/src/types/composition.rs` | `CompositionNode`, `CompositionTree`, `dedup_fields()` |
+| `crates/codegraph-grafeo/src/querier.rs` | `build_composition_node()`, `get_composition_tree()`, `get_properties()` |
+| `crates/codegraph/src/generate/db/ddl.rs` | `query_ddl_context()`, `column_info_to_ddl()`, `composition_node_to_child_table()`, FK/Comment dedup |
+| `crates/codegraph/src/generate/mod.rs` | `compute_generation_order()`, domain-level entity dedup |
+| `crates/codegraph/templates/db/table.tera` | PostgreSQL DDL template with child table rendering |
+
+### How structured fields become child tables
+
+1. Classifier assigns `ValueObject` classification (or explicit `force_value_objects`)
+2. `build_composition_node()` creates a `CompositionNode` child for the VO property
+3. `composition_node_to_child_table()` converts child → `ChildTableDef`
+   with table name `{parent_table}_{field_name}`
+4. `flatten_child_tables()` recursively flattens tree, skipping duplicates by name
+5. `table.tera` renders `{% for child in child_tables %}` creating separate DDL tables
+
+### AllOf → VO→entity extender pattern
+
+When a ValueObject type extends an entity via allOf (e.g., `RemoteWorkType` allOf
+→ `RemoteWork` entity), `build_composition_node()` pushes BOTH an FK column
+(`remote_work_id UUID`) AND a child CompositionNode. The entity generator
+correctly produces both outputs. The DDL generator must also produce both
+(FK column + child table). `dedup_fields()` with independent HashSets
+preserves both.
