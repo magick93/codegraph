@@ -634,9 +634,10 @@ impl GraphQuerier for GrafeoEngine {
         schema_title: &str,
     ) -> Result<CompositionTree, GraphError> {
         let mut visited = std::collections::HashSet::new();
-        let root = self
+        let mut root = self
             .build_composition_node(schema_title, schema_title, None, false, &mut visited, 0)
             .await?;
+        root.dedup_fields();
         Ok(CompositionTree { root })
     }
 
