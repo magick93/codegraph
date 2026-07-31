@@ -12,7 +12,7 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "cosmos"
+name = "{{ project.lib_name }}"
 path = "src/lib.rs"
 
 {% if has_test_gen %}

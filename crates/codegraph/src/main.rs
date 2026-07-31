@@ -261,6 +261,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         let database_target_str = plan.database_target().to_string();
         project_config = Some(ProjectConfig {
             app_name: meta.app_name.clone().unwrap_or_else(|| "app".into()),
+            lib_name: "cosmos".into(),
             domain_types_crate: meta.domain_types_crate.clone().unwrap_or_else(|| "domain_types".into()),
             hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_default(),
             api_title: meta.api_title.clone().unwrap_or_else(|| "HR Open API".into()),

@@ -180,6 +180,10 @@ use self::traits::{DomainGenerator, EntityGenerator, GeneratedFile, GlobalGenera
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProjectConfig {
     pub app_name: String,
+    /// Rust crate name of the generated library (the `[lib] name` in the
+    /// generated Cargo.toml). Test templates reference the crate by this name.
+    #[serde(default)]
+    pub lib_name: String,
     pub domain_types_crate: String,
     pub hooks_api_crate: String,
     pub api_title: String,
@@ -236,6 +240,7 @@ impl Default for ProjectConfig {
     fn default() -> Self {
         Self {
             app_name: "app".into(),
+            lib_name: "cosmos".into(),
             domain_types_crate: "domain_types".into(),
             hooks_api_crate: String::new(),
             api_title: "HR Open API".into(),
