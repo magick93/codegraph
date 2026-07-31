@@ -1,0 +1,37 @@
+{%- import "atproto/lexicon_macros.tera" as macros -%}
+{
+  "lexicon": 1,
+  "id": "{{ lexicon.nsid }}",
+  "revision": {{ lexicon.revision | default(value=1) }},
+  "description": "{{ lexicon.description }}",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "{{ macros::render_key_strategy(ks=lexicon.key_strategy) }}",
+      "record": {
+        "type": "object",
+{%- if record.description %}
+        "description": "{{ record.description }}",
+{%- endif %}
+        "required": [{% for f in record.required_fields %}"{{ f }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+        "properties": {
+{%- for prop in record.properties %}
+          "{{ prop.name }}": { {{ macros::render_lexicon_type(type=prop.type) }} }{% if not loop.last %},{% endif %}
+{%- endfor %}
+        }
+      }
+    }{% for def in defs %},
+    "{{ def.name }}": {
+      "type": "object",
+{%- if def.description %}
+      "description": "{{ def.description }}",
+{%- endif %}
+      "required": [{% for f in def.required_fields %}"{{ f }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+      "properties": {
+{%- for prop in def.properties %}
+        "{{ prop.name }}": { {{ macros::render_lexicon_type(type=prop.type) }} }{% if not loop.last %},{% endif %}
+{%- endfor %}
+      }
+    }{% endfor %}
+  }
+}

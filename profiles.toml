@@ -26,6 +26,9 @@ validation_level = "strict"
 offline_mode = false
 ifml_backend = true
 grpc_backend = true
+atproto_backend = false
+atproto_tenancy = "shared_pds"
+atproto_float_policy = "integer_scaled"
 
 [profiles.default.api]
 generators = [
@@ -42,6 +45,9 @@ generators = [
     "webhook_dispatch", "webhook_endpoint_api",
     # gRPC
     "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",
+    # AT Protocol (enable with atproto_backend = true)
+    # "lexicon", "lexicon_scaffold", "atproto_types", "atproto_client",
+    # "atproto_appview", "atproto_xrpc", "atproto_identity",
 ]
 output = "review/generated-candidate/"
 scripts.post_gen = ["echo post-gen check skipped"]

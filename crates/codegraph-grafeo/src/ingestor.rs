@@ -2,9 +2,10 @@ use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    ActionNode, CodeList, CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties,
-    EdgeType, EnumValue, EventNode, IngestStats, ParameterDefinitionNode, PropertyNode,
-    SchemaNode, ViewComponentNode, ViewContainerNode,
+    ActionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, DataBindingNode,
+    EdgeProperties, EdgeType, EnumValue, EventNode, IngestStats, LexiconNode, NamespaceNode,
+    ParameterDefinitionNode, PropertyNode, RepositoryNode, SchemaNode, ViewComponentNode,
+    ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -364,6 +365,11 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::HasModuleDefinition => "HasModuleDefinition",
             EdgeType::HasViewComponentPart => "HasViewComponentPart",
             EdgeType::HasConditionalExpr => "HasConditionalExpr",
+            EdgeType::InNamespace => "InNamespace",
+            EdgeType::ProjectsToLexicon => "ProjectsToLexicon",
+            EdgeType::DefinesCollection => "DefinesCollection",
+            EdgeType::LexiconReferences => "LexiconReferences",
+            EdgeType::StoredInRepository => "StoredInRepository",
         };
 
         let match_clause = match &edge_type {
@@ -589,6 +595,41 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(to_id),
                 )
             }
+            EdgeType::InNamespace => {
+                format!(
+                    "MATCH (a:Lexicon {{nsid: '{}'}}), (b:Namespace {{authority: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::ProjectsToLexicon => {
+                format!(
+                    "MATCH (a:Schema {{title: '{}'}}), (b:Lexicon {{nsid: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::DefinesCollection => {
+                format!(
+                    "MATCH (a:Lexicon {{nsid: '{}'}}), (b:Collection {{nsid: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::LexiconReferences => {
+                format!(
+                    "MATCH (a:Lexicon {{nsid: '{}'}}), (b:Lexicon {{nsid: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::StoredInRepository => {
+                format!(
+                    "MATCH (a:Collection {{nsid: '{}'}}), (b:Repository {{did: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
         };
 
         let props_str = build_edge_props_string(props);
@@ -721,6 +762,73 @@ impl GraphIngestor for GrafeoEngine {
         Ok(id)
     }
 
+    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let gql = format!(
+            "INSERT (:Namespace {{ authority: '{}', segment: '{}', domain: '{}' }})",
+            escape_gql(&node.authority),
+            escape_gql(&node.segment),
+            escape_gql(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_namespace failed: {e}")))?;
+        Ok(node.authority.clone())
+    }
+
+    async fn ingest_lexicon(&self, node: &LexiconNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let revision_val = match &node.revision {
+            Some(v) => v.to_string(),
+            None => "null".to_string(),
+        };
+        let gql = format!(
+            "INSERT (:Lexicon {{ nsid: '{}', lex_type: '{}', key_strategy: '{}', \
+             revision: {}, description: {}, domain: '{}' }})",
+            escape_gql(&node.nsid),
+            escape_gql(&node.lex_type),
+            escape_gql(&node.key_strategy),
+            revision_val,
+            opt_str(&node.description),
+            escape_gql(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_lexicon failed: {e}")))?;
+        Ok(node.nsid.clone())
+    }
+
+    async fn ingest_collection(&self, node: &CollectionNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let gql = format!(
+            "INSERT (:Collection {{ nsid: '{}', key_strategy: '{}', domain: '{}' }})",
+            escape_gql(&node.nsid),
+            escape_gql(&node.key_strategy),
+            escape_gql(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_collection failed: {e}")))?;
+        Ok(node.nsid.clone())
+    }
+
+    async fn ingest_repository(&self, node: &RepositoryNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let gql = format!(
+            "INSERT (:Repository {{ did: '{}', handle: {}, pds_endpoint: '{}', \
+             org_name: '{}', tenancy_mode: '{}' }})",
+            escape_gql(&node.did),
+            opt_str(&node.handle),
+            escape_gql(&node.pds_endpoint),
+            escape_gql(&node.org_name),
+            escape_gql(&node.tenancy_mode),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_repository failed: {e}")))?;
+        Ok(node.did.clone())
+    }
+
     async fn finalize(&self) -> Result<IngestStats, GraphError> {
         Ok(IngestStats {
             schema_count: count_from_gql(self, "MATCH (s:Schema) RETURN count(s) AS cnt")?,
@@ -747,6 +855,22 @@ impl GraphIngestor for GrafeoEngine {
             ifml_node_count: count_from_gql(
                 self,
                 "MATCH (n) WHERE n:ViewContainer OR n:ViewComponent OR n:Event OR n:ActionNode OR n:ParameterDefinition OR n:DataBinding RETURN count(n) AS cnt",
+            )?,
+            lexicons_ingested: count_from_gql(
+                self,
+                "MATCH (l:Lexicon) RETURN count(l) AS cnt",
+            )?,
+            collections_ingested: count_from_gql(
+                self,
+                "MATCH (c:Collection) RETURN count(c) AS cnt",
+            )?,
+            namespaces_ingested: count_from_gql(
+                self,
+                "MATCH (n:Namespace) RETURN count(n) AS cnt",
+            )?,
+            repositories_ingested: count_from_gql(
+                self,
+                "MATCH (r:Repository) RETURN count(r) AS cnt",
             )?,
             duration: self.start_time().elapsed(),
         })

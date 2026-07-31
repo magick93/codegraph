@@ -1,0 +1,25 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/multikey/v1"
+  ],
+  "id": "did:web:{{ host }}",
+  "alsoKnownAs": [
+    "at://{{ host }}"
+  ],
+  "verificationMethod": [
+    {
+      "id": "#atproto",
+      "type": "Multikey",
+      "controller": "did:web:{{ host }}",
+      "publicKeyMultibase": "{{ signing_key }}"
+    }
+  ],
+  "service": [
+    {
+      "id": "#atproto_pds",
+      "type": "AtprotoPersonalDataServer",
+      "serviceEndpoint": "{{ pds_url }}"
+    }
+  ]
+}

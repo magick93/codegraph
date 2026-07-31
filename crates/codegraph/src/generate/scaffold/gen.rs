@@ -25,6 +25,7 @@ pub struct ScaffoldContext {
     pub has_webhooks: bool,
     pub has_reports: bool,
     pub has_grpc: bool,
+    pub has_atproto: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,15 +48,17 @@ pub struct ScaffoldGenerator {
     has_webhooks: bool,
     has_reports: bool,
     has_grpc: bool,
+    has_atproto: bool,
 }
 
 impl ScaffoldGenerator {
-    pub fn new(output_dir: &Path, has_webhooks: bool, has_reports: bool, has_grpc: bool) -> Self {
+    pub fn new(output_dir: &Path, has_webhooks: bool, has_reports: bool, has_grpc: bool, has_atproto: bool) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
             has_webhooks,
             has_reports,
             has_grpc,
+            has_atproto,
         }
     }
 }
@@ -153,6 +156,7 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_webhooks: self.has_webhooks,
             has_reports: self.has_reports,
             has_grpc: self.has_grpc,
+            has_atproto: self.has_atproto,
         };
 
         let mut files = Vec::new();

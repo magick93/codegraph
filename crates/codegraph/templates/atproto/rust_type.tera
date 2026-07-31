@@ -1,0 +1,36 @@
+/// {{ description | default(value=struct_name) }}
+///
+/// Generated from AT Protocol lexicon: {{ nsid }}
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct {{ struct_name }} {
+{%- if is_record %}
+    #[serde(rename = "$type", default = "type_default")]
+    pub r#type: String,
+{%- endif %}
+{%- for field in fields %}
+{%- if field.doc %}
+    /// {{ field.doc }}
+{%- endif %}
+{%- if field.serde_attr %}
+    {{ field.serde_attr }}
+{%- endif %}
+{%- if field.has_serde_with %}
+    #[serde(with = "{{ field.serde_with }}")]
+{%- endif %}
+    pub {{ field.field_name }}: {%- if field.is_option %} Option<{{ field.rust_type }}>{%- else %} {{ field.rust_type }}{%- endif %},
+{%- endfor %}
+}
+
+{% if needs_blob_ref %}
+/// A reference to a blob stored in the repository.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BlobRef {
+    #[serde(rename = "$type")]
+    pub r#type: String,
+    pub r#ref: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    pub size: i64,
+}
+{% endif %}

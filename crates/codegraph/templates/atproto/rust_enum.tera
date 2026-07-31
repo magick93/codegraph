@@ -1,0 +1,14 @@
+/// {{ description | default(value=enum_name) }}
+///
+/// Generated from AT Protocol lexicon codelist.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum {{ enum_name }} {
+{%- for variant in variants %}
+{%- if variant.rename %}
+    #[serde(rename = "{{ variant.rename }}")]
+{%- endif %}
+    /// {{ variant.display }}
+    {{ variant.name }},
+{%- endfor %}
+}

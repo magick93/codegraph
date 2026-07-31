@@ -13,5 +13,9 @@ pub struct IngestStats {
     pub composite_range_count: usize,
     pub domain_count: usize,
     pub ifml_node_count: usize,
+    pub lexicons_ingested: usize,
+    pub collections_ingested: usize,
+    pub namespaces_ingested: usize,
+    pub repositories_ingested: usize,
     pub duration: Duration,
 }

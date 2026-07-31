@@ -13,6 +13,7 @@ members = [
     "crates/codegraph-workflow",
     "crates/codegraph-ifml-dsl",
     "crates/ast-ifml",
+    "gravy-atproto",
 ]
 
 [workspace.package]

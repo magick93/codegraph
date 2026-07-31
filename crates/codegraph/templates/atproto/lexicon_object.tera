@@ -1,0 +1,21 @@
+{%- import "atproto/lexicon_macros.tera" as macros -%}
+{
+  "lexicon": 1,
+  "id": "{{ lexicon.nsid }}",
+  "revision": {{ lexicon.revision | default(value=1) }},
+  "description": "{{ lexicon.description }}",
+  "defs": {
+    "main": {
+      "type": "object",
+{%- if object.description %}
+      "description": "{{ object.description }}",
+{%- endif %}
+      "required": [{% for f in object.required_fields %}"{{ f }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+      "properties": {
+{%- for prop in object.properties %}
+        "{{ prop.name }}": { {{ macros::render_lexicon_type(type=prop.type) }} }{% if not loop.last %},{% endif %}
+{%- endfor %}
+      }
+    }
+  }
+}

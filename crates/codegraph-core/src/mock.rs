@@ -26,6 +26,12 @@ pub struct MockEngine {
     action_nodes: Mutex<HashMap<String, ActionNode>>,
     parameter_definitions: Mutex<HashMap<String, ParameterDefinitionNode>>,
     data_bindings: Mutex<HashMap<String, DataBindingNode>>,
+    namespaces: Mutex<HashMap<String, NamespaceNode>>,
+    lexicons: Mutex<HashMap<String, LexiconNode>>,
+    collections: Mutex<HashMap<String, CollectionNode>>,
+    repositories: Mutex<HashMap<String, RepositoryNode>>,
+    /// Maps schema_title -> lexicon nsid for get_lexicon_by_schema lookups.
+    schema_lexicons: Mutex<HashMap<String, String>>,
     start_time: Instant,
 }
 
@@ -49,8 +55,20 @@ impl MockEngine {
             action_nodes: Mutex::new(HashMap::new()),
             parameter_definitions: Mutex::new(HashMap::new()),
             data_bindings: Mutex::new(HashMap::new()),
+            namespaces: Mutex::new(HashMap::new()),
+            lexicons: Mutex::new(HashMap::new()),
+            collections: Mutex::new(HashMap::new()),
+            repositories: Mutex::new(HashMap::new()),
+            schema_lexicons: Mutex::new(HashMap::new()),
             start_time: Instant::now(),
         }
+    }
+
+    pub fn add_lexicon_mapping(&self, schema_title: &str, lexicon_nsid: &str) {
+        self.schema_lexicons
+            .lock()
+            .unwrap()
+            .insert(schema_title.to_string(), lexicon_nsid.to_string());
     }
 
     pub fn builder() -> MockEngineBuilder {
@@ -76,6 +94,8 @@ pub struct MockEngineBuilder {
     extends_map: HashMap<String, Vec<SchemaNode>>,
     allof_targets: HashMap<String, Vec<String>>,
     enum_values: HashMap<String, Vec<EnumValue>>,
+    /// (schema_title, lexicon_nsid) pairs for get_lexicon_by_schema lookups.
+    schema_lexicons: HashMap<String, String>,
 }
 
 impl MockEngineBuilder {
@@ -147,6 +167,12 @@ impl MockEngineBuilder {
 
     pub fn with_enum_values(mut self, schema_title: &str, values: Vec<EnumValue>) -> Self {
         self.enum_values.insert(schema_title.to_string(), values);
+        self
+    }
+
+    pub fn with_lexicon_mapping(mut self, schema_title: &str, lexicon_nsid: &str) -> Self {
+        self.schema_lexicons
+            .insert(schema_title.to_string(), lexicon_nsid.to_string());
         self
     }
 
@@ -230,6 +256,12 @@ impl MockEngineBuilder {
             let mut enum_values = engine.enum_values.lock().unwrap();
             for (k, v) in self.enum_values {
                 enum_values.insert(k, v);
+            }
+        }
+        {
+            let mut schema_lexicons = engine.schema_lexicons.lock().unwrap();
+            for (k, v) in self.schema_lexicons {
+                schema_lexicons.insert(k, v);
             }
         }
         engine
@@ -509,6 +541,42 @@ impl GraphIngestor for MockEngine {
     async fn ingest_data_binding(&self, _node: &DataBindingNode) -> Result<String, GraphError> {
         let id = format!("db:{}", Uuid::new_v4());
         Ok(id)
+    }
+
+    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError> {
+        let authority = node.authority.clone();
+        self.namespaces
+            .lock()
+            .unwrap()
+            .insert(authority.clone(), node.clone());
+        Ok(authority)
+    }
+
+    async fn ingest_lexicon(&self, node: &LexiconNode) -> Result<String, GraphError> {
+        let nsid = node.nsid.clone();
+        self.lexicons
+            .lock()
+            .unwrap()
+            .insert(nsid.clone(), node.clone());
+        Ok(nsid)
+    }
+
+    async fn ingest_collection(&self, node: &CollectionNode) -> Result<String, GraphError> {
+        let nsid = node.nsid.clone();
+        self.collections
+            .lock()
+            .unwrap()
+            .insert(nsid.clone(), node.clone());
+        Ok(nsid)
+    }
+
+    async fn ingest_repository(&self, node: &RepositoryNode) -> Result<String, GraphError> {
+        let did = node.did.clone();
+        self.repositories
+            .lock()
+            .unwrap()
+            .insert(did.clone(), node.clone());
+        Ok(did)
     }
 
     async fn finalize(&self) -> Result<IngestStats, GraphError> {
@@ -857,5 +925,65 @@ impl GraphQuerier for MockEngine {
 
     async fn get_generation_order(&self) -> Result<Vec<String>, GraphError> {
         Ok(self.get_entity_names().await?)
+    }
+
+    // ── AT Protocol query methods ─────────────────────────────────────
+
+    async fn get_lexicons(&self, domain: &str) -> Result<Vec<LexiconNode>, GraphError> {
+        Ok(self
+            .lexicons
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|l| domain.is_empty() || l.domain == domain)
+            .cloned()
+            .collect())
+    }
+
+    async fn get_lexicon_by_schema(&self, schema_title: &str) -> Result<Option<LexiconNode>, GraphError> {
+        let mapping = self.schema_lexicons.lock().unwrap();
+        if let Some(nsid) = mapping.get(schema_title) {
+            let lexicons = self.lexicons.lock().unwrap();
+            return Ok(lexicons.get(nsid).cloned());
+        }
+        Ok(None)
+    }
+
+    async fn get_collections(&self, domain: &str) -> Result<Vec<CollectionNode>, GraphError> {
+        Ok(self
+            .collections
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|c| domain.is_empty() || c.domain == domain)
+            .cloned()
+            .collect())
+    }
+
+    async fn get_repositories(&self) -> Result<Vec<RepositoryNode>, GraphError> {
+        Ok(self
+            .repositories
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    async fn get_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+        Ok(self
+            .namespaces
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    #[allow(unused_variables)]
+    async fn get_lexicon_references(&self, nsid: &str) -> Result<Vec<LexiconNode>, GraphError> {
+        // TODO: look up via LexiconReferences edges.
+        // MockEngine doesn't store edges, so we can't resolve this relationship.
+        Ok(Vec::new())
     }
 }

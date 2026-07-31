@@ -6,9 +6,10 @@ use async_trait::async_trait;
 use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
-    ActionNode, CodeList, CompositeColumn, CompositeRange, CompositionTree, EnumValue, EventNode,
-    Extension, ParentCandidate, ParameterDefinitionNode, PropertyNode, SchemaClassificationData,
-    SchemaNode, StructuredSubField, ViewComponentNode, ViewContainerNode,
+    ActionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree,
+    EnumValue, EventNode, Extension, LexiconNode, NamespaceNode, ParameterDefinitionNode,
+    ParentCandidate, PropertyNode, RepositoryNode, SchemaClassificationData, SchemaNode,
+    StructuredSubField, ViewComponentNode, ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -514,5 +515,31 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
         self.inner.get_ifml_parameters().await
+    }
+
+    // ── AT Protocol query delegation ───────────────────────────────────
+
+    async fn get_lexicons(&self, domain: &str) -> Result<Vec<LexiconNode>, GraphError> {
+        self.inner.get_lexicons(domain).await
+    }
+
+    async fn get_lexicon_by_schema(&self, schema_title: &str) -> Result<Option<LexiconNode>, GraphError> {
+        self.inner.get_lexicon_by_schema(schema_title).await
+    }
+
+    async fn get_collections(&self, domain: &str) -> Result<Vec<CollectionNode>, GraphError> {
+        self.inner.get_collections(domain).await
+    }
+
+    async fn get_repositories(&self) -> Result<Vec<RepositoryNode>, GraphError> {
+        self.inner.get_repositories().await
+    }
+
+    async fn get_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+        self.inner.get_namespaces().await
+    }
+
+    async fn get_lexicon_references(&self, nsid: &str) -> Result<Vec<LexiconNode>, GraphError> {
+        self.inner.get_lexicon_references(nsid).await
     }
 }
