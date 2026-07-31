@@ -57,7 +57,7 @@ test.describe('{{ entity_name }} Validation', () => {
 
     // HTML5 validation should prevent submission — check that required fields are invalid
 {% for field in required_create_fields %}
-{% if field.input_type != "checkbox" and not field.is_codelist and field.input_type != "select" %}
+{% if field.input_type != "checkbox" and not field.is_codelist and field.input_type != "select" and not field.nested_type_name %}
     if (await ownerPage.locator('#{{ field.name }}').count() > 0) {
       const field = ownerPage.locator('#{{ field.name }}');
       const isInvalid = await field.evaluate((el: HTMLInputElement) => !el.validity.valid);

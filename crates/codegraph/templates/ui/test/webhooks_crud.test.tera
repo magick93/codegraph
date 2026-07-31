@@ -8,8 +8,10 @@ test.describe('Webhook Management', () => {
   test('displays webhook settings page', async ({ ownerPage }) => {
     await ownerPage.goto('/settings/webhooks');
     await waitForHydration(ownerPage, 'body.hydrated');
-    // Verify the page rendered correctly — heading and Add Endpoint button are always present
-    await expect(ownerPage.getByText('Webhooks')).toBeVisible();
+    // Use getByRole('heading') to avoid ambiguous match: getByText('Webhooks')
+    // also matches endpoint URLs in the list (e.g. https://example.com/webhooks/...)
+    // and the sidebar nav link, causing toBeVisible() to fail with N > 1 matches.
+    await expect(ownerPage.getByRole('heading', { name: 'Webhooks' })).toBeVisible();
     await expect(ownerPage.getByText('Add Endpoint')).toBeVisible();
   });
 
@@ -27,8 +29,12 @@ test.describe('Webhook Management', () => {
 
     await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+$/, { timeout: 15000 });
 
+    // Wait for detail page to fully load before interacting with its links.
+    // The Edit button only appears after the async loadData() fetch completes.
+    await waitForHydration(ownerPage, 'text="Edit"');
+
     // Now edit the URL
-    await ownerPage.click('text=Edit');
+    await ownerPage.click('text="Edit"');
     await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+\/edit$/, { timeout: 15000 });
     await waitForHydration(ownerPage, '[data-testid="webhook-endpoint-submit-btn"]');
     await ownerPage.waitForFunction((expected) => {
@@ -101,7 +107,7 @@ test.describe('Webhook Management', () => {
     await ownerPage.click('[data-testid="webhook-endpoint-submit-btn"]');
     await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+$/, { timeout: 15000 });
 
-    await ownerPage.click('text=Edit');
+    await ownerPage.click('text="Edit"');
     await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+\/edit$/, { timeout: 15000 });
     await waitForHydration(ownerPage, '[data-testid="webhook-endpoint-submit-btn"]');
     // Wait for loadEndpoint() to populate form fields (races with fill() otherwise)

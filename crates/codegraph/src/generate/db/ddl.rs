@@ -1206,6 +1206,19 @@ impl DdlGenerator {
             columns.retain(|col| seen.insert(col.name.clone()));
         }
 
+        // Deduplicate foreign keys by constraint name — cross-domain
+        // schema merging via allOf produces duplicate FK definitions.
+        {
+            let mut seen = std::collections::HashSet::new();
+            foreign_keys.retain(|fk| seen.insert(fk.column_name.clone()));
+        }
+
+        // Deduplicate comments by column name — same root cause.
+        {
+            let mut seen = std::collections::HashSet::new();
+            comments.retain(|c| seen.insert(c.column.clone()));
+        }
+
         // Query required extensions
         let mut extensions: Vec<String> = db
             .get_required_extensions(schema_title)

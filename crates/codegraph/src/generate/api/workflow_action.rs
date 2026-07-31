@@ -164,8 +164,9 @@ impl EntityGenerator for WorkflowActionGenerator {
             resolved_role = "child".to_string();
         }
 
-        // Fall back to graph parent_candidates
-        if resolved_role != "child" {
+        // Fall back to graph parent_candidates (only if entity is NOT root,
+        // i.e. explicitly configured as child — matching handler.rs behavior)
+        if resolved_role != "root" {
             for pc in &self.parent_candidates {
                 let child_name = super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
                 if child_name == stripped_title {

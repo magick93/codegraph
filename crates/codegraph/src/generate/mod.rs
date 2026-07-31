@@ -1032,6 +1032,7 @@ pub async fn compute_generation_order(
 
     let mut entries = Vec::new();
     let mut seen_entries = HashSet::new();
+    let mut seen_titles: HashSet<String> = HashSet::new();
 
     for domain_name in &domain_order {
         let domain_entry = match config.domains.get(domain_name.as_str()) {
@@ -1071,6 +1072,9 @@ pub async fn compute_generation_order(
             }
             if !seen_entries.insert((title.clone(), domain_name.clone())) {
                 continue;
+            }
+            if !seen_titles.insert(title.clone()) {
+                continue; // already assigned to a higher-priority domain
             }
 
             entries.push(GenerationEntry {

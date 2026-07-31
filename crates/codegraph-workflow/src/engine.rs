@@ -19,17 +19,22 @@ impl SeaOrmWorkflowService {
         Self { db }
     }
 
-    /// Set `app.organization_id` session variable for RLS enforcement.
-    /// Must be called at the start of every transaction that touches platform tables.
+    /// Set `app.organization_id`, `app.user_id`, and `app.current_api_key` session
+    /// variables for RLS enforcement. Must be called at the start of every transaction.
     async fn set_rls_org(
         conn: &impl ConnectionTrait,
         tenant_id: Uuid,
+        user_id: Option<Uuid>,
+        api_key_id: Option<Uuid>,
     ) -> Result<(), WorkflowError> {
-        // Use query_one (not execute) so the SELECT actually runs on the same connection.
+        let uid = user_id.unwrap_or(Uuid::nil()).to_string();
+        let aid = api_key_id.unwrap_or(Uuid::nil()).to_string();
         conn.query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT set_config('app.organization_id', $1, true)",
-            [tenant_id.to_string().into()],
+            "SELECT set_config('app.organization_id', $1, true), \
+                    set_config('app.user_id', $2, true), \
+                    set_config('app.current_api_key', $3, true)",
+            [tenant_id.to_string().into(), uid.into(), aid.into()],
         ))
         .await
         .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
@@ -142,7 +147,7 @@ impl WorkflowService for SeaOrmWorkflowService {
             .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
 
         // Set RLS session variable so tenant isolation policies allow access.
-        Self::set_rls_org(&tx, ctx.tenant_id).await?;
+        Self::set_rls_org(&tx, ctx.tenant_id, ctx.session_user_id, ctx.session_api_key_id).await?;
 
         // 1. Load definition
         let (def_id, initial_state, terminal_states, sm) = self
@@ -371,7 +376,7 @@ impl WorkflowService for SeaOrmWorkflowService {
             .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
 
         // Set RLS session variable so tenant isolation policies allow access.
-        Self::set_rls_org(&tx, ctx.tenant_id).await?;
+        Self::set_rls_org(&tx, ctx.tenant_id, ctx.session_user_id, ctx.session_api_key_id).await?;
 
         let (def_id, _initial, terminal_states, sm) = self
             .load_definition(&tx, ctx.tenant_id, &ctx.domain, &ctx.entity_table)
@@ -562,7 +567,7 @@ impl WorkflowService for SeaOrmWorkflowService {
             .await
             .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
 
-        Self::set_rls_org(&tx, tenant_id).await?;
+        Self::set_rls_org(&tx, tenant_id, None, None).await?;
 
         let (def_id, initial_state, _terminal_states, sm) = self
             .load_definition(&tx, tenant_id, domain, entity_table)
@@ -632,7 +637,7 @@ impl WorkflowService for SeaOrmWorkflowService {
             .await
             .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
 
-        Self::set_rls_org(&tx, tenant_id).await?;
+        Self::set_rls_org(&tx, tenant_id, None, None).await?;
 
         let rows = tx
             .query_all(Statement::from_sql_and_values(

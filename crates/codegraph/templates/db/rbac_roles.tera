@@ -30,7 +30,12 @@ DECLARE
     v_org_id uuid;
     v_role text;
 BEGIN
-    v_org_id := public.get_current_org_id();
+    v_org_id := COALESCE(
+        public.get_current_org_id(),
+        public.resolve_user_org(
+            nullif(current_setting('app.user_id', true), '')::uuid
+        )
+    );
     IF v_org_id IS NULL THEN
         RETURN NULL;
     END IF;
@@ -38,7 +43,11 @@ BEGIN
     SELECT account_role::text INTO v_role
     FROM basejump.account_user
     WHERE account_id = v_org_id
-      AND user_id = auth.uid();
+      AND user_id = nullif(current_setting('app.user_id', true), '')::uuid;
+
+    IF v_role = 'member' THEN
+        v_role := 'employee';
+    END IF;
 
     RETURN v_role;
 END;

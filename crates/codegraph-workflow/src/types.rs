@@ -28,6 +28,10 @@ pub struct TransitionContext {
     pub entity_data: serde_json::Value,
     /// Source of the transition. Defaults to `User`.
     pub trigger_source: TriggerSource,
+    /// Session context for RLS policy evaluation.
+    pub session_user_id: Option<Uuid>,
+    /// API key ID for RLS policy evaluation (nil for JWT).
+    pub session_api_key_id: Option<Uuid>,
 }
 
 /// Current workflow state for an entity.
@@ -71,6 +75,8 @@ pub struct ApprovalContext {
     pub correlation_id: Uuid,
     pub idempotency_key: Option<Uuid>,
     pub comment: Option<String>,
+    pub session_user_id: Option<Uuid>,
+    pub session_api_key_id: Option<Uuid>,
 }
 
 /// A single entry in the process history (workflow transition log).
@@ -96,4 +102,6 @@ pub struct DelegationContext {
     pub to_actor_id: Uuid,
     pub correlation_id: Uuid,
     pub reason: Option<String>,
+    pub session_user_id: Option<Uuid>,
+    pub session_api_key_id: Option<Uuid>,
 }

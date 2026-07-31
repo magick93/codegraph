@@ -125,10 +125,17 @@ impl CompositionNode {
 
     pub fn dedup_fields(&mut self) {
         use std::collections::HashSet;
-        let mut seen = HashSet::new();
-        self.columns.retain(|c| seen.insert(c.name.clone()));
-        self.jsonb_columns.retain(|c| seen.insert(c.name.clone()));
-        self.children.retain(|c| seen.insert(c.field_name.clone()));
+        // Use independent sets per category — a shared set would silently
+        // remove child nodes when a column and child share the same name.
+        // This happens with the VO→entity allOf pattern (commit 33240aa)
+        // where build_composition_node pushes both an FK column and a child
+        // node for the same property.
+        let mut seen_cols = HashSet::new();
+        let mut seen_jsonb = HashSet::new();
+        let mut seen_children = HashSet::new();
+        self.columns.retain(|c| seen_cols.insert(c.name.clone()));
+        self.jsonb_columns.retain(|c| seen_jsonb.insert(c.name.clone()));
+        self.children.retain(|c| seen_children.insert(c.field_name.clone()));
         for child in &mut self.children {
             child.dedup_fields();
         }

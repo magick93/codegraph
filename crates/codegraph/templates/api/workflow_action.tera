@@ -127,7 +127,7 @@ pub async fn transition(
     Json(body): Json<TransitionRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers, body.correlation_id);
-    let entity = state.{{ domain }}_{{ module_name }}_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await
+    let entity = state.{{ domain }}_{{ module_name }}_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
         .map_err(|e| AppError::internal(format!("Failed to find {{ entity_name }}: {e}")))?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found")))?;
     let entity_data = serde_json::to_value(&entity)
@@ -144,6 +144,8 @@ pub async fn transition(
         comment: body.comment,
         entity_data,
         trigger_source: codegraph_workflow::TriggerSource::User,
+        session_user_id: Some(api_key_info.user_id),
+        session_api_key_id: Some(api_key_info.api_key_id),
     };
     let ws = state.workflow_service.transition(ctx).await.map_err(|e| {
         use codegraph_workflow::WorkflowError;
@@ -210,7 +212,7 @@ pub async fn approve(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers, body.correlation_id);
     let actor_id = api_key_info.api_key_id;
-    let ctx = codegraph_workflow::ApprovalContext {
+     let ctx = codegraph_workflow::ApprovalContext {
         tenant_id: api_key_info.organization_id,
         entity_id: id,
         domain: "{{ domain }}".to_string(),
@@ -220,6 +222,8 @@ pub async fn approve(
         correlation_id,
         idempotency_key: body.idempotency_key,
         comment: body.comment,
+        session_user_id: Some(api_key_info.user_id),
+        session_api_key_id: Some(api_key_info.api_key_id),
     };
     let ws = state.workflow_service.approval_action(ctx).await
         .map_err(|e| AppError::internal(e.to_string()).with_correlation_id(correlation_id))?;
@@ -285,6 +289,8 @@ pub async fn reject(
         correlation_id,
         idempotency_key: body.idempotency_key,
         comment: body.comment,
+        session_user_id: Some(api_key_info.user_id),
+        session_api_key_id: Some(api_key_info.api_key_id),
     };
     let ws = state.workflow_service.approval_action(ctx).await
         .map_err(|e| AppError::internal(e.to_string()).with_correlation_id(correlation_id))?;
@@ -349,6 +355,8 @@ pub async fn delegate(
         to_actor_id: body.to_actor_id,
         correlation_id,
         reason: body.reason,
+        session_user_id: Some(api_key_info.user_id),
+        session_api_key_id: Some(api_key_info.api_key_id),
     };
     state.workflow_service.delegate(ctx).await
         .map_err(|e| AppError::internal(e.to_string()))?;
