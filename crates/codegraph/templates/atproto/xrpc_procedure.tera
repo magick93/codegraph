@@ -9,7 +9,7 @@ use axum::{
 use gravy_atproto::AtprotoError;
 use serde::{Deserialize, Serialize};
 
-use crate::appstate::AppState;
+use crate::app_state::AppState;
 
 {% for imp in imports %}
 use {{ imp }};

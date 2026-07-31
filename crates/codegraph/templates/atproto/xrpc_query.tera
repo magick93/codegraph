@@ -10,7 +10,7 @@ use gravy_atproto::AtprotoError;
 use sea_orm::{DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, ColumnTrait};
 use serde::{Deserialize, Serialize};
 
-use crate::appstate::AppState;
+use crate::app_state::AppState;
 
 {% for imp in imports %}
 use {{ imp }};

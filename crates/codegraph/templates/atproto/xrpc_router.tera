@@ -14,7 +14,7 @@ use super::create_{{ endpoint.module_name }};
 use super::create_{{ proc.module_name }};
 {% endfor %}
 
-pub fn atproto_routes() -> Router<crate::app_state::AppState> {
+pub fn xrpc_routes() -> Router<crate::app_state::AppState> {
     Router::new()
 {% for endpoint in endpoints %}
         .route("/xrpc/{{ endpoint.nsid }}", get(get_{{ endpoint.module_name }}::get_{{ endpoint.module_name }}).post(create_{{ endpoint.module_name }}::create_{{ endpoint.module_name }}))
