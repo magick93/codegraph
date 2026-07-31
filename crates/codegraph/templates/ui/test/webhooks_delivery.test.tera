@@ -107,8 +107,8 @@ test.describe('Webhook Delivery', () => {
         },
         body: JSON.stringify({
           event_domain: 'timecard',
-          event_entity: null,
-          event_type: null,
+          event_entity: 'timecard',
+          event_type: 'created',
         }),
       },
     );
@@ -120,10 +120,13 @@ test.describe('Webhook Delivery', () => {
     // 4. Wait for dispatch worker to drain queue backlog and attempt delivery
     await ownerPage.waitForTimeout(30000);
 
-    // 5. Check delivery log shows failure
+    // 5. Check delivery log shows failure.
+    // Use .first() to avoid strict mode violation when the delivery log
+    // accumulates records from parallel test execution (broad subscription
+    // combined with other tests' events in the pgmq queue).
     await ownerPage.goto(`/settings/webhooks/${endpointId}`);
     await waitForHydration(ownerPage, 'body.hydrated');
-    await expect(ownerPage.getByText('Failed')).toBeVisible({ timeout: 60000 });
+    await expect(ownerPage.getByText('Failed').first()).toBeVisible({ timeout: 60000 });
   });
 
   test('delivers webhook with custom headers', async ({ ownerPage, orgContext }) => {
