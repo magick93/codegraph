@@ -12,11 +12,7 @@ import {
 } from '../../e2e/helpers';
 
 
-
-const PARENT_API_PATH = '/recruiting/application';
-
-let BASE_PATH: string;
-
+const BASE_PATH = '/recruiting/candidate';
 
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
@@ -42,7 +38,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'application_process_history': {},
+    // 'application_process_history': ValueObject — omit, serde default
 
 
 
@@ -58,7 +54,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'distribution_guidelines': {},
+    // 'distribution_guidelines': ValueObject — omit, serde default
 
 
 
@@ -70,7 +66,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'person_name': {},
+    // 'person_name': ValueObject — omit, serde default
 
 
 
@@ -82,7 +78,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    'qualifications': {},
+    'qualifications': [],
 
 
 
@@ -105,12 +101,6 @@ test.describe('Candidate Workflow', () => {
 
 
   test.beforeAll(async ({ orgContext }) => {
-
-
-    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'applied_date': '2025-01-15', 'status': 'Applied' });
-    const parentId = parentEntity['id'] as string;
-    BASE_PATH = `${PARENT_API_PATH}/${parentId}/candidate`;
-
 
 
     try {

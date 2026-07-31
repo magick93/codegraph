@@ -393,7 +393,7 @@ async fn scaffold_middleware_supports_dual_auth() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-dual-auth");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -1684,7 +1684,7 @@ async fn scaffold_main() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -1764,7 +1764,7 @@ async fn scaffold_error_module() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-error");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -1803,7 +1803,7 @@ async fn scaffold_generates_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-mw");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -2893,7 +2893,7 @@ async fn scaffold_main_has_security_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-security");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -2970,7 +2970,7 @@ async fn scaffold_main_has_graceful_shutdown() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shutdown");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -3001,7 +3001,7 @@ async fn scaffold_main_has_health_ready() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-health-ready");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -3916,7 +3916,7 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shadow");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -3944,7 +3944,7 @@ async fn scaffold_generates_build_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-build-rs");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -3968,7 +3968,7 @@ async fn scaffold_main_has_version_endpoint() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-version");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -6080,8 +6080,83 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
                 deployment_position_fk,
             ],
         )
+        .build();
 
-        // === SQLite Dialect Integration Tests ===
+    let tera = test_tera();
+    let output_dir =
+        std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-stripped");
+
+    let config = codegraph_config::config::parse_domain_config_str(
+        r#"
+[defaults]
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType", "DeploymentType", "PositionType"]
+
+[domains.hr.entity_config.WorkerType]
+operations = ["create", "read", "update", "list"]
+allow_include = ["deployment.position"]
+"#,
+    )
+    .unwrap();
+
+    let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let included_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_included"))
+        .expect("Should have a dto_included.rs file");
+
+    let content = &included_file.content;
+
+    // The enriched struct is generated for the dot-notation path.
+    assert!(
+        content.contains("struct DeploymentCombinedResponse"),
+        "Should contain enriched type for dot-notation path. Got:\n{content}"
+    );
+    // Leaf entity reference is a nested field.
+    assert!(
+        content.contains("position: Option<PositionResponse>"),
+        "Should contain nested position field. Got:\n{content}"
+    );
+
+    // Codelist base_fields must use the STRIPPED rust_field_name.
+    assert!(
+        content.contains("assignment_reason:"),
+        "Enriched struct must use stripped codelist field name. Got:\n{content}"
+    );
+    assert!(
+        content.contains("status:"),
+        "Enriched struct must use stripped status field name. Got:\n{content}"
+    );
+
+    // It must NEVER leak the _code-suffixed pg_column_name into struct fields.
+    assert!(
+        !content.contains("assignment_reason_code"),
+        "Enriched struct leaked _code-suffixed pg_column_name. Got:\n{content}"
+    );
+    assert!(
+        !content.contains("status_code"),
+        "Enriched struct leaked _code-suffixed pg_column_name. Got:\n{content}"
+    );
+}
+
+// === SQLite Dialect Integration Tests ===
 
 /// Verify that SeaOrmEntityGenerator with SQLite dialect uses the SQLite-specific
 /// entity template: no schema_name attribute, primary key without auto_increment = false.
@@ -6159,77 +6234,40 @@ async fn codelist_with_sqlite_dialect_uses_insert_or_ignore() {
         )
         .build();
 
+    let config = test_domain_config();
     let tera = test_tera();
-    let output_dir =
-        std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-stripped");
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-codelist");
 
-    let config = codegraph_config::config::parse_domain_config_str(
-        r#"
-[defaults]
-operations = ["create", "read", "update", "list"]
-
-[domains.hr]
-label = "HR"
-schema_dir = "hr"
-postgres_schema = "hr"
-entities = ["WorkerType", "DeploymentType", "PositionType"]
-
-[domains.hr.entity_config.WorkerType]
-operations = ["create", "read", "update", "list"]
-allow_include = ["deployment.position"]
-"#,
-    )
-    .unwrap();
-
-    let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let gen = CodelistGenerator::new(&output_dir)
+        .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
     let files = gen
-        .generate(
-            &mock,
-            "WorkerType",
-            "hr",
-            &config,
-            &tera,
-            &test_project_config(),
-        )
+        .generate(&engine, "GenderCodeList", "common", &config, &tera, &test_project_config())
         .await
         .unwrap();
 
-    let included_file = files
-        .iter()
-        .find(|f| f.path.to_string_lossy().contains("dto_included"))
-        .expect("Should have a dto_included.rs file");
+    assert!(!files.is_empty(), "Codelist generator should produce a file");
+    let content = &files[0].content;
 
-    let content = &included_file.content;
-
-    // The enriched struct is generated for the dot-notation path.
+    // SQLite codelist template uses INSERT OR IGNORE
     assert!(
-        content.contains("struct DeploymentCombinedResponse"),
-        "Should contain enriched type for dot-notation path. Got:\n{content}"
-    );
-    // Leaf entity reference is a nested field.
-    assert!(
-        content.contains("position: Option<PositionResponse>"),
-        "Should contain nested position field. Got:\n{content}"
+        content.contains("INSERT OR IGNORE"),
+        "SQLite codelist should use INSERT OR IGNORE. Got:\n{content}"
     );
 
-    // Codelist base_fields must use the STRIPPED rust_field_name.
+    // Should contain codelist values
     assert!(
-        content.contains("assignment_reason:"),
-        "Enriched struct must use stripped codelist field name. Got:\n{content}"
+        content.contains("'Male'"),
+        "Should contain Male codelist value. Got:\n{content}"
     );
     assert!(
-        content.contains("status:"),
-        "Enriched struct must use stripped status field name. Got:\n{content}"
+        content.contains("'Female'"),
+        "Should contain Female codelist value. Got:\n{content}"
     );
 
-    // It must NEVER leak the _code-suffixed pg_column_name into struct fields.
+    // Should use STRICT table mode
     assert!(
-        !content.contains("assignment_reason_code"),
-        "Enriched struct leaked _code-suffixed pg_column_name. Got:\n{content}"
-    );
-    assert!(
-        !content.contains("status_code"),
-        "Enriched struct leaked _code-suffixed pg_column_name. Got:\n{content}"
+        content.contains("STRICT"),
+        "SQLite codelist table should use STRICT mode. Got:\n{content}"
     );
 }
 
@@ -6477,42 +6515,6 @@ async fn handler_filter_keys_use_stripped_codelist_names() {
             &handler.content[..handler.content.len().min(2000)]
         );
     }
-
-    let config = test_domain_config();
-    let tera = test_tera();
-    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-codelist");
-
-    let gen = CodelistGenerator::new(&output_dir)
-        .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
-    let files = gen
-        .generate(&engine, "GenderCodeList", "common", &config, &tera, &test_project_config())
-        .await
-        .unwrap();
-
-    assert!(!files.is_empty(), "Codelist generator should produce a file");
-    let content = &files[0].content;
-
-    // SQLite codelist template uses INSERT OR IGNORE
-    assert!(
-        content.contains("INSERT OR IGNORE"),
-        "SQLite codelist should use INSERT OR IGNORE. Got:\n{content}"
-    );
-
-    // Should contain codelist values
-    assert!(
-        content.contains("'Male'"),
-        "Should contain Male codelist value. Got:\n{content}"
-    );
-    assert!(
-        content.contains("'Female'"),
-        "Should contain Female codelist value. Got:\n{content}"
-    );
-
-    // Should use STRICT table mode
-    assert!(
-        content.contains("STRICT"),
-        "SQLite codelist table should use STRICT mode. Got:\n{content}"
-    );
 }
 
 /// Verify that PG-only generators are skipped when using SQLite dialect.
@@ -6576,7 +6578,7 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-scaffold");
     let project = sqlite_project_config();
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &project)
         .await

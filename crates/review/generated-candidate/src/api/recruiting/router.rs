@@ -9,7 +9,11 @@ pub fn router() -> Router<AppState> {
     Router::new()
 
 
+        .nest("/application", application_routes())
 
+
+
+        .nest("/candidate", candidate_routes())
 
 
 }
@@ -25,14 +29,13 @@ fn application_routes() -> Router<AppState> {
         .route("/", axum::routing::get(application_handler::list).post(application_handler::create))
 
 
+
         .route("/{application_id}", axum::routing::get(application_handler::get_by_id).put(application_handler::update).delete(application_handler::delete))
 
 
 
 
 
-
-        .nest("/{application_id}/candidate", candidate_routes())
 
 }
 
@@ -49,6 +52,7 @@ fn candidate_routes() -> Router<AppState> {
         .route("/", axum::routing::get(candidate_handler::list).post(candidate_handler::create))
 
 
+
         .route("/{candidate_id}", axum::routing::get(candidate_handler::get_by_id).put(candidate_handler::update))
 
 
@@ -61,8 +65,6 @@ fn candidate_routes() -> Router<AppState> {
         .route("/{candidate_id}/workflow/history", axum::routing::get(candidate_workflow::get_process_history))
 
 
-
-        .nest("/{candidate_id}/application", application_routes())
 
 }
 

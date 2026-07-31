@@ -20,7 +20,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('PayRun Cross-Org Isolation', () => {
+test.describe('PayRun Cross-Org Isolation', () => {
   let acmeEntityId: string;
   const data = testData();
 

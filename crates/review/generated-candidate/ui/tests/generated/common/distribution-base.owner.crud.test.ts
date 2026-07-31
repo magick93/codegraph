@@ -27,8 +27,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('DistributionBase Owner CRUD', () => {
-  let createdId: string;
+test.describe('DistributionBase Owner CRUD', () => {
 
 
 
@@ -59,7 +58,7 @@ test.describe.serial('DistributionBase Owner CRUD', () => {
 
     await ownerPage.waitForURL(/\/common\/distribution-base\/[0-9a-f-]+$/, { timeout: 20_000 });
 
-    createdId = ownerPage.url().split('/').pop()!;
+    const formCreatedId = ownerPage.url().split('/').pop()!;
   });
 
 
@@ -74,9 +73,11 @@ test.describe.serial('DistributionBase Owner CRUD', () => {
 
 
 
-  test('owner can view DistributionBase detail', async ({ ownerPage }) => {
+  test('owner can view DistributionBase detail', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await expect(ownerPage.locator('[data-testid="distribution_base-field-description"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="distribution_base-field-end_date"]')).toBeVisible();
@@ -86,9 +87,11 @@ test.describe.serial('DistributionBase Owner CRUD', () => {
 
 
 
-  test('owner can edit DistributionBase', async ({ ownerPage }) => {
+  test('owner can edit DistributionBase', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}/edit`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}/edit`);
 
     // Wait for Svelte 5 to hydrate the form's submit handler.
     await waitForHydration(ownerPage, '[data-testid="distribution_base-submit-btn"]');
@@ -111,9 +114,11 @@ test.describe.serial('DistributionBase Owner CRUD', () => {
 
 
 
-  test('owner can delete DistributionBase', async ({ ownerPage }) => {
+  test('owner can delete DistributionBase', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(ownerPage, '[data-testid="distribution_base-delete-btn"]');
     await ownerPage.locator('[data-testid="distribution_base-delete-btn"]').click();

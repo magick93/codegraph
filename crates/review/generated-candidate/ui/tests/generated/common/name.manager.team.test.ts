@@ -19,7 +19,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('Name Manager Team', () => {
+test.describe('Name Manager Team', () => {
   let createdId: string;
   const data = testData();
 

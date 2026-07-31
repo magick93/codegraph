@@ -16,6 +16,8 @@ pub mod distribution_base;
 
 pub mod effective_date;
 
+pub mod event_base;
+
 pub mod formatted_date_time;
 
 pub mod gender_code_list;
@@ -68,6 +70,12 @@ pub enum CommonCommand {
     EffectiveDate {
         #[command(subcommand)]
         command: effective_date::EffectiveDateCommand,
+    },
+
+    /// Manage event_bases
+    EventBase {
+        #[command(subcommand)]
+        command: event_base::EventBaseCommand,
     },
 
     /// Manage formatted_date_times
@@ -157,6 +165,10 @@ pub async fn execute(
 
         CommonCommand::EffectiveDate { command } => {
             effective_date::execute(command, client, format).await
+        }
+
+        CommonCommand::EventBase { command } => {
+            event_base::execute(command, client, format).await
         }
 
         CommonCommand::FormattedDateTime { command } => {

@@ -21,8 +21,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('Code Owner CRUD', () => {
-  let createdId: string;
+test.describe('Code Owner CRUD', () => {
 
 
 
@@ -35,8 +34,8 @@ test.describe.serial('Code Owner CRUD', () => {
     // All properties are complex types (value objects / child tables) — no simple form fields.
     // Use direct API call via orgContext (authenticated as ACME owner).
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-    createdId = entity['id'] as string;
-    expect(createdId).toBeTruthy();
+    const apiCreatedId = entity['id'] as string;
+    expect(apiCreatedId).toBeTruthy();
   });
 
 
@@ -51,9 +50,11 @@ test.describe.serial('Code Owner CRUD', () => {
 
 
 
-  test('owner can view Code detail', async ({ ownerPage }) => {
+  test('owner can view Code detail', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
   });
 
@@ -66,9 +67,11 @@ test.describe.serial('Code Owner CRUD', () => {
 
 
 
-  test('owner can delete Code', async ({ ownerPage }) => {
+  test('owner can delete Code', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(ownerPage, '[data-testid="code-delete-btn"]');
     await ownerPage.locator('[data-testid="code-delete-btn"]').click();

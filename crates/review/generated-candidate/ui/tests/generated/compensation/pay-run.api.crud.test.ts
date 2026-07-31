@@ -72,8 +72,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('PayRun CRUD', () => {
-  let createdId: string | undefined;
+test.describe('PayRun CRUD', () => {
 
 
 
@@ -97,19 +96,19 @@ test.describe.serial('PayRun CRUD', () => {
 
 
 
-    if (await page.locator('#pay_run_id').isVisible()) {
+    if (data['pay_run_id'] != null && await page.locator('#pay_run_id').isVisible()) {
       await page.locator('#pay_run_id').fill(String(data['pay_run_id']));
     }
 
 
 
-    if (await page.locator('#run_date').isVisible()) {
+    if (data['run_date'] != null && await page.locator('#run_date').isVisible()) {
       await page.locator('#run_date').fill(String(data['run_date']));
     }
 
 
 
-    if (await page.locator('#total_amount').isVisible()) {
+    if (data['total_amount'] != null && await page.locator('#total_amount').isVisible()) {
       await page.locator('#total_amount').fill(String(data['total_amount']));
     }
 
@@ -131,7 +130,7 @@ test.describe.serial('PayRun CRUD', () => {
 
     // Capture the created entity ID from the URL
     const url = page.url();
-    createdId = url.split('/').pop()!;
+    const formCreatedId = url.split('/').pop()!;
 
     // Verify field values on detail page (only check fields present on the page)
 
@@ -161,15 +160,13 @@ test.describe.serial('PayRun CRUD', () => {
 
   });
 
-  test('entity appears in list after create', async ({ ownerPage: page }) => {
+  test('entity appears in list after create', async ({ ownerPage: page, orgContext }) => {
+    await createEntityAsAcme(orgContext, BASE_PATH, testData());
     await page.goto(BASE_PATH);
     const table = page.locator('[data-testid="pay_run-table"]');
     const empty = page.locator('[data-testid="pay_run-empty"]');
     await expect(table.or(empty)).toBeVisible();
-    // If we created an entity, the table should be visible (not empty state)
-    if (createdId) {
-      await expect(table).toBeVisible();
-    }
+    await expect(table).toBeVisible();
   });
 
 
@@ -205,14 +202,11 @@ test.describe.serial('PayRun CRUD', () => {
 
 
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
-    // Create via API if we don't have one yet
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await expect(page.getByRole('heading', { name: 'Pay Run' })).toBeVisible();
 
@@ -235,34 +229,32 @@ test.describe.serial('PayRun CRUD', () => {
 
 
   test('edit entity via form', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}/edit`);
+    await page.goto(`${BASE_PATH}/${myId}/edit`);
 
     await waitForHydration(page, '[data-testid="pay_run-submit-btn"]');
     const data = updatedData();
 
 
 
-    if (await page.locator('#pay_run_id').isVisible()) {
+    if (data['pay_run_id'] != null && await page.locator('#pay_run_id').isVisible()) {
       await page.locator('#pay_run_id').clear();
       await page.locator('#pay_run_id').fill(String(data['pay_run_id']));
     }
 
 
 
-    if (await page.locator('#run_date').isVisible()) {
+    if (data['run_date'] != null && await page.locator('#run_date').isVisible()) {
       await page.locator('#run_date').clear();
       await page.locator('#run_date').fill(String(data['run_date']));
     }
 
 
 
-    if (await page.locator('#total_amount').isVisible()) {
+    if (data['total_amount'] != null && await page.locator('#total_amount').isVisible()) {
       await page.locator('#total_amount').clear();
       await page.locator('#total_amount').fill(String(data['total_amount']));
     }
@@ -317,13 +309,11 @@ test.describe.serial('PayRun CRUD', () => {
 
 
   test('delete entity', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(page, '[data-testid="pay_run-delete-btn"]');
     await page.locator('[data-testid="pay_run-delete-btn"]').click();
@@ -342,7 +332,7 @@ test.describe.serial('PayRun CRUD', () => {
     const empty = page.locator('[data-testid="pay_run-empty"]');
     await expect(table.or(empty)).toBeVisible();
     if (await table.isVisible()) {
-      await expect(table).not.toContainText(createdId);
+      await expect(table).not.toContainText(myId);
     }
   });
 

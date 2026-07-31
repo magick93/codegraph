@@ -13,6 +13,9 @@ pub struct Model {
     pub id: Uuid,
 
 
+    pub platform_organization_id: Uuid,
+
+
     pub candidate_id: Uuid,
 
 

@@ -64,8 +64,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('PersonBase CRUD', () => {
-  let createdId: string | undefined;
+test.describe('PersonBase CRUD', () => {
 
 
 
@@ -89,19 +88,19 @@ test.describe.serial('PersonBase CRUD', () => {
 
 
 
-    if (await page.locator('#birth_date').isVisible()) {
+    if (data['birth_date'] != null && await page.locator('#birth_date').isVisible()) {
       await page.locator('#birth_date').fill(String(data['birth_date']));
     }
 
 
 
-    if (await page.locator('#family_name').isVisible()) {
+    if (data['family_name'] != null && await page.locator('#family_name').isVisible()) {
       await page.locator('#family_name').fill(String(data['family_name']));
     }
 
 
 
-    if (await page.locator('#given_name').isVisible()) {
+    if (data['given_name'] != null && await page.locator('#given_name').isVisible()) {
       await page.locator('#given_name').fill(String(data['given_name']));
     }
 
@@ -117,7 +116,7 @@ test.describe.serial('PersonBase CRUD', () => {
 
     // Capture the created entity ID from the URL
     const url = page.url();
-    createdId = url.split('/').pop()!;
+    const formCreatedId = url.split('/').pop()!;
 
     // Verify field values on detail page (only check fields present on the page)
 
@@ -141,15 +140,13 @@ test.describe.serial('PersonBase CRUD', () => {
 
   });
 
-  test('entity appears in list after create', async ({ ownerPage: page }) => {
+  test('entity appears in list after create', async ({ ownerPage: page, orgContext }) => {
+    await createEntityAsAcme(orgContext, BASE_PATH, testData());
     await page.goto(BASE_PATH);
     const table = page.locator('[data-testid="person_base-table"]');
     const empty = page.locator('[data-testid="person_base-empty"]');
     await expect(table.or(empty)).toBeVisible();
-    // If we created an entity, the table should be visible (not empty state)
-    if (createdId) {
-      await expect(table).toBeVisible();
-    }
+    await expect(table).toBeVisible();
   });
 
 
@@ -185,14 +182,11 @@ test.describe.serial('PersonBase CRUD', () => {
 
 
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
-    // Create via API if we don't have one yet
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await expect(page.getByRole('heading', { name: 'Person Base' })).toBeVisible();
 
@@ -213,34 +207,32 @@ test.describe.serial('PersonBase CRUD', () => {
 
 
   test('edit entity via form', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}/edit`);
+    await page.goto(`${BASE_PATH}/${myId}/edit`);
 
     await waitForHydration(page, '[data-testid="person_base-submit-btn"]');
     const data = updatedData();
 
 
 
-    if (await page.locator('#birth_date').isVisible()) {
+    if (data['birth_date'] != null && await page.locator('#birth_date').isVisible()) {
       await page.locator('#birth_date').clear();
       await page.locator('#birth_date').fill(String(data['birth_date']));
     }
 
 
 
-    if (await page.locator('#family_name').isVisible()) {
+    if (data['family_name'] != null && await page.locator('#family_name').isVisible()) {
       await page.locator('#family_name').clear();
       await page.locator('#family_name').fill(String(data['family_name']));
     }
 
 
 
-    if (await page.locator('#given_name').isVisible()) {
+    if (data['given_name'] != null && await page.locator('#given_name').isVisible()) {
       await page.locator('#given_name').clear();
       await page.locator('#given_name').fill(String(data['given_name']));
     }
@@ -283,13 +275,11 @@ test.describe.serial('PersonBase CRUD', () => {
 
 
   test('delete entity', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(page, '[data-testid="person_base-delete-btn"]');
     await page.locator('[data-testid="person_base-delete-btn"]').click();
@@ -308,7 +298,7 @@ test.describe.serial('PersonBase CRUD', () => {
     const empty = page.locator('[data-testid="person_base-empty"]');
     await expect(table.or(empty)).toBeVisible();
     if (await table.isVisible()) {
-      await expect(table).not.toContainText(createdId);
+      await expect(table).not.toContainText(myId);
     }
   });
 

@@ -61,16 +61,6 @@ impl CandidateQueryHandler {
     }
 
 
-    /// Find by ID scoped to a parent entity — returns None if entity doesn't belong to parent.
-    pub async fn find_by_id_scoped(&self, id: Uuid, parent_id: Uuid, api_key_id: Uuid, organization_id: Uuid) -> Result<Option<CandidateResponse>, Box<dyn std::error::Error>> {
-        let tx = self.db.begin().await?;
-        set_rls_session_vars(&tx, api_key_id, organization_id).await?;
-        let result = self.repo.find_by_id_scoped(&tx, id, parent_id).await?;
-        tx.commit().await?;
-        Ok(result)
-    }
-
-
 
 
     pub async fn list_filtered(&self, page: u64, page_size: u64, filters: &std::collections::HashMap<String, String>, api_key_id: Uuid, organization_id: Uuid) -> Result<(Vec<CandidateResponse>, u64), Box<dyn std::error::Error>> {

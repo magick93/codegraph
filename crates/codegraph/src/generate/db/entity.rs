@@ -370,7 +370,11 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                         )
                         .await?;
                         if fk_field.ends_with("_id") {
-                            let is_nullable = !prop.is_required;
+                            // VO→entity FK columns are always nullable in the DDL
+                            // (the DTO/repository model the VO as a nested child
+                            // table and never populate the FK), so the model field
+                            // must be Option<Uuid> regardless of schema required.
+                            let is_nullable = true;
                             columns.push(EntityColumn {
                                 field_name: fk_field,
                                 rust_type: if is_nullable {

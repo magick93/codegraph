@@ -72,8 +72,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('Identifier CRUD', () => {
-  let createdId: string | undefined;
+test.describe('Identifier CRUD', () => {
 
 
 
@@ -97,25 +96,25 @@ test.describe.serial('Identifier CRUD', () => {
 
 
 
-    if (await page.locator('#scheme_agency_id').isVisible()) {
+    if (data['scheme_agency_id'] != null && await page.locator('#scheme_agency_id').isVisible()) {
       await page.locator('#scheme_agency_id').fill(String(data['scheme_agency_id']));
     }
 
 
 
-    if (await page.locator('#scheme_id').isVisible()) {
+    if (data['scheme_id'] != null && await page.locator('#scheme_id').isVisible()) {
       await page.locator('#scheme_id').fill(String(data['scheme_id']));
     }
 
 
 
-    if (await page.locator('#scheme_version_id').isVisible()) {
+    if (data['scheme_version_id'] != null && await page.locator('#scheme_version_id').isVisible()) {
       await page.locator('#scheme_version_id').fill(String(data['scheme_version_id']));
     }
 
 
 
-    if (await page.locator('#value').isVisible()) {
+    if (data['value'] != null && await page.locator('#value').isVisible()) {
       await page.locator('#value').fill(String(data['value']));
     }
 
@@ -131,7 +130,7 @@ test.describe.serial('Identifier CRUD', () => {
 
     // Capture the created entity ID from the URL
     const url = page.url();
-    createdId = url.split('/').pop()!;
+    const formCreatedId = url.split('/').pop()!;
 
     // Verify field values on detail page (only check fields present on the page)
 
@@ -161,15 +160,13 @@ test.describe.serial('Identifier CRUD', () => {
 
   });
 
-  test('entity appears in list after create', async ({ ownerPage: page }) => {
+  test('entity appears in list after create', async ({ ownerPage: page, orgContext }) => {
+    await createEntityAsAcme(orgContext, BASE_PATH, testData());
     await page.goto(BASE_PATH);
     const table = page.locator('[data-testid="identifier-table"]');
     const empty = page.locator('[data-testid="identifier-empty"]');
     await expect(table.or(empty)).toBeVisible();
-    // If we created an entity, the table should be visible (not empty state)
-    if (createdId) {
-      await expect(table).toBeVisible();
-    }
+    await expect(table).toBeVisible();
   });
 
 
@@ -205,14 +202,11 @@ test.describe.serial('Identifier CRUD', () => {
 
 
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
-    // Create via API if we don't have one yet
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await expect(page.getByRole('heading', { name: 'Identifier' })).toBeVisible();
 
@@ -235,41 +229,39 @@ test.describe.serial('Identifier CRUD', () => {
 
 
   test('edit entity via form', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}/edit`);
+    await page.goto(`${BASE_PATH}/${myId}/edit`);
 
     await waitForHydration(page, '[data-testid="identifier-submit-btn"]');
     const data = updatedData();
 
 
 
-    if (await page.locator('#scheme_agency_id').isVisible()) {
+    if (data['scheme_agency_id'] != null && await page.locator('#scheme_agency_id').isVisible()) {
       await page.locator('#scheme_agency_id').clear();
       await page.locator('#scheme_agency_id').fill(String(data['scheme_agency_id']));
     }
 
 
 
-    if (await page.locator('#scheme_id').isVisible()) {
+    if (data['scheme_id'] != null && await page.locator('#scheme_id').isVisible()) {
       await page.locator('#scheme_id').clear();
       await page.locator('#scheme_id').fill(String(data['scheme_id']));
     }
 
 
 
-    if (await page.locator('#scheme_version_id').isVisible()) {
+    if (data['scheme_version_id'] != null && await page.locator('#scheme_version_id').isVisible()) {
       await page.locator('#scheme_version_id').clear();
       await page.locator('#scheme_version_id').fill(String(data['scheme_version_id']));
     }
 
 
 
-    if (await page.locator('#value').isVisible()) {
+    if (data['value'] != null && await page.locator('#value').isVisible()) {
       await page.locator('#value').clear();
       await page.locator('#value').fill(String(data['value']));
     }
@@ -318,13 +310,11 @@ test.describe.serial('Identifier CRUD', () => {
 
 
   test('delete entity', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(page, '[data-testid="identifier-delete-btn"]');
     await page.locator('[data-testid="identifier-delete-btn"]').click();
@@ -343,7 +333,7 @@ test.describe.serial('Identifier CRUD', () => {
     const empty = page.locator('[data-testid="identifier-empty"]');
     await expect(table.or(empty)).toBeVisible();
     if (await table.isVisible()) {
-      await expect(table).not.toContainText(createdId);
+      await expect(table).not.toContainText(myId);
     }
   });
 

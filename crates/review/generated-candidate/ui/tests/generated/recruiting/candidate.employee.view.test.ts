@@ -3,11 +3,7 @@ import { createEntityAsAcme, createEntityViaApi, deleteEntityViaApi, expectToast
 import type { OrgContext } from '../../e2e/fixtures/personas';
 
 
-
-const PARENT_API_PATH = '/recruiting/application';
-
-let BASE_PATH: string;
-
+const BASE_PATH = '/recruiting/candidate';
 
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
@@ -20,34 +16,28 @@ function testData(): Record<string, unknown> {
     'birth_date': '2025-01-15',
     'family_name': 'Test Family Name',
     'given_name': 'Test Given Name',
-    'application_process_history': {},
+    // 'application_process_history': ValueObject — omit, serde default
     'candidate_id': 'Test Candidate Id',
     'compensation_expectation': 42,
     'compensation_expectation_currency': 'USD',
-    'distribution_guidelines': {},
+    // 'distribution_guidelines': ValueObject — omit, serde default
     'external_identifier': { value: 'Test External Identifier' },
     'gender': 'Male',
-    'person_name': {},
+    // 'person_name': ValueObject — omit, serde default
     'position_schedule_type_codes': [{ code: 'FullTime' }],
     'position_titles': ['Test Position Titles'],
-    'qualifications': {},
+    'qualifications': [],
     ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
     'status': 'active',
     'uri': 'Test Uri',
   };
 }
 
-test.describe.serial('Candidate Employee View', () => {
+test.describe('Candidate Employee View', () => {
   let createdId: string;
   const data = testData();
 
   test.beforeAll(async ({ orgContext }) => {
-
-
-    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'applied_date': '2025-01-15', 'status': 'Applied' });
-    const parentId = parentEntity['id'] as string;
-    BASE_PATH = `${PARENT_API_PATH}/${parentId}/candidate`;
-
 
 
     try {

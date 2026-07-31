@@ -16,12 +16,7 @@ import {
 } from '../../e2e/helpers';
 
 
-
-const PARENT_API_PATH = '/recruiting/candidate';
-
-let parentId: string;
-let BASE_PATH: string;
-
+const BASE_PATH = '/recruiting/application';
 
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
@@ -77,18 +72,10 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('Application CRUD', () => {
-  let createdId: string | undefined;
+test.describe('Application CRUD', () => {
 
 
   test.beforeAll(async ({ orgContext }) => {
-
-
-    // Create parent entity for nested route
-    const parentEntity = await createEntityAsAcme(orgContext, PARENT_API_PATH, { 'birth_date': '2025-01-15', 'family_name': 'Test Family Name', 'given_name': 'Test Given Name', 'application_process_history': {}, 'compensation_expectation': 42, 'compensation_expectation_currency': 'USD', 'distribution_guidelines': {}, 'external_identifier': { value: 'Test External Identifier' }, 'gender': 'Male', 'person_name': {}, 'position_schedule_type_codes': [{ code: 'FullTime' }], 'position_titles': ['Test Position Titles'], 'qualifications': {}, 'status': 'active', 'uri': 'Test Uri' });
-    parentId = parentEntity['id'] as string;
-    BASE_PATH = `${PARENT_API_PATH}/${parentId}/application`;
-
 
 
     try {
@@ -113,15 +100,6 @@ test.describe.serial('Application CRUD', () => {
     }
 
 
-    if (parentId) {
-      try {
-        await fetch(`${baseUrl}/api${PARENT_API_PATH}/${parentId}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
-        });
-      } catch { /* best effort */ }
-    }
-
   });
 
 
@@ -145,13 +123,13 @@ test.describe.serial('Application CRUD', () => {
 
 
 
-    if (await page.locator('#application_id').isVisible()) {
+    if (data['application_id'] != null && await page.locator('#application_id').isVisible()) {
       await page.locator('#application_id').fill(String(data['application_id']));
     }
 
 
 
-    if (await page.locator('#applied_date').isVisible()) {
+    if (data['applied_date'] != null && await page.locator('#applied_date').isVisible()) {
       await page.locator('#applied_date').fill(String(data['applied_date']));
     }
 
@@ -174,12 +152,12 @@ test.describe.serial('Application CRUD', () => {
 
     // Should redirect to detail page
 
-    await expect(page).toHaveURL(/\/recruiting\/candidate\/[0-9a-f-]+\/application\/[0-9a-f-]+/);
+    await expect(page).toHaveURL(/\/recruiting\/application\/[0-9a-f-]+/);
 
 
     // Capture the created entity ID from the URL
     const url = page.url();
-    createdId = url.split('/').pop()!;
+    const formCreatedId = url.split('/').pop()!;
 
     // Verify field values on detail page (only check fields present on the page)
 
@@ -209,15 +187,13 @@ test.describe.serial('Application CRUD', () => {
 
   });
 
-  test('entity appears in list after create', async ({ ownerPage: page }) => {
+  test('entity appears in list after create', async ({ ownerPage: page, orgContext }) => {
+    await createEntityAsAcme(orgContext, BASE_PATH, testData());
     await page.goto(BASE_PATH);
     const table = page.locator('[data-testid="application-table"]');
     const empty = page.locator('[data-testid="application-empty"]');
     await expect(table.or(empty)).toBeVisible();
-    // If we created an entity, the table should be visible (not empty state)
-    if (createdId) {
-      await expect(table).toBeVisible();
-    }
+    await expect(table).toBeVisible();
   });
 
 
@@ -253,14 +229,11 @@ test.describe.serial('Application CRUD', () => {
 
 
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
-    // Create via API if we don't have one yet
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await expect(page.getByRole('heading', { name: 'Application' })).toBeVisible();
 
@@ -283,27 +256,25 @@ test.describe.serial('Application CRUD', () => {
 
 
   test('edit entity via form', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}/edit`);
+    await page.goto(`${BASE_PATH}/${myId}/edit`);
 
     await waitForHydration(page, '[data-testid="application-submit-btn"]');
     const data = updatedData();
 
 
 
-    if (await page.locator('#application_id').isVisible()) {
+    if (data['application_id'] != null && await page.locator('#application_id').isVisible()) {
       await page.locator('#application_id').clear();
       await page.locator('#application_id').fill(String(data['application_id']));
     }
 
 
 
-    if (await page.locator('#applied_date').isVisible()) {
+    if (data['applied_date'] != null && await page.locator('#applied_date').isVisible()) {
       await page.locator('#applied_date').clear();
       await page.locator('#applied_date').fill(String(data['applied_date']));
     }
@@ -328,7 +299,7 @@ test.describe.serial('Application CRUD', () => {
 
     // Should redirect to detail page
 
-    await expect(page).toHaveURL(/\/recruiting\/candidate\/[0-9a-f-]+\/application\/[0-9a-f-]+$/);
+    await expect(page).toHaveURL(/\/recruiting\/application\/[0-9a-f-]+$/);
 
 
     // Verify updated values (only check fields present on the page)
@@ -365,13 +336,11 @@ test.describe.serial('Application CRUD', () => {
 
 
   test('delete entity', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(page, '[data-testid="application-delete-btn"]');
     await page.locator('[data-testid="application-delete-btn"]').click();
@@ -390,7 +359,7 @@ test.describe.serial('Application CRUD', () => {
     const empty = page.locator('[data-testid="application-empty"]');
     await expect(table.or(empty)).toBeVisible();
     if (await table.isVisible()) {
-      await expect(table).not.toContainText(createdId);
+      await expect(table).not.toContainText(myId);
     }
   });
 

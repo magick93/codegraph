@@ -40,8 +40,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('StringTypeArray CRUD', () => {
-  let createdId: string | undefined;
+test.describe('StringTypeArray CRUD', () => {
 
 
 
@@ -59,15 +58,12 @@ test.describe.serial('StringTypeArray CRUD', () => {
     // All properties are complex types (value objects / child tables) — no simple form fields.
     // Create via API instead of form fill.
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-    createdId = entity['id'] as string;
-    expect(createdId).toBeTruthy();
+    const apiCreatedId = entity['id'] as string;
+    expect(apiCreatedId).toBeTruthy();
   });
 
   test('entity appears in list after create', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    await createEntityAsAcme(orgContext, BASE_PATH, testData());
     await page.goto(BASE_PATH);
     const table = page.locator('[data-testid="string_type_array-table"]');
     const empty = page.locator('[data-testid="string_type_array-empty"]');
@@ -107,14 +103,11 @@ test.describe.serial('StringTypeArray CRUD', () => {
 
 
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
-    // Create via API if we don't have one yet
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await expect(page.getByRole('heading', { name: 'String Type Array' })).toBeVisible();
 
@@ -137,13 +130,11 @@ test.describe.serial('StringTypeArray CRUD', () => {
 
 
   test('delete entity', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(page, '[data-testid="string_type_array-delete-btn"]');
     await page.locator('[data-testid="string_type_array-delete-btn"]').click();
@@ -162,7 +153,7 @@ test.describe.serial('StringTypeArray CRUD', () => {
     const empty = page.locator('[data-testid="string_type_array-empty"]');
     await expect(table.or(empty)).toBeVisible();
     if (await table.isVisible()) {
-      await expect(table).not.toContainText(createdId);
+      await expect(table).not.toContainText(myId);
     }
   });
 

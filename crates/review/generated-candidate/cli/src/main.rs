@@ -49,10 +49,22 @@ enum Commands {
         command: commands::compensation::CompensationCommand,
     },
 
+    /// Events commands
+    Events {
+        #[command(subcommand)]
+        command: commands::events::EventsCommand,
+    },
+
     /// Recruiting commands
     Recruiting {
         #[command(subcommand)]
         command: commands::recruiting::RecruitingCommand,
+    },
+
+    /// RSVP commands
+    Rsvp {
+        #[command(subcommand)]
+        command: commands::rsvp::RsvpCommand,
     },
 
     /// Show client and server version information
@@ -97,9 +109,19 @@ async fn main() -> anyhow::Result<()> {
             commands::compensation::execute(command, &client, cli.output).await
         }
 
+        Commands::Events { command } => {
+            let client = ApiClient::new(&base_url, api_token.as_deref())?;
+            commands::events::execute(command, &client, cli.output).await
+        }
+
         Commands::Recruiting { command } => {
             let client = ApiClient::new(&base_url, api_token.as_deref())?;
             commands::recruiting::execute(command, &client, cli.output).await
+        }
+
+        Commands::Rsvp { command } => {
+            let client = ApiClient::new(&base_url, api_token.as_deref())?;
+            commands::rsvp::execute(command, &client, cli.output).await
         }
 
         Commands::Version => {

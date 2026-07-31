@@ -22,18 +22,23 @@ pub struct AuthInfo {
     pub organization_id: Uuid,
     /// API key UUID for API-key auth, or nil for JWT auth.
     pub api_key_id: Uuid,
-    /// User UUID for JWT auth, or nil for API key auth.
+    /// User UUID for JWT auth, or nil for API key / magic link auth.
     /// Used to set request.jwt.claim.sub for Supabase auth.uid().
     pub user_id: Uuid,
     pub auth_mode: AuthMode,
     /// Basejump account role: "owner", "member", "manager", or "employee".
+    /// For magic link: "community_member".
+    /// For API key: "api_key".
     pub role: String,
+    /// Email for magic link auth, None otherwise.
+    pub email: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub enum AuthMode {
     Jwt { user_id: Uuid },
     ApiKey { api_key_id: Uuid, raw_key: String },
+    MagicLink { email: String },
 }
 
 /// Legacy alias for backward compatibility with handlers expecting ApiKeyInfo.
@@ -56,6 +61,7 @@ struct JwtClaims {
 
 /// Axum middleware that validates auth from Authorization header.
 /// Tries API key (sk_ prefix) or JWT (signature-verified via SUPABASE_JWT_SECRET).
+/// In TEST_MODE, accepts "Bearer test-mode" as a valid auth token.
 pub async fn auth_middleware(
     State(state): State<AppState>,
     mut request: Request,
@@ -67,6 +73,24 @@ pub async fn auth_middleware(
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(|s| s.to_string())
         .ok_or_else(|| reject_unauthorized("Missing or malformed Authorization header"))?;
+
+    // TEST_MODE: accept "test-mode" token without real auth
+    if std::env::var("TEST_MODE").unwrap_or_default() == "true" && token == "test-mode" {
+        let org_id = std::env::var("TEST_ORG_ID")
+            .ok()
+            .and_then(|s| uuid::Uuid::parse_str(&s).ok())
+            .unwrap_or_else(uuid::Uuid::nil);
+        let test_auth = AuthInfo {
+            organization_id: org_id,
+            api_key_id: uuid::Uuid::nil(),
+            user_id: uuid::Uuid::nil(),
+            auth_mode: AuthMode::MagicLink { email: "test@e2e.local".to_string() },
+            role: "test".to_string(),
+            email: Some("test@e2e.local".to_string()),
+        };
+        request.extensions_mut().insert(test_auth);
+        return Ok(next.run(request).await);
+    }
 
     let auth_info = if token.starts_with("sk_") {
         verify_api_key(&state.db, &token).await?
@@ -154,6 +178,7 @@ async fn verify_api_key(db: &sea_orm::DatabaseConnection, token: &str) -> Result
             raw_key: token.to_string(),
         },
         role: "api_key".to_string(),
+        email: None,
     })
 }
 
@@ -198,6 +223,24 @@ async fn verify_jwt(db: &sea_orm::DatabaseConnection, token: &str, jwt_secret: &
     let token_data = decode::<JwtClaims>(token, &decoding_key, &validation)
         .map_err(|e| reject_unauthorized(&format!("Invalid JWT: {e}")))?;
 
+    // Detect magic link JWT: sub is email, not UUID
+    if token_data.claims.sub.contains('@') {
+        let email = token_data.claims.sub.clone();
+        let org_id = std::env::var("MAGIC_LINK_ORG_ID")
+            .ok()
+            .and_then(|s| Uuid::parse_str(&s).ok())
+            .unwrap_or_else(Uuid::nil);
+
+        return Ok(AuthInfo {
+            organization_id: org_id,
+            api_key_id: Uuid::nil(),
+            user_id: Uuid::nil(),
+            auth_mode: AuthMode::MagicLink { email: email.clone() },
+            role: "community_member".to_string(),
+            email: Some(email),
+        });
+    }
+
     let user_id: Uuid = token_data.claims.sub
         .parse()
         .map_err(|_| reject_unauthorized("JWT sub is not a valid UUID"))?;
@@ -235,6 +278,7 @@ async fn verify_jwt(db: &sea_orm::DatabaseConnection, token: &str, jwt_secret: &
         user_id,
         auth_mode: AuthMode::Jwt { user_id },
         role,
+        email: None,
     })
 }
 

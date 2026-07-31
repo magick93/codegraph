@@ -256,6 +256,41 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: api_key_migration,
         });
 
+        // SeaORM migration crate: applies the raw SQL files in migrations/ via
+        // the Migrator (run with `sea-orm-cli migrate up` or `cargo run
+        // --manifest-path migration/Cargo.toml -- up`), and on app boot.
+        let migration_cargo_toml =
+            render_template_with_project(tera, "scaffold/migration_cargo_toml.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self.output_dir.join("migration").join("Cargo.toml"),
+            content: migration_cargo_toml,
+        });
+
+        let migration_lib =
+            render_template_with_project(tera, "scaffold/migration_lib.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self.output_dir.join("migration").join("src").join("lib.rs"),
+            content: migration_lib,
+        });
+
+        let migration_main =
+            render_template_with_project(tera, "scaffold/migration_main.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self.output_dir.join("migration").join("src").join("main.rs"),
+            content: migration_main,
+        });
+
+        let migration_migrator =
+            render_template_with_project(tera, "scaffold/migration_migrator.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self
+                .output_dir
+                .join("migration")
+                .join("src")
+                .join("migrator.rs"),
+            content: migration_migrator,
+        });
+
         Ok(files)
     }
 }

@@ -8,7 +8,7 @@ mod tests {
     #[test]
     fn test_application_create_dto_deserializes() {
         let json = r#"{ }"#;
-        let _result: Result<app::domain::recruiting::application::dto_create::CreateApplicationRequest, _> =
+        let _result: Result<cosmos::domain::recruiting::application::dto_create::CreateApplicationRequest, _> =
             serde_json::from_str(json);
         // Should not panic even with empty body (optional fields)
     }
@@ -16,7 +16,7 @@ mod tests {
     #[test]
     fn test_application_response_serializes() {
         // Verify Response DTO can serialize
-        let response = app::domain::recruiting::application::dto_response::ApplicationResponse {
+        let response = cosmos::domain::recruiting::application::dto_response::ApplicationResponse {
             id: uuid::Uuid::new_v4(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -30,35 +30,35 @@ mod tests {
     fn test_application_create_body_single_deserializes() {
         // Verify CreateBody untagged enum deserializes a single JSON object
         let json = r#"{ }"#;
-        let body: app::api::recruiting::application_handler::CreateApplicationBody =
+        let body: cosmos::api::recruiting::application_handler::CreateApplicationBody =
             serde_json::from_str(json).expect("single object should deserialize as CreateBody::Single");
-        assert!(matches!(body, app::api::recruiting::application_handler::CreateApplicationBody::Single(_)));
+        assert!(matches!(body, cosmos::api::recruiting::application_handler::CreateApplicationBody::Single(_)));
     }
 
     #[test]
     fn test_application_create_body_bulk_deserializes() {
         // Verify CreateBody untagged enum deserializes a JSON array
         let json = r#"[{}, {}]"#;
-        let body: app::api::recruiting::application_handler::CreateApplicationBody =
+        let body: cosmos::api::recruiting::application_handler::CreateApplicationBody =
             serde_json::from_str(json).expect("array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, app::api::recruiting::application_handler::CreateApplicationBody::Bulk(ref items) if items.len() == 2));
+        assert!(matches!(body, cosmos::api::recruiting::application_handler::CreateApplicationBody::Bulk(ref items) if items.len() == 2));
     }
 
     #[test]
     fn test_application_create_body_empty_array_deserializes() {
         // Verify empty array deserializes (handler rejects it, but serde should accept it)
         let json = r#"[]"#;
-        let body: app::api::recruiting::application_handler::CreateApplicationBody =
+        let body: cosmos::api::recruiting::application_handler::CreateApplicationBody =
             serde_json::from_str(json).expect("empty array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, app::api::recruiting::application_handler::CreateApplicationBody::Bulk(ref items) if items.is_empty()));
+        assert!(matches!(body, cosmos::api::recruiting::application_handler::CreateApplicationBody::Bulk(ref items) if items.is_empty()));
     }
 
     #[test]
     fn test_application_bulk_create_response_serializes() {
         // Verify BulkCreateResponse serializes with correct JSON structure
-        let response = app::api::recruiting::application_handler::BulkCreateResponse {
+        let response = cosmos::api::recruiting::application_handler::BulkCreateResponse {
             success: vec![
-                app::domain::recruiting::application::dto_response::ApplicationResponse {
+                cosmos::domain::recruiting::application::dto_response::ApplicationResponse {
                     id: uuid::Uuid::new_v4(),
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
@@ -66,7 +66,7 @@ mod tests {
                 },
             ],
             failed: vec![
-                app::api::recruiting::application_handler::BulkItemError {
+                cosmos::api::recruiting::application_handler::BulkItemError {
                     index: 1,
                     error: "test error".to_string(),
                 },

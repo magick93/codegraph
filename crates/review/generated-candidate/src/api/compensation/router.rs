@@ -25,6 +25,7 @@ fn pay_run_routes() -> Router<AppState> {
         .route("/", axum::routing::get(pay_run_handler::list).post(pay_run_handler::create))
 
 
+
         .route("/{pay_run_id}", axum::routing::get(pay_run_handler::get_by_id).put(pay_run_handler::update).delete(pay_run_handler::delete))
 
 

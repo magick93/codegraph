@@ -8,7 +8,7 @@ mod tests {
     #[test]
     fn test_process_history_item_create_dto_deserializes() {
         let json = r#"{ }"#;
-        let _result: Result<app::domain::common::process_history_item::dto_create::CreateProcessHistoryItemRequest, _> =
+        let _result: Result<cosmos::domain::common::process_history_item::dto_create::CreateProcessHistoryItemRequest, _> =
             serde_json::from_str(json);
         // Should not panic even with empty body (optional fields)
     }
@@ -16,7 +16,7 @@ mod tests {
     #[test]
     fn test_process_history_item_response_serializes() {
         // Verify Response DTO can serialize
-        let response = app::domain::common::process_history_item::dto_response::ProcessHistoryItemResponse {
+        let response = cosmos::domain::common::process_history_item::dto_response::ProcessHistoryItemResponse {
             id: uuid::Uuid::new_v4(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -30,35 +30,35 @@ mod tests {
     fn test_process_history_item_create_body_single_deserializes() {
         // Verify CreateBody untagged enum deserializes a single JSON object
         let json = r#"{ }"#;
-        let body: app::api::common::process_history_item_handler::CreateProcessHistoryItemBody =
+        let body: cosmos::api::common::process_history_item_handler::CreateProcessHistoryItemBody =
             serde_json::from_str(json).expect("single object should deserialize as CreateBody::Single");
-        assert!(matches!(body, app::api::common::process_history_item_handler::CreateProcessHistoryItemBody::Single(_)));
+        assert!(matches!(body, cosmos::api::common::process_history_item_handler::CreateProcessHistoryItemBody::Single(_)));
     }
 
     #[test]
     fn test_process_history_item_create_body_bulk_deserializes() {
         // Verify CreateBody untagged enum deserializes a JSON array
         let json = r#"[{}, {}]"#;
-        let body: app::api::common::process_history_item_handler::CreateProcessHistoryItemBody =
+        let body: cosmos::api::common::process_history_item_handler::CreateProcessHistoryItemBody =
             serde_json::from_str(json).expect("array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, app::api::common::process_history_item_handler::CreateProcessHistoryItemBody::Bulk(ref items) if items.len() == 2));
+        assert!(matches!(body, cosmos::api::common::process_history_item_handler::CreateProcessHistoryItemBody::Bulk(ref items) if items.len() == 2));
     }
 
     #[test]
     fn test_process_history_item_create_body_empty_array_deserializes() {
         // Verify empty array deserializes (handler rejects it, but serde should accept it)
         let json = r#"[]"#;
-        let body: app::api::common::process_history_item_handler::CreateProcessHistoryItemBody =
+        let body: cosmos::api::common::process_history_item_handler::CreateProcessHistoryItemBody =
             serde_json::from_str(json).expect("empty array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, app::api::common::process_history_item_handler::CreateProcessHistoryItemBody::Bulk(ref items) if items.is_empty()));
+        assert!(matches!(body, cosmos::api::common::process_history_item_handler::CreateProcessHistoryItemBody::Bulk(ref items) if items.is_empty()));
     }
 
     #[test]
     fn test_process_history_item_bulk_create_response_serializes() {
         // Verify BulkCreateResponse serializes with correct JSON structure
-        let response = app::api::common::process_history_item_handler::BulkCreateResponse {
+        let response = cosmos::api::common::process_history_item_handler::BulkCreateResponse {
             success: vec![
-                app::domain::common::process_history_item::dto_response::ProcessHistoryItemResponse {
+                cosmos::domain::common::process_history_item::dto_response::ProcessHistoryItemResponse {
                     id: uuid::Uuid::new_v4(),
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
@@ -66,7 +66,7 @@ mod tests {
                 },
             ],
             failed: vec![
-                app::api::common::process_history_item_handler::BulkItemError {
+                cosmos::api::common::process_history_item_handler::BulkItemError {
                     index: 1,
                     error: "test error".to_string(),
                 },

@@ -13,6 +13,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use axum::http::HeaderValue;
+use migration::MigratorTrait;
 use shadow_rs::shadow;
 shadow!(build);
 
@@ -221,6 +222,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     let db = sea_orm::Database::connect(&db_url).await?;
+
+    // Apply pending migrations on startup (idempotent — applied files are
+    // tracked in the seaql_migrations table). Manual runs:
+    //   DATABASE_URL=... sea-orm-cli migrate up
+    if let Err(e) = migration::Migrator::up(&db, None).await {
+        tracing::error!("Failed to apply database migrations: {e}");
+        return Err(e.into());
+    }
 
 {% if has_atproto %}
     let atproto_authority = std::env::var("ATPROTO_AUTHORITY")

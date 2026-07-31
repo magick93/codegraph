@@ -19,7 +19,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('DistributionBase Cross-Org Isolation', () => {
+test.describe('DistributionBase Cross-Org Isolation', () => {
   let acmeEntityId: string;
   const data = testData();
 

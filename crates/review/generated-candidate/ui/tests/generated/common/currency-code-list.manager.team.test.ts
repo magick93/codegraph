@@ -19,7 +19,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('CurrencyCodeList Manager Team', () => {
+test.describe('CurrencyCodeList Manager Team', () => {
   let createdId: string;
   const data = testData();
 

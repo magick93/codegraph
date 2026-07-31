@@ -98,6 +98,37 @@ export interface CandidateQualificationResponse {
 }
 
 
+/** Nested value object. */
+export interface RsvpEventBaseResponse {
+	
+
+	capacity?: number | null;
+
+	
+
+	/** Event title */
+	title: string;
+
+	
+
+	birth_date?: string | null;
+
+	
+
+	/** Last name */
+	family_name: string;
+
+	
+
+	/** First name */
+	given_name: string;
+
+	
+	created_at: string;
+	updated_at: string;
+}
+
+
 
 /** Amount response from the API. */
 export interface AmountResponse {
@@ -620,6 +651,83 @@ export interface UpdateEffectiveDateRequest {
 
 
 
+/** EventBase response from the API. */
+export interface EventBaseResponse {
+	id: string;
+
+
+	capacity?: number | null;
+
+
+
+	/** Event title */
+	title: string;
+
+
+
+	birth_date?: string | null;
+
+
+
+	/** Last name */
+	family_name: string;
+
+
+
+	/** First name */
+	given_name: string;
+
+
+	created_at: string;
+	updated_at: string;
+
+}
+
+
+/** Create request for EventBase. */
+export interface CreateEventBaseRequest {
+
+
+	capacity?: number | null;
+
+
+
+	title: string;
+
+
+
+	birth_date?: string | null;
+
+
+
+	family_name: string;
+
+
+
+	given_name: string;
+
+
+}
+
+
+
+/** Update request for EventBase. All fields optional (partial update). */
+export interface UpdateEventBaseRequest {
+
+	capacity?: number | null;
+
+	title?: string | null;
+
+	birth_date?: string | null;
+
+	family_name?: string | null;
+
+	given_name?: string | null;
+
+}
+
+
+
 /** FormattedDateTime response from the API. */
 export interface FormattedDateTimeResponse {
 	id: string;
@@ -1099,6 +1207,148 @@ export interface UpdateProcessHistoryItemRequest {
 	descriptions?: Array<string>[] | null;
 
 	id?: string | null;
+
+}
+
+
+
+/** PublicEvent response from the API. */
+export interface PublicEventResponse {
+	id: string;
+
+
+	is_published?: boolean | null;
+
+
+
+	capacity?: number | null;
+
+
+
+	/** Event title */
+	title: string;
+
+
+
+	birth_date?: string | null;
+
+
+
+	/** Last name */
+	family_name: string;
+
+
+
+	/** First name */
+	given_name: string;
+
+
+	created_at: string;
+	updated_at: string;
+
+}
+
+
+/** Create request for PublicEvent. */
+export interface CreatePublicEventRequest {
+
+
+	is_published?: boolean | null;
+
+
+
+	capacity?: number | null;
+
+
+
+	title: string;
+
+
+
+	birth_date?: string | null;
+
+
+
+	family_name: string;
+
+
+
+	given_name: string;
+
+
+}
+
+
+
+/** Update request for PublicEvent. All fields optional (partial update). */
+export interface UpdatePublicEventRequest {
+
+	is_published?: boolean | null;
+
+	capacity?: number | null;
+
+	title?: string | null;
+
+	birth_date?: string | null;
+
+	family_name?: string | null;
+
+	given_name?: string | null;
+
+}
+
+
+
+/** Rsvp response from the API. */
+export interface RsvpResponse {
+	id: string;
+
+
+	/** The event this RSVP is for (required value object that resolves to an entity) */
+	event: RsvpEventBaseResponse;
+
+
+
+	status: string;
+
+
+
+	timestamp: string;
+
+
+	created_at: string;
+	updated_at: string;
+
+}
+
+
+/** Create request for Rsvp. */
+export interface CreateRsvpRequest {
+
+
+	event: RsvpEventBaseResponse;
+
+
+
+	status: string;
+
+
+
+	timestamp: string;
+
+
+}
+
+
+
+/** Update request for Rsvp. All fields optional (partial update). */
+export interface UpdateRsvpRequest {
+
+	event?: RsvpEventBaseResponse | null;
+
+	status?: string | null;
+
+	timestamp?: string | null;
 
 }
 

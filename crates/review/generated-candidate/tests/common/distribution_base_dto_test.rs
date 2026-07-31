@@ -8,7 +8,7 @@ mod tests {
     #[test]
     fn test_distribution_base_create_dto_deserializes() {
         let json = r#"{ }"#;
-        let _result: Result<app::domain::common::distribution_base::dto_create::CreateDistributionBaseRequest, _> =
+        let _result: Result<cosmos::domain::common::distribution_base::dto_create::CreateDistributionBaseRequest, _> =
             serde_json::from_str(json);
         // Should not panic even with empty body (optional fields)
     }
@@ -16,7 +16,7 @@ mod tests {
     #[test]
     fn test_distribution_base_response_serializes() {
         // Verify Response DTO can serialize
-        let response = app::domain::common::distribution_base::dto_response::DistributionBaseResponse {
+        let response = cosmos::domain::common::distribution_base::dto_response::DistributionBaseResponse {
             id: uuid::Uuid::new_v4(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -30,35 +30,35 @@ mod tests {
     fn test_distribution_base_create_body_single_deserializes() {
         // Verify CreateBody untagged enum deserializes a single JSON object
         let json = r#"{ }"#;
-        let body: app::api::common::distribution_base_handler::CreateDistributionBaseBody =
+        let body: cosmos::api::common::distribution_base_handler::CreateDistributionBaseBody =
             serde_json::from_str(json).expect("single object should deserialize as CreateBody::Single");
-        assert!(matches!(body, app::api::common::distribution_base_handler::CreateDistributionBaseBody::Single(_)));
+        assert!(matches!(body, cosmos::api::common::distribution_base_handler::CreateDistributionBaseBody::Single(_)));
     }
 
     #[test]
     fn test_distribution_base_create_body_bulk_deserializes() {
         // Verify CreateBody untagged enum deserializes a JSON array
         let json = r#"[{}, {}]"#;
-        let body: app::api::common::distribution_base_handler::CreateDistributionBaseBody =
+        let body: cosmos::api::common::distribution_base_handler::CreateDistributionBaseBody =
             serde_json::from_str(json).expect("array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, app::api::common::distribution_base_handler::CreateDistributionBaseBody::Bulk(ref items) if items.len() == 2));
+        assert!(matches!(body, cosmos::api::common::distribution_base_handler::CreateDistributionBaseBody::Bulk(ref items) if items.len() == 2));
     }
 
     #[test]
     fn test_distribution_base_create_body_empty_array_deserializes() {
         // Verify empty array deserializes (handler rejects it, but serde should accept it)
         let json = r#"[]"#;
-        let body: app::api::common::distribution_base_handler::CreateDistributionBaseBody =
+        let body: cosmos::api::common::distribution_base_handler::CreateDistributionBaseBody =
             serde_json::from_str(json).expect("empty array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, app::api::common::distribution_base_handler::CreateDistributionBaseBody::Bulk(ref items) if items.is_empty()));
+        assert!(matches!(body, cosmos::api::common::distribution_base_handler::CreateDistributionBaseBody::Bulk(ref items) if items.is_empty()));
     }
 
     #[test]
     fn test_distribution_base_bulk_create_response_serializes() {
         // Verify BulkCreateResponse serializes with correct JSON structure
-        let response = app::api::common::distribution_base_handler::BulkCreateResponse {
+        let response = cosmos::api::common::distribution_base_handler::BulkCreateResponse {
             success: vec![
-                app::domain::common::distribution_base::dto_response::DistributionBaseResponse {
+                cosmos::domain::common::distribution_base::dto_response::DistributionBaseResponse {
                     id: uuid::Uuid::new_v4(),
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
@@ -66,7 +66,7 @@ mod tests {
                 },
             ],
             failed: vec![
-                app::api::common::distribution_base_handler::BulkItemError {
+                cosmos::api::common::distribution_base_handler::BulkItemError {
                     index: 1,
                     error: "test error".to_string(),
                 },

@@ -415,6 +415,7 @@ pub(crate) fn example_for_field(name: &str, rust_type: &str, codelist_target: Op
         }
         "time" | "startTime" | "endTime" | "start_time" | "end_time" => "\"14:00\"".into(),
         "channel" | "notificationChannel" | "notification_channel" => "\"Email\"".into(),
+        "checkInMethod" | "check_in_method" => "\"QR\"".into(),
         "period" | "reportPeriod" | "report_period" => "\"[2025-01-01,2025-12-31)\"".into(),
         "capacity" | "maxAttendees" | "max_attendees" => "50".into(),
         "did" => "\"did:web:test.community.os\"".into(),

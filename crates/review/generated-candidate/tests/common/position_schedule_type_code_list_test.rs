@@ -9,7 +9,7 @@ mod tests {
     #[test]
     fn test_position_schedule_type_code_list_entity_columns() {
         // Verify the entity model compiles and has expected columns
-        let _model = app::entity::position_schedule_type_code_list::Model {
+        let _model = cosmos::entity::position_schedule_type_code_list::Model {
             id: Uuid::new_v4(),
             ..Default::default()
         };

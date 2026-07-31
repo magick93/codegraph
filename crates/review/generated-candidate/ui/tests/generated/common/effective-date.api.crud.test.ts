@@ -56,8 +56,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('EffectiveDate CRUD', () => {
-  let createdId: string | undefined;
+test.describe('EffectiveDate CRUD', () => {
 
 
 
@@ -81,13 +80,13 @@ test.describe.serial('EffectiveDate CRUD', () => {
 
 
 
-    if (await page.locator('#valid_from').isVisible()) {
+    if (data['valid_from'] != null && await page.locator('#valid_from').isVisible()) {
       await page.locator('#valid_from').fill(String(data['valid_from']));
     }
 
 
 
-    if (await page.locator('#valid_to').isVisible()) {
+    if (data['valid_to'] != null && await page.locator('#valid_to').isVisible()) {
       await page.locator('#valid_to').fill(String(data['valid_to']));
     }
 
@@ -103,7 +102,7 @@ test.describe.serial('EffectiveDate CRUD', () => {
 
     // Capture the created entity ID from the URL
     const url = page.url();
-    createdId = url.split('/').pop()!;
+    const formCreatedId = url.split('/').pop()!;
 
     // Verify field values on detail page (only check fields present on the page)
 
@@ -121,15 +120,13 @@ test.describe.serial('EffectiveDate CRUD', () => {
 
   });
 
-  test('entity appears in list after create', async ({ ownerPage: page }) => {
+  test('entity appears in list after create', async ({ ownerPage: page, orgContext }) => {
+    await createEntityAsAcme(orgContext, BASE_PATH, testData());
     await page.goto(BASE_PATH);
     const table = page.locator('[data-testid="effective_date-table"]');
     const empty = page.locator('[data-testid="effective_date-empty"]');
     await expect(table.or(empty)).toBeVisible();
-    // If we created an entity, the table should be visible (not empty state)
-    if (createdId) {
-      await expect(table).toBeVisible();
-    }
+    await expect(table).toBeVisible();
   });
 
 
@@ -165,14 +162,11 @@ test.describe.serial('EffectiveDate CRUD', () => {
 
 
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
-    // Create via API if we don't have one yet
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await expect(page.getByRole('heading', { name: 'Effective Date' })).toBeVisible();
 
@@ -191,27 +185,25 @@ test.describe.serial('EffectiveDate CRUD', () => {
 
 
   test('edit entity via form', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}/edit`);
+    await page.goto(`${BASE_PATH}/${myId}/edit`);
 
     await waitForHydration(page, '[data-testid="effective_date-submit-btn"]');
     const data = updatedData();
 
 
 
-    if (await page.locator('#valid_from').isVisible()) {
+    if (data['valid_from'] != null && await page.locator('#valid_from').isVisible()) {
       await page.locator('#valid_from').clear();
       await page.locator('#valid_from').fill(String(data['valid_from']));
     }
 
 
 
-    if (await page.locator('#valid_to').isVisible()) {
+    if (data['valid_to'] != null && await page.locator('#valid_to').isVisible()) {
       await page.locator('#valid_to').clear();
       await page.locator('#valid_to').fill(String(data['valid_to']));
     }
@@ -248,13 +240,11 @@ test.describe.serial('EffectiveDate CRUD', () => {
 
 
   test('delete entity', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(page, '[data-testid="effective_date-delete-btn"]');
     await page.locator('[data-testid="effective_date-delete-btn"]').click();
@@ -273,7 +263,7 @@ test.describe.serial('EffectiveDate CRUD', () => {
     const empty = page.locator('[data-testid="effective_date-empty"]');
     await expect(table.or(empty)).toBeVisible();
     if (await table.isVisible()) {
-      await expect(table).not.toContainText(createdId);
+      await expect(table).not.toContainText(myId);
     }
   });
 

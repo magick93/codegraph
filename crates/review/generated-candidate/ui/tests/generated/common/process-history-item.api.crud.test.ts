@@ -64,8 +64,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('ProcessHistoryItem CRUD', () => {
-  let createdId: string | undefined;
+test.describe('ProcessHistoryItem CRUD', () => {
 
 
 
@@ -105,7 +104,7 @@ test.describe.serial('ProcessHistoryItem CRUD', () => {
 
 
 
-    if (await page.locator('#id').isVisible()) {
+    if (data['id'] != null && await page.locator('#id').isVisible()) {
       await page.locator('#id').fill(String(data['id']));
     }
 
@@ -121,7 +120,7 @@ test.describe.serial('ProcessHistoryItem CRUD', () => {
 
     // Capture the created entity ID from the URL
     const url = page.url();
-    createdId = url.split('/').pop()!;
+    const formCreatedId = url.split('/').pop()!;
 
     // Verify field values on detail page (only check fields present on the page)
 
@@ -145,15 +144,13 @@ test.describe.serial('ProcessHistoryItem CRUD', () => {
 
   });
 
-  test('entity appears in list after create', async ({ ownerPage: page }) => {
+  test('entity appears in list after create', async ({ ownerPage: page, orgContext }) => {
+    await createEntityAsAcme(orgContext, BASE_PATH, testData());
     await page.goto(BASE_PATH);
     const table = page.locator('[data-testid="process_history_item-table"]');
     const empty = page.locator('[data-testid="process_history_item-empty"]');
     await expect(table.or(empty)).toBeVisible();
-    // If we created an entity, the table should be visible (not empty state)
-    if (createdId) {
-      await expect(table).toBeVisible();
-    }
+    await expect(table).toBeVisible();
   });
 
 
@@ -189,14 +186,11 @@ test.describe.serial('ProcessHistoryItem CRUD', () => {
 
 
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
-    // Create via API if we don't have one yet
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await expect(page.getByRole('heading', { name: 'Process History Item' })).toBeVisible();
 
@@ -217,13 +211,11 @@ test.describe.serial('ProcessHistoryItem CRUD', () => {
 
 
   test('edit entity via form', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}/edit`);
+    await page.goto(`${BASE_PATH}/${myId}/edit`);
 
     await waitForHydration(page, '[data-testid="process_history_item-submit-btn"]');
     const data = updatedData();
@@ -254,7 +246,7 @@ test.describe.serial('ProcessHistoryItem CRUD', () => {
 
 
 
-    if (await page.locator('#id').isVisible()) {
+    if (data['id'] != null && await page.locator('#id').isVisible()) {
       await page.locator('#id').clear();
       await page.locator('#id').fill(String(data['id']));
     }
@@ -297,13 +289,11 @@ test.describe.serial('ProcessHistoryItem CRUD', () => {
 
 
   test('delete entity', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(page, '[data-testid="process_history_item-delete-btn"]');
     await page.locator('[data-testid="process_history_item-delete-btn"]').click();
@@ -322,7 +312,7 @@ test.describe.serial('ProcessHistoryItem CRUD', () => {
     const empty = page.locator('[data-testid="process_history_item-empty"]');
     await expect(table.or(empty)).toBeVisible();
     if (await table.isVisible()) {
-      await expect(table).not.toContainText(createdId);
+      await expect(table).not.toContainText(myId);
     }
   });
 

@@ -101,7 +101,7 @@ async fn generate_full_app(output_dir: &std::path::Path) {
             let module = &schema.pg_table_name;
 
             let code = emitter
-                .emit(&engine, entity_title, domain, &config, None)
+                .emit(&engine, entity_title, domain, &config, None, &[])
                 .await
                 .unwrap();
             let repo_dir = output_dir
@@ -618,6 +618,116 @@ async fn grafeo_cross_layer_consistency() {
     assert!(
         response.contains("candidate_id"),
         "Response should have candidate_id field"
+    );
+}
+
+// === Regression: required VO→entity refs (issue #48) ===
+//
+// A scalar VO property whose allOf chain reaches a known entity must not
+// produce a required (NOT NULL) FK column: the DTO and repository generators
+// model it as a nested child table, so nothing ever populates the FK column
+// and every create fails with a NOT NULL violation.
+
+#[tokio::test]
+async fn required_vo_entity_ref_emits_nullable_fk() {
+    let (engine, config) = setup_grafeo().await;
+    let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
+
+    // Sanity: the fixture graph has the expected shape.
+    let event_prop = engine
+        .get_properties("RsvpType")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|p| p.name == "event")
+        .expect("RsvpType should have an 'event' property");
+    assert!(event_prop.is_required, "event must be required in the fixture");
+    assert_eq!(
+        event_prop.effective_kind(),
+        Some(RefClassificationKind::ValueObject),
+        "event should classify as a ValueObject"
+    );
+
+    // 1. Composition tree: VO→entity ref becomes an FK column that is nullable.
+    // (ColumnInfo keeps the raw property name; the DDL generator appends `_id`.)
+    let tree = engine.get_composition_tree("RsvpType").await.unwrap();
+    let event_col = tree
+        .root
+        .columns
+        .iter()
+        .find(|c| c.name == "event")
+        .expect("composition tree should materialize an event FK column");
+    assert!(
+        event_col.is_optional,
+        "required VO→entity FK column must be nullable — the DTO/repository model it as a nested child table"
+    );
+    let fk = event_col
+        .fk_target
+        .as_ref()
+        .expect("event_id should have an FK target");
+    assert_eq!(fk.schema, "events", "event_id should reference the events schema");
+    assert_eq!(
+        fk.table, "public_event",
+        "event_id should reference events.public_event, not an unrelated entity"
+    );
+
+    // 2. DDL: the FK column is nullable (no NOT NULL).
+    let ddl_gen = codegraph::generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"));
+    let ddl_files = ddl_gen
+        .generate(&engine, "RsvpType", "rsvp", &config, &tera, &ProjectConfig::default())
+        .await
+        .unwrap();
+    let ddl = ddl_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("rsvp_rsvp.sql"))
+        .expect("should produce rsvp_rsvp.sql")
+        .content
+        .clone();
+    assert!(
+        ddl.contains("event_id UUID,"),
+        "event_id column must be nullable. Got:\n{ddl}"
+    );
+    assert!(
+        !ddl.contains("\n    event_id UUID NOT NULL"),
+        "event_id must NOT be NOT NULL. Got:\n{ddl}"
+    );
+
+    // 3. Create DTO keeps the nested child-table VO contract.
+    let tmp = std::env::temp_dir().join("grafeo-test-required-vo-dto");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let dto_gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let dto_files = dto_gen
+        .generate(&engine, "RsvpType", "rsvp", &config, &tera, &ProjectConfig::default())
+        .await
+        .unwrap();
+    let create = dto_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_create"))
+        .expect("should produce dto_create file")
+        .content
+        .clone();
+    assert!(
+        create.contains("pub event: Option<"),
+        "create DTO must keep the nested VO field. Got:\n{create}"
+    );
+
+    // 4. Entity model: the FK field is Option<Uuid> (matches the nullable column).
+    let entity_gen =
+        codegraph::generate::db::entity::SeaOrmEntityGenerator::new(Path::new("/tmp/out"));
+    let entity_files = entity_gen
+        .generate(&engine, "RsvpType", "rsvp", &config, &tera, &ProjectConfig::default())
+        .await
+        .unwrap();
+    let entity = entity_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("rsvp_rsvp.rs"))
+        .expect("should produce the rsvp_rsvp.rs entity file")
+        .content
+        .clone();
+    assert!(
+        entity.contains("pub event_id: Option<Uuid>"),
+        "entity model FK field must be Option<Uuid>. Got:\n{entity}"
     );
 }
 

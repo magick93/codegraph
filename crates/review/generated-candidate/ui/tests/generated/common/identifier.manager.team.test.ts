@@ -20,7 +20,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('Identifier Manager Team', () => {
+test.describe('Identifier Manager Team', () => {
   let createdId: string;
   const data = testData();
 

@@ -30,7 +30,7 @@ function testData(): Record<string, unknown> {
   return {
 
 
-    'code': `TestCode-$ {Date.now()}-$ {Math.random().toString(36).slice(2, 8)}`,
+    'code': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 
 
 
@@ -50,7 +50,7 @@ function updatedData(): Record<string, unknown> {
   return {
 
 
-    'code': `TestCode-$ {Date.now()}-$ {Math.random().toString(36).slice(2, 8)}`,
+    'code': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 
 
 
@@ -64,8 +64,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('CurrencyCodeList CRUD', () => {
-  let createdId: string | undefined;
+test.describe('CurrencyCodeList CRUD', () => {
 
 
 
@@ -89,19 +88,19 @@ test.describe.serial('CurrencyCodeList CRUD', () => {
 
 
 
-    if (await page.locator('#code').isVisible()) {
+    if (data['code'] != null && await page.locator('#code').isVisible()) {
       await page.locator('#code').fill(String(data['code']));
     }
 
 
 
-    if (await page.locator('#display_name').isVisible()) {
+    if (data['display_name'] != null && await page.locator('#display_name').isVisible()) {
       await page.locator('#display_name').fill(String(data['display_name']));
     }
 
 
 
-    if (await page.locator('#sort_order').isVisible()) {
+    if (data['sort_order'] != null && await page.locator('#sort_order').isVisible()) {
       await page.locator('#sort_order').fill(String(data['sort_order']));
     }
 
@@ -117,7 +116,7 @@ test.describe.serial('CurrencyCodeList CRUD', () => {
 
     // Capture the created entity ID from the URL
     const url = page.url();
-    createdId = url.split('/').pop()!;
+    const formCreatedId = url.split('/').pop()!;
 
     // Verify field values on detail page (only check fields present on the page)
 
@@ -141,15 +140,13 @@ test.describe.serial('CurrencyCodeList CRUD', () => {
 
   });
 
-  test('entity appears in list after create', async ({ ownerPage: page }) => {
+  test('entity appears in list after create', async ({ ownerPage: page, orgContext }) => {
+    await createEntityAsAcme(orgContext, BASE_PATH, testData());
     await page.goto(BASE_PATH);
     const table = page.locator('[data-testid="currency_code_list-table"]');
     const empty = page.locator('[data-testid="currency_code_list-empty"]');
     await expect(table.or(empty)).toBeVisible();
-    // If we created an entity, the table should be visible (not empty state)
-    if (createdId) {
-      await expect(table).toBeVisible();
-    }
+    await expect(table).toBeVisible();
   });
 
 
@@ -185,14 +182,11 @@ test.describe.serial('CurrencyCodeList CRUD', () => {
 
 
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
-    // Create via API if we don't have one yet
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await expect(page.getByRole('heading', { name: 'Currency Code List' })).toBeVisible();
 
@@ -213,34 +207,32 @@ test.describe.serial('CurrencyCodeList CRUD', () => {
 
 
   test('edit entity via form', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}/edit`);
+    await page.goto(`${BASE_PATH}/${myId}/edit`);
 
     await waitForHydration(page, '[data-testid="currency_code_list-submit-btn"]');
     const data = updatedData();
 
 
 
-    if (await page.locator('#code').isVisible()) {
+    if (data['code'] != null && await page.locator('#code').isVisible()) {
       await page.locator('#code').clear();
       await page.locator('#code').fill(String(data['code']));
     }
 
 
 
-    if (await page.locator('#display_name').isVisible()) {
+    if (data['display_name'] != null && await page.locator('#display_name').isVisible()) {
       await page.locator('#display_name').clear();
       await page.locator('#display_name').fill(String(data['display_name']));
     }
 
 
 
-    if (await page.locator('#sort_order').isVisible()) {
+    if (data['sort_order'] != null && await page.locator('#sort_order').isVisible()) {
       await page.locator('#sort_order').clear();
       await page.locator('#sort_order').fill(String(data['sort_order']));
     }
@@ -283,13 +275,11 @@ test.describe.serial('CurrencyCodeList CRUD', () => {
 
 
   test('delete entity', async ({ ownerPage: page, orgContext }) => {
-    if (!createdId) {
-      const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-      createdId = entity['id'] as string;
-    }
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
 
-    await page.goto(`${BASE_PATH}/${createdId}`);
+    await page.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(page, '[data-testid="currency_code_list-delete-btn"]');
     await page.locator('[data-testid="currency_code_list-delete-btn"]').click();
@@ -308,7 +298,7 @@ test.describe.serial('CurrencyCodeList CRUD', () => {
     const empty = page.locator('[data-testid="currency_code_list-empty"]');
     await expect(table.or(empty)).toBeVisible();
     if (await table.isVisible()) {
-      await expect(table).not.toContainText(createdId);
+      await expect(table).not.toContainText(myId);
     }
   });
 

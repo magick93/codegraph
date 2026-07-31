@@ -19,7 +19,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('DistributionBase Manager Team', () => {
+test.describe('DistributionBase Manager Team', () => {
   let createdId: string;
   const data = testData();
 

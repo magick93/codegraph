@@ -29,8 +29,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('Identifier Owner CRUD', () => {
-  let createdId: string;
+test.describe('Identifier Owner CRUD', () => {
 
 
 
@@ -64,7 +63,7 @@ test.describe.serial('Identifier Owner CRUD', () => {
 
     await ownerPage.waitForURL(/\/common\/identifier\/[0-9a-f-]+$/, { timeout: 20_000 });
 
-    createdId = ownerPage.url().split('/').pop()!;
+    const formCreatedId = ownerPage.url().split('/').pop()!;
   });
 
 
@@ -79,9 +78,11 @@ test.describe.serial('Identifier Owner CRUD', () => {
 
 
 
-  test('owner can view Identifier detail', async ({ ownerPage }) => {
+  test('owner can view Identifier detail', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await expect(ownerPage.locator('[data-testid="identifier-field-scheme_agency_id"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="identifier-field-scheme_id"]')).toBeVisible();
@@ -92,9 +93,11 @@ test.describe.serial('Identifier Owner CRUD', () => {
 
 
 
-  test('owner can edit Identifier', async ({ ownerPage }) => {
+  test('owner can edit Identifier', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}/edit`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}/edit`);
 
     // Wait for Svelte 5 to hydrate the form's submit handler.
     await waitForHydration(ownerPage, '[data-testid="identifier-submit-btn"]');
@@ -121,9 +124,11 @@ test.describe.serial('Identifier Owner CRUD', () => {
 
 
 
-  test('owner can delete Identifier', async ({ ownerPage }) => {
+  test('owner can delete Identifier', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(ownerPage, '[data-testid="identifier-delete-btn"]');
     await ownerPage.locator('[data-testid="identifier-delete-btn"]').click();

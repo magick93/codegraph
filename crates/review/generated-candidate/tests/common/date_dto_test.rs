@@ -8,7 +8,7 @@ mod tests {
     #[test]
     fn test_date_create_dto_deserializes() {
         let json = r#"{ }"#;
-        let _result: Result<app::domain::common::date::dto_create::CreateDateRequest, _> =
+        let _result: Result<cosmos::domain::common::date::dto_create::CreateDateRequest, _> =
             serde_json::from_str(json);
         // Should not panic even with empty body (optional fields)
     }
@@ -16,7 +16,7 @@ mod tests {
     #[test]
     fn test_date_response_serializes() {
         // Verify Response DTO can serialize
-        let response = app::domain::common::date::dto_response::DateResponse {
+        let response = cosmos::domain::common::date::dto_response::DateResponse {
             id: uuid::Uuid::new_v4(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -30,35 +30,35 @@ mod tests {
     fn test_date_create_body_single_deserializes() {
         // Verify CreateBody untagged enum deserializes a single JSON object
         let json = r#"{ }"#;
-        let body: app::api::common::date_handler::CreateDateBody =
+        let body: cosmos::api::common::date_handler::CreateDateBody =
             serde_json::from_str(json).expect("single object should deserialize as CreateBody::Single");
-        assert!(matches!(body, app::api::common::date_handler::CreateDateBody::Single(_)));
+        assert!(matches!(body, cosmos::api::common::date_handler::CreateDateBody::Single(_)));
     }
 
     #[test]
     fn test_date_create_body_bulk_deserializes() {
         // Verify CreateBody untagged enum deserializes a JSON array
         let json = r#"[{}, {}]"#;
-        let body: app::api::common::date_handler::CreateDateBody =
+        let body: cosmos::api::common::date_handler::CreateDateBody =
             serde_json::from_str(json).expect("array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, app::api::common::date_handler::CreateDateBody::Bulk(ref items) if items.len() == 2));
+        assert!(matches!(body, cosmos::api::common::date_handler::CreateDateBody::Bulk(ref items) if items.len() == 2));
     }
 
     #[test]
     fn test_date_create_body_empty_array_deserializes() {
         // Verify empty array deserializes (handler rejects it, but serde should accept it)
         let json = r#"[]"#;
-        let body: app::api::common::date_handler::CreateDateBody =
+        let body: cosmos::api::common::date_handler::CreateDateBody =
             serde_json::from_str(json).expect("empty array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, app::api::common::date_handler::CreateDateBody::Bulk(ref items) if items.is_empty()));
+        assert!(matches!(body, cosmos::api::common::date_handler::CreateDateBody::Bulk(ref items) if items.is_empty()));
     }
 
     #[test]
     fn test_date_bulk_create_response_serializes() {
         // Verify BulkCreateResponse serializes with correct JSON structure
-        let response = app::api::common::date_handler::BulkCreateResponse {
+        let response = cosmos::api::common::date_handler::BulkCreateResponse {
             success: vec![
-                app::domain::common::date::dto_response::DateResponse {
+                cosmos::domain::common::date::dto_response::DateResponse {
                     id: uuid::Uuid::new_v4(),
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
@@ -66,7 +66,7 @@ mod tests {
                 },
             ],
             failed: vec![
-                app::api::common::date_handler::BulkItemError {
+                cosmos::api::common::date_handler::BulkItemError {
                     index: 1,
                     error: "test error".to_string(),
                 },

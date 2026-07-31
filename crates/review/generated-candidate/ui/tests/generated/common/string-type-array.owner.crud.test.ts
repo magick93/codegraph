@@ -21,8 +21,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('StringTypeArray Owner CRUD', () => {
-  let createdId: string;
+test.describe('StringTypeArray Owner CRUD', () => {
 
 
 
@@ -35,8 +34,8 @@ test.describe.serial('StringTypeArray Owner CRUD', () => {
     // All properties are complex types (value objects / child tables) — no simple form fields.
     // Use direct API call via orgContext (authenticated as ACME owner).
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
-    createdId = entity['id'] as string;
-    expect(createdId).toBeTruthy();
+    const apiCreatedId = entity['id'] as string;
+    expect(apiCreatedId).toBeTruthy();
   });
 
 
@@ -51,9 +50,11 @@ test.describe.serial('StringTypeArray Owner CRUD', () => {
 
 
 
-  test('owner can view StringTypeArray detail', async ({ ownerPage }) => {
+  test('owner can view StringTypeArray detail', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
   });
 
@@ -66,9 +67,11 @@ test.describe.serial('StringTypeArray Owner CRUD', () => {
 
 
 
-  test('owner can delete StringTypeArray', async ({ ownerPage }) => {
+  test('owner can delete StringTypeArray', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(ownerPage, '[data-testid="string_type_array-delete-btn"]');
     await ownerPage.locator('[data-testid="string_type_array-delete-btn"]').click();

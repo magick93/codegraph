@@ -1,0 +1,14 @@
+{
+  "$id": "EventBaseType.json",
+  "title": "EventBaseType",
+  "description": "Base type for events (value object)",
+  "type": "object",
+  "allOf": [
+    { "$ref": "PersonBaseType.json" }
+  ],
+  "properties": {
+    "title": { "type": "string", "description": "Event title" },
+    "capacity": { "type": "integer", "minimum": 0 }
+  },
+  "required": ["title"]
+}

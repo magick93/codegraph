@@ -72,7 +72,6 @@ impl PersonBaseCommandHandler {
     pub async fn bulk_create(
         &self,
         items: Vec<CreatePersonBaseRequest>,
-
         source: domain_types::SourceContext,
         correlation_id: Uuid,
         api_key_id: Uuid,
@@ -97,9 +96,7 @@ impl PersonBaseCommandHandler {
                 continue;
             }
 
-
             match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id).await {
-
                 Ok(id) => results.push(Ok(id)),
                 Err(e) => results.push(Err(crate::error::BulkItemError {
                     index: idx,
@@ -129,9 +126,7 @@ impl PersonBaseCommandHandler {
 
         
 
-
         let id = self.repo.create(&tx, cmd).await?;
-
 
         
 

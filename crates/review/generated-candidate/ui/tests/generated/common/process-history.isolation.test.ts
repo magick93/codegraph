@@ -19,7 +19,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('ProcessHistory Cross-Org Isolation', () => {
+test.describe('ProcessHistory Cross-Org Isolation', () => {
   let acmeEntityId: string;
   const data = testData();
 

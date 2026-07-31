@@ -19,7 +19,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('ProcessHistoryItem Manager Team', () => {
+test.describe('ProcessHistoryItem Manager Team', () => {
   let createdId: string;
   const data = testData();
 

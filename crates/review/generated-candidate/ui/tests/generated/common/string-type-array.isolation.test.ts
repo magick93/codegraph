@@ -16,7 +16,7 @@ function testData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('StringTypeArray Cross-Org Isolation', () => {
+test.describe('StringTypeArray Cross-Org Isolation', () => {
   let acmeEntityId: string;
   const data = testData();
 

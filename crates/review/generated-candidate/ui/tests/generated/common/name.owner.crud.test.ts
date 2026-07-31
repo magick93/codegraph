@@ -27,8 +27,7 @@ function updatedData(): Record<string, unknown> {
   };
 }
 
-test.describe.serial('Name Owner CRUD', () => {
-  let createdId: string;
+test.describe('Name Owner CRUD', () => {
 
 
 
@@ -59,7 +58,7 @@ test.describe.serial('Name Owner CRUD', () => {
 
     await ownerPage.waitForURL(/\/common\/name\/[0-9a-f-]+$/, { timeout: 20_000 });
 
-    createdId = ownerPage.url().split('/').pop()!;
+    const formCreatedId = ownerPage.url().split('/').pop()!;
   });
 
 
@@ -74,9 +73,11 @@ test.describe.serial('Name Owner CRUD', () => {
 
 
 
-  test('owner can view Name detail', async ({ ownerPage }) => {
+  test('owner can view Name detail', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await expect(ownerPage.locator('[data-testid="name-field-family_name"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="name-field-formatted_name"]')).toBeVisible();
@@ -86,9 +87,11 @@ test.describe.serial('Name Owner CRUD', () => {
 
 
 
-  test('owner can edit Name', async ({ ownerPage }) => {
+  test('owner can edit Name', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}/edit`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}/edit`);
 
     // Wait for Svelte 5 to hydrate the form's submit handler.
     await waitForHydration(ownerPage, '[data-testid="name-submit-btn"]');
@@ -111,9 +114,11 @@ test.describe.serial('Name Owner CRUD', () => {
 
 
 
-  test('owner can delete Name', async ({ ownerPage }) => {
+  test('owner can delete Name', async ({ ownerPage, orgContext }) => {
+    const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
+    const myId = entity['id'] as string;
 
-    await ownerPage.goto(`${BASE_PATH}/${createdId}`);
+    await ownerPage.goto(`${BASE_PATH}/${myId}`);
 
     await waitForHydration(ownerPage, '[data-testid="name-delete-btn"]');
     await ownerPage.locator('[data-testid="name-delete-btn"]').click();

@@ -521,8 +521,16 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // may generate a different set of files (e.g. duplicates removed),
     // and stale numbered SQL files must not linger in the migrations directory.
     // Hand-written bootstrap migrations (0000–0009) are preserved.
+    //
+    // Only runs when the active build plan includes the `ddl` generator (the
+    // entity migration emitter). Narrower profiles (e.g. e2e/playwright-only)
+    // must NOT delete migrations produced by a previous fullstack run — they
+    // would never be regenerated, corrupting the migration set.
+    let plan_emits_migrations = build_plan
+        .map(|bp| bp.has_entity_gen("ddl"))
+        .unwrap_or(true);
     let migrations_dir = output_dir.join("migrations");
-    if migrations_dir.is_dir() {
+    if plan_emits_migrations && migrations_dir.is_dir() {
         let mut removed = 0usize;
         for entry in fs::read_dir(&migrations_dir)
             .into_iter()

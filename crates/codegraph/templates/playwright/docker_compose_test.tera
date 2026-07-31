@@ -15,8 +15,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    volumes:
-      - ../../generated/cosmos-app/migrations:/docker-entrypoint-initdb.d:ro
+    # Migrations are applied by the app on boot (migration::Migrator::up),
+    # tracked in the seaql_migrations table.
 
   app:
     build:
