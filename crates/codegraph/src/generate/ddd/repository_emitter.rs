@@ -89,6 +89,7 @@ struct EntityTree {
     direct_columns: Vec<TreeColumn>,
     child_tables: Vec<ChildTableInfo>,
     has_create: bool,
+    has_read: bool,
     has_update: bool,
     has_delete: bool,
     has_workflow: bool,
@@ -1580,7 +1581,16 @@ impl RepositoryImplEmitter {
         if tree.has_create {
             self.emit_create_fn(&tree, &mut code);
         }
-        self.emit_find_by_id_fn(&tree, &mut code);
+        // find_by_id is only referenced when the query handler emits it
+        // (create bulk path, or read without a parent) or when FTS/embedding
+        // search hydrates results through it.
+        let needs_find_by_id = tree.has_create
+            || (tree.has_read && tree.parent_ref.is_none())
+            || tree.has_fts
+            || tree.has_embeddings;
+        if needs_find_by_id {
+            self.emit_find_by_id_fn(&tree, &mut code);
+        }
         if tree.parent_ref.is_some() {
             self.emit_find_by_id_scoped_fn(&tree, &mut code);
         }
@@ -1599,7 +1609,6 @@ impl RepositoryImplEmitter {
         }
         if tree.hierarchy_field.is_some() {
             self.emit_find_tree_fn(&tree, &mut code);
-            self.emit_find_ancestors_fn(&tree, &mut code);
         }
         self.emit_footer(&mut code);
 
@@ -1842,6 +1851,7 @@ impl RepositoryImplEmitter {
             .and_then(|ec| ec.operations.clone())
             .unwrap_or_else(|| config.defaults.operations.clone());
         let has_create = operations.contains(&"create".to_string());
+        let has_read = operations.contains(&"read".to_string());
         let has_update = operations.contains(&"update".to_string());
         let has_delete = operations.contains(&"delete".to_string());
         let entity_cfg = config
@@ -2049,6 +2059,7 @@ impl RepositoryImplEmitter {
             direct_columns,
             child_tables,
             has_create,
+            has_read,
             has_update,
             has_delete,
             has_workflow,
@@ -2079,31 +2090,41 @@ impl RepositoryImplEmitter {
             .direct_columns
             .iter()
             .any(|c| c.pg_cast.is_some() && !c.is_composite_range);
-        if tree.child_tables.is_empty()
-            && !tree.has_fts
-            && !tree.has_embeddings
-            && !has_range_cols
-            && tree.hierarchy_field.is_none()
-        {
-            writeln!(
-                code,
-                "    ActiveModelTrait, ColumnTrait, DatabaseTransaction,"
-            )
-            .unwrap();
-            writeln!(
-                code,
-                "    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,"
-            )
-            .unwrap();
-        } else {
-            writeln!(code, "    ActiveModelTrait, ColumnTrait, ConnectionTrait,").unwrap();
-            writeln!(
-                code,
-                "    DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,"
-            )
-            .unwrap();
-            writeln!(code, "    DatabaseBackend, Statement,").unwrap();
+        // Only count child tables that actually produce raw SQL inserts
+        // (empty children are skipped by emit_child_inserts).
+        let has_meaningful_children = tree
+            .child_tables
+            .iter()
+            .any(|c| !c.columns.is_empty() || !c.child_tables.is_empty());
+        let needs_raw_sql = has_meaningful_children
+            || tree.has_fts
+            || tree.has_embeddings
+            || has_range_cols
+            || tree.hierarchy_field.is_some();
+        let needs_active_model =
+            tree.has_create || tree.has_update || (tree.is_auditable && tree.has_delete);
+
+        let mut sea_orm_items: Vec<&str> = Vec::new();
+        if needs_active_model {
+            sea_orm_items.push("ActiveModelTrait");
         }
+        sea_orm_items.push("ColumnTrait");
+        if needs_raw_sql {
+            sea_orm_items.push("ConnectionTrait");
+        }
+        sea_orm_items.push("DatabaseTransaction");
+        sea_orm_items.push("EntityTrait");
+        sea_orm_items.push("PaginatorTrait");
+        sea_orm_items.push("QueryFilter");
+        sea_orm_items.push("QueryOrder");
+        if needs_active_model {
+            sea_orm_items.push("Set");
+        }
+        if needs_raw_sql {
+            sea_orm_items.push("DatabaseBackend");
+            sea_orm_items.push("Statement");
+        }
+        writeln!(code, "    {},", sea_orm_items.join(", ")).unwrap();
         writeln!(code, "}};").unwrap();
         writeln!(code, "use uuid::Uuid;").unwrap();
         writeln!(code).unwrap();
@@ -2161,6 +2182,28 @@ impl RepositoryImplEmitter {
     }
 
     fn emit_create_fn(&self, tree: &EntityTree, code: &mut String) {
+        // Build the body first so we can detect whether the request parameter
+        // is actually referenced (flat entities emit an insert that ignores it).
+        let mut body = String::new();
+        let has_range_cols = tree
+            .direct_columns
+            .iter()
+            .any(|c| c.pg_cast.is_some() && !c.is_composite_range);
+
+        // Dispatch to CrudOp::CreateActiveModel or CrudOp::CreateRawSql
+        if has_range_cols {
+            // Use raw SQL INSERT so range parameters get explicit casts
+            self.emit_create_raw_sql(tree, &mut body);
+        } else {
+            // Use SeaORM ActiveModel insert (no range columns)
+            self.emit_create_active_model(tree, &mut body);
+        }
+
+        // Insert child table rows (recursively handles nested children).
+        emit_child_inserts(&mut body, &tree.child_tables, "id", "cmd", 2);
+
+        let cmd_ident = if body.contains("cmd.") { "cmd" } else { "_cmd" };
+
         writeln!(
             code,
             "    #[tracing::instrument(skip(self, tx), fields(db.operation = \"insert\", db.table = \"{}.{}\"))]",
@@ -2170,30 +2213,14 @@ impl RepositoryImplEmitter {
         writeln!(code, "    async fn create(").unwrap();
         writeln!(code, "        &self,").unwrap();
         writeln!(code, "        tx: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        cmd: Create{}Request,", tree.entity_name).unwrap();
+        writeln!(code, "        {cmd_ident}: Create{}Request,", tree.entity_name).unwrap();
         if tree.parent_ref.is_some() {
             writeln!(code, "        parent_id: Uuid,").unwrap();
         }
         writeln!(code, "    ) -> Result<Uuid, Box<dyn std::error::Error>> {{").unwrap();
         writeln!(code, "        let id = Uuid::new_v4();").unwrap();
         writeln!(code).unwrap();
-        let has_range_cols = tree
-            .direct_columns
-            .iter()
-            .any(|c| c.pg_cast.is_some() && !c.is_composite_range);
-
-        // Dispatch to CrudOp::CreateActiveModel or CrudOp::CreateRawSql
-        if has_range_cols {
-            // Use raw SQL INSERT so range parameters get explicit casts
-            self.emit_create_raw_sql(tree, code);
-        } else {
-            // Use SeaORM ActiveModel insert (no range columns)
-            self.emit_create_active_model(tree, code);
-        }
-
-        // Insert child table rows (recursively handles nested children).
-        emit_child_inserts(code, &tree.child_tables, "id", "cmd", 2);
-
+        code.push_str(&body);
         writeln!(code).unwrap();
         writeln!(code, "        Ok(id)").unwrap();
         writeln!(code, "    }}").unwrap();
@@ -2551,6 +2578,12 @@ impl RepositoryImplEmitter {
     }
 
     fn emit_update_fn(&self, tree: &EntityTree, code: &mut String) {
+        // Build the body first so we can detect whether the request parameter
+        // is actually referenced (flat entities emit an update that ignores it).
+        let mut body = String::new();
+        self.emit_update_body(tree, &mut body);
+        let cmd_ident = if body.contains("cmd.") { "cmd" } else { "_cmd" };
+
         writeln!(code).unwrap();
         writeln!(
             code,
@@ -2562,8 +2595,15 @@ impl RepositoryImplEmitter {
         writeln!(code, "        &self,").unwrap();
         writeln!(code, "        tx: &DatabaseTransaction,").unwrap();
         writeln!(code, "        id: Uuid,").unwrap();
-        writeln!(code, "        cmd: Update{}Request,", tree.entity_name).unwrap();
+        writeln!(code, "        {cmd_ident}: Update{}Request,", tree.entity_name).unwrap();
         writeln!(code, "    ) -> Result<(), Box<dyn std::error::Error>> {{").unwrap();
+        code.push_str(&body);
+        writeln!(code).unwrap();
+        writeln!(code, "        Ok(())").unwrap();
+        writeln!(code, "    }}").unwrap();
+    }
+
+    fn emit_update_body(&self, tree: &EntityTree, code: &mut String) {
         writeln!(
             code,
             "        // Update {}.{} — only set fields present in the update request",
@@ -2844,10 +2884,6 @@ impl RepositoryImplEmitter {
                 writeln!(code, "        }}").unwrap();
             }
         }
-
-        writeln!(code).unwrap();
-        writeln!(code, "        Ok(())").unwrap();
-        writeln!(code, "    }}").unwrap();
     }
 
     fn emit_delete_fn(&self, tree: &EntityTree, code: &mut String) {
@@ -3309,7 +3345,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
         }
-        writeln!(code, "        let sql = if let Some(depth) = max_depth {{").unwrap();
+        writeln!(code, "        let sql = if let Some(_depth) = max_depth {{").unwrap();
         writeln!(
             code,
             "            format!(\"WITH RECURSIVE tree AS (SELECT *, 0 AS _tree_depth FROM {schema}.{table} WHERE id = $1 UNION ALL SELECT c.*, t._tree_depth + 1 AS _tree_depth FROM {schema}.{table} c JOIN tree t ON c.{hf} = t.id WHERE t._tree_depth < $2) SELECT * FROM tree ORDER BY _tree_depth, created_at\",)",
@@ -3480,81 +3516,6 @@ impl RepositoryImplEmitter {
             writeln!(code, "        }}").unwrap();
             writeln!(code).unwrap();
         }
-    }
-
-    /// Emit `find_ancestors` — recursive CTE fetching ancestors from a node to the root.
-    fn emit_find_ancestors_fn(&self, tree: &EntityTree, code: &mut String) {
-        let hf = tree.hierarchy_field.as_deref().unwrap();
-        writeln!(code).unwrap();
-        writeln!(
-            code,
-            "    #[tracing::instrument(skip(self, db), fields(db.operation = \"find_ancestors\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "    async fn find_ancestors(").unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        node_id: Uuid,").unwrap();
-        writeln!(
-            code,
-            "    ) -> Result<Vec<{}Response>, Box<dyn std::error::Error>> {{",
-            tree.entity_name
-        )
-        .unwrap();
-        writeln!(code, "        let stmt = Statement::from_sql_and_values(",).unwrap();
-        writeln!(code, "            DatabaseBackend::Postgres,").unwrap();
-        writeln!(
-            code,
-            "            \"WITH RECURSIVE ancestors AS (SELECT * FROM {schema}.{table} WHERE id = $1 UNION ALL SELECT p.* FROM {schema}.{table} p JOIN ancestors a ON a.{hf} = p.id) SELECT * FROM ancestors\",",
-            schema = tree.schema_name,
-            table = q(&tree.table_name),
-            hf = hf
-        )
-        .unwrap();
-        writeln!(code, "            vec![node_id.into()],").unwrap();
-        writeln!(code, "        );").unwrap();
-        writeln!(
-            code,
-            "        let rows = crate::entity::{}::Entity::find()",
-            tree.entity_module
-        )
-        .unwrap();
-        writeln!(code, "            .from_raw_sql(stmt)").unwrap();
-        writeln!(code, "            .all(db)").unwrap();
-        writeln!(code, "            .await?;").unwrap();
-        writeln!(code).unwrap();
-        writeln!(
-            code,
-            "        let mut results = Vec::with_capacity(rows.len());"
-        )
-        .unwrap();
-        writeln!(code, "        for row in rows {{").unwrap();
-        emit_child_reads(code, &tree.child_tables, "row.id", 3);
-        writeln!(
-            code,
-            "            results.push({}Response {{",
-            tree.entity_name
-        )
-        .unwrap();
-        writeln!(code, "                id: row.id,").unwrap();
-        for col in &tree.direct_columns {
-            if col.is_composite_range {
-                continue;
-            }
-            emit_entity_to_dto_field(code, col, "row", "                ");
-        }
-        emit_child_field_population(code, &tree.child_tables, "                ");
-        if tree.has_workflow {
-            writeln!(code, "                workflow_state: None,").unwrap();
-        }
-        writeln!(code, "                created_at: row.created_at,").unwrap();
-        writeln!(code, "                updated_at: row.updated_at,").unwrap();
-        writeln!(code, "            }});").unwrap();
-        writeln!(code, "        }}").unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "        Ok(results)").unwrap();
-        writeln!(code, "    }}").unwrap();
     }
 
     fn emit_include_fetch_methods(

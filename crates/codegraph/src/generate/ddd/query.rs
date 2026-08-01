@@ -18,6 +18,7 @@ pub struct QueryContext {
     pub module_name: String,
     pub domain: String,
     pub has_read: bool,
+    pub has_create: bool,
     pub has_list: bool,
     pub has_fts: bool,
     pub has_embeddings: bool,
@@ -113,6 +114,7 @@ impl EntityGenerator for QueryGenerator {
 
         let ctx = QueryContext {
             has_read: operations.contains(&"read".to_string()),
+            has_create: operations.contains(&"create".to_string()),
             has_list: operations.contains(&"list".to_string()),
             has_fts,
             has_embeddings,

@@ -32,6 +32,13 @@ pub struct ScaffoldEntity {
     pub name: String,
     pub module_name: String,
     pub domain: String,
+    /// Whether any command operations (create/update/delete) are enabled for
+    /// this entity — hook-only entities get no command handler usage, so the
+    /// AppState field would otherwise be dead code.
+    pub has_commands: bool,
+    /// Whether the generated query handler takes a hooks argument (mirrors the
+    /// `uses_find_by_id` condition in ddd/query.tera).
+    pub has_query_hooks: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -40,6 +47,35 @@ pub struct ScaffoldDomain {
     pub label: String,
     pub postgres_schema: String,
     pub entities: Vec<ScaffoldEntity>,
+}
+
+fn entity_has_command_ops(config: &DomainConfig, domain: &str, entity_name: &str) -> bool {
+    let operations = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(entity_name))
+        .and_then(|ec| ec.operations.clone())
+        .unwrap_or_else(|| config.defaults.operations.clone());
+    operations.iter().any(|op| {
+        op == "create" || op == "update" || op == "delete"
+    })
+}
+
+/// Mirrors `uses_find_by_id` in ddd/query.tera: the query handler's find_by_id
+/// (and thus its hooks argument) exists when the entity can create (bulk path
+/// re-reads created rows) or when it has read access without a parent scope.
+fn entity_has_query_hooks(config: &DomainConfig, domain: &str, entity_name: &str) -> bool {
+    let entity_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(entity_name));
+    let operations = entity_cfg
+        .and_then(|ec| ec.operations.clone())
+        .unwrap_or_else(|| config.defaults.operations.clone());
+    let has_create = operations.iter().any(|op| op == "create");
+    let has_read = operations.iter().any(|op| op == "read");
+    let has_config_parent = entity_cfg.and_then(|ec| ec.parent_ref.as_ref()).is_some();
+    has_create || (has_read && !has_config_parent)
 }
 
 pub struct ScaffoldGenerator {
@@ -102,9 +138,11 @@ impl GlobalGenerator for ScaffoldGenerator {
                 .entry(entry.domain.clone())
                 .or_default()
                 .push(ScaffoldEntity {
-                    module_name,
-                    name: stripped,
+                    module_name: module_name.clone(),
+                    name: stripped.clone(),
                     domain: entry.domain.clone(),
+                    has_commands: entity_has_command_ops(config, &entry.domain, &stripped),
+                    has_query_hooks: entity_has_query_hooks(config, &entry.domain, &stripped),
                 });
         }
 

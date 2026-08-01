@@ -39,8 +39,11 @@ async fn set_rls_session_vars(
 pub struct {{ entity_name }}QueryHandler {
     repo: Arc<dyn {{ entity_name }}Repository>,
     db: DatabaseConnection,
+{% set uses_find_by_id = has_create or (has_read and not parent_ref) %}
 {% if project.hooks_api_crate %}
+{% if uses_find_by_id %}
     hooks: Option<Arc<dyn {{ project.hooks_api_crate }}::generated::{{ domain }}::{{ module_name }}::{{ entity_name }}Lifecycle>>,
+{% endif %}
 {% endif %}
 }
 
@@ -49,12 +52,15 @@ impl {{ entity_name }}QueryHandler {
         repo: Arc<dyn {{ entity_name }}Repository>,
         db: DatabaseConnection,
 {% if project.hooks_api_crate %}
+{% if uses_find_by_id %}
         hooks: Option<Arc<dyn {{ project.hooks_api_crate }}::generated::{{ domain }}::{{ module_name }}::{{ entity_name }}Lifecycle>>,
 {% endif %}
+{% endif %}
     ) -> Self {
-        Self { repo, db{% if project.hooks_api_crate %}, hooks{% endif %} }
+        Self { repo, db{% if project.hooks_api_crate %}{% if uses_find_by_id %}, hooks{% endif %}{% endif %} }
     }
 {% if has_read %}
+{% if uses_find_by_id %}
 
     pub async fn find_by_id(&self, id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Option<{{ entity_name }}Response>, Box<dyn std::error::Error>> {
         let tx = self.db.begin().await?;
@@ -82,6 +88,7 @@ impl {{ entity_name }}QueryHandler {
 
         Ok(result)
     }
+{% endif %}
 {% if parent_ref %}
 
     /// Find by ID scoped to a parent entity — returns None if entity doesn't belong to parent.

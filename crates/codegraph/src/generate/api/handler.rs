@@ -528,9 +528,10 @@ impl EntityGenerator for HandlerGenerator {
             "ApiKeyInfo".into(),
             format!("{}Response", entity_name),
             format!("{}LinkedResponse", entity_name),
-            format!("{}Repository", entity_name),
-            "BulkItemError".into(),
         ];
+        if operations.contains(&"create".to_string()) {
+            handler_refs.push("BulkItemError".into());
+        }
         if operations.contains(&"create".to_string()) {
             handler_refs.push(format!("Create{}Request", entity_name));
         }
@@ -547,8 +548,13 @@ impl EntityGenerator for HandlerGenerator {
                 if path.segments.len() > 1 {
                     handler_refs.push(format!("{}CombinedResponse", path.segments[0].entity_name));
                 }
-                if let Some(over) = path.segments.first().and_then(|s| s.child_table_override.as_ref()) {
-                    handler_refs.push(over.response_type.clone());
+                // The override response type is only referenced textually in the
+                // dot-path merge arm (handler.tera), so only register it for
+                // multi-segment paths; single-segment includes use inference.
+                if path.segments.len() > 1 {
+                    if let Some(over) = path.segments.first().and_then(|s| s.child_table_override.as_ref()) {
+                        handler_refs.push(over.response_type.clone());
+                    }
                 }
             }
         }

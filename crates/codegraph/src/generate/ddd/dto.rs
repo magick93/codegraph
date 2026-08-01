@@ -1258,10 +1258,18 @@ impl DtoGenerator {
                             .or_else(|| rt.strip_prefix("Vec<"))
                             .and_then(|s| s.strip_suffix('>'))
                             .unwrap_or(rt);
-                        // Add unwrapped types (e.g. "JobResponse") and
-                        // wrapped types (e.g. "CertificationResponse" from
-                        // "Vec<CertificationResponse>") to the import list.
-                        ref_type_names.push(inner.to_string());
+                        // Skip codelist enum types — they are referenced via
+                        // `pub use crate::codelist::…` re-exports, and resolving
+                        // them to their dto_response module would emit an
+                        // import the generated body never uses.
+                        let is_codelist = (inner.ends_with("CodeList") || inner.ends_with("Code"))
+                            && !inner.contains('<');
+                        if !is_codelist {
+                            // Add unwrapped types (e.g. "JobResponse") and
+                            // wrapped types (e.g. "CertificationResponse" from
+                            // "Vec<CertificationResponse>") to the import list.
+                            ref_type_names.push(inner.to_string());
+                        }
                     }
                 }
             }
@@ -1295,6 +1303,19 @@ impl DtoGenerator {
             }
         }
 
+        // Only emit `use uuid::Uuid;` when an enriched base field actually
+        // references the bare `Uuid` type (otherwise the import is dead code).
+        let needs_uuid = enriched_types.iter().any(|et| {
+            et["base_fields"].as_array().map_or(false, |bfs| {
+                bfs.iter().any(|bf| {
+                    bf["rust_type"]
+                        .as_str()
+                        .map(|rt| rt == "Uuid" || rt == "Option<Uuid>")
+                        .unwrap_or(false)
+                })
+            })
+        });
+
         let ctx = serde_json::json!({
             "entity_name": entity_name,
             "module_name": module_name,
@@ -1305,6 +1326,7 @@ impl DtoGenerator {
             "enriched_types": enriched_types,
             "imports": imports,
             "codelist_imports": codelist_imports,
+            "needs_uuid": needs_uuid,
         });
 
         let content =

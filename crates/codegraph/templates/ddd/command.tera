@@ -13,9 +13,6 @@ use super::dto_create::Create{{ entity_name }}Request;
 {% if has_update %}
 use super::dto_update::Update{{ entity_name }}Request;
 {% endif %}
-{% if has_create %}
-use crate::error::BulkItemError;
-{% endif %}
 
 /// Set API key + org session variables within a transaction so Postgres RLS policies
 /// can enforce tenant isolation and scope checks. Uses `set_config(..., true)` which
