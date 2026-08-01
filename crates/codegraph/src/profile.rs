@@ -148,6 +148,10 @@ pub struct BuildPlan {
     pub has_atproto: bool,
     /// AT Protocol tenancy mode: "shared_pds" or "per_org_pds".
     pub atproto_tenancy: String,
+    /// Whether Fern SDK generation is enabled (from `fern_sdk` feature).
+    pub has_fern: bool,
+    /// Fern SDK languages to generate (from `fern_sdk_languages` feature, defaults to ["typescript"]).
+    pub fern_sdk_languages: Vec<String>,
 }
 
 impl BuildPlan {
@@ -223,6 +227,23 @@ impl BuildPlan {
             .unwrap_or("shared_pds")
             .to_string();
 
+        // Parse fern sdk features
+        let has_fern = profile
+            .features
+            .get("fern_sdk")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let fern_sdk_languages: Vec<String> = profile
+            .features
+            .get("fern_sdk_languages")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_else(|| vec!["typescript".to_string()]);
+
         Ok(BuildPlan {
             entity_generators: entity_gens,
             domain_generators: domain_gens,
@@ -233,6 +254,8 @@ impl BuildPlan {
             database_target,
             has_atproto,
             atproto_tenancy,
+            has_fern,
+            fern_sdk_languages,
         })
     }
 
@@ -393,6 +416,9 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("grpc_service",         Entity,  Api, &["grpc_backend"], &[]),
         cap("grpc_router",          Domain,  Api, &["grpc_backend"], &[]),
         cap("grpc_scaffold",        Global,  Api, &["grpc_backend"], &[]),
+
+        // ── Fern SDK generators ─────────────────────────────────────────
+        cap("fern_config",          Global, Api,   &["fern_sdk"], &[]),
 
         // ── AT Protocol generators ─────────────────────────────────────
         cap("lexicon",              Entity, Common, &["atproto_backend"], &[]),

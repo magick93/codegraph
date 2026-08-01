@@ -393,7 +393,7 @@ async fn scaffold_middleware_supports_dual_auth() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-dual-auth");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -887,6 +887,99 @@ async fn candidate_handler() {
         !content.contains("format!(\"Bulk request exceeds"),
         "Bulk size rejection message should be a string literal, not format!()"
     );
+}
+
+fn extract_operation_ids(content: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(id) = trimmed.strip_prefix("operation_id = \"") {
+            if let Some(end) = id.find('\"') {
+                ids.push(id[..end].to_string());
+            }
+        }
+    }
+    ids
+}
+
+#[tokio::test]
+async fn handler_operation_ids_are_unique_across_domains() {
+    generate::type_registry::register_framework_types();
+    let mock = MockEngine::builder()
+        .with_schema(candidate_schema())
+        .with_properties("CandidateType", candidate_properties())
+        .with_schema(SchemaNode {
+            schema_id: "events/json/PublicEventType.json".to_string(),
+            title: "PublicEventType".to_string(),
+            description: Some("A public event".to_string()),
+            schema_type: "object".to_string(),
+            classification: "entity_reference".to_string(),
+            domain: Some("events".to_string()),
+            rel_path: "events/json/PublicEventType.json".to_string(),
+            pg_type: "UUID".to_string(),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            rust_type_name: "PublicEvent".to_string(),
+            pg_table_name: "public_event".to_string(),
+            api_path_segment: "public-events".to_string(),
+            parent_schema: None,
+            is_entity: true,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+        })
+        .build();
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-op-id");
+
+    let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
+
+    let candidate_files = gen
+        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .await
+        .unwrap();
+    let candidate_ids = extract_operation_ids(&candidate_files[0].content);
+
+    let event_files = gen
+        .generate(&mock, "PublicEventType", "events", &config, &tera, &test_project_config())
+        .await
+        .unwrap();
+    let event_ids = extract_operation_ids(&event_files[0].content);
+
+    assert!(
+        !candidate_ids.is_empty(),
+        "Candidate handler should have operation_id values"
+    );
+    assert!(
+        !event_ids.is_empty(),
+        "Event handler should have operation_id values"
+    );
+
+    let mut seen = std::collections::HashSet::new();
+    for id in &candidate_ids {
+        assert!(
+            seen.insert(id.clone()),
+            "Duplicate operation_id in candidate handler: {id}"
+        );
+        assert!(
+            id.contains("recruiting_candidate_"),
+            "Candidate operation_id should be prefixed with domain and entity, got: {id}"
+        );
+    }
+    for id in &event_ids {
+        assert!(
+            seen.insert(id.clone()),
+            "Duplicate operation_id across handlers: {id}"
+        );
+        assert!(
+            id.contains("events_public_event_"),
+            "Event operation_id should be prefixed with domain and entity, got: {id}"
+        );
+    }
 }
 
 // === Router Template Tests (Domain-level) ===
@@ -1684,7 +1777,7 @@ async fn scaffold_main() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -1764,7 +1857,7 @@ async fn scaffold_error_module() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-error");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -1803,7 +1896,7 @@ async fn scaffold_generates_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-mw");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -2893,7 +2986,7 @@ async fn scaffold_main_has_security_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-security");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -2970,7 +3063,7 @@ async fn scaffold_main_has_graceful_shutdown() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shutdown");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -3001,7 +3094,7 @@ async fn scaffold_main_has_health_ready() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-health-ready");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -3916,7 +4009,7 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shadow");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -3944,7 +4037,7 @@ async fn scaffold_generates_build_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-build-rs");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -3968,7 +4061,7 @@ async fn scaffold_main_has_version_endpoint() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-version");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -6578,7 +6671,7 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-scaffold");
     let project = sqlite_project_config();
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &project)
         .await

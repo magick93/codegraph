@@ -277,6 +277,8 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
             codegraph_rev: current_git_rev(),
             has_atproto: plan.has_atproto,
+            has_fern: plan.has_fern,
+            fern_sdk_languages: plan.fern_sdk_languages.clone(),
             atproto_authority: String::new(),
             atproto_tenancy: plan.atproto_tenancy.clone(),
             atproto_float_policy: resolved

@@ -51,6 +51,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/{{ domain }}/{{ path_segment }}",
 {% endif %}
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_create",
     request_body(
         content = Create{{ entity_name }}Body,
         description = "A single {{ entity_name }} object or an array of {{ entity_name }} objects",
@@ -181,6 +182,7 @@ pub async fn create(
 {% endif %}
 {% endif %}
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_get_by_id",
     responses(
         (status = 200, description = "OK", body = {% if has_include %}{{ entity_name }}WithIncludeResponse{% else %}{{ entity_name }}LinkedResponse{% endif %}),
         (status = 404, description = "Not found"),
@@ -363,6 +365,7 @@ pub async fn get_by_id(
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_update",
     request_body = Update{{ entity_name }}Request,
     responses(
         (status = 200, description = "Updated", body = {{ entity_name }}Response),
@@ -439,6 +442,7 @@ pub async fn update(
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -484,6 +488,7 @@ pub async fn delete(
 {% if has_list %}
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -547,6 +552,7 @@ const ALLOWED_INCLUDE_KEYS: &[&str] = &[
     params(ListParams),
 {% endif %}
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_list",
     responses(
         (status = 200, description = "OK", body = Vec<{{ entity_name }}Response>),
     )
@@ -665,6 +671,7 @@ pub async fn list(
 
 /// Query parameters for the {{ entity_name }} search endpoint.
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SearchParams {
     /// Full-text search query. Supports natural syntax: quoted phrases, OR, -exclude.
     pub q: String,
@@ -688,6 +695,7 @@ pub struct SearchParams {
     params(SearchParams),
 {% endif %}
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_search",
     responses(
         (status = 200, description = "OK", body = Vec<{{ entity_name }}Response>),
         (status = 400, description = "Missing or empty q parameter"),
@@ -742,12 +750,12 @@ fn default_semantic_limit() -> u64 { 10 }
     post,
     path = "/api/{{ domain }}/{{ path_segment }}/semantic-search",
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_semantic_search",
     request_body = SemanticSearchRequest,
     responses(
         (status = 200, description = "OK", body = Vec<{{ entity_name }}Response>),
     )
 )]
-#[tracing::instrument(skip(state, headers, body), fields(domain = "{{ domain }}", entity = "{{ module_name }}"))]
 pub async fn semantic_search(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
@@ -768,6 +776,7 @@ pub async fn semantic_search(
 
 /// Query parameters for the tree endpoint.
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct TreeParams {
     /// Maximum tree depth to return. Omit for unlimited.
     pub depth: Option<i32>,
@@ -782,6 +791,7 @@ pub struct TreeParams {
     path = "/api/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/tree",
 {% endif %}
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_tree",
     params(
         ("{{ param_name }}" = Uuid, Path, description = "Root {{ entity_name }} ID"),
         TreeParams,

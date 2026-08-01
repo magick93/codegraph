@@ -26,6 +26,8 @@ pub struct ScaffoldContext {
     pub has_reports: bool,
     pub has_grpc: bool,
     pub has_atproto: bool,
+    /// Whether Fern SDK generation is enabled (drives dump_openapi binary + [[bin]] section).
+    pub has_fern: bool,
     /// Whether the cli/ sub-crate is generated (drives the [workspace] section).
     pub has_cli: bool,
     /// Whether the `test` generator is active (drives the [[test]] sections).
@@ -53,6 +55,7 @@ pub struct ScaffoldGenerator {
     has_reports: bool,
     has_grpc: bool,
     has_atproto: bool,
+    has_fern: bool,
     has_cli: bool,
     has_test_gen: bool,
 }
@@ -66,6 +69,7 @@ impl ScaffoldGenerator {
         has_atproto: bool,
         has_cli: bool,
         has_test_gen: bool,
+        has_fern: bool,
     ) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
@@ -73,6 +77,7 @@ impl ScaffoldGenerator {
             has_reports,
             has_grpc,
             has_atproto,
+            has_fern,
             has_cli,
             has_test_gen,
         }
@@ -174,6 +179,7 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_reports: self.has_reports,
             has_grpc: self.has_grpc,
             has_atproto: self.has_atproto,
+            has_fern: self.has_fern,
             has_cli: self.has_cli,
             has_test_gen: self.has_test_gen,
         };
@@ -290,6 +296,19 @@ impl GlobalGenerator for ScaffoldGenerator {
                 .join("migrator.rs"),
             content: migration_migrator,
         });
+
+        if self.has_fern {
+            let dump_openapi = render_template_with_project(
+                tera,
+                "scaffold/dump_openapi.tera",
+                &ctx,
+                project,
+            )?;
+            files.push(GeneratedFile {
+                path: self.output_dir.join("src").join("bin").join("dump_openapi.rs"),
+                content: dump_openapi,
+            });
+        }
 
         Ok(files)
     }

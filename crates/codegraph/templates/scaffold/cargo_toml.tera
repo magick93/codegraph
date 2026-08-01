@@ -15,6 +15,12 @@ edition = "2021"
 name = "{{ project.lib_name }}"
 path = "src/lib.rs"
 
+{% if has_fern %}
+[[bin]]
+name = "dump-openapi"
+path = "src/bin/dump_openapi.rs"
+
+{% endif %}
 {% if has_test_gen %}
 [[test]]
 name = "integration"

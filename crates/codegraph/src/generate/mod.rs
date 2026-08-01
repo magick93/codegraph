@@ -13,6 +13,7 @@ pub mod cli;
 pub mod db;
 pub mod ddd;
 pub mod domain_types;
+pub mod fern;
 pub mod hooks;
 pub mod integration;
 pub mod playwright;
@@ -212,6 +213,12 @@ pub struct ProjectConfig {
     pub codegraph_rev: String,
     /// Whether atproto generators are enabled via profile feature flag.
     pub has_atproto: bool,
+    /// Whether Fern SDK generation is enabled via profile feature flag.
+    #[serde(default)]
+    pub has_fern: bool,
+    /// Fern SDK languages to generate (e.g. ["typescript", "rust"]).
+    #[serde(default)]
+    pub fern_sdk_languages: Vec<String>,
     /// AT Protocol namespace authority (e.g. "nz.gravy").
     /// Read from domain config or hard-coded default. Empty string = atproto disabled.
     pub atproto_authority: String,
@@ -256,6 +263,8 @@ impl Default for ProjectConfig {
             database_target: "postgres".to_string(),
             types_import_prefix: "codegraph_type_contracts".into(),
             has_atproto: false,
+            has_fern: false,
+            fern_sdk_languages: vec!["typescript".into()],
             atproto_authority: String::new(),
             atproto_tenancy: "shared_pds".to_string(),
             atproto_float_policy: "integer_scaled".to_string(),
@@ -487,6 +496,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             || bp.has_entity_gen("atproto_client")
             || bp.has_global_gen("atproto_client_scaffold"))
         .unwrap_or(false);
+    let has_fern = build_plan
+        .map(|bp| bp.has_global_gen("fern_config"))
+        .unwrap_or(false);
     let has_grpc = build_plan
         .map(|bp| bp.has_global_gen("grpc_scaffold"))
         .unwrap_or(false);
@@ -717,6 +729,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             has_atproto,
             has_cli,
             has_test_gen,
+            has_fern,
         )) as Box<dyn GlobalGenerator>,
         Box::new(ui::scaffold::UiScaffoldGenerator::new(
             output_dir,
@@ -770,6 +783,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(atproto::identity_gen::AtprotoIdentityEmitter::new(output_dir))
             as Box<dyn GlobalGenerator>,
         Box::new(atproto::types_gen::GeneratedTypesEmitter::new(output_dir))
+            as Box<dyn GlobalGenerator>,
+        // Fern SDK config generator
+        Box::new(fern::config::FernConfigGenerator::new(output_dir))
             as Box<dyn GlobalGenerator>,
     ]
     .into_iter()
