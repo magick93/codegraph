@@ -32,6 +32,8 @@ pub struct ScaffoldContext {
     pub has_cli: bool,
     /// Whether the `test` generator is active (drives the [[test]] sections).
     pub has_test_gen: bool,
+    pub has_admin_cli: bool,
+    pub migration_strategy: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,6 +60,8 @@ pub struct ScaffoldGenerator {
     has_fern: bool,
     has_cli: bool,
     has_test_gen: bool,
+    has_admin_cli: bool,
+    migration_strategy: String,
 }
 
 impl ScaffoldGenerator {
@@ -70,6 +74,8 @@ impl ScaffoldGenerator {
         has_cli: bool,
         has_test_gen: bool,
         has_fern: bool,
+        has_admin_cli: bool,
+        migration_strategy: &str,
     ) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
@@ -80,6 +86,8 @@ impl ScaffoldGenerator {
             has_fern,
             has_cli,
             has_test_gen,
+            has_admin_cli,
+            migration_strategy: migration_strategy.to_string(),
         }
     }
 }
@@ -182,6 +190,8 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_fern: self.has_fern,
             has_cli: self.has_cli,
             has_test_gen: self.has_test_gen,
+            has_admin_cli: self.has_admin_cli,
+            migration_strategy: self.migration_strategy.clone(),
         };
 
         let mut files = Vec::new();
@@ -191,6 +201,36 @@ impl GlobalGenerator for ScaffoldGenerator {
             path: self.output_dir.join("src").join("main.rs"),
             content: main_rs,
         });
+
+        let server_rs =
+            render_template_with_project(tera, "scaffold/server.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self.output_dir.join("src").join("server.rs"),
+            content: server_rs,
+        });
+
+        if self.has_admin_cli {
+            let config_rs =
+                render_template_with_project(tera, "scaffold/config.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: self.output_dir.join("src").join("config.rs"),
+                content: config_rs,
+            });
+
+            let doctor_rs =
+                render_template_with_project(tera, "scaffold/doctor.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: self.output_dir.join("src").join("doctor.rs"),
+                content: doctor_rs,
+            });
+
+            let migration_rs =
+                render_template_with_project(tera, "scaffold/migration.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: self.output_dir.join("src").join("migration.rs"),
+                content: migration_rs,
+            });
+        }
 
         let app_state = render_template_with_project(tera, "scaffold/app_state.tera", &ctx, project)?;
         files.push(GeneratedFile {

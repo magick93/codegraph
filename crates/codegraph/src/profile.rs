@@ -152,6 +152,8 @@ pub struct BuildPlan {
     pub has_fern: bool,
     /// Fern SDK languages to generate (from `fern_sdk_languages` feature, defaults to ["typescript"]).
     pub fern_sdk_languages: Vec<String>,
+    /// Feature flags from the profile (e.g., has_admin_cli, auth, etc.).
+    pub features: toml::Table,
 }
 
 impl BuildPlan {
@@ -256,6 +258,7 @@ impl BuildPlan {
             atproto_tenancy,
             has_fern,
             fern_sdk_languages,
+            features: profile.features.clone(),
         })
     }
 

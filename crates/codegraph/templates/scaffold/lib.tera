@@ -9,15 +9,16 @@ pub mod entity;
 pub mod error;
 pub mod integrations;
 pub mod middleware;
-{% if has_atproto %}
-pub mod atproto;
-{% endif %}
-{% if project.hooks_api_crate %}
-pub mod hooks;
-{% endif %}
+pub mod metrics_middleware;
 {% if has_webhooks %}
 pub mod webhook_api;
 pub mod webhook_dispatch;
 pub mod webhook_router;
 {% endif %}
 pub mod qs_query;
+pub mod server;
+{% if has_admin_cli %}
+pub mod config;
+pub mod doctor;
+pub mod migration;
+{% endif %}

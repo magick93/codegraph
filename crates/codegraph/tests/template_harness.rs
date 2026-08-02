@@ -393,7 +393,7 @@ async fn scaffold_middleware_supports_dual_auth() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-dual-auth");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -1777,7 +1777,7 @@ async fn scaffold_main() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -1857,7 +1857,7 @@ async fn scaffold_error_module() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-error");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -1896,7 +1896,7 @@ async fn scaffold_generates_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-mw");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -2986,7 +2986,7 @@ async fn scaffold_main_has_security_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-security");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -3063,7 +3063,7 @@ async fn scaffold_main_has_graceful_shutdown() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shutdown");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -3094,7 +3094,7 @@ async fn scaffold_main_has_health_ready() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-health-ready");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -4009,7 +4009,7 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shadow");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -4037,7 +4037,7 @@ async fn scaffold_generates_build_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-build-rs");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -4061,7 +4061,7 @@ async fn scaffold_main_has_version_endpoint() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-version");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
         .await
@@ -6671,7 +6671,7 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-scaffold");
     let project = sqlite_project_config();
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &project)
         .await

@@ -502,6 +502,15 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let has_grpc = build_plan
         .map(|bp| bp.has_global_gen("grpc_scaffold"))
         .unwrap_or(false);
+    let has_admin_cli = build_plan
+        .and_then(|bp| bp.features.get("has_admin_cli"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let migration_strategy = build_plan
+        .and_then(|bp| bp.features.get("migration_strategy"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("sea-orm")
+        .to_string();
     // Whether the cli/ sub-crate is generated. Legacy (no build plan) runs
     // execute every generator, so it defaults to true.
     let has_cli = build_plan
@@ -733,6 +742,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             has_cli,
             has_test_gen,
             has_fern,
+            has_admin_cli,
+            &migration_strategy,
         )) as Box<dyn GlobalGenerator>,
         Box::new(ui::scaffold::UiScaffoldGenerator::new(
             output_dir,
