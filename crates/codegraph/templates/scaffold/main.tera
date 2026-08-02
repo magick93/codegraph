@@ -4,6 +4,29 @@
 {% if has_admin_cli %}
 use clap::{Parser, Subcommand};
 
+mod api;
+mod app_state;
+mod codelist;
+mod domain;
+mod entity;
+mod error;
+mod integrations;
+mod metrics_middleware;
+mod middleware;
+mod qs_query;
+mod server;
+mod config;
+mod doctor;
+mod migration;
+{% if has_webhooks %}
+mod webhook_api;
+mod webhook_dispatch;
+mod webhook_router;
+{% endif %}
+{% if project.hooks_api_crate %}
+mod hooks;
+{% endif %}
+
 #[derive(Parser)]
 #[command(name = "{{ app_name }}", version)]
 struct Cli {

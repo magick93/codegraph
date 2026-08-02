@@ -8,7 +8,7 @@ use serde::Deserialize;
 ///   2. Environment variables (HR_APP_*)
 ///   3. Configuration file (config.toml)
 ///   4. Defaults (lowest precedence)
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
     #[serde(default = "default_bind_addr")]
     pub bind_addr: String,
