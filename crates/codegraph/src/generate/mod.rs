@@ -1804,6 +1804,12 @@ fn generate_mod_files_recursive(dir: &Path, out: &mut Vec<GeneratedFile>) -> Res
         return Ok(false);
     }
 
+    // Cargo treats `src/bin/mod.rs` as a binary target — never generate mod.rs
+    // inside a `bin` directory to avoid phantom binary targets with no `main()`.
+    if dir.file_name().is_some_and(|n| n == "bin") {
+        return Ok(false);
+    }
+
     let mut modules = BTreeSet::new();
     let mut has_content = false;
 
