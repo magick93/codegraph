@@ -17,3 +17,6 @@ pub mod webhook_router;
 {% endif %}
 pub mod qs_query;
 pub mod server;
+{% if has_admin_cli %}
+pub mod config;
+{% endif %}
