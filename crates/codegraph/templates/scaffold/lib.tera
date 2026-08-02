@@ -19,4 +19,6 @@ pub mod qs_query;
 pub mod server;
 {% if has_admin_cli %}
 pub mod config;
+pub mod doctor;
+pub mod migration;
 {% endif %}
