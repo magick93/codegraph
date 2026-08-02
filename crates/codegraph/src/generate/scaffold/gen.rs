@@ -201,6 +201,13 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: main_rs,
         });
 
+        let server_rs =
+            render_template_with_project(tera, "scaffold/server.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self.output_dir.join("src").join("server.rs"),
+            content: server_rs,
+        });
+
         let app_state =
             render_template_with_project(tera, "scaffold/app_state.tera", &ctx, project)?;
         files.push(GeneratedFile {
