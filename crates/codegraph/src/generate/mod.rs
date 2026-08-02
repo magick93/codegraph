@@ -629,6 +629,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 .with_parent_candidates(parent_candidates.clone()),
         ) as Box<dyn EntityGenerator>,
         Box::new(ui::form::UiFormGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
+        Box::new(ui::cosmos_entity_form::CosmosEntityFormGenerator::new(
+            output_dir,
+        )) as Box<dyn EntityGenerator>,
         Box::new(
             ui::store::UiStoreGenerator::new(output_dir)
                 .with_parent_candidates(parent_candidates.clone()),
@@ -924,15 +927,13 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         let codelist_sql_gen = db::codelist::CodelistGenerator::new(output_dir)
             .with_dialect(make_dialect());
         for (idx, cl) in codelists.iter().enumerate() {
-            if let Ok(files) = codelist_sql_gen
+            let files = codelist_sql_gen
                 .generate(db, &cl.name, "common", config, tera, project)
-                .await
-            {
-                for file in files {
-                    let file = prefix_migration_path(file, idx + 10);
-                    write_output(&file)?;
-                    report.files.push(file);
-                }
+                .await?;
+            for file in files {
+                let file = prefix_migration_path(file, idx + 10);
+                write_output(&file)?;
+                report.files.push(file);
             }
         }
     }

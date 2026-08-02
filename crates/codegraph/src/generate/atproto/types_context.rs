@@ -1,4 +1,5 @@
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::codelist_enum_name_from_ref;
 use codegraph_core::types::{LexiconNode, PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
@@ -92,7 +93,7 @@ impl TypesContext {
             } else {
                 let kind = prop.effective_kind();
                 field_rust_type(
-                    kind.as_ref(),
+                    &kind,
                     prop,
                     db,
                     &mut needs_blob_ref,
@@ -117,11 +118,7 @@ impl TypesContext {
 
         let needs_generated_types_import = fields
             .iter()
-            .any(|f| {
-                f.rust_type == "serde_json::Value"
-                    || f.rust_type.starts_with("Codelist")
-                    || f.rust_type.starts_with("CommonJsonCodelist")
-            });
+            .any(|f| f.rust_type == "serde_json::Value");
 
         Ok(Self {
             struct_name,
@@ -138,7 +135,7 @@ impl TypesContext {
 }
 
 async fn field_rust_type(
-    kind: Option<&RefClassificationKind>,
+    kind: &Option<RefClassificationKind>,
     prop: &PropertyNode,
     db: &dyn GraphQuerier,
     needs_blob_ref: &mut bool,
@@ -164,7 +161,7 @@ async fn field_rust_type(
         }
         RefClassificationKind::InlineEnum | RefClassificationKind::CodelistReference
         | RefClassificationKind::CodelistCheck => {
-            resolve_codelist_enum(prop, db, seen_enum_names, enum_defs).await
+            resolve_codelist_enum(prop, &kind, db, seen_enum_names, enum_defs).await
         }
         RefClassificationKind::ValueObject
         | RefClassificationKind::CompositeWrapper
@@ -216,34 +213,49 @@ fn serde_with_for_prop(prop: &PropertyNode) -> Option<String> {
 
 async fn resolve_codelist_enum(
     prop: &PropertyNode,
+    kind: &RefClassificationKind,
     db: &dyn GraphQuerier,
     seen: &mut std::collections::HashSet<String>,
     defs: &mut Vec<EnumDefContext>,
 ) -> (String, Option<String>) {
     if let Some(ref target) = prop.ref_target {
-        let enum_name = codegraph_naming::to_pascal_case(target);
-        if !seen.contains(&enum_name) {
-            if let Ok(values) = db.get_enum_values(target).await {
-                if !values.is_empty() {
-                    let variants: Vec<EnumVariantContext> = values
-                        .iter()
-                        .map(|v| EnumVariantContext {
-                            name: codegraph_naming::to_pascal_case(&v.value),
-                            rename: Some(v.value.clone()),
-                            display: v.display_name.clone().unwrap_or(v.value.clone()),
-                        })
-                        .collect();
-                    seen.insert(enum_name.clone());
-                    defs.push(EnumDefContext {
-                        enum_name: enum_name.clone(),
-                        description: None,
-                        nsid: String::new(),
-                        variants,
-                    });
-                }
+        match kind {
+            RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck => {
+                let codelist_name = codelist_enum_name_from_ref(&prop.ref_target)
+                    .unwrap_or_else(|| codegraph_naming::to_pascal_case(target));
+                let rust_type = format!("cosmos_domain_types::codelist::{}", codelist_name);
+                (rust_type, None)
             }
+            RefClassificationKind::InlineEnum => {
+                let enum_name = codelist_enum_name_from_ref(&prop.ref_target)
+                    .unwrap_or_else(|| codegraph_naming::to_pascal_case(target));
+                if !seen.contains(&enum_name) {
+                    let codelist_query_name = codelist_enum_name_from_ref(&prop.ref_target)
+                        .unwrap_or_else(|| target.clone());
+                    if let Ok(values) = db.get_enum_values(&codelist_query_name).await {
+                        if !values.is_empty() {
+                            let variants: Vec<EnumVariantContext> = values
+                                .iter()
+                                .map(|v| EnumVariantContext {
+                                    name: codegraph_naming::to_pascal_case(&v.value),
+                                    rename: Some(v.value.clone()),
+                                    display: v.display_name.clone().unwrap_or(v.value.clone()),
+                                })
+                                .collect();
+                            seen.insert(enum_name.clone());
+                            defs.push(EnumDefContext {
+                                enum_name: enum_name.clone(),
+                                description: None,
+                                nsid: String::new(),
+                                variants,
+                            });
+                        }
+                    }
+                }
+                (enum_name, None)
+            }
+            _ => (rust_type_from_prop_builtin(prop), serde_with_for_prop(prop)),
         }
-        (enum_name, None)
     } else {
         ("String".to_string(), None)
     }

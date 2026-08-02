@@ -65,10 +65,10 @@ impl EntityGenerator for CodelistGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let schema = db
-            .get_schema_in_domain(schema_title, domain)
-            .await?
-            .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
+        let schema = match db.get_schema_in_domain(schema_title, domain).await {
+            Ok(Some(s)) => s,
+            _ => return Ok(Vec::new()),
+        };
 
         // Only generate for codelist schemas
         if schema.classification != "codelist" && schema.classification != "codelist_check" {

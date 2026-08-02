@@ -372,6 +372,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
 
         cap("ui_page",              Entity, Ui,   &[], &[]),
         cap("ui_form",              Entity, Ui,   &[], &[]),
+        cap("cosmos_entity_form",   Entity, Ui,   &[], &[]),
         cap("ui_store",             Entity, Ui,   &[], &[]),
         cap("ui_e2e_test",          Entity, Ui,   &[], &[]),
         cap("playwright-entity",    Entity, Ui,   &[], &[]),
