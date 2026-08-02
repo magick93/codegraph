@@ -144,6 +144,8 @@ pub struct BuildPlan {
     pub template_pack_path: Option<PathBuf>,
     /// Database target dialect for SQL generation (default: Postgres).
     pub database_target: DatabaseTarget,
+    /// Feature flags from the profile (e.g., has_admin_cli, auth, etc.).
+    pub features: toml::Table,
 }
 
 impl BuildPlan {
@@ -214,6 +216,7 @@ impl BuildPlan {
             ifml_frameworks: profile.ifml_frameworks.clone(),
             template_pack_path: profile.template_pack_path.clone(),
             database_target,
+            features: profile.features.clone(),
         })
     }
 

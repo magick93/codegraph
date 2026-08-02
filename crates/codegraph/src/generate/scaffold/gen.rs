@@ -25,6 +25,7 @@ pub struct ScaffoldContext {
     pub has_webhooks: bool,
     pub has_reports: bool,
     pub has_grpc: bool,
+    pub has_admin_cli: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -83,15 +84,17 @@ pub struct ScaffoldGenerator {
     has_webhooks: bool,
     has_reports: bool,
     has_grpc: bool,
+    has_admin_cli: bool,
 }
 
 impl ScaffoldGenerator {
-    pub fn new(output_dir: &Path, has_webhooks: bool, has_reports: bool, has_grpc: bool) -> Self {
+    pub fn new(output_dir: &Path, has_webhooks: bool, has_reports: bool, has_grpc: bool, has_admin_cli: bool) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
             has_webhooks,
             has_reports,
             has_grpc,
+            has_admin_cli,
         }
     }
 }
@@ -191,6 +194,7 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_webhooks: self.has_webhooks,
             has_reports: self.has_reports,
             has_grpc: self.has_grpc,
+            has_admin_cli: self.has_admin_cli,
         };
 
         let mut files = Vec::new();
@@ -207,6 +211,15 @@ impl GlobalGenerator for ScaffoldGenerator {
             path: self.output_dir.join("src").join("server.rs"),
             content: server_rs,
         });
+
+        if self.has_admin_cli {
+            let config_rs =
+                render_template_with_project(tera, "scaffold/config.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: self.output_dir.join("src").join("config.rs"),
+                content: config_rs,
+            });
+        }
 
         let app_state =
             render_template_with_project(tera, "scaffold/app_state.tera", &ctx, project)?;
