@@ -4,6 +4,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use migration::MigratorTrait;
 use tokio_util::sync::CancellationToken;
 
 use tracing_subscriber::layer::SubscriberExt;
@@ -201,20 +202,118 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     let db = sea_orm::Database::connect(&db_url).await?;
 
+    // Apply pending migrations on startup (idempotent — applied files are
+    // tracked in the seaql_migrations table). Manual runs:
+    //   DATABASE_URL=... sea-orm-cli migrate up
+    if let Err(e) = migration::Migrator::up(&db, None).await {
+        tracing::error!("Failed to apply database migrations: {e}");
+        return Err(e.into());
+    }
+
+{% if has_atproto %}
+    let atproto_authority = std::env::var("ATPROTO_AUTHORITY")
+        .unwrap_or_else(|_| "{{ project.atproto_authority }}".to_string());
+    let server_did = format!("did:web:{atproto_authority}");
+    let plc_directory_url = std::env::var("PLC_DIRECTORY_URL").ok();
+    let did_document_cache_ttl_secs: u64 = std::env::var("DID_DOCUMENT_CACHE_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
+    let identity_service = crate::api::identity::IdentityService::new(
+        server_did.clone(),
+        plc_directory_url,
+        Some(5000),
+        Some(std::time::Duration::from_secs(did_document_cache_ttl_secs)),
+    );
+
+    let pds_endpoint = std::env::var("PDS_ENDPOINT")
+        .unwrap_or_else(|_| "https://pds.{{ project.atproto_authority }}".to_string());
+
+    let atproto_auth = {
+        let signing_key_hex = std::env::var("ATPROTO_SIGNING_KEY_HEX")
+            .unwrap_or_default();
+        let app_env = std::env::var("APP_ENV")
+            .or_else(|_| std::env::var("ENVIRONMENT"))
+            .or_else(|_| std::env::var("ENV"))
+            .unwrap_or_default();
+        let (did, signing_key) = if signing_key_hex.is_empty() {
+            if app_env == "production" {
+                tracing::error!(
+                    "FATAL: ATPROTO_SIGNING_KEY_HEX must be set in production. \
+                     Generate one with: {{ app_name }}-cli keygen"
+                );
+                std::process::exit(1);
+            }
+            let (did, key) = crate::api::auth::atproto::generate_service_key()
+                .expect("Failed to generate AT Protocol service key");
+            tracing::warn!(
+                "Generated new AT Protocol service key. DID: {}. Add ATPROTO_SIGNING_KEY_HEX={} to persist.",
+                did,
+                hex::encode(&key)
+            );
+            (did, key)
+        } else {
+            let key = hex::decode(&signing_key_hex)
+                .expect("ATPROTO_SIGNING_KEY_HEX must be valid hex");
+            let did = server_did.clone();
+            (did, key)
+        };
+        crate::api::auth::atproto::AtprotoAuth {
+            server_did: did,
+            signing_key,
+            pds_endpoint,
+        }
+    };
+
+    let key_prefix: String = atproto_auth.signing_key.iter().take(4).map(|b| format!("{:02x}", b)).collect();
+    tracing::info!(
+        "AT Protocol PDS: {} | Server DID: {} | Key prefix: {}...",
+        atproto_auth.pds_endpoint,
+        atproto_auth.server_did,
+        key_prefix,
+    );
+
+    let auth_token = atproto_auth
+        .sign_service_jwt(&atproto_auth.pds_endpoint, std::time::Duration::from_secs(3600))
+        .unwrap_or_else(|e| {
+            tracing::warn!("Failed to sign initial service JWT: {}", e);
+            String::new()
+        });
+
+    let atproto_client = cosmos_extensions::atproto_client::AtprotoClient::new(
+        &atproto_auth.pds_endpoint,
+        &atproto_auth.server_did,
+        Some(auth_token),
+    );
+{% endif %}
+
     let state = crate::app_state::AppState {
 {% for domain in domains %}
 {% for entity in domain.entities %}
         {{ domain.name }}_{{ entity.module_name }}_commands: crate::domain::{{ domain.name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler::new(
             Arc::new(crate::domain::{{ domain.name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl),
             db.clone(),
+            None,
         ),
         {{ domain.name }}_{{ entity.module_name }}_queries: crate::domain::{{ domain.name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler::new(
             Arc::new(crate::domain::{{ domain.name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl),
             db.clone(),
+            None,
         ),
 {% endfor %}
 {% endfor %}
         db: db.clone(),
+{% if project.hooks_api_crate %}
+        registry: crate::hooks::HookRegistry::default(),
+{% endif %}
+{% if has_atproto %}
+        identity: Some(identity_service),
+
+        atproto_auth,
+
+        atproto_client: Some(atproto_client),
+
+{% endif %}
         jwt_secret: std::env::var("SUPABASE_JWT_SECRET").map_err(|_| {
             "SUPABASE_JWT_SECRET environment variable is required. Set it to your Supabase project JWT secret"
         })?,
@@ -250,6 +349,32 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             _ = webhook_dispatcher.run() => {}
         }
     });
+{% endif %}
+
+{% if has_atproto %}
+    // AT Protocol Firehose Consumers
+    let firehose_url = std::env::var("FIREHOSE_URL")
+        .unwrap_or_else(|_| "wss://bsky.network/xrpc".to_string());
+{% for domain in domains %}
+{% if domain.entities | length > 0 %}
+    {
+        let db = db.clone();
+        let firehose_url = firehose_url.clone();
+        let fh_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            use crate::atproto::appview::ingest_{{ domain.name }};
+            let mut firehose = crate::atproto::firehose::FirehoseClient::new(&firehose_url).unwrap();
+            tracing::info!("Starting firehose consumer for domain: {{ domain.name }}");
+            tokio::select! {
+                _ = fh_token.cancelled() => {
+                    tracing::info!("firehose consumer shutting down: {{ domain.name }}");
+                }
+                _ = ingest_{{ domain.name }}::ingest_{{ domain.name }}(firehose, db) => {}
+            }
+        });
+    }
+{% endif %}
+{% endfor %}
 {% endif %}
 
     let shutdown_signal = async move {
@@ -315,6 +440,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
 
     let app = axum::Router::new()
+{% if has_atproto %}
+        .route("/.well-known/atproto-did", axum::routing::get(crate::api::well_known::atproto_did))
+        .route("/.well-known/did.json", axum::routing::get(crate::api::well_known::did_json))
+{% endif %}
         .route("/version", axum::routing::get(version))
         .route("/health", axum::routing::get(health))
         .route("/health/ready", axum::routing::get(health_ready))
@@ -332,6 +461,9 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {% endfor %}
                 ])
         )
+{% if has_atproto %}
+        .merge(crate::atproto::xrpc::xrpc_routes())
+{% endif %}
         .with_state(state);
 
     // Merge custom extension routes (Router<()>) after .with_state()

@@ -26,6 +26,9 @@ mod webhook_router;
 {% if project.hooks_api_crate %}
 mod hooks;
 {% endif %}
+{% if has_atproto %}
+mod atproto;
+{% endif %}
 
 fn pid_file_path(bind_addr: Option<&str>, pid_file: Option<&str>) -> String {
     if let Some(pf) = pid_file {
@@ -286,6 +289,9 @@ mod webhook_router;
 {% endif %}
 {% if project.hooks_api_crate %}
 mod hooks;
+{% endif %}
+{% if has_atproto %}
+mod atproto;
 {% endif %}
 
 #[tokio::main]
