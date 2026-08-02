@@ -375,6 +375,172 @@ cargo run -- classify --schemas <dir> --classifier classifier.toml \
   --config domains.toml
 ```
 
+## Production-ready Application Features
+
+When `has_admin_cli = true` is set in the profile features, the scaffold
+generator produces a production-ready binary with the following capabilities.
+
+### Server library extraction (`server.tera`)
+
+The scaffold generator now produces two files instead of one monolithic `main.rs`:
+
+| File | Purpose |
+|------|---------|
+| `src/main.rs` | Thin entry point: module declarations + `#[tokio::main]` calling `crate::server::run_server()` (or clap CLI dispatcher if `has_admin_cli`) |
+| `src/server.rs` | `pub async fn run_server()` — all server startup logic (tracing, DB, state, webhooks, router) |
+
+`run_server()` is a public library function — usable by integration tests,
+future binaries (Tauri, GUI), and the CLI dispatcher. The `lib.tera` template
+exposes `pub mod server;` for reuse.
+
+### CLI subcommands (`has_admin_cli`)
+
+When enabled, `main.rs` uses clap to provide a polished CLI:
+
+```
+hr-app start --bind-addr 0.0.0.0:3000 --database-url ...
+hr-app migrate --database-url ...
+hr-app init --output config.toml
+hr-app doctor --database-url ...
+hr-app version
+hr-app stop --bind-addr 0.0.0.0:3000
+hr-app status --bind-addr 0.0.0.0:3000
+```
+
+Bare `hr-app` with no arguments prints help and exits non-zero.
+
+Profile configuration:
+```toml
+[profiles.default.features]
+has_admin_cli = true
+migration_strategy = "sea-orm"    # or "supabase" or "none"
+```
+
+When `has_admin_cli = false` (default), the current single-purpose server
+`main.rs` is preserved — a thin wrapper calling `run_server()` with no
+clap dependency. This ensures backward compatibility.
+
+### Configurable bind address
+
+The `start` command reads `--bind-addr` (CLI flag) or `BIND_ADDR` (env var),
+defaulting to `0.0.0.0:3000`. clap's `env` attribute provides automatic
+CLI > env > default precedence.
+
+### Application configuration (`config.tera`)
+
+Generated `src/config.rs` with `ServerConfig` struct using 3-layer loading:
+
+1. CLI arguments (highest precedence, via clap)
+2. Environment variables (`BIND_ADDR`, `DATABASE_URL`, `SUPABASE_JWT_SECRET`)
+3. Configuration file (`config.toml`)
+4. Defaults (lowest precedence)
+
+`ServerConfig` derives `Deserialize` and `Serialize` — used by both `init`
+(to write defaults) and `start` (to read overrides).
+
+### Diagnostic checks (`doctor.tera`)
+
+The `hr-app doctor` command runs pre-flight checks:
+
+| Check | What it verifies |
+|-------|-----------------|
+| `config_parseable` | Configuration loads without errors |
+| `database_reachable` | DB connection succeeds, `SELECT 1` works |
+| `database_version` | PostgreSQL version string |
+
+Generated as `src/doctor.rs` when `has_admin_cli` is enabled. Consumer
+repos (like hr-specs) can override `doctor.tera` to add domain-specific
+checks (pgmq, RLS, workflow definitions, platform schema, integration config).
+
+### Migration engine (`migration.tera`)
+
+Gated on the `migration_strategy` profile feature:
+
+| Strategy | `hr-app migrate` behavior |
+|----------|--------------------------|
+| `sea-orm` | Reads `migrations/*.sql` sorted, executes each, tracks applied in `schema_migrations` table |
+| `supabase` | Prints: "This app uses Supabase. Run: `npx supabase db reset`" |
+| `none` | Prints: "No migration strategy configured." |
+
+Generated as `src/migration.rs` when `has_admin_cli` is enabled.
+
+### Process management (stop/status via PID file)
+
+The `start` command writes the process PID to `hr-app-{port}.pid` (derived
+from `--bind-addr` port, overridable with `--pid-file`). The PID file is
+removed on graceful shutdown.
+
+```
+hr-app start --bind-addr 0.0.0.0:3000          → writes hr-app-3000.pid
+hr-app stop  --bind-addr 0.0.0.0:3000           → SIGTERM, waits 15s, cleans up
+hr-app stop  --bind-addr 0.0.0.0:3000 --force   → SIGKILL immediately
+hr-app stop  --pid-file custom.pid               → explicit PID file override
+hr-app status --bind-addr 0.0.0.0:3000           → "running" (exit 0) or "stopped" (exit 1)
+```
+
+Unix only (`libc::kill`). Non-Unix platforms print: "Process management is
+not supported on this platform."
+
+The `stop` command handles clean shutdown, stale PID files, and graceful
+timeout with `--force` escalation to SIGKILL.
+
+### Graceful shutdown
+
+Uses `tokio_util::sync::CancellationToken` for broadcasting shutdown signals
+to all spawned tasks:
+
+- **TimerService** listens via `shutdown.cancelled()` in its `tokio::select!` loop
+- **WebhookDispatcher** drains one final batch before exiting via `tokio::select!`
+- **Axum server** uses `with_graceful_shutdown(shutdown_signal)` to stop accepting
+  new connections and drain in-flight requests
+- OTel tracer provider flushed before `main()` returns
+
+Three signals trigger shutdown on Unix: SIGINT (Ctrl+C), SIGTERM (systemd/Docker),
+SIGQUIT. On non-Unix, only SIGINT is handled.
+
+### ScaffoldGenerator changes
+
+The generator now accepts two additional parameters:
+
+```rust
+ScaffoldGenerator::new(
+    output_dir,
+    has_webhooks,
+    has_reports,
+    has_grpc,
+    has_admin_cli,         // NEW: enables clap CLI + config + doctor + migration
+    migration_strategy,     // NEW: "sea-orm" | "supabase" | "none"
+)
+```
+
+Both are derived from profile features in `generate/mod.rs`:
+```rust
+let has_admin_cli = build_plan
+    .and_then(|bp| bp.features.get("has_admin_cli"))
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+let migration_strategy = build_plan
+    .and_then(|bp| bp.features.get("migration_strategy"))
+    .and_then(|v| v.as_str())
+    .unwrap_or("sea-orm");
+```
+
+The `BuildPlan` struct carries `features: toml::Table` populated from the
+resolved profile in `profile.rs`.
+
+### Template files summary
+
+| Template | When generated | Output |
+|----------|---------------|--------|
+| `scaffold/main.tera` | Always | `src/main.rs` (thin or clap CLI) |
+| `scaffold/server.tera` | Always | `src/server.rs` (extracted `run_server()`) |
+| `scaffold/config.tera` | `has_admin_cli` | `src/config.rs` |
+| `scaffold/doctor.tera` | `has_admin_cli` | `src/doctor.rs` |
+| `scaffold/migration.tera` | `has_admin_cli` | `src/migration.rs` |
+| `scaffold/lib.tera` | Always | `src/lib.rs` (+ config/doctor/migration when `has_admin_cli`) |
+| `scaffold/cargo_toml.tera` | Always | `Cargo.toml` (+ clap/toml/libc when `has_admin_cli`) |
+
 ## Template Overrides
 
 ### The `--template-dir` flag
