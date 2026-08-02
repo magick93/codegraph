@@ -5,7 +5,9 @@ use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
-use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::generate::db::dialect::{
+    db_template_for, dialect_for_target, DatabaseTarget, SqlDialect,
+};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
@@ -61,8 +63,7 @@ impl GlobalGenerator for BasejumpSetupGenerator {
             return Ok(vec![]);
         }
 
-        let empty_ctx: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
+        let empty_ctx: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let rbac_roles = render_template_with_project(
             tera,
             &db_template_for(&*self.dialect, "rbac_roles"),

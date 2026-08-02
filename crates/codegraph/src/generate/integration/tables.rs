@@ -2,8 +2,8 @@ use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use codegraph_ext_points::ExtensionPointsConfig;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_ext_points::ExtensionPointsConfig;
 use serde::Serialize;
 
 use crate::error::Result;

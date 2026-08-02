@@ -181,7 +181,7 @@ async fn build_child_dto(
                             description: String::new(),
                             render_strategy: "composite_column".to_string(),
                             is_entity_ref: false,
-            is_hierarchy_field: false,
+                            is_hierarchy_field: false,
                             min_length: None,
                             max_length: None,
                             minimum: None,
@@ -202,7 +202,7 @@ async fn build_child_dto(
                     description: String::new(),
                     render_strategy: "entity_ref".to_string(),
                     is_entity_ref: true,
-            is_hierarchy_field: false,
+                    is_hierarchy_field: false,
                     min_length: None,
                     max_length: None,
                     minimum: None,
@@ -222,7 +222,7 @@ async fn build_child_dto(
                     description: String::new(),
                     render_strategy: "direct_column".to_string(),
                     is_entity_ref: false,
-            is_hierarchy_field: false,
+                    is_hierarchy_field: false,
                     min_length: None,
                     max_length: None,
                     minimum: None,
@@ -269,7 +269,7 @@ async fn build_child_dto(
                             description: String::new(),
                             render_strategy: "codelist".to_string(),
                             is_entity_ref: false,
-            is_hierarchy_field: false,
+                            is_hierarchy_field: false,
                             min_length: None,
                             max_length: None,
                             minimum: None,
@@ -292,7 +292,7 @@ async fn build_child_dto(
                         description: String::new(),
                         render_strategy: "codelist".to_string(),
                         is_entity_ref: false,
-            is_hierarchy_field: false,
+                        is_hierarchy_field: false,
                         min_length: None,
                         max_length: None,
                         minimum: None,
@@ -315,7 +315,7 @@ async fn build_child_dto(
                     description: String::new(),
                     render_strategy: "direct_column".to_string(),
                     is_entity_ref: false,
-            is_hierarchy_field: false,
+                    is_hierarchy_field: false,
                     min_length: c.min_length,
                     max_length: c.max_length,
                     minimum: c.minimum,
@@ -342,7 +342,7 @@ async fn build_child_dto(
                         description: String::new(),
                         render_strategy: "direct_column".to_string(),
                         is_entity_ref: false,
-            is_hierarchy_field: false,
+                        is_hierarchy_field: false,
                         min_length: c.min_length,
                         max_length: c.max_length,
                         minimum: c.minimum,
@@ -525,7 +525,7 @@ pub async fn build_dto_context(
                         description: String::new(),
                         render_strategy: "composite_column".to_string(),
                         is_entity_ref: false,
-            is_hierarchy_field: false,
+                        is_hierarchy_field: false,
                         min_length: None,
                         max_length: None,
                         minimum: None,
@@ -561,7 +561,7 @@ pub async fn build_dto_context(
                     description: prop.description.clone().unwrap_or_default(),
                     render_strategy: "entity_ref".to_string(),
                     is_entity_ref: true,
-            is_hierarchy_field: false,
+                    is_hierarchy_field: false,
                     min_length: None,
                     max_length: None,
                     minimum: None,
@@ -618,7 +618,7 @@ pub async fn build_dto_context(
                         description: prop.description.clone().unwrap_or_default(),
                         render_strategy: "codelist".to_string(),
                         is_entity_ref: false,
-            is_hierarchy_field: false,
+                        is_hierarchy_field: false,
                         min_length: None,
                         max_length: None,
                         minimum: None,
@@ -948,7 +948,12 @@ impl EntityGenerator for DtoGenerator {
 
         // Register all DTO types produced by this generator for cross-generator import resolution.
         let module_path = || -> Vec<String> {
-            vec!["crate".into(), "domain".into(), ctx.domain.clone(), ctx.module_name.clone()]
+            vec![
+                "crate".into(),
+                "domain".into(),
+                ctx.domain.clone(),
+                ctx.module_name.clone(),
+            ]
         };
         type_registry::register_type(
             &format!("{}Response", ctx.entity_name),
@@ -1002,14 +1007,23 @@ impl EntityGenerator for DtoGenerator {
             .unwrap_or(true);
         if has_explicit_include || is_root {
             let include_paths = if let Some(ec) = entity_cfg {
-                resolve_include_paths(db, config, domain, schema_title, ec.allow_include.as_ref()).await?
+                resolve_include_paths(db, config, domain, schema_title, ec.allow_include.as_ref())
+                    .await?
             } else {
                 Vec::new()
             };
 
             if !include_paths.is_empty() {
                 let mut dto_files = self
-                    .build_include_dtos(db, schema_title, domain, config, tera, project, &include_paths)
+                    .build_include_dtos(
+                        db,
+                        schema_title,
+                        domain,
+                        config,
+                        tera,
+                        project,
+                        &include_paths,
+                    )
                     .await?;
                 files.append(&mut dto_files);
             }
@@ -1060,57 +1074,48 @@ impl DtoGenerator {
             }
             let mut seen_aliases = std::collections::HashSet::new();
             include_paths
-            .iter()
-            .filter(|path| seen_aliases.insert(field_alias_for(path)))
-            .map(|path| {
-                let (rust_type, inner_type, is_vec) = if path.segments.len() == 1 {
-                    let seg = &path.segments[0];
-                    // When the segment has a child_table_override (VO→entity),
-                    // the response type is the child DTO (e.g. WorkerPersonLegalResponse),
-                    // not the entity's response type (PersonResponse).
-                    let resp_type = seg.child_table_override.as_ref()
-                        .map(|o| o.response_type.clone())
-                        .unwrap_or_else(|| format!("{}Response", seg.entity_name));
-                    if seg.is_array {
-                        (
-                            format!("Option<Vec<{}>>", resp_type),
-                            resp_type,
-                            true,
-                        )
+                .iter()
+                .filter(|path| seen_aliases.insert(field_alias_for(path)))
+                .map(|path| {
+                    let (rust_type, inner_type, is_vec) = if path.segments.len() == 1 {
+                        let seg = &path.segments[0];
+                        // When the segment has a child_table_override (VO→entity),
+                        // the response type is the child DTO (e.g. WorkerPersonLegalResponse),
+                        // not the entity's response type (PersonResponse).
+                        let resp_type = seg
+                            .child_table_override
+                            .as_ref()
+                            .map(|o| o.response_type.clone())
+                            .unwrap_or_else(|| format!("{}Response", seg.entity_name));
+                        if seg.is_array {
+                            (format!("Option<Vec<{}>>", resp_type), resp_type, true)
+                        } else {
+                            (format!("Option<{}>", resp_type), resp_type, false)
+                        }
                     } else {
-                        (
-                            format!("Option<{}>", resp_type),
-                            resp_type,
-                            false,
-                        )
-                    }
-                } else {
-                    // Dot-notation paths use the combined DTO type name.
-                    let combined_name = format!("{}CombinedResponse", path.segments[0].entity_name);
-                    (
-                        format!("Option<{}>", combined_name),
-                        combined_name,
-                        false,
-                    )
-                };
+                        // Dot-notation paths use the combined DTO type name.
+                        let combined_name =
+                            format!("{}CombinedResponse", path.segments[0].entity_name);
+                        (format!("Option<{}>", combined_name), combined_name, false)
+                    };
 
-                let field_alias = field_alias_for(path);
-                // For dot-notation paths, field_alias is the first segment (e.g. "deployment")
-                // which doesn't need serde renaming — the Rust field name is the JSON key.
-                // Only apply rename when field_alias has underscore-for-dot substitution
-                // that changes the Rust identifier from the API key (single-segment paths).
-                let needs_serde_rename = path.segments.len() == 1 && field_alias != path.alias;
-                serde_json::json!({
-                    "alias": path.alias,
-                    "field_alias": field_alias,
-                    "serde_rename": if needs_serde_rename { Some(&path.alias) } else { None },
-                    "rust_type": rust_type,
-                    "inner_type": inner_type,
-                    "is_vec": is_vec,
-                    "is_dot_path": path.segments.len() > 1,
+                    let field_alias = field_alias_for(path);
+                    // For dot-notation paths, field_alias is the first segment (e.g. "deployment")
+                    // which doesn't need serde renaming — the Rust field name is the JSON key.
+                    // Only apply rename when field_alias has underscore-for-dot substitution
+                    // that changes the Rust identifier from the API key (single-segment paths).
+                    let needs_serde_rename = path.segments.len() == 1 && field_alias != path.alias;
+                    serde_json::json!({
+                        "alias": path.alias,
+                        "field_alias": field_alias,
+                        "serde_rename": if needs_serde_rename { Some(&path.alias) } else { None },
+                        "rust_type": rust_type,
+                        "inner_type": inner_type,
+                        "is_vec": is_vec,
+                        "is_dot_path": path.segments.len() > 1,
+                    })
                 })
-            })
-            .collect()
+                .collect()
         };
 
         // Query all properties for dot-notation intermediate entity fields
@@ -1122,7 +1127,8 @@ impl DtoGenerator {
         // with one optional nested field per leaf.
         let enriched_types: Vec<serde_json::Value> = if has_dot_paths {
             // Group dot-notation paths by first segment.
-            let mut by_first_seg: std::collections::HashMap<String, Vec<&ResolvedIncludePath>> = std::collections::HashMap::new();
+            let mut by_first_seg: std::collections::HashMap<String, Vec<&ResolvedIncludePath>> =
+                std::collections::HashMap::new();
             for path in include_paths {
                 if path.segments.len() > 1 {
                     let key = path.segments[0].module_name.clone();
@@ -1135,18 +1141,24 @@ impl DtoGenerator {
                 let first_path = group_paths[0];
                 let intermediate = &first_path.segments[0];
 
-
                 // Build the combined type name: DeploymentCombinedResponse
                 let combined_name = format!("{}CombinedResponse", intermediate.entity_name);
 
                 let mut base_fields: Vec<serde_json::Value> = Vec::new();
-                base_fields.push(serde_json::json!({"name": "id", "rust_type": "Uuid", "is_optional": false}));
+                base_fields.push(
+                    serde_json::json!({"name": "id", "rust_type": "Uuid", "is_optional": false}),
+                );
 
-                let props_key = match db.get_schema_in_domain(&intermediate.schema_title, domain).await? {
+                let props_key = match db
+                    .get_schema_in_domain(&intermediate.schema_title, domain)
+                    .await?
+                {
                     Some(s) => Some(s.title),
                     None => {
                         let with_type = format!("{}Type", intermediate.entity_name);
-                        db.get_schema_in_domain(&with_type, domain).await?.map(|s| s.title)
+                        db.get_schema_in_domain(&with_type, domain)
+                            .await?
+                            .map(|s| s.title)
                     }
                 };
                 if let Some(ref key) = props_key {
@@ -1159,22 +1171,52 @@ impl DtoGenerator {
                                 continue;
                             }
                             // Skip ValueObject properties (not direct columns).
-                            if matches!(prop.effective_kind(), Some(RefClassificationKind::ValueObject)) {
+                            if matches!(
+                                prop.effective_kind(),
+                                Some(RefClassificationKind::ValueObject)
+                            ) {
                                 continue;
                             }
                             let is_optional = prop.is_nullable || !prop.is_required;
-                            let field_type = if matches!(prop.effective_kind(), Some(RefClassificationKind::StructuredWrapper)) {
-                                let base = if prop.is_array { "Vec<serde_json::Value>" } else { "serde_json::Value" };
-                                if is_optional { format!("Option<{base}>") } else { base.to_string() }
-                            } else if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference)) {
+                            let field_type = if matches!(
+                                prop.effective_kind(),
+                                Some(RefClassificationKind::StructuredWrapper)
+                            ) {
+                                let base = if prop.is_array {
+                                    "Vec<serde_json::Value>"
+                                } else {
+                                    "serde_json::Value"
+                                };
+                                if is_optional {
+                                    format!("Option<{base}>")
+                                } else {
+                                    base.to_string()
+                                }
+                            } else if matches!(
+                                prop.effective_kind(),
+                                Some(RefClassificationKind::EntityReference)
+                            ) {
                                 "Option<uuid::Uuid>".to_string()
-                            } else if matches!(prop.effective_kind(), Some(RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck)) {
+                            } else if matches!(
+                                prop.effective_kind(),
+                                Some(
+                                    RefClassificationKind::CodelistReference
+                                        | RefClassificationKind::CodelistCheck
+                                )
+                            ) {
                                 let enum_type = codelist_enum_name_from_ref(&prop.ref_target)
                                     .unwrap_or_else(|| "String".to_string());
-                                if is_optional { format!("Option<{}>", enum_type) } else { enum_type }
+                                if is_optional {
+                                    format!("Option<{}>", enum_type)
+                                } else {
+                                    enum_type
+                                }
                             } else {
                                 let raw = prop.rust_field_type.clone();
-                                if is_optional && !raw.starts_with("Option<") && !raw.starts_with("Vec<Option<") {
+                                if is_optional
+                                    && !raw.starts_with("Option<")
+                                    && !raw.starts_with("Vec<Option<")
+                                {
                                     format!("Option<{}>", raw)
                                 } else {
                                     raw
@@ -1218,9 +1260,16 @@ impl DtoGenerator {
 
         // Register include DTO types for cross-generator import resolution.
         let module_path: Vec<String> = vec![
-            "crate".into(), "domain".into(), domain.into(), module_name.clone(), "dto_included".into(),
+            "crate".into(),
+            "domain".into(),
+            domain.into(),
+            module_name.clone(),
+            "dto_included".into(),
         ];
-        type_registry::register_type(&format!("{}WithIncludeResponse", entity_name), module_path.clone());
+        type_registry::register_type(
+            &format!("{}WithIncludeResponse", entity_name),
+            module_path.clone(),
+        );
         type_registry::register_type(&format!("{}IncludedData", entity_name), module_path.clone());
         for path in include_paths {
             let type_name = if path.segments.len() > 1 {
@@ -1278,7 +1327,11 @@ impl DtoGenerator {
         ref_type_names.push(format!("{}LinkedResponse", entity_name));
         ref_type_names.push("Meta".into());
         let caller_module: Vec<String> = vec![
-            "crate".into(), "domain".into(), domain.into(), module_name.clone(), "dto_included".into(),
+            "crate".into(),
+            "domain".into(),
+            domain.into(),
+            module_name.clone(),
+            "dto_included".into(),
         ];
         let imports = type_registry::resolve_imports(&ref_type_names, &caller_module);
 
@@ -1329,8 +1382,7 @@ impl DtoGenerator {
             "needs_uuid": needs_uuid,
         });
 
-        let content =
-            render_template_with_project(tera, "ddd/dto_included.tera", &ctx, project)?;
+        let content = render_template_with_project(tera, "ddd/dto_included.tera", &ctx, project)?;
 
         Ok(vec![GeneratedFile {
             path: self

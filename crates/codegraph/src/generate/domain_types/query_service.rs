@@ -29,7 +29,9 @@ pub struct QueryServiceGenerator {
 impl QueryServiceGenerator {
     /// Creates a generator that writes output under `base_dir` (crate root), appending `src/` internally.
     pub fn new_with_base(base_dir: PathBuf) -> Self {
-        Self { src_dir: base_dir.join("src") }
+        Self {
+            src_dir: base_dir.join("src"),
+        }
     }
 }
 
@@ -66,7 +68,8 @@ impl EntityGenerator for QueryServiceGenerator {
             domain: domain.to_string(),
         };
 
-        let content = render_template_with_project(tera, "domain_types/query_service.tera", &ctx, project)?;
+        let content =
+            render_template_with_project(tera, "domain_types/query_service.tera", &ctx, project)?;
 
         let output_path = self
             .src_dir

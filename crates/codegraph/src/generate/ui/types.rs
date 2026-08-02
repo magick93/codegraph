@@ -5,14 +5,13 @@ use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
+use super::common::collect_ui_fields;
 use crate::error::Result;
-use crate::generate::ProjectConfig;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
+use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
-use super::common::collect_ui_fields;
-
 
 #[derive(Debug, Serialize)]
 pub struct UiTypesContext {
@@ -81,7 +80,10 @@ impl GlobalGenerator for UiTypeGenerator {
         let mut entities = Vec::new();
 
         for entry in generation_order {
-            let schema = match db.get_schema_in_domain(&entry.schema_title, &entry.domain).await? {
+            let schema = match db
+                .get_schema_in_domain(&entry.schema_title, &entry.domain)
+                .await?
+            {
                 Some(s) => s,
                 None => continue,
             };
@@ -175,9 +177,10 @@ impl GlobalGenerator for UiTypeGenerator {
                     }
                     // Resolve the nested type's TS interface name and fields.
                     let nested_ts_name = field.ts_type.clone();
-                    if let Some(nt_fields) = collect_nested_type_fields(
-                        db, schema_title_for_ref, Some(&entity.domain),
-                    ).await {
+                    if let Some(nt_fields) =
+                        collect_nested_type_fields(db, schema_title_for_ref, Some(&entity.domain))
+                            .await
+                    {
                         nested_types.push(UiNestedType {
                             name: nested_ts_name,
                             fields: nt_fields,
@@ -187,7 +190,10 @@ impl GlobalGenerator for UiTypeGenerator {
             }
         }
 
-        let ctx = UiTypesContext { entities, nested_types };
+        let ctx = UiTypesContext {
+            entities,
+            nested_types,
+        };
         let content = render_template_with_project(tera, "ui/scaffold/types.tera", &ctx, project)?;
 
         Ok(vec![GeneratedFile {
@@ -210,7 +216,9 @@ async fn collect_nested_type_fields(
     schema_title: &str,
     domain: Option<&str>,
 ) -> Option<Vec<UiTypeField>> {
-    let fields = collect_ui_fields(db, schema_title, &[], domain).await.ok()?;
+    let fields = collect_ui_fields(db, schema_title, &[], domain)
+        .await
+        .ok()?;
     Some(
         fields
             .into_iter()

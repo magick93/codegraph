@@ -480,24 +480,25 @@ async fn generation_with_api_profile_produces_fewer_files_than_full() {
     assert!(!plan.has_entity_gen("ui_page"));
     assert!(!plan.has_entity_gen("cli_command"));
 
-    let report = codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
-        db: &mock,
-        config: &config,
-        output_dir: output_dir.path(),
-        tera: &tera,
-        ui_overrides: &Default::default(),
-        ui_domains: &Default::default(),
-        schema_base_dir: Path::new(""),
-        domain_types_base: Some(domain_types_tmp.path()),
-        hooks_base: Some(hooks_tmp.path()),
-        ext_points: None,
-        seed_config: None,
-        build_plan: Some(&plan),
-        ifml_frameworks: vec![],
-        project_config: None,
-    })
-    .await
-    .unwrap();
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: &mock,
+            config: &config,
+            output_dir: output_dir.path(),
+            tera: &tera,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: Path::new(""),
+            domain_types_base: Some(domain_types_tmp.path()),
+            hooks_base: Some(hooks_tmp.path()),
+            ext_points: None,
+            seed_config: None,
+            build_plan: Some(&plan),
+            ifml_frameworks: vec![],
+            project_config: None,
+        })
+        .await
+        .unwrap();
 
     assert!(
         !report.has_errors(),
@@ -552,24 +553,25 @@ async fn generation_with_ui_profile_produces_only_ui_files() {
     assert!(plan.has_entity_gen("ui_page"));
     assert!(!plan.has_entity_gen("ddl"));
 
-    let report = codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
-        db: &mock,
-        config: &config,
-        output_dir: output_dir.path(),
-        tera: &tera,
-        ui_overrides: &Default::default(),
-        ui_domains: &Default::default(),
-        schema_base_dir: Path::new(""),
-        domain_types_base: Some(domain_types_tmp.path()),
-        hooks_base: Some(hooks_tmp.path()),
-        ext_points: None,
-        seed_config: None,
-        build_plan: Some(&plan),
-        ifml_frameworks: vec![],
-        project_config: None,
-    })
-    .await
-    .unwrap();
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: &mock,
+            config: &config,
+            output_dir: output_dir.path(),
+            tera: &tera,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: Path::new(""),
+            domain_types_base: Some(domain_types_tmp.path()),
+            hooks_base: Some(hooks_tmp.path()),
+            ext_points: None,
+            seed_config: None,
+            build_plan: Some(&plan),
+            ifml_frameworks: vec![],
+            project_config: None,
+        })
+        .await
+        .unwrap();
 
     assert!(!report.has_errors(), "UI profile run should have no errors");
     // UI profile with only a CandidateType should still produce some files
@@ -594,24 +596,25 @@ async fn generation_with_cli_profile_produces_only_cli_files() {
     assert!(!plan.has_entity_gen("ddl"));
     assert!(!plan.has_entity_gen("ui_page"));
 
-    let report = codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
-        db: &mock,
-        config: &config,
-        output_dir: output_dir.path(),
-        tera: &tera,
-        ui_overrides: &Default::default(),
-        ui_domains: &Default::default(),
-        schema_base_dir: Path::new(""),
-        domain_types_base: Some(domain_types_tmp.path()),
-        hooks_base: Some(hooks_tmp.path()),
-        ext_points: None,
-        seed_config: None,
-        build_plan: Some(&plan),
-        ifml_frameworks: vec![],
-        project_config: None,
-    })
-    .await
-    .unwrap();
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: &mock,
+            config: &config,
+            output_dir: output_dir.path(),
+            tera: &tera,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: Path::new(""),
+            domain_types_base: Some(domain_types_tmp.path()),
+            hooks_base: Some(hooks_tmp.path()),
+            ext_points: None,
+            seed_config: None,
+            build_plan: Some(&plan),
+            ifml_frameworks: vec![],
+            project_config: None,
+        })
+        .await
+        .unwrap();
 
     assert!(
         !report.has_errors(),
@@ -649,11 +652,11 @@ async fn generation_with_lite_variant_produces_fewer_files_than_full_api() {
             schema_base_dir: Path::new(""),
             domain_types_base: Some(dt1.path()),
             hooks_base: Some(hk1.path()),
-        ext_points: None,
-        seed_config: None,
-        build_plan: Some(&full_plan),
-        ifml_frameworks: vec![],
-        project_config: None,
+            ext_points: None,
+            seed_config: None,
+            build_plan: Some(&full_plan),
+            ifml_frameworks: vec![],
+            project_config: None,
         })
         .await
         .unwrap();
@@ -678,11 +681,11 @@ async fn generation_with_lite_variant_produces_fewer_files_than_full_api() {
             schema_base_dir: Path::new(""),
             domain_types_base: Some(dt2.path()),
             hooks_base: Some(hk2.path()),
-        ext_points: None,
-        seed_config: None,
-        build_plan: Some(&lite_plan),
-        ifml_frameworks: vec![],
-        project_config: None,
+            ext_points: None,
+            seed_config: None,
+            build_plan: Some(&lite_plan),
+            ifml_frameworks: vec![],
+            project_config: None,
         })
         .await
         .unwrap();

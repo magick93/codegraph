@@ -1,4 +1,3 @@
-
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
@@ -82,11 +81,7 @@ impl ProtoContext {
         let package = domain.to_string();
 
         if module_name.is_empty() {
-            return Ok(Self::empty(
-                package,
-                entity_name,
-                module_name,
-            ));
+            return Ok(Self::empty(package, entity_name, module_name));
         }
 
         let properties = db.get_properties(schema_title).await?;
@@ -149,7 +144,11 @@ impl ProtoContext {
 
             let is_repeated = field_type.proto_type.starts_with("repeated ");
             let base_proto_type = if is_repeated {
-                field_type.proto_type.strip_prefix("repeated ").unwrap().to_string()
+                field_type
+                    .proto_type
+                    .strip_prefix("repeated ")
+                    .unwrap()
+                    .to_string()
             } else {
                 proto_type.clone()
             };
@@ -510,8 +509,7 @@ impl ProtoContext {
 
         // Build service methods
         let mut service_methods = Vec::new();
-        let op_set: std::collections::HashSet<String> =
-            operations.iter().cloned().collect();
+        let op_set: std::collections::HashSet<String> = operations.iter().cloned().collect();
 
         if op_set.contains("create") {
             service_methods.push(ProtoServiceMethod {
@@ -664,12 +662,17 @@ fn maybe_collect_enum(
     let kind = prop.effective_kind()?;
     match kind {
         RefClassificationKind::InlineEnum => {
-            let enum_name = format!("{}{}", entity_name, codegraph_naming::to_pascal_case(&prop.name));
+            let enum_name = format!(
+                "{}{}",
+                entity_name,
+                codegraph_naming::to_pascal_case(&prop.name)
+            );
             // Create a basic enum definition; real values come from the codelist data.
             // The context builder will refine this when codelist data is available.
-            let values = vec![
-                ProtoEnumValue { name: format!("{}_UNSPECIFIED", enum_name.to_uppercase()), number: 0 },
-            ];
+            let values = vec![ProtoEnumValue {
+                name: format!("{}_UNSPECIFIED", enum_name.to_uppercase()),
+                number: 0,
+            }];
             enums.push(ProtoEnumDef {
                 name: enum_name.clone(),
                 values,

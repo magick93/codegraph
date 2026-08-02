@@ -3,8 +3,8 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
     ActionNode, CodeList, CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties,
-    EdgeType, EnumValue, EventNode, IngestStats, ParameterDefinitionNode, PropertyNode,
-    SchemaNode, ViewComponentNode, ViewContainerNode,
+    EdgeType, EnumValue, EventNode, IngestStats, ParameterDefinitionNode, PropertyNode, SchemaNode,
+    ViewComponentNode, ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;

@@ -38,7 +38,8 @@ impl GlobalGenerator for WebhookEndpointApiGenerator {
     ) -> Result<Vec<GeneratedFile>> {
         let ctx: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
-        let endpoints = render_template_with_project(tera, "webhook/api_endpoints.tera", &ctx, project)?;
+        let endpoints =
+            render_template_with_project(tera, "webhook/api_endpoints.tera", &ctx, project)?;
         let router = render_template_with_project(tera, "webhook/api_router.tera", &ctx, project)?;
 
         Ok(vec![

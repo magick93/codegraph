@@ -10,7 +10,9 @@ use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::generate::db::dialect::{
+    db_template_for, dialect_for_target, DatabaseTarget, SqlDialect,
+};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::{DomainConfig, SearchConfig};
@@ -826,8 +828,10 @@ fn composition_node_to_child_table(
     parent_schema_name: &str,
     parent_display_name: &str,
 ) -> ChildTableDef {
-    let child_table_name =
-        codegraph_naming::truncate_pg_identifier(&format!("{}_{}", parent_table_name, node.field_name));
+    let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
+        "{}_{}",
+        parent_table_name, node.field_name
+    ));
     let child_display_name = format!("{} {}", parent_display_name, node.field_name);
 
     let mut columns = Vec::new();
@@ -873,7 +877,8 @@ fn composition_node_to_child_table(
     }
 
     // Remove any column that collides with the parent FK column
-    let parent_fk_col = codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name));
+    let parent_fk_col =
+        codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name));
     columns.retain(|col| col.name != parent_fk_col);
 
     // Recursively convert nested children
@@ -1005,7 +1010,9 @@ impl DdlGenerator {
             if let Some(ec) = entity_cfg {
                 if ec.role.as_deref() == Some("child") {
                     if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, domain).await {
+                        if let Ok(Some(parent_schema)) =
+                            db.get_schema_in_domain(parent_title, domain).await
+                        {
                             let parent_domain = if config
                                 .domains
                                 .get(domain)
@@ -1030,11 +1037,19 @@ impl DdlGenerator {
                 }
             }
             if !fk_resolved {
-                let stripped = crate::generate::api::router::strip_suffix(schema_title, &config.defaults.type_suffix);
+                let stripped = crate::generate::api::router::strip_suffix(
+                    schema_title,
+                    &config.defaults.type_suffix,
+                );
                 if let Some(pc) = self.parent_candidates.iter().find(|pc| {
-                    crate::generate::api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix) == stripped
+                    crate::generate::api::router::strip_suffix(
+                        &pc.child_title,
+                        &config.defaults.type_suffix,
+                    ) == stripped
                 }) {
-                    if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, domain).await {
+                    if let Ok(Some(parent_schema)) =
+                        db.get_schema_in_domain(&pc.parent_title, domain).await
+                    {
                         let parent_domain = if config
                             .domains
                             .get(domain)
@@ -1120,7 +1135,10 @@ impl DdlGenerator {
                 if !is_fk_candidate {
                     continue;
                 }
-                let base = prop.rust_field_name.strip_prefix("r#").unwrap_or(&prop.rust_field_name);
+                let base = prop
+                    .rust_field_name
+                    .strip_prefix("r#")
+                    .unwrap_or(&prop.rust_field_name);
                 let col_name = if base.ends_with("_id") {
                     base.to_string()
                 } else {
@@ -1136,7 +1154,9 @@ impl DdlGenerator {
                         is_array: false,
                     });
                     // Try to resolve the FK target for the constraint
-                    if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, schema_title).await {
+                    if let Ok(Some(target)) =
+                        db.get_property_ref_target(&prop.name, schema_title).await
+                    {
                         if !target.pg_table_name.is_empty() {
                             let fk_schema = target.domain.as_deref().unwrap_or(&schema_name);
                             foreign_keys.push(ForeignKeyDef {
@@ -1294,7 +1314,11 @@ impl DdlGenerator {
         // DDL generator with id UUID PRIMARY KEY, even if classified as codelists.
         let has_codelist_seed = schema.is_codelist
             && domain == "common"
-            && !db.get_enum_values(schema_title).await.unwrap_or_default().is_empty();
+            && !db
+                .get_enum_values(schema_title)
+                .await
+                .unwrap_or_default()
+                .is_empty();
 
         Ok(DdlContext {
             schema_name,

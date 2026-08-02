@@ -256,10 +256,16 @@ entities = ["ReportType", "AssessmentScoreType"]
         .unwrap();
 
     // Only the top-level schema should be in the order — the inline def must be excluded
-    assert_eq!(order.len(), 1, "inline def schema should be excluded from generation order");
+    assert_eq!(
+        order.len(),
+        1,
+        "inline def schema should be excluded from generation order"
+    );
     assert_eq!(order[0].schema_title, "ReportType");
     assert!(
-        !order.iter().any(|e| e.schema_title == "AssessmentScoreType"),
+        !order
+            .iter()
+            .any(|e| e.schema_title == "AssessmentScoreType"),
         "AssessmentScoreType (inline def) must not appear in generation order"
     );
 }
@@ -290,7 +296,14 @@ async fn test_ddl_generator_produces_table_sql() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -343,7 +356,14 @@ async fn test_entity_generator_produces_model() {
 
     let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -374,7 +394,14 @@ async fn test_dto_generator_produces_create_and_response() {
 
     let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -415,8 +442,8 @@ async fn test_repository_emitter_produces_impl() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-.emit(&mock, "CandidateType", "recruiting", &config, None, &[])
-                .await
+        .emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+        .await
         .unwrap();
 
     assert!(code.contains("CandidateRepository"));
@@ -444,8 +471,8 @@ async fn test_repository_emitter_uses_num_items() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-.emit(&mock, "CandidateType", "recruiting", &config, None, &[])
-                .await
+        .emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+        .await
         .unwrap();
 
     assert!(
@@ -518,8 +545,8 @@ async fn snapshot_repository_emitter_simple_entity() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-.emit(&mock, "CandidateType", "recruiting", &config, None, &[])
-                .await
+        .emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+        .await
         .unwrap();
 
     insta::assert_snapshot!("repo_simple_entity", code);
@@ -577,8 +604,8 @@ async fn snapshot_repository_emitter_codelist_columns() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-.emit(&mock, "CandidateType", "recruiting", &config, None, &[])
-                .await
+        .emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+        .await
         .unwrap();
 
     insta::assert_snapshot!("repo_codelist_columns", code);
@@ -658,8 +685,8 @@ async fn snapshot_repository_emitter_structured_wrapper() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-.emit(&mock, "CandidateType", "recruiting", &config, None, &[])
-                .await
+        .emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+        .await
         .unwrap();
 
     insta::assert_snapshot!("repo_structured_wrapper", code);
@@ -758,8 +785,8 @@ async fn snapshot_repository_emitter_child_tables() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-.emit(&mock, "CandidateType", "recruiting", &config, None, &[])
-                .await
+        .emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+        .await
         .unwrap();
 
     insta::assert_snapshot!("repo_child_tables", code);
@@ -918,7 +945,10 @@ async fn test_domain_types_codelist_generates_enum_not_string_alias() {
     )
     .unwrap();
 
-    let files = gen.generate_all(&mock, &tera, &test_project_config()).await.unwrap();
+    let files = gen
+        .generate_all(&mock, &tera, &test_project_config())
+        .await
+        .unwrap();
 
     assert!(
         files.len() >= 2,
@@ -1122,19 +1152,17 @@ async fn child_insert_uses_stripped_dto_field_names() {
         ))
         .with_properties(
             "DeploymentType",
-            vec![
-                prop_split(
-                    "position_schedule_types",
-                    "position_schedule_types",
-                    "position_schedule_type_codes",
-                    "Vec<String>",
-                    "TEXT[]",
-                    false,
-                    Some(RefClassificationKind::CodelistReference),
-                    Some("../common/json/codelist/PositionScheduleTypeCodeList.json"),
-                    true, // array codelist → child table
-                ),
-            ],
+            vec![prop_split(
+                "position_schedule_types",
+                "position_schedule_types",
+                "position_schedule_type_codes",
+                "Vec<String>",
+                "TEXT[]",
+                false,
+                Some(RefClassificationKind::CodelistReference),
+                Some("../common/json/codelist/PositionScheduleTypeCodeList.json"),
+                true, // array codelist → child table
+            )],
         )
         .build();
 
@@ -1201,11 +1229,18 @@ async fn dto_generator_uses_stripped_names_for_codelist_fields() {
     let config = test_domain_config();
     let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
-    let gen = codegraph::generate::ddd::dto::DtoGenerator::new(
-        &std::path::PathBuf::from("/tmp/test-dto-code"),
-    );
+    let gen = codegraph::generate::ddd::dto::DtoGenerator::new(&std::path::PathBuf::from(
+        "/tmp/test-dto-code",
+    ));
     let files = gen
-        .generate(&mock, "DeploymentType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "DeploymentType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1282,7 +1317,14 @@ async fn entity_model_uses_stripped_names_for_codelist_fields() {
         &std::path::PathBuf::from("/tmp/test-entity-code"),
     );
     let files = gen
-        .generate(&mock, "DeploymentType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "DeploymentType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1290,14 +1332,32 @@ async fn entity_model_uses_stripped_names_for_codelist_fields() {
     let content = &files[0].content;
 
     // Struct field names must use stripped rust_field_name
-    assert!(content.contains("pub assignment_reason"), "struct field must use stripped name");
-    assert!(!content.contains("pub assignment_reason_code"), "struct field must NOT use _code suffix");
-    assert!(content.contains("pub status"), "struct field must use stripped name");
-    assert!(!content.contains("pub status_code"), "struct field must NOT use _code suffix");
+    assert!(
+        content.contains("pub assignment_reason"),
+        "struct field must use stripped name"
+    );
+    assert!(
+        !content.contains("pub assignment_reason_code"),
+        "struct field must NOT use _code suffix"
+    );
+    assert!(
+        content.contains("pub status"),
+        "struct field must use stripped name"
+    );
+    assert!(
+        !content.contains("pub status_code"),
+        "struct field must NOT use _code suffix"
+    );
 
     // Column name attribute should still use pg_column_name
-    assert!(content.contains("assignment_reason_code"), "column_name attr should use pg_column_name");
-    assert!(content.contains("status_code"), "column_name attr should use pg_column_name");
+    assert!(
+        content.contains("assignment_reason_code"),
+        "column_name attr should use pg_column_name"
+    );
+    assert!(
+        content.contains("status_code"),
+        "column_name attr should use pg_column_name"
+    );
 }
 
 /// Verify the domain-types DTO generator uses stripped rust_field_name for
@@ -1314,19 +1374,17 @@ async fn domain_types_dto_uses_stripped_names_for_codelist_fields() {
         ))
         .with_properties(
             "DeploymentType",
-            vec![
-                prop_split(
-                    "assignment_reason",
-                    "assignment_reason",
-                    "assignment_reason_code",
-                    "AssignmentReasonCodeList",
-                    "TEXT",
-                    false,
-                    Some(RefClassificationKind::CodelistReference),
-                    Some("../common/json/codelist/AssignmentReasonCodeList.json"),
-                    false,
-                ),
-            ],
+            vec![prop_split(
+                "assignment_reason",
+                "assignment_reason",
+                "assignment_reason_code",
+                "AssignmentReasonCodeList",
+                "TEXT",
+                false,
+                Some(RefClassificationKind::CodelistReference),
+                Some("../common/json/codelist/AssignmentReasonCodeList.json"),
+                false,
+            )],
         )
         .build();
 
@@ -1337,7 +1395,14 @@ async fn domain_types_dto_uses_stripped_names_for_codelist_fields() {
         std::path::PathBuf::from("/tmp/test-domain-types-dto"),
     );
     let files = gen
-        .generate(&mock, "DeploymentType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "DeploymentType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1345,9 +1410,18 @@ async fn domain_types_dto_uses_stripped_names_for_codelist_fields() {
     for file in &files {
         let path = file.path.to_string_lossy();
         let content = &file.content;
-        if path.contains("dto_create") || path.contains("dto_update") || path.contains("dto_response") {
-            assert!(content.contains("assignment_reason"), "missing stripped field in {path}");
-            assert!(!content.contains("assignment_reason_code"), "{path} has _code suffix in field name");
+        if path.contains("dto_create")
+            || path.contains("dto_update")
+            || path.contains("dto_response")
+        {
+            assert!(
+                content.contains("assignment_reason"),
+                "missing stripped field in {path}"
+            );
+            assert!(
+                !content.contains("assignment_reason_code"),
+                "{path} has _code suffix in field name"
+            );
         }
     }
 }
@@ -1359,30 +1433,47 @@ async fn filter_fields_use_stripped_names_for_codelist() {
     let mock = MockEngine::builder()
         .with_schema(mock_schema(
             "recruiting/json/DeploymentType.json",
-            "DeploymentType", "deployment", "recruiting", "entity_reference",
+            "DeploymentType",
+            "deployment",
+            "recruiting",
+            "entity_reference",
         ))
-        .with_properties("DeploymentType", vec![
-            prop_split("assignment_reason", "assignment_reason",
-                "assignment_reason_code", "AssignmentReasonCodeList", "TEXT",
+        .with_properties(
+            "DeploymentType",
+            vec![prop_split(
+                "assignment_reason",
+                "assignment_reason",
+                "assignment_reason_code",
+                "AssignmentReasonCodeList",
+                "TEXT",
                 false,
                 Some(RefClassificationKind::CodelistReference),
                 Some("../common/json/codelist/AssignmentReasonCodeList.json"),
-                false),
-        ])
+                false,
+            )],
+        )
         .build();
 
-    let fields = codegraph::generate::filter_fields::resolve_filter_fields(
-        &mock, "DeploymentType", None).await.unwrap();
+    let fields =
+        codegraph::generate::filter_fields::resolve_filter_fields(&mock, "DeploymentType", None)
+            .await
+            .unwrap();
 
     assert!(!fields.is_empty(), "should resolve filter fields");
     for f in &fields {
         // field_name = rust_field_name (stripped, DTO side)
         // pg_column_name = pg_column_name (with _code suffix, DB side)
         if f.field_name.contains("assignment_reason") {
-            assert_eq!(f.field_name, "assignment_reason",
-                "filter field_name must be stripped, got: {}", f.field_name);
-            assert_eq!(f.pg_column_name, "assignment_reason_code",
-                "filter pg_column_name must keep _code suffix, got: {}", f.pg_column_name);
+            assert_eq!(
+                f.field_name, "assignment_reason",
+                "filter field_name must be stripped, got: {}",
+                f.field_name
+            );
+            assert_eq!(
+                f.pg_column_name, "assignment_reason_code",
+                "filter pg_column_name must keep _code suffix, got: {}",
+                f.pg_column_name
+            );
         }
     }
 }
@@ -1434,11 +1525,18 @@ async fn grpc_service_conversions_use_stripped_names_for_codelist() {
     let config = test_domain_config();
     let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
-    let gen = codegraph::generate::grpc::service::GrpcServiceGenerator::new(
-        std::path::Path::new("/tmp/test-grpc-service-code"),
-    );
+    let gen = codegraph::generate::grpc::service::GrpcServiceGenerator::new(std::path::Path::new(
+        "/tmp/test-grpc-service-code",
+    ));
     let files = gen
-        .generate(&mock, "DeploymentType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "DeploymentType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1451,8 +1549,14 @@ async fn grpc_service_conversions_use_stripped_names_for_codelist() {
     let content = &conversions.content;
 
     // Rust DTO field access must use the stripped rust_field_name.
-    assert!(content.contains("assignment_reason"), "conversions must reference stripped field name");
-    assert!(content.contains("status"), "conversions must reference stripped field name");
+    assert!(
+        content.contains("assignment_reason"),
+        "conversions must reference stripped field name"
+    );
+    assert!(
+        content.contains("status"),
+        "conversions must reference stripped field name"
+    );
 
     // It must NEVER use the pg_column_name with the _code suffix.
     assert!(
@@ -1511,11 +1615,18 @@ async fn cli_command_uses_stripped_names_for_codelist() {
     let config = test_domain_config();
     let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
-    let gen = codegraph::generate::cli::command::CliCommandGenerator::new(
-        std::path::Path::new("/tmp/test-cli-command-code"),
-    );
+    let gen = codegraph::generate::cli::command::CliCommandGenerator::new(std::path::Path::new(
+        "/tmp/test-cli-command-code",
+    ));
     let files = gen
-        .generate(&mock, "DeploymentType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "DeploymentType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1523,8 +1634,14 @@ async fn cli_command_uses_stripped_names_for_codelist() {
     let content = &files[0].content;
 
     // CLI args + body builder must use the stripped field name.
-    assert!(content.contains("assignment_reason"), "CLI must reference stripped field name");
-    assert!(content.contains("status"), "CLI must reference stripped field name");
+    assert!(
+        content.contains("assignment_reason"),
+        "CLI must reference stripped field name"
+    );
+    assert!(
+        content.contains("status"),
+        "CLI must reference stripped field name"
+    );
 
     // It must NEVER access fields via the pg_column_name with _code suffix.
     assert!(
@@ -1582,11 +1699,18 @@ async fn ui_form_uses_stripped_names_for_codelist() {
     let config = test_domain_config();
     let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
-    let gen = codegraph::generate::ui::form::UiFormGenerator::new(
-        std::path::Path::new("/tmp/test-ui-form-code"),
-    );
+    let gen = codegraph::generate::ui::form::UiFormGenerator::new(std::path::Path::new(
+        "/tmp/test-ui-form-code",
+    ));
     let files = gen
-        .generate(&mock, "DeploymentType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "DeploymentType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1594,8 +1718,14 @@ async fn ui_form_uses_stripped_names_for_codelist() {
     let content = &files[0].content;
 
     // Form state + data bindings must use the stripped field name.
-    assert!(content.contains("assignment_reason"), "form must bind stripped field name");
-    assert!(content.contains("status"), "form must bind stripped field name");
+    assert!(
+        content.contains("assignment_reason"),
+        "form must bind stripped field name"
+    );
+    assert!(
+        content.contains("status"),
+        "form must bind stripped field name"
+    );
 
     // It must NEVER bind via the pg_column_name with the _code suffix.
     assert!(

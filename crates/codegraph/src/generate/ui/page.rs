@@ -218,7 +218,10 @@ impl EntityGenerator for UiPageGenerator {
         // Resolve parent info for child entities.
         // Manual config takes priority over graph detection.
         let parent = {
-            let stripped = crate::generate::api::router::strip_suffix(schema_title, &config.defaults.type_suffix);
+            let stripped = crate::generate::api::router::strip_suffix(
+                schema_title,
+                &config.defaults.type_suffix,
+            );
             let mut result = None;
 
             // 1. Check manual config first
@@ -229,7 +232,9 @@ impl EntityGenerator for UiPageGenerator {
             {
                 if ec.role.as_deref() == Some("child") {
                     if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, &domain).await {
+                        if let Ok(Some(parent_schema)) =
+                            db.get_schema_in_domain(parent_title, &domain).await
+                        {
                             let parent_domain = if config
                                 .domains
                                 .get(&domain)
@@ -277,8 +282,10 @@ impl EntityGenerator for UiPageGenerator {
                 .unwrap_or("root");
             if result.is_none() && page_effective_role != "root" {
                 for pc in &self.parent_candidates {
-                    let child_name =
-                        crate::generate::api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
+                    let child_name = crate::generate::api::router::strip_suffix(
+                        &pc.child_title,
+                        &config.defaults.type_suffix,
+                    );
                     if child_name == stripped {
                         let in_explicit = config
                             .domains
@@ -287,16 +294,18 @@ impl EntityGenerator for UiPageGenerator {
                             .unwrap_or(false);
                         let parent_in_domain = in_explicit
                             || db
-                            .get_schema_in_domain(&pc.parent_title, &domain)
-                            .await
-                            .ok()
-                            .flatten()
-                            .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
-                            .unwrap_or(false);
+                                .get_schema_in_domain(&pc.parent_title, &domain)
+                                .await
+                                .ok()
+                                .flatten()
+                                .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
+                                .unwrap_or(false);
                         if !parent_in_domain {
                             break;
                         }
-                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, &domain).await {
+                        if let Ok(Some(parent_schema)) =
+                            db.get_schema_in_domain(&pc.parent_title, &domain).await
+                        {
                             let gp = super::store::resolve_grandparent(
                                 &pc.parent_title,
                                 &domain,

@@ -53,7 +53,11 @@ pub fn proto_type_from_field(
             is_message: false,
         },
         Some(RefClassificationKind::ValueObject) => {
-            let msg_name = format!("{}{}", entity_name, codegraph_naming::to_pascal_case(&prop.name));
+            let msg_name = format!(
+                "{}{}",
+                entity_name,
+                codegraph_naming::to_pascal_case(&prop.name)
+            );
             ProtoFieldType {
                 proto_type: msg_name.clone(),
                 rust_type: msg_name,
@@ -63,7 +67,11 @@ pub fn proto_type_from_field(
             }
         }
         Some(RefClassificationKind::CompositeWrapper) => {
-            let msg_name = format!("{}{}", entity_name, codegraph_naming::to_pascal_case(&prop.name));
+            let msg_name = format!(
+                "{}{}",
+                entity_name,
+                codegraph_naming::to_pascal_case(&prop.name)
+            );
             ProtoFieldType {
                 proto_type: msg_name.clone(),
                 rust_type: msg_name,
@@ -226,7 +234,11 @@ mod tests {
 
     #[test]
     fn proto_type_for_string() {
-        let p = prop("name", "String", Some(RefClassificationKind::PrimitiveWrapper));
+        let p = prop(
+            "name",
+            "String",
+            Some(RefClassificationKind::PrimitiveWrapper),
+        );
         let result = proto_type_from_field(&p, &empty_mock(), "Candidate");
         assert_eq!(result.proto_type, "string");
         assert_eq!(result.rust_type, "String");
@@ -244,7 +256,11 @@ mod tests {
 
     #[test]
     fn proto_type_for_i16() {
-        let p = prop("score", "i16", Some(RefClassificationKind::PrimitiveWrapper));
+        let p = prop(
+            "score",
+            "i16",
+            Some(RefClassificationKind::PrimitiveWrapper),
+        );
         let result = proto_type_from_field(&p, &empty_mock(), "Candidate");
         assert_eq!(result.proto_type, "int32");
         assert_eq!(result.rust_type, "i32");
@@ -252,7 +268,11 @@ mod tests {
 
     #[test]
     fn proto_type_for_i64() {
-        let p = prop("count", "i64", Some(RefClassificationKind::PrimitiveWrapper));
+        let p = prop(
+            "count",
+            "i64",
+            Some(RefClassificationKind::PrimitiveWrapper),
+        );
         let result = proto_type_from_field(&p, &empty_mock(), "Candidate");
         assert_eq!(result.proto_type, "int64");
         assert_eq!(result.rust_type, "i64");
@@ -260,7 +280,11 @@ mod tests {
 
     #[test]
     fn proto_type_for_f32() {
-        let p = prop("rating", "f32", Some(RefClassificationKind::PrimitiveWrapper));
+        let p = prop(
+            "rating",
+            "f32",
+            Some(RefClassificationKind::PrimitiveWrapper),
+        );
         let result = proto_type_from_field(&p, &empty_mock(), "Candidate");
         assert_eq!(result.proto_type, "float");
         assert_eq!(result.rust_type, "f32");
@@ -268,7 +292,11 @@ mod tests {
 
     #[test]
     fn proto_type_for_f64() {
-        let p = prop("score", "f64", Some(RefClassificationKind::PrimitiveWrapper));
+        let p = prop(
+            "score",
+            "f64",
+            Some(RefClassificationKind::PrimitiveWrapper),
+        );
         let result = proto_type_from_field(&p, &empty_mock(), "Candidate");
         assert_eq!(result.proto_type, "double");
         assert_eq!(result.rust_type, "f64");
@@ -276,7 +304,11 @@ mod tests {
 
     #[test]
     fn proto_type_for_bool() {
-        let p = prop("active", "bool", Some(RefClassificationKind::PrimitiveWrapper));
+        let p = prop(
+            "active",
+            "bool",
+            Some(RefClassificationKind::PrimitiveWrapper),
+        );
         let result = proto_type_from_field(&p, &empty_mock(), "Candidate");
         assert_eq!(result.proto_type, "bool");
         assert_eq!(result.rust_type, "bool");
@@ -370,11 +402,7 @@ mod tests {
 
     #[test]
     fn proto_type_for_inline_enum() {
-        let p = prop(
-            "status",
-            "String",
-            Some(RefClassificationKind::InlineEnum),
-        );
+        let p = prop("status", "String", Some(RefClassificationKind::InlineEnum));
         let result = proto_type_from_field(&p, &empty_mock(), "Candidate");
         assert_eq!(result.proto_type, "string");
     }

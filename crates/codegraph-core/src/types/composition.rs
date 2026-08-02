@@ -134,8 +134,10 @@ impl CompositionNode {
         let mut seen_jsonb = HashSet::new();
         let mut seen_children = HashSet::new();
         self.columns.retain(|c| seen_cols.insert(c.name.clone()));
-        self.jsonb_columns.retain(|c| seen_jsonb.insert(c.name.clone()));
-        self.children.retain(|c| seen_children.insert(c.field_name.clone()));
+        self.jsonb_columns
+            .retain(|c| seen_jsonb.insert(c.name.clone()));
+        self.children
+            .retain(|c| seen_children.insert(c.field_name.clone()));
         for child in &mut self.children {
             child.dedup_fields();
         }

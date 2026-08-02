@@ -138,7 +138,8 @@ impl GlobalGenerator for CliScaffoldGenerator {
             content: util_rs,
         });
 
-        let commands_mod = render_template_with_project(tera, "cli/commands_mod.tera", &ctx, project)?;
+        let commands_mod =
+            render_template_with_project(tera, "cli/commands_mod.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self
                 .output_dir

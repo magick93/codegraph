@@ -1,6 +1,6 @@
 use crate::schema_ddl;
-use grafeo::GrafeoDB;
 use codegraph_core::error::GraphError;
+use grafeo::GrafeoDB;
 use std::sync::Arc;
 use std::time::Instant;
 

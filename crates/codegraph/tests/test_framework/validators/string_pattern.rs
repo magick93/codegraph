@@ -18,14 +18,12 @@ impl OutputValidator for StringPatternValidator {
         &self.label
     }
 
-    fn validate(
-        &self,
-        files: &[GeneratedFile],
-        _work_dir: &Path,
-    ) -> Result<(), Vec<String>> {
+    fn validate(&self, files: &[GeneratedFile], _work_dir: &Path) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 
-        if files.is_empty() && (!self.required_patterns.is_empty() || !self.forbidden_patterns.is_empty()) {
+        if files.is_empty()
+            && (!self.required_patterns.is_empty() || !self.forbidden_patterns.is_empty())
+        {
             errors.push("No files generated to validate patterns against".to_string());
             return Err(errors);
         }

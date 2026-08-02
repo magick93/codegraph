@@ -1,7 +1,7 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, CodeList, CompositeColumn, CompositeRange, CompositionTree, EventNode, EnumValue,
-    Extension, ParentCandidate, ParameterDefinitionNode, PropertyNode, SchemaClassificationData,
+    ActionNode, CodeList, CompositeColumn, CompositeRange, CompositionTree, EnumValue, EventNode,
+    Extension, ParameterDefinitionNode, ParentCandidate, PropertyNode, SchemaClassificationData,
     SchemaNode, StructuredSubField, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
@@ -85,11 +85,17 @@ pub trait GraphQuerier: Send + Sync {
     ///
     /// For example, if both PersonType (entity) and PersonLegalType (VO) allOf-compose
     /// PersonBaseType, then `get_schemas_that_extend("PersonBaseType")` returns both.
-    async fn get_schemas_that_extend(&self, parent_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+    async fn get_schemas_that_extend(
+        &self,
+        parent_title: &str,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
         Ok(Vec::new())
     }
     async fn get_referencing_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError>;
-    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError>;
+    async fn get_referenced_schemas(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<SchemaNode>, GraphError>;
     async fn get_property_ref_target(
         &self,
         property_name: &str,
@@ -173,17 +179,12 @@ pub trait GraphQuerier: Send + Sync {
     }
 
     /// Get all Event nodes for a given parent element.
-    async fn get_ifml_events(
-        &self,
-        _parent_id: &str,
-    ) -> Result<Vec<EventNode>, GraphError> {
+    async fn get_ifml_events(&self, _parent_id: &str) -> Result<Vec<EventNode>, GraphError> {
         Ok(Vec::new())
     }
 
     /// Get NavigationFlow edges: (source_element, source_event, target_container).
-    async fn get_ifml_navigation_flows(
-        &self,
-    ) -> Result<Vec<(String, String, String)>, GraphError> {
+    async fn get_ifml_navigation_flows(&self) -> Result<Vec<(String, String, String)>, GraphError> {
         Ok(Vec::new())
     }
 

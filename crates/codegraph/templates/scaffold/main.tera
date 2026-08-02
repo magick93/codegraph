@@ -4,6 +4,8 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use tokio_util::sync::CancellationToken;
+
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
@@ -244,25 +246,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     };
 
-    // Timer service with graceful shutdown
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
+    // Graceful shutdown — CancellationToken broadcasts to all components
+    let shutdown_token = CancellationToken::new();
+
+    // Timer service
     let timer_service = codegraph_workflow::timer::TimerService::new(
         db.clone(),
         state.workflow_service.clone(),
         std::time::Duration::from_secs(30),
     );
-    tokio::spawn(async move { timer_service.run(shutdown_rx).await });
+    let timer_token = shutdown_token.child_token();
+    tokio::spawn(async move { timer_service.run(timer_token).await });
 
 {% if has_webhooks %}
     // Webhook dispatch worker
     let webhook_dispatcher = crate::webhook_dispatch::WebhookDispatcher::new(db.clone())?;
-    tokio::spawn(async move { webhook_dispatcher.run().await });
+    let wd_token = shutdown_token.child_token();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = wd_token.cancelled() => {
+                tracing::info!("webhook dispatcher shutting down");
+            }
+            _ = webhook_dispatcher.run() => {}
+        }
+    });
 {% endif %}
 
     let shutdown_signal = async move {
-        tokio::signal::ctrl_c().await.ok();
-        tracing::info!("Shutdown signal received");
-        let _ = shutdown_tx.send(());
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = signal(SignalKind::terminate())
+                .expect("failed to install SIGTERM handler");
+            let mut sigquit = signal(SignalKind::quit())
+                .expect("failed to install SIGQUIT handler");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!("received SIGINT, initiating graceful shutdown");
+                }
+                _ = sigterm.recv() => {
+                    tracing::info!("received SIGTERM, initiating graceful shutdown");
+                }
+                _ = sigquit.recv() => {
+                    tracing::info!("received SIGQUIT, initiating graceful shutdown");
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c().await.ok();
+            tracing::info!("received SIGINT, initiating graceful shutdown");
+        }
+        shutdown_token.cancel();
     };
 
     // CORS configuration
@@ -349,9 +384,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         app
     };
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    tracing::info!(app_name = %app_name, "Swagger UI: http://0.0.0.0:3000/swagger-ui/  |  API Catalog: http://0.0.0.0:3000/api-catalog.json");
-    tracing::info!("Listening on {}", addr);
+    let addr: SocketAddr = std::env::var("BIND_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:3000".to_string())
+        .parse()
+        .expect("BIND_ADDR must be a valid socket address (e.g. 0.0.0.0:3000 or 127.0.0.1:8080)");
+    tracing::info!(app_name = %app_name, "Swagger UI: http://{addr}/swagger-ui/  |  API Catalog: http://{addr}/api-catalog.json");
+    tracing::info!("Listening on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)

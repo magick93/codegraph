@@ -287,7 +287,10 @@ impl BuildPlan {
     /// When the profile variant specifies a `template_pack`, the resolved
     /// directory is returned so generators can look there first for overrides.
     pub fn template_override_dirs(&self) -> Vec<&Path> {
-        self.template_pack_path.iter().map(|p| p.as_path()).collect()
+        self.template_pack_path
+            .iter()
+            .map(|p| p.as_path())
+            .collect()
     }
 }
 
@@ -626,20 +629,13 @@ pub fn load_and_resolve_profile(
 
     // Resolve template_pack path from the variant, relative to profiles.toml directory.
     if let Some(variant_name) = variant {
-        if let Some(variant_def) = def
-            .variants
-            .as_ref()
-            .and_then(|vs| vs.get(variant_name))
-        {
+        if let Some(variant_def) = def.variants.as_ref().and_then(|vs| vs.get(variant_name)) {
             resolved.template_pack_path = variant_def.template_pack.as_ref().map(|tp| {
                 let path = PathBuf::from(tp);
                 if path.is_absolute() {
                     path
                 } else {
-                    profiles_path
-                        .parent()
-                        .unwrap_or(Path::new("."))
-                        .join(&path)
+                    profiles_path.parent().unwrap_or(Path::new(".")).join(&path)
                 }
             });
         }

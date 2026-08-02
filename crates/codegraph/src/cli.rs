@@ -8,7 +8,10 @@ pub enum ClassifyFormat {
 }
 
 #[derive(Parser)]
-#[command(name = "codegraph", about = "Graph-driven code generation from JSON schemas")]
+#[command(
+    name = "codegraph",
+    about = "Graph-driven code generation from JSON schemas"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

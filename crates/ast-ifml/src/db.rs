@@ -18,9 +18,8 @@ pub fn create_ifml_db(source_code: &[&str]) -> impl BaseDatabase {
     for (i, code) in source_code.iter().enumerate() {
         let url = Url::parse(&format!("file:///test{i}.ifml")).expect("Failed to parse URL");
 
-        let parsers: &'static auto_lsp::core::parsers::Parsers = IFML_PARSERS
-            .get("ifml")
-            .expect("IFML parser not found");
+        let parsers: &'static auto_lsp::core::parsers::Parsers =
+            IFML_PARSERS.get("ifml").expect("IFML parser not found");
 
         let texter = Text::new(code.to_string());
 

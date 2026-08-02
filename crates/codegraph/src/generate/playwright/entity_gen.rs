@@ -116,8 +116,10 @@ impl EntityGenerator for PlaywrightEntityGenerator {
             .join("factories")
             .join(domain);
 
-        let page_content = render_template_with_project(tera, "playwright/entity_page.tera", &ctx, project)?;
-        let factory_content = render_template_with_project(tera, "playwright/test_data_factory.tera", &ctx, project)?;
+        let page_content =
+            render_template_with_project(tera, "playwright/entity_page.tera", &ctx, project)?;
+        let factory_content =
+            render_template_with_project(tera, "playwright/test_data_factory.tera", &ctx, project)?;
 
         Ok(vec![
             GeneratedFile {

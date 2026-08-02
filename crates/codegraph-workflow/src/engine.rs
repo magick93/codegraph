@@ -147,7 +147,13 @@ impl WorkflowService for SeaOrmWorkflowService {
             .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
 
         // Set RLS session variable so tenant isolation policies allow access.
-        Self::set_rls_org(&tx, ctx.tenant_id, ctx.session_user_id, ctx.session_api_key_id).await?;
+        Self::set_rls_org(
+            &tx,
+            ctx.tenant_id,
+            ctx.session_user_id,
+            ctx.session_api_key_id,
+        )
+        .await?;
 
         // 1. Load definition
         let (def_id, initial_state, terminal_states, sm) = self
@@ -376,7 +382,13 @@ impl WorkflowService for SeaOrmWorkflowService {
             .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
 
         // Set RLS session variable so tenant isolation policies allow access.
-        Self::set_rls_org(&tx, ctx.tenant_id, ctx.session_user_id, ctx.session_api_key_id).await?;
+        Self::set_rls_org(
+            &tx,
+            ctx.tenant_id,
+            ctx.session_user_id,
+            ctx.session_api_key_id,
+        )
+        .await?;
 
         let (def_id, _initial, terminal_states, sm) = self
             .load_definition(&tx, ctx.tenant_id, &ctx.domain, &ctx.entity_table)

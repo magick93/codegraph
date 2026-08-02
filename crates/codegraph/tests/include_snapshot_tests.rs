@@ -145,7 +145,9 @@ fn snapshot_dto_included_single_level() {
         .expect("Should have a dto_included.rs file");
 
     assert!(
-        included_file.content.contains(r#"#[serde(skip_serializing_if = "Option::is_none")]"#),
+        included_file
+            .content
+            .contains(r#"#[serde(skip_serializing_if = "Option::is_none")]"#),
         "serde attr must close correctly when no rename is set"
     );
 
@@ -186,8 +188,16 @@ fn setup_dot_notation_mock() -> MockEngine {
         .with_schema(dot_notation_schema_for("WorkerType", "worker", "Worker"))
         .with_schema(deployment_schema)
         .with_schema(position_schema)
-        .with_ref_target("deployment", "WorkerType", dot_notation_schema_for("DeploymentType", "deployment", "Deployment"))
-        .with_ref_target("position", "DeploymentType", dot_notation_schema_for("PositionType", "position", "Position"))
+        .with_ref_target(
+            "deployment",
+            "WorkerType",
+            dot_notation_schema_for("DeploymentType", "deployment", "Deployment"),
+        )
+        .with_ref_target(
+            "position",
+            "DeploymentType",
+            dot_notation_schema_for("PositionType", "position", "Position"),
+        )
         .with_properties(
             "WorkerType",
             vec![PropertyNode {

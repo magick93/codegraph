@@ -44,15 +44,19 @@ impl GlobalGenerator for PlaywrightGlobalGenerator {
         // the module names declared in lib.rs match the filenames on disk.
         let mut domain_map: BTreeMap<String, Vec<PlaywrightEntitySummary>> = BTreeMap::new();
         for entry in generation_order {
-            let schema = db.get_schema_in_domain(&entry.schema_title, &entry.domain).await?;
+            let schema = db
+                .get_schema_in_domain(&entry.schema_title, &entry.domain)
+                .await?;
             let module_name = schema
                 .as_ref()
                 .map(|s| s.pg_table_name.clone())
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| {
                     // Fallback: strip type suffix then snake_case (should rarely trigger)
-                    let stripped =
-                        crate::generate::api::router::strip_suffix(&entry.schema_title, &config.defaults.type_suffix);
+                    let stripped = crate::generate::api::router::strip_suffix(
+                        &entry.schema_title,
+                        &config.defaults.type_suffix,
+                    );
                     codegraph_naming::to_snake_case(stripped)
                 });
             if module_name.is_empty() {
@@ -76,8 +80,10 @@ impl GlobalGenerator for PlaywrightGlobalGenerator {
 
         let e2e_dir = self.output_dir.join("e2e");
 
-        let lib_content = render_template_with_project(tera, "playwright/crate_lib.tera", &ctx, project)?;
-        let cargo_content = render_template_with_project(tera, "playwright/crate_cargo.tera", &ctx, project)?;
+        let lib_content =
+            render_template_with_project(tera, "playwright/crate_lib.tera", &ctx, project)?;
+        let cargo_content =
+            render_template_with_project(tera, "playwright/crate_cargo.tera", &ctx, project)?;
 
         Ok(vec![
             GeneratedFile {

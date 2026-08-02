@@ -33,10 +33,7 @@ pub fn ifml_capabilities() -> Vec<GeneratorCapability> {
             name: format!("ifml_route_{framework}"),
             kind: GeneratorKind::Global,
             target: GeneratorTarget::Ui,
-            features_required: vec![
-                "ifml_backend".to_string(),
-                format!("framework_{framework}"),
-            ],
+            features_required: vec!["ifml_backend".to_string(), format!("framework_{framework}")],
             features_optional: vec![],
         });
     }
@@ -47,10 +44,7 @@ pub fn ifml_capabilities() -> Vec<GeneratorCapability> {
             name: format!("ifml_navigation_{framework}"),
             kind: GeneratorKind::Global,
             target: GeneratorTarget::Ui,
-            features_required: vec![
-                "ifml_backend".to_string(),
-                format!("framework_{framework}"),
-            ],
+            features_required: vec!["ifml_backend".to_string(), format!("framework_{framework}")],
             features_optional: vec![],
         });
     }

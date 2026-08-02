@@ -1,10 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use heck::ToUpperCamelCase;
 use codegraph_classifier::classify::{classify_plain_type, classify_ref};
 use codegraph_classifier::config::ClassifierConfig;
-use codegraph_type_contracts::{DddFieldProjection, RefClassificationKind};
 use codegraph_config::UiOverrideConfig;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
@@ -12,6 +10,8 @@ use codegraph_core::types::{
     SchemaNode,
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
+use codegraph_type_contracts::{DddFieldProjection, RefClassificationKind};
+use heck::ToUpperCamelCase;
 
 use crate::error::{Error, Result};
 use crate::generate::ddd::dto::strip_code_suffix_safe;
@@ -43,7 +43,11 @@ fn sanitize_rust_type_name(s: &str) -> String {
     let pascal = cleaned.to_upper_camel_case();
     // Remove leading digits
     let trimmed: String = pascal.chars().skip_while(|c| c.is_ascii_digit()).collect();
-    let trimmed = if trimmed.is_empty() { "_".to_string() } else { trimmed };
+    let trimmed = if trimmed.is_empty() {
+        "_".to_string()
+    } else {
+        trimmed
+    };
     // Cap length
     trimmed.chars().take(200).collect()
 }
@@ -73,7 +77,17 @@ pub async fn ingest_schemas(
         .collect();
 
     for uri in &uris {
-        ingest_schema_node(db, &loader, uri, classifier, &is_entity, None, suffix, &mut result).await?;
+        ingest_schema_node(
+            db,
+            &loader,
+            uri,
+            classifier,
+            &is_entity,
+            None,
+            suffix,
+            &mut result,
+        )
+        .await?;
     }
 
     // Pass 1b: Ingest codelist entries and enum values for codelist schemas
@@ -96,8 +110,16 @@ pub async fn ingest_schemas(
     // Pass 2: Ingest inline definitions
     let mut inline_uris: Vec<String> = Vec::new();
     for uri in &uris {
-        let new_uris =
-            ingest_inline_defs(db, &loader, uri, classifier, &is_entity, suffix, &mut result).await?;
+        let new_uris = ingest_inline_defs(
+            db,
+            &loader,
+            uri,
+            classifier,
+            &is_entity,
+            suffix,
+            &mut result,
+        )
+        .await?;
         inline_uris.extend(new_uris);
     }
 
@@ -531,7 +553,12 @@ async fn ingest_properties_from_schema(
             // suffix so that entity model, DTO, and repository generators all see
             // the same field name (e.g., "worker_type" instead of "worker_type_code").
             // The pg_column_name retains the _code suffix for the actual DB column.
-            if matches!(prop.effective_kind(), Some(RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck)) {
+            if matches!(
+                prop.effective_kind(),
+                Some(
+                    RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck
+                )
+            ) {
                 prop.rust_field_name = strip_code_suffix_safe(&prop.rust_field_name);
             }
 

@@ -1,8 +1,8 @@
 use crate::error::GraphError;
 use crate::types::{
     ActionNode, CodeList, CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties,
-    EdgeType, EnumValue, EventNode, IngestStats, ParameterDefinitionNode, PropertyNode,
-    SchemaNode, ViewComponentNode, ViewContainerNode,
+    EdgeType, EnumValue, EventNode, IngestStats, ParameterDefinitionNode, PropertyNode, SchemaNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 

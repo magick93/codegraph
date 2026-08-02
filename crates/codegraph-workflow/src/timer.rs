@@ -28,7 +28,7 @@ impl TimerService {
         }
     }
 
-    pub async fn run(&self, mut shutdown: tokio::sync::watch::Receiver<()>) {
+    pub async fn run(&self, shutdown: tokio_util::sync::CancellationToken) {
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(self.poll_interval) => {
@@ -36,7 +36,7 @@ impl TimerService {
                         tracing::error!("timer service error: {e}");
                     }
                 }
-                _ = shutdown.changed() => {
+                _ = shutdown.cancelled() => {
                     tracing::info!("timer service shutting down");
                     return;
                 }

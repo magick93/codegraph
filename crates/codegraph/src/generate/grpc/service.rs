@@ -99,9 +99,12 @@ impl EntityGenerator for GrpcServiceGenerator {
             proto_ctx.operations.iter().cloned().collect();
 
         // Build field lists with conversion expressions
-        let create_fields = build_field_conversions(&properties, &entity_name, db, true, false).await;
-        let update_fields = build_field_conversions(&properties, &entity_name, db, false, false).await;
-        let response_fields = build_field_conversions(&properties, &entity_name, db, true, true).await;
+        let create_fields =
+            build_field_conversions(&properties, &entity_name, db, true, false).await;
+        let update_fields =
+            build_field_conversions(&properties, &entity_name, db, false, false).await;
+        let response_fields =
+            build_field_conversions(&properties, &entity_name, db, true, true).await;
 
         let repo_trait = format!("{}Repository", entity_name);
         let proto_service_mod = format!("{}_service_server", module_name);
@@ -232,9 +235,7 @@ fn command_conversion_expr(
             ".into()".to_string()
         }
         Some(RefClassificationKind::MediaWrapper)
-        | Some(RefClassificationKind::CompositeWrapper) => {
-            ".into()".to_string()
-        }
+        | Some(RefClassificationKind::CompositeWrapper) => ".into()".to_string(),
         _ => {
             // PrimitiveWrapper — check rust type
             match prop.rust_field_type.as_str() {
@@ -260,9 +261,7 @@ fn command_conversion_expr(
                         String::new()
                     }
                 }
-                "chrono::DateTime<chrono::Utc>" => {
-                    String::new()
-                }
+                "chrono::DateTime<chrono::Utc>" => String::new(),
                 "serde_json::Value" => String::new(),
                 _ => String::new(),
             }
@@ -289,27 +288,21 @@ fn response_conversion_expr(
         }
         Some(RefClassificationKind::CodelistReference)
         | Some(RefClassificationKind::CodelistCheck)
-        | Some(RefClassificationKind::InlineEnum) => {
-            ".to_string()".to_string()
-        }
+        | Some(RefClassificationKind::InlineEnum) => ".to_string()".to_string(),
         Some(RefClassificationKind::ValueObject)
         | Some(RefClassificationKind::MediaWrapper)
-        | Some(RefClassificationKind::CompositeWrapper) => {
-            ".into()".to_string()
-        }
-        _ => {
-            match prop.rust_field_type.as_str() {
-                "uuid::Uuid" | "Uuid" => ".to_string()".to_string(),
-                "rust_decimal::Decimal" | "Decimal" => ".to_string()".to_string(),
-                "chrono::NaiveDate" | "NaiveDate" | "chrono::DateTime<chrono::Utc>" => {
-                    if is_optional {
-                        ".map(|dt| dt.into())".to_string()
-                    } else {
-                        ".into()".to_string()
-                    }
+        | Some(RefClassificationKind::CompositeWrapper) => ".into()".to_string(),
+        _ => match prop.rust_field_type.as_str() {
+            "uuid::Uuid" | "Uuid" => ".to_string()".to_string(),
+            "rust_decimal::Decimal" | "Decimal" => ".to_string()".to_string(),
+            "chrono::NaiveDate" | "NaiveDate" | "chrono::DateTime<chrono::Utc>" => {
+                if is_optional {
+                    ".map(|dt| dt.into())".to_string()
+                } else {
+                    ".into()".to_string()
                 }
-                _ => String::new(),
             }
-        }
+            _ => String::new(),
+        },
     }
 }

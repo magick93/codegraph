@@ -47,7 +47,8 @@ impl EntityGenerator for GrpcProtoGenerator {
         let mut files = Vec::new();
 
         // Render proto_message.tera for the entity message + CRUD messages
-        let msg_content = render_template_with_project(tera, "grpc/proto_message.tera", &ctx, project)?;
+        let msg_content =
+            render_template_with_project(tera, "grpc/proto_message.tera", &ctx, project)?;
         let proto_dir = self.output_dir.join("proto").join(&ctx.package);
         files.push(GeneratedFile {
             path: proto_dir.join(&ctx.proto_file_name),
@@ -55,7 +56,8 @@ impl EntityGenerator for GrpcProtoGenerator {
         });
 
         // Render proto_service.tera for the service definition (appended to the same .proto)
-        let svc_content = render_template_with_project(tera, "grpc/proto_service.tera", &ctx, project)?;
+        let svc_content =
+            render_template_with_project(tera, "grpc/proto_service.tera", &ctx, project)?;
         // Append service definition to the same file
         if let Some(existing) = files.last_mut() {
             existing.content.push_str("\n");

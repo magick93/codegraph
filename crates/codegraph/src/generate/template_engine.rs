@@ -43,7 +43,10 @@ pub fn create_tera_with_overrides(override_dirs: &[&Path]) -> Result<Tera> {
 /// Walk a directory and add every `.tera` file to the Tera engine,
 /// shadowing any existing template with the same name.
 fn merge_tera_dir(tera: &mut Tera, dir: &Path) -> Result<()> {
-    for entry in walkdir::WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("tera") {
             continue;
@@ -78,7 +81,9 @@ fn upper_camel_filter(
         .as_str()
         .ok_or_else(|| tera::Error::msg("upper_camel filter expects a string"))?;
     let stripped = codegraph_naming::strip_suffix(s, "Type");
-    Ok(tera::Value::String(codegraph_naming::to_pascal_case(&stripped)))
+    Ok(tera::Value::String(codegraph_naming::to_pascal_case(
+        &stripped,
+    )))
 }
 
 fn pascal_case_filter(
@@ -108,7 +113,9 @@ fn truncate_pg_filter(
     let s = value
         .as_str()
         .ok_or_else(|| tera::Error::msg("truncate_pg filter expects a string"))?;
-    Ok(tera::Value::String(codegraph_naming::truncate_pg_identifier(s)))
+    Ok(tera::Value::String(
+        codegraph_naming::truncate_pg_identifier(s),
+    ))
 }
 
 fn pluralize_filter(

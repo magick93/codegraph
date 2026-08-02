@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
-use crate::generate::render_template_with_project;
 use crate::generate::ddd::dto::build_dto_context;
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
@@ -25,7 +25,9 @@ pub struct DomainTypesDtoGenerator {
 impl DomainTypesDtoGenerator {
     /// Creates a generator that writes output under `base_dir` (crate root), appending `src/` internally.
     pub fn new_with_base(base_dir: PathBuf) -> Self {
-        Self { src_dir: base_dir.join("src") }
+        Self {
+            src_dir: base_dir.join("src"),
+        }
     }
 }
 
@@ -55,7 +57,8 @@ impl EntityGenerator for DomainTypesDtoGenerator {
         let mut files = Vec::new();
 
         if ctx.operations.contains(&"create".to_string()) {
-            let content = render_template_with_project(tera, "domain_types/dto_create.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "domain_types/dto_create.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: base_dir.join("dto_create.rs"),
                 content,
@@ -63,14 +66,16 @@ impl EntityGenerator for DomainTypesDtoGenerator {
         }
 
         if ctx.operations.contains(&"update".to_string()) {
-            let content = render_template_with_project(tera, "domain_types/dto_update.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "domain_types/dto_update.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: base_dir.join("dto_update.rs"),
                 content,
             });
         }
 
-        let response = render_template_with_project(tera, "domain_types/dto_response.tera", &ctx, project)?;
+        let response =
+            render_template_with_project(tera, "domain_types/dto_response.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: base_dir.join("dto_response.rs"),
             content: response,

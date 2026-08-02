@@ -6,8 +6,8 @@ use auto_lsp::lsp_server::Connection;
 use auto_lsp::lsp_types::*;
 use auto_lsp::lsp_types::{
     notification::{
-        Cancel, DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
-        Initialized, PublishDiagnostics, SetTrace,
+        Cancel, DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
+        DidSaveTextDocument, Initialized, PublishDiagnostics, SetTrace,
     },
     request::{
         CodeActionRequest, Completion, DocumentDiagnosticRequest, GotoDefinition, HoverRequest,
@@ -119,8 +119,8 @@ fn server_capabilities() -> ServerCapabilities {
         }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
-        semantic_tokens_provider: Some(
-            SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
+        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+            SemanticTokensOptions {
                 legend: SemanticTokensLegend {
                     token_types: handlers::TOKEN_TYPES
                         .iter()
@@ -134,13 +134,15 @@ fn server_capabilities() -> ServerCapabilities {
                 full: Some(SemanticTokensFullOptions::Bool(true)),
                 range: None,
                 ..Default::default()
-            }),
-        ),
+            },
+        )),
         diagnostic_provider: Some(DiagnosticServerCapabilities::Options(DiagnosticOptions {
             identifier: None,
             inter_file_dependencies: true,
             workspace_diagnostics: false,
-            work_done_progress_options: WorkDoneProgressOptions { work_done_progress: None },
+            work_done_progress_options: WorkDoneProgressOptions {
+                work_done_progress: None,
+            },
         })),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         ..Default::default()

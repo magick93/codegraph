@@ -9,7 +9,10 @@ pub fn apply_naming_rules(
 ) -> Option<NamingRuleResult> {
     for (pattern, rule) in rules {
         if title.contains(pattern.as_str()) {
-            let is_hard = matches!(rule.rule_type, codegraph_classifier::config::NamingRuleType::Hard);
+            let is_hard = matches!(
+                rule.rule_type,
+                codegraph_classifier::config::NamingRuleType::Hard
+            );
             let type_label = if is_hard { "hard" } else { "soft" };
             return Some(NamingRuleResult {
                 vo_score: rule.score,

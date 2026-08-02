@@ -4,12 +4,10 @@ extern "C" {
 
 /// The Tree-sitter `LanguageFn` for IFML.
 pub const LANGUAGE: tree_sitter_language::LanguageFn = unsafe {
-    tree_sitter_language::LanguageFn::from_raw(
-        std::mem::transmute::<
-            unsafe extern "C" fn() -> tree_sitter::Language,
-            unsafe extern "C" fn() -> *const (),
-        >(tree_sitter_ifml),
-    )
+    tree_sitter_language::LanguageFn::from_raw(std::mem::transmute::<
+        unsafe extern "C" fn() -> tree_sitter::Language,
+        unsafe extern "C" fn() -> *const (),
+    >(tree_sitter_ifml))
 };
 
 /// The Tree-sitter IFML language definition.

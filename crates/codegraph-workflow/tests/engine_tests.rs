@@ -71,6 +71,8 @@ fn trigger_source_timer_skips_guards() {
         comment: None,
         entity_data: serde_json::Value::Null,
         trigger_source: TriggerSource::Timer,
+        session_user_id: None,
+        session_api_key_id: None,
     };
     assert_eq!(ctx.trigger_source, TriggerSource::Timer);
     assert_ne!(ctx.trigger_source, TriggerSource::User);

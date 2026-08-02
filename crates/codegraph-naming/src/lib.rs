@@ -23,7 +23,10 @@ pub fn strip_suffix(title: &str, suffix: &str) -> String {
 ///
 /// Convenience wrapper around [`strip_suffix`] that strips the default "Type" suffix.
 /// Prefer `strip_suffix(title, &config.defaults.type_suffix)` in new code.
-#[deprecated(since = "0.2.0", note = "use strip_suffix(title, &config.defaults.type_suffix) instead")]
+#[deprecated(
+    since = "0.2.0",
+    note = "use strip_suffix(title, &config.defaults.type_suffix) instead"
+)]
 pub fn strip_type_suffix(title: &str) -> String {
     strip_suffix(title, "Type")
 }

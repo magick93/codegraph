@@ -56,9 +56,9 @@ fn entity_has_command_ops(config: &DomainConfig, domain: &str, entity_name: &str
         .and_then(|d| d.get_entity_config(entity_name))
         .and_then(|ec| ec.operations.clone())
         .unwrap_or_else(|| config.defaults.operations.clone());
-    operations.iter().any(|op| {
-        op == "create" || op == "update" || op == "delete"
-    })
+    operations
+        .iter()
+        .any(|op| op == "create" || op == "update" || op == "delete")
 }
 
 /// Mirrors `uses_find_by_id` in ddd/query.tera: the query handler's find_by_id
@@ -201,13 +201,15 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: main_rs,
         });
 
-        let app_state = render_template_with_project(tera, "scaffold/app_state.tera", &ctx, project)?;
+        let app_state =
+            render_template_with_project(tera, "scaffold/app_state.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("app_state.rs"),
             content: app_state,
         });
 
-        let cargo_toml = render_template_with_project(tera, "scaffold/cargo_toml.tera", &ctx, project)?;
+        let cargo_toml =
+            render_template_with_project(tera, "scaffold/cargo_toml.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("Cargo.toml"),
             content: cargo_toml,
@@ -231,7 +233,8 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: error_rs,
         });
 
-        let middleware_rs = render_template_with_project(tera, "scaffold/middleware.tera", &ctx, project)?;
+        let middleware_rs =
+            render_template_with_project(tera, "scaffold/middleware.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("middleware.rs"),
             content: middleware_rs,
@@ -244,25 +247,37 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: metrics_middleware_rs,
         });
 
-        let qs_query_rs = render_template_with_project(tera, "scaffold/qs_query.tera", &ctx, project)?;
+        let qs_query_rs =
+            render_template_with_project(tera, "scaffold/qs_query.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("qs_query.rs"),
             content: qs_query_rs,
         });
 
-        let meta_content = render_template_with_project(tera, "scaffold/meta.tera", &serde_json::json!({}), project)?;
+        let meta_content = render_template_with_project(
+            tera,
+            "scaffold/meta.tera",
+            &serde_json::json!({}),
+            project,
+        )?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("api").join("meta.rs"),
             content: meta_content,
         });
 
-        let integrations_rs = render_template_with_project(tera, "scaffold/integrations_handler.tera", &ctx, project)?;
+        let integrations_rs = render_template_with_project(
+            tera,
+            "scaffold/integrations_handler.tera",
+            &ctx,
+            project,
+        )?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("integrations.rs"),
             content: integrations_rs,
         });
 
-        let api_key_migration = render_template_with_project(tera, "db/api_key_migration.tera", &ctx, project)?;
+        let api_key_migration =
+            render_template_with_project(tera, "db/api_key_migration.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self
                 .output_dir

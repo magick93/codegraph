@@ -2,12 +2,12 @@ pub mod validators;
 
 use std::path::Path;
 
+use codegraph_config::DomainConfig;
 use codegraph_core::caching_querier::CachingQuerier;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_config::DomainConfig;
 
-use codegraph::generate::{run_generators_with_opts, GeneratorOpts, ProjectConfig};
 use codegraph::generate::traits::GeneratedFile;
+use codegraph::generate::{run_generators_with_opts, GeneratorOpts, ProjectConfig};
 
 use validators::OutputValidator;
 

@@ -307,7 +307,9 @@ fn build_mock_node(
         }
 
         let fk_target = match classification {
-            Some(codegraph_type_contracts::RefClassificationKind::CodelistReference) if !p.is_array => {
+            Some(codegraph_type_contracts::RefClassificationKind::CodelistReference)
+                if !p.is_array =>
+            {
                 p.ref_target.as_ref().map(|rt| FkTarget {
                     schema: mock_ref_schema(rt),
                     table: mock_ref_table(rt),
@@ -315,7 +317,9 @@ fn build_mock_node(
                     on_delete: "RESTRICT".to_string(),
                 })
             }
-            Some(codegraph_type_contracts::RefClassificationKind::EntityReference) if !p.is_array => {
+            Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
+                if !p.is_array =>
+            {
                 p.ref_target.as_ref().map(|rt| FkTarget {
                     schema: mock_ref_schema(rt),
                     table: mock_ref_table(rt),
@@ -522,8 +526,7 @@ impl GraphIngestor for MockEngine {
         let act = self.action_nodes.lock().unwrap();
         let param = self.parameter_definitions.lock().unwrap();
 
-        let ifml_count =
-            vc.len() + vcomp.len() + evt.len() + act.len() + param.len();
+        let ifml_count = vc.len() + vcomp.len() + evt.len() + act.len() + param.len();
 
         Ok(IngestStats {
             schema_count: schemas.len(),
@@ -764,7 +767,10 @@ impl GraphQuerier for MockEngine {
         Ok(vec![])
     }
 
-    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+    async fn get_referenced_schemas(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
         let ref_targets = self.ref_targets.lock().unwrap();
         let mut seen = std::collections::HashSet::new();
         let mut result = Vec::new();

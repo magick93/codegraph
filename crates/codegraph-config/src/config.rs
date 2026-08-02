@@ -1050,7 +1050,13 @@ allow_include = ["person", "deployment", "deployment.position"]
         let worker = &hr.entity_config["WorkerType"];
         assert_eq!(
             worker.allow_include.as_deref(),
-            Some(&["person".to_string(), "deployment".to_string(), "deployment.position".to_string()][..])
+            Some(
+                &[
+                    "person".to_string(),
+                    "deployment".to_string(),
+                    "deployment.position".to_string()
+                ][..]
+            )
         );
     }
 

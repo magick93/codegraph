@@ -13,11 +13,7 @@ impl OutputValidator for ProtoCompileValidator {
         "proto_compile"
     }
 
-    fn validate(
-        &self,
-        files: &[GeneratedFile],
-        work_dir: &Path,
-    ) -> Result<(), Vec<String>> {
+    fn validate(&self, files: &[GeneratedFile], work_dir: &Path) -> Result<(), Vec<String>> {
         // Check if protoc is available
         let has_protoc = std::process::Command::new("protoc")
             .arg("--version")

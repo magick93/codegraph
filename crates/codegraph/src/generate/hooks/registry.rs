@@ -143,7 +143,8 @@ impl GlobalGenerator for HookRegistryGenerator {
         let mut files = Vec::new();
 
         // 1. Render registry.rs
-        let registry_content = render_template_with_project(tera, "hooks/registry.tera", &registry_ctx, project)?;
+        let registry_content =
+            render_template_with_project(tera, "hooks/registry.tera", &registry_ctx, project)?;
         files.push(GeneratedFile {
             path: generated_dir.join("registry.rs"),
             content: registry_content,
@@ -187,7 +188,8 @@ impl GlobalGenerator for HookRegistryGenerator {
                 })
                 .collect(),
         };
-        let generated_mod_content = render_template_with_project(tera, "hooks/generated_mod.tera", &merged_ctx, project)?;
+        let generated_mod_content =
+            render_template_with_project(tera, "hooks/generated_mod.tera", &merged_ctx, project)?;
         files.push(GeneratedFile {
             path: mod_path,
             content: generated_mod_content,
@@ -205,8 +207,12 @@ impl GlobalGenerator for HookRegistryGenerator {
                     })
                     .collect(),
             };
-            let domain_mod_content =
-                render_template_with_project(tera, "hooks/domain_mod.tera", &domain_mod_ctx, project)?;
+            let domain_mod_content = render_template_with_project(
+                tera,
+                "hooks/domain_mod.tera",
+                &domain_mod_ctx,
+                project,
+            )?;
             files.push(GeneratedFile {
                 path: generated_dir.join(&domain.name).join("mod.rs"),
                 content: domain_mod_content,
