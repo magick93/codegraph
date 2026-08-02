@@ -76,7 +76,7 @@ fn load_migrations() -> Vec<Box<dyn MigrationTrait>> {
         .map(|rd| rd.flatten().collect::<Vec<_>>())
         .unwrap_or_default()
         .into_iter()
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "sql"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "sql"))
         .collect();
     entries.sort_by_key(|e| e.file_name());
 

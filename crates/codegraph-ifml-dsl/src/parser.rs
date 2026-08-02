@@ -694,6 +694,7 @@ fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn parse_view_body_content(
     pair: Pair<Rule>,
 ) -> (

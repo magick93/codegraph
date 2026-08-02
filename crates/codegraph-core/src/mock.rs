@@ -25,6 +25,7 @@ pub struct MockEngine {
     events: Mutex<HashMap<String, EventNode>>,
     action_nodes: Mutex<HashMap<String, ActionNode>>,
     parameter_definitions: Mutex<HashMap<String, ParameterDefinitionNode>>,
+    #[allow(dead_code)]
     data_bindings: Mutex<HashMap<String, DataBindingNode>>,
     namespaces: Mutex<HashMap<String, NamespaceNode>>,
     lexicons: Mutex<HashMap<String, LexiconNode>>,
