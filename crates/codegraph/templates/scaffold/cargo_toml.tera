@@ -55,6 +55,7 @@ tokio-stream = { version = "0.1", optional = true }
 {% if has_admin_cli %}
 toml = "0.8"
 clap = { version = "4", features = ["derive", "env"] }
+libc = "0.2"
 {% endif %}
 
 {% if has_grpc %}
