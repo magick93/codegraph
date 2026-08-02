@@ -27,6 +27,17 @@ mod webhook_router;
 mod hooks;
 {% endif %}
 
+fn pid_file_path(bind_addr: Option<&str>, pid_file: Option<&str>) -> String {
+    if let Some(pf) = pid_file {
+        if !pf.is_empty() {
+            return pf.to_string();
+        }
+    }
+    let addr = bind_addr.unwrap_or("0.0.0.0:3000");
+    let port = addr.rsplit(':').next().unwrap_or("3000");
+    format!("hr-app-{port}.pid")
+}
+
 #[derive(Parser)]
 #[command(name = "{{ app_name }}", version)]
 struct Cli {
@@ -44,6 +55,26 @@ enum Commands {
         database_url: Option<String>,
         #[arg(long = "config", env = "HR_APP_CONFIG")]
         config: Option<String>,
+        #[arg(long = "pid-file")]
+        pid_file: Option<String>,
+    },
+    /// Stop a running server (sends SIGTERM)
+    Stop {
+        #[arg(long = "bind-addr")]
+        bind_addr: Option<String>,
+        #[arg(long = "pid-file")]
+        pid_file: Option<String>,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        #[arg(long, default_value_t = 15)]
+        timeout: u64,
+    },
+    /// Check if a server is running
+    Status {
+        #[arg(long = "bind-addr")]
+        bind_addr: Option<String>,
+        #[arg(long = "pid-file")]
+        pid_file: Option<String>,
     },
     /// Run database migrations
     Migrate {
@@ -68,16 +99,35 @@ enum Commands {
     Version,
 }
 
+#[cfg(unix)]
+fn send_signal(pid: u32, sig: i32) -> bool {
+    unsafe { libc::kill(pid as i32, sig) == 0 }
+}
+
+#[cfg(unix)]
+fn process_exists(pid: u32) -> bool {
+    unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Start { bind_addr, database_url, config: _config } => {
+        Commands::Start { bind_addr, database_url, config: _config, pid_file } => {
             std::env::set_var("BIND_ADDR", &bind_addr);
             if let Some(u) = database_url {
                 std::env::set_var("DATABASE_URL", &u);
             }
-            if let Err(e) = crate::server::run_server().await {
+            let pf_path = pid_file_path(Some(&bind_addr), pid_file.as_deref());
+            let pid = std::process::id();
+            if let Err(e) = std::fs::write(&pf_path, pid.to_string()) {
+                eprintln!("warning: could not write PID file {pf_path}: {e}");
+            } else {
+                tracing::info!("PID {pid} written to {pf_path}");
+            }
+            let result = crate::server::run_server().await;
+            let _ = std::fs::remove_file(&pf_path);
+            if let Err(e) = result {
                 eprintln!("fatal: {e}");
                 std::process::exit(1);
             }
@@ -121,6 +171,95 @@ async fn main() {
             if let Err(e) = crate::migration::run_migrations().await {
                 eprintln!("Migration error: {e}");
                 std::process::exit(1);
+            }
+        }
+        Commands::Stop { bind_addr, pid_file, force, timeout } => {
+            #[cfg(not(unix))]
+            {
+                eprintln!("Process management is not supported on this platform.");
+                std::process::exit(1);
+            }
+            #[cfg(unix)]
+            {
+                let pf_path = pid_file_path(bind_addr.as_deref(), pid_file.as_deref());
+                let pid_str = match std::fs::read_to_string(&pf_path) {
+                    Ok(s) => s.trim().to_string(),
+                    Err(_) => {
+                        eprintln!("No server appears to be running (PID file {pf_path} not found).");
+                        std::process::exit(1);
+                    }
+                };
+                let pid: u32 = match pid_str.parse() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        eprintln!("Invalid PID file {pf_path}: corrupted content.");
+                        std::process::exit(1);
+                    }
+                };
+                if !process_exists(pid) {
+                    let _ = std::fs::remove_file(&pf_path);
+                    println!("Server was already stopped (stale PID file {pf_path} removed).");
+                    return;
+                }
+                let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
+                let sig_name = if force { "SIGKILL" } else { "SIGTERM" };
+                if !send_signal(pid, signal) {
+                    eprintln!("Failed to send {sig_name} to PID {pid}.");
+                    std::process::exit(1);
+                }
+                println!("Sent {sig_name} to PID {pid}, waiting for shutdown...");
+                let mut waited = 0u64;
+                while waited < timeout {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    waited += 1; // count in 500ms ticks, but we track seconds approximately
+                    if !process_exists(pid) {
+                        let _ = std::fs::remove_file(&pf_path);
+                        println!("Server stopped gracefully in ~{}s.", (waited + 1) / 2);
+                        return;
+                    }
+                    if waited % 2 == 1 {
+                        // wait full 500ms
+                    }
+                }
+                let elapsed = waited / 2;
+                if force {
+                    let _ = std::fs::remove_file(&pf_path);
+                    eprintln!("Server did not exit after SIGKILL within {elapsed}s.");
+                    std::process::exit(1);
+                }
+                eprintln!("Server did not stop within {elapsed}s. Use --force to send SIGKILL.");
+                std::process::exit(1);
+            }
+        }
+        Commands::Status { bind_addr, pid_file } => {
+            #[cfg(not(unix))]
+            {
+                eprintln!("Process management is not supported on this platform.");
+                std::process::exit(1);
+            }
+            #[cfg(unix)]
+            {
+                let pf_path = pid_file_path(bind_addr.as_deref(), pid_file.as_deref());
+                let pid_str = match std::fs::read_to_string(&pf_path) {
+                    Ok(s) => s.trim().to_string(),
+                    Err(_) => {
+                        println!("Server is stopped (no PID file at {pf_path}).");
+                        std::process::exit(1);
+                    }
+                };
+                let pid: u32 = match pid_str.parse() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        println!("Server is stopped (corrupted PID file {pf_path}).");
+                        std::process::exit(1);
+                    }
+                };
+                if process_exists(pid) {
+                    println!("Server is running (PID {pid}).");
+                } else {
+                    println!("Server is stopped (stale PID file at {pf_path}).");
+                    std::process::exit(1);
+                }
             }
         }
     }
