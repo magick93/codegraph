@@ -440,6 +440,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
 
     let app = axum::Router::new()
+
+        // ── Hand-written route registrations ──
+        // These are preserved across regens via the // --- END GENERATED --- marker.
+        .merge(crate::api::ad_hoc::routes())
 {% if has_atproto %}
         .route("/.well-known/atproto-did", axum::routing::get(crate::api::well_known::atproto_did))
         .route("/.well-known/did.json", axum::routing::get(crate::api::well_known::did_json))
@@ -462,12 +466,14 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
                 ])
         )
 {% if has_atproto %}
-        .merge(crate::atproto::xrpc::xrpc_routes())
+         .merge(crate::atproto::xrpc::xrpc_routes())
 {% endif %}
-        .with_state(state);
+         .with_state(state);
+
+    // --- END GENERATED ---
 
     // Merge custom extension routes (Router<()>) after .with_state()
-{% if ext_points %}
+{% if ext_points %}   
     let app = custom_routes.into_iter().fold(app, |app, (prefix, router)| {
         app.nest(&prefix, router)
     });
