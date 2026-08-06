@@ -41,6 +41,13 @@ pub struct ScaffoldEntity {
     pub name: String,
     pub module_name: String,
     pub domain: String,
+    /// Whether any command operations (create/update/delete) are enabled for
+    /// this entity — hook-only entities get no command handler usage, so the
+    /// AppState field would otherwise be dead code.
+    pub has_commands: bool,
+    /// Whether the generated query handler takes a hooks argument (mirrors the
+    /// `uses_find_by_id` condition in ddd/query.tera).
+    pub has_query_hooks: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,6 +56,35 @@ pub struct ScaffoldDomain {
     pub label: String,
     pub postgres_schema: String,
     pub entities: Vec<ScaffoldEntity>,
+}
+
+fn entity_has_command_ops(config: &DomainConfig, domain: &str, entity_name: &str) -> bool {
+    let operations = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(entity_name))
+        .and_then(|ec| ec.operations.clone())
+        .unwrap_or_else(|| config.defaults.operations.clone());
+    operations
+        .iter()
+        .any(|op| op == "create" || op == "update" || op == "delete")
+}
+
+/// Mirrors `uses_find_by_id` in ddd/query.tera: the query handler's find_by_id
+/// (and thus its hooks argument) exists when the entity can create (bulk path
+/// re-reads created rows) or when it has read access without a parent scope.
+fn entity_has_query_hooks(config: &DomainConfig, domain: &str, entity_name: &str) -> bool {
+    let entity_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(entity_name));
+    let operations = entity_cfg
+        .and_then(|ec| ec.operations.clone())
+        .unwrap_or_else(|| config.defaults.operations.clone());
+    let has_create = operations.iter().any(|op| op == "create");
+    let has_read = operations.iter().any(|op| op == "read");
+    let has_config_parent = entity_cfg.and_then(|ec| ec.parent_ref.as_ref()).is_some();
+    has_create || (has_read && !has_config_parent)
 }
 
 pub struct ScaffoldGenerator {
@@ -135,9 +171,11 @@ impl GlobalGenerator for ScaffoldGenerator {
                 .entry(entry.domain.clone())
                 .or_default()
                 .push(ScaffoldEntity {
-                    module_name,
+                    module_name: module_name.clone(),
                     name: entity_name_pascal,
                     domain: entry.domain.clone(),
+                    has_commands: entity_has_command_ops(config, &entry.domain, &stripped),
+                    has_query_hooks: entity_has_query_hooks(config, &entry.domain, &stripped),
                 });
         }
 
@@ -232,13 +270,15 @@ impl GlobalGenerator for ScaffoldGenerator {
             });
         }
 
-        let app_state = render_template_with_project(tera, "scaffold/app_state.tera", &ctx, project)?;
+        let app_state =
+            render_template_with_project(tera, "scaffold/app_state.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("app_state.rs"),
             content: app_state,
         });
 
-        let cargo_toml = render_template_with_project(tera, "scaffold/cargo_toml.tera", &ctx, project)?;
+        let cargo_toml =
+            render_template_with_project(tera, "scaffold/cargo_toml.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("Cargo.toml"),
             content: cargo_toml,
@@ -262,7 +302,8 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: error_rs,
         });
 
-        let middleware_rs = render_template_with_project(tera, "scaffold/middleware.tera", &ctx, project)?;
+        let middleware_rs =
+            render_template_with_project(tera, "scaffold/middleware.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("middleware.rs"),
             content: middleware_rs,
@@ -275,25 +316,37 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: metrics_middleware_rs,
         });
 
-        let qs_query_rs = render_template_with_project(tera, "scaffold/qs_query.tera", &ctx, project)?;
+        let qs_query_rs =
+            render_template_with_project(tera, "scaffold/qs_query.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("qs_query.rs"),
             content: qs_query_rs,
         });
 
-        let meta_content = render_template_with_project(tera, "scaffold/meta.tera", &serde_json::json!({}), project)?;
+        let meta_content = render_template_with_project(
+            tera,
+            "scaffold/meta.tera",
+            &serde_json::json!({}),
+            project,
+        )?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("api").join("meta.rs"),
             content: meta_content,
         });
 
-        let integrations_rs = render_template_with_project(tera, "scaffold/integrations_handler.tera", &ctx, project)?;
+        let integrations_rs = render_template_with_project(
+            tera,
+            "scaffold/integrations_handler.tera",
+            &ctx,
+            project,
+        )?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("integrations.rs"),
             content: integrations_rs,
         });
 
-        let api_key_migration = render_template_with_project(tera, "db/api_key_migration.tera", &ctx, project)?;
+        let api_key_migration =
+            render_template_with_project(tera, "db/api_key_migration.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self
                 .output_dir

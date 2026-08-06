@@ -9,7 +9,9 @@ use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::generate::db::dialect::{
+    db_template_for, dialect_for_target, DatabaseTarget, SqlDialect,
+};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
@@ -320,13 +322,18 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     });
                 }
                 Some(RefClassificationKind::EntityReference) => {
+                    let is_nullable = !prop.is_required;
                     columns.push(EntityColumn {
                         field_name: field_def.rust_field_name,
-                        rust_type: "Option<Uuid>".to_string(),
+                        rust_type: if is_nullable {
+                            "Option<Uuid>".to_string()
+                        } else {
+                            "Uuid".to_string()
+                        },
                         sea_orm_type: "Uuid".to_string(),
                         column_name: field_def.column_name,
                         is_primary_key: false,
-                        is_nullable: true,
+                        is_nullable,
                         pg_cast: None,
                         sea_orm_attr: None,
                     });
@@ -366,7 +373,10 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     // — single source of truth for FK column naming across layers.
                     if !prop.is_array {
                         let (fk_field, fk_col) = codegraph_core::types::resolve_fk_column_name(
-                            db, prop, schema_title, &entity_titles,
+                            db,
+                            prop,
+                            schema_title,
+                            &entity_titles,
                         )
                         .await?;
                         if fk_field.ends_with("_id") {
@@ -412,7 +422,10 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                 EntityColumn {
                     field_name: "platform_organization_id".to_string(),
                     rust_type: "Uuid".to_string(),
-                    sea_orm_type: self.dialect.map_sea_orm_type("Uuid").unwrap_or("Uuid".to_string()),
+                    sea_orm_type: self
+                        .dialect
+                        .map_sea_orm_type("Uuid")
+                        .unwrap_or("Uuid".to_string()),
                     column_name: "platform_organization_id".to_string(),
                     is_primary_key: false,
                     is_nullable: false,
@@ -715,7 +728,9 @@ async fn build_child_entity(
         EntityColumn {
             field_name: "id".to_string(),
             rust_type: "Uuid".to_string(),
-            sea_orm_type: dialect.map_sea_orm_type("Uuid").unwrap_or("Uuid".to_string()),
+            sea_orm_type: dialect
+                .map_sea_orm_type("Uuid")
+                .unwrap_or("Uuid".to_string()),
             column_name: "id".to_string(),
             is_primary_key: true,
             is_nullable: false,
@@ -723,10 +738,18 @@ async fn build_child_entity(
             sea_orm_attr: None,
         },
         EntityColumn {
-            field_name: codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name)),
+            field_name: codegraph_naming::truncate_pg_identifier(&format!(
+                "{}_id",
+                parent_table_name
+            )),
             rust_type: "Uuid".to_string(),
-            sea_orm_type: dialect.map_sea_orm_type("Uuid").unwrap_or("Uuid".to_string()),
-            column_name: codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name)),
+            sea_orm_type: dialect
+                .map_sea_orm_type("Uuid")
+                .unwrap_or("Uuid".to_string()),
+            column_name: codegraph_naming::truncate_pg_identifier(&format!(
+                "{}_id",
+                parent_table_name
+            )),
             is_primary_key: false,
             is_nullable: false,
             pg_cast: None,
@@ -865,7 +888,8 @@ async fn build_child_entity(
             | Some(RefClassificationKind::MediaWrapper) => {
                 if let Ok(comp_cols) = db.get_composite_columns(&child_prop.name, &ts.title).await {
                     for col in &comp_cols {
-                        let field_name = format!("{}{}", child_field_def.rust_field_name, col.suffix);
+                        let field_name =
+                            format!("{}{}", child_field_def.rust_field_name, col.suffix);
                         let column_name = format!("{}{}", child_field_def.column_name, col.suffix);
                         let is_nullable = !child_prop.is_required;
                         let rust_type = if is_nullable {
@@ -921,7 +945,9 @@ async fn build_child_entity(
     columns.push(EntityColumn {
         field_name: "created_at".to_string(),
         rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-        sea_orm_type: dialect.map_sea_orm_type("TimestampWithTimeZone").unwrap_or("TimestampWithTimeZone".to_string()),
+        sea_orm_type: dialect
+            .map_sea_orm_type("TimestampWithTimeZone")
+            .unwrap_or("TimestampWithTimeZone".to_string()),
         column_name: "created_at".to_string(),
         is_primary_key: false,
         is_nullable: false,
@@ -931,7 +957,9 @@ async fn build_child_entity(
     columns.push(EntityColumn {
         field_name: "updated_at".to_string(),
         rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-        sea_orm_type: dialect.map_sea_orm_type("TimestampWithTimeZone").unwrap_or("TimestampWithTimeZone".to_string()),
+        sea_orm_type: dialect
+            .map_sea_orm_type("TimestampWithTimeZone")
+            .unwrap_or("TimestampWithTimeZone".to_string()),
         column_name: "updated_at".to_string(),
         is_primary_key: false,
         is_nullable: false,
@@ -983,7 +1011,8 @@ async fn build_child_entity(
         structured_imports,
     };
 
-    let content = render_template_with_project(tera, &db_template_for(dialect, "entity"), &ctx, project)?;
+    let content =
+        render_template_with_project(tera, &db_template_for(dialect, "entity"), &ctx, project)?;
     let mut files = vec![GeneratedFile {
         path: output_dir
             .join("src")
@@ -1026,7 +1055,9 @@ fn build_codelist_child_entity(
         EntityColumn {
             field_name: "id".to_string(),
             rust_type: "Uuid".to_string(),
-            sea_orm_type: dialect.map_sea_orm_type("Uuid").unwrap_or("Uuid".to_string()),
+            sea_orm_type: dialect
+                .map_sea_orm_type("Uuid")
+                .unwrap_or("Uuid".to_string()),
             column_name: "id".to_string(),
             is_primary_key: true,
             is_nullable: false,
@@ -1034,10 +1065,18 @@ fn build_codelist_child_entity(
             sea_orm_attr: None,
         },
         EntityColumn {
-            field_name: codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name)),
+            field_name: codegraph_naming::truncate_pg_identifier(&format!(
+                "{}_id",
+                parent_table_name
+            )),
             rust_type: "Uuid".to_string(),
-            sea_orm_type: dialect.map_sea_orm_type("Uuid").unwrap_or("Uuid".to_string()),
-            column_name: codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name)),
+            sea_orm_type: dialect
+                .map_sea_orm_type("Uuid")
+                .unwrap_or("Uuid".to_string()),
+            column_name: codegraph_naming::truncate_pg_identifier(&format!(
+                "{}_id",
+                parent_table_name
+            )),
             is_primary_key: false,
             is_nullable: false,
             pg_cast: None,
@@ -1055,7 +1094,6 @@ fn build_codelist_child_entity(
         },
     ];
 
-
     // Add platform_organization_id for tenant-scoped entities
     let is_tenant_scoped = !is_global_entity(&child_table_name, config);
     if is_tenant_scoped {
@@ -1064,7 +1102,9 @@ fn build_codelist_child_entity(
             EntityColumn {
                 field_name: "platform_organization_id".to_string(),
                 rust_type: "Uuid".to_string(),
-                sea_orm_type: dialect.map_sea_orm_type("Uuid").unwrap_or("Uuid".to_string()),
+                sea_orm_type: dialect
+                    .map_sea_orm_type("Uuid")
+                    .unwrap_or("Uuid".to_string()),
                 column_name: "platform_organization_id".to_string(),
                 is_primary_key: false,
                 is_nullable: false,
@@ -1078,7 +1118,9 @@ fn build_codelist_child_entity(
     columns.push(EntityColumn {
         field_name: "created_at".to_string(),
         rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-        sea_orm_type: dialect.map_sea_orm_type("TimestampWithTimeZone").unwrap_or("TimestampWithTimeZone".to_string()),
+        sea_orm_type: dialect
+            .map_sea_orm_type("TimestampWithTimeZone")
+            .unwrap_or("TimestampWithTimeZone".to_string()),
         column_name: "created_at".to_string(),
         is_primary_key: false,
         is_nullable: false,
@@ -1088,7 +1130,9 @@ fn build_codelist_child_entity(
     columns.push(EntityColumn {
         field_name: "updated_at".to_string(),
         rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-        sea_orm_type: dialect.map_sea_orm_type("TimestampWithTimeZone").unwrap_or("TimestampWithTimeZone".to_string()),
+        sea_orm_type: dialect
+            .map_sea_orm_type("TimestampWithTimeZone")
+            .unwrap_or("TimestampWithTimeZone".to_string()),
         column_name: "updated_at".to_string(),
         is_primary_key: false,
         is_nullable: false,
@@ -1108,7 +1152,8 @@ fn build_codelist_child_entity(
         structured_imports: Vec::new(),
     };
 
-    let content = render_template_with_project(tera, &db_template_for(dialect, "entity"), &ctx, project)?;
+    let content =
+        render_template_with_project(tera, &db_template_for(dialect, "entity"), &ctx, project)?;
     Ok(vec![GeneratedFile {
         path: output_dir
             .join("src")

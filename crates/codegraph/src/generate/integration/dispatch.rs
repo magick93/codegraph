@@ -37,7 +37,8 @@ impl GlobalGenerator for IntegrationDispatchGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let ctx: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        let content = render_template_with_project(tera, "integration/dispatcher.tera", &ctx, project)?;
+        let content =
+            render_template_with_project(tera, "integration/dispatcher.tera", &ctx, project)?;
 
         Ok(vec![GeneratedFile {
             path: self.output_dir.join("src").join("integration_dispatch.rs"),

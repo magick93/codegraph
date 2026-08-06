@@ -80,7 +80,8 @@ impl EntityGenerator for MediaRouteGenerator {
                 media_accept: self.default_accept.clone(),
             };
 
-            let content = render_template_with_project(tera, "api/media_route.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "api/media_route.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: self
                     .output_dir

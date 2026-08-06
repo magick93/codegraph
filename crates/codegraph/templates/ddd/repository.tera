@@ -26,12 +26,14 @@ pub trait {{ entity_name }}Repository: Send + Sync {
     ) -> Result<Uuid, Box<dyn std::error::Error>>;
 {% endif %}
 
-{% if has_read %}
+{% if has_create or (has_read and not parent_ref) or has_fts or has_embeddings %}
     async fn find_by_id(
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
     ) -> Result<Option<{{ entity_name }}Response>, Box<dyn std::error::Error>>;
+{% endif %}
+{% if has_read %}
 {% if parent_ref %}
 
     /// Find by ID scoped to a parent entity (verifies ownership).
@@ -102,12 +104,5 @@ pub trait {{ entity_name }}Repository: Send + Sync {
         root_id: Uuid,
         max_depth: Option<i32>,
     ) -> Result<Vec<{% if tree_include %}serde_json::Value{% else %}{{ entity_name }}Response{% endif %}>, Box<dyn std::error::Error>>;
-
-    /// Fetch ancestors from a node to the root.
-    async fn find_ancestors(
-        &self,
-        db: &DatabaseTransaction,
-        node_id: Uuid,
-    ) -> Result<Vec<{{ entity_name }}Response>, Box<dyn std::error::Error>>;
 {% endif %}
 }

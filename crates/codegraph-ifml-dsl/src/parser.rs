@@ -53,8 +53,14 @@ fn parse_identifier(pair: &Pair<Rule>) -> String {
 
 fn parse_parameter_decl(pair: Pair<Rule>) -> ParameterDecl {
     let mut inner = pair.clone().into_inner();
-    let name = inner.next().map(|p| parse_identifier(&p)).unwrap_or_default();
-    let type_ref = inner.next().map(|p| parse_identifier(&p)).unwrap_or_default();
+    let name = inner
+        .next()
+        .map(|p| parse_identifier(&p))
+        .unwrap_or_default();
+    let type_ref = inner
+        .next()
+        .map(|p| parse_identifier(&p))
+        .unwrap_or_default();
     ParameterDecl { name, type_ref }
 }
 
@@ -82,7 +88,10 @@ fn parse_value_primary(pair: Pair<Rule>) -> ValueExpression {
         Rule::identifier => ValueExpression::Identifier(pair.as_str().to_string()),
         Rule::call_expr => {
             let mut inner = pair.clone().into_inner();
-            let name = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+            let name = inner
+                .next()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_default();
             let mut args = Vec::new();
             for arg in inner {
                 if arg.as_rule() != Rule::expression {
@@ -94,8 +103,14 @@ fn parse_value_primary(pair: Pair<Rule>) -> ValueExpression {
         }
         Rule::field_expr => {
             let mut inner = pair.clone().into_inner();
-            let object = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
-            let field = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+            let object = inner
+                .next()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_default();
+            let field = inner
+                .next()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_default();
             ValueExpression::FieldAccess {
                 object: Box::new(ValueExpression::Identifier(object)),
                 field,
@@ -300,8 +315,14 @@ fn parse_value_expression(pair: Pair<Rule>) -> ValueExpression {
 
 fn parse_property_assignment(pair: Pair<Rule>) -> PropertyAssignment {
     let mut inner = pair.clone().into_inner();
-    let key = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
-    let value = inner.next().map(parse_value_expression).unwrap_or(ValueExpression::Identifier("".to_string()));
+    let key = inner
+        .next()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_default();
+    let value = inner
+        .next()
+        .map(parse_value_expression)
+        .unwrap_or(ValueExpression::Identifier("".to_string()));
     PropertyAssignment { key, value }
 }
 
@@ -593,8 +614,14 @@ fn parse_parameter_binding(pair: Pair<Rule>) -> ParameterBinding {
     for child in pair.clone().into_inner() {
         if child.as_rule() == Rule::parameter_binding_pair {
             let mut inner = child.into_inner();
-            let key = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
-            let value = inner.next().map(parse_expression).unwrap_or(Expression::Ident("".to_string()));
+            let key = inner
+                .next()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_default();
+            let value = inner
+                .next()
+                .map(parse_expression)
+                .unwrap_or(Expression::Ident("".to_string()));
             pairs.push((key, value));
         }
     }
@@ -610,19 +637,28 @@ fn parse_event_action(pair: Pair<Rule>) -> EventAction {
     match inner.as_rule() {
         Rule::navigate_action => {
             let mut nav_inner = inner.clone().into_inner();
-            let target = nav_inner.next().map(|p| parse_string(&p)).unwrap_or_default();
+            let target = nav_inner
+                .next()
+                .map(|p| parse_string(&p))
+                .unwrap_or_default();
             let binding = nav_inner.next().map(parse_parameter_binding);
             EventAction::Navigate { target, binding }
         }
         Rule::refresh_action => {
             let mut ref_inner = inner.clone().into_inner();
-            let target = ref_inner.next().map(|p| parse_string(&p)).unwrap_or_default();
+            let target = ref_inner
+                .next()
+                .map(|p| parse_string(&p))
+                .unwrap_or_default();
             let binding = ref_inner.next().map(parse_parameter_binding);
             EventAction::Refresh { target, binding }
         }
         Rule::action_invocation => {
             let mut act_inner = inner.clone().into_inner();
-            let name = act_inner.next().map(|p| parse_string(&p)).unwrap_or_default();
+            let name = act_inner
+                .next()
+                .map(|p| parse_string(&p))
+                .unwrap_or_default();
             let body = act_inner.next().map(parse_action_body);
             EventAction::ActionInvocation { name, body }
         }
@@ -649,7 +685,10 @@ fn parse_action_body(pair: Pair<Rule>) -> ActionBody {
 
 fn parse_event_handler(pair: Pair<Rule>) -> EventHandler {
     let mut inner = pair.clone().into_inner();
-    let event_type = inner.next().map(parse_event_type).unwrap_or(EventType::Custom("unknown".to_string()));
+    let event_type = inner
+        .next()
+        .map(parse_event_type)
+        .unwrap_or(EventType::Custom("unknown".to_string()));
 
     let mut params = Vec::new();
     let mut action = EventAction::Stay;
@@ -673,8 +712,14 @@ fn parse_event_handler(pair: Pair<Rule>) -> EventHandler {
 fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
     let mut inner = pair.clone().into_inner();
     let name = inner.next().map(|p| parse_string(&p)).unwrap_or_default();
-    let body = if let Some(b) = inner.next() { b } else {
-        return ComponentDeclaration { name, properties: Vec::new(), events: Vec::new() };
+    let body = if let Some(b) = inner.next() {
+        b
+    } else {
+        return ComponentDeclaration {
+            name,
+            properties: Vec::new(),
+            events: Vec::new(),
+        };
     };
 
     let mut properties = Vec::new();
@@ -768,7 +813,9 @@ fn parse_container_body_content(
 fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
     let mut inner = pair.clone().into_inner();
     let name = inner.next().map(|p| parse_string(&p)).unwrap_or_default();
-    let body = if let Some(b) = inner.next() { b } else {
+    let body = if let Some(b) = inner.next() {
+        b
+    } else {
         return ContainerDeclaration {
             name,
             is_default: false,
@@ -820,7 +867,9 @@ fn extract_bool_property(properties: &[PropertyAssignment], key: &str) -> bool {
 fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
     let mut inner = pair.clone().into_inner();
     let name = inner.next().map(|p| parse_string(&p)).unwrap_or_default();
-    let body = if let Some(b) = inner.next() { b } else {
+    let body = if let Some(b) = inner.next() {
+        b
+    } else {
         return ViewDeclaration {
             name,
             label: None,
@@ -835,8 +884,7 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
         };
     };
 
-    let (params, label, properties, containers, components, events) =
-        parse_view_body_content(body);
+    let (params, label, properties, containers, components, events) = parse_view_body_content(body);
 
     let is_landmark = extract_bool_property(&properties, "landmark");
     let is_xor = extract_bool_property(&properties, "xor");
@@ -871,7 +919,11 @@ fn parse_action_declaration(pair: Pair<Rule>) -> ActionDeclaration {
         }
     }
 
-    ActionDeclaration { name, properties, events }
+    ActionDeclaration {
+        name,
+        properties,
+        events,
+    }
 }
 
 fn parse_module_declaration(pair: Pair<Rule>) -> ModuleDeclaration {
@@ -953,11 +1005,10 @@ fn parse_ifml_model(pairs: Pairs<Rule>) -> Result<IfmlModel, IfmlParseError> {
 
 /// Parse an IFML DSL string into an AST model.
 pub fn parse_ifml(input: &str) -> Result<IfmlModel, IfmlParseError> {
-    let parsed = IfmlParser::parse(Rule::ifml_model, input)
-        .map_err(|e| IfmlParseError::Parse {
-            position: "unknown".to_string(),
-            message: format!("{}", e),
-        })?;
+    let parsed = IfmlParser::parse(Rule::ifml_model, input).map_err(|e| IfmlParseError::Parse {
+        position: "unknown".to_string(),
+        message: format!("{}", e),
+    })?;
 
     let top_level_pairs: Vec<Pair<Rule>> = parsed.collect();
     if top_level_pairs.is_empty() {

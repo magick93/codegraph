@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::Result;
-use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::generate::db::dialect::{
+    db_template_for, dialect_for_target, DatabaseTarget, SqlDialect,
+};
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -165,7 +167,8 @@ impl SeedDataGenerator {
             .names
             .into_iter()
             .map(|name| {
-                let id = Uuid::new_v5(&ns, format!("person:{}", &name.email).as_bytes()).to_string();
+                let id =
+                    Uuid::new_v5(&ns, format!("person:{}", &name.email).as_bytes()).to_string();
                 SeedPerson {
                     id,
                     given_name: name.given,

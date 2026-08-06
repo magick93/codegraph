@@ -220,7 +220,9 @@ pub async fn ingest_fixtures(
 
     // Properties
     for prop in person_properties() {
-        engine.ingest_property("PersonType", "PersonType.json#", &prop).await?;
+        engine
+            .ingest_property("PersonType", "PersonType.json#", &prop)
+            .await?;
     }
 
     // Codelist + enum values

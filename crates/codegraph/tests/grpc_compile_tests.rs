@@ -2,7 +2,6 @@
 //! Run with: cargo test -p codegraph --test grpc_compile_tests
 //! Requires `protoc` in PATH (skipped if absent).
 
-
 use codegraph::generate::traits::EntityGenerator;
 use codegraph::generate::ProjectConfig;
 
@@ -32,7 +31,14 @@ fn test_grpc_proto_files_compile() {
     let gen = codegraph::generate::grpc::proto::GrpcProtoGenerator::new(&out_dir);
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(&engine, "CandidateType", "recruiting", &config, &tera, &project))
+        .block_on(gen.generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        ))
         .expect("GrpcProtoGenerator failed");
 
     // Write a minimal shared.proto for the import dependency

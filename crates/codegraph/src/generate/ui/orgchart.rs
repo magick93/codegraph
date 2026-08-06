@@ -50,19 +50,35 @@ impl GlobalGenerator for UiOrgchartGenerator {
             return Ok(Vec::new());
         }
 
-        let src = self.output_dir.join("ui").join("src").join("routes").join("(app)").join("org-chart");
+        let src = self
+            .output_dir
+            .join("ui")
+            .join("src")
+            .join("routes")
+            .join("(app)")
+            .join("org-chart");
 
         let mut files = Vec::new();
 
         // +page.server.ts
-        let load_content = render_template_with_project(tera, "ui/orgchart_load.tera", &serde_json::json!({}), project)?;
+        let load_content = render_template_with_project(
+            tera,
+            "ui/orgchart_load.tera",
+            &serde_json::json!({}),
+            project,
+        )?;
         files.push(GeneratedFile {
             path: src.join("+page.server.ts"),
             content: load_content,
         });
 
         // +page.svelte
-        let page_content = render_template_with_project(tera, "ui/orgchart_page.tera", &serde_json::json!({}), project)?;
+        let page_content = render_template_with_project(
+            tera,
+            "ui/orgchart_page.tera",
+            &serde_json::json!({}),
+            project,
+        )?;
         files.push(GeneratedFile {
             path: src.join("+page.svelte"),
             content: page_content,

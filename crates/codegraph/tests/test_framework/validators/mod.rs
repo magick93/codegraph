@@ -13,9 +13,5 @@ pub trait OutputValidator: Send + Sync {
 
     /// Validate the set of generated files.
     /// Returns `Ok(())` on success, or `Err` with a list of error messages.
-    fn validate(
-        &self,
-        files: &[GeneratedFile],
-        work_dir: &Path,
-    ) -> Result<(), Vec<String>>;
+    fn validate(&self, files: &[GeneratedFile], work_dir: &Path) -> Result<(), Vec<String>>;
 }

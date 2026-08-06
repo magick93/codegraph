@@ -109,10 +109,8 @@ impl<'a> CachingQuerier<'a> {
         }
 
         // 3. Bulk-load all schema references → referenced_cache
-        let schema_by_title: HashMap<&str, &SchemaNode> = all_schemas
-            .iter()
-            .map(|s| (s.title.as_str(), s))
-            .collect();
+        let schema_by_title: HashMap<&str, &SchemaNode> =
+            all_schemas.iter().map(|s| (s.title.as_str(), s)).collect();
         let all_refs = self.inner.list_all_schema_references().await?;
         {
             let mut cache = self.referenced_cache.write().unwrap();
@@ -120,7 +118,10 @@ impl<'a> CachingQuerier<'a> {
             let mut ref_map: HashMap<String, Vec<SchemaNode>> = HashMap::new();
             for (src, tgt) in &all_refs {
                 if let Some(schema) = schema_by_title.get(tgt.as_str()) {
-                    ref_map.entry(src.clone()).or_default().push((*schema).clone());
+                    ref_map
+                        .entry(src.clone())
+                        .or_default()
+                        .push((*schema).clone());
                 }
             }
             for (src, targets) in ref_map {
@@ -398,7 +399,10 @@ impl GraphQuerier for CachingQuerier<'_> {
         )
     }
 
-    async fn get_schemas_that_extend(&self, parent_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+    async fn get_schemas_that_extend(
+        &self,
+        parent_title: &str,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
         cached_single!(
             self,
             schemas_that_extend_cache,
@@ -407,7 +411,10 @@ impl GraphQuerier for CachingQuerier<'_> {
         )
     }
 
-    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+    async fn get_referenced_schemas(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
         cached_single!(
             self,
             referenced_cache,
@@ -497,9 +504,7 @@ impl GraphQuerier for CachingQuerier<'_> {
         self.inner.get_ifml_events(parent_id).await
     }
 
-    async fn get_ifml_navigation_flows(
-        &self,
-    ) -> Result<Vec<(String, String, String)>, GraphError> {
+    async fn get_ifml_navigation_flows(&self) -> Result<Vec<(String, String, String)>, GraphError> {
         self.inner.get_ifml_navigation_flows().await
     }
 

@@ -140,7 +140,14 @@ async fn ui_page_generator_produces_list_and_detail_pages() {
 
     let gen = generate::ui::page::UiPageGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -181,7 +188,14 @@ async fn ui_page_generator_produces_create_page() {
 
     let gen = generate::ui::page::UiPageGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -204,7 +218,14 @@ async fn ui_page_generator_skips_delete_page_when_no_delete_op() {
     // CandidateType has operations = ["create", "read", "update", "list"] — no delete
     let gen = generate::ui::page::UiPageGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -230,7 +251,14 @@ async fn ui_form_generator_produces_form_component() {
 
     let gen = generate::ui::form::UiFormGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -261,7 +289,14 @@ async fn ui_store_generator_produces_store_file() {
 
     let gen = generate::ui::store::UiStoreGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -284,7 +319,13 @@ async fn ui_scaffold_generator_produces_scaffold_files() {
 
     let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -318,7 +359,13 @@ async fn ui_scaffold_generates_supabase_client() {
 
     let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -345,7 +392,13 @@ async fn ui_scaffold_generates_auth_callback() {
 
     let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -371,7 +424,13 @@ async fn ui_scaffold_generates_login_and_signup_pages() {
 
     let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -417,7 +476,13 @@ async fn ui_scaffold_generates_dashboard_page() {
 
     let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -451,7 +516,13 @@ async fn ui_scaffold_generates_settings_pages() {
 
     let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -489,7 +560,13 @@ async fn ui_scaffold_api_client_uses_supabase_jwt() {
 
     let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -520,7 +597,13 @@ async fn ui_scaffold_package_json_has_supabase_deps() {
 
     let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -551,7 +634,13 @@ async fn ui_scaffold_app_layout_has_settings_nav() {
 
     let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -584,7 +673,13 @@ async fn ui_type_generator_produces_types_file() {
 
     let gen = generate::ui::types::UiTypeGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -611,7 +706,14 @@ async fn ui_domain_layout_generator_produces_layout() {
     let gen = generate::ui::domain_layout::UiDomainLayoutGenerator::new(&output_dir);
     let entities = vec!["CandidateType".to_string()];
     let files = gen
-        .generate(&mock, "recruiting", &entities, &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "recruiting",
+            &entities,
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -762,7 +864,14 @@ entities = ["ReadOnlyType"]
 
     let gen = generate::ui::form::UiFormGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "ReadOnlyType", "common", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "ReadOnlyType",
+            "common",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -783,7 +892,13 @@ async fn ui_scaffold_vite_config_has_version_defines() {
 
     let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -815,7 +930,13 @@ async fn ui_scaffold_generates_version_server_route() {
 
     let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -874,7 +995,13 @@ async fn ui_scaffold_generates_version_page() {
 
     let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 

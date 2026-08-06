@@ -46,7 +46,9 @@ impl DomainTypesScaffoldGenerator {
     /// Creates a generator that writes output under `base_dir` (crate root), appending `src/` internally.
     /// Pass a `tempfile::tempdir()` path to avoid corrupting the real source when using a mock graph.
     pub fn new_with_base(base_dir: PathBuf) -> Self {
-        Self { src_dir: base_dir.join("src") }
+        Self {
+            src_dir: base_dir.join("src"),
+        }
     }
 }
 
@@ -160,7 +162,12 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
                     .collect(),
             };
 
-            let content = render_template_with_project(tera, "domain_types/domain_mod.tera", &domain_mod_ctx, project)?;
+            let content = render_template_with_project(
+                tera,
+                "domain_types/domain_mod.tera",
+                &domain_mod_ctx,
+                project,
+            )?;
             files.push(GeneratedFile {
                 path: src_dir.join(domain_name).join("mod.rs"),
                 content,
@@ -182,8 +189,12 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
                     has_update: operations.contains(&"update".to_string()),
                 };
 
-                let content =
-                    render_template_with_project(tera, "domain_types/entity_mod.tera", &entity_mod_ctx, project)?;
+                let content = render_template_with_project(
+                    tera,
+                    "domain_types/entity_mod.tera",
+                    &entity_mod_ctx,
+                    project,
+                )?;
                 files.push(GeneratedFile {
                     path: src_dir.join(domain_name).join(module_name).join("mod.rs"),
                     content,
@@ -209,13 +220,11 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
                         || prop.effective_kind() == Some(RefClassificationKind::PrimitiveWrapper)
                     {
                         let mut ty = prop.rust_field_type.as_str();
-                        if let Some(s) = ty.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>'))
-                        {
+                        if let Some(s) = ty.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
                             ty = s;
                         }
-                        if let Some(s) = ty
-                            .strip_prefix("Option<")
-                            .and_then(|s| s.strip_suffix('>'))
+                        if let Some(s) =
+                            ty.strip_prefix("Option<").and_then(|s| s.strip_suffix('>'))
                         {
                             ty = s;
                         }
@@ -272,7 +281,8 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
              pub mod query;\n\
              \n\
              pub use context::{{SourceContext, SourceOrigin}};\n\
-             pub use query::{{ListParams, PagedResult, QueryError, SortOrder}};\
+             pub use query::{{ListParams, PagedResult, QueryError, SortOrder}};\n\
+             pub use serde_json;\
              {structured_re_exports}\n\
              \n\
              // --- GENERATED DOMAIN MODULES ---\n\

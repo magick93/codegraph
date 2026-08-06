@@ -67,8 +67,7 @@ pub async fn resolve_fk_column_name(
             ));
         }
         // ValueObject whose allOf chain reaches an entity.
-        if let Ok(Some(entity)) =
-            crate::traits::find_entity_extended_by_vo(db, &target.title).await
+        if let Ok(Some(entity)) = crate::traits::find_entity_extended_by_vo(db, &target.title).await
         {
             if entity_titles.contains(&entity.title) {
                 return Ok((

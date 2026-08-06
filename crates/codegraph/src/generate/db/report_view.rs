@@ -5,7 +5,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::generate::db::dialect::{
+    db_template_for, dialect_for_target, DatabaseTarget, SqlDialect,
+};
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
@@ -75,8 +77,9 @@ impl GlobalGenerator for ReportViewGenerator {
             return Ok(vec![]);
         }
 
-        let reports_toml = std::fs::read_to_string(&reports_path)
-            .map_err(|e| crate::error::Error::Config(format!("Failed to read reports.toml: {e}")))?;
+        let reports_toml = std::fs::read_to_string(&reports_path).map_err(|e| {
+            crate::error::Error::Config(format!("Failed to read reports.toml: {e}"))
+        })?;
         let config: ReportsConfig = toml::from_str(&reports_toml)
             .map_err(|e| crate::error::Error::Config(format!("Invalid reports.toml: {e}")))?;
 

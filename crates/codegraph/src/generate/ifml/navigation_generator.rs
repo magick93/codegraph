@@ -45,9 +45,10 @@ impl GlobalGenerator for IfmlNavigationGenerator {
     ) -> Result<Vec<GeneratedFile>> {
         let querier = IfmlGraphQuerier::new(db);
 
-        let model = querier.get_ifml_model().await.map_err(|e| {
-            crate::error::Error::Graph(e)
-        })?;
+        let model = querier
+            .get_ifml_model()
+            .await
+            .map_err(|e| crate::error::Error::Graph(e))?;
 
         if model.view_containers.is_empty() {
             return Ok(vec![]);
@@ -153,7 +154,9 @@ fn generate_type_helpers(_ctx: &RouteMapContext) -> String {
     s.push_str(" * Type-safe navigation helper.\n");
     s.push_str(" * Call with route name and optional path params.\n");
     s.push_str(" */\n");
-    s.push_str("export function navigate(routeName: string, params?: Record<string, string>): string {\n");
+    s.push_str(
+        "export function navigate(routeName: string, params?: Record<string, string>): string {\n",
+    );
     s.push_str("  return resolveRoute(routeName, params);\n");
     s.push_str("}\n\n");
 

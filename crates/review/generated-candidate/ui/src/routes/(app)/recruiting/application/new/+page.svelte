@@ -3,8 +3,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import { page } from '$app/state';
-
 	import ApplicationForm from '$lib/components/forms/ApplicationForm.svelte';
 	import { createApplication } from '$lib/stores/recruiting_application';
 	import { toast } from 'svelte-sonner';
@@ -13,9 +11,7 @@
 	import type { CreateApplicationRequest } from '$lib/api/types';
 
 
-	const grandparentId = $derived(page.params.application_id);
-	const parentId = $derived(page.params.candidate_id);
-	const basePath = $derived(`/recruiting/application/${grandparentId}/candidate/${parentId}/application`);
+	const basePath = '/recruiting/application';
 
 
 	let submitting = $state(false);
@@ -26,7 +22,7 @@
 		error = '';
 		try {
 
-			const result = await createApplication(grandparentId, parentId, formData);
+			const result = await createApplication(formData);
 
 			toast.success(m.common_entity_created({ entity: 'Application' }));
 			goto(`${basePath}/${result.id}`);

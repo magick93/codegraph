@@ -16,8 +16,13 @@ pub fn inject_codelist_properties(props: &mut Vec<PropertyNode>, is_codelist: bo
         return;
     }
     // Helper to create a synthetic PropertyNode for a codelist column.
-    let make = |name: &str, rust_field: &str, rust_type: &str, sea_orm_type: &str,
-                pg_column: &str, pg_type: &str, is_required: bool| {
+    let make = |name: &str,
+                rust_field: &str,
+                rust_type: &str,
+                sea_orm_type: &str,
+                pg_column: &str,
+                pg_type: &str,
+                is_required: bool| {
         PropertyNode {
             name: name.to_string(),
             prop_type: "string".to_string(),
@@ -47,9 +52,27 @@ pub fn inject_codelist_properties(props: &mut Vec<PropertyNode>, is_codelist: bo
             ui_override_inline: None,
         }
     };
-    props.push(make("code", "code", "String", "String", "code", "TEXT", true));
-    props.push(make("display_name", "display_name", "String", "String", "display_name", "TEXT", true));
-    props.push(make("sort_order", "sort_order", "i32", "Integer", "sort_order", "INTEGER", false));
+    props.push(make(
+        "code", "code", "String", "String", "code", "TEXT", true,
+    ));
+    props.push(make(
+        "display_name",
+        "display_name",
+        "String",
+        "String",
+        "display_name",
+        "TEXT",
+        true,
+    ));
+    props.push(make(
+        "sort_order",
+        "sort_order",
+        "i32",
+        "Integer",
+        "sort_order",
+        "INTEGER",
+        false,
+    ));
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

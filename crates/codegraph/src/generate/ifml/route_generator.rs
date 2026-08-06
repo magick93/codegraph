@@ -44,9 +44,10 @@ impl GlobalGenerator for IfmlRouteGenerator {
         _project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let querier = IfmlGraphQuerier::new(db);
-        let model = querier.get_ifml_model().await.map_err(|e| {
-            crate::error::Error::Graph(e)
-        })?;
+        let model = querier
+            .get_ifml_model()
+            .await
+            .map_err(|e| crate::error::Error::Graph(e))?;
 
         if model.view_containers.is_empty() {
             return Ok(vec![]);
@@ -60,7 +61,9 @@ impl GlobalGenerator for IfmlRouteGenerator {
         for vc in &model.view_containers {
             if let Ok(content) = render_page_svelte(&vc, tera, &page_template) {
                 files.push(GeneratedFile {
-                    path: self.output_dir.join((self.output_paths.route_page)(&vc.name)),
+                    path: self
+                        .output_dir
+                        .join((self.output_paths.route_page)(&vc.name)),
                     content,
                 });
             }
@@ -109,33 +112,53 @@ pub struct PageLoadComponentContext {
     route_name: String,
 }
 
-fn render_page_svelte(vc: &super::context::IfmlViewContainer, tera: &tera::Tera, template: &str) -> Result<String> {
+fn render_page_svelte(
+    vc: &super::context::IfmlViewContainer,
+    tera: &tera::Tera,
+    template: &str,
+) -> Result<String> {
     let ctx = PageSvelteContext {
         name: vc.name.clone(),
         label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
-        components: vc.components.iter().map(|c| PageComponentContext {
-            name: c.name.clone(),
-            component_type: c.component_type.clone(),
-            entity: c.entity.clone().unwrap_or_default(),
-            fields: c.fields.clone(),
-            filter: c.filter.clone().unwrap_or_default(),
-        }).collect(),
+        components: vc
+            .components
+            .iter()
+            .map(|c| PageComponentContext {
+                name: c.name.clone(),
+                component_type: c.component_type.clone(),
+                entity: c.entity.clone().unwrap_or_default(),
+                fields: c.fields.clone(),
+                filter: c.filter.clone().unwrap_or_default(),
+            })
+            .collect(),
         params: vc.params.clone(),
     };
     render_template(tera, template, &ctx)
 }
 
-fn render_page_load(vc: &super::context::IfmlViewContainer, tera: &tera::Tera, template: &str) -> Result<String> {
+fn render_page_load(
+    vc: &super::context::IfmlViewContainer,
+    tera: &tera::Tera,
+    template: &str,
+) -> Result<String> {
     let ctx = PageLoadContext {
         name: vc.name.clone(),
-        components: vc.components.iter().map(|c| {
-            let route_name = c.entity.as_ref().map(|e| e.to_lowercase()).unwrap_or_default();
-            PageLoadComponentContext {
-                component_type: c.component_type.clone(),
-                entity: c.entity.clone().unwrap_or_default(),
-                route_name,
-            }
-        }).collect(),
+        components: vc
+            .components
+            .iter()
+            .map(|c| {
+                let route_name = c
+                    .entity
+                    .as_ref()
+                    .map(|e| e.to_lowercase())
+                    .unwrap_or_default();
+                PageLoadComponentContext {
+                    component_type: c.component_type.clone(),
+                    entity: c.entity.clone().unwrap_or_default(),
+                    route_name,
+                }
+            })
+            .collect(),
     };
     render_template(tera, template, &ctx)
 }

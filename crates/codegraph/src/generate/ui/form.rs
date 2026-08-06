@@ -41,9 +41,9 @@ pub fn ui_field_from_property(
         .to_string();
     // rust_field_name is sanitized at ingestion (no _code suffix),
     // so it matches the DTO field name directly.
-    let ts_field_name = if is_entity_ref {
-        // EntityReference fields get _id suffix in the backend DTO (added by
-        // the Tera template). The UI field name must match.
+    let ts_field_name = if is_entity_ref && !ts_field_name.ends_with("_id") {
+        // resolve_field already appends _id for EntityReference columns.
+        // Only append if the resolved name doesn't already end in _id.
         format!("{}_id", ts_field_name)
     } else {
         ts_field_name

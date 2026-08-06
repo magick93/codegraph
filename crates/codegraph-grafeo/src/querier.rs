@@ -4,7 +4,7 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
     ActionNode, CodeList, CollectionNode, ColumnInfo, CompositeColumn, CompositeRange,
     CompositionNode, CompositionTree, DetectionSource, EnumValue, EventNode, Extension,
-    FkDirection, FkTarget, LexiconNode, NamespaceNode, ParentCandidate, ParameterDefinitionNode,
+    FkDirection, FkTarget, LexiconNode, NamespaceNode, ParameterDefinitionNode, ParentCandidate,
     PropertyNode, RepositoryNode, SchemaClassificationData, SchemaNode, StructuredSubField,
     ViewComponentNode, ViewContainerNode,
 };
@@ -94,13 +94,10 @@ impl GraphQuerier for GrafeoEngine {
     }
 
     async fn get_schema_by_id(&self, schema_id: &str) -> Result<Option<SchemaNode>, GraphError> {
-        let params =
-            HashMap::from([("sid".to_string(), grafeo::Value::String(schema_id.into()))]);
+        let params = HashMap::from([("sid".to_string(), grafeo::Value::String(schema_id.into()))]);
         let result = query_gql_params(
             self,
-            &format!(
-                "MATCH (s:Schema {{schema_id: $sid}}) RETURN {SCHEMA_RETURN_COLS}"
-            ),
+            &format!("MATCH (s:Schema {{schema_id: $sid}}) RETURN {SCHEMA_RETURN_COLS}"),
             params,
         )?;
         if result.rows.is_empty() {
@@ -635,9 +632,10 @@ impl GraphQuerier for GrafeoEngine {
         schema_title: &str,
     ) -> Result<CompositionTree, GraphError> {
         let mut visited = std::collections::HashSet::new();
-        let root = self
+        let mut root = self
             .build_composition_node(schema_title, schema_title, None, false, &mut visited, 0)
             .await?;
+        root.dedup_fields();
         Ok(CompositionTree { root })
     }
 
@@ -660,7 +658,10 @@ impl GraphQuerier for GrafeoEngine {
             .collect()
     }
 
-    async fn get_schemas_that_extend(&self, parent_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+    async fn get_schemas_that_extend(
+        &self,
+        parent_title: &str,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
         let params = HashMap::from([(
             "title".to_string(),
             grafeo::Value::String(parent_title.into()),
@@ -700,7 +701,10 @@ impl GraphQuerier for GrafeoEngine {
             .collect()
     }
 
-    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+    async fn get_referenced_schemas(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
         let params = HashMap::from([(
             "title".to_string(),
             grafeo::Value::String(schema_title.into()),
@@ -782,13 +786,10 @@ impl GraphQuerier for GrafeoEngine {
         &self,
         schema_id: &str,
     ) -> Result<Vec<PropertyNode>, GraphError> {
-        let params =
-            HashMap::from([("sid".to_string(), grafeo::Value::String(schema_id.into()))]);
+        let params = HashMap::from([("sid".to_string(), grafeo::Value::String(schema_id.into()))]);
         let result = query_gql_params(
             self,
-            &format!(
-                "MATCH (p:Property {{_schema_id: $sid}}) RETURN {PROPERTY_RETURN_COLS}"
-            ),
+            &format!("MATCH (p:Property {{_schema_id: $sid}}) RETURN {PROPERTY_RETURN_COLS}"),
             params,
         )?;
         let reader = RowReader::from_columns(&result.columns);
@@ -964,8 +965,8 @@ impl GraphQuerier for GrafeoEngine {
         let mut nodes = Vec::new();
         for row in &result.rows {
             let fields_str: Option<String> = reader.get_opt_string(row, "comp.fields")?;
-            let fields: Option<Vec<String>> = fields_str
-                .and_then(|s| serde_json::from_str(&s).ok());
+            let fields: Option<Vec<String>> =
+                fields_str.and_then(|s| serde_json::from_str(&s).ok());
             nodes.push(ViewComponentNode {
                 name: reader.get_string(row, "comp.name")?,
                 component_type: reader.get_string(row, "comp.component_type")?,
@@ -991,8 +992,8 @@ impl GraphQuerier for GrafeoEngine {
         let mut nodes = Vec::new();
         for row in &result.rows {
             let params_str: Option<String> = reader.get_opt_string(row, "evt.params")?;
-            let params: Option<Vec<String>> = params_str
-                .and_then(|s| serde_json::from_str(&s).ok());
+            let params: Option<Vec<String>> =
+                params_str.and_then(|s| serde_json::from_str(&s).ok());
             nodes.push(EventNode {
                 name: reader.get_string(row, "evt.name")?,
                 event_type: reader.get_string(row, "evt.event_type")?,
@@ -1003,9 +1004,7 @@ impl GraphQuerier for GrafeoEngine {
         Ok(nodes)
     }
 
-    async fn get_ifml_navigation_flows(
-        &self,
-    ) -> Result<Vec<(String, String, String)>, GraphError> {
+    async fn get_ifml_navigation_flows(&self) -> Result<Vec<(String, String, String)>, GraphError> {
         let gql = "MATCH (source)-[:HasEvent]->(evt:Event)-[flow:NavigationFlow]->(target:ViewContainer) \
                    RETURN source.name, evt.name, target.name";
         let result = query_gql(self, gql)?;
@@ -1335,7 +1334,8 @@ impl GrafeoEngine {
             // ValueObject properties → recurse into child nodes instead of
             // flattening into jsonb_columns. This matches the DDL child-table
             // hierarchy: each ValueObject becomes a separate SQL table.
-            if classification == Some(codegraph_type_contracts::RefClassificationKind::ValueObject) {
+            if classification == Some(codegraph_type_contracts::RefClassificationKind::ValueObject)
+            {
                 if depth < MAX_COMPOSITION_DEPTH {
                     // Resolve target schema
                     let target = if prop.is_array {
@@ -1357,28 +1357,28 @@ impl GrafeoEngine {
                         // lives on the child entity's table instead (configured via
                         // parent_ref in domains.toml).
                         let vo_entity = if !target_schema.is_entity {
-                            codegraph_core::traits::find_entity_extended_by_vo(self, &target_schema.title)
-                                .await
-                                .ok()
-                                .flatten()
+                            codegraph_core::traits::find_entity_extended_by_vo(
+                                self,
+                                &target_schema.title,
+                            )
+                            .await
+                            .ok()
+                            .flatten()
                         } else {
                             None
                         };
 
                         if (target_schema.is_entity || vo_entity.is_some()) && !prop.is_array {
                             let mut entity_col = col;
-                            entity_col.classification =
-                                Some(codegraph_type_contracts::RefClassificationKind::EntityReference);
-                            // VO→entity FK columns are always nullable: the DTO and
-                            // repository generators model the VO as a nested child
-                            // table, so no create command ever supplies a value for
-                            // this column. Deriving nullability from the schema's
-                            // `required` makes required VO refs unmaterializable
-                            // (NOT NULL violation on every create).
-                            entity_col.is_optional = true;
+                            entity_col.classification = Some(
+                                codegraph_type_contracts::RefClassificationKind::EntityReference,
+                            );
                             if let Some(entity) = &vo_entity {
                                 entity_col.fk_target = Some(FkTarget {
-                                    schema: entity.domain.clone().unwrap_or_else(|| default_schema.to_string()),
+                                    schema: entity
+                                        .domain
+                                        .clone()
+                                        .unwrap_or_else(|| default_schema.to_string()),
                                     table: entity.pg_table_name.clone(),
                                     column: "id".to_string(),
                                     on_delete: "SET NULL".to_string(),
@@ -1397,9 +1397,7 @@ impl GrafeoEngine {
                             }
                             columns.push(entity_col);
                         }
-                        if !target_schema.is_entity
-                            && !visited.contains(&target_schema.title)
-                        {
+                        if !target_schema.is_entity && !visited.contains(&target_schema.title) {
                             // Recurse into ValueObject as a child node.
                             // Use a fresh visited set (seeded with the current
                             // path) so sibling VO properties referencing the same
@@ -1615,8 +1613,7 @@ impl GrafeoEngine {
         let schema_name = if is_codelist_ref {
             "common".to_string()
         } else {
-            let domain = extract_ref_domain(ref_str)
-                .unwrap_or(default_schema);
+            let domain = extract_ref_domain(ref_str).unwrap_or(default_schema);
             // If the "domain" looks like a JSON schema filename (contains `.json`),
             // the ref_target is a bare filename without path (no domain prefix).
             // Use the default schema instead of the filename.
@@ -1662,7 +1659,7 @@ fn extract_ref_table(ref_target: &str) -> Option<String> {
         .strip_suffix(".json#")
         .or_else(|| filename.strip_suffix(".json"))
         .unwrap_or(filename);
-    Some(codegraph_naming::to_snake_case(&codegraph_naming::strip_type_suffix(
-        stem,
-    )))
+    Some(codegraph_naming::to_snake_case(
+        &codegraph_naming::strip_type_suffix(stem),
+    ))
 }

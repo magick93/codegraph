@@ -7,9 +7,9 @@ use codegraph_core::types::ParentCandidate;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template_with_project;
 use crate::generate::api::include_path::resolve_include_paths;
 use crate::generate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
@@ -187,7 +187,8 @@ impl EntityGenerator for RepositoryTraitGenerator {
         let mut files = Vec::new();
 
         // Repository trait (Tera template)
-        let trait_content = render_template_with_project(tera, "ddd/repository.tera", &ctx, project)?;
+        let trait_content =
+            render_template_with_project(tera, "ddd/repository.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: base_dir.join("repository.rs"),
             content: trait_content,
@@ -196,7 +197,14 @@ impl EntityGenerator for RepositoryTraitGenerator {
         // Repository implementation (Rust emitter)
         let emitter = RepositoryImplEmitter;
         let impl_content = emitter
-            .emit(db, schema_title, &domain, config, parent_ref.as_deref(), &include_paths)
+            .emit(
+                db,
+                schema_title,
+                &domain,
+                config,
+                parent_ref.as_deref(),
+                &include_paths,
+            )
             .await?;
         files.push(GeneratedFile {
             path: base_dir.join("repository_impl.rs"),

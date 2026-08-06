@@ -83,7 +83,8 @@ impl EntityGenerator for TestGenerator {
 
         let mut files = Vec::new();
 
-        let entity_test = render_template_with_project(tera, "test/entity_test.tera", &ctx, project)?;
+        let entity_test =
+            render_template_with_project(tera, "test/entity_test.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self
                 .output_dir

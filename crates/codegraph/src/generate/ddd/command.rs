@@ -90,6 +90,15 @@ impl EntityGenerator for CommandGenerator {
         )
         .await;
 
+        // Hook-only entities (no create/update/delete) get no command handler —
+        // emit nothing rather than a dead skeleton (unused imports, dead struct).
+        let has_command_ops = operations
+            .iter()
+            .any(|op| op == "create" || op == "update" || op == "delete");
+        if !has_command_ops {
+            return Ok(Vec::new());
+        }
+
         let ctx = CommandContext {
             has_create: operations.contains(&"create".to_string()),
             has_update: operations.contains(&"update".to_string()),

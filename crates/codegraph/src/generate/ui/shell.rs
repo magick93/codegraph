@@ -105,12 +105,14 @@ impl EntityGenerator for UiShellGenerator {
 
         // Detail page
         if operations.contains(&"read".to_string()) {
-            let content = render_template_with_project(tera, "ui/shell_detail.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "ui/shell_detail.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: base.join("[id]").join("+page.svelte"),
                 content,
             });
-            let load = render_template_with_project(tera, "ui/shell_detail_load.tera", &ctx, project)?;
+            let load =
+                render_template_with_project(tera, "ui/shell_detail_load.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: base.join("[id]").join("+page.server.ts"),
                 content: load,
@@ -119,7 +121,8 @@ impl EntityGenerator for UiShellGenerator {
 
         // Create page
         if operations.contains(&"create".to_string()) {
-            let content = render_template_with_project(tera, "ui/shell_create.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "ui/shell_create.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: base.join("new").join("+page.svelte"),
                 content,

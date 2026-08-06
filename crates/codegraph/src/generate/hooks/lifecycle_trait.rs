@@ -91,7 +91,8 @@ impl EntityGenerator for LifecycleTraitGenerator {
             domain: domain.clone(),
         };
 
-        let content = render_template_with_project(tera, "hooks/lifecycle_trait.tera", &ctx, project)?;
+        let content =
+            render_template_with_project(tera, "hooks/lifecycle_trait.tera", &ctx, project)?;
 
         let output_path = self
             .generated_dir

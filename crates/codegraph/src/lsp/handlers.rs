@@ -2,18 +2,34 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use auto_lsp::anyhow;
-use auto_lsp::default::db::{BaseDb, BaseDatabase};
+use auto_lsp::default::db::{BaseDatabase, BaseDb};
 use auto_lsp::lsp_types::*;
 use auto_lsp::tree_sitter;
 use auto_lsp::tree_sitter::{Query, QueryCursor, StreamingIterator};
 
 pub const TOKEN_TYPES: &[&str] = &[
-    "namespace", "type", "class", "enumMember", "property", "variable",
-    "string", "number", "keyword", "modifier", "event", "operator", "comment",
+    "namespace",
+    "type",
+    "class",
+    "enumMember",
+    "property",
+    "variable",
+    "string",
+    "number",
+    "keyword",
+    "modifier",
+    "event",
+    "operator",
+    "comment",
 ];
 
 pub const TOKEN_MODIFIERS: &[&str] = &[
-    "declaration", "definition", "readonly", "static", "deprecated", "abstract",
+    "declaration",
+    "definition",
+    "readonly",
+    "static",
+    "deprecated",
+    "abstract",
 ];
 
 use super::state::{GrafeoState, GRAFE};
@@ -22,24 +38,19 @@ fn with_grafe<F, R>(f: F) -> R
 where
     F: FnOnce(Option<&GrafeoState>) -> R,
 {
-    let guard = GRAFE.get().map(|l| {
-        l.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-    });
+    let guard = GRAFE
+        .get()
+        .map(|l| l.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
     f(guard.as_ref().and_then(|g| g.as_ref()))
 }
 
-static IFML_LANG: LazyLock<tree_sitter::Language> = LazyLock::new(|| {
-    tree_sitter_ifml::language()
-});
+static IFML_LANG: LazyLock<tree_sitter::Language> = LazyLock::new(|| tree_sitter_ifml::language());
 
 const VALID_COMPONENT_TYPES: &[&str] = &["list", "form", "details", "search", "tree", "chart"];
 
 static VIEW_DECL_QUERY: LazyLock<Query> = LazyLock::new(|| {
-    Query::new(
-        &IFML_LANG,
-        r"(view_declaration (string) @view-name)",
-    )
-    .expect("Failed to create view declaration query")
+    Query::new(&IFML_LANG, r"(view_declaration (string) @view-name)")
+        .expect("Failed to create view declaration query")
 });
 
 static DATA_REF_QUERY: LazyLock<Query> = LazyLock::new(|| {
@@ -174,8 +185,8 @@ pub fn handle_completion(
         }
     } else if trimmed.contains("on ") {
         for e in &[
-            "select", "submit", "click", "change", "load", "save", "cancel", "delete",
-            "confirm", "back",
+            "select", "submit", "click", "change", "load", "save", "cancel", "delete", "confirm",
+            "back",
         ] {
             items.push(CompletionItem {
                 label: e.to_string(),
@@ -347,7 +358,10 @@ fn extract_view_names(source: &[u8], root: &tree_sitter::Node) -> Vec<String> {
     names
 }
 
-fn extract_views_with_params(source: &[u8], root: &tree_sitter::Node) -> HashMap<String, Vec<String>> {
+fn extract_views_with_params(
+    source: &[u8],
+    root: &tree_sitter::Node,
+) -> HashMap<String, Vec<String>> {
     let mut views: HashMap<String, Vec<String>> = HashMap::new();
     let mut cursor = root.walk();
 
@@ -391,9 +405,19 @@ fn extract_views_with_params(source: &[u8], root: &tree_sitter::Node) -> HashMap
                                                                 if dc.goto_first_child() {
                                                                     loop {
                                                                         let param_child = dc.node();
-                                                                        if param_child.kind() == "identifier" {
-                                                                            if let Ok(name) = param_child.utf8_text(source) {
-                                                                                params.push(name.to_string());
+                                                                        if param_child.kind()
+                                                                            == "identifier"
+                                                                        {
+                                                                            if let Ok(name) =
+                                                                                param_child
+                                                                                    .utf8_text(
+                                                                                        source,
+                                                                                    )
+                                                                            {
+                                                                                params.push(
+                                                                                    name.to_string(
+                                                                                    ),
+                                                                                );
                                                                             }
                                                                             break;
                                                                         }
@@ -441,7 +465,10 @@ fn extract_views_with_params(source: &[u8], root: &tree_sitter::Node) -> HashMap
     views
 }
 
-fn extract_navigate_bindings(source: &[u8], root: &tree_sitter::Node) -> Vec<(String, Vec<String>)> {
+fn extract_navigate_bindings(
+    source: &[u8],
+    root: &tree_sitter::Node,
+) -> Vec<(String, Vec<String>)> {
     let mut results = Vec::new();
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&NAVIGATE_BINDING_QUERY, *root, source);
@@ -513,10 +540,7 @@ fn extract_data_refs(source: &[u8], root: &tree_sitter::Node) -> Vec<String> {
     refs
 }
 
-pub fn handle_hover(
-    db: &BaseDb,
-    params: HoverParams,
-) -> anyhow::Result<Option<Hover>> {
+pub fn handle_hover(db: &BaseDb, params: HoverParams) -> anyhow::Result<Option<Hover>> {
     let uri = &params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
 
@@ -569,10 +593,7 @@ pub fn handle_hover(
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
-                    value: format!(
-                        "**View: {}**\n\nA view container in the IFML model.",
-                        word
-                    ),
+                    value: format!("**View: {}**\n\nA view container in the IFML model.", word),
                 }),
                 range: None,
             }));
@@ -668,10 +689,7 @@ fn get_word_at_position(line: &str, character: usize) -> Option<String> {
     }
 }
 
-pub fn compute_diagnostics(
-    db: &BaseDb,
-    uri: &Url,
-) -> Vec<Diagnostic> {
+pub fn compute_diagnostics(db: &BaseDb, uri: &Url) -> Vec<Diagnostic> {
     let file = match db.get_file(uri) {
         Some(f) => f,
         None => return Vec::new(),
@@ -701,10 +719,7 @@ pub fn compute_diagnostics(
                     if !grafe.entity_names.contains(ref_name) {
                         if let Some(line) = find_line_with_text(source, ref_name) {
                             diagnostics.push(Diagnostic {
-                                range: Range::new(
-                                    Position::new(line, 0),
-                                    Position::new(line, 50),
-                                ),
+                                range: Range::new(Position::new(line, 0), Position::new(line, 50)),
                                 severity: Some(DiagnosticSeverity::ERROR),
                                 message: format!(
                                     "Entity '{}' not found in loaded schemas",
@@ -729,10 +744,7 @@ pub fn compute_diagnostics(
                 if !expected_params.contains(key) {
                     if let Some(line) = find_line_with_text(source, key) {
                         diagnostics.push(Diagnostic {
-                            range: Range::new(
-                                Position::new(line, 0),
-                                Position::new(line, 50),
-                            ),
+                            range: Range::new(Position::new(line, 0), Position::new(line, 50)),
                             severity: Some(DiagnosticSeverity::WARNING),
                             message: format!(
                                 "'{}' is not a declared parameter of view '{}'. Expected: {:?}",
@@ -772,7 +784,11 @@ pub fn handle_semantic_tokens_full(
     let mut prev_col = 0u32;
     for (line, col, len, ty, mods) in &raw {
         let delta_line = *line - prev_line;
-        let delta_start = if delta_line == 0 { *col - prev_col } else { *col };
+        let delta_start = if delta_line == 0 {
+            *col - prev_col
+        } else {
+            *col
+        };
         data.push(SemanticToken {
             delta_line,
             delta_start,
@@ -807,14 +823,14 @@ fn walk_semantic(
         "comment" => add_semantic_token(node, tokens, 12, 0),
         "boolean" => add_semantic_token(node, tokens, 8, 0),
 
-        "view" | "component" | "container" | "module" | "domain" | "schema"
-        | "on" | "navigate" | "refresh" | "action" | "params" | "label"
-        | "stay_statement" | "input" | "output" | "true" | "false" => {
+        "view" | "component" | "container" | "module" | "domain" | "schema" | "on" | "navigate"
+        | "refresh" | "action" | "params" | "label" | "stay_statement" | "input" | "output"
+        | "true" | "false" => {
             add_semantic_token(node, tokens, 8, 0);
         }
 
-        "select" | "submit" | "click" | "change" | "load" | "save"
-        | "cancel" | "delete" | "confirm" | "back" => {
+        "select" | "submit" | "click" | "change" | "load" | "save" | "cancel" | "delete"
+        | "confirm" | "back" => {
             add_semantic_token(node, tokens, 10, 0);
         }
 
@@ -822,8 +838,8 @@ fn walk_semantic(
             add_semantic_token(node, tokens, 1, 0);
         }
 
-        "->" | "==" | "!=" | "!~" | "~=" | "<" | "<=" | ">" | ">="
-        | "+" | "-" | "*" | "/" | "%" | "&&" | "||" | "!" => {
+        "->" | "==" | "!=" | "!~" | "~=" | "<" | "<=" | ">" | ">=" | "+" | "-" | "*" | "/"
+        | "%" | "&&" | "||" | "!" => {
             add_semantic_token(node, tokens, 11, 0);
         }
 
@@ -937,13 +953,19 @@ fn collect_errors(node: &tree_sitter::Node, source: &[u8], diagnostics: &mut Vec
         let range = node.range();
         let text = node.utf8_text(source).unwrap_or("<binary>");
         let message = if node.is_missing() {
-            format!("Missing syntax element (expected something before '{}')", text)
+            format!(
+                "Missing syntax element (expected something before '{}')",
+                text
+            )
         } else {
             format!("Unexpected syntax: '{}'", text)
         };
         diagnostics.push(Diagnostic {
             range: Range::new(
-                Position::new(range.start_point.row as u32, range.start_point.column as u32),
+                Position::new(
+                    range.start_point.row as u32,
+                    range.start_point.column as u32,
+                ),
                 Position::new(range.end_point.row as u32, range.end_point.column as u32),
             ),
             severity: Some(DiagnosticSeverity::ERROR),
@@ -980,9 +1002,17 @@ fn validate_component_types(
         let mut val_range = None;
         for capture in m.captures {
             if capture.index == name_idx {
-                key = capture.node.utf8_text(source).ok().map(|s: &str| s.to_string());
+                key = capture
+                    .node
+                    .utf8_text(source)
+                    .ok()
+                    .map(|s: &str| s.to_string());
             } else if capture.index == val_idx {
-                val_text = capture.node.utf8_text(source).ok().map(|s: &str| s.to_string());
+                val_text = capture
+                    .node
+                    .utf8_text(source)
+                    .ok()
+                    .map(|s: &str| s.to_string());
                 let r = capture.node.range();
                 val_range = Some(Range::new(
                     Position::new(r.start_point.row as u32, r.start_point.column as u32),
@@ -1038,21 +1068,29 @@ fn check_fields_duplicates(
 ) {
     // First child should be the key identifier
     let mut c = node.walk();
-    if !c.goto_first_child() { return; }
+    if !c.goto_first_child() {
+        return;
+    }
     let first = c.node();
-    if first.kind() != "identifier" { return; }
+    if first.kind() != "identifier" {
+        return;
+    }
     let key_text = match first.utf8_text(source) {
         Ok(t) => t,
         Err(_) => return,
     };
-    if key_text != "fields" { return; }
+    if key_text != "fields" {
+        return;
+    }
 
     // Walk children to find value_expression → array_literal
     let mut seen: std::collections::HashMap<&str, ()> = std::collections::HashMap::new();
 
     // Restart from first child of the property_assignment
     let mut walker = node.walk();
-    if !walker.goto_first_child() { return; }
+    if !walker.goto_first_child() {
+        return;
+    }
     loop {
         let child = walker.node();
         if child.kind() == "value_expression" {
@@ -1070,12 +1108,18 @@ fn check_fields_duplicates(
                                 if elem.kind() == "value_expression" {
                                     if let Ok(text) = elem.utf8_text(source) {
                                         let trimmed = text.trim();
-                                             if seen.contains_key(trimmed) {
+                                        if seen.contains_key(trimmed) {
                                             let r = elem.range();
                                             diagnostics.push(Diagnostic {
                                                 range: Range::new(
-                                                    Position::new(r.start_point.row as u32, r.start_point.column as u32),
-                                                    Position::new(r.end_point.row as u32, r.end_point.column as u32),
+                                                    Position::new(
+                                                        r.start_point.row as u32,
+                                                        r.start_point.column as u32,
+                                                    ),
+                                                    Position::new(
+                                                        r.end_point.row as u32,
+                                                        r.end_point.column as u32,
+                                                    ),
                                                 ),
                                                 severity: Some(DiagnosticSeverity::WARNING),
                                                 message: format!("Duplicate field '{}'", trimmed),
@@ -1087,15 +1131,21 @@ fn check_fields_duplicates(
                                         }
                                     }
                                 }
-                                if !arr.goto_next_sibling() { break; }
+                                if !arr.goto_next_sibling() {
+                                    break;
+                                }
                             }
                         }
                     }
-                    if !ve.goto_next_sibling() { break; }
+                    if !ve.goto_next_sibling() {
+                        break;
+                    }
                 }
             }
         }
-        if !walker.goto_next_sibling() { break; }
+        if !walker.goto_next_sibling() {
+            break;
+        }
     }
 }
 
@@ -1246,8 +1296,11 @@ fn create_schema_edit(entity_name: &str) -> WorkspaceEdit {
 }
 
 fn create_field_edit(entity: &str, field: &str) -> WorkspaceEdit {
-    let field_content = format!(r#"    "{}": {{ "type": "string" }},
-"#, field);
+    let field_content = format!(
+        r#"    "{}": {{ "type": "string" }},
+"#,
+        field
+    );
 
     let uri_str = format!("file:///schemas/{}.json", entity.to_lowercase());
     let uri = Url::parse(&uri_str).expect("valid URI");

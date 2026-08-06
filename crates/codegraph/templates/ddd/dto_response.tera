@@ -19,6 +19,10 @@ pub struct {{ entity_name }}LinkedResponse {
     pub links: crate::api::links::Links,
 }
 
+// Builder helpers are part of the generated response API surface; which ones
+// generated handlers actually call varies per entity (root/child/links), so
+// keep them all and suppress dead-code noise.
+#[allow(dead_code)]
 impl {{ entity_name }}LinkedResponse {
     /// Wrap a response with self-link for a root entity.
     pub fn root(data: {{ entity_name }}Response, domain: &str, path_segment: &str) -> Self {

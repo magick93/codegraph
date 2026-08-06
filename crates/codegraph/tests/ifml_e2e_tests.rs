@@ -57,8 +57,7 @@ view "CustomerEdit" {
 }
 "#;
 
-    let model = codegraph_ifml_dsl::parse_ifml(ifml_content)
-        .expect("Should parse valid IFML");
+    let model = codegraph_ifml_dsl::parse_ifml(ifml_content).expect("Should parse valid IFML");
 
     assert_eq!(model.domains.len(), 1);
     assert_eq!(model.domains[0].name, "sales");
@@ -84,8 +83,7 @@ view "Dashboard" {
     }
 }
 "#;
-    let model = codegraph_ifml_dsl::parse_ifml(ifml)
-        .expect("Should parse expressions");
+    let model = codegraph_ifml_dsl::parse_ifml(ifml).expect("Should parse expressions");
     assert_eq!(model.views.len(), 1);
     let comp = &model.views[0].components[0];
     let fields_prop = comp

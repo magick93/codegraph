@@ -26,18 +26,17 @@ impl OutputValidator for SnapshotCollector {
         &self.label
     }
 
-    fn validate(
-        &self,
-        files: &[GeneratedFile],
-        _work_dir: &Path,
-    ) -> Result<(), Vec<String>> {
+    fn validate(&self, files: &[GeneratedFile], _work_dir: &Path) -> Result<(), Vec<String>> {
         let mut map = self.files.lock().unwrap();
         for file in files {
             let path_str = file.path.to_string_lossy().to_string();
-            map.insert(path_str, GeneratedFile {
-                path: file.path.clone(),
-                content: file.content.clone(),
-            });
+            map.insert(
+                path_str,
+                GeneratedFile {
+                    path: file.path.clone(),
+                    content: file.content.clone(),
+                },
+            );
         }
         Ok(())
     }

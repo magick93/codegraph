@@ -16,11 +16,7 @@ impl OutputValidator for FilePresenceValidator {
         &self.label
     }
 
-    fn validate(
-        &self,
-        files: &[GeneratedFile],
-        work_dir: &Path,
-    ) -> Result<(), Vec<String>> {
+    fn validate(&self, files: &[GeneratedFile], work_dir: &Path) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 
         let existing_paths: Vec<String> = files
@@ -31,7 +27,9 @@ impl OutputValidator for FilePresenceValidator {
         // Also check files on disk that might not be in the list
         for required in &self.required_paths {
             let on_disk = work_dir.join(required).exists();
-            let in_list = existing_paths.iter().any(|p| p == required || p.ends_with(required));
+            let in_list = existing_paths
+                .iter()
+                .any(|p| p == required || p.ends_with(required));
 
             if !on_disk && !in_list {
                 errors.push(format!("Required file not found: {}", required));

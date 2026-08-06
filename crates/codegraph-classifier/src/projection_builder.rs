@@ -819,8 +819,10 @@ mod tests {
 
     #[test]
     fn from_scalar_string_produces_text_column() {
-        let proj =
-            ProjectionBuilder::from_scalar(&codegraph_type_contracts::ScalarKind::String, "given_name");
+        let proj = ProjectionBuilder::from_scalar(
+            &codegraph_type_contracts::ScalarKind::String,
+            "given_name",
+        );
 
         match &proj.entity {
             EntityProjection::SingleColumn {

@@ -15,7 +15,7 @@ use crate::generate::type_registry;
 use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
-use super::include_path::{ResolvedIncludePath, resolve_include_paths};
+use super::include_path::{resolve_include_paths, ResolvedIncludePath};
 use super::router::{ChildInfo, CrossRefInfo};
 
 #[derive(Debug, Serialize)]
@@ -173,7 +173,8 @@ impl EntityGenerator for HandlerGenerator {
             .unwrap_or(config.defaults.max_bulk_size);
 
         // Resolve parent/child relationships from parent_candidates.
-        let stripped_title = super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
+        let stripped_title =
+            super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
         let mut resolved_parent_path_segment = None;
         let mut resolved_parent_module_name = None;
         let mut resolved_parent_domain = None;
@@ -186,11 +187,17 @@ impl EntityGenerator for HandlerGenerator {
         if let Some(ec) = entity_cfg {
             if ec.role.as_deref() == Some("child") {
                 if let Some(parent_title) = &ec.parent {
-                    let parent_name = super::router::strip_suffix(parent_title, &config.defaults.type_suffix);
+                    let parent_name =
+                        super::router::strip_suffix(parent_title, &config.defaults.type_suffix);
                     if parent_ref.is_none() {
-                        parent_ref = Some(format!("{}_id", codegraph_naming::to_snake_case(parent_name)));
+                        parent_ref = Some(format!(
+                            "{}_id",
+                            codegraph_naming::to_snake_case(parent_name)
+                        ));
                     }
-                    if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, &domain).await {
+                    if let Ok(Some(parent_schema)) =
+                        db.get_schema_in_domain(parent_title, &domain).await
+                    {
                         resolved_parent_path_segment = Some(parent_schema.api_path_segment.clone());
                         resolved_parent_module_name = Some(parent_schema.pg_table_name.clone());
                         resolved_parent_domain = if config
@@ -207,8 +214,10 @@ impl EntityGenerator for HandlerGenerator {
                                 .or_else(|| Some(domain.clone()))
                         };
                     } else {
-                        resolved_parent_path_segment = Some(codegraph_naming::to_kebab_case(parent_name));
-                        resolved_parent_module_name = Some(codegraph_naming::to_snake_case(parent_name));
+                        resolved_parent_path_segment =
+                            Some(codegraph_naming::to_kebab_case(parent_name));
+                        resolved_parent_module_name =
+                            Some(codegraph_naming::to_snake_case(parent_name));
                         resolved_parent_domain = Some(domain.clone());
                     }
                     resolved_role = "child".to_string();
@@ -220,7 +229,8 @@ impl EntityGenerator for HandlerGenerator {
         // Only nest when the parent is in the same domain (matching router behavior).
         if resolved_parent_path_segment.is_none() && resolved_role != "root" {
             for pc in &self.parent_candidates {
-                let child_name = super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
+                let child_name =
+                    super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
                 if child_name == stripped_title {
                     // Check if parent is in the same domain: either explicitly listed
                     // or its schema is classified into this domain.
@@ -239,21 +249,32 @@ impl EntityGenerator for HandlerGenerator {
                     if !parent_in_domain {
                         // Parent is in another domain — keep FK column but don't nest
                         if parent_ref.is_none() {
-                            parent_ref = Some(crate::generate::fk_column_for_candidate(pc, &config.defaults.type_suffix));
+                            parent_ref = Some(crate::generate::fk_column_for_candidate(
+                                pc,
+                                &config.defaults.type_suffix,
+                            ));
                         }
                         break;
                     }
-                    let parent_name = super::router::strip_suffix(&pc.parent_title, &config.defaults.type_suffix);
+                    let parent_name =
+                        super::router::strip_suffix(&pc.parent_title, &config.defaults.type_suffix);
                     if parent_ref.is_none() {
-                        parent_ref = Some(crate::generate::fk_column_for_candidate(pc, &config.defaults.type_suffix));
+                        parent_ref = Some(crate::generate::fk_column_for_candidate(
+                            pc,
+                            &config.defaults.type_suffix,
+                        ));
                     }
-                    if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, &domain).await {
+                    if let Ok(Some(parent_schema)) =
+                        db.get_schema_in_domain(&pc.parent_title, &domain).await
+                    {
                         resolved_parent_path_segment = Some(parent_schema.api_path_segment.clone());
                         resolved_parent_module_name = Some(parent_schema.pg_table_name.clone());
                         resolved_parent_domain = Some(domain.clone());
                     } else {
-                        resolved_parent_path_segment = Some(codegraph_naming::to_kebab_case(parent_name));
-                        resolved_parent_module_name = Some(codegraph_naming::to_snake_case(parent_name));
+                        resolved_parent_path_segment =
+                            Some(codegraph_naming::to_kebab_case(parent_name));
+                        resolved_parent_module_name =
+                            Some(codegraph_naming::to_snake_case(parent_name));
                         resolved_parent_domain = Some(domain.clone());
                     }
                     resolved_role = "child".to_string();
@@ -264,10 +285,14 @@ impl EntityGenerator for HandlerGenerator {
 
         // Check if this entity is a parent (graph detection)
         for pc in &self.parent_candidates {
-            let parent_name = super::router::strip_suffix(&pc.parent_title, &config.defaults.type_suffix);
+            let parent_name =
+                super::router::strip_suffix(&pc.parent_title, &config.defaults.type_suffix);
             if parent_name == stripped_title {
-                let child_name = super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
-                if let Ok(Some(child_schema)) = db.get_schema_in_domain(&pc.child_title, &domain).await {
+                let child_name =
+                    super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
+                if let Ok(Some(child_schema)) =
+                    db.get_schema_in_domain(&pc.child_title, &domain).await
+                {
                     resolved_children.push(ChildInfo {
                         entity_name: child_schema.rust_type_name.clone(),
                         module_name: child_schema.pg_table_name.clone(),
@@ -291,10 +316,17 @@ impl EntityGenerator for HandlerGenerator {
                     for (other_title, other_cfg) in &domain_entry.entity_config {
                         if other_cfg.role.as_deref() == Some("child") {
                             if let Some(parent_title) = &other_cfg.parent {
-                                if super::router::strip_suffix(parent_title, &config.defaults.type_suffix) == stripped_title
+                                if super::router::strip_suffix(
+                                    parent_title,
+                                    &config.defaults.type_suffix,
+                                ) == stripped_title
                                 {
-                                    let child_name = super::router::strip_suffix(other_title, &config.defaults.type_suffix);
-                                    if let Ok(Some(child_schema)) = db.get_schema_in_domain(other_title, &domain).await
+                                    let child_name = super::router::strip_suffix(
+                                        other_title,
+                                        &config.defaults.type_suffix,
+                                    );
+                                    if let Ok(Some(child_schema)) =
+                                        db.get_schema_in_domain(other_title, &domain).await
                                     {
                                         resolved_children.push(ChildInfo {
                                             entity_name: child_schema.rust_type_name.clone(),
@@ -304,8 +336,12 @@ impl EntityGenerator for HandlerGenerator {
                                     } else {
                                         resolved_children.push(ChildInfo {
                                             entity_name: child_name.to_string(),
-                                            module_name: codegraph_naming::to_snake_case(child_name),
-                                            path_segment: codegraph_naming::to_kebab_case(child_name),
+                                            module_name: codegraph_naming::to_snake_case(
+                                                child_name,
+                                            ),
+                                            path_segment: codegraph_naming::to_kebab_case(
+                                                child_name,
+                                            ),
                                         });
                                     }
                                 }
@@ -329,7 +365,8 @@ impl EntityGenerator for HandlerGenerator {
 
                 for ref_schema_node in &referenced {
                     let ref_title = &ref_schema_node.title;
-                    let ref_entity_name = super::router::strip_suffix(ref_title, &config.defaults.type_suffix);
+                    let ref_entity_name =
+                        super::router::strip_suffix(ref_title, &config.defaults.type_suffix);
 
                     if ref_entity_name == entity_name {
                         continue;
@@ -342,7 +379,8 @@ impl EntityGenerator for HandlerGenerator {
                     }
 
                     // Only include refs that are entities in any domain
-                    if let Ok(Some(ref_schema)) = db.get_schema_in_domain(ref_title, &domain).await {
+                    if let Ok(Some(ref_schema)) = db.get_schema_in_domain(ref_title, &domain).await
+                    {
                         if ref_schema.pg_table_name.is_empty() {
                             continue;
                         }
@@ -373,7 +411,10 @@ impl EntityGenerator for HandlerGenerator {
                     self.parent_candidates
                         .iter()
                         .find(|pc| {
-                            super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix) == stripped_title
+                            super::router::strip_suffix(
+                                &pc.child_title,
+                                &config.defaults.type_suffix,
+                            ) == stripped_title
                         })
                         .map(|pc| pc.parent_title.clone())
                 });
@@ -431,7 +472,10 @@ impl EntityGenerator for HandlerGenerator {
                     self.parent_candidates
                         .iter()
                         .find(|pc| {
-                            super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix) == stripped_title
+                            super::router::strip_suffix(
+                                &pc.child_title,
+                                &config.defaults.type_suffix,
+                            ) == stripped_title
                         })
                         .map(|pc| pc.parent_title.clone())
                 });
@@ -442,12 +486,15 @@ impl EntityGenerator for HandlerGenerator {
                         .and_then(|d| d.get_entity_config(&pt))
                         .and_then(|ec| ec.parent.clone())
                         .or_else(|| {
-                            let parent_stripped = super::router::strip_suffix(&pt, &config.defaults.type_suffix);
+                            let parent_stripped =
+                                super::router::strip_suffix(&pt, &config.defaults.type_suffix);
                             self.parent_candidates
                                 .iter()
                                 .find(|pc| {
-                                    super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix)
-                                        == parent_stripped
+                                    super::router::strip_suffix(
+                                        &pc.child_title,
+                                        &config.defaults.type_suffix,
+                                    ) == parent_stripped
                                 })
                                 .map(|pc| pc.parent_title.clone())
                         })
@@ -457,7 +504,10 @@ impl EntityGenerator for HandlerGenerator {
                         let gp_seg = if !gp_schema.api_path_segment.is_empty() {
                             gp_schema.api_path_segment.clone()
                         } else {
-                            codegraph_naming::to_kebab_case(super::router::strip_suffix(gpt, &config.defaults.type_suffix))
+                            codegraph_naming::to_kebab_case(super::router::strip_suffix(
+                                gpt,
+                                &config.defaults.type_suffix,
+                            ))
                         };
                         let gp_param = super::router::param_name_from_path_segment(&gp_seg);
                         // Grandparent domain: look up which domain owns it.
@@ -474,7 +524,8 @@ impl EntityGenerator for HandlerGenerator {
                             .unwrap_or_else(|| domain.clone());
                         (Some(gp_param), Some(gp_seg), Some(gp_domain))
                     } else {
-                        let gp_name = super::router::strip_suffix(gpt, &config.defaults.type_suffix);
+                        let gp_name =
+                            super::router::strip_suffix(gpt, &config.defaults.type_suffix);
                         let gp_seg = codegraph_naming::to_kebab_case(gp_name);
                         let gp_param = super::router::param_name_from_path_segment(&gp_seg);
                         (Some(gp_param), Some(gp_seg), Some(domain.clone()))
@@ -498,7 +549,8 @@ impl EntityGenerator for HandlerGenerator {
             .unwrap_or(true);
         let include_paths = if has_explicit_include || is_root {
             if let Some(ec) = entity_cfg {
-                resolve_include_paths(db, config, &domain, schema_title, ec.allow_include.as_ref()).await?
+                resolve_include_paths(db, config, &domain, schema_title, ec.allow_include.as_ref())
+                    .await?
             } else {
                 Vec::new()
             }
@@ -528,9 +580,10 @@ impl EntityGenerator for HandlerGenerator {
             "ApiKeyInfo".into(),
             format!("{}Response", entity_name),
             format!("{}LinkedResponse", entity_name),
-            format!("{}Repository", entity_name),
-            "BulkItemError".into(),
         ];
+        if operations.contains(&"create".to_string()) {
+            handler_refs.push("BulkItemError".into());
+        }
         if operations.contains(&"create".to_string()) {
             handler_refs.push(format!("Create{}Request", entity_name));
         }
@@ -547,8 +600,17 @@ impl EntityGenerator for HandlerGenerator {
                 if path.segments.len() > 1 {
                     handler_refs.push(format!("{}CombinedResponse", path.segments[0].entity_name));
                 }
-                if let Some(over) = path.segments.first().and_then(|s| s.child_table_override.as_ref()) {
-                    handler_refs.push(over.response_type.clone());
+                // The override response type is only referenced textually in the
+                // dot-path merge arm (handler.tera), so only register it for
+                // multi-segment paths; single-segment includes use inference.
+                if path.segments.len() > 1 {
+                    if let Some(over) = path
+                        .segments
+                        .first()
+                        .and_then(|s| s.child_table_override.as_ref())
+                    {
+                        handler_refs.push(over.response_type.clone());
+                    }
                 }
             }
         }
@@ -561,7 +623,10 @@ impl EntityGenerator for HandlerGenerator {
         // types that should be local, producing duplicate definitions and
         // non-existent type references in the generated code.
         let handler_caller: Vec<String> = vec![
-            "crate".into(), "api".into(), domain.clone(), format!("{}_handler", module_name),
+            "crate".into(),
+            "api".into(),
+            domain.clone(),
+            format!("{}_handler", module_name),
         ];
         let handler_imports = type_registry::resolve_imports(&handler_refs, &handler_caller);
 

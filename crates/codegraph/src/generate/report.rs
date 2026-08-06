@@ -47,8 +47,10 @@ impl GenerationReport {
             .collect();
 
         for entry in generation_order {
-            let snake =
-                codegraph_naming::to_snake_case(&codegraph_naming::strip_suffix(&entry.schema_title, suffix));
+            let snake = codegraph_naming::to_snake_case(&codegraph_naming::strip_suffix(
+                &entry.schema_title,
+                suffix,
+            ));
             // Check if any generated file path contains this entity's module name
             // under the entity's domain directory (e.g. "recruiting/candidate")
             let has_entity_file = generated_paths

@@ -49,10 +49,8 @@ impl GlobalGenerator for GrpcScaffoldGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         // Collect unique domains from generation_order
-        let domain_names: BTreeSet<String> = generation_order
-            .iter()
-            .map(|e| e.domain.clone())
-            .collect();
+        let domain_names: BTreeSet<String> =
+            generation_order.iter().map(|e| e.domain.clone()).collect();
 
         let mut domains: Vec<GrpcScaffoldDomain> = domain_names
             .into_iter()
@@ -65,9 +63,7 @@ impl GlobalGenerator for GrpcScaffoldGenerator {
             return Ok(Vec::new());
         }
 
-        let ctx = GrpcScaffoldContext {
-            domains,
-        };
+        let ctx = GrpcScaffoldContext { domains };
 
         let proto_dir = self.output_dir.join("proto");
         let grpc_dir = self.output_dir.join("src").join("api").join("grpc");
@@ -157,5 +153,6 @@ pub fn decimal_to_string(d: rust_decimal::Decimal) -> String {
 pub fn string_to_decimal(s: &str) -> Result<rust_decimal::Decimal, String> {
     rust_decimal::Decimal::from_str(s).map_err(|e| e.to_string())
 }
-"#.to_string()
+"#
+    .to_string()
 }

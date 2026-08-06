@@ -15,16 +15,33 @@ export const load: PageServerLoad = async ({ params, locals, fetch: skFetch }) =
 	};
 
 
-	const res = await skFetch(`${BASE_URL}/api/recruiting/candidate/${params.candidate_id}/application/${params.application_id}/candidate/${params.candidate_id}`, { headers });
+	const res = await skFetch(`${BASE_URL}/api/recruiting/candidate/${params.candidate_id}`, { headers });
 
 
 	if (!res.ok) {
 		const body = await res.text().catch(() => '');
-		console.error(`[ssr] Candidate edit load ${res.status}: ${body}`);
+		console.error(`[ssr] Candidate detail ${res.status}: ${body}`);
 		if (res.status === 404) throw error(404, 'Candidate not found');
-		throw error(res.status, `Failed to load Candidate for edit: ${res.statusText}`);
+		throw error(res.status, `Failed to load Candidate: ${res.statusText}`);
 	}
 
 	const json = await res.json();
-	return { item: json.data ?? json };
+	const item = json.data ?? json;
+
+
+	// Fetch workflow state and merge into response
+	try {
+
+		const wfRes = await skFetch(`${BASE_URL}/api/recruiting/candidate/${params.candidate_id}/workflow`, { headers });
+
+		if (wfRes.ok) {
+			const wfJson = await wfRes.json();
+			item.workflow_state = wfJson.data ?? wfJson;
+		}
+	} catch (_e) {
+		// Workflow state not available — panel will be hidden
+	}
+
+
+	return { item };
 };

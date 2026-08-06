@@ -212,7 +212,9 @@ impl DomainGenerator for RouterGenerator {
                         .iter()
                         .filter(|p| {
                             p.effective_kind()
-                                == Some(codegraph_type_contracts::RefClassificationKind::MediaWrapper)
+                                == Some(
+                                    codegraph_type_contracts::RefClassificationKind::MediaWrapper,
+                                )
                         })
                         .map(|p| p.pg_column_name.clone())
                         .collect();
@@ -265,10 +267,14 @@ impl DomainGenerator for RouterGenerator {
                                 title_to_entity_idx.get(title.as_str()),
                                 title_to_entity_idx.get(parent_title.as_str()),
                             ) {
-                    if entities[ci].parent.is_none() {
-                                    let parent_name = strip_suffix(parent_title, &config.defaults.type_suffix);
+                                if entities[ci].parent.is_none() {
+                                    let parent_name =
+                                        strip_suffix(parent_title, &config.defaults.type_suffix);
                                     let fk_column = ec.parent_ref.clone().unwrap_or_else(|| {
-                                        format!("{}_id", codegraph_naming::to_snake_case(parent_name))
+                                        format!(
+                                            "{}_id",
+                                            codegraph_naming::to_snake_case(parent_name)
+                                        )
                                     });
                                     let parent_module = entities[pi].module_name.clone();
                                     let parent_path = entities[pi].path_segment.clone();
@@ -305,7 +311,10 @@ impl DomainGenerator for RouterGenerator {
 
                 if let (Some(ci), Some(pi)) = (child_idx, parent_idx) {
                     if entities[ci].parent.is_none() && entities[ci].role != "root" {
-                        let fk_column = crate::generate::fk_column_for_candidate(pc, &config.defaults.type_suffix);
+                        let fk_column = crate::generate::fk_column_for_candidate(
+                            pc,
+                            &config.defaults.type_suffix,
+                        );
                         let parent_module = entities[pi].module_name.clone();
                         let parent_path = entities[pi].path_segment.clone();
                         let parent_entity = entities[pi].entity_name.clone();

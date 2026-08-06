@@ -89,6 +89,7 @@ struct EntityTree {
     direct_columns: Vec<TreeColumn>,
     child_tables: Vec<ChildTableInfo>,
     has_create: bool,
+    has_read: bool,
     has_update: bool,
     has_delete: bool,
     has_workflow: bool,
@@ -886,7 +887,10 @@ async fn build_child_table_info(
         struct_name: child_struct_name,
         sql_table_name: child_table_name,
         sql_schema_name: schema_name.to_string(),
-        parent_fk_column: codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name)),
+        parent_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
+            "{}_id",
+            parent_table_name
+        )),
         is_array: prop.is_array,
         columns: child_columns,
         child_tables: nested_child_tables,
@@ -1381,7 +1385,7 @@ async fn build_columns_and_children(
                         child_tables: vec![],
                     });
                 }
-                } else {
+            } else {
                 let codelist_type =
                     crate::generate::ddd::dto::codelist_enum_name_from_ref(&prop.ref_target);
                 direct_columns.push(TreeColumn {
@@ -1422,7 +1426,7 @@ async fn build_columns_and_children(
                 pg_column_name: field_def.column_name,
                 dto_field_name: None,
                 rust_type: "Uuid".to_string(),
-                is_nullable: true,
+                is_nullable: !prop.is_required,
                 is_entity_ref: true,
                 dto_rust_type: None,
                 is_workflow_managed: is_workflow_field,
@@ -1449,7 +1453,7 @@ async fn build_columns_and_children(
                     pg_column_name: format!("{}_id", field_def.column_name),
                     dto_field_name: None,
                     rust_type: "Uuid".to_string(),
-                    is_nullable: true,
+                    is_nullable: !prop.is_required,
                     is_entity_ref: true,
                     dto_rust_type: None,
                     is_workflow_managed: is_workflow_field,
@@ -1507,15 +1511,21 @@ enum CrudOp {
 impl CrudOp {
     fn columns<'a>(&self, tree: &'a EntityTree) -> Vec<&'a TreeColumn> {
         match self {
-            CrudOp::CreateActiveModel => tree.direct_columns.iter()
+            CrudOp::CreateActiveModel => tree
+                .direct_columns
+                .iter()
                 .filter(|c| !c.is_workflow_managed && !c.is_composite_range && !c.is_media)
                 .filter(|c| !Self::is_parent_fk(c, tree))
                 .collect(),
-            CrudOp::CreateRawSql => tree.direct_columns.iter()
+            CrudOp::CreateRawSql => tree
+                .direct_columns
+                .iter()
                 .filter(|c| !c.is_workflow_managed && !c.is_composite_range && !c.is_media)
                 .filter(|c| !Self::is_parent_fk(c, tree))
                 .collect(),
-            CrudOp::Update => tree.direct_columns.iter()
+            CrudOp::Update => tree
+                .direct_columns
+                .iter()
                 .filter(|c| !c.is_workflow_managed && !c.is_media && !c.is_composite_range)
                 .filter(|c| c.pg_cast.is_none())
                 .collect(),
@@ -1584,7 +1594,16 @@ impl RepositoryImplEmitter {
         if tree.has_create {
             self.emit_create_fn(&tree, &mut code);
         }
-        self.emit_find_by_id_fn(&tree, &mut code);
+        // find_by_id is only referenced when the query handler emits it
+        // (create bulk path, or read without a parent) or when FTS/embedding
+        // search hydrates results through it.
+        let needs_find_by_id = tree.has_create
+            || (tree.has_read && tree.parent_ref.is_none())
+            || tree.has_fts
+            || tree.has_embeddings;
+        if needs_find_by_id {
+            self.emit_find_by_id_fn(&tree, &mut code);
+        }
         if tree.parent_ref.is_some() {
             self.emit_find_by_id_scoped_fn(&tree, &mut code);
         }
@@ -1603,7 +1622,6 @@ impl RepositoryImplEmitter {
         }
         if tree.hierarchy_field.is_some() {
             self.emit_find_tree_fn(&tree, &mut code);
-            self.emit_find_ancestors_fn(&tree, &mut code);
         }
         self.emit_footer(&mut code);
 
@@ -1647,10 +1665,10 @@ impl RepositoryImplEmitter {
                 let mut is_nullable: Vec<bool> = Vec::new();
                 // When the segment has a child table override (VO→entity), use
                 // the VO's properties instead of the entity's properties.
-                let props_key = seg.child_table_override.as_ref().map_or(
-                    &seg.schema_title,
-                    |over| &over.vo_title,
-                );
+                let props_key = seg
+                    .child_table_override
+                    .as_ref()
+                    .map_or(&seg.schema_title, |over| &over.vo_title);
                 if let Some(props) = all_props.get(props_key) {
                     let mut seen = std::collections::HashSet::new();
                     for prop in props {
@@ -1666,9 +1684,11 @@ impl RepositoryImplEmitter {
                             // enriched type has a nested field for the leaf entity
                             // instead. Match both raw rust_field_name and with _id
                             // suffix, since entity generators may differ in naming.
-                            if matches!(prop.effective_kind(), Some(RefClassificationKind::EntityReference))
-                                && (prop.rust_field_name == *next_module
-                                    || prop.rust_field_name == format!("{}_id", next_module))
+                            if matches!(
+                                prop.effective_kind(),
+                                Some(RefClassificationKind::EntityReference)
+                            ) && (prop.rust_field_name == *next_module
+                                || prop.rust_field_name == format!("{}_id", next_module))
                             {
                                 continue;
                             }
@@ -1687,7 +1707,13 @@ impl RepositoryImplEmitter {
                             continue;
                         }
                         // Skip composite/media wrappers — expanded into sub-columns.
-                        if matches!(prop.effective_kind(), Some(RefClassificationKind::CompositeWrapper | RefClassificationKind::MediaWrapper)) {
+                        if matches!(
+                            prop.effective_kind(),
+                            Some(
+                                RefClassificationKind::CompositeWrapper
+                                    | RefClassificationKind::MediaWrapper
+                            )
+                        ) {
                             continue;
                         }
                         if prop.rust_field_name == "id"
@@ -1700,13 +1726,15 @@ impl RepositoryImplEmitter {
                         // column on the entity Model — matching the entity
                         // generator's match arm logic.
                         match prop.effective_kind() {
-                            Some(RefClassificationKind::PrimitiveWrapper
+                            Some(
+                                RefClassificationKind::PrimitiveWrapper
                                 | RefClassificationKind::StructuredWrapper
                                 | RefClassificationKind::CodelistReference
                                 | RefClassificationKind::CodelistCheck
                                 | RefClassificationKind::EntityReference
                                 | RefClassificationKind::RangeWrapper
-                                | RefClassificationKind::InlineEnum) => {}
+                                | RefClassificationKind::InlineEnum,
+                            ) => {}
                             _ => continue,
                         }
                         // Skip properties whose direct $ref target is a
@@ -1746,7 +1774,9 @@ impl RepositoryImplEmitter {
                                     | Some(RefClassificationKind::CodelistCheck)
                             ));
                             dto_rust_types.push(
-                                crate::generate::ddd::dto::codelist_enum_name_from_ref(&prop.ref_target),
+                                crate::generate::ddd::dto::codelist_enum_name_from_ref(
+                                    &prop.ref_target,
+                                ),
                             );
                             is_nullable.push(prop.is_nullable);
                         }
@@ -1772,8 +1802,11 @@ impl RepositoryImplEmitter {
             // These types (e.g. PersonResponse) live in other entity modules and need
             // use crate::domain::{domain}::{module}::dto_response::TypeName imports.
             let caller_base: Vec<String> = vec![
-                "crate".into(), "domain".into(), domain.into(),
-                tree.module_name.clone(), "repository_impl".into(),
+                "crate".into(),
+                "domain".into(),
+                domain.into(),
+                tree.module_name.clone(),
+                "repository_impl".into(),
             ];
             let mut include_type_names: Vec<String> = Vec::new();
             for path in &include_paths {
@@ -1797,7 +1830,8 @@ impl RepositoryImplEmitter {
             // type registry when the repository emitter runs (DTO generator runs later).
             let mut seen_enriched = std::collections::HashSet::new();
             for path in &include_paths {
-                if path.segments.len() > 1 && seen_enriched.insert(path.response_rust_type.clone()) {
+                if path.segments.len() > 1 && seen_enriched.insert(path.response_rust_type.clone())
+                {
                     writeln!(
                         code,
                         "use super::dto_included::{};",
@@ -1808,13 +1842,18 @@ impl RepositoryImplEmitter {
             }
 
             writeln!(code).unwrap();
-            writeln!(
-                code,
-                "impl {}RepositoryImpl {{",
-                tree.entity_name
-            )
-            .unwrap();
-            self.emit_include_fetch_methods(&tree, &mut code, &include_paths, &include_segment_dto_fields, &include_segment_col_fields, &include_segment_is_structured, &include_segment_is_codelist, &include_segment_dto_rust_types, &include_segment_is_nullable);
+            writeln!(code, "impl {}RepositoryImpl {{", tree.entity_name).unwrap();
+            self.emit_include_fetch_methods(
+                &tree,
+                &mut code,
+                &include_paths,
+                &include_segment_dto_fields,
+                &include_segment_col_fields,
+                &include_segment_is_structured,
+                &include_segment_is_codelist,
+                &include_segment_dto_rust_types,
+                &include_segment_is_nullable,
+            );
             writeln!(code, "}}").unwrap();
         }
 
@@ -1846,6 +1885,7 @@ impl RepositoryImplEmitter {
             .and_then(|ec| ec.operations.clone())
             .unwrap_or_else(|| config.defaults.operations.clone());
         let has_create = operations.contains(&"create".to_string());
+        let has_read = operations.contains(&"read".to_string());
         let has_update = operations.contains(&"update".to_string());
         let has_delete = operations.contains(&"delete".to_string());
         let entity_cfg = config
@@ -1980,11 +2020,12 @@ impl RepositoryImplEmitter {
             if let Some(entries) = entity_cfg.and_then(|ec| ec.tree_include.as_ref()) {
                 for entry in entries {
                     // Find the via entity's domain entry (search all domains)
-                    let via_domain_entry = config.domains.values().find(|d| {
-                        d.entity_config.contains_key(&entry.via_entity)
-                    });
-                    let via_entity_cfg = via_domain_entry
-                        .and_then(|d| d.entity_config.get(&entry.via_entity));
+                    let via_domain_entry = config
+                        .domains
+                        .values()
+                        .find(|d| d.entity_config.contains_key(&entry.via_entity));
+                    let via_entity_cfg =
+                        via_domain_entry.and_then(|d| d.entity_config.get(&entry.via_entity));
 
                     // Get via entity's parent_ref column name
                     let parent_ref_col = via_entity_cfg
@@ -1992,16 +2033,18 @@ impl RepositoryImplEmitter {
                         .cloned();
 
                     // Get via entity's parent entity name from role/parent config
-                    let parent_entity_name = via_entity_cfg
-                        .and_then(|ec| ec.parent.as_ref())
-                        .cloned();
+                    let parent_entity_name =
+                        via_entity_cfg.and_then(|ec| ec.parent.as_ref()).cloned();
 
                     // Find the FK column on via_entity that references the current entity.
                     // Use the naming convention: snake_case(prop.name) + "_id" matches the DDL.
                     let via_props = db.get_properties(&entry.via_entity).await?;
                     let mut via_fk = None;
                     for prop in &via_props {
-                        if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, &entry.via_entity).await {
+                        if let Ok(Some(target)) = db
+                            .get_property_ref_target(&prop.name, &entry.via_entity)
+                            .await
+                        {
                             if target.title == schema_title {
                                 let col = codegraph_core::types::resolve_field(prop).column_name;
                                 via_fk = Some(col);
@@ -2011,8 +2054,12 @@ impl RepositoryImplEmitter {
                     }
 
                     // Get via entity's schema for table name
-                    let via_schema = db.get_schema_in_domain(&entry.via_entity, domain).await?
-                        .ok_or_else(|| crate::error::Error::SchemaNotFound(entry.via_entity.clone()))?;
+                    let via_schema = db
+                        .get_schema_in_domain(&entry.via_entity, domain)
+                        .await?
+                        .ok_or_else(|| {
+                            crate::error::Error::SchemaNotFound(entry.via_entity.clone())
+                        })?;
 
                     // Get parent entity's schema for table name
                     let parent_schema = if let Some(ref name) = parent_entity_name {
@@ -2029,12 +2076,22 @@ impl RepositoryImplEmitter {
                         Vec::new()
                     };
 
-                    if let (Some(p_ref), Some(fk), Some(parent_schema)) = (parent_ref_col, via_fk, parent_schema) {
+                    if let (Some(p_ref), Some(fk), Some(parent_schema)) =
+                        (parent_ref_col, via_fk, parent_schema)
+                    {
                         resolved.push(TreeIncludeResolved {
                             alias: entry.alias.clone(),
-                            via_table: format!("{}.{}", via_schema.domain.as_deref().unwrap_or("public"), via_schema.pg_table_name),
+                            via_table: format!(
+                                "{}.{}",
+                                via_schema.domain.as_deref().unwrap_or("public"),
+                                via_schema.pg_table_name
+                            ),
                             via_fk_column: fk,
-                            parent_table: format!("{}.{}", parent_schema.domain.as_deref().unwrap_or("public"), parent_schema.pg_table_name),
+                            parent_table: format!(
+                                "{}.{}",
+                                parent_schema.domain.as_deref().unwrap_or("public"),
+                                parent_schema.pg_table_name
+                            ),
                             parent_ref_column: p_ref,
                             worker_detail_joins,
                         });
@@ -2053,6 +2110,7 @@ impl RepositoryImplEmitter {
             direct_columns,
             child_tables,
             has_create,
+            has_read,
             has_update,
             has_delete,
             has_workflow,
@@ -2075,7 +2133,12 @@ impl RepositoryImplEmitter {
             tree.entity_name
         )
         .unwrap();
-        writeln!(code, "//! DO NOT EDIT — generated by {}.", crate::generate::get_project_config().generator_name).unwrap();
+        writeln!(
+            code,
+            "//! DO NOT EDIT — generated by {}.",
+            crate::generate::get_project_config().generator_name
+        )
+        .unwrap();
         writeln!(code).unwrap();
         writeln!(code, "use async_trait::async_trait;").unwrap();
         writeln!(code, "use sea_orm::{{").unwrap();
@@ -2083,31 +2146,41 @@ impl RepositoryImplEmitter {
             .direct_columns
             .iter()
             .any(|c| c.pg_cast.is_some() && !c.is_composite_range);
-        if tree.child_tables.is_empty()
-            && !tree.has_fts
-            && !tree.has_embeddings
-            && !has_range_cols
-            && tree.hierarchy_field.is_none()
-        {
-            writeln!(
-                code,
-                "    ActiveModelTrait, ColumnTrait, DatabaseTransaction,"
-            )
-            .unwrap();
-            writeln!(
-                code,
-                "    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,"
-            )
-            .unwrap();
-        } else {
-            writeln!(code, "    ActiveModelTrait, ColumnTrait, ConnectionTrait,").unwrap();
-            writeln!(
-                code,
-                "    DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,"
-            )
-            .unwrap();
-            writeln!(code, "    DatabaseBackend, Statement,").unwrap();
+        // Only count child tables that actually produce raw SQL inserts
+        // (empty children are skipped by emit_child_inserts).
+        let has_meaningful_children = tree
+            .child_tables
+            .iter()
+            .any(|c| !c.columns.is_empty() || !c.child_tables.is_empty());
+        let needs_raw_sql = has_meaningful_children
+            || tree.has_fts
+            || tree.has_embeddings
+            || has_range_cols
+            || tree.hierarchy_field.is_some();
+        let needs_active_model =
+            tree.has_create || tree.has_update || (tree.is_auditable && tree.has_delete);
+
+        let mut sea_orm_items: Vec<&str> = Vec::new();
+        if needs_active_model {
+            sea_orm_items.push("ActiveModelTrait");
         }
+        sea_orm_items.push("ColumnTrait");
+        if needs_raw_sql {
+            sea_orm_items.push("ConnectionTrait");
+        }
+        sea_orm_items.push("DatabaseTransaction");
+        sea_orm_items.push("EntityTrait");
+        sea_orm_items.push("PaginatorTrait");
+        sea_orm_items.push("QueryFilter");
+        sea_orm_items.push("QueryOrder");
+        if needs_active_model {
+            sea_orm_items.push("Set");
+        }
+        if needs_raw_sql {
+            sea_orm_items.push("DatabaseBackend");
+            sea_orm_items.push("Statement");
+        }
+        writeln!(code, "    {},", sea_orm_items.join(", ")).unwrap();
         writeln!(code, "}};").unwrap();
         writeln!(code, "use uuid::Uuid;").unwrap();
         writeln!(code).unwrap();
@@ -2165,6 +2238,28 @@ impl RepositoryImplEmitter {
     }
 
     fn emit_create_fn(&self, tree: &EntityTree, code: &mut String) {
+        // Build the body first so we can detect whether the request parameter
+        // is actually referenced (flat entities emit an insert that ignores it).
+        let mut body = String::new();
+        let has_range_cols = tree
+            .direct_columns
+            .iter()
+            .any(|c| c.pg_cast.is_some() && !c.is_composite_range);
+
+        // Dispatch to CrudOp::CreateActiveModel or CrudOp::CreateRawSql
+        if has_range_cols {
+            // Use raw SQL INSERT so range parameters get explicit casts
+            self.emit_create_raw_sql(tree, &mut body);
+        } else {
+            // Use SeaORM ActiveModel insert (no range columns)
+            self.emit_create_active_model(tree, &mut body);
+        }
+
+        // Insert child table rows (recursively handles nested children).
+        emit_child_inserts(&mut body, &tree.child_tables, "id", "cmd", 2);
+
+        let cmd_ident = if body.contains("cmd.") { "cmd" } else { "_cmd" };
+
         writeln!(
             code,
             "    #[tracing::instrument(skip(self, tx), fields(db.operation = \"insert\", db.table = \"{}.{}\"))]",
@@ -2174,30 +2269,19 @@ impl RepositoryImplEmitter {
         writeln!(code, "    async fn create(").unwrap();
         writeln!(code, "        &self,").unwrap();
         writeln!(code, "        tx: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        cmd: Create{}Request,", tree.entity_name).unwrap();
+        writeln!(
+            code,
+            "        {cmd_ident}: Create{}Request,",
+            tree.entity_name
+        )
+        .unwrap();
         if tree.parent_ref.is_some() {
             writeln!(code, "        parent_id: Uuid,").unwrap();
         }
         writeln!(code, "    ) -> Result<Uuid, Box<dyn std::error::Error>> {{").unwrap();
         writeln!(code, "        let id = Uuid::new_v4();").unwrap();
         writeln!(code).unwrap();
-        let has_range_cols = tree
-            .direct_columns
-            .iter()
-            .any(|c| c.pg_cast.is_some() && !c.is_composite_range);
-
-        // Dispatch to CrudOp::CreateActiveModel or CrudOp::CreateRawSql
-        if has_range_cols {
-            // Use raw SQL INSERT so range parameters get explicit casts
-            self.emit_create_raw_sql(tree, code);
-        } else {
-            // Use SeaORM ActiveModel insert (no range columns)
-            self.emit_create_active_model(tree, code);
-        }
-
-        // Insert child table rows (recursively handles nested children).
-        emit_child_inserts(code, &tree.child_tables, "id", "cmd", 2);
-
+        code.push_str(&body);
         writeln!(code).unwrap();
         writeln!(code, "        Ok(id)").unwrap();
         writeln!(code, "    }}").unwrap();
@@ -2555,6 +2639,12 @@ impl RepositoryImplEmitter {
     }
 
     fn emit_update_fn(&self, tree: &EntityTree, code: &mut String) {
+        // Build the body first so we can detect whether the request parameter
+        // is actually referenced (flat entities emit an update that ignores it).
+        let mut body = String::new();
+        self.emit_update_body(tree, &mut body);
+        let cmd_ident = if body.contains("cmd.") { "cmd" } else { "_cmd" };
+
         writeln!(code).unwrap();
         writeln!(
             code,
@@ -2566,8 +2656,20 @@ impl RepositoryImplEmitter {
         writeln!(code, "        &self,").unwrap();
         writeln!(code, "        tx: &DatabaseTransaction,").unwrap();
         writeln!(code, "        id: Uuid,").unwrap();
-        writeln!(code, "        cmd: Update{}Request,", tree.entity_name).unwrap();
+        writeln!(
+            code,
+            "        {cmd_ident}: Update{}Request,",
+            tree.entity_name
+        )
+        .unwrap();
         writeln!(code, "    ) -> Result<(), Box<dyn std::error::Error>> {{").unwrap();
+        code.push_str(&body);
+        writeln!(code).unwrap();
+        writeln!(code, "        Ok(())").unwrap();
+        writeln!(code, "    }}").unwrap();
+    }
+
+    fn emit_update_body(&self, tree: &EntityTree, code: &mut String) {
         writeln!(
             code,
             "        // Update {}.{} — only set fields present in the update request",
@@ -2673,8 +2775,8 @@ impl RepositoryImplEmitter {
             .unwrap();
             for col in &range_cols {
                 let cast = col.pg_cast.as_deref().unwrap();
-            let dto_field = col.dto_name();
-            let pg_col = q(&col.pg_column_name);
+                let dto_field = col.dto_name();
+                let pg_col = q(&col.pg_column_name);
                 let typed_value = typed_value_expr(&col.rust_type, "v");
                 writeln!(code, "            if let Some(v) = cmd.{dto_field} {{").unwrap();
                 let set_expr = if crate::generate::is_geometry_cast(cast) {
@@ -2848,10 +2950,6 @@ impl RepositoryImplEmitter {
                 writeln!(code, "        }}").unwrap();
             }
         }
-
-        writeln!(code).unwrap();
-        writeln!(code, "        Ok(())").unwrap();
-        writeln!(code, "    }}").unwrap();
     }
 
     fn emit_delete_fn(&self, tree: &EntityTree, code: &mut String) {
@@ -2955,8 +3053,9 @@ impl RepositoryImplEmitter {
         .unwrap();
 
         // Build filter condition from JSON:API filter params.
-        let has_any_filters =
-            !tree.filter_fields.is_empty() || !tree.nested_filter_fields.is_empty() || tree.parent_ref.is_some();
+        let has_any_filters = !tree.filter_fields.is_empty()
+            || !tree.nested_filter_fields.is_empty()
+            || tree.parent_ref.is_some();
         if has_any_filters {
             writeln!(
                 code,
@@ -3018,7 +3117,11 @@ impl RepositoryImplEmitter {
             // --- Parent ref filter (child entity scoped to a parent) ---
             if let Some(ref parent_ref) = tree.parent_ref {
                 let pascal_col = codegraph_naming::to_pascal_case(parent_ref);
-                writeln!(code, "        if let Some(val) = filters.get(\"{parent_ref}\") {{").unwrap();
+                writeln!(
+                    code,
+                    "        if let Some(val) = filters.get(\"{parent_ref}\") {{"
+                )
+                .unwrap();
                 writeln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{parent_ref}': {{e}}\")))?;").unwrap();
                 writeln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col).unwrap();
                 writeln!(code, "        }}").unwrap();
@@ -3326,7 +3429,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
         }
-        writeln!(code, "        let sql = if let Some(depth) = max_depth {{").unwrap();
+        writeln!(code, "        let sql = if let Some(_depth) = max_depth {{").unwrap();
         writeln!(
             code,
             "            format!(\"WITH RECURSIVE tree AS (SELECT *, 0 AS _tree_depth FROM {schema}.{table} WHERE id = $1 UNION ALL SELECT c.*, t._tree_depth + 1 AS _tree_depth FROM {schema}.{table} c JOIN tree t ON c.{hf} = t.id WHERE t._tree_depth < $2) SELECT * FROM tree ORDER BY _tree_depth, created_at\",)",
@@ -3445,7 +3548,11 @@ impl RepositoryImplEmitter {
             "        let mut worker_map: std::collections::HashMap<Uuid, serde_json::Value> = std::collections::HashMap::new();"
         )
         .unwrap();
-        writeln!(code, "        let pos_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();").unwrap();
+        writeln!(
+            code,
+            "        let pos_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();"
+        )
+        .unwrap();
         writeln!(code).unwrap();
         for inc in &tree.tree_include {
             // Build JOIN chain from parent table through worker detail tables.
@@ -3461,7 +3568,10 @@ impl RepositoryImplEmitter {
             // Index 1 (name): alias "wpn", parent alias "wp" (person)
             for (i, (table, fk_col, parent_alias)) in inc.worker_detail_joins.iter().enumerate() {
                 let alias = if i == 0 { "wp" } else { "wpn" };
-                from_clause.push_str(&format!(" JOIN {} {} ON {}.{} = {}.id", table, alias, alias, fk_col, parent_alias));
+                from_clause.push_str(&format!(
+                    " JOIN {} {} ON {}.{} = {}.id",
+                    table, alias, alias, fk_col, parent_alias
+                ));
                 has_person = true;
             }
             if has_person {
@@ -3489,7 +3599,11 @@ impl RepositoryImplEmitter {
                 "        let worker_stmt = Statement::from_sql_and_values(DatabaseBackend::Postgres, worker_sql, vec![pos_ids.clone().into()]);"
             )
             .unwrap();
-            writeln!(code, "        let worker_rows = db.query_all(worker_stmt).await?;").unwrap();
+            writeln!(
+                code,
+                "        let worker_rows = db.query_all(worker_stmt).await?;"
+            )
+            .unwrap();
             writeln!(code, "        for wr in &worker_rows {{").unwrap();
             writeln!(code, "            let pos_id: Uuid = wr.try_get_by_index(0).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Missing position_id: {{e}}\").into() }})?;").unwrap();
             writeln!(code, "            let worker_json: serde_json::Value = wr.try_get_by_index(1).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Missing deployed_worker: {{e}}\").into() }})?;").unwrap();
@@ -3497,81 +3611,6 @@ impl RepositoryImplEmitter {
             writeln!(code, "        }}").unwrap();
             writeln!(code).unwrap();
         }
-    }
-
-    /// Emit `find_ancestors` — recursive CTE fetching ancestors from a node to the root.
-    fn emit_find_ancestors_fn(&self, tree: &EntityTree, code: &mut String) {
-        let hf = tree.hierarchy_field.as_deref().unwrap();
-        writeln!(code).unwrap();
-        writeln!(
-            code,
-            "    #[tracing::instrument(skip(self, db), fields(db.operation = \"find_ancestors\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "    async fn find_ancestors(").unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        node_id: Uuid,").unwrap();
-        writeln!(
-            code,
-            "    ) -> Result<Vec<{}Response>, Box<dyn std::error::Error>> {{",
-            tree.entity_name
-        )
-        .unwrap();
-        writeln!(code, "        let stmt = Statement::from_sql_and_values(",).unwrap();
-        writeln!(code, "            DatabaseBackend::Postgres,").unwrap();
-        writeln!(
-            code,
-            "            \"WITH RECURSIVE ancestors AS (SELECT * FROM {schema}.{table} WHERE id = $1 UNION ALL SELECT p.* FROM {schema}.{table} p JOIN ancestors a ON a.{hf} = p.id) SELECT * FROM ancestors\",",
-            schema = tree.schema_name,
-            table = q(&tree.table_name),
-            hf = hf
-        )
-        .unwrap();
-        writeln!(code, "            vec![node_id.into()],").unwrap();
-        writeln!(code, "        );").unwrap();
-        writeln!(
-            code,
-            "        let rows = crate::entity::{}::Entity::find()",
-            tree.entity_module
-        )
-        .unwrap();
-        writeln!(code, "            .from_raw_sql(stmt)").unwrap();
-        writeln!(code, "            .all(db)").unwrap();
-        writeln!(code, "            .await?;").unwrap();
-        writeln!(code).unwrap();
-        writeln!(
-            code,
-            "        let mut results = Vec::with_capacity(rows.len());"
-        )
-        .unwrap();
-        writeln!(code, "        for row in rows {{").unwrap();
-        emit_child_reads(code, &tree.child_tables, "row.id", 3);
-        writeln!(
-            code,
-            "            results.push({}Response {{",
-            tree.entity_name
-        )
-        .unwrap();
-        writeln!(code, "                id: row.id,").unwrap();
-        for col in &tree.direct_columns {
-            if col.is_composite_range {
-                continue;
-            }
-            emit_entity_to_dto_field(code, col, "row", "                ");
-        }
-        emit_child_field_population(code, &tree.child_tables, "                ");
-        if tree.has_workflow {
-            writeln!(code, "                workflow_state: None,").unwrap();
-        }
-        writeln!(code, "                created_at: row.created_at,").unwrap();
-        writeln!(code, "                updated_at: row.updated_at,").unwrap();
-        writeln!(code, "            }});").unwrap();
-        writeln!(code, "        }}").unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "        Ok(results)").unwrap();
-        writeln!(code, "    }}").unwrap();
     }
 
     fn emit_include_fetch_methods(
@@ -3587,37 +3626,122 @@ impl RepositoryImplEmitter {
         include_segment_is_nullable: &[Vec<Vec<bool>>],
     ) {
         for (idx, path) in include_paths.iter().enumerate() {
-            let per_seg_dto = include_segment_dto_fields.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
-            let per_seg_col = include_segment_col_fields.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
-            let per_seg_structured = include_segment_is_structured.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
-            let per_seg_codelist = include_segment_is_codelist.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
-            let per_seg_dto_types = include_segment_dto_rust_types.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
-            let per_seg_is_nullable = include_segment_is_nullable.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+            let per_seg_dto = include_segment_dto_fields
+                .get(idx)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let per_seg_col = include_segment_col_fields
+                .get(idx)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let per_seg_structured = include_segment_is_structured
+                .get(idx)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let per_seg_codelist = include_segment_is_codelist
+                .get(idx)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let per_seg_dto_types = include_segment_dto_rust_types
+                .get(idx)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let per_seg_is_nullable = include_segment_is_nullable
+                .get(idx)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
             if path.segments.len() == 1 {
                 let dto_fields = per_seg_dto.first().map(|v| v.as_slice()).unwrap_or(&[]);
                 let col_fields = per_seg_col.first().map(|v| v.as_slice()).unwrap_or(&[]);
-                let is_structured = per_seg_structured.first().map(|v| v.as_slice()).unwrap_or(&[]);
-                let is_codelist = per_seg_codelist.first().map(|v| v.as_slice()).unwrap_or(&[]);
-                let dto_rust_types = per_seg_dto_types.first().map(|v| v.as_slice()).unwrap_or(&[]);
-                let is_nullable = per_seg_is_nullable.first().map(|v| v.as_slice()).unwrap_or(&[]);
-                self.emit_single_fetch_method(tree, code, path, dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
-                self.emit_batch_fetch_method(tree, code, path, dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+                let is_structured = per_seg_structured
+                    .first()
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let is_codelist = per_seg_codelist
+                    .first()
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let dto_rust_types = per_seg_dto_types
+                    .first()
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let is_nullable = per_seg_is_nullable
+                    .first()
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                self.emit_single_fetch_method(
+                    tree,
+                    code,
+                    path,
+                    dto_fields,
+                    col_fields,
+                    is_structured,
+                    is_codelist,
+                    dto_rust_types,
+                    is_nullable,
+                );
+                self.emit_batch_fetch_method(
+                    tree,
+                    code,
+                    path,
+                    dto_fields,
+                    col_fields,
+                    is_structured,
+                    is_codelist,
+                    dto_rust_types,
+                    is_nullable,
+                );
             } else {
                 let intermediate_dto = per_seg_dto.first().map(|v| v.as_slice()).unwrap_or(&[]);
                 let leaf_dto = per_seg_dto.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
                 let intermediate_col = per_seg_col.first().map(|v| v.as_slice()).unwrap_or(&[]);
                 let leaf_col = per_seg_col.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
-                let intermediate_structured = per_seg_structured.first().map(|v| v.as_slice()).unwrap_or(&[]);
-                let intermediate_codelist = per_seg_codelist.first().map(|v| v.as_slice()).unwrap_or(&[]);
-                let leaf_structured = per_seg_structured.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
+                let intermediate_structured = per_seg_structured
+                    .first()
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let intermediate_codelist = per_seg_codelist
+                    .first()
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let leaf_structured = per_seg_structured
+                    .get(1)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
                 let leaf_codelist = per_seg_codelist.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
-                let intermediate_dto_types = per_seg_dto_types.first().map(|v| v.as_slice()).unwrap_or(&[]);
-                let leaf_dto_types = per_seg_dto_types.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
-                let intermediate_nullable = per_seg_is_nullable.first().map(|v| v.as_slice()).unwrap_or(&[]);
-                let leaf_nullable = per_seg_is_nullable.get(1).map(|v| v.as_slice()).unwrap_or(&[]);
-                self.emit_dot_fetch_method(tree, code, path,
-                    intermediate_dto, intermediate_col, intermediate_structured, intermediate_codelist, intermediate_dto_types, intermediate_nullable,
-                    leaf_dto, leaf_col, leaf_structured, leaf_codelist, leaf_dto_types, leaf_nullable);
+                let intermediate_dto_types = per_seg_dto_types
+                    .first()
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let leaf_dto_types = per_seg_dto_types
+                    .get(1)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let intermediate_nullable = per_seg_is_nullable
+                    .first()
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let leaf_nullable = per_seg_is_nullable
+                    .get(1)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                self.emit_dot_fetch_method(
+                    tree,
+                    code,
+                    path,
+                    intermediate_dto,
+                    intermediate_col,
+                    intermediate_structured,
+                    intermediate_codelist,
+                    intermediate_dto_types,
+                    intermediate_nullable,
+                    leaf_dto,
+                    leaf_col,
+                    leaf_structured,
+                    leaf_codelist,
+                    leaf_dto_types,
+                    leaf_nullable,
+                );
             }
         }
     }
@@ -3626,9 +3750,19 @@ impl RepositoryImplEmitter {
     /// Uses `dto_fields` for the left side (response struct field names) and
     /// `col_fields` for the right side (entity Model field names from pg_column_name).
     /// These differ for codelist fields: DTO uses "worker_type", entity uses "worker_type_code".
-    fn emit_field_assignments(code: &mut String, row_var: &str, dto_fields: &[String], col_fields: &[String]) {
+    fn emit_field_assignments(
+        code: &mut String,
+        row_var: &str,
+        dto_fields: &[String],
+        col_fields: &[String],
+    ) {
         for (dto_name, col_name) in dto_fields.iter().zip(col_fields.iter()) {
-            writeln!(code, "                {}: {}.{},", dto_name, row_var, col_name).unwrap();
+            writeln!(
+                code,
+                "                {}: {}.{},",
+                dto_name, row_var, col_name
+            )
+            .unwrap();
         }
     }
 
@@ -3661,7 +3795,11 @@ impl RepositoryImplEmitter {
                         "                {dto_name}: serde_json::from_value({row_var}.{col_name}).unwrap_or_default(),",
                     ).unwrap();
                 }
-            } else if i < is_codelist.len() && is_codelist[i] && i < dto_rust_types.len() && dto_rust_types[i].is_some() {
+            } else if i < is_codelist.len()
+                && is_codelist[i]
+                && i < dto_rust_types.len()
+                && dto_rust_types[i].is_some()
+            {
                 // Codelist: .parse()
                 writeln!(
                     code,
@@ -3691,12 +3829,7 @@ impl RepositoryImplEmitter {
         let target_module = format!("{}_{}", seg.domain, seg.module_name);
 
         writeln!(code).unwrap();
-        writeln!(
-            code,
-            "    pub(crate) async fn {}(",
-            path.fetch_method
-        )
-        .unwrap();
+        writeln!(code, "    pub(crate) async fn {}(", path.fetch_method).unwrap();
         writeln!(code, "        &self,").unwrap();
         writeln!(code, "        db: &DatabaseTransaction,").unwrap();
         writeln!(code, "        source_id: Uuid,").unwrap();
@@ -3738,7 +3871,16 @@ impl RepositoryImplEmitter {
             writeln!(code, "            None => return Ok(None),").unwrap();
             writeln!(code, "        }};").unwrap();
             writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
-            Self::emit_field_assignments_typed(code, "target", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            Self::emit_field_assignments_typed(
+                code,
+                "target",
+                dto_fields,
+                col_fields,
+                is_structured,
+                is_codelist,
+                dto_rust_types,
+                is_nullable,
+            );
             writeln!(code, "            ..Default::default()").unwrap();
             writeln!(code, "        }}))").unwrap();
         } else if seg.is_array {
@@ -3765,7 +3907,16 @@ impl RepositoryImplEmitter {
             writeln!(code, "        for row in rows {{").unwrap();
             writeln!(code, "            results.push({} {{", resp_type).unwrap();
             writeln!(code, "                id: row.id,").unwrap();
-            Self::emit_field_assignments_typed(code, "row", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            Self::emit_field_assignments_typed(
+                code,
+                "row",
+                dto_fields,
+                col_fields,
+                is_structured,
+                is_codelist,
+                dto_rust_types,
+                is_nullable,
+            );
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
             writeln!(code, "                ..Default::default()").unwrap();
@@ -3820,7 +3971,16 @@ impl RepositoryImplEmitter {
             writeln!(code, "        }};").unwrap();
             writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
             writeln!(code, "            id: target.id,").unwrap();
-            Self::emit_field_assignments_typed(code, "target", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            Self::emit_field_assignments_typed(
+                code,
+                "target",
+                dto_fields,
+                col_fields,
+                is_structured,
+                is_codelist,
+                dto_rust_types,
+                is_nullable,
+            );
             writeln!(code, "            created_at: target.created_at,").unwrap();
             writeln!(code, "            updated_at: target.updated_at,").unwrap();
             writeln!(code, "            ..Default::default()").unwrap();
@@ -3848,12 +4008,7 @@ impl RepositoryImplEmitter {
         let target_module = format!("{}_{}", seg.domain, seg.module_name);
 
         writeln!(code).unwrap();
-        writeln!(
-            code,
-            "    pub(crate) async fn {}(",
-            path.batch_fetch_method
-        )
-        .unwrap();
+        writeln!(code, "    pub(crate) async fn {}(", path.batch_fetch_method).unwrap();
         writeln!(code, "        &self,").unwrap();
         writeln!(code, "        db: &DatabaseTransaction,").unwrap();
         writeln!(code, "        source_ids: &[Uuid],").unwrap();
@@ -3902,11 +4057,19 @@ impl RepositoryImplEmitter {
             writeln!(
                 code,
                 "            result.insert(row.{}, Some({} {{",
-                over.parent_fk_column,
-                resp_type,
+                over.parent_fk_column, resp_type,
             )
             .unwrap();
-            Self::emit_field_assignments_typed(code, "row", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            Self::emit_field_assignments_typed(
+                code,
+                "row",
+                dto_fields,
+                col_fields,
+                is_structured,
+                is_codelist,
+                dto_rust_types,
+                is_nullable,
+            );
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }}));").unwrap();
             writeln!(code, "        }}").unwrap();
@@ -3956,7 +4119,16 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code, "                id: row.id,").unwrap();
-            Self::emit_field_assignments_typed(code, "row", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            Self::emit_field_assignments_typed(
+                code,
+                "row",
+                dto_fields,
+                col_fields,
+                is_structured,
+                is_codelist,
+                dto_rust_types,
+                is_nullable,
+            );
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
             writeln!(code, "                ..Default::default()").unwrap();
@@ -3977,11 +4149,7 @@ impl RepositoryImplEmitter {
             .unwrap();
             writeln!(code, "            .all(db)").unwrap();
             writeln!(code, "            .await?;").unwrap();
-            writeln!(
-                code,
-                "        let mut fk_values: Vec<Uuid> = Vec::new();"
-            )
-            .unwrap();
+            writeln!(code, "        let mut fk_values: Vec<Uuid> = Vec::new();").unwrap();
             writeln!(code, "        for source in &sources {{").unwrap();
             writeln!(
                 code,
@@ -4013,15 +4181,20 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code, "            id: t.id,").unwrap();
-            Self::emit_field_assignments_typed(code, "t", dto_fields, col_fields, is_structured, is_codelist, dto_rust_types, is_nullable);
+            Self::emit_field_assignments_typed(
+                code,
+                "t",
+                dto_fields,
+                col_fields,
+                is_structured,
+                is_codelist,
+                dto_rust_types,
+                is_nullable,
+            );
             writeln!(code, "            created_at: t.created_at,").unwrap();
             writeln!(code, "            updated_at: t.updated_at,").unwrap();
             writeln!(code, "            ..Default::default()").unwrap();
-            writeln!(
-                code,
-                "        }})).collect();"
-            )
-            .unwrap();
+            writeln!(code, "        }})).collect();").unwrap();
             writeln!(
                 code,
                 "        let mut result: std::collections::HashMap<Uuid, Option<{}>> = std::collections::HashMap::new();",
@@ -4035,11 +4208,7 @@ impl RepositoryImplEmitter {
                 seg.fk_column
             )
             .unwrap();
-            writeln!(
-                code,
-                "            result.insert(*id, found);"
-            )
-            .unwrap();
+            writeln!(code, "            result.insert(*id, found);").unwrap();
             writeln!(code, "        }}").unwrap();
         }
 
@@ -4068,17 +4237,16 @@ impl RepositoryImplEmitter {
         let seg0 = &path.segments[0];
         let seg1 = &path.segments[1];
         let resp_type = &path.response_rust_type;
-        let leaf_resp_type = path.segments.last().map(|s| format!("{}Response", s.entity_name)).unwrap_or_default();
+        let leaf_resp_type = path
+            .segments
+            .last()
+            .map(|s| format!("{}Response", s.entity_name))
+            .unwrap_or_default();
         let intermediate_module = format!("{}_{}", seg0.domain, seg0.module_name);
         let leaf_module = format!("{}_{}", seg1.domain, seg1.module_name);
 
         writeln!(code).unwrap();
-        writeln!(
-            code,
-            "    pub(crate) async fn {}(",
-            path.fetch_method
-        )
-        .unwrap();
+        writeln!(code, "    pub(crate) async fn {}(", path.fetch_method).unwrap();
         writeln!(code, "        &self,").unwrap();
         writeln!(code, "        db: &DatabaseTransaction,").unwrap();
         writeln!(code, "        source_id: Uuid,").unwrap();
@@ -4143,18 +4311,41 @@ impl RepositoryImplEmitter {
         writeln!(code, "            .await?;").unwrap();
 
         // Build enriched response: base fields from intermediate, nested leaf from leaf
-        writeln!(code, "        let leaf_dto = leaf.map(|l| {} {{", leaf_resp_type).unwrap();
+        writeln!(
+            code,
+            "        let leaf_dto = leaf.map(|l| {} {{",
+            leaf_resp_type
+        )
+        .unwrap();
         writeln!(code, "            id: l.id,").unwrap();
-        Self::emit_field_assignments_typed(code, "l", leaf_dto, leaf_col, leaf_structured, leaf_codelist, leaf_dto_types, leaf_nullable);
+        Self::emit_field_assignments_typed(
+            code,
+            "l",
+            leaf_dto,
+            leaf_col,
+            leaf_structured,
+            leaf_codelist,
+            leaf_dto_types,
+            leaf_nullable,
+        );
         writeln!(code, "            created_at: l.created_at,").unwrap();
         writeln!(code, "            updated_at: l.updated_at,").unwrap();
         writeln!(code, "            ..Default::default()").unwrap();
-            writeln!(code, "        }});").unwrap();
+        writeln!(code, "        }});").unwrap();
 
         writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
         writeln!(code, "            id: intermediate.id,").unwrap();
         // Intermediate entity fields go into the enriched struct base
-        Self::emit_field_assignments_typed(code, "intermediate", intermediate_dto, intermediate_col, intermediate_structured, intermediate_codelist, intermediate_dto_types, intermediate_nullable);
+        Self::emit_field_assignments_typed(
+            code,
+            "intermediate",
+            intermediate_dto,
+            intermediate_col,
+            intermediate_structured,
+            intermediate_codelist,
+            intermediate_dto_types,
+            intermediate_nullable,
+        );
         writeln!(code, "            created_at: intermediate.created_at,").unwrap();
         writeln!(code, "            updated_at: intermediate.updated_at,").unwrap();
         writeln!(code, "            {}: leaf_dto,", seg1.module_name).unwrap();

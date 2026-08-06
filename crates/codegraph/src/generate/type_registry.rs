@@ -157,17 +157,35 @@ mod tests {
         let mut reg = InMemoryTypeRegistry::new();
         reg.register(TypeRef {
             name: "WorkerResponse".into(),
-            module_path: vec!["crate".into(), "domain".into(), "common".into(), "worker".into(), "dto_response".into()],
+            module_path: vec![
+                "crate".into(),
+                "domain".into(),
+                "common".into(),
+                "worker".into(),
+                "dto_response".into(),
+            ],
         })
         .unwrap();
         reg.register(TypeRef {
             name: "WorkerRepository".into(),
-            module_path: vec!["crate".into(), "domain".into(), "common".into(), "worker".into(), "repository".into()],
+            module_path: vec![
+                "crate".into(),
+                "domain".into(),
+                "common".into(),
+                "worker".into(),
+                "repository".into(),
+            ],
         })
         .unwrap();
         reg.register(TypeRef {
             name: "OrderResponse".into(),
-            module_path: vec!["crate".into(), "domain".into(), "assessments".into(), "order".into(), "dto_response".into()],
+            module_path: vec![
+                "crate".into(),
+                "domain".into(),
+                "assessments".into(),
+                "order".into(),
+                "dto_response".into(),
+            ],
         })
         .unwrap();
         reg
@@ -177,7 +195,13 @@ mod tests {
     fn test_type_ref_full_path() {
         let tr = TypeRef {
             name: "WorkerResponse".into(),
-            module_path: vec!["crate".into(), "domain".into(), "common".into(), "worker".into(), "dto_response".into()],
+            module_path: vec![
+                "crate".into(),
+                "domain".into(),
+                "common".into(),
+                "worker".into(),
+                "dto_response".into(),
+            ],
         };
         assert_eq!(
             tr.full_path(),
@@ -189,7 +213,13 @@ mod tests {
     fn test_type_ref_use_statement() {
         let tr = TypeRef {
             name: "WorkerResponse".into(),
-            module_path: vec!["crate".into(), "domain".into(), "common".into(), "worker".into(), "dto_response".into()],
+            module_path: vec![
+                "crate".into(),
+                "domain".into(),
+                "common".into(),
+                "worker".into(),
+                "dto_response".into(),
+            ],
         };
         assert_eq!(
             tr.use_statement(),
@@ -202,7 +232,13 @@ mod tests {
         let mut reg = InMemoryTypeRegistry::new();
         reg.register(TypeRef {
             name: "FooResponse".into(),
-            module_path: vec!["crate".into(), "domain".into(), "test".into(), "foo".into(), "dto_response".into()],
+            module_path: vec![
+                "crate".into(),
+                "domain".into(),
+                "test".into(),
+                "foo".into(),
+                "dto_response".into(),
+            ],
         })
         .unwrap();
         let resolved = reg.resolve("FooResponse");
@@ -215,12 +251,24 @@ mod tests {
         let mut reg = InMemoryTypeRegistry::new();
         reg.register(TypeRef {
             name: "FooResponse".into(),
-            module_path: vec!["crate".into(), "domain".into(), "test".into(), "foo".into(), "dto_response".into()],
+            module_path: vec![
+                "crate".into(),
+                "domain".into(),
+                "test".into(),
+                "foo".into(),
+                "dto_response".into(),
+            ],
         })
         .unwrap();
         let err = reg.register(TypeRef {
             name: "FooResponse".into(),
-            module_path: vec!["crate".into(), "domain".into(), "test".into(), "bar".into(), "dto_response".into()],
+            module_path: vec![
+                "crate".into(),
+                "domain".into(),
+                "test".into(),
+                "bar".into(),
+                "dto_response".into(),
+            ],
         });
         assert!(err.is_err());
     }
@@ -230,12 +278,24 @@ mod tests {
         let mut reg = InMemoryTypeRegistry::new();
         reg.register(TypeRef {
             name: "FooResponse".into(),
-            module_path: vec!["crate".into(), "domain".into(), "test".into(), "foo".into(), "dto_response".into()],
+            module_path: vec![
+                "crate".into(),
+                "domain".into(),
+                "test".into(),
+                "foo".into(),
+                "dto_response".into(),
+            ],
         })
         .unwrap();
         let result = reg.register(TypeRef {
             name: "FooResponse".into(),
-            module_path: vec!["crate".into(), "domain".into(), "test".into(), "foo".into(), "dto_response".into()],
+            module_path: vec![
+                "crate".into(),
+                "domain".into(),
+                "test".into(),
+                "foo".into(),
+                "dto_response".into(),
+            ],
         });
         assert!(result.is_ok());
     }
@@ -249,7 +309,13 @@ mod tests {
     #[test]
     fn test_imports_needed_same_module() {
         let reg = make_registry();
-        let caller: Vec<String> = vec!["crate".into(), "domain".into(), "common".into(), "worker".into(), "dto_response".into()];
+        let caller: Vec<String> = vec![
+            "crate".into(),
+            "domain".into(),
+            "common".into(),
+            "worker".into(),
+            "dto_response".into(),
+        ];
         let imports = reg.imports_needed(&["WorkerResponse".into()], &caller);
         assert!(imports.is_empty(), "same module should produce no imports");
     }
@@ -257,7 +323,13 @@ mod tests {
     #[test]
     fn test_imports_needed_cross_module() {
         let reg = make_registry();
-        let caller: Vec<String> = vec!["crate".into(), "domain".into(), "common".into(), "worker".into(), "dto_included".into()];
+        let caller: Vec<String> = vec![
+            "crate".into(),
+            "domain".into(),
+            "common".into(),
+            "worker".into(),
+            "dto_included".into(),
+        ];
         let imports = reg.imports_needed(&["OrderResponse".into()], &caller);
         assert_eq!(imports.len(), 1);
         assert_eq!(

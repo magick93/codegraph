@@ -44,8 +44,7 @@ pub async fn collect_ui_fields(
                 db.get_property_ref_target(&prop.name, schema_title).await?
             };
             if let Some(target) = target_schema {
-                let source_entity_name =
-                    router::strip_suffix(schema_title, "Type");
+                let source_entity_name = router::strip_suffix(schema_title, "Type");
                 // TS interface name for the parent type to reference, e.g. "WorkerPersonLegalResponse"
                 let ts_type_name = format!(
                     "{}{}Response",
@@ -56,10 +55,34 @@ pub async fn collect_ui_fields(
                 let schema_title_for_ref = target.title.clone();
                 // Strip Rust r# prefix — it is only needed for Rust identifiers,
                 // not for TypeScript / Svelte property access.
-                let ts_name = prop.rust_field_name
+                let ts_name = prop
+                    .rust_field_name
                     .strip_prefix("r#")
                     .unwrap_or(&prop.rust_field_name)
                     .to_string();
+                // Query structured sub-fields so the form generator renders nested
+                // ValueObjects (e.g. JurisdictionType → city, country_code, ...)
+                // using StructuredWrapperField instead of a plain text input.
+                let raw_sub_fields = db
+                    .get_structured_sub_fields(&schema_title_for_ref)
+                    .await
+                    .unwrap_or_default();
+                let sub_fields: Vec<super::page::UiSubField> = raw_sub_fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, sf)| {
+                        let snake_name = codegraph_naming::to_snake_case(&sf.name);
+                        let label = super::form::field_name_to_label(&snake_name);
+                        super::page::UiSubField {
+                            name: sf.name.clone(),
+                            snake_name,
+                            label,
+                            is_required: sf.is_required,
+                            description: sf.description.clone(),
+                            show_by_default: sf.is_required || i < 2,
+                        }
+                    })
+                    .collect();
                 fields.push(UiField {
                     name: ts_name.clone(),
                     label: field_name_to_label(&ts_name),
@@ -76,7 +99,7 @@ pub async fn collect_ui_fields(
                     pg_type: prop.pg_column_type.clone(),
                     open_end: false,
                     ref_api_path: None,
-                    structured_sub_fields: vec![],
+                    structured_sub_fields: sub_fields,
                     nested_type_name: Some(schema_title_for_ref),
                 });
             }
@@ -88,7 +111,8 @@ pub async fn collect_ui_fields(
         if prop.effective_kind() == Some(RefClassificationKind::CompositeWrapper) {
             if let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await {
                 for col in &comp_cols {
-                    let base_name = prop.rust_field_name
+                    let base_name = prop
+                        .rust_field_name
                         .strip_prefix("r#")
                         .unwrap_or(&prop.rust_field_name);
                     let field_name = format!("{}{}", base_name, col.suffix);
@@ -245,8 +269,18 @@ pub async fn collect_ui_fields(
                 // the same type name exists in multiple domains (e.g., OrderType
                 // in both assessments and screening).
                 let mut resolved = None;
-                if let Ok(Some(ref_schema)) = db.get_schema_in_domain(ref_schema_title, current_domain.unwrap_or("")).await {
+                if let Ok(Some(ref_schema)) = db
+                    .get_schema_in_domain(ref_schema_title, current_domain.unwrap_or(""))
+                    .await
+                {
                     resolved = Some(ref_schema);
+                }
+                // Fallback: look in all domains (cross-domain references like
+                // timecard.leave_request → common.worker are common).
+                if resolved.is_none() {
+                    if let Ok(Some(ref_schema)) = db.get_schema(ref_schema_title).await {
+                        resolved = Some(ref_schema);
+                    }
                 }
                 // If the resolved schema is in a different domain, check if
                 // the same type exists in the current domain and prefer it.
@@ -286,27 +320,28 @@ pub async fn collect_ui_fields(
         if let Some(domain) = current_domain {
             if let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, domain).await {
                 if schema.is_codelist && domain == "common" {
-                    let mut inject = |name: &str, label: &str, input_type: &str, is_required: bool| {
-                        fields.push(UiField {
-                            name: name.to_string(),
-                            label: label.to_string(),
-                            ts_type: "string".to_string(),
-                            input_type: input_type.to_string(),
-                            is_required,
-                            is_array: false,
-                            is_entity_ref: false,
-                            is_immutable: false,
-                            is_codelist: false,
-                            is_range: false,
-                            codelist_values: vec![],
-                            description: String::new(),
-                            pg_type: "TEXT".to_string(),
-                            open_end: false,
-                            ref_api_path: None,
-                            structured_sub_fields: vec![],
-                            nested_type_name: None,
-                        });
-                    };
+                    let mut inject =
+                        |name: &str, label: &str, input_type: &str, is_required: bool| {
+                            fields.push(UiField {
+                                name: name.to_string(),
+                                label: label.to_string(),
+                                ts_type: "string".to_string(),
+                                input_type: input_type.to_string(),
+                                is_required,
+                                is_array: false,
+                                is_entity_ref: false,
+                                is_immutable: false,
+                                is_codelist: false,
+                                is_range: false,
+                                codelist_values: vec![],
+                                description: String::new(),
+                                pg_type: "TEXT".to_string(),
+                                open_end: false,
+                                ref_api_path: None,
+                                structured_sub_fields: vec![],
+                                nested_type_name: None,
+                            });
+                        };
                     inject("code", "Code", "code", true);
                     inject("display_name", "Display Name", "text", true);
                     inject("sort_order", "Sort Order", "number", false);
