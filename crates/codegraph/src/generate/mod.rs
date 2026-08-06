@@ -266,6 +266,30 @@ pub struct GenerationEntry {
     pub is_cyclic: bool,
 }
 
+/// Returns true if the generator name is an API-layer entity generator
+/// (handler, workflow, media, test, UI, CLI, gRPC, playwright).
+/// DDD generators (ddl, entity, repo, command, query, event, dto, lifecycle_trait,
+/// domain_types) are NOT considered API generators.
+pub fn is_api_entity_generator(name: &str) -> bool {
+    matches!(
+        name,
+        "handler"
+            | "workflow_action"
+            | "media_route"
+            | "test"
+            | "ui-page"
+            | "ui-form"
+            | "ui-store"
+            | "ui-e2e-test"
+            | "playwright-entity"
+            | "ui-descriptor"
+            | "ui-shell"
+            | "cli_command"
+            | "grpc_proto"
+            | "grpc_service"
+    )
+}
+
 /// Configuration for the code generation pipeline.
 ///
 /// Groups all the various config inputs so generator entry points
@@ -763,9 +787,23 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // Within each entity, generators run sequentially.
     let mut entity_results: Vec<(Vec<GeneratedFile>, Vec<report::GenerationError>)> = Vec::new();
     for entry in &order {
+        let generation_mode = config
+            .domains
+            .get(&entry.domain)
+            .and_then(|d| d.get_entity_config(&entry.schema_title))
+            .and_then(|ec| ec.generation_mode.as_deref())
+            .unwrap_or(&config.defaults.generation_mode);
+
+        if generation_mode == "none" {
+            continue;
+        }
+
         let mut entity_files = Vec::new();
         let mut errors = Vec::new();
         for gen in entity_gens.iter() {
+            if generation_mode == "ddd_only" && is_api_entity_generator(gen.name()) {
+                continue;
+            }
             match gen
                 .generate(
                     db,

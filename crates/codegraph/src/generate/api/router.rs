@@ -12,6 +12,8 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{DomainGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
+use super::api_model::resolve_path_segment;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ParentInfo {
     pub entity_name: String,
@@ -169,6 +171,17 @@ impl DomainGenerator for RouterGenerator {
         let mut title_to_entity_idx: HashMap<String, usize> = HashMap::new();
 
         for title in entity_titles {
+            let entity_cfg = config
+                .domains
+                .get(domain)
+                .and_then(|d| d.get_entity_config(title));
+            let generation_mode = entity_cfg
+                .and_then(|ec| ec.generation_mode.as_deref())
+                .unwrap_or(&config.defaults.generation_mode);
+            if generation_mode == "handler_only" || generation_mode == "ddd_only" {
+                continue;
+            }
+
             if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain).await {
                 if !schema.pg_table_name.is_empty() {
                     // Dedup by module name to prevent duplicate route functions
@@ -177,10 +190,6 @@ impl DomainGenerator for RouterGenerator {
                         continue;
                     }
                     let entity_name = &schema.rust_type_name;
-                    let entity_cfg = config
-                        .domains
-                        .get(domain)
-                        .and_then(|d| d.get_entity_config(title));
                     let operations = entity_cfg
                         .and_then(|ec| ec.operations.clone())
                         .unwrap_or_else(|| config.defaults.operations.clone());
@@ -218,7 +227,7 @@ impl DomainGenerator for RouterGenerator {
                     entities.push(RouterEntity {
                         entity_name: entity_name.clone(),
                         module_name: schema.pg_table_name.clone(),
-                        path_segment: schema.api_path_segment.clone(),
+                        path_segment: resolve_path_segment(entity_cfg, &schema),
                         has_create: operations.contains(&"create".to_string()),
                         has_update: operations.contains(&"update".to_string()),
                         has_delete: operations.contains(&"delete".to_string()),
@@ -228,7 +237,7 @@ impl DomainGenerator for RouterGenerator {
                         role: entity_cfg
                             .and_then(|ec| ec.role.clone())
                             .unwrap_or_else(|| "root".into()),
-                        param_name: param_name_from_path_segment(&schema.api_path_segment),
+                        param_name: param_name_from_path_segment(&resolve_path_segment(entity_cfg, &schema)),
                         parent: None,
                         children: vec![],
                         cross_refs: vec![],

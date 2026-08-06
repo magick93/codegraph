@@ -1,3 +1,4 @@
+pub mod api_ingest;
 pub mod async_ingest;
 pub mod ifml_ingest;
 pub mod schema_loader;

@@ -366,3 +366,31 @@ pub async fn list(
     })))
 
 }
+
+
+
+
+// --- Trait-based extensibility ---
+// Uncomment and implement to override generated handler behavior:
+//
+// #[async_trait]
+// pub trait CustomCandidateHandlers {
+//     async fn custom_create(
+//         &self,
+//         state: axum::extract::State<AppState>,
+//         headers: axum::http::HeaderMap,
+//         Json(body): axum::Json<CreateCandidateRequest>,
+//     ) -> Result<axum::response::Response, AppError>;
+// }
+//
+// impl CustomCandidateHandlers for AppState {
+//     async fn custom_create(
+//         &self,
+//         state: axum::extract::State<AppState>,
+//         headers: axum::http::HeaderMap,
+//         Json(body): axum::Json<CreateCandidateRequest>,
+//     ) -> Result<axum::response::Response, AppError> {
+//         // Your custom logic here
+//         todo!()
+//     }
+// }

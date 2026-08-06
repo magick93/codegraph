@@ -13,6 +13,8 @@ use codegraph_core::types::resolve_field;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 
+use crate::generate::api::api_model::resolve_path_segment;
+
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::page::UiField;
 
@@ -186,7 +188,6 @@ impl EntityGenerator for UiFormGenerator {
         let entity_name = schema.rust_type_name.clone();
         let module_name = schema.pg_table_name.clone();
         let domain = domain.to_string();
-        let path_segment = schema.api_path_segment.clone();
 
         if module_name.is_empty() {
             return Ok(Vec::new());
@@ -196,6 +197,8 @@ impl EntityGenerator for UiFormGenerator {
             .domains
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
+
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
 
         let operations = entity_cfg
             .and_then(|ec| ec.operations.clone())

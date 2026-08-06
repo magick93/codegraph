@@ -10,6 +10,7 @@ use super::form::{field_name_to_label, ui_field_from_property};
 use super::page::{ChildSection, UiField};
 use crate::error::Result;
 use crate::generate::api::router;
+use crate::generate::api::api_model::resolve_path_segment;
 
 /// Collects UI fields from graph properties, applying standard classification
 /// and codelist value resolution. Shared across page, form, and type generators.
@@ -298,7 +299,7 @@ pub async fn collect_ui_fields(
                 if let Some(ref_schema) = resolved {
                     if let Some(ref domain) = ref_schema.domain {
                         field.ref_api_path =
-                            Some(format!("/{}/{}", domain, ref_schema.api_path_segment));
+                            Some(format!("/{}/{}", domain, resolve_path_segment(None, &ref_schema)));
                     }
                 }
             }
@@ -403,10 +404,7 @@ pub async fn collect_child_sections(
                 continue;
             }
 
-            let path_segment = entity_cfg
-                .path_segment
-                .clone()
-                .unwrap_or_else(|| child_schema.api_path_segment.clone());
+            let path_segment = resolve_path_segment(Some(entity_cfg), &child_schema);
             let label = field_name_to_label(&entity_name);
 
             // Collect scalar fields for the child
@@ -443,7 +441,7 @@ pub async fn collect_child_sections(
             }
             let entity_name = child.rust_type_name.clone();
             let label = field_name_to_label(&entity_name);
-            let path_segment = child.api_path_segment.clone();
+            let path_segment = resolve_path_segment(None, &child);
             let immutable_fields: Vec<String> = Vec::new();
             let fields =
                 collect_ui_fields(db, &child.title, &immutable_fields, Some(current_domain))

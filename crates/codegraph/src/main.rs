@@ -359,6 +359,14 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         println!("Pass 1b complete: {total_stats}");
     }
 
+    // Pass 1c: Ingest API model from domain configuration
+    {
+        let api_stats =
+            codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config)
+                .await?;
+        println!("Pass 1c complete: {api_stats}");
+    }
+
     // Auto-classify
     let classifier_types: HashSet<String> = classifier_config
         .primitive_wrappers

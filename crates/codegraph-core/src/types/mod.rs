@@ -1,3 +1,4 @@
+mod api;
 mod codelist;
 mod composite;
 mod composition;
@@ -9,6 +10,10 @@ mod property;
 mod schema;
 mod stats;
 
+pub use api::{
+    ApiOperationNode, ApiResourceNode, ErrorDefinitionNode, HttpEndpointNode, InteractionNode,
+    PermissionNode, PipelineNode,
+};
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};

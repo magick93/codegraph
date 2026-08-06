@@ -55,5 +55,5 @@ pub struct DeploymentCombinedResponse {
 pub struct WorkerWithIncludeResponse {
     pub data: WorkerLinkedResponse,
     pub included: Option<WorkerIncludedData>,
-    pub meta: crate::api::meta::Meta,
+    pub meta: Meta,
 }

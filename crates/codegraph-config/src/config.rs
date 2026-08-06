@@ -34,6 +34,10 @@ fn default_max_bulk_size() -> usize {
     100
 }
 
+fn default_generation_mode() -> String {
+    "full".to_string()
+}
+
 fn default_type_suffix() -> String {
     "Type".to_string()
 }
@@ -67,6 +71,13 @@ pub struct DefaultsConfig {
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
     #[serde(default = "default_types_import_prefix")]
     pub types_import_prefix: String,
+    /// Default generation mode for entities.
+    /// "full" (default): generate everything.
+    /// "handler_only": generate handler but not router.
+    /// "ddd_only": generate DDD layer (repo, command, query) but not API layer.
+    /// "none": skip all generation for this entity.
+    #[serde(default = "default_generation_mode")]
+    pub generation_mode: String,
 }
 
 impl Default for DefaultsConfig {
@@ -79,6 +90,7 @@ impl Default for DefaultsConfig {
             max_bulk_size: default_max_bulk_size(),
             type_suffix: default_type_suffix(),
             types_import_prefix: default_types_import_prefix(),
+            generation_mode: default_generation_mode(),
         }
     }
 }
@@ -315,6 +327,13 @@ pub struct EntityConfig {
     /// Explicit `[]` = disable includes for this entity.
     #[serde(default)]
     pub allow_include: Option<Vec<String>>,
+    /// Generation mode for this entity's handlers/routes.
+    /// "full" (default): generate everything.
+    /// "handler_only": generate handler but not router.
+    /// "ddd_only": generate DDD layer (repo, command, query) but not API layer.
+    /// "none": skip all generation for this entity.
+    #[serde(default)]
+    pub generation_mode: Option<String>,
 }
 
 /// Configuration for resolving a related entity into a tree response.

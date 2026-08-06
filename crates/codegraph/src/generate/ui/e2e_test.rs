@@ -11,6 +11,8 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
+use crate::generate::api::api_model::resolve_path_segment;
+
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::page::{ChildSection, UiField};
 use super::store::UiParentInfo;
@@ -167,10 +169,10 @@ impl UiE2eTestGenerator {
                         };
                         return Some(Box::new(super::store::UiGrandparentInfo {
                             param_name: crate::generate::api::router::param_name_from_path_segment(
-                                &gp_schema.api_path_segment,
+                                &resolve_path_segment(None, &gp_schema),
                             ),
                             domain: gp_domain,
-                            path_segment: gp_schema.api_path_segment.clone(),
+                            path_segment: resolve_path_segment(None, &gp_schema),
                             entity_name: gp_schema.rust_type_name.clone(),
                         }));
                     }
@@ -206,10 +208,10 @@ impl UiE2eTestGenerator {
                     };
                     return Some(Box::new(super::store::UiGrandparentInfo {
                         param_name: crate::generate::api::router::param_name_from_path_segment(
-                            &gp_schema.api_path_segment,
+                            &resolve_path_segment(None, &gp_schema),
                         ),
                         domain: gp_domain,
-                        path_segment: gp_schema.api_path_segment.clone(),
+                        path_segment: resolve_path_segment(None, &gp_schema),
                         entity_name: gp_schema.rust_type_name.clone(),
                     }));
                 }
@@ -246,7 +248,6 @@ impl EntityGenerator for UiE2eTestGenerator {
             codegraph_naming::to_display_name(&config.defaults.strip_suffix(&schema.title));
         let module_name = schema.pg_table_name.clone();
         let domain = domain.to_string();
-        let path_segment = schema.api_path_segment.clone();
 
         if module_name.is_empty() {
             return Ok(Vec::new());
@@ -256,6 +257,8 @@ impl EntityGenerator for UiE2eTestGenerator {
             .domains
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
+
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
 
         let operations = entity_cfg
             .and_then(|ec| ec.operations.clone())
@@ -464,10 +467,10 @@ impl EntityGenerator for UiE2eTestGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &parent_schema.api_path_segment,
+                                        &resolve_path_segment(None, &parent_schema),
                                     ),
                                 domain: parent_domain,
-                                path_segment: parent_schema.api_path_segment.clone(),
+                                path_segment: resolve_path_segment(None, &parent_schema),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent,
@@ -518,10 +521,10 @@ impl EntityGenerator for UiE2eTestGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &parent_schema.api_path_segment,
+                                        &resolve_path_segment(None, &parent_schema),
                                     ),
                                 domain: parent_domain,
-                                path_segment: parent_schema.api_path_segment.clone(),
+                                path_segment: resolve_path_segment(None, &parent_schema),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent,
@@ -967,7 +970,7 @@ async fn resolve_e2e_include_config(
                 .get_schema_in_domain(&seg.schema_title, domain)
                 .await?
                 .ok_or_else(|| crate::error::Error::SchemaNotFound(seg.schema_title.clone()))?;
-            let api_path = format!("/api/{}/{}", seg.domain, target_schema.api_path_segment);
+            let api_path = format!("/api/{}/{}", seg.domain, resolve_path_segment(None, &target_schema));
 
             let fields_json = build_test_data_json(db, &seg.schema_title, Some(&seg.domain)).await;
 
@@ -1027,7 +1030,7 @@ async fn resolve_e2e_include_config(
     let main_dep_id = source_schema.pg_table_name.clone();
 
     if !seen_deps.contains(&main_dep_id) {
-        let main_api_path = format!("/api/{}/{}", domain, source_schema.api_path_segment);
+        let main_api_path = format!("/api/{}/{}", domain, resolve_path_segment(None, &source_schema));
         let main_fields = build_test_data_json(db, schema_title, Some(domain)).await;
 
         all_steps.push(IncludeSetupStep {

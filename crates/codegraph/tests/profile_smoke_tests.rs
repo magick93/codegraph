@@ -698,3 +698,118 @@ async fn generation_with_lite_variant_produces_fewer_files_than_full_api() {
         "Lite variant ({lite_count} files) should produce fewer files than full API ({full_count} files)"
     );
 }
+
+#[tokio::test]
+async fn ddd_only_mode_produces_ddd_but_not_api_files() {
+    let (mock, _config, tera, output_dir) = mock_test_setup();
+    let domain_types_tmp = tempfile::TempDir::new().unwrap();
+    let hooks_tmp = tempfile::TempDir::new().unwrap();
+
+    let config = codegraph_config::config::parse_domain_config_str(
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting"
+postgres_schema = "recruiting"
+entities = ["CandidateType"]
+
+[domains.recruiting.entity_config.CandidateType]
+operations = ["create", "read", "update", "delete", "list"]
+generation_mode = "ddd_only"
+"#,
+    )
+    .unwrap();
+
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: &mock,
+            config: &config,
+            output_dir: output_dir.path(),
+            tera: &tera,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: Path::new(""),
+            domain_types_base: Some(domain_types_tmp.path()),
+            hooks_base: Some(hooks_tmp.path()),
+            ext_points: None,
+            seed_config: None,
+            build_plan: None,
+            ifml_frameworks: vec![],
+            project_config: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !report.has_errors(),
+        "ddd_only mode should produce no errors"
+    );
+
+    let file_paths: Vec<String> = report
+        .files
+        .iter()
+        .map(|f| f.path.to_string_lossy().to_string())
+        .collect();
+
+    // DDD files should exist
+    let has_repository = file_paths
+        .iter()
+        .any(|p| p.contains("candidate/repository.rs"));
+    let has_command = file_paths
+        .iter()
+        .any(|p| p.contains("candidate/command.rs"));
+    let has_query = file_paths
+        .iter()
+        .any(|p| p.contains("candidate/query.rs"));
+
+    // API files should NOT exist
+    let has_handler = file_paths
+        .iter()
+        .any(|p| p.contains("candidate_handler.rs"));
+    let has_workflow = file_paths
+        .iter()
+        .any(|p| p.contains("candidate_workflow"));
+
+    // Router file may exist (domain generator always runs) but should be empty
+    let router_path = file_paths
+        .iter()
+        .find(|p| p.contains("recruiting/router.rs"));
+
+    assert!(
+        has_repository,
+        "ddd_only mode should produce repository"
+    );
+    assert!(has_command, "ddd_only mode should produce command");
+    assert!(has_query, "ddd_only mode should produce query");
+    assert!(
+        !has_handler,
+        "ddd_only mode should NOT produce handler"
+    );
+    assert!(
+        !has_workflow,
+        "ddd_only mode should NOT produce workflow"
+    );
+
+    // Router should exist but contain no candidate routes
+    if let Some(rp) = router_path {
+        let router_file = report
+            .files
+            .iter()
+            .find(|f| f.path.to_string_lossy().to_string() == *rp)
+            .unwrap();
+        let content = &router_file.content;
+        assert!(
+            !content.contains("candidate"),
+            "ddd_only router should not contain candidate routes, got:\n{content}"
+        );
+    }
+
+    println!(
+        "ddd_only mode produced {} files (repo={has_repository}, cmd={has_command}, qry={has_query}, handler={has_handler}, router={})",
+        report.files.len(),
+        router_path.is_some()
+    );
+}

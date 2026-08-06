@@ -782,3 +782,29 @@ pub async fn tree(
     Ok(Json(rows))
 }
 {% endif %}
+{% if has_create or has_read or has_update or has_delete or has_list %}
+// --- Trait-based extensibility ---
+// Uncomment and implement to override generated handler behavior:
+//
+// #[async_trait]
+// pub trait Custom{{ entity_name }}Handlers {
+//     async fn custom_create(
+//         &self,
+//         state: axum::extract::State<AppState>,
+//         headers: axum::http::HeaderMap,
+//         Json(body): axum::Json<Create{{ entity_name }}Request>,
+//     ) -> Result<axum::response::Response, AppError>;
+// }
+//
+// impl Custom{{ entity_name }}Handlers for AppState {
+//     async fn custom_create(
+//         &self,
+//         state: axum::extract::State<AppState>,
+//         headers: axum::http::HeaderMap,
+//         Json(body): axum::Json<Create{{ entity_name }}Request>,
+//     ) -> Result<axum::response::Response, AppError> {
+//         // Your custom logic here
+//         todo!()
+//     }
+// }
+{% endif %}

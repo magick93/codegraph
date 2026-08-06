@@ -12,6 +12,8 @@ use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
 use codegraph_naming;
 
+use super::api_model::resolve_path_segment;
+
 /// Context for the combined "All" OpenAPI spec (`openapi_all.tera`).
 #[derive(Debug, Serialize)]
 pub struct OpenApiContext {
@@ -148,7 +150,7 @@ impl GlobalGenerator for OpenApiGenerator {
                                 db.get_schema_in_domain(pname, domain_name).await
                             {
                                 (
-                                    Some(parent_schema.api_path_segment.clone()),
+                                    Some(resolve_path_segment(None, &parent_schema)),
                                     Some(parent_schema.rust_type_name.clone()),
                                     parent_schema.domain.clone(),
                                 )
@@ -166,7 +168,7 @@ impl GlobalGenerator for OpenApiGenerator {
                     entities.push(OpenApiEntity {
                         entity_name: schema.rust_type_name.clone(),
                         module_name: schema.pg_table_name.clone(),
-                        path_segment: schema.api_path_segment.clone(),
+                        path_segment: resolve_path_segment(entity_cfg, &schema),
                         tag: schema.rust_type_name.clone(),
                         has_create: operations.contains(&"create".to_string()),
                         has_read: operations.contains(&"read".to_string()),

@@ -2,10 +2,12 @@ use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
-    ActionNode, CodeList, ColumnInfo, CompositeColumn, CompositeRange, CompositionNode,
-    CompositionTree, DetectionSource, EnumValue, EventNode, Extension, FkDirection, FkTarget,
-    ParameterDefinitionNode, ParentCandidate, PropertyNode, SchemaClassificationData, SchemaNode,
-    StructuredSubField, ViewComponentNode, ViewContainerNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, ColumnInfo, CompositeColumn,
+    CompositeRange, CompositionNode, CompositionTree, DetectionSource, EnumValue,
+    ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, HttpEndpointNode,
+    InteractionNode, ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode,
+    PropertyNode, SchemaClassificationData, SchemaNode, StructuredSubField, ViewComponentNode,
+    ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -1063,6 +1065,158 @@ impl GraphQuerier for GrafeoEngine {
                 direction: reader.get_string(row, "p.direction")?,
                 type_ref: reader.get_string(row, "p.type_ref")?,
                 domain: reader.get_opt_string(row, "p.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    // ── API metamodel query methods ────────────────────────────────────
+
+    async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
+        let gql = "MATCH (r:ApiResource) RETURN \
+            r.name, r.schema_title, r.domain, r.label, r.path_segment \
+            ORDER BY r.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(ApiResourceNode {
+                name: reader.get_string(row, "r.name")?,
+                schema_title: reader.get_string(row, "r.schema_title")?,
+                domain: reader.get_string(row, "r.domain")?,
+                label: reader.get_opt_string(row, "r.label")?,
+                path_segment: reader.get_string(row, "r.path_segment")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_api_resource(&self, name: &str) -> Result<Option<ApiResourceNode>, GraphError> {
+        let escaped = name.replace('\'', "\\'");
+        let gql = format!(
+            "MATCH (r:ApiResource {{name: '{escaped}'}}) RETURN \
+            r.name, r.schema_title, r.domain, r.label, r.path_segment"
+        );
+        let result = query_gql(self, &gql)?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        let row = &result.rows[0];
+        Ok(Some(ApiResourceNode {
+            name: reader.get_string(row, "r.name")?,
+            schema_title: reader.get_string(row, "r.schema_title")?,
+            domain: reader.get_string(row, "r.domain")?,
+            label: reader.get_opt_string(row, "r.label")?,
+            path_segment: reader.get_string(row, "r.path_segment")?,
+        }))
+    }
+
+    async fn get_api_operations(
+        &self,
+        resource_name: &str,
+    ) -> Result<Vec<ApiOperationNode>, GraphError> {
+        let escaped = resource_name.replace('\'', "\\'");
+        let gql = format!(
+            "MATCH (r:ApiResource {{name: '{escaped}'}})-[:HasOperation]->(op:ApiOperation) \
+             RETURN op.name, op.kind, op.input_schema, op.output_schema, \
+             op.paging, op.sorting, op.filtering, op.domain \
+             ORDER BY op.name"
+        );
+        let result = query_gql(self, &gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(ApiOperationNode {
+                name: reader.get_string(row, "op.name")?,
+                kind: reader.get_string(row, "op.kind")?,
+                input_schema: reader.get_opt_string(row, "op.input_schema")?,
+                output_schema: reader.get_string(row, "op.output_schema")?,
+                paging: reader.get_bool(row, "op.paging")?,
+                sorting: reader.get_bool(row, "op.sorting")?,
+                filtering: reader.get_bool(row, "op.filtering")?,
+                domain: reader.get_opt_string(row, "op.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_interactions(
+        &self,
+        _operation_name: &str,
+    ) -> Result<Vec<InteractionNode>, GraphError> {
+        let gql = "MATCH (ia:Interaction) RETURN ia.transport, ia.domain ORDER BY ia.transport";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(InteractionNode {
+                transport: reader.get_string(row, "ia.transport")?,
+                domain: reader.get_opt_string(row, "ia.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_http_endpoints(&self) -> Result<Vec<HttpEndpointNode>, GraphError> {
+        let gql =
+            "MATCH (he:HttpEndpoint) RETURN he.method, he.path_template, he.domain ORDER BY he.path_template";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(HttpEndpointNode {
+                method: reader.get_string(row, "he.method")?,
+                path_template: reader.get_string(row, "he.path_template")?,
+                domain: reader.get_opt_string(row, "he.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_error_definitions(&self) -> Result<Vec<ErrorDefinitionNode>, GraphError> {
+        let gql = "MATCH (ed:ErrorDefinition) RETURN ed.code, ed.description, ed.http_status, ed.domain ORDER BY ed.code";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(ErrorDefinitionNode {
+                code: reader.get_string(row, "ed.code")?,
+                description: reader.get_string(row, "ed.description")?,
+                http_status: reader.get_i32(row, "ed.http_status")?,
+                domain: reader.get_opt_string(row, "ed.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_permissions(&self) -> Result<Vec<PermissionNode>, GraphError> {
+        let gql = "MATCH (pm:Permission) RETURN pm.name, pm.domain ORDER BY pm.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(PermissionNode {
+                name: reader.get_string(row, "pm.name")?,
+                domain: reader.get_opt_string(row, "pm.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_pipelines(&self) -> Result<Vec<PipelineNode>, GraphError> {
+        let gql = "MATCH (pl:Pipeline) RETURN pl.name, pl.middleware, pl.domain ORDER BY pl.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            let middleware_str: Option<String> = reader.get_opt_string(row, "pl.middleware")?;
+            let middleware: Option<Vec<String>> =
+                middleware_str.and_then(|s| serde_json::from_str(&s).ok());
+            nodes.push(PipelineNode {
+                name: reader.get_string(row, "pl.name")?,
+                middleware,
+                domain: reader.get_opt_string(row, "pl.domain")?,
             });
         }
         Ok(nodes)

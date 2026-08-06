@@ -14,8 +14,14 @@ pub struct SchemaNode {
     pub sea_orm_type: String,
     pub rust_type_name: String,
     pub pg_table_name: String,
+    /// URL path segment for REST API routing.
+    /// DEPRECATED: prefer using ApiResourceNode.path_segment from the API model instead.
+    /// This field remains for backward compatibility during the transition.
     pub api_path_segment: String,
     pub parent_schema: Option<String>,
+    /// Whether this schema is a domain entity.
+    /// NOTE: This is a domain concept (not an API concept). Whether an entity is
+    /// exposed via REST/gRPC/CLI is determined by the API model layer (ApiResourceNode).
     pub is_entity: bool,
     pub is_codelist: bool,
     pub is_primitive_wrapper: bool,

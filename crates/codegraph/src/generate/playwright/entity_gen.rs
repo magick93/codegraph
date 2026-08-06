@@ -6,6 +6,7 @@ use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
+use crate::generate::api::api_model::resolve_path_segment;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use crate::generate::ui::common::collect_ui_fields;
@@ -50,12 +51,13 @@ impl EntityGenerator for PlaywrightEntityGenerator {
         }
 
         let entity_name = schema.rust_type_name.clone();
-        let path_segment = schema.api_path_segment.clone();
 
         let entity_cfg = config
             .domains
             .get(domain)
             .and_then(|d| d.get_entity_config(&entity_name));
+
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
 
         let operations = entity_cfg
             .and_then(|ec| ec.operations.clone())

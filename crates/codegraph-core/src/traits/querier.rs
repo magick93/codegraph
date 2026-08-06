@@ -1,8 +1,10 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, CodeList, CompositeColumn, CompositeRange, CompositionTree, EnumValue, EventNode,
-    Extension, ParameterDefinitionNode, ParentCandidate, PropertyNode, SchemaClassificationData,
-    SchemaNode, StructuredSubField, ViewComponentNode, ViewContainerNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
+    CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension, HttpEndpointNode,
+    InteractionNode, ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode,
+    PropertyNode, SchemaClassificationData, SchemaNode, StructuredSubField, ViewComponentNode,
+    ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -202,6 +204,46 @@ pub trait GraphQuerier: Send + Sync {
 
     /// Get all ParameterDefinition nodes.
     async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    // ── API metamodel query methods ─────────────────────────────────────
+
+    async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_api_resource(&self, _name: &str) -> Result<Option<ApiResourceNode>, GraphError> {
+        Ok(None)
+    }
+
+    async fn get_api_operations(
+        &self,
+        _resource_name: &str,
+    ) -> Result<Vec<ApiOperationNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_interactions(
+        &self,
+        _operation_name: &str,
+    ) -> Result<Vec<InteractionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_http_endpoints(&self) -> Result<Vec<HttpEndpointNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_error_definitions(&self) -> Result<Vec<ErrorDefinitionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_permissions(&self) -> Result<Vec<PermissionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_pipelines(&self) -> Result<Vec<PipelineNode>, GraphError> {
         Ok(Vec::new())
     }
 }

@@ -10,6 +10,8 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
+use crate::generate::api::api_model::resolve_path_segment;
+
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::store::UiParentInfo;
 
@@ -142,8 +144,6 @@ impl EntityGenerator for UiPageGenerator {
         let entity_name = schema.rust_type_name.clone();
         let module_name = schema.pg_table_name.clone();
         let domain = domain.to_string();
-        let path_segment = schema.api_path_segment.clone();
-
         if module_name.is_empty() {
             return Ok(Vec::new());
         }
@@ -152,6 +152,8 @@ impl EntityGenerator for UiPageGenerator {
             .domains
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
+
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
 
         let operations = entity_cfg
             .and_then(|ec| ec.operations.clone())
@@ -260,10 +262,10 @@ impl EntityGenerator for UiPageGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &parent_schema.api_path_segment,
+                                        &resolve_path_segment(None, &parent_schema),
                                     ),
                                 domain: parent_domain,
-                                path_segment: parent_schema.api_path_segment.clone(),
+                                path_segment: resolve_path_segment(None, &parent_schema),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent: gp,
@@ -318,10 +320,10 @@ impl EntityGenerator for UiPageGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &parent_schema.api_path_segment,
+                                        &resolve_path_segment(None, &parent_schema),
                                     ),
                                 domain: domain.clone(),
-                                path_segment: parent_schema.api_path_segment.clone(),
+                                path_segment: resolve_path_segment(None, &parent_schema),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent: gp,

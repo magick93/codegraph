@@ -5,6 +5,10 @@ use axum::Router;
 
 use crate::app_state::AppState;
 
+// Handwritten extensions — create this file to add custom routes.
+// #[path = "handwritten_routes.rs"]
+// mod handwritten_routes;
+
 pub fn router() -> Router<AppState> {
     Router::new()
 {% for entity in entities %}
