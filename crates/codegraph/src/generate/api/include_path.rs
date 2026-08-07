@@ -180,6 +180,10 @@ async fn resolve_explicit_paths(
                 break;
             }
 
+            // NOTE: is_entity is a domain-model concept here — it determines whether a
+            // schema is an entity vs a value object for FK resolution and include path
+            // computation. API exposure is handled by ApiResourceNode in the API model layer.
+            //
             // Skip non-entity types — they don't have standalone entity generation
             // or response DTOs, so include paths referencing them would fail.
             if !target_schema.is_entity {

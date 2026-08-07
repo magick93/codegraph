@@ -1995,6 +1995,47 @@ async fn scaffold_generates_middleware() {
     );
 }
 
+#[tokio::test]
+async fn test_permission_middleware_generated() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-permission-mw");
+
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let files = gen
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let permission_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("permission.rs"))
+        .expect("Scaffold should generate middleware/permission.rs");
+
+    assert!(
+        permission_file.content.contains("require_permission"),
+        "Permission middleware should contain require_permission function. Got:\n{}",
+        permission_file.content
+    );
+    assert!(
+        permission_file.content.contains("RequiredPermission"),
+        "Permission middleware should contain RequiredPermission struct. Got:\n{}",
+        permission_file.content
+    );
+    assert!(
+        permission_file.content.contains("has_permission"),
+        "Permission middleware should contain has_permission function. Got:\n{}",
+        permission_file.content
+    );
+}
+
 // === Test Generator Template Tests ===
 
 #[tokio::test]
