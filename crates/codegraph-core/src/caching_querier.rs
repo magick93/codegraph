@@ -562,4 +562,11 @@ impl GraphQuerier for CachingQuerier<'_> {
     async fn get_pipelines(&self) -> Result<Vec<PipelineNode>, GraphError> {
         self.inner.get_pipelines().await
     }
+
+    async fn get_pipeline_for_endpoint(
+        &self,
+        endpoint_path: &str,
+    ) -> Result<Option<PipelineNode>, GraphError> {
+        self.inner.get_pipeline_for_endpoint(endpoint_path).await
+    }
 }

@@ -92,13 +92,13 @@ fn extract_correlation_id(headers: &HeaderMap, body_correlation_id: Option<Uuid>
 #[utoipa::path(
     post,
 {% if role == "child" %}
-    path = "/api/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/actions/transition",
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/actions/transition",
     params(
         ("{{ parent_param_name }}" = Uuid, Path, description = "Parent ID"),
         ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
     ),
 {% else %}
-    path = "/api/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/actions/transition",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/actions/transition",
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
     tag = "{{ tag }}",
@@ -177,13 +177,13 @@ pub async fn transition(
 #[utoipa::path(
     post,
 {% if role == "child" %}
-    path = "/api/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/actions/approve",
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/actions/approve",
     params(
         ("{{ parent_param_name }}" = Uuid, Path, description = "Parent ID"),
         ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
     ),
 {% else %}
-    path = "/api/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/actions/approve",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/actions/approve",
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
     tag = "{{ tag }}",
@@ -244,13 +244,13 @@ pub async fn approve(
 #[utoipa::path(
     post,
 {% if role == "child" %}
-    path = "/api/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/actions/reject",
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/actions/reject",
     params(
         ("{{ parent_param_name }}" = Uuid, Path, description = "Parent ID"),
         ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
     ),
 {% else %}
-    path = "/api/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/actions/reject",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/actions/reject",
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
     tag = "{{ tag }}",
@@ -312,13 +312,13 @@ pub async fn reject(
 #[utoipa::path(
     post,
 {% if role == "child" %}
-    path = "/api/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/actions/delegate",
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/actions/delegate",
     params(
         ("{{ parent_param_name }}" = Uuid, Path, description = "Parent ID"),
         ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
     ),
 {% else %}
-    path = "/api/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/actions/delegate",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/actions/delegate",
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
     tag = "{{ tag }}",
@@ -367,13 +367,13 @@ pub async fn delegate(
 #[utoipa::path(
     get,
 {% if role == "child" %}
-    path = "/api/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/workflow",
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/workflow",
     params(
         ("{{ parent_param_name }}" = Uuid, Path, description = "Parent ID"),
         ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
     ),
 {% else %}
-    path = "/api/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/workflow",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/workflow",
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
     tag = "{{ tag }}",
@@ -424,13 +424,13 @@ pub async fn get_workflow_state(
 #[utoipa::path(
     get,
 {% if role == "child" %}
-    path = "/api/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/workflow/history",
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/workflow/history",
     params(
         ("{{ parent_param_name }}" = Uuid, Path, description = "Parent ID"),
         ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
     ),
 {% else %}
-    path = "/api/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/workflow/history",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/workflow/history",
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
     tag = "{{ tag }}",

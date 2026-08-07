@@ -35,7 +35,7 @@ test.describe('Webhook Delivery', () => {
 
     // 2. Subscribe to timecard events via API
     const subResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
       {
         method: 'POST',
         headers: {
@@ -98,7 +98,7 @@ test.describe('Webhook Delivery', () => {
 
     // 2. Subscribe via API
     const subResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
       {
         method: 'POST',
         headers: {
@@ -133,7 +133,7 @@ test.describe('Webhook Delivery', () => {
     test.setTimeout(180000);
     // Create endpoint via API with custom headers
     const createResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints`,
       {
         method: 'POST',
         headers: {
@@ -153,7 +153,7 @@ test.describe('Webhook Delivery', () => {
 
     // Subscribe to timecard events
     const subResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
       {
         method: 'POST',
         headers: {
@@ -198,7 +198,7 @@ test.describe('Webhook Delivery', () => {
 
     // Subscribe with a NON-matching event type
     const subResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
       {
         method: 'POST',
         headers: {
@@ -247,7 +247,7 @@ test.describe('Webhook Delivery', () => {
 
     // Subscribe to recruiting domain events
     const subResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
       {
         method: 'POST',
         headers: {

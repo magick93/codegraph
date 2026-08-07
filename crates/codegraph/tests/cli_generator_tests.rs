@@ -382,7 +382,7 @@ async fn cli_command_generator_includes_api_calls() {
     let file = &files[0];
 
     assert!(
-        file.content.contains("/api/recruiting/candidates"),
+        file.content.contains("/api/v1/recruiting/candidates"),
         "Should use correct API base path"
     );
     assert!(

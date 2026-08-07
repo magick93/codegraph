@@ -193,6 +193,7 @@ pub fn domain_config() -> DomainConfig {
             type_suffix: "Type".into(),
             types_import_prefix: "codegraph_type_contracts".into(),
             generation_mode: "full".into(),
+            api_version: "v1".into(),
         },
         domains,
     }

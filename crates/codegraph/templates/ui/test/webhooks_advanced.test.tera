@@ -11,7 +11,7 @@ test.describe('Webhook Advanced', () => {
 
     // 1. Create endpoint
     const createResp = await fetch(
-      `${API_URL}/api/webhooks/webhook-endpoints`,
+      `${API_URL}/api/{{ project.api_version }}/webhooks/webhook-endpoints`,
       {
         method: 'POST',
         headers: {
@@ -34,7 +34,7 @@ test.describe('Webhook Advanced', () => {
 
     // 3. Rotate the secret
     const rotateResp = await fetch(
-      `${API_URL}/api/webhooks/webhook-endpoints/${endpointId}/rotate-secret`,
+      `${API_URL}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/rotate-secret`,
       {
         method: 'POST',
         headers: {
@@ -51,7 +51,7 @@ test.describe('Webhook Advanced', () => {
 
     // 4. Verify the endpoint's hmac_secret is now different
     const getResp = await fetch(
-      `${API_URL}/api/webhooks/webhook-endpoints/${endpointId}`,
+      `${API_URL}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}`,
       {
         headers: {
           Authorization: `Bearer ${orgContext.acme.apiKey}`,
@@ -67,7 +67,7 @@ test.describe('Webhook Advanced', () => {
 
     // Create endpoint pointing to unreachable URL
     const createResp = await fetch(
-      `${API_URL}/api/webhooks/webhook-endpoints`,
+      `${API_URL}/api/{{ project.api_version }}/webhooks/webhook-endpoints`,
       {
         method: 'POST',
         headers: {
@@ -86,7 +86,7 @@ test.describe('Webhook Advanced', () => {
 
     // Subscribe to timecard events
     const subResp = await fetch(
-      `${API_URL}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      `${API_URL}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
       {
         method: 'POST',
         headers: {
@@ -108,7 +108,7 @@ test.describe('Webhook Advanced', () => {
 
     // Check deliveries exist for this endpoint
     const deliveriesResp = await fetch(
-      `${API_URL}/api/webhooks/webhook-endpoints/${endpointId}/deliveries`,
+      `${API_URL}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/deliveries`,
       {
         headers: {
           Authorization: `Bearer ${orgContext.acme.apiKey}`,
@@ -127,7 +127,7 @@ test.describe('Webhook Advanced', () => {
 
     // Retry the delivery
     const retryResp = await fetch(
-      `${API_URL}/api/webhooks/webhook-endpoints/${endpointId}/deliveries/${failedDelivery.id}/retry`,
+      `${API_URL}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/deliveries/${failedDelivery.id}/retry`,
       {
         method: 'POST',
         headers: {
@@ -144,7 +144,7 @@ test.describe('Webhook Advanced', () => {
 
     // Create endpoint
     const createResp = await fetch(
-      `${API_URL}/api/webhooks/webhook-endpoints`,
+      `${API_URL}/api/{{ project.api_version }}/webhooks/webhook-endpoints`,
       {
         method: 'POST',
         headers: {
@@ -163,7 +163,7 @@ test.describe('Webhook Advanced', () => {
 
     // Subscribe
     const subResp = await fetch(
-      `${API_URL}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      `${API_URL}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
       {
         method: 'POST',
         headers: {
@@ -185,7 +185,7 @@ test.describe('Webhook Advanced', () => {
 
     // Fetch deliveries
     const deliveriesResp = await fetch(
-      `${API_URL}/api/webhooks/webhook-endpoints/${endpointId}/deliveries`,
+      `${API_URL}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/deliveries`,
       {
         headers: {
           Authorization: `Bearer ${orgContext.acme.apiKey}`,

@@ -411,7 +411,7 @@ impl EntityGenerator for UiE2eTestGenerator {
                     ec.allow_include.as_ref(),
                 )
                 .await?;
-                resolve_e2e_include_config(db, config, &domain, schema_title, &resolved, has_list)
+                resolve_e2e_include_config(db, config, &domain, schema_title, &resolved, has_list, project)
                     .await?
             } else {
                 None
@@ -939,6 +939,7 @@ async fn resolve_e2e_include_config(
     schema_title: &str,
     include_paths: &[crate::generate::api::include_path::ResolvedIncludePath],
     has_list: bool,
+    project: &ProjectConfig,
 ) -> Result<Option<E2eIncludeConfig>> {
     let mut all_steps: Vec<IncludeSetupStep> = Vec::new();
     let mut test_paths: Vec<IncludeTestPath> = Vec::new();
@@ -970,7 +971,7 @@ async fn resolve_e2e_include_config(
                 .get_schema_in_domain(&seg.schema_title, domain)
                 .await?
                 .ok_or_else(|| crate::error::Error::SchemaNotFound(seg.schema_title.clone()))?;
-            let api_path = format!("/api/{}/{}", seg.domain, resolve_path_segment(None, &target_schema));
+            let api_path = format!("/api/{}/{}/{}", project.api_version, seg.domain, resolve_path_segment(None, &target_schema));
 
             let fields_json = build_test_data_json(db, &seg.schema_title, Some(&seg.domain)).await;
 
@@ -1030,7 +1031,7 @@ async fn resolve_e2e_include_config(
     let main_dep_id = source_schema.pg_table_name.clone();
 
     if !seen_deps.contains(&main_dep_id) {
-        let main_api_path = format!("/api/{}/{}", domain, resolve_path_segment(None, &source_schema));
+        let main_api_path = format!("/api/{}/{}/{}", project.api_version, domain, resolve_path_segment(None, &source_schema));
         let main_fields = build_test_data_json(db, schema_title, Some(domain)).await;
 
         all_steps.push(IncludeSetupStep {

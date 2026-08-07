@@ -236,8 +236,19 @@ impl GlobalGenerator for ScaffoldGenerator {
         let middleware_rs =
             render_template_with_project(tera, "scaffold/middleware.tera", &ctx, project)?;
         files.push(GeneratedFile {
-            path: self.output_dir.join("src").join("middleware.rs"),
+            path: self.output_dir.join("src").join("middleware").join("mod.rs"),
             content: middleware_rs,
+        });
+
+        let permission_rs = render_template_with_project(
+            tera,
+            "scaffold/permission_middleware.tera",
+            &ctx,
+            project,
+        )?;
+        files.push(GeneratedFile {
+            path: self.output_dir.join("src").join("middleware").join("permission.rs"),
+            content: permission_rs,
         });
 
         let metrics_middleware_rs =

@@ -333,13 +333,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nest("/webhooks", crate::webhook_router::webhook_routes())
 {% endif %}
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
+        // ^ Global auth middleware — applied to ALL /api routes as a fallback.
+        // Individual entity routes may apply additional layers via pipeline config.
 
     let app = axum::Router::new()
         .route("/version", axum::routing::get(version))
         .route("/health", axum::routing::get(health))
         .route("/health/ready", axum::routing::get(health_ready))
         .route("/metrics", axum::routing::get(move || std::future::ready(metrics_handle.render())))
-        .nest("/api", api_routes)
+        .nest("/api/{{ project.api_version }}", api_routes)
         .route("/api-catalog.json", axum::routing::get(api::openapi::catalog::api_catalog))
         .merge(
             SwaggerUi::new("/swagger-ui")

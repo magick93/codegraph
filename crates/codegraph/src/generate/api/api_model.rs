@@ -3,6 +3,11 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::SchemaNode;
 
+/// Returns the versioned API prefix path (e.g. "/api/v1").
+pub fn api_prefix(api_version: &str) -> String {
+    format!("/api/{}", api_version)
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolvedOperation {
     pub kind: String,
@@ -60,7 +65,8 @@ pub async fn resolve_domain_api_resources(
                 resolved_endpoints.push(ResolvedHttpEndpoint {
                     method: method.to_string(),
                     path_template: format!(
-                        "/api/{}/{}{}",
+                        "{}/{}/{}{}",
+                        api_prefix("v1"),
                         domain_name, resource.path_segment, suffix
                     ),
                     operation_kind: op.kind.clone(),
@@ -108,7 +114,7 @@ fn resolve_from_entity_config(
         let mut resolved_ops = Vec::new();
         let mut resolved_endpoints = Vec::new();
 
-        let base_path = format!("/api/{}/{}", domain_name, path_segment);
+        let base_path = format!("/api/v1/{}/{}", domain_name, path_segment);
 
         for op_kind in &operations {
             resolved_ops.push(ResolvedOperation {

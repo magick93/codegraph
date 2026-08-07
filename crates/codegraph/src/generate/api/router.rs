@@ -43,6 +43,7 @@ pub struct CrossRefInfo {
 pub struct RouterContext {
     pub domain: String,
     pub entities: Vec<RouterEntity>,
+    pub has_permission_middleware: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,6 +66,10 @@ pub struct RouterEntity {
     pub media_fields: Vec<String>,
     /// When set, this entity supports the /tree endpoint (self-referencing hierarchy).
     pub hierarchy_field: Option<String>,
+    /// Middleware names from the Pipeline that applies to this entity's endpoints.
+    pub pipeline_middleware: Vec<String>,
+    /// True when a non-empty pipeline middleware list exists.
+    pub has_pipeline_layer: bool,
 }
 
 pub struct RouterGenerator {
@@ -243,6 +248,8 @@ impl DomainGenerator for RouterGenerator {
                         cross_refs: vec![],
                         media_fields,
                         hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
+                        pipeline_middleware: Vec::new(),
+                        has_pipeline_layer: false,
                     });
                 }
             }
@@ -422,9 +429,31 @@ impl DomainGenerator for RouterGenerator {
             }
         }
 
+        let perms = db.get_permissions().await.unwrap_or_default();
+        let has_permission_middleware = !perms.is_empty();
+
+        let pipelines = db.get_pipelines().await.unwrap_or_default();
+        let endpoints = db.get_http_endpoints().await.unwrap_or_default();
+
+        for entity in &mut entities {
+            let base_path = format!("/api/v1/{}/{}", domain, entity.path_segment);
+            if let Some(endpoint) = endpoints
+                .iter()
+                .find(|ep| ep.path_template.starts_with(&base_path))
+            {
+                if let Ok(Some(pipeline)) =
+                    db.get_pipeline_for_endpoint(&endpoint.path_template).await
+                {
+                    entity.pipeline_middleware = pipeline.middleware.unwrap_or_default();
+                    entity.has_pipeline_layer = !entity.pipeline_middleware.is_empty();
+                }
+            }
+        }
+
         let ctx = RouterContext {
             domain: domain.to_string(),
             entities,
+            has_permission_middleware,
         };
 
         let content = render_template_with_project(tera, "api/router.tera", &ctx, project)?;

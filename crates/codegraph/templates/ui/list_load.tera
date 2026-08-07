@@ -30,11 +30,11 @@ export const load: PageServerLoad = async ({ url, locals, fetch: skFetch }) => {
 	};
 
 {% if parent and parent.grandparent %}
-	const apiUrl = new URL(`${BASE_URL}/api/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}/${grandparentId}/{{ parent.path_segment }}/${parentId}/{{ path_segment }}`);
+	const apiUrl = new URL(`${BASE_URL}/api/{{ project.api_version }}/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}/${grandparentId}/{{ parent.path_segment }}/${parentId}/{{ path_segment }}`);
 {% elif parent %}
-	const apiUrl = new URL(`${BASE_URL}/api/{{ parent.domain }}/{{ parent.path_segment }}/${parentId}/{{ path_segment }}`);
+	const apiUrl = new URL(`${BASE_URL}/api/{{ project.api_version }}/{{ parent.domain }}/{{ parent.path_segment }}/${parentId}/{{ path_segment }}`);
 {% else %}
-	const apiUrl = new URL(`${BASE_URL}/api/{{ domain }}/{{ path_segment }}`);
+	const apiUrl = new URL(`${BASE_URL}/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}`);
 {% endif %}
 	apiUrl.searchParams.set('page', String(page));
 	apiUrl.searchParams.set('page_size', String(pageSize));

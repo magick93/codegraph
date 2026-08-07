@@ -1,5 +1,6 @@
 ---
 source: crates/codegraph/tests/rest_snapshot_tests.rs
+assertion_line: 39
 expression: "&f.content"
 ---
 //! Axum HTTP handlers for Candidate.
@@ -14,6 +15,7 @@ use crate::app_state::AppState;
 use crate::error::AppError;
 use crate::middleware::ApiKeyInfo;
 use crate::error::BulkItemError;
+use crate::domain::recruiting::errors::RecruitingError;
 
 
 /// Accepts either a single item or an array of items for creation.
@@ -51,7 +53,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
 #[utoipa::path(
     post,
 
-    path = "/api/recruiting/candidates",
+    path = "/api/v1/recruiting/candidates",
 
     tag = "Candidate",
     request_body(
@@ -94,10 +96,10 @@ pub async fn create(
 
             let id = state.recruiting_candidate_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
 
-                .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to create Candidate: {e}"))
+                .map_err(|e: RecruitingError| AppError::internal(format!("Failed to create Candidate: {e}"))
                     .with_correlation_id(correlation_id))?;
             let response = state.recruiting_candidate_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-                .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find Candidate: {e}"))
+                .map_err(|e: RecruitingError| AppError::internal(format!("Failed to find Candidate: {e}"))
                     .with_correlation_id(correlation_id))?
                 .ok_or_else(|| AppError::internal("Created entity not found")
                     .with_correlation_id(correlation_id))?;
@@ -154,7 +156,7 @@ pub async fn create(
 #[utoipa::path(
     get,
 
-    path = "/api/recruiting/candidates/{candidate_id}",
+    path = "/api/v1/recruiting/candidates/{candidate_id}",
 
     params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
 
@@ -178,7 +180,7 @@ pub async fn get_by_id(
     let correlation_id = extract_correlation_id(&headers);
 
     let response = state.recruiting_candidate_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find Candidate: {e}"))
+        .map_err(|e: RecruitingError| AppError::internal(format!("Failed to find Candidate: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("Candidate {id} not found"))
             .with_correlation_id(correlation_id))?;
@@ -201,7 +203,7 @@ pub async fn get_by_id(
 #[utoipa::path(
     put,
 
-    path = "/api/recruiting/candidates/{candidate_id}",
+    path = "/api/v1/recruiting/candidates/{candidate_id}",
     params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
 
     tag = "Candidate",
@@ -239,10 +241,10 @@ pub async fn update(
     }
 
     state.recruiting_candidate_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to update Candidate: {e}"))
+        .map_err(|e: RecruitingError| AppError::internal(format!("Failed to update Candidate: {e}"))
             .with_correlation_id(correlation_id))?;
     let response = state.recruiting_candidate_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find Candidate: {e}"))
+        .map_err(|e: RecruitingError| AppError::internal(format!("Failed to find Candidate: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("Candidate {id} not found"))
             .with_correlation_id(correlation_id))?;
@@ -258,7 +260,7 @@ pub async fn update(
 #[utoipa::path(
     delete,
 
-    path = "/api/recruiting/candidates/{candidate_id}",
+    path = "/api/v1/recruiting/candidates/{candidate_id}",
     params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
 
     tag = "Candidate",
@@ -279,7 +281,7 @@ pub async fn delete(
     let correlation_id = extract_correlation_id(&headers);
 
     state.recruiting_candidate_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| {
+        .map_err(|e: RecruitingError| {
             let msg = e.to_string();
             if msg.contains("Entity not found") {
                 AppError::not_found(format!("Candidate {id} not found"))
@@ -324,7 +326,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
 #[utoipa::path(
     get,
 
-    path = "/api/recruiting/candidates",
+    path = "/api/v1/recruiting/candidates",
     params(ListParams),
 
     tag = "Candidate",
@@ -354,7 +356,7 @@ pub async fn list(
 
 
     let (results, total) = state.recruiting_candidate_queries.list_filtered(params.page, params.page_size, &filters, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to list Candidate: {e}"))
+        .map_err(|e: RecruitingError| AppError::internal(format!("Failed to list Candidate: {e}"))
             .with_correlation_id(correlation_id))?;
 
     Ok(Json(serde_json::json!({

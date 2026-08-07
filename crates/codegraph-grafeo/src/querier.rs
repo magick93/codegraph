@@ -1221,6 +1221,34 @@ impl GraphQuerier for GrafeoEngine {
         }
         Ok(nodes)
     }
+
+    async fn get_pipeline_for_endpoint(
+        &self,
+        endpoint_path: &str,
+    ) -> Result<Option<PipelineNode>, GraphError> {
+        let params = HashMap::from([(
+            "path".to_string(),
+            grafeo::Value::String(endpoint_path.into()),
+        )]);
+        let result = query_gql_params(
+            self,
+            "MATCH (he:HttpEndpoint {path_template: $path})-[:UsesPipeline]->(pl:Pipeline) RETURN pl.name, pl.middleware, pl.domain",
+            params,
+        )?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        let row = &result.rows[0];
+        let middleware_str: Option<String> = reader.get_opt_string(row, "pl.middleware")?;
+        let middleware: Option<Vec<String>> =
+            middleware_str.and_then(|s| serde_json::from_str(&s).ok());
+        Ok(Some(PipelineNode {
+            name: reader.get_string(row, "pl.name")?,
+            middleware,
+            domain: reader.get_opt_string(row, "pl.domain")?,
+        }))
+    }
 }
 
 /// Maximum nesting depth for recursive composition tree building.

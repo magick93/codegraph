@@ -342,6 +342,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("cli_command",          Entity, Cli,  &[], &[]),
 
         // ── Domain generators ──────────────────────────────────────────
+        cap("errors",               Domain, Api,  &[], &[]),
         cap("router",               Domain, Api,  &[], &[]),
         cap("links",                Domain, Api,  &[], &[]),
         cap("ui-domain-layout",     Domain, Ui,   &[], &[]),

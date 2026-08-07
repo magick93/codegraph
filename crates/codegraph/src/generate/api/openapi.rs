@@ -211,7 +211,7 @@ impl GlobalGenerator for OpenApiGenerator {
         // 2. Combined "All" spec
         let all_ctx = OpenApiContext {
             title: crate::generate::get_project_config().api_title.clone(),
-            version: "1.0.0".to_string(),
+            version: project.api_version.clone(),
             domains: domains.clone(),
         };
         let all_content =
@@ -229,7 +229,7 @@ impl GlobalGenerator for OpenApiGenerator {
                     crate::generate::get_project_config().api_title,
                     domain.label
                 ),
-                version: "1.0.0".to_string(),
+                version: project.api_version.clone(),
                 domain_name: domain.name.clone(),
                 domain_label: domain.label.clone(),
                 entities: domain.entities.clone(),

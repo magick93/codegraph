@@ -442,8 +442,8 @@ async fn scaffold_middleware_supports_dual_auth() {
 
     let middleware_file = files
         .iter()
-        .find(|f| f.path.ends_with("middleware.rs"))
-        .expect("Should generate middleware.rs");
+        .find(|f| f.path.ends_with("middleware/mod.rs"))
+        .expect("Should generate middleware/mod.rs");
     let content = &middleware_file.content;
 
     assert!(
@@ -1979,10 +1979,10 @@ async fn scaffold_generates_middleware() {
         .await
         .unwrap();
 
-    let middleware_file = files.iter().find(|f| f.path.ends_with("middleware.rs"));
+    let middleware_file = files.iter().find(|f| f.path.ends_with("middleware/mod.rs"));
     assert!(
         middleware_file.is_some(),
-        "Scaffold should generate middleware.rs"
+        "Scaffold should generate middleware/mod.rs"
     );
     let content = &middleware_file.unwrap().content;
     assert!(
@@ -4203,13 +4203,13 @@ async fn child_handler_has_nested_utoipa_path() {
 
     // The get_by_id path should include the parent path segment with {parent_id}
     assert!(
-        content.contains("/api/compensation/compensation/{compensation_id}/reward/{reward_id}"),
+        content.contains("/api/v1/compensation/compensation/{compensation_id}/reward/{reward_id}"),
         "Child handler utoipa path must include nested parent path. Got:\n{content}"
     );
 
     // The create path should include only {parent_id}
     assert!(
-        content.contains("/api/compensation/compensation/{compensation_id}/reward"),
+        content.contains("/api/v1/compensation/compensation/{compensation_id}/reward"),
         "Child handler create path must include parent prefix. Got:\n{content}"
     );
 

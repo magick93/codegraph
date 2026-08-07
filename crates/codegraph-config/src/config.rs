@@ -78,6 +78,13 @@ pub struct DefaultsConfig {
     /// "none": skip all generation for this entity.
     #[serde(default = "default_generation_mode")]
     pub generation_mode: String,
+    /// API version prefix used in URL path construction (e.g. "v1" → `/api/v1/...`).
+    #[serde(default = "default_api_version")]
+    pub api_version: String,
+}
+
+fn default_api_version() -> String {
+    "v1".to_string()
 }
 
 impl Default for DefaultsConfig {
@@ -91,6 +98,7 @@ impl Default for DefaultsConfig {
             type_suffix: default_type_suffix(),
             types_import_prefix: default_types_import_prefix(),
             generation_mode: default_generation_mode(),
+            api_version: default_api_version(),
         }
     }
 }
@@ -334,6 +342,21 @@ pub struct EntityConfig {
     /// "none": skip all generation for this entity.
     #[serde(default)]
     pub generation_mode: Option<String>,
+    /// Custom per-entity error definitions keyed by error code
+    /// (e.g. "DUPLICATE_EMAIL"). These are ingested as additional
+    /// ErrorDefinition nodes for the entity's domain.
+    #[serde(default)]
+    pub errors: std::collections::HashMap<String, ErrorDefConfig>,
+    /// Operations that do not require a permission check (public endpoints).
+    /// E.g. ["read", "list"] to allow unauthenticated access to read operations.
+    #[serde(default)]
+    pub public_operations: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorDefConfig {
+    pub description: String,
+    pub http_status: i32,
 }
 
 /// Configuration for resolving a related entity into a tree response.

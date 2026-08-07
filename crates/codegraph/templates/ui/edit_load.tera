@@ -15,11 +15,11 @@ export const load: PageServerLoad = async ({ params, locals, fetch: skFetch }) =
 	};
 
 {% if parent and parent.grandparent %}
-	const res = await skFetch(`${BASE_URL}/api/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}/${params.{{ parent.grandparent.param_name }}}/{{ parent.path_segment }}/${params.{{ parent.param_name }}}/{{ path_segment }}/${params.{{ param_name }}}`, { headers });
+	const res = await skFetch(`${BASE_URL}/api/{{ project.api_version }}/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}/${params.{{ parent.grandparent.param_name }}}/{{ parent.path_segment }}/${params.{{ parent.param_name }}}/{{ path_segment }}/${params.{{ param_name }}}`, { headers });
 {% elif parent %}
-	const res = await skFetch(`${BASE_URL}/api/{{ parent.domain }}/{{ parent.path_segment }}/${params.{{ parent.param_name }}}/{{ path_segment }}/${params.{{ param_name }}}`, { headers });
+	const res = await skFetch(`${BASE_URL}/api/{{ project.api_version }}/{{ parent.domain }}/{{ parent.path_segment }}/${params.{{ parent.param_name }}}/{{ path_segment }}/${params.{{ param_name }}}`, { headers });
 {% else %}
-	const res = await skFetch(`${BASE_URL}/api/{{ domain }}/{{ path_segment }}/${params.{{ param_name }}}`, { headers });
+	const res = await skFetch(`${BASE_URL}/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/${params.{{ param_name }}}`, { headers });
 {% endif %}
 
 	if (!res.ok) {

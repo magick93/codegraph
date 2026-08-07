@@ -3,7 +3,8 @@ use std::fmt;
 use codegraph_config::config::DomainConfig;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    ApiOperationNode, ApiResourceNode, EdgeType, HttpEndpointNode, InteractionNode,
+    ApiOperationNode, ApiResourceNode, EdgeType, ErrorDefinitionNode, HttpEndpointNode,
+    InteractionNode, PermissionNode, PipelineNode,
 };
 
 use crate::error::{Error, Result};
@@ -12,6 +13,7 @@ use crate::error::{Error, Result};
 pub struct ApiModelIngestStats {
     pub resources: usize,
     pub operations: usize,
+    pub permissions: usize,
     pub interactions: usize,
     pub endpoints: usize,
     pub errors: usize,
@@ -21,8 +23,8 @@ impl fmt::Display for ApiModelIngestStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "API model: {} resources, {} operations, {} interactions, {} endpoints",
-            self.resources, self.operations, self.interactions, self.endpoints
+            "API model: {} resources, {} operations, {} permissions, {} interactions, {} endpoints",
+            self.resources, self.operations, self.permissions, self.interactions, self.endpoints
         )
     }
 }
@@ -40,6 +42,37 @@ pub async fn ingest_api_model(
     config: &DomainConfig,
 ) -> Result<ApiModelIngestStats> {
     let mut stats = ApiModelIngestStats::default();
+
+    let default_pipeline_id = db
+        .ingest_pipeline(&PipelineNode {
+            name: "default".to_string(),
+            middleware: Some(vec!["auth".to_string(), "metrics".to_string()]),
+            domain: Some("common".to_string()),
+        })
+        .await
+        .map_err(|e| Error::Graph(e))?;
+
+    let public_pipeline_id = db
+        .ingest_pipeline(&PipelineNode {
+            name: "public".to_string(),
+            middleware: Some(vec!["metrics".to_string()]),
+            domain: Some("common".to_string()),
+        })
+        .await
+        .map_err(|e| Error::Graph(e))?;
+
+    let _admin_pipeline_id = db
+        .ingest_pipeline(&PipelineNode {
+            name: "admin".to_string(),
+            middleware: Some(vec![
+                "auth".to_string(),
+                "permission".to_string(),
+                "metrics".to_string(),
+            ]),
+            domain: Some("common".to_string()),
+        })
+        .await
+        .map_err(|e| Error::Graph(e))?;
 
     for (domain_name, domain_entry) in &config.domains {
         for entity_name in &domain_entry.entities {
@@ -92,7 +125,7 @@ pub async fn ingest_api_model(
                 })
                 .collect();
 
-            let base_path = format!("/api/{}/{}", domain_name, path_segment);
+            let base_path = format!("/api/v1/{}/{}", domain_name, path_segment);
 
             for (op_kind, method, path_suffix) in &op_mappings {
                 let op_name = format!("{}_{}", op_kind, resource_name);
@@ -118,6 +151,30 @@ pub async fn ingest_api_model(
                 db.ingest_edge(&op_id, &schema_title, EdgeType::OutputBoundTo, None)
                     .await
                     .map_err(|e| Error::Graph(e))?;
+
+                let public_ops: &[String] = ec
+                    .and_then(|c| c.public_operations.as_deref())
+                    .unwrap_or(&[]);
+                if !public_ops.contains(&op_kind.to_string()) {
+                    let perm_name = format!(
+                        "{}:{}:{}",
+                        domain_name,
+                        resource_name.to_lowercase(),
+                        op_kind
+                    );
+                    let perm_id = db
+                        .ingest_permission(&PermissionNode {
+                            name: perm_name.clone(),
+                            domain: Some(domain_name.clone()),
+                        })
+                        .await
+                        .map_err(|e| Error::Graph(e))?;
+                    stats.permissions += 1;
+
+                    db.ingest_edge(&op_id, &perm_id, EdgeType::RequiresPermission, None)
+                        .await
+                        .map_err(|e| Error::Graph(e))?;
+                }
 
                 let interaction_id = db
                     .ingest_interaction(&InteractionNode {
@@ -151,6 +208,55 @@ pub async fn ingest_api_model(
                 )
                 .await
                 .map_err(|e| Error::Graph(e))?;
+
+                let pipeline_id = if public_ops.contains(&op_kind.to_string()) {
+                    &public_pipeline_id
+                } else {
+                    &default_pipeline_id
+                };
+                db.ingest_edge(&endpoint_id, pipeline_id, EdgeType::UsesPipeline, None)
+                    .await
+                    .map_err(|e| Error::Graph(e))?;
+            }
+        }
+    }
+
+    const STANDARD_ERRORS: &[(&str, &str, i32)] = &[
+        ("NOT_FOUND", "The requested resource was not found", 404),
+        ("VALIDATION_ERROR", "Request validation failed", 422),
+        ("UNAUTHORIZED", "Authentication required", 401),
+        ("FORBIDDEN", "Insufficient permissions", 403),
+        ("CONFLICT", "Resource conflict", 409),
+    ];
+
+    for (domain_name, _domain_entry) in &config.domains {
+        for (code, description, http_status) in STANDARD_ERRORS {
+            let node = ErrorDefinitionNode {
+                code: code.to_string(),
+                description: description.to_string(),
+                http_status: *http_status,
+                domain: Some(domain_name.clone()),
+            };
+            if let Err(e) = db.ingest_error_definition(&node).await {
+                tracing::warn!(domain = %domain_name, error_code = %code, "failed to ingest standard error definition: {e}");
+            }
+            stats.errors += 1;
+        }
+
+        for entity_name in &_domain_entry.entities {
+            if let Some(ec) = _domain_entry.get_entity_config(entity_name) {
+                for (code, def) in &ec.errors {
+                    let node = ErrorDefinitionNode {
+                        code: code.clone(),
+                        description: def.description.clone(),
+                        http_status: def.http_status,
+                        domain: Some(domain_name.clone()),
+                    };
+                    if let Err(e) = db.ingest_error_definition(&node).await {
+                        tracing::warn!(domain = %domain_name, entity = %entity_name, error_code = %code, "failed to ingest custom error definition: {e}");
+                    }
+                    stats.errors += 1;
+                }
             }
         }
     }

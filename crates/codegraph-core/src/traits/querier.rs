@@ -246,6 +246,13 @@ pub trait GraphQuerier: Send + Sync {
     async fn get_pipelines(&self) -> Result<Vec<PipelineNode>, GraphError> {
         Ok(Vec::new())
     }
+
+    async fn get_pipeline_for_endpoint(
+        &self,
+        _endpoint_path: &str,
+    ) -> Result<Option<PipelineNode>, GraphError> {
+        Ok(None)
+    }
 }
 
 /// Check if a VO (value object) schema extends an entity through its allOf

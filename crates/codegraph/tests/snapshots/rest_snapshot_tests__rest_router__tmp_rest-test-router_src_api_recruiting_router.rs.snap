@@ -1,5 +1,6 @@
 ---
 source: crates/codegraph/tests/rest_snapshot_tests.rs
+assertion_line: 71
 expression: "&f.content"
 ---
 //! Router for recruiting domain.
@@ -34,6 +35,7 @@ fn candidate_routes() -> Router<AppState> {
 
 
         .route("/{candidate_id}", axum::routing::get(candidate_handler::get_by_id).put(candidate_handler::update).delete(candidate_handler::delete))
+
 
 
 

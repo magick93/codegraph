@@ -41,7 +41,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
         _config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
-        _project: &ProjectConfig,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let querier = IfmlGraphQuerier::new(db);
         let model = querier
@@ -59,7 +59,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
         let load_template = format!("ifml/{}/page_load.tera", self.framework);
 
         for vc in &model.view_containers {
-            if let Ok(content) = render_page_svelte(&vc, tera, &page_template) {
+            if let Ok(content) = render_page_svelte(&vc, tera, &page_template, &project.api_version) {
                 files.push(GeneratedFile {
                     path: self
                         .output_dir
@@ -69,7 +69,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
             }
 
             if let Some(ref route_load_fn) = self.output_paths.route_load {
-                if let Ok(content) = render_page_load(&vc, tera, &load_template) {
+                if let Ok(content) = render_page_load(&vc, tera, &load_template, &project.api_version) {
                     files.push(GeneratedFile {
                         path: self.output_dir.join(route_load_fn(&vc.name)),
                         content,
@@ -84,6 +84,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
 
 #[derive(Debug, Serialize)]
 pub struct PageSvelteContext {
+    pub api_version: String,
     name: String,
     label: String,
     components: Vec<PageComponentContext>,
@@ -101,6 +102,7 @@ pub struct PageComponentContext {
 
 #[derive(Debug, Serialize)]
 pub struct PageLoadContext {
+    pub api_version: String,
     name: String,
     components: Vec<PageLoadComponentContext>,
 }
@@ -116,8 +118,10 @@ fn render_page_svelte(
     vc: &super::context::IfmlViewContainer,
     tera: &tera::Tera,
     template: &str,
+    api_version: &str,
 ) -> Result<String> {
     let ctx = PageSvelteContext {
+        api_version: api_version.to_string(),
         name: vc.name.clone(),
         label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
         components: vc
@@ -140,8 +144,10 @@ fn render_page_load(
     vc: &super::context::IfmlViewContainer,
     tera: &tera::Tera,
     template: &str,
+    api_version: &str,
 ) -> Result<String> {
     let ctx = PageLoadContext {
+        api_version: api_version.to_string(),
         name: vc.name.clone(),
         components: vc
             .components
