@@ -30,6 +30,7 @@ pub struct ScaffoldContext {
     pub has_fern: bool,
     pub has_cli: bool,
     pub has_test_gen: bool,
+    pub has_auth_rate_limit: bool,
     pub has_admin_cli: bool,
     pub migration_strategy: String,
 }
@@ -65,6 +66,7 @@ pub struct ScaffoldGenerator {
     has_fern: bool,
     has_cli: bool,
     has_test_gen: bool,
+    has_auth_rate_limit: bool,
     has_admin_cli: bool,
     migration_strategy: String,
 }
@@ -79,6 +81,7 @@ impl ScaffoldGenerator {
         has_cli: bool,
         has_test_gen: bool,
         has_fern: bool,
+        has_auth_rate_limit: bool,
         has_admin_cli: bool,
         migration_strategy: &str,
     ) -> Self {
@@ -91,6 +94,7 @@ impl ScaffoldGenerator {
             has_fern,
             has_cli,
             has_test_gen,
+            has_auth_rate_limit,
             has_admin_cli,
             migration_strategy: migration_strategy.to_string(),
         }
@@ -211,6 +215,7 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_fern: self.has_fern,
             has_cli: self.has_cli,
             has_test_gen: self.has_test_gen,
+            has_auth_rate_limit: self.has_auth_rate_limit,
             has_admin_cli: self.has_admin_cli,
             migration_strategy: self.migration_strategy.clone(),
         };

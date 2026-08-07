@@ -16,6 +16,9 @@ pub mod webhook_dispatch;
 pub mod webhook_router;
 {% endif %}
 pub mod qs_query;
+{% if has_auth_rate_limit %}
+pub mod rate_limiter;
+{% endif %}
 pub mod server;
 {% if project.hooks_api_crate %}
 pub mod hooks;

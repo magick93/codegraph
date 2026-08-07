@@ -554,6 +554,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         .and_then(|bp| bp.features.get("has_admin_cli"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let has_auth_rate_limit = build_plan
+        .and_then(|bp| bp.features.get("has_auth_rate_limit"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let migration_strategy = build_plan
         .and_then(|bp| bp.features.get("migration_strategy"))
         .and_then(|v| v.as_str())
@@ -790,6 +794,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             has_cli,
             has_test_gen,
             has_fern,
+            has_auth_rate_limit,
             has_admin_cli,
             &migration_strategy,
         )) as Box<dyn GlobalGenerator>,

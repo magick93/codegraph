@@ -14,6 +14,9 @@ mod integrations;
 mod metrics_middleware;
 mod middleware;
 mod qs_query;
+{% if has_auth_rate_limit %}
+mod rate_limiter;
+{% endif %}
 mod server;
 mod config;
 mod doctor;
@@ -281,6 +284,9 @@ mod integrations;
 mod metrics_middleware;
 mod middleware;
 mod qs_query;
+{% if has_auth_rate_limit %}
+mod rate_limiter;
+{% endif %}
 mod server;
 {% if has_webhooks %}
 mod webhook_api;
