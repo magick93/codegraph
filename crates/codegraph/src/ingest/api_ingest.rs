@@ -218,6 +218,75 @@ pub async fn ingest_api_model(
                     .await
                     .map_err(|e| Error::Graph(e))?;
             }
+
+            // Add search as a first-class operation when the entity has a dedicated
+            // /search REST surface.
+            let has_fts = ec
+                .and_then(|c| c.search.fts_columns.as_ref())
+                .map(|cols| !cols.is_empty())
+                .unwrap_or(false);
+            let fts_rest_mode = ec
+                .map(|c| c.search.fts_rest_mode.clone())
+                .unwrap_or_else(|| "query_param".to_string());
+            if has_fts && (fts_rest_mode == "dedicated" || fts_rest_mode == "both") {
+                let op_name = format!("search_{}", resource_name);
+                let op_id = db
+                    .ingest_api_operation(&ApiOperationNode {
+                        name: op_name.clone(),
+                        kind: "search".to_string(),
+                        input_schema: None,
+                        output_schema: schema_title.clone(),
+                        paging: true,
+                        sorting: false,
+                        filtering: false,
+                        domain: Some(domain_name.to_string()),
+                    })
+                    .await
+                    .map_err(|e| Error::Graph(e))?;
+                stats.operations += 1;
+
+                db.ingest_edge(&resource_id, &op_id, EdgeType::HasOperation, None)
+                    .await
+                    .map_err(|e| Error::Graph(e))?;
+
+                db.ingest_edge(&op_id, &schema_title, EdgeType::OutputBoundTo, None)
+                    .await
+                    .map_err(|e| Error::Graph(e))?;
+
+                // Interaction + HttpEndpoint for the search operation
+                let interaction_id = db
+                    .ingest_interaction(&InteractionNode {
+                        transport: "http".to_string(),
+                        domain: Some(domain_name.to_string()),
+                    })
+                    .await
+                    .map_err(|e| Error::Graph(e))?;
+                stats.interactions += 1;
+
+                db.ingest_edge(&op_id, &interaction_id, EdgeType::HasInteraction, None)
+                    .await
+                    .map_err(|e| Error::Graph(e))?;
+
+                let path_template = format!("{}/search", base_path);
+                let endpoint_id = db
+                    .ingest_http_endpoint(&HttpEndpointNode {
+                        method: "GET".to_string(),
+                        path_template,
+                        domain: Some(domain_name.to_string()),
+                    })
+                    .await
+                    .map_err(|e| Error::Graph(e))?;
+                stats.endpoints += 1;
+
+                db.ingest_edge(
+                    &interaction_id,
+                    &endpoint_id,
+                    EdgeType::BindsHttpEndpoint,
+                    None,
+                )
+                .await
+                .map_err(|e| Error::Graph(e))?;
+            }
         }
     }
 

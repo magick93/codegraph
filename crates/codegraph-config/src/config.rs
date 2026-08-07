@@ -377,6 +377,10 @@ fn default_fts_language() -> String {
     "english".to_string()
 }
 
+fn default_fts_rest_mode() -> String {
+    "query_param".to_string()
+}
+
 fn default_embedding_dimensions() -> u32 {
     1536
 }
@@ -404,6 +408,12 @@ pub struct SearchConfig {
     /// Vector dimensions for pgvector (default: 1536 for OpenAI text-embedding-ada-002).
     #[serde(default = "default_embedding_dimensions")]
     pub embedding_dimensions: u32,
+    /// REST surface for full-text search. "query_param" (default) exposes FTS
+    /// via ?q= on the list route; "dedicated" generates a standalone
+    /// GET /{entity}/search endpoint with a typed SearchParams struct;
+    /// "both" enables both surfaces.
+    #[serde(default = "default_fts_rest_mode")]
+    pub fts_rest_mode: String,
 }
 
 impl Default for SearchConfig {
@@ -412,6 +422,7 @@ impl Default for SearchConfig {
             fts_columns: None,
             fts_weights: HashMap::new(),
             fts_language: default_fts_language(),
+            fts_rest_mode: default_fts_rest_mode(),
             embedding_columns: Vec::new(),
             embedding_dimensions: default_embedding_dimensions(),
         }
@@ -821,6 +832,7 @@ role = "root"
         assert_eq!(person.search.fts_language, "english");
         assert!(person.search.embedding_columns.is_empty());
         assert_eq!(person.search.embedding_dimensions, 1536);
+        assert_eq!(person.search.fts_rest_mode, "query_param");
     }
 
     #[test]

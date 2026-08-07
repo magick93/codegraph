@@ -1000,6 +1000,172 @@ async fn candidate_handler() {
     );
 }
 
+// === FTS REST surface mode tests ===
+
+/// Entity with search.fts_rest_mode = "dedicated" must generate the
+/// standalone GET /search endpoint with typed SearchParams and a
+/// versioned utoipa path.
+#[tokio::test]
+async fn handler_fts_rest_dedicated_generates_search_endpoint() {
+    generate::type_registry::register_framework_types();
+    let mock = setup_mock().await;
+    let mut config = test_domain_config();
+    let recruiting = config
+        .domains
+        .get_mut("recruiting")
+        .expect("recruiting domain exists");
+    let candidate_cfg = recruiting
+        .entity_config
+        .get_mut("CandidateType")
+        .expect("CandidateType entity config exists");
+    candidate_cfg.search.fts_columns = Some(vec!["summary".to_string()]);
+    candidate_cfg.search.fts_rest_mode = "dedicated".to_string();
+
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-handler-fts-dedicated");
+
+    let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let content = &files[0].content;
+    assert!(
+        content.contains("pub struct SearchParams"),
+        "Dedicated mode should generate SearchParams struct. Got:\n{content}"
+    );
+    assert!(
+        content.contains("pub async fn search("),
+        "Dedicated mode should generate search handler. Got:\n{content}"
+    );
+    assert!(
+        content.contains("operation_id = \"recruiting_candidate_search\""),
+        "Search handler should have dedicated operation_id"
+    );
+    assert!(
+        content.contains("path = \"/api/v1/recruiting/candidates/search\""),
+        "Search utoipa path should include api_version"
+    );
+    assert!(
+        content.contains("/search\""),
+        "Search utoipa path should end with /search"
+    );
+    assert!(
+        content.contains("api_key_info.user_id"),
+        "Search handler should pass user_id to queries.search"
+    );
+    assert!(
+        content.contains("candidate_queries.search("),
+        "Search handler should delegate to candidate_queries.search"
+    );
+    // The ?q= param should still be present on the list route
+    assert!(
+        content.contains("pub q: Option<String>"),
+        "List route should still have ?q= param"
+    );
+}
+
+/// Dedicated /search route registration in the router template.
+#[tokio::test]
+async fn router_fts_rest_dedicated_registers_search_route() {
+    generate::type_registry::register_framework_types();
+    let mock = setup_mock().await;
+    let mut config = test_domain_config();
+    let recruiting = config
+        .domains
+        .get_mut("recruiting")
+        .expect("recruiting domain exists");
+    let candidate_cfg = recruiting
+        .entity_config
+        .get_mut("CandidateType")
+        .expect("CandidateType entity config exists");
+    candidate_cfg.search.fts_columns = Some(vec!["summary".to_string()]);
+    candidate_cfg.search.fts_rest_mode = "dedicated".to_string();
+
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-router-fts-dedicated");
+
+    let gen = generate::api::router::RouterGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &mock,
+            "recruiting",
+            &["CandidateType".to_string()],
+            &config,
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let router_content = files
+        .iter()
+        .map(|f| f.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        router_content.contains(".route(\"/search\""),
+        "Dedicated mode should register /search route. Got:\n{router_content}"
+    );
+    assert!(
+        router_content.contains("candidate_handler::search"),
+        "/search route should point to candidate_handler::search"
+    );
+}
+
+/// Default mode (query_param) must NOT generate a dedicated /search endpoint
+/// or register a /search route — backward compatibility.
+#[tokio::test]
+async fn handler_fts_rest_query_param_omits_search_endpoint() {
+    generate::type_registry::register_framework_types();
+    let mock = setup_mock().await;
+    let mut config = test_domain_config();
+    let recruiting = config
+        .domains
+        .get_mut("recruiting")
+        .expect("recruiting domain exists");
+    let candidate_cfg = recruiting
+        .entity_config
+        .get_mut("CandidateType")
+        .expect("CandidateType entity config exists");
+    candidate_cfg.search.fts_columns = Some(vec!["summary".to_string()]);
+    candidate_cfg.search.fts_rest_mode = "query_param".to_string();
+
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-handler-fts-query");
+
+    let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let content = &files[0].content;
+    assert!(
+        !content.contains("pub struct SearchParams"),
+        "query_param mode should NOT generate SearchParams. Got:\n{content}"
+    );
+    assert!(
+        content.contains("pub q: Option<String>"),
+        "query_param mode should keep ?q= on the list route"
+    );
+}
+
 // === Router Template Tests (Domain-level) ===
 
 #[tokio::test]

@@ -52,6 +52,9 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 {% if entity.has_embeddings %}
         .route("/semantic-search", axum::routing::post({{ entity.module_name }}_handler::semantic_search))
 {% endif %}
+{%- if entity.has_fts and entity.fts_rest_mode != "query_param" %}
+        .route("/search", axum::routing::get({{ entity.module_name }}_handler::search))
+{% endif %}
 {% if entity.has_workflow %}
         .route("/{ {{- entity.param_name -}} }/actions/transition", axum::routing::post({{ entity.module_name }}_workflow::transition))
 {% if entity.has_approval_status %}
