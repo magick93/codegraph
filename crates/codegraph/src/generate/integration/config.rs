@@ -2,8 +2,8 @@ use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use codegraph_ext_points::{ConfigFieldType, ExtensionPointsConfig};
 use codegraph_core::traits::GraphQuerier;
+use codegraph_ext_points::{ConfigFieldType, ExtensionPointsConfig};
 use serde::Serialize;
 
 use crate::error::Result;
@@ -93,7 +93,8 @@ impl GlobalGenerator for IntegrationConfigGenerator {
         let ctx = ConfigContext {
             extension_points: points,
         };
-        let content = render_template_with_project(tera, "integration/config_struct.tera", &ctx, project)?;
+        let content =
+            render_template_with_project(tera, "integration/config_struct.tera", &ctx, project)?;
 
         Ok(vec![GeneratedFile {
             path: self.output_dir.join("src").join("integration_config.rs"),

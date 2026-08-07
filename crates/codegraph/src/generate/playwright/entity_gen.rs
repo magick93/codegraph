@@ -6,6 +6,7 @@ use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
+use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use crate::generate::ui::common::collect_ui_fields;
@@ -50,16 +51,16 @@ impl EntityGenerator for PlaywrightEntityGenerator {
         }
 
         let entity_name = schema.rust_type_name.clone();
-        let path_segment = schema.api_path_segment.clone();
 
         let entity_cfg = config
             .domains
             .get(domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
+
+        let operations =
+            resolve_entity_operations(db, config, domain, &entity_name).await;
 
         let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
         let has_workflow = workflow
@@ -116,8 +117,10 @@ impl EntityGenerator for PlaywrightEntityGenerator {
             .join("factories")
             .join(domain);
 
-        let page_content = render_template_with_project(tera, "playwright/entity_page.tera", &ctx, project)?;
-        let factory_content = render_template_with_project(tera, "playwright/test_data_factory.tera", &ctx, project)?;
+        let page_content =
+            render_template_with_project(tera, "playwright/entity_page.tera", &ctx, project)?;
+        let factory_content =
+            render_template_with_project(tera, "playwright/test_data_factory.tera", &ctx, project)?;
 
         Ok(vec![
             GeneratedFile {

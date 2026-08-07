@@ -8,7 +8,10 @@ pub enum ClassifyFormat {
 }
 
 #[derive(Parser)]
-#[command(name = "codegraph", about = "Graph-driven code generation from JSON schemas")]
+#[command(
+    name = "codegraph",
+    about = "Graph-driven code generation from JSON schemas"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -107,4 +110,23 @@ pub enum Commands {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// Migrate domain configuration to the graph-based API model.
+    /// Reads domains.toml and creates ApiResource/Operation/Endpoint
+    /// nodes in an existing graph database.
+    Migrate(MigrateArgs),
+}
+
+#[derive(Parser, Debug)]
+pub struct MigrateArgs {
+    /// Path to the domain configuration file
+    #[arg(long, default_value = "domains.toml")]
+    pub config: PathBuf,
+
+    /// Path to the schema directory (for loading existing schemas)
+    #[arg(long, default_value = "schemas")]
+    pub schemas: PathBuf,
+
+    /// Path to the classifier configuration
+    #[arg(long, default_value = "classifier.toml")]
+    pub classifier: PathBuf,
 }

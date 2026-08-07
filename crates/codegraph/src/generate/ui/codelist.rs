@@ -174,7 +174,8 @@ impl GlobalGenerator for UiCodelistGenerator {
                 options,
             };
 
-            let content = render_template_with_project(tera, "ui/codelist_data.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "ui/codelist_data.tera", &ctx, project)?;
 
             files.push(GeneratedFile {
                 path: self.ts_output_dir().join(format!("{}.ts", title)),

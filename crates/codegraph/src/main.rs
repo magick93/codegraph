@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
-use codegraph_backend::{create_backend, BackendConfig};
 use codegraph::generate::ProjectConfig;
+use codegraph_backend::{create_backend, BackendConfig};
 
 mod cli;
 
@@ -41,7 +41,17 @@ async fn main() -> codegraph::error::Result<()> {
             extension_points,
             template_dir,
             ifml_framework,
-        } => cmd_generate(&config, &output, extension_points.as_deref(), &template_dir, &ifml_framework).await,
+        } => {
+            cmd_generate(
+                &config,
+                &output,
+                extension_points.as_deref(),
+                &template_dir,
+                &ifml_framework,
+            )
+            .await
+        }
+        cli::Commands::Migrate(args) => cmd_migrate(args).await,
         cli::Commands::Classify {
             schemas,
             classifier,
@@ -79,9 +89,11 @@ async fn main() -> codegraph::error::Result<()> {
             })
             .await
         }
-        cli::Commands::Lsp { schemas, classifier, config } => {
-            cmd_lsp(&schemas, classifier.as_deref(), config.as_deref()).await
-        }
+        cli::Commands::Lsp {
+            schemas,
+            classifier,
+            config,
+        } => cmd_lsp(&schemas, classifier.as_deref(), config.as_deref()).await,
     }
 }
 
@@ -132,7 +144,11 @@ fn load_ui_overrides(
 
 fn load_seed_config(config_path: &Path) -> Option<PathBuf> {
     let path = config_path.parent()?.join("seed.toml");
-    if path.exists() { Some(path) } else { None }
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 fn load_ui_domains(
@@ -187,30 +203,69 @@ async fn cmd_generate(
         None => None,
     };
 
+    let api_resources = be
+        .querier()
+        .get_api_resources()
+        .await
+        .map_err(codegraph::error::Error::Graph)?;
+    if api_resources.is_empty() {
+        println!(
+            "No API model nodes found — auto-seeding from domain configuration..."
+        );
+        let stats = codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &config)
+            .await?;
+        println!("Auto-seeded: {stats}");
+    }
+
     // cmd_generate uses a pre-populated backend; schema base dir is unknown here.
     // Pass an empty path so UiCodelistGenerator skips gracefully.
     run_validation(be.querier(), &config).await?;
-    let report = codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
-        db: be.querier(),
-        config: &config,
-        output_dir: output,
-        tera: &tera,
-        ui_overrides: &ui_overrides,
-        ui_domains: &ui_domains,
-        schema_base_dir: Path::new(""),
-        seed_config: load_seed_config(config_path).as_deref(),
-        domain_types_base: None,
-        hooks_base: None,
-        ext_points: ext_config.as_ref(),
-        build_plan: None,
-        ifml_frameworks: ifml_frameworks.to_vec(),
-        project_config: None,
-    })
-    .await?;
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: be.querier(),
+            config: &config,
+            output_dir: output,
+            tera: &tera,
+            ui_overrides: &ui_overrides,
+            ui_domains: &ui_domains,
+            schema_base_dir: Path::new(""),
+            seed_config: load_seed_config(config_path).as_deref(),
+            domain_types_base: None,
+            hooks_base: None,
+            ext_points: ext_config.as_ref(),
+            build_plan: None,
+            ifml_frameworks: ifml_frameworks.to_vec(),
+            project_config: None,
+        })
+        .await?;
     print!("{}", report.summary());
     if report.has_errors() {
         eprintln!("Generation completed with errors. Some entities were skipped.");
     }
+    Ok(())
+}
+
+async fn cmd_migrate(args: cli::MigrateArgs) -> codegraph::error::Result<()> {
+    let domain_config = codegraph_config::config::parse_domain_config(&args.config)
+        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
+
+    let be = create_backend(&BackendConfig::default())
+        .await
+        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
+
+    println!(
+        "Ingesting API model from domain configuration '{}'...",
+        args.config.display()
+    );
+    let stats =
+        codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config).await?;
+
+    println!("Migration complete: {stats}");
+    println!(
+        "{} API resources, {} operations, {} endpoints, {} interactions created",
+        stats.resources, stats.operations, stats.endpoints, stats.interactions
+    );
+
     Ok(())
 }
 
@@ -255,17 +310,24 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
 
         // Build project config from profile meta (optional fields override defaults).
         let meta = &resolved.meta;
-        domain_types_base_path = meta.domain_types_base
-            .as_ref()
-            .map(|p| output.join(p));
+        domain_types_base_path = meta.domain_types_base.as_ref().map(|p| output.join(p));
         let database_target_str = plan.database_target().to_string();
         project_config = Some(ProjectConfig {
             app_name: meta.app_name.clone().unwrap_or_else(|| "app".into()),
             lib_name: "cosmos".into(),
-            domain_types_crate: meta.domain_types_crate.clone().unwrap_or_else(|| "domain_types".into()),
+            domain_types_crate: meta
+                .domain_types_crate
+                .clone()
+                .unwrap_or_else(|| "domain_types".into()),
             hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_default(),
-            api_title: meta.api_title.clone().unwrap_or_else(|| "HR Open API".into()),
-            generator_name: meta.generator_name.clone().unwrap_or_else(|| "codegraph".into()),
+            api_title: meta
+                .api_title
+                .clone()
+                .unwrap_or_else(|| "HR Open API".into()),
+            generator_name: meta
+                .generator_name
+                .clone()
+                .unwrap_or_else(|| "codegraph".into()),
             domain_types_base: meta.domain_types_base.clone().unwrap_or_default(),
             hooks_api_base: meta.hooks_api_base.clone().unwrap_or_default(),
             extensions_base: meta.extensions_base.clone().unwrap_or_default(),
@@ -290,6 +352,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             cargo_patch: String::new(),
             extra_dependencies: String::new(),
             cargo_workspace: false,
+            api_version: domain_config.defaults.api_version.clone(),
         });
 
         println!(
@@ -332,11 +395,15 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
         let mut total_stats = codegraph::ingest::ifml_ingest::IfmlIngestStats::default();
         for ifml_path in ifml_files {
-            let model = codegraph_ifml_dsl::parse_ifml_file(ifml_path)
-                .map_err(|e| codegraph::error::Error::Config(format!(
-                    "Failed to parse IFML file '{}': {}", ifml_path.display(), e
-                )))?;
-            let stats = codegraph::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+            let model = codegraph_ifml_dsl::parse_ifml_file(ifml_path).map_err(|e| {
+                codegraph::error::Error::Config(format!(
+                    "Failed to parse IFML file '{}': {}",
+                    ifml_path.display(),
+                    e
+                ))
+            })?;
+            let stats =
+                codegraph::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
             total_stats.view_containers += stats.view_containers;
             total_stats.containers += stats.containers;
             total_stats.components += stats.components;
@@ -345,6 +412,14 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             total_stats.actions += stats.actions;
         }
         println!("Pass 1b complete: {total_stats}");
+    }
+
+    // Pass 1c: Ingest API model from domain configuration
+    {
+        let api_stats =
+            codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config)
+                .await?;
+        println!("Pass 1c complete: {api_stats}");
     }
 
     // Auto-classify
@@ -445,23 +520,24 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
 
     run_validation(be.querier(), &domain_config).await?;
 
-    let report = codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
-        db: be.querier(),
-        config: &domain_config,
-        output_dir: output,
-        tera: &tera,
-        ui_overrides: &ui_overrides,
-        ui_domains: &ui_domains,
-        schema_base_dir: schemas,
-        seed_config: load_seed_config(config_path).as_deref(),
-        domain_types_base: domain_types_base_path.as_deref(),
-        hooks_base: None,
-        ext_points: ext_config.as_ref(),
-        build_plan: build_plan.as_ref(),
-        ifml_frameworks: ifml_framework.to_vec(),
-        project_config: project_config.as_ref(),
-    })
-    .await?;
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: be.querier(),
+            config: &domain_config,
+            output_dir: output,
+            tera: &tera,
+            ui_overrides: &ui_overrides,
+            ui_domains: &ui_domains,
+            schema_base_dir: schemas,
+            seed_config: load_seed_config(config_path).as_deref(),
+            domain_types_base: domain_types_base_path.as_deref(),
+            hooks_base: None,
+            ext_points: ext_config.as_ref(),
+            build_plan: build_plan.as_ref(),
+            ifml_frameworks: ifml_framework.to_vec(),
+            project_config: project_config.as_ref(),
+        })
+        .await?;
 
     print!("{}", report.summary());
     if report.has_errors() {
@@ -649,8 +725,7 @@ async fn cmd_lsp(
         .collect();
 
     let naming_rules = classifier_config.naming_rules.clone();
-    let auto_classifier =
-        codegraph::classify::AutoClassifier::new(classifier_types, naming_rules);
+    let auto_classifier = codegraph::classify::AutoClassifier::new(classifier_types, naming_rules);
 
     // Build entity names by stripping the "Type" suffix from raw schema titles.
     // IFML references entities without the suffix (e.g. "Customer" not "CustomerType").

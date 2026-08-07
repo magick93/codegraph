@@ -102,7 +102,7 @@ async function buildPositionTree(
 	const depMap = new Map<string, FlatWorker>();
 	for (const w of workers) {
 		try {
-			const depsRes = await fetch(`${BASE_URL}/api/common/worker/${w.id}/deployment?page_size=10`, {
+			const depsRes = await fetch(`${BASE_URL}/api/{{ project.api_version }}/common/worker/${w.id}/deployment?page_size=10`, {
 				headers: { Authorization: `Bearer ${apiKey}` },
 			});
 			if (!depsRes.ok) continue;
@@ -165,7 +165,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	// Resolve org from tenant if not cached in session
 	if (!resolvedOrgId) {
 		try {
-			const orgListRes = await fetch(`${BASE_URL}/api/common/organization?page_size=100`, {
+			const orgListRes = await fetch(`${BASE_URL}/api/{{ project.api_version }}/common/organization?page_size=100`, {
 				headers: { Authorization: `Bearer ${apiKey}` },
 			});
 			if (orgListRes.ok) {
@@ -183,7 +183,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	}
 
 	try {
-		const orgRes = await fetch(`${BASE_URL}/api/common/organization/${resolvedOrgId}/tree`, {
+		const orgRes = await fetch(`${BASE_URL}/api/{{ project.api_version }}/common/organization/${resolvedOrgId}/tree`, {
 			headers: { Authorization: `Bearer ${apiKey}` },
 		});
 		if (orgRes.ok) {
@@ -196,13 +196,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 	if (positionId) {
 		try {
-			const posRes = await fetch(`${BASE_URL}/api/common/position/${positionId}/tree`, {
+			const posRes = await fetch(`${BASE_URL}/api/{{ project.api_version }}/common/position/${positionId}/tree`, {
 				headers: { Authorization: `Bearer ${apiKey}` },
 			});
 			if (posRes.ok) {
 				const posRows: FlatPosition[] = await posRes.json();
 				if (posRows.length > 0) {
-					const workersRes = await fetch(`${BASE_URL}/api/common/worker?page_size=100`, {
+					const workersRes = await fetch(`${BASE_URL}/api/{{ project.api_version }}/common/worker?page_size=100`, {
 						headers: { Authorization: `Bearer ${apiKey}` },
 					});
 					if (workersRes.ok) {

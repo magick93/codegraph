@@ -11,6 +11,8 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
+use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment};
+
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::page::{ChildSection, UiField};
 use super::store::UiParentInfo;
@@ -138,7 +140,8 @@ impl UiE2eTestGenerator {
         parent_title: &str,
         parent_domain: &str,
     ) -> Option<Box<super::store::UiGrandparentInfo>> {
-        let parent_stripped = crate::generate::api::router::strip_suffix(parent_title, &config.defaults.type_suffix);
+        let parent_stripped =
+            crate::generate::api::router::strip_suffix(parent_title, &config.defaults.type_suffix);
 
         // 1. Check manual config for parent's parent
         if let Some(parent_ec) = config
@@ -148,7 +151,9 @@ impl UiE2eTestGenerator {
         {
             if parent_ec.role.as_deref() == Some("child") {
                 if let Some(ref gp_title) = parent_ec.parent {
-                    if let Ok(Some(gp_schema)) = db.get_schema_in_domain(gp_title, parent_domain).await {
+                    if let Ok(Some(gp_schema)) =
+                        db.get_schema_in_domain(gp_title, parent_domain).await
+                    {
                         let gp_domain = if config
                             .domains
                             .get(parent_domain)
@@ -164,10 +169,10 @@ impl UiE2eTestGenerator {
                         };
                         return Some(Box::new(super::store::UiGrandparentInfo {
                             param_name: crate::generate::api::router::param_name_from_path_segment(
-                                &gp_schema.api_path_segment,
+                                &resolve_path_segment(None, &gp_schema),
                             ),
                             domain: gp_domain,
-                            path_segment: gp_schema.api_path_segment.clone(),
+                            path_segment: resolve_path_segment(None, &gp_schema),
                             entity_name: gp_schema.rust_type_name.clone(),
                         }));
                     }
@@ -179,9 +184,15 @@ impl UiE2eTestGenerator {
 
         // 2. Check graph parent_candidates
         for gpc in &self.parent_candidates {
-            let gpc_child = crate::generate::api::router::strip_suffix(&gpc.child_title, &config.defaults.type_suffix);
+            let gpc_child = crate::generate::api::router::strip_suffix(
+                &gpc.child_title,
+                &config.defaults.type_suffix,
+            );
             if gpc_child == parent_stripped {
-                if let Ok(Some(gp_schema)) = db.get_schema_in_domain(&gpc.parent_title, parent_domain).await {
+                if let Ok(Some(gp_schema)) = db
+                    .get_schema_in_domain(&gpc.parent_title, parent_domain)
+                    .await
+                {
                     let gp_domain = if config
                         .domains
                         .get(parent_domain)
@@ -197,10 +208,10 @@ impl UiE2eTestGenerator {
                     };
                     return Some(Box::new(super::store::UiGrandparentInfo {
                         param_name: crate::generate::api::router::param_name_from_path_segment(
-                            &gp_schema.api_path_segment,
+                            &resolve_path_segment(None, &gp_schema),
                         ),
                         domain: gp_domain,
-                        path_segment: gp_schema.api_path_segment.clone(),
+                        path_segment: resolve_path_segment(None, &gp_schema),
                         entity_name: gp_schema.rust_type_name.clone(),
                     }));
                 }
@@ -233,10 +244,10 @@ impl EntityGenerator for UiE2eTestGenerator {
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
         let entity_name = schema.rust_type_name.clone();
-        let entity_label = codegraph_naming::to_display_name(&config.defaults.strip_suffix(&schema.title));
+        let entity_label =
+            codegraph_naming::to_display_name(&config.defaults.strip_suffix(&schema.title));
         let module_name = schema.pg_table_name.clone();
         let domain = domain.to_string();
-        let path_segment = schema.api_path_segment.clone();
 
         if module_name.is_empty() {
             return Ok(Vec::new());
@@ -247,9 +258,10 @@ impl EntityGenerator for UiE2eTestGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
+
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let dto_config = entity_cfg.map(|ec| &ec.dto);
         let immutable_fields: Vec<String> = dto_config
@@ -373,7 +385,7 @@ impl EntityGenerator for UiE2eTestGenerator {
         for field in &create_fields {
             if field.is_entity_ref {
                 if let Some(ref api_path) = field.ref_api_path {
-                    if seen_deps.insert(api_path.clone()) {
+                    if seen_deps.insert(field.name.clone()) {
                         let test_data_json =
                             build_dep_test_data(db, &all_props, &field.name, Some(&domain)).await;
                         entity_ref_deps.push(EntityRefDep {
@@ -391,9 +403,15 @@ impl EntityGenerator for UiE2eTestGenerator {
         let e2e_include = if let Some(ec) = entity_cfg {
             if ec.allow_include.as_ref().map_or(false, |v| !v.is_empty()) {
                 let resolved = crate::generate::api::include_path::resolve_include_paths(
-                    db, config, &domain, schema_title, ec.allow_include.as_ref(),
-                ).await?;
-                resolve_e2e_include_config(db, config, &domain, schema_title, &resolved, has_list).await?
+                    db,
+                    config,
+                    &domain,
+                    schema_title,
+                    ec.allow_include.as_ref(),
+                )
+                .await?;
+                resolve_e2e_include_config(db, config, &domain, schema_title, &resolved, has_list, project)
+                    .await?
             } else {
                 None
             }
@@ -408,7 +426,10 @@ impl EntityGenerator for UiE2eTestGenerator {
         // Resolve parent info for child entities.
         // Manual config (role = "child", parent = "...") takes priority over graph detection.
         let (parent, parent_title_for_data) = {
-            let stripped = crate::generate::api::router::strip_suffix(schema_title, &config.defaults.type_suffix);
+            let stripped = crate::generate::api::router::strip_suffix(
+                schema_title,
+                &config.defaults.type_suffix,
+            );
             let mut result = None;
             let mut parent_title_str = String::new();
 
@@ -420,7 +441,9 @@ impl EntityGenerator for UiE2eTestGenerator {
             {
                 if ec.role.as_deref() == Some("child") {
                     if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, &domain).await {
+                        if let Ok(Some(parent_schema)) =
+                            db.get_schema_in_domain(parent_title, &domain).await
+                        {
                             let parent_domain = if config
                                 .domains
                                 .get(&domain)
@@ -443,10 +466,10 @@ impl EntityGenerator for UiE2eTestGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &parent_schema.api_path_segment,
+                                        &resolve_path_segment(None, &parent_schema),
                                     ),
                                 domain: parent_domain,
-                                path_segment: parent_schema.api_path_segment.clone(),
+                                path_segment: resolve_path_segment(None, &parent_schema),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent,
@@ -463,8 +486,10 @@ impl EntityGenerator for UiE2eTestGenerator {
                 .unwrap_or("root");
             if result.is_none() && effective_role != "root" {
                 for pc in &self.parent_candidates {
-                    let child_name =
-                        crate::generate::api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
+                    let child_name = crate::generate::api::router::strip_suffix(
+                        &pc.child_title,
+                        &config.defaults.type_suffix,
+                    );
                     if child_name == stripped {
                         let in_explicit = config
                             .domains
@@ -473,16 +498,18 @@ impl EntityGenerator for UiE2eTestGenerator {
                             .unwrap_or(false);
                         let parent_in_domain = in_explicit
                             || db
-                            .get_schema_in_domain(&pc.parent_title, &domain)
-                            .await
-                            .ok()
-                            .flatten()
-                            .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
-                            .unwrap_or(false);
+                                .get_schema_in_domain(&pc.parent_title, &domain)
+                                .await
+                                .ok()
+                                .flatten()
+                                .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
+                                .unwrap_or(false);
                         if !parent_in_domain {
                             break;
                         }
-                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, &domain).await {
+                        if let Ok(Some(parent_schema)) =
+                            db.get_schema_in_domain(&pc.parent_title, &domain).await
+                        {
                             let parent_domain = domain.clone();
 
                             let grandparent = self
@@ -493,10 +520,10 @@ impl EntityGenerator for UiE2eTestGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &parent_schema.api_path_segment,
+                                        &resolve_path_segment(None, &parent_schema),
                                     ),
                                 domain: parent_domain,
-                                path_segment: parent_schema.api_path_segment.clone(),
+                                path_segment: resolve_path_segment(None, &parent_schema),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent,
@@ -521,12 +548,16 @@ impl EntityGenerator for UiE2eTestGenerator {
         let grandparent_test_data_json = if let Some(ref p) = parent {
             if let Some(ref gp) = p.grandparent {
                 // Find grandparent's schema title from parent_candidates
-                let parent_stripped =
-                    crate::generate::api::router::strip_suffix(&parent_title_for_data, &config.defaults.type_suffix);
+                let parent_stripped = crate::generate::api::router::strip_suffix(
+                    &parent_title_for_data,
+                    &config.defaults.type_suffix,
+                );
                 let mut gp_title = String::new();
                 for gpc in &self.parent_candidates {
-                    let gpc_child =
-                        crate::generate::api::router::strip_suffix(&gpc.child_title, &config.defaults.type_suffix);
+                    let gpc_child = crate::generate::api::router::strip_suffix(
+                        &gpc.child_title,
+                        &config.defaults.type_suffix,
+                    );
                     if gpc_child == parent_stripped {
                         gp_title = gpc.parent_title.clone();
                         break;
@@ -588,7 +619,8 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // CRUD test
         if has_list || has_create || has_read || has_update || has_delete {
-            let content = render_template_with_project(tera, "ui/test/crud.test.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "ui/test/crud.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.api.crud.test.ts", path_segment)),
                 content,
@@ -597,7 +629,8 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // Validation test
         if has_create {
-            let content = render_template_with_project(tera, "ui/test/validation.test.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "ui/test/validation.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.validation.test.ts", path_segment)),
                 content,
@@ -606,7 +639,8 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // Workflow test
         if has_workflow {
-            let content = render_template_with_project(tera, "ui/test/workflow.test.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "ui/test/workflow.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.workflow.test.ts", path_segment)),
                 content,
@@ -615,25 +649,37 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // Persona-based tests
         if has_list || has_create || has_read || has_update || has_delete {
-            let content = render_template_with_project(tera, "ui/test/owner_crud.test.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "ui/test/owner_crud.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.owner.crud.test.ts", path_segment)),
                 content,
             });
 
-            let content = render_template_with_project(tera, "ui/test/employee_view.test.tera", &ctx, project)?;
+            let content = render_template_with_project(
+                tera,
+                "ui/test/employee_view.test.tera",
+                &ctx,
+                project,
+            )?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.employee.view.test.ts", path_segment)),
                 content,
             });
 
-            let content = render_template_with_project(tera, "ui/test/manager_team.test.tera", &ctx, project)?;
+            let content = render_template_with_project(
+                tera,
+                "ui/test/manager_team.test.tera",
+                &ctx,
+                project,
+            )?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.manager.team.test.ts", path_segment)),
                 content,
             });
 
-            let content = render_template_with_project(tera, "ui/test/isolation.test.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "ui/test/isolation.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.isolation.test.ts", path_segment)),
                 content,
@@ -642,13 +688,19 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // Search tests (only for FTS-enabled entities)
         if has_fts && has_list {
-            let content = render_template_with_project(tera, "ui/test/search.test.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "ui/test/search.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.search.test.ts", path_segment)),
                 content,
             });
 
-            let content = render_template_with_project(tera, "ui/test/search_isolation.test.tera", &ctx, project)?;
+            let content = render_template_with_project(
+                tera,
+                "ui/test/search_isolation.test.tera",
+                &ctx,
+                project,
+            )?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.search.isolation.test.ts", path_segment)),
                 content,
@@ -657,7 +709,8 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // Include test
         if ctx.e2e_include.is_some() && has_read {
-            let content = render_template_with_project(tera, "ui/test/include.test.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "ui/test/include.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.include.test.ts", path_segment)),
                 content,
@@ -696,10 +749,18 @@ async fn build_dep_test_data(
         .or_else(|| last_segment.strip_suffix(".json"))
         .unwrap_or(last_segment);
 
-    // Resolve the referenced schema to find its domain
-    let dep_domain = match db.get_schema_in_domain(ref_schema_title, current_domain.unwrap_or("")).await {
+    // Resolve the referenced schema to find its domain.
+    // Try current domain first, then fallback to cross-domain lookup
+    // (e.g., timecard.leave_request → common.WorkerType).
+    let dep_domain = match db
+        .get_schema_in_domain(ref_schema_title, current_domain.unwrap_or(""))
+        .await
+    {
         Ok(Some(s)) => s.domain.clone(),
-        _ => current_domain.map(|s| s.to_string()),
+        _ => match db.get_schema(ref_schema_title).await {
+            Ok(Some(s)) => s.domain.clone(),
+            _ => current_domain.map(|s| s.to_string()),
+        },
     };
 
     // Collect UI fields for the dependency entity
@@ -715,21 +776,45 @@ async fn build_dep_test_data(
         Err(_) => return String::new(),
     };
 
-    // Build test value entries — include all non-entity-ref fields to maximize
-    // the chance of passing server-side validation (NOT NULL constraints, codelist FKs).
+    // Gather the dep entity's properties so we can skip fields that have ref_target
+    // (even if not classified as entity_ref — ValueObjects and composite wrappers
+    // also reference other schemas).
+    let dep_props = match current_domain {
+        Some(d) => db
+            .get_properties_in_domain(ref_schema_title, d)
+            .await
+            .unwrap_or_default(),
+        None => db
+            .get_properties(ref_schema_title)
+            .await
+            .unwrap_or_default(),
+    };
+    let ref_target_fields: std::collections::HashSet<String> = dep_props
+        .iter()
+        .filter(|p| p.ref_target.is_some())
+        .map(|p| p.rust_field_name.clone())
+        .collect();
+
+    // Build test value entries — include only fields that are simple scalars or
+    // codelists, skipping entity refs, complex types, and fields with ref_target.
     let mut entries = Vec::new();
     for f in &dep_fields {
         // Skip entity refs in deps (would cause recursive dep creation).
-        // Also skip fields ending in _id that aren't codelists — they're likely
-        // FK references that need real UUIDs, not string test data.
         if f.is_entity_ref {
             continue;
         }
+        // Skip fields ending in _id that aren't codelists — they're likely
+        // FK references that need real UUIDs, not string test data.
         if f.name.ends_with("_id") && !f.is_codelist {
             continue;
         }
         // Skip bare "id" field — it's the primary key, auto-generated
         if f.name == "id" {
+            continue;
+        }
+        // Skip fields that have a ref_target in the graph (references to other
+        // entities, ValueObjects, etc. — we can't fabricate valid UUIDs).
+        if ref_target_fields.contains(&f.name) {
             continue;
         }
         let value = test_value_for_field(f);
@@ -756,7 +841,8 @@ async fn build_test_data_json(
             // code placeholder to satisfy NOT NULL constraints.
             // Only common-domain codelists have code columns.
             if !schema_title.is_empty() && domain.map_or(false, |d| d == "common") {
-                return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`".to_string();
+                return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`"
+                    .to_string();
             }
             return String::new();
         }
@@ -765,7 +851,8 @@ async fn build_test_data_json(
     // the schema has no properties (e.g. enum-only code-list schemas).
     // Only common-domain codelists have code columns.
     if fields.is_empty() && !schema_title.is_empty() && domain.map_or(false, |d| d == "common") {
-        return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`".to_string();
+        return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`"
+            .to_string();
     }
     let mut entries = Vec::new();
     for f in &fields {
@@ -851,6 +938,7 @@ async fn resolve_e2e_include_config(
     schema_title: &str,
     include_paths: &[crate::generate::api::include_path::ResolvedIncludePath],
     has_list: bool,
+    project: &ProjectConfig,
 ) -> Result<Option<E2eIncludeConfig>> {
     let mut all_steps: Vec<IncludeSetupStep> = Vec::new();
     let mut test_paths: Vec<IncludeTestPath> = Vec::new();
@@ -882,7 +970,7 @@ async fn resolve_e2e_include_config(
                 .get_schema_in_domain(&seg.schema_title, domain)
                 .await?
                 .ok_or_else(|| crate::error::Error::SchemaNotFound(seg.schema_title.clone()))?;
-            let api_path = format!("/api/{}/{}", seg.domain, target_schema.api_path_segment);
+            let api_path = format!("/api/{}/{}/{}", project.api_version, seg.domain, resolve_path_segment(None, &target_schema));
 
             let fields_json = build_test_data_json(db, &seg.schema_title, Some(&seg.domain)).await;
 
@@ -942,7 +1030,7 @@ async fn resolve_e2e_include_config(
     let main_dep_id = source_schema.pg_table_name.clone();
 
     if !seen_deps.contains(&main_dep_id) {
-        let main_api_path = format!("/api/{}/{}", domain, source_schema.api_path_segment);
+        let main_api_path = format!("/api/{}/{}/{}", project.api_version, domain, resolve_path_segment(None, &source_schema));
         let main_fields = build_test_data_json(db, schema_title, Some(domain)).await;
 
         all_steps.push(IncludeSetupStep {

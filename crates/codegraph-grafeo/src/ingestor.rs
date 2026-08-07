@@ -2,10 +2,11 @@ use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    ActionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, DataBindingNode,
-    EdgeProperties, EdgeType, EnumValue, EventNode, IngestStats, LexiconNode, NamespaceNode,
-    ParameterDefinitionNode, PropertyNode, RepositoryNode, SchemaNode, ViewComponentNode,
-    ViewContainerNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode,
+    EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, NamespaceNode,
+    ParameterDefinitionNode, PermissionNode, PipelineNode, PropertyNode, RepositoryNode,
+    SchemaNode, ViewComponentNode, ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -370,6 +371,16 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::DefinesCollection => "DefinesCollection",
             EdgeType::LexiconReferences => "LexiconReferences",
             EdgeType::StoredInRepository => "StoredInRepository",
+            EdgeType::ExposesResource => "ExposesResource",
+            EdgeType::BindsToSchema => "BindsToSchema",
+            EdgeType::HasOperation => "HasOperation",
+            EdgeType::InputBoundTo => "InputBoundTo",
+            EdgeType::OutputBoundTo => "OutputBoundTo",
+            EdgeType::CanReturnError => "CanReturnError",
+            EdgeType::RequiresPermission => "RequiresPermission",
+            EdgeType::HasInteraction => "HasInteraction",
+            EdgeType::BindsHttpEndpoint => "BindsHttpEndpoint",
+            EdgeType::UsesPipeline => "UsesPipeline",
         };
 
         let match_clause = match &edge_type {
@@ -630,6 +641,22 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(to_id),
                 )
             }
+            EdgeType::ExposesResource
+            | EdgeType::BindsToSchema
+            | EdgeType::HasOperation
+            | EdgeType::InputBoundTo
+            | EdgeType::OutputBoundTo
+            | EdgeType::CanReturnError
+            | EdgeType::RequiresPermission
+            | EdgeType::HasInteraction
+            | EdgeType::BindsHttpEndpoint
+            | EdgeType::UsesPipeline => {
+                format!(
+                    "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
         };
 
         let props_str = build_edge_props_string(props);
@@ -872,6 +899,10 @@ impl GraphIngestor for GrafeoEngine {
                 self,
                 "MATCH (r:Repository) RETURN count(r) AS cnt",
             )?,
+            api_resource_count: count_from_gql(
+                self,
+                "MATCH (r:ApiResource) RETURN count(r) AS cnt",
+            )?,
             duration: self.start_time().elapsed(),
         })
     }
@@ -906,5 +937,139 @@ impl GraphIngestor for GrafeoEngine {
             .execute(&query)
             .map_err(|e| GraphError::Query(e.to_string()))?;
         Ok(())
+    }
+
+    // ── API metamodel ingestion ───────────────────────────────────────
+
+    async fn ingest_api_resource(&self, node: &ApiResourceNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("ar:{}", node.name);
+        let gql = format!(
+            "INSERT (:ApiResource {{ \
+                name: '{}', schema_title: '{}', domain: '{}', \
+                label: {}, path_segment: '{}' \
+            }})",
+            escape_gql(&node.name),
+            escape_gql(&node.schema_title),
+            escape_gql(&node.domain),
+            opt_str(&node.label),
+            escape_gql(&node.path_segment),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_api_resource failed: {e}")))?;
+        Ok(id)
+    }
+
+    async fn ingest_api_operation(
+        &self,
+        node: &ApiOperationNode,
+    ) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("ao:{}", node.name);
+        let gql = format!(
+            "INSERT (:ApiOperation {{ \
+                name: '{}', kind: '{}', input_schema: {}, output_schema: '{}', \
+                paging: {}, sorting: {}, filtering: {}, domain: {} \
+            }})",
+            escape_gql(&node.name),
+            escape_gql(&node.kind),
+            opt_str(&node.input_schema),
+            escape_gql(&node.output_schema),
+            node.paging,
+            node.sorting,
+            node.filtering,
+            opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_api_operation failed: {e}")))?;
+        Ok(id)
+    }
+
+    async fn ingest_interaction(&self, node: &InteractionNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("ia:{}", uuid::Uuid::new_v4());
+        let gql = format!(
+            "INSERT (:Interaction {{ transport: '{}', domain: {} }})",
+            escape_gql(&node.transport),
+            opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_interaction failed: {e}")))?;
+        Ok(id)
+    }
+
+    async fn ingest_http_endpoint(
+        &self,
+        node: &HttpEndpointNode,
+    ) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("he:{}", uuid::Uuid::new_v4());
+        let gql = format!(
+            "INSERT (:HttpEndpoint {{ method: '{}', path_template: '{}', domain: {} }})",
+            escape_gql(&node.method),
+            escape_gql(&node.path_template),
+            opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_http_endpoint failed: {e}")))?;
+        Ok(id)
+    }
+
+    async fn ingest_pipeline(&self, node: &PipelineNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("pl:{}", node.name);
+        let middleware_str = node
+            .middleware
+            .as_ref()
+            .map(|m| serde_json::to_string(m).unwrap_or_default());
+        let gql = format!(
+            "INSERT (:Pipeline {{ name: '{}', middleware: {}, domain: {} }})",
+            escape_gql(&node.name),
+            opt_str(&middleware_str),
+            opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_pipeline failed: {e}")))?;
+        Ok(id)
+    }
+
+    async fn ingest_error_definition(
+        &self,
+        node: &ErrorDefinitionNode,
+    ) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("ed:{}", node.code);
+        let gql = format!(
+            "INSERT (:ErrorDefinition {{ \
+                code: '{}', description: '{}', http_status: {}, domain: {} \
+            }})",
+            escape_gql(&node.code),
+            escape_gql(&node.description),
+            node.http_status,
+            opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_error_definition failed: {e}")))?;
+        Ok(id)
+    }
+
+    async fn ingest_permission(&self, node: &PermissionNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("pm:{}", node.name);
+        let gql = format!(
+            "INSERT (:Permission {{ name: '{}', domain: {} }})",
+            escape_gql(&node.name),
+            opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_permission failed: {e}")))?;
+        Ok(id)
     }
 }

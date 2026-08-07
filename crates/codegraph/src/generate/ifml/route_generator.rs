@@ -41,12 +41,13 @@ impl GlobalGenerator for IfmlRouteGenerator {
         _config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
-        _project: &ProjectConfig,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let querier = IfmlGraphQuerier::new(db);
-        let model = querier.get_ifml_model().await.map_err(|e| {
-            crate::error::Error::Graph(e)
-        })?;
+        let model = querier
+            .get_ifml_model()
+            .await
+            .map_err(|e| crate::error::Error::Graph(e))?;
 
         if model.view_containers.is_empty() {
             return Ok(vec![]);
@@ -58,15 +59,17 @@ impl GlobalGenerator for IfmlRouteGenerator {
         let load_template = format!("ifml/{}/page_load.tera", self.framework);
 
         for vc in &model.view_containers {
-            if let Ok(content) = render_page_svelte(&vc, tera, &page_template) {
+            if let Ok(content) = render_page_svelte(&vc, tera, &page_template, &project.api_version) {
                 files.push(GeneratedFile {
-                    path: self.output_dir.join((self.output_paths.route_page)(&vc.name)),
+                    path: self
+                        .output_dir
+                        .join((self.output_paths.route_page)(&vc.name)),
                     content,
                 });
             }
 
             if let Some(ref route_load_fn) = self.output_paths.route_load {
-                if let Ok(content) = render_page_load(&vc, tera, &load_template) {
+                if let Ok(content) = render_page_load(&vc, tera, &load_template, &project.api_version) {
                     files.push(GeneratedFile {
                         path: self.output_dir.join(route_load_fn(&vc.name)),
                         content,
@@ -81,6 +84,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
 
 #[derive(Debug, Serialize)]
 pub struct PageSvelteContext {
+    pub api_version: String,
     name: String,
     label: String,
     components: Vec<PageComponentContext>,
@@ -98,6 +102,7 @@ pub struct PageComponentContext {
 
 #[derive(Debug, Serialize)]
 pub struct PageLoadContext {
+    pub api_version: String,
     name: String,
     components: Vec<PageLoadComponentContext>,
 }
@@ -109,33 +114,57 @@ pub struct PageLoadComponentContext {
     route_name: String,
 }
 
-fn render_page_svelte(vc: &super::context::IfmlViewContainer, tera: &tera::Tera, template: &str) -> Result<String> {
+fn render_page_svelte(
+    vc: &super::context::IfmlViewContainer,
+    tera: &tera::Tera,
+    template: &str,
+    api_version: &str,
+) -> Result<String> {
     let ctx = PageSvelteContext {
+        api_version: api_version.to_string(),
         name: vc.name.clone(),
         label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
-        components: vc.components.iter().map(|c| PageComponentContext {
-            name: c.name.clone(),
-            component_type: c.component_type.clone(),
-            entity: c.entity.clone().unwrap_or_default(),
-            fields: c.fields.clone(),
-            filter: c.filter.clone().unwrap_or_default(),
-        }).collect(),
+        components: vc
+            .components
+            .iter()
+            .map(|c| PageComponentContext {
+                name: c.name.clone(),
+                component_type: c.component_type.clone(),
+                entity: c.entity.clone().unwrap_or_default(),
+                fields: c.fields.clone(),
+                filter: c.filter.clone().unwrap_or_default(),
+            })
+            .collect(),
         params: vc.params.clone(),
     };
     render_template(tera, template, &ctx)
 }
 
-fn render_page_load(vc: &super::context::IfmlViewContainer, tera: &tera::Tera, template: &str) -> Result<String> {
+fn render_page_load(
+    vc: &super::context::IfmlViewContainer,
+    tera: &tera::Tera,
+    template: &str,
+    api_version: &str,
+) -> Result<String> {
     let ctx = PageLoadContext {
+        api_version: api_version.to_string(),
         name: vc.name.clone(),
-        components: vc.components.iter().map(|c| {
-            let route_name = c.entity.as_ref().map(|e| e.to_lowercase()).unwrap_or_default();
-            PageLoadComponentContext {
-                component_type: c.component_type.clone(),
-                entity: c.entity.clone().unwrap_or_default(),
-                route_name,
-            }
-        }).collect(),
+        components: vc
+            .components
+            .iter()
+            .map(|c| {
+                let route_name = c
+                    .entity
+                    .as_ref()
+                    .map(|e| e.to_lowercase())
+                    .unwrap_or_default();
+                PageLoadComponentContext {
+                    component_type: c.component_type.clone(),
+                    entity: c.entity.clone().unwrap_or_default(),
+                    route_name,
+                }
+            })
+            .collect(),
     };
     render_template(tera, template, &ctx)
 }

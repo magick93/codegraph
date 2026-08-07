@@ -6,12 +6,12 @@ use crate::app_state::AppState;
 
 pub fn integration_router() -> Router<AppState> {
     Router::new()
-        .route("/api/integrations/extension-points", get(super::integration_catalog::list_extension_points))
-        .route("/api/integrations/catalog", get(super::integration_catalog::list_catalog))
-        .route("/api/integrations/catalog/{id}", get(super::integration_catalog::get_catalog_entry))
-        .route("/api/integrations/installations", get(super::integration_catalog::list_installations))
-        .route("/api/integrations/installations", post(super::integration_catalog::install_integration))
-        .route("/api/integrations/installations/{id}", get(super::integration_catalog::get_installation))
-        .route("/api/integrations/installations/{id}", delete(super::integration_catalog::uninstall_integration))
-        .route("/api/integrations/installations/{id}/settings", patch(super::integration_catalog::update_installation_settings))
+        .route("/api/{{ project.api_version }}/integrations/extension-points", get(super::integration_catalog::list_extension_points))
+        .route("/api/{{ project.api_version }}/integrations/catalog", get(super::integration_catalog::list_catalog))
+        .route("/api/{{ project.api_version }}/integrations/catalog/{id}", get(super::integration_catalog::get_catalog_entry))
+        .route("/api/{{ project.api_version }}/integrations/installations", get(super::integration_catalog::list_installations))
+        .route("/api/{{ project.api_version }}/integrations/installations", post(super::integration_catalog::install_integration))
+        .route("/api/{{ project.api_version }}/integrations/installations/{id}", get(super::integration_catalog::get_installation))
+        .route("/api/{{ project.api_version }}/integrations/installations/{id}", delete(super::integration_catalog::uninstall_integration))
+        .route("/api/{{ project.api_version }}/integrations/installations/{id}/settings", patch(super::integration_catalog::update_installation_settings))
 }

@@ -53,11 +53,18 @@ pub struct Create{{ entity_name }}Request {
 {%- endif %}
 {%- endif %}
 {%- else %}
+{%- if field.is_required %}
+{%- if has_validate %}
+    #[garde(skip)]
+{%- endif %}
+    pub {{ field.name }}: uuid::Uuid,
+{%- else %}
 {%- if has_validate %}
     #[garde(skip)]
 {%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub {{ field.name }}: Option<uuid::Uuid>,
+{%- endif %}
 {%- endif %}
 {%- endif %}
 {%- endfor %}

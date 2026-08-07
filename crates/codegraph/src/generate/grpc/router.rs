@@ -87,8 +87,12 @@ impl DomainGenerator for GrpcRouterGenerator {
             proto_types_prefix: "crate::api::grpc::proto::".to_string(),
         };
 
-        let content =
-            render_template_with_project(tera, "grpc/tonic/domain_router.tera", &router_ctx, project)?;
+        let content = render_template_with_project(
+            tera,
+            "grpc/tonic/domain_router.tera",
+            &router_ctx,
+            project,
+        )?;
 
         let grpc_dir = self.output_dir.join("src").join("api").join("grpc");
         Ok(vec![GeneratedFile {

@@ -12,6 +12,8 @@ use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
 use codegraph_naming;
 
+use super::api_model::{resolve_entity_operations, resolve_path_segment};
+
 /// Context for the combined "All" OpenAPI spec (`openapi_all.tera`).
 #[derive(Debug, Serialize)]
 pub struct OpenApiContext {
@@ -130,9 +132,8 @@ impl GlobalGenerator for OpenApiGenerator {
                 }
                 if let Ok(Some(schema)) = db.get_schema_in_domain(entity_name, domain_name).await {
                     let entity_cfg = domain_entry.get_entity_config(entity_name);
-                    let operations = entity_cfg
-                        .and_then(|ec| ec.operations.clone())
-                        .unwrap_or_else(|| config.defaults.operations.clone());
+                    let operations =
+                        resolve_entity_operations(db, config, domain_name, entity_name).await;
 
                     // Resolve role and parent relationship info from entity config.
                     // These mirror the fields populated by HandlerContext so that
@@ -144,9 +145,11 @@ impl GlobalGenerator for OpenApiGenerator {
                     let (parent_path_segment, parent_entity, parent_domain) =
                         if let Some(ref pname) = parent_name {
                             // Look up parent schema for accurate path segment and domain
-                            if let Ok(Some(parent_schema)) = db.get_schema_in_domain(pname, domain_name).await {
+                            if let Ok(Some(parent_schema)) =
+                                db.get_schema_in_domain(pname, domain_name).await
+                            {
                                 (
-                                    Some(parent_schema.api_path_segment.clone()),
+                                    Some(resolve_path_segment(None, &parent_schema)),
                                     Some(parent_schema.rust_type_name.clone()),
                                     parent_schema.domain.clone(),
                                 )
@@ -164,7 +167,7 @@ impl GlobalGenerator for OpenApiGenerator {
                     entities.push(OpenApiEntity {
                         entity_name: schema.rust_type_name.clone(),
                         module_name: schema.pg_table_name.clone(),
-                        path_segment: schema.api_path_segment.clone(),
+                        path_segment: resolve_path_segment(entity_cfg, &schema),
                         tag: schema.rust_type_name.clone(),
                         has_create: operations.contains(&"create".to_string()),
                         has_read: operations.contains(&"read".to_string()),
@@ -197,7 +200,8 @@ impl GlobalGenerator for OpenApiGenerator {
 
         // 1. Shared security modifier
         let empty_ctx: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        let security_content = render_template_with_project(tera, "api/openapi_security.tera", &empty_ctx, project)?;
+        let security_content =
+            render_template_with_project(tera, "api/openapi_security.tera", &empty_ctx, project)?;
         files.push(GeneratedFile {
             path: openapi_dir.join("security.rs"),
             content: security_content,
@@ -206,10 +210,11 @@ impl GlobalGenerator for OpenApiGenerator {
         // 2. Combined "All" spec
         let all_ctx = OpenApiContext {
             title: crate::generate::get_project_config().api_title.clone(),
-            version: "1.0.0".to_string(),
+            version: project.api_version.clone(),
             domains: domains.clone(),
         };
-        let all_content = render_template_with_project(tera, "api/openapi_all.tera", &all_ctx, project)?;
+        let all_content =
+            render_template_with_project(tera, "api/openapi_all.tera", &all_ctx, project)?;
         files.push(GeneratedFile {
             path: openapi_dir.join("all.rs"),
             content: all_content,
@@ -218,13 +223,18 @@ impl GlobalGenerator for OpenApiGenerator {
         // 3. Per-domain specs
         for domain in &domains {
             let ctx = PerDomainOpenApiContext {
-                title: format!("{} — {}", crate::generate::get_project_config().api_title, domain.label),
-                version: "1.0.0".to_string(),
+                title: format!(
+                    "{} — {}",
+                    crate::generate::get_project_config().api_title,
+                    domain.label
+                ),
+                version: project.api_version.clone(),
                 domain_name: domain.name.clone(),
                 domain_label: domain.label.clone(),
                 entities: domain.entities.clone(),
             };
-            let content = render_template_with_project(tera, "api/openapi_domain.tera", &ctx, project)?;
+            let content =
+                render_template_with_project(tera, "api/openapi_domain.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: openapi_dir.join(format!("{}.rs", domain.name)),
                 content,
@@ -244,7 +254,8 @@ impl GlobalGenerator for OpenApiGenerator {
                 })
                 .collect(),
         };
-        let catalog_content = render_template_with_project(tera, "api/openapi_catalog.tera", &catalog_ctx, project)?;
+        let catalog_content =
+            render_template_with_project(tera, "api/openapi_catalog.tera", &catalog_ctx, project)?;
         files.push(GeneratedFile {
             path: openapi_dir.join("catalog.rs"),
             content: catalog_content,
@@ -255,7 +266,10 @@ impl GlobalGenerator for OpenApiGenerator {
         // generator is self-documenting about what it produces.
         let mut mod_lines = vec![
             "//! Per-domain OpenAPI specifications and API catalog.".to_string(),
-            format!("//! Generated by {} . DO NOT EDIT.", crate::generate::get_project_config().generator_name),
+            format!(
+                "//! Generated by {} . DO NOT EDIT.",
+                crate::generate::get_project_config().generator_name
+            ),
             String::new(),
             "pub mod all;".to_string(),
             "pub mod catalog;".to_string(),

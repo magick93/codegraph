@@ -12,7 +12,8 @@ use super::dependency_graph;
 pub trait IfmlQuerier: Send + Sync {
     async fn get_ifml_model(&self) -> Result<IfmlModel, GraphError>;
     async fn get_view_containers(&self) -> Result<Vec<IfmlViewContainer>, GraphError>;
-    async fn get_view_container(&self, name: &str) -> Result<Option<IfmlViewContainer>, GraphError>;
+    async fn get_view_container(&self, name: &str)
+        -> Result<Option<IfmlViewContainer>, GraphError>;
     async fn get_navigation_edges(&self) -> Result<Vec<NavigationEdge>, GraphError>;
     async fn get_data_flows(&self) -> Result<Vec<DataFlowEdge>, GraphError>;
     async fn get_actions(&self) -> Result<Vec<IfmlActionDef>, GraphError>;
@@ -20,7 +21,10 @@ pub trait IfmlQuerier: Send + Sync {
 }
 
 impl<'a> IfmlGraphQuerier<'a> {
-    async fn get_components_for(&self, container_name: &str) -> Result<Vec<IfmlComponent>, GraphError> {
+    async fn get_components_for(
+        &self,
+        container_name: &str,
+    ) -> Result<Vec<IfmlComponent>, GraphError> {
         let raw = self.db.get_ifml_view_components(container_name).await?;
         let mut components = Vec::new();
         for comp in &raw {
@@ -50,14 +54,15 @@ impl<'a> IfmlGraphQuerier<'a> {
 
     async fn get_events_for(&self, parent_id: &str) -> Result<Vec<IfmlEvent>, GraphError> {
         let raw = self.db.get_ifml_events(parent_id).await?;
-        Ok(raw.into_iter().map(|evt| {
-            IfmlEvent {
+        Ok(raw
+            .into_iter()
+            .map(|evt| IfmlEvent {
                 name: evt.name,
                 event_type: evt.event_type,
                 params: evt.params.unwrap_or_default(),
                 action: IfmlAction::Stay,
-            }
-        }).collect())
+            })
+            .collect())
     }
 }
 
@@ -115,51 +120,60 @@ impl<'a> IfmlQuerier for IfmlGraphQuerier<'a> {
         Ok(containers)
     }
 
-    async fn get_view_container(&self, name: &str) -> Result<Option<IfmlViewContainer>, GraphError> {
+    async fn get_view_container(
+        &self,
+        name: &str,
+    ) -> Result<Option<IfmlViewContainer>, GraphError> {
         let containers = self.get_view_containers().await?;
         Ok(containers.into_iter().find(|c| c.name == name))
     }
 
     async fn get_navigation_edges(&self) -> Result<Vec<NavigationEdge>, GraphError> {
         let raw = self.db.get_ifml_navigation_flows().await?;
-        Ok(raw.into_iter().map(|(source, event, target)| {
-            NavigationEdge {
+        Ok(raw
+            .into_iter()
+            .map(|(source, event, target)| NavigationEdge {
                 source_container: source,
                 source_event: event,
                 target_container: target,
                 parameter_binding: HashMap::new(),
                 conditional_expression: None,
-            }
-        }).collect())
+            })
+            .collect())
     }
 
     async fn get_data_flows(&self) -> Result<Vec<DataFlowEdge>, GraphError> {
         let raw = self.db.get_ifml_data_flows().await?;
-        Ok(raw.into_iter().map(|(source, target, source_param, target_param)| {
-            DataFlowEdge {
-                source_element: source,
-                target_element: target,
-                source_param,
-                target_param,
-            }
-        }).collect())
+        Ok(raw
+            .into_iter()
+            .map(
+                |(source, target, source_param, target_param)| DataFlowEdge {
+                    source_element: source,
+                    target_element: target,
+                    source_param,
+                    target_param,
+                },
+            )
+            .collect())
     }
 
     async fn get_actions(&self) -> Result<Vec<IfmlActionDef>, GraphError> {
         let raw = self.db.get_ifml_actions().await?;
-        Ok(raw.into_iter().map(|a| {
-            IfmlActionDef {
+        Ok(raw
+            .into_iter()
+            .map(|a| IfmlActionDef {
                 name: a.name,
                 properties: HashMap::new(),
                 events: Vec::new(),
-            }
-        }).collect())
+            })
+            .collect())
     }
 
     async fn compute_generation_order(&self) -> Result<Vec<String>, GraphError> {
         let nav = self.get_navigation_edges().await?;
         if !nav.is_empty() {
-            let pairs: Vec<(String, String)> = nav.iter()
+            let pairs: Vec<(String, String)> = nav
+                .iter()
                 .map(|e| (e.source_container.clone(), e.target_container.clone()))
                 .collect();
             return Ok(dependency_graph::compute_view_generation_order(&pairs));

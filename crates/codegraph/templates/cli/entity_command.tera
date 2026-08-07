@@ -168,7 +168,7 @@ pub async fn execute(
     client: &ApiClient,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
-    let base = format!("/api/{{ domain }}/{{ path_segment }}");
+    let base = format!("/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}");
 
     match cmd {
 {% if has_list %}

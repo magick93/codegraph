@@ -1,7 +1,7 @@
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    ActionNode, EdgeProperties, EdgeType, EventNode, ParameterDefinitionNode,
-    ViewComponentNode, ViewContainerNode,
+    ActionNode, EdgeProperties, EdgeType, EventNode, ParameterDefinitionNode, ViewComponentNode,
+    ViewContainerNode,
 };
 use codegraph_ifml_dsl::*;
 
@@ -85,10 +85,7 @@ pub async fn ingest_ifml_model(
     Ok(stats)
 }
 
-async fn ingest_view_container(
-    db: &dyn GraphIngestor,
-    view: &ViewDeclaration,
-) -> Result<String> {
+async fn ingest_view_container(db: &dyn GraphIngestor, view: &ViewDeclaration) -> Result<String> {
     let node = ViewContainerNode {
         name: view.name.clone(),
         label: view.label.clone(),
@@ -230,11 +227,7 @@ async fn ingest_view_component(
     Ok(id)
 }
 
-async fn handle_event(
-    db: &dyn GraphIngestor,
-    event: &EventHandler,
-    parent_id: &str,
-) -> Result<()> {
+async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &str) -> Result<()> {
     let event_name = format!(
         "{}_{}",
         parent_id.replace(':', "_"),
@@ -312,14 +305,9 @@ async fn handle_event(
         }
         EventAction::ActionInvocation { name, body } => {
             let action_id = format!("action:{}", name);
-            db.ingest_edge(
-                &event_id,
-                &action_id,
-                EdgeType::TriggersAction,
-                None,
-            )
-            .await
-            .map_err(|e| Error::Graph(e))?;
+            db.ingest_edge(&event_id, &action_id, EdgeType::TriggersAction, None)
+                .await
+                .map_err(|e| Error::Graph(e))?;
 
             // Handle nested action body events (success/error outcomes)
             if let Some(body) = body {
@@ -327,11 +315,7 @@ async fn handle_event(
                     let outcome_str = body_event.event_type.to_string();
                     let outcome_event_id = db
                         .ingest_event(&EventNode {
-                            name: format!(
-                                "{}_{}",
-                                action_id.replace(':', "_"),
-                                outcome_str
-                            ),
+                            name: format!("{}_{}", action_id.replace(':', "_"), outcome_str),
                             event_type: outcome_str.clone(),
                             params: None,
                             domain: None,
@@ -358,9 +342,7 @@ async fn handle_event(
                                 let pairs: Vec<String> = b
                                     .pairs
                                     .iter()
-                                    .map(|(k, v)| {
-                                        format!("\"{}\": \"{}\"", k, expr_to_string(v))
-                                    })
+                                    .map(|(k, v)| format!("\"{}\": \"{}\"", k, expr_to_string(v)))
                                     .collect();
                                 format!("{{{}}}", pairs.join(", "))
                             });

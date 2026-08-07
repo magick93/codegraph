@@ -6,6 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::api::api_model::resolve_entity_operations;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
@@ -67,12 +68,8 @@ impl EntityGenerator for LifecycleTraitGenerator {
             return Ok(Vec::new());
         }
 
-        let operations = config
-            .domains
-            .get(&domain)
-            .and_then(|d| d.get_entity_config(&entity_name))
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let has_workflow = config
             .domains
@@ -91,7 +88,8 @@ impl EntityGenerator for LifecycleTraitGenerator {
             domain: domain.clone(),
         };
 
-        let content = render_template_with_project(tera, "hooks/lifecycle_trait.tera", &ctx, project)?;
+        let content =
+            render_template_with_project(tera, "hooks/lifecycle_trait.tera", &ctx, project)?;
 
         let output_path = self
             .generated_dir

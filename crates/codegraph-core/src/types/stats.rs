@@ -17,5 +17,6 @@ pub struct IngestStats {
     pub collections_ingested: usize,
     pub namespaces_ingested: usize,
     pub repositories_ingested: usize,
+    pub api_resource_count: usize,
     pub duration: Duration,
 }

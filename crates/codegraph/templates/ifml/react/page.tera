@@ -16,20 +16,20 @@ export default function Page({ params }: PageProps) {
 {% for comp in components %}
 {% if comp.component_type == "list" %}
 {% if comp.entity %}
-        const res = await fetch('/api/{{ comp.entity | lower }}');
+        const res = await fetch('/api/{{ api_version }}/{{ comp.entity | lower }}');
         const items = await res.json();
         setData(prev => ({ ...prev, items }));
 {% endif %}
 {% elif comp.component_type == "details" %}
 {% if comp.entity %}
-        const res = await fetch(`/api/{{ comp.entity | lower }}/${params.id}`);
+        const res = await fetch(`/api/{{ api_version }}/{{ comp.entity | lower }}/${params.id}`);
         const item = await res.json();
         setData(prev => ({ ...prev, item }));
 {% endif %}
 {% elif comp.component_type == "form" %}
 {% if comp.entity %}
         if (params.id) {
-          const res = await fetch(`/api/{{ comp.entity | lower }}/${params.id}`);
+          const res = await fetch(`/api/{{ api_version }}/{{ comp.entity | lower }}/${params.id}`);
           const formData = await res.json();
           setData(prev => ({ ...prev, formData }));
         }

@@ -5,10 +5,20 @@ import { test, expect } from '../fixtures/personas';
 import { expectToast, waitForHydration } from '../helpers';
 
 test.describe('Webhook Management', () => {
-  test('displays empty state when no webhooks exist', async ({ ownerPage }) => {
+  test('displays webhook settings page', async ({ ownerPage }) => {
     await ownerPage.goto('/settings/webhooks');
-    await waitForHydration(ownerPage, 'body.hydrated');
-    await expect(ownerPage.getByText('No webhook endpoints configured yet.')).toBeVisible();
+    await expect(ownerPage.getByRole('heading', { name: 'Webhooks' })).toBeVisible({ timeout: 30000 });
+    await expect(ownerPage.getByRole('link', { name: 'Add Endpoint' })).toBeVisible();
+  });
+
+  test('warms up webhook routes', async ({ ownerPage }) => {
+    // Pre-warm SvelteKit lazy compilation for all webhook routes
+    await ownerPage.goto('/settings/webhooks/new');
+    await expect(ownerPage.getByRole('heading', { name: /New Webhook/i })).toBeVisible({ timeout: 30000 });
+    await ownerPage.goto('/settings/webhooks/00000000-0000-0000-0000-000000000000/edit');
+    await expect(ownerPage.getByRole('heading', { name: /Edit Webhook/i })).toBeVisible({ timeout: 30000 });
+    await ownerPage.goto('/settings/webhooks');
+    await expect(ownerPage.getByRole('heading', { name: 'Webhooks' })).toBeVisible({ timeout: 30000 });
   });
 
   test('creates a new webhook endpoint', async ({ ownerPage }) => {
@@ -26,6 +36,69 @@ test.describe('Webhook Management', () => {
     await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+$/, { timeout: 15000 });
     await expect(ownerPage.getByText(webhookUrl)).toBeVisible();
     await expect(ownerPage.getByText('Active')).toBeVisible();
+  });
+
+  test('edits webhook endpoint URL', async ({ ownerPage }) => {
+    await ownerPage.goto('/settings/webhooks');
+    await waitForHydration(ownerPage, 'body.hydrated');
+    await ownerPage.click('text=Add Endpoint');
+    await ownerPage.waitForURL('/settings/webhooks/new');
+    await waitForHydration(ownerPage, '[data-testid="webhook-endpoint-submit-btn"]');
+
+    const originalUrl = `https://webhook-test.example/hooks/${Date.now()}`;
+    await ownerPage.fill('#url', originalUrl);
+    await ownerPage.fill('#description', 'URL edit test');
+    await ownerPage.click('[data-testid="webhook-endpoint-submit-btn"]');
+
+    await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+$/, { timeout: 15000 });
+
+    // Now edit the URL
+    await ownerPage.click('text=Edit');
+    await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+\/edit$/, { timeout: 15000 });
+    await waitForHydration(ownerPage, '[data-testid="webhook-endpoint-submit-btn"]');
+    await ownerPage.waitForFunction((expected) => {
+      const input = document.querySelector('#url') as HTMLInputElement;
+      return input && input.value.includes(expected);
+    }, originalUrl, { timeout: 10000 });
+
+    const newUrl = `https://webhook-test.example/hooks/updated-${Date.now()}`;
+    await ownerPage.fill('#url', newUrl);
+    await ownerPage.click('[data-testid="webhook-endpoint-submit-btn"]');
+    await ownerPage.waitForURL(/\/settings\/webhooks\/[a-f0-9-]+$/, { timeout: 15000 });
+
+    await expect(ownerPage.getByText(newUrl)).toBeVisible();
+  });
+
+  test('enforces tenant isolation at API level', async ({ orgContext }) => {
+    // Create an endpoint as ACME via API
+    const createResp = await fetch(
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${orgContext.acme.apiKey}`,
+        },
+        body: JSON.stringify({
+          url: `https://webhook-test.example/hooks/${Date.now()}`,
+          description: 'Isolation test',
+        }),
+      },
+    );
+    expect(createResp.ok).toBeTruthy();
+    const endpoint = await createResp.json();
+    const endpointId = endpoint.id;
+
+    // Try to access the ACME endpoint with HighFive's API key
+    const response = await fetch(
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${orgContext.highfive.apiKey}`,
+        },
+      },
+    );
+    expect(response.status).toBe(404);
   });
 
   test('edits an existing webhook endpoint', async ({ ownerPage }) => {

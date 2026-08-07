@@ -75,42 +75,66 @@ pub trait SqlDialect: fmt::Debug + Send + Sync {
     // ── Type mapping ─────────────────────────────────────────────────────
 
     /// The SQL type for UUID primary keys.
-    fn uuid_type(&self) -> &'static str { "UUID" }
+    fn uuid_type(&self) -> &'static str {
+        "UUID"
+    }
 
     /// The SQL type for timestamps with time zone.
-    fn timestamp_tz_type(&self) -> &'static str { "TIMESTAMPTZ" }
+    fn timestamp_tz_type(&self) -> &'static str {
+        "TIMESTAMPTZ"
+    }
 
     /// The SQL type for JSON data.
-    fn json_type(&self) -> &'static str { "JSONB" }
+    fn json_type(&self) -> &'static str {
+        "JSONB"
+    }
 
     /// The SQL type for TEXT.
-    fn text_type(&self) -> &'static str { "TEXT" }
+    fn text_type(&self) -> &'static str {
+        "TEXT"
+    }
 
     /// The SQL type for BOOLEAN.
-    fn boolean_type(&self) -> &'static str { "BOOLEAN" }
+    fn boolean_type(&self) -> &'static str {
+        "BOOLEAN"
+    }
 
     /// The SQL type for INTEGER.
-    fn integer_type(&self) -> &'static str { "INTEGER" }
+    fn integer_type(&self) -> &'static str {
+        "INTEGER"
+    }
 
     /// The SQL type for geometry/spatial data.
-    fn geometry_type(&self) -> &'static str { "GEOMETRY(Point, 4326)" }
+    fn geometry_type(&self) -> &'static str {
+        "GEOMETRY(Point, 4326)"
+    }
 
     /// The SQL type for vector/embeddings.
-    fn vector_type(&self, dimensions: u32) -> String { format!("vector({})", dimensions) }
+    fn vector_type(&self, dimensions: u32) -> String {
+        format!("vector({})", dimensions)
+    }
 
     /// Whether arrays are supported natively (PostgreSQL `TEXT[]`).
-    fn supports_array_types(&self) -> bool { true }
+    fn supports_array_types(&self) -> bool {
+        true
+    }
 
     /// The array suffix for a type (e.g. `[]` in PostgreSQL).
-    fn array_suffix(&self) -> &'static str { "[]" }
+    fn array_suffix(&self) -> &'static str {
+        "[]"
+    }
 
     // ── Default expressions ──────────────────────────────────────────────
 
     /// Default expression for UUID primary keys.
-    fn uuid_default(&self) -> &'static str { "gen_random_uuid()" }
+    fn uuid_default(&self) -> &'static str {
+        "gen_random_uuid()"
+    }
 
     /// Default expression for timestamp columns.
-    fn now_default(&self) -> &'static str { "now()" }
+    fn now_default(&self) -> &'static str {
+        "now()"
+    }
 
     /// Default expression for the null UUID sentinel.
     fn null_uuid_default(&self) -> String {
@@ -120,42 +144,66 @@ pub trait SqlDialect: fmt::Debug + Send + Sync {
     // ── Feature flags ────────────────────────────────────────────────────
 
     /// Whether the dialect supports database schemas (PostgreSQL schemas).
-    fn has_schemas(&self) -> bool { true }
+    fn has_schemas(&self) -> bool {
+        true
+    }
 
     /// Whether the dialect supports Row-Level Security.
-    fn has_rls(&self) -> bool { true }
+    fn has_rls(&self) -> bool {
+        true
+    }
 
     /// Whether the dialect supports extensions (`CREATE EXTENSION IF NOT EXISTS`).
-    fn has_extensions(&self) -> bool { true }
+    fn has_extensions(&self) -> bool {
+        true
+    }
 
     /// Whether the dialect supports PL/pgSQL functions.
-    fn has_plpgsql(&self) -> bool { true }
+    fn has_plpgsql(&self) -> bool {
+        true
+    }
 
     /// Whether the dialect supports `COMMENT ON` statements.
-    fn has_comments(&self) -> bool { true }
+    fn has_comments(&self) -> bool {
+        true
+    }
 
     /// Whether the dialect supports `DO $$ ... $$` anonymous blocks.
-    fn has_do_blocks(&self) -> bool { true }
+    fn has_do_blocks(&self) -> bool {
+        true
+    }
 
     /// Whether the dialect supports `CREATE TYPE ... AS ENUM`.
-    fn has_enums(&self) -> bool { true }
+    fn has_enums(&self) -> bool {
+        true
+    }
 
     /// Whether the dialect supports partial indexes.
-    fn has_partial_indexes(&self) -> bool { true }
+    fn has_partial_indexes(&self) -> bool {
+        true
+    }
 
     /// Whether the dialect supports array columns (TEXT[], INT[]).
-    fn has_array_columns(&self) -> bool { true }
+    fn has_array_columns(&self) -> bool {
+        true
+    }
 
     /// Whether the dialect supports full-text search via tsvector/FTS5.
-    fn has_fulltext_search(&self) -> bool { true }
+    fn has_fulltext_search(&self) -> bool {
+        true
+    }
 
     /// Whether the dialect supports pgvector-style embeddings.
-    fn has_embeddings(&self) -> bool { true }
+    fn has_embeddings(&self) -> bool {
+        true
+    }
 
     // ── Identifier handling ──────────────────────────────────────────────
 
     /// Maximum identifier length in bytes.
-    fn max_identifier_length(&self) -> usize { 63 }
+    fn max_identifier_length(&self) -> usize {
+        63
+    }
 
     /// Quote an identifier for use in SQL.
     fn quote_identifier(&self, name: &str) -> String {
@@ -181,18 +229,26 @@ pub trait SqlDialect: fmt::Debug + Send + Sync {
     // ── Trigger syntax ───────────────────────────────────────────────────
 
     /// Whether triggers are defined inline (SQLite) or via a function (PG).
-    fn trigger_uses_function(&self) -> bool { true }
+    fn trigger_uses_function(&self) -> bool {
+        true
+    }
 
     /// Template type for `updated_at` triggers: "plpgsql" or "inline".
-    fn trigger_template_style(&self) -> &'static str { "plpgsql" }
+    fn trigger_template_style(&self) -> &'static str {
+        "plpgsql"
+    }
 
     /// Template type for domain event triggers: "pgmq" or "simple_event_table".
-    fn event_trigger_style(&self) -> &'static str { "pgmq" }
+    fn event_trigger_style(&self) -> &'static str {
+        "pgmq"
+    }
 
     // ── Full-text search ─────────────────────────────────────────────────
 
     /// FTS engine: "tsvector" or "fts5".
-    fn fts_engine(&self) -> &'static str { "tsvector" }
+    fn fts_engine(&self) -> &'static str {
+        "tsvector"
+    }
 
     // ── Dialect-specific type coercion ───────────────────────────────────
 
@@ -289,25 +345,43 @@ impl SqlDialect for SqliteDialect {
 
     // ── Type mapping ─────────────────────────────────────────────────────
 
-    fn uuid_type(&self) -> &'static str { "TEXT" }
+    fn uuid_type(&self) -> &'static str {
+        "TEXT"
+    }
 
-    fn timestamp_tz_type(&self) -> &'static str { "TEXT" }
+    fn timestamp_tz_type(&self) -> &'static str {
+        "TEXT"
+    }
 
-    fn json_type(&self) -> &'static str { "TEXT" }
+    fn json_type(&self) -> &'static str {
+        "TEXT"
+    }
 
-    fn boolean_type(&self) -> &'static str { "INTEGER" }
+    fn boolean_type(&self) -> &'static str {
+        "INTEGER"
+    }
 
-    fn vector_type(&self, _dimensions: u32) -> String { "BLOB".to_string() }
+    fn vector_type(&self, _dimensions: u32) -> String {
+        "BLOB".to_string()
+    }
 
-    fn supports_array_types(&self) -> bool { false }
+    fn supports_array_types(&self) -> bool {
+        false
+    }
 
-    fn array_suffix(&self) -> &'static str { "" }
+    fn array_suffix(&self) -> &'static str {
+        ""
+    }
 
     // ── Default expressions ──────────────────────────────────────────────
 
-    fn uuid_default(&self) -> &'static str { "" }
+    fn uuid_default(&self) -> &'static str {
+        ""
+    }
 
-    fn now_default(&self) -> &'static str { "(unixepoch())" }
+    fn now_default(&self) -> &'static str {
+        "(unixepoch())"
+    }
 
     fn null_uuid_default(&self) -> String {
         "'00000000-0000-0000-0000-000000000000'".to_string()
@@ -315,47 +389,83 @@ impl SqlDialect for SqliteDialect {
 
     // ── Feature flags ────────────────────────────────────────────────────
 
-    fn has_schemas(&self) -> bool { false }
+    fn has_schemas(&self) -> bool {
+        false
+    }
 
-    fn has_rls(&self) -> bool { false }
+    fn has_rls(&self) -> bool {
+        false
+    }
 
-    fn has_extensions(&self) -> bool { false }
+    fn has_extensions(&self) -> bool {
+        false
+    }
 
-    fn has_plpgsql(&self) -> bool { false }
+    fn has_plpgsql(&self) -> bool {
+        false
+    }
 
-    fn has_comments(&self) -> bool { false }
+    fn has_comments(&self) -> bool {
+        false
+    }
 
-    fn has_do_blocks(&self) -> bool { false }
+    fn has_do_blocks(&self) -> bool {
+        false
+    }
 
-    fn has_enums(&self) -> bool { false }
+    fn has_enums(&self) -> bool {
+        false
+    }
 
-    fn has_partial_indexes(&self) -> bool { true }
+    fn has_partial_indexes(&self) -> bool {
+        true
+    }
 
-    fn has_array_columns(&self) -> bool { false }
+    fn has_array_columns(&self) -> bool {
+        false
+    }
 
-    fn has_fulltext_search(&self) -> bool { true }
+    fn has_fulltext_search(&self) -> bool {
+        true
+    }
 
-    fn has_embeddings(&self) -> bool { false }
+    fn has_embeddings(&self) -> bool {
+        false
+    }
 
     // ── Identifier handling ──────────────────────────────────────────────
 
-    fn max_identifier_length(&self) -> usize { 128 }
+    fn max_identifier_length(&self) -> usize {
+        128
+    }
 
-    fn needs_quoting(&self, _name: &str) -> bool { false }
+    fn needs_quoting(&self, _name: &str) -> bool {
+        false
+    }
 
-    fn quote_identifier(&self, name: &str) -> String { name.to_string() }
+    fn quote_identifier(&self, name: &str) -> String {
+        name.to_string()
+    }
 
     // ── Trigger syntax ───────────────────────────────────────────────────
 
-    fn trigger_uses_function(&self) -> bool { false }
+    fn trigger_uses_function(&self) -> bool {
+        false
+    }
 
-    fn trigger_template_style(&self) -> &'static str { "inline" }
+    fn trigger_template_style(&self) -> &'static str {
+        "inline"
+    }
 
-    fn event_trigger_style(&self) -> &'static str { "simple_event_table" }
+    fn event_trigger_style(&self) -> &'static str {
+        "simple_event_table"
+    }
 
     // ── Full-text search ─────────────────────────────────────────────────
 
-    fn fts_engine(&self) -> &'static str { "fts5" }
+    fn fts_engine(&self) -> &'static str {
+        "fts5"
+    }
 
     // ── Type mapping overrides ───────────────────────────────────────────
 
@@ -373,15 +483,20 @@ impl SqlDialect for SqliteDialect {
         let upper = pg_type.to_uppercase();
         // SQLite strict mode: only INTEGER, TEXT, BLOB, REAL
         match upper.as_str() {
-            "UUID" | "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE"
-            | "JSONB" | "TEXT" | "VARCHAR" => Some("TEXT".to_string()),
-            "BOOLEAN" | "INTEGER" | "INT4" | "INT8" | "SMALLINT"
-            | "BIGINT" | "SERIAL" | "BIGSERIAL" => Some("INTEGER".to_string()),
-            "FLOAT" | "FLOAT8" | "DOUBLE PRECISION" | "REAL" | "NUMERIC"
-            | "DECIMAL" => Some("REAL".to_string()),
+            "UUID" | "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" | "JSONB" | "TEXT" | "VARCHAR" => {
+                Some("TEXT".to_string())
+            }
+            "BOOLEAN" | "INTEGER" | "INT4" | "INT8" | "SMALLINT" | "BIGINT" | "SERIAL"
+            | "BIGSERIAL" => Some("INTEGER".to_string()),
+            "FLOAT" | "FLOAT8" | "DOUBLE PRECISION" | "REAL" | "NUMERIC" | "DECIMAL" => {
+                Some("REAL".to_string())
+            }
             _ if upper.starts_with("GEOMETRY")
                 || upper.starts_with("GEOGRAPHY")
-                || upper.starts_with("VECTOR") => Some("BLOB".to_string()),
+                || upper.starts_with("VECTOR") =>
+            {
+                Some("BLOB".to_string())
+            }
             _ => None,
         }
     }
@@ -517,7 +632,10 @@ mod tests {
         assert_eq!(d.map_pg_type("TIMESTAMPTZ"), Some("TEXT".to_string()));
         assert_eq!(d.map_pg_type("JSONB"), Some("TEXT".to_string()));
         assert_eq!(d.map_pg_type("BOOLEAN"), Some("INTEGER".to_string()));
-        assert_eq!(d.map_pg_type("GEOMETRY(Point, 4326)"), Some("BLOB".to_string()));
+        assert_eq!(
+            d.map_pg_type("GEOMETRY(Point, 4326)"),
+            Some("BLOB".to_string())
+        );
         assert_eq!(d.map_pg_type("VECTOR(1536)"), Some("BLOB".to_string()));
     }
 
@@ -544,9 +662,18 @@ mod tests {
 
     #[test]
     fn test_database_target_from_config() {
-        assert_eq!(DatabaseTarget::from_config("postgres"), DatabaseTarget::Postgres);
-        assert_eq!(DatabaseTarget::from_config("sqlite"), DatabaseTarget::Sqlite);
-        assert_eq!(DatabaseTarget::from_config("unknown"), DatabaseTarget::Postgres);
+        assert_eq!(
+            DatabaseTarget::from_config("postgres"),
+            DatabaseTarget::Postgres
+        );
+        assert_eq!(
+            DatabaseTarget::from_config("sqlite"),
+            DatabaseTarget::Sqlite
+        );
+        assert_eq!(
+            DatabaseTarget::from_config("unknown"),
+            DatabaseTarget::Postgres
+        );
         assert_eq!(DatabaseTarget::from_config(""), DatabaseTarget::Postgres);
     }
 

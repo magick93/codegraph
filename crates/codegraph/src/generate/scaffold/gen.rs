@@ -6,6 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::api::api_model::resolve_entity_operations;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
@@ -26,11 +27,8 @@ pub struct ScaffoldContext {
     pub has_reports: bool,
     pub has_grpc: bool,
     pub has_atproto: bool,
-    /// Whether Fern SDK generation is enabled (drives dump_openapi binary + [[bin]] section).
     pub has_fern: bool,
-    /// Whether the cli/ sub-crate is generated (drives the [workspace] section).
     pub has_cli: bool,
-    /// Whether the `test` generator is active (drives the [[test]] sections).
     pub has_test_gen: bool,
     pub has_admin_cli: bool,
     pub migration_strategy: String,
@@ -41,6 +39,13 @@ pub struct ScaffoldEntity {
     pub name: String,
     pub module_name: String,
     pub domain: String,
+    /// Whether any command operations (create/update/delete) are enabled for
+    /// this entity — hook-only entities get no command handler usage, so the
+    /// AppState field would otherwise be dead code.
+    pub has_commands: bool,
+    /// Whether the generated query handler takes a hooks argument (mirrors the
+    /// `uses_find_by_id` condition in ddd/query.tera).
+    pub has_query_hooks: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -113,7 +118,7 @@ impl GlobalGenerator for ScaffoldGenerator {
 
     async fn generate(
         &self,
-        _db: &dyn GraphQuerier,
+        db: &dyn GraphQuerier,
         config: &DomainConfig,
         generation_order: &[GenerationEntry],
         tera: &tera::Tera,
@@ -131,13 +136,29 @@ impl GlobalGenerator for ScaffoldGenerator {
             if !seen_scaffold_entities.insert((entry.domain.clone(), module_name.clone())) {
                 continue;
             }
+            let operations =
+                resolve_entity_operations(db, config, &entry.domain, &stripped).await;
+            let has_commands = operations
+                .iter()
+                .any(|op| op == "create" || op == "update" || op == "delete");
+            let has_create = operations.iter().any(|op| op == "create");
+            let has_read = operations.iter().any(|op| op == "read");
+            let has_config_parent = config
+                .domains
+                .get(&entry.domain)
+                .and_then(|d| d.get_entity_config(&stripped))
+                .and_then(|ec| ec.parent_ref.as_ref())
+                .is_some();
+            let has_query_hooks = has_create || (has_read && !has_config_parent);
             domain_entity_map
                 .entry(entry.domain.clone())
                 .or_default()
                 .push(ScaffoldEntity {
-                    module_name,
+                    module_name: module_name.clone(),
                     name: entity_name_pascal,
                     domain: entry.domain.clone(),
+                    has_commands,
+                    has_query_hooks,
                 });
         }
 
@@ -232,13 +253,15 @@ impl GlobalGenerator for ScaffoldGenerator {
             });
         }
 
-        let app_state = render_template_with_project(tera, "scaffold/app_state.tera", &ctx, project)?;
+        let app_state =
+            render_template_with_project(tera, "scaffold/app_state.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("app_state.rs"),
             content: app_state,
         });
 
-        let cargo_toml = render_template_with_project(tera, "scaffold/cargo_toml.tera", &ctx, project)?;
+        let cargo_toml =
+            render_template_with_project(tera, "scaffold/cargo_toml.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("Cargo.toml"),
             content: cargo_toml,
@@ -262,10 +285,22 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: error_rs,
         });
 
-        let middleware_rs = render_template_with_project(tera, "scaffold/middleware.tera", &ctx, project)?;
+        let middleware_rs =
+            render_template_with_project(tera, "scaffold/middleware.tera", &ctx, project)?;
         files.push(GeneratedFile {
-            path: self.output_dir.join("src").join("middleware.rs"),
+            path: self.output_dir.join("src").join("middleware").join("mod.rs"),
             content: middleware_rs,
+        });
+
+        let permission_rs = render_template_with_project(
+            tera,
+            "scaffold/permission_middleware.tera",
+            &ctx,
+            project,
+        )?;
+        files.push(GeneratedFile {
+            path: self.output_dir.join("src").join("middleware").join("permission.rs"),
+            content: permission_rs,
         });
 
         let metrics_middleware_rs =
@@ -275,25 +310,37 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: metrics_middleware_rs,
         });
 
-        let qs_query_rs = render_template_with_project(tera, "scaffold/qs_query.tera", &ctx, project)?;
+        let qs_query_rs =
+            render_template_with_project(tera, "scaffold/qs_query.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("qs_query.rs"),
             content: qs_query_rs,
         });
 
-        let meta_content = render_template_with_project(tera, "scaffold/meta.tera", &serde_json::json!({}), project)?;
+        let meta_content = render_template_with_project(
+            tera,
+            "scaffold/meta.tera",
+            &serde_json::json!({}),
+            project,
+        )?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("api").join("meta.rs"),
             content: meta_content,
         });
 
-        let integrations_rs = render_template_with_project(tera, "scaffold/integrations_handler.tera", &ctx, project)?;
+        let integrations_rs = render_template_with_project(
+            tera,
+            "scaffold/integrations_handler.tera",
+            &ctx,
+            project,
+        )?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("integrations.rs"),
             content: integrations_rs,
         });
 
-        let api_key_migration = render_template_with_project(tera, "db/api_key_migration.tera", &ctx, project)?;
+        let api_key_migration =
+            render_template_with_project(tera, "db/api_key_migration.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self
                 .output_dir

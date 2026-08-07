@@ -1,3 +1,4 @@
+pub mod api_model;
 pub mod handler;
 pub mod include_path;
 pub mod links;
@@ -6,4 +7,4 @@ pub mod openapi;
 pub mod router;
 pub mod workflow_action;
 
-pub use include_path::{IncludeSegment, ResolvedIncludePath, resolve_include_paths};
+pub use include_path::{resolve_include_paths, IncludeSegment, ResolvedIncludePath};

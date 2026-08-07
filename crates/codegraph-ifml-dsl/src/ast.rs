@@ -231,10 +231,7 @@ pub struct IfmlModel {
 #[derive(Debug, Error)]
 pub enum IfmlParseError {
     #[error("Parse error at {position}: {message}")]
-    Parse {
-        position: String,
-        message: String,
-    },
+    Parse { position: String, message: String },
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

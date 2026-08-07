@@ -7,8 +7,7 @@ expression: code
 
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 

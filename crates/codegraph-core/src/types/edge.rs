@@ -41,6 +41,18 @@ pub enum EdgeType {
     DefinesCollection,
     LexiconReferences,
     StoredInRepository,
+
+    // API metamodel edge types
+    ExposesResource,
+    BindsToSchema,
+    HasOperation,
+    InputBoundTo,
+    OutputBoundTo,
+    CanReturnError,
+    RequiresPermission,
+    HasInteraction,
+    BindsHttpEndpoint,
+    UsesPipeline,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

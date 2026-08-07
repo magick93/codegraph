@@ -7,8 +7,9 @@ use codegraph_core::types::ParentCandidate;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::render_template_with_project;
+use crate::generate::api::api_model::resolve_entity_operations;
 use crate::generate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
+use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
@@ -18,6 +19,7 @@ pub struct QueryContext {
     pub module_name: String,
     pub domain: String,
     pub has_read: bool,
+    pub has_create: bool,
     pub has_list: bool,
     pub has_fts: bool,
     pub has_embeddings: bool,
@@ -78,9 +80,8 @@ impl EntityGenerator for QueryGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let search = entity_cfg.map(|ec| &ec.search);
         let has_fts = search
@@ -113,6 +114,7 @@ impl EntityGenerator for QueryGenerator {
 
         let ctx = QueryContext {
             has_read: operations.contains(&"read".to_string()),
+            has_create: operations.contains(&"create".to_string()),
             has_list: operations.contains(&"list".to_string()),
             has_fts,
             has_embeddings,

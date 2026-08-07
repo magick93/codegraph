@@ -1,9 +1,11 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree,
-    EventNode, EnumValue, Extension, LexiconNode, NamespaceNode, ParameterDefinitionNode,
-    ParentCandidate, PropertyNode, RepositoryNode, SchemaClassificationData, SchemaNode,
-    StructuredSubField, ViewComponentNode, ViewContainerNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension,
+    HttpEndpointNode, InteractionNode, LexiconNode, NamespaceNode, ParameterDefinitionNode,
+    ParentCandidate, PermissionNode, PipelineNode, PropertyNode, RepositoryNode,
+    SchemaClassificationData, SchemaNode, StructuredSubField, ViewComponentNode,
+    ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -84,13 +86,19 @@ pub trait GraphQuerier: Send + Sync {
     /// title — the reverse of `get_allof_targets`. Returns full SchemaNode objects
     /// so callers can inspect `is_entity`, `pg_table_name`, etc.
     ///
-    /// For example, if both PersonType (entity) and PersonLegalType (VO) allOf-compose
-    /// PersonBaseType, then `get_schemas_that_extend("PersonBaseType")` returns both.
-    async fn get_schemas_that_extend(&self, _parent_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+/// For example, if both PersonType (entity) and PersonLegalType (VO) allOf-compose
+/// PersonBaseType, then `get_schemas_that_extend("PersonBaseType")` returns both.
+    async fn get_schemas_that_extend(
+        &self,
+        parent_title: &str,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
         Ok(Vec::new())
     }
     async fn get_referencing_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError>;
-    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError>;
+    async fn get_referenced_schemas(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<SchemaNode>, GraphError>;
     async fn get_property_ref_target(
         &self,
         property_name: &str,
@@ -174,17 +182,12 @@ pub trait GraphQuerier: Send + Sync {
     }
 
     /// Get all Event nodes for a given parent element.
-    async fn get_ifml_events(
-        &self,
-        _parent_id: &str,
-    ) -> Result<Vec<EventNode>, GraphError> {
+    async fn get_ifml_events(&self, _parent_id: &str) -> Result<Vec<EventNode>, GraphError> {
         Ok(Vec::new())
     }
 
     /// Get NavigationFlow edges: (source_element, source_event, target_container).
-    async fn get_ifml_navigation_flows(
-        &self,
-    ) -> Result<Vec<(String, String, String)>, GraphError> {
+    async fn get_ifml_navigation_flows(&self) -> Result<Vec<(String, String, String)>, GraphError> {
         Ok(Vec::new())
     }
 
@@ -215,7 +218,10 @@ pub trait GraphQuerier: Send + Sync {
 
     /// Get the Lexicon projected from a schema.
     #[allow(unused_variables)]
-    async fn get_lexicon_by_schema(&self, schema_title: &str) -> Result<Option<LexiconNode>, GraphError> {
+    async fn get_lexicon_by_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Option<LexiconNode>, GraphError> {
         Ok(None)
     }
 
@@ -241,6 +247,53 @@ pub trait GraphQuerier: Send + Sync {
     #[allow(unused_variables)]
     async fn get_lexicon_references(&self, nsid: &str) -> Result<Vec<LexiconNode>, GraphError> {
         Ok(Vec::new())
+    }
+
+    // ── API metamodel query methods ─────────────────────────────────────
+
+    async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_api_resource(&self, _name: &str) -> Result<Option<ApiResourceNode>, GraphError> {
+        Ok(None)
+    }
+
+    async fn get_api_operations(
+        &self,
+        _resource_name: &str,
+    ) -> Result<Vec<ApiOperationNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_interactions(
+        &self,
+        _operation_name: &str,
+    ) -> Result<Vec<InteractionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_http_endpoints(&self) -> Result<Vec<HttpEndpointNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_error_definitions(&self) -> Result<Vec<ErrorDefinitionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_permissions(&self) -> Result<Vec<PermissionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_pipelines(&self) -> Result<Vec<PipelineNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_pipeline_for_endpoint(
+        &self,
+        _endpoint_path: &str,
+    ) -> Result<Option<PipelineNode>, GraphError> {
+        Ok(None)
     }
 }
 

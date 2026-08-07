@@ -14,13 +14,13 @@ pub mod db;
 pub mod ddd;
 pub mod domain_types;
 pub mod fern;
+pub mod grpc;
 pub mod hooks;
 pub mod integration;
 pub mod playwright;
 pub mod scaffold;
 pub mod test;
 pub mod ui;
-pub mod grpc;
 pub mod webhook;
 
 /// Returns the lowercased PG cast string for range/geometry types, or `None` for standard types.
@@ -50,7 +50,10 @@ pub fn is_geometry_cast(cast: &str) -> bool {
 /// This is the single source of truth for FK naming; entity, DDL, repository,
 /// command, query, handler, and router generators must all call this helper
 /// (or the bulk wrapper `resolve_parent_fk_column`) to stay in sync.
-pub fn fk_column_for_candidate(pc: &codegraph_core::types::ParentCandidate, suffix: &str) -> String {
+pub fn fk_column_for_candidate(
+    pc: &codegraph_core::types::ParentCandidate,
+    suffix: &str,
+) -> String {
     let parent_name = api::router::strip_suffix(&pc.parent_title, suffix);
     match pc.source {
         codegraph_core::types::DetectionSource::ArrayItems => {
@@ -81,7 +84,10 @@ pub fn resolve_parent_fk_column(
         if ec.role.as_deref() == Some("child") {
             if let Some(ref parent_title) = ec.parent {
                 let parent_name = api::router::strip_suffix(parent_title, suffix);
-                return Some(format!("{}_id", codegraph_naming::to_snake_case(parent_name)));
+                return Some(format!(
+                    "{}_id",
+                    codegraph_naming::to_snake_case(parent_name)
+                ));
             }
         }
     }
@@ -116,8 +122,12 @@ pub async fn resolve_parent_fk_column_same_domain(
     if let Some(ec) = entity_cfg {
         if ec.role.as_deref() == Some("child") {
             if let Some(ref parent_title) = ec.parent {
-                let parent_name = api::router::strip_suffix(parent_title, &config.defaults.type_suffix);
-                return Some(format!("{}_id", codegraph_naming::to_snake_case(parent_name)));
+                let parent_name =
+                    api::router::strip_suffix(parent_title, &config.defaults.type_suffix);
+                return Some(format!(
+                    "{}_id",
+                    codegraph_naming::to_snake_case(parent_name)
+                ));
             }
         }
     }
@@ -164,7 +174,9 @@ use codegraph_core::traits::GraphQuerier;
 use tera::Tera;
 
 use crate::error::{Error, Result};
-use crate::generate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::generate::db::dialect::{
+    db_template_for, dialect_for_target, DatabaseTarget, SqlDialect,
+};
 use codegraph_config::{DomainConfig, UiDomainConfig, UiOverrideConfig};
 
 use std::sync::OnceLock;
@@ -206,6 +218,9 @@ pub struct ProjectConfig {
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
     pub types_import_prefix: String,
+    /// API version prefix used in URL path construction (e.g. "v1" → `/api/v1/...`).
+    #[serde(default)]
+    pub api_version: String,
     /// Git revision SHA used for fallback path dependencies in generated Cargo.toml.
     /// When domain_types_base is empty, the domain types Cargo.toml uses this rev
     /// to reference codegraph-type-contracts as a git dependency.
@@ -271,6 +286,7 @@ impl Default for ProjectConfig {
             cargo_patch: String::new(),
             extra_dependencies: String::new(),
             cargo_workspace: false,
+            api_version: "v1".into(),
         }
     }
 }
@@ -299,6 +315,30 @@ pub struct GenerationEntry {
     pub domain: String,
     pub pg_schema: String,
     pub is_cyclic: bool,
+}
+
+/// Returns true if the generator name is an API-layer entity generator
+/// (handler, workflow, media, test, UI, CLI, gRPC, playwright).
+/// DDD generators (ddl, entity, repo, command, query, event, dto, lifecycle_trait,
+/// domain_types) are NOT considered API generators.
+pub fn is_api_entity_generator(name: &str) -> bool {
+    matches!(
+        name,
+        "handler"
+            | "workflow_action"
+            | "media_route"
+            | "test"
+            | "ui-page"
+            | "ui-form"
+            | "ui-store"
+            | "ui-e2e-test"
+            | "playwright-entity"
+            | "ui-descriptor"
+            | "ui-shell"
+            | "cli_command"
+            | "grpc_proto"
+            | "grpc_service"
+    )
 }
 
 /// Configuration for the code generation pipeline.
@@ -345,7 +385,7 @@ pub async fn run_generators(
     ui_domains: &UiDomainConfig,
     schema_base_dir: &Path,
 ) -> Result<report::GenerationReport> {
-        run_generators_with_opts(GeneratorOpts {
+    run_generators_with_opts(GeneratorOpts {
         db,
         config,
         output_dir,
@@ -446,7 +486,12 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             let entity_name = codegraph_naming::strip_suffix(entity_title, suffix);
             let module_name = codegraph_naming::to_snake_case(&entity_name);
             let base = || -> Vec<String> {
-                vec!["crate".into(), "domain".into(), domain_name.clone(), module_name.clone()]
+                vec![
+                    "crate".into(),
+                    "domain".into(),
+                    domain_name.clone(),
+                    module_name.clone(),
+                ]
             };
             type_registry::register_type(
                 &format!("{}Response", entity_name),
@@ -488,7 +533,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let has_reports = build_plan
         .map(|bp| bp.has_global_gen("report_views"))
         .unwrap_or(true)
-        && std::env::current_dir().unwrap_or_default().join("reports.toml").exists();
+        && std::env::current_dir()
+            .unwrap_or_default()
+            .join("reports.toml")
+            .exists();
     let has_atproto = build_plan
         .map(|bp| bp.has_global_gen("atproto_identity")
             || bp.has_entity_gen("lexicon")
@@ -511,8 +559,6 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         .and_then(|v| v.as_str())
         .unwrap_or("sea-orm")
         .to_string();
-    // Whether the cli/ sub-crate is generated. Legacy (no build plan) runs
-    // execute every generator, so it defaults to true.
     let has_cli = build_plan
         .map(|bp| {
             bp.has_global_gen("cli_scaffold")
@@ -520,7 +566,6 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 || bp.has_domain_gen("cli_domain")
         })
         .unwrap_or(true);
-    // Whether the entity `test` generator is active (Rust tests/ tree).
     let has_test_gen = build_plan
         .map(|bp| bp.has_entity_gen("test"))
         .unwrap_or(true);
@@ -663,18 +708,22 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(ui::shell::UiShellGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
         Box::new(
             hooks::lifecycle_trait::LifecycleTraitGenerator::new_with_base(
-                hooks_base.map(|b| b.to_path_buf()).unwrap_or_else(|| output_dir.to_path_buf()),
+                hooks_base
+                    .map(|b| b.to_path_buf())
+                    .unwrap_or_else(|| output_dir.to_path_buf()),
             ),
         ) as Box<dyn EntityGenerator>,
         // domain_types generators: use the provided base override, defaulting to output_dir.
-        Box::new(
-            domain_types::dto::DomainTypesDtoGenerator::new_with_base(
-                domain_types_base.map(|b| b.to_path_buf()).unwrap_or_else(|| output_dir.to_path_buf()),
-            ),
-        ) as Box<dyn EntityGenerator>,
+        Box::new(domain_types::dto::DomainTypesDtoGenerator::new_with_base(
+            domain_types_base
+                .map(|b| b.to_path_buf())
+                .unwrap_or_else(|| output_dir.to_path_buf()),
+        )) as Box<dyn EntityGenerator>,
         Box::new(
             domain_types::query_service::QueryServiceGenerator::new_with_base(
-                domain_types_base.map(|b| b.to_path_buf()).unwrap_or_else(|| output_dir.to_path_buf()),
+                domain_types_base
+                    .map(|b| b.to_path_buf())
+                    .unwrap_or_else(|| output_dir.to_path_buf()),
             ),
         ) as Box<dyn EntityGenerator>,
         Box::new(cli::command::CliCommandGenerator::new(output_dir)) as Box<dyn EntityGenerator>,
@@ -697,6 +746,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     .collect::<Vec<_>>();
 
     let domain_gens: Vec<Box<dyn DomainGenerator>> = vec![
+        Box::new(ddd::errors::ErrorGenerator::new(output_dir)) as Box<dyn DomainGenerator>,
         Box::new(
             api::router::RouterGenerator::new(output_dir)
                 .with_parent_candidates(parent_candidates.clone()),
@@ -721,16 +771,14 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 .with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(
-            db::event_trigger::PgmqSetupGenerator::new(output_dir)
-                .with_dialect(make_dialect()),
+            db::event_trigger::PgmqSetupGenerator::new(output_dir).with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(
             db::platform_schema::PlatformSchemaGenerator::new(output_dir)
                 .with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(
-            db::workflow_seed::WorkflowSeedGenerator::new(output_dir)
-                .with_dialect(make_dialect()),
+            db::workflow_seed::WorkflowSeedGenerator::new(output_dir).with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(api::openapi::OpenApiGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
         Box::new(scaffold::gen::ScaffoldGenerator::new(
@@ -756,24 +804,23 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             schema_base_dir,
         )) as Box<dyn GlobalGenerator>,
         Box::new(hooks::registry::HookRegistryGenerator::new_with_base(
-            hooks_base.map(|b| b.to_path_buf()).unwrap_or_else(|| output_dir.to_path_buf()),
+            hooks_base
+                .map(|b| b.to_path_buf())
+                .unwrap_or_else(|| output_dir.to_path_buf()),
         )) as Box<dyn GlobalGenerator>,
         Box::new(
             domain_types::scaffold::DomainTypesScaffoldGenerator::new_with_base(
-                domain_types_base.map(|b| b.to_path_buf()).unwrap_or_else(|| output_dir.to_path_buf()),
+                domain_types_base
+                    .map(|b| b.to_path_buf())
+                    .unwrap_or_else(|| output_dir.to_path_buf()),
             ),
         ) as Box<dyn GlobalGenerator>,
         Box::new(cli::scaffold::CliScaffoldGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
+        Box::new(db::report_view::ReportViewGenerator::new(output_dir).with_dialect(make_dialect()))
+            as Box<dyn GlobalGenerator>,
         Box::new(
-            db::report_view::ReportViewGenerator::new(output_dir)
+            db::seed::SeedDataGenerator::new(output_dir, seed_config.map(|p| p.to_path_buf()))
                 .with_dialect(make_dialect()),
-        ) as Box<dyn GlobalGenerator>,
-        Box::new(
-            db::seed::SeedDataGenerator::new(
-                output_dir,
-                seed_config.map(|p| p.to_path_buf()),
-            )
-            .with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(playwright::global_gen::PlaywrightGlobalGenerator::new(
             output_dir,
@@ -822,10 +869,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     for fw in &ifml_frameworks {
         let fw_output = output_dir.join(fw);
         if build_plan.is_none() || plan_has_global(&format!("ifml_route_{}", fw)) {
-            global_gens.push(
-                Box::new(ifml::route_generator::IfmlRouteGenerator::new(&fw_output, fw))
-                    as Box<dyn GlobalGenerator>,
-            );
+            global_gens.push(Box::new(ifml::route_generator::IfmlRouteGenerator::new(
+                &fw_output, fw,
+            )) as Box<dyn GlobalGenerator>);
         }
         if build_plan.is_none() || plan_has_global(&format!("ifml_navigation_{}", fw)) {
             global_gens.push(
@@ -865,11 +911,32 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // Within each entity, generators run sequentially.
     let mut entity_results: Vec<(Vec<GeneratedFile>, Vec<report::GenerationError>)> = Vec::new();
     for entry in &order {
+        let generation_mode = config
+            .domains
+            .get(&entry.domain)
+            .and_then(|d| d.get_entity_config(&entry.schema_title))
+            .and_then(|ec| ec.generation_mode.as_deref())
+            .unwrap_or(&config.defaults.generation_mode);
+
+        if generation_mode == "none" {
+            continue;
+        }
+
         let mut entity_files = Vec::new();
         let mut errors = Vec::new();
         for gen in entity_gens.iter() {
+            if generation_mode == "ddd_only" && is_api_entity_generator(gen.name()) {
+                continue;
+            }
             match gen
-                .generate(db, &entry.schema_title, &entry.domain, config, tera, project)
+                .generate(
+                    db,
+                    &entry.schema_title,
+                    &entry.domain,
+                    config,
+                    tera,
+                    project,
+                )
                 .await
             {
                 Ok(files) => entity_files.extend(files),
@@ -935,8 +1002,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             .list_codelists()
             .await
             .map_err(|e| Error::Config(e.to_string()))?;
-        let codelist_sql_gen = db::codelist::CodelistGenerator::new(output_dir)
-            .with_dialect(make_dialect());
+        let codelist_sql_gen =
+            db::codelist::CodelistGenerator::new(output_dir).with_dialect(make_dialect());
         for (idx, cl) in codelists.iter().enumerate() {
             let files = codelist_sql_gen
                 .generate(db, &cl.name, "common", config, tera, project)
@@ -951,12 +1018,11 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
 
     // Codelist Rust enums into domain-types crate (source-of-truth for DTOs)
     let codelist_gen = domain_types::codelist::DomainTypesCodelistGenerator::new_with_base(
-        domain_types_base.map(|b| b.to_path_buf()).unwrap_or_else(|| output_dir.to_path_buf()),
+        domain_types_base
+            .map(|b| b.to_path_buf())
+            .unwrap_or_else(|| output_dir.to_path_buf()),
     );
-    match codelist_gen
-        .generate_all(db, tera, project)
-        .await
-    {
+    match codelist_gen.generate_all(db, tera, project).await {
         Ok(files) => {
             for file in &files {
                 write_output(file)?;
@@ -999,7 +1065,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             domain_gens.iter().map(move |gen| {
                 let domain = domain.clone();
                 async move {
-                    let result = gen.generate(db, &domain, entity_titles, config, tera, project).await;
+                    let result = gen
+                        .generate(db, &domain, entity_titles, config, tera, project)
+                        .await;
                     (domain, gen.name().to_string(), result)
                 }
             })
@@ -1152,6 +1220,7 @@ pub async fn compute_generation_order(
 
     let mut entries = Vec::new();
     let mut seen_entries = HashSet::new();
+    let mut seen_titles: HashSet<String> = HashSet::new();
 
     for domain_name in &domain_order {
         let domain_entry = match config.domains.get(domain_name.as_str()) {
@@ -1191,6 +1260,9 @@ pub async fn compute_generation_order(
             }
             if !seen_entries.insert((title.clone(), domain_name.clone())) {
                 continue;
+            }
+            if !seen_titles.insert(title.clone()) {
+                continue; // already assigned to a higher-priority domain
             }
 
             entries.push(GenerationEntry {
@@ -1853,9 +1925,12 @@ fn generate_mod_files_recursive(dir: &Path, out: &mut Vec<GeneratedFile>) -> Res
         let mod_path = dir.join("mod.rs");
         // Skip if a mod.rs with pub-use re-exports exists (written by a specialised
         // generator like codelist). Always overwrite plain `pub mod` declarations.
+        // Skip if mod.rs was explicitly generated (contains real code beyond
+        // auto-generated pub mod declarations). Check for pub use (codelist)
+        // or use statements (scaffold middleware, etc.).
         let skip = mod_path.exists()
             && fs::read_to_string(&mod_path)
-                .map(|c| c.contains("pub use "))
+                .map(|c| c.contains("pub use ") || c.contains("use "))
                 .unwrap_or(false);
         if !skip {
             let content = modules

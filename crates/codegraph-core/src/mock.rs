@@ -33,6 +33,13 @@ pub struct MockEngine {
     repositories: Mutex<HashMap<String, RepositoryNode>>,
     /// Maps schema_title -> lexicon nsid for get_lexicon_by_schema lookups.
     schema_lexicons: Mutex<HashMap<String, String>>,
+    api_resources: Mutex<HashMap<String, ApiResourceNode>>,
+    api_operations: Mutex<HashMap<String, ApiOperationNode>>,
+    interactions: Mutex<HashMap<String, InteractionNode>>,
+    http_endpoints: Mutex<HashMap<String, HttpEndpointNode>>,
+    pipelines: Mutex<HashMap<String, PipelineNode>>,
+    error_definitions: Mutex<HashMap<String, ErrorDefinitionNode>>,
+    permissions: Mutex<HashMap<String, PermissionNode>>,
     start_time: Instant,
 }
 
@@ -61,6 +68,13 @@ impl MockEngine {
             collections: Mutex::new(HashMap::new()),
             repositories: Mutex::new(HashMap::new()),
             schema_lexicons: Mutex::new(HashMap::new()),
+            api_resources: Mutex::new(HashMap::new()),
+            api_operations: Mutex::new(HashMap::new()),
+            interactions: Mutex::new(HashMap::new()),
+            http_endpoints: Mutex::new(HashMap::new()),
+            pipelines: Mutex::new(HashMap::new()),
+            error_definitions: Mutex::new(HashMap::new()),
+            permissions: Mutex::new(HashMap::new()),
             start_time: Instant::now(),
         }
     }
@@ -340,7 +354,9 @@ fn build_mock_node(
         }
 
         let fk_target = match classification {
-            Some(codegraph_type_contracts::RefClassificationKind::CodelistReference) if !p.is_array => {
+            Some(codegraph_type_contracts::RefClassificationKind::CodelistReference)
+                if !p.is_array =>
+            {
                 p.ref_target.as_ref().map(|rt| FkTarget {
                     schema: mock_ref_schema(rt),
                     table: mock_ref_table(rt),
@@ -348,7 +364,9 @@ fn build_mock_node(
                     on_delete: "RESTRICT".to_string(),
                 })
             }
-            Some(codegraph_type_contracts::RefClassificationKind::EntityReference) if !p.is_array => {
+            Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
+                if !p.is_array =>
+            {
                 p.ref_target.as_ref().map(|rt| FkTarget {
                     schema: mock_ref_schema(rt),
                     table: mock_ref_table(rt),
@@ -580,6 +598,80 @@ impl GraphIngestor for MockEngine {
         Ok(did)
     }
 
+    // ── API metamodel ingestion ───────────────────────────────────────
+
+    async fn ingest_api_resource(&self, node: &ApiResourceNode) -> Result<String, GraphError> {
+        let id = format!("ar:{}", node.name);
+        self.api_resources
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_api_operation(
+        &self,
+        node: &ApiOperationNode,
+    ) -> Result<String, GraphError> {
+        let id = format!("ao:{}", node.name);
+        self.api_operations
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_interaction(&self, node: &InteractionNode) -> Result<String, GraphError> {
+        let id = format!("ia:{}", Uuid::new_v4());
+        self.interactions
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_http_endpoint(
+        &self,
+        node: &HttpEndpointNode,
+    ) -> Result<String, GraphError> {
+        let id = format!("he:{}", Uuid::new_v4());
+        self.http_endpoints
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_pipeline(&self, node: &PipelineNode) -> Result<String, GraphError> {
+        let id = format!("pl:{}", node.name);
+        self.pipelines
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_error_definition(
+        &self,
+        node: &ErrorDefinitionNode,
+    ) -> Result<String, GraphError> {
+        let id = format!("ed:{}", node.code);
+        self.error_definitions
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_permission(&self, node: &PermissionNode) -> Result<String, GraphError> {
+        let id = format!("pm:{}", node.name);
+        self.permissions
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
     async fn finalize(&self) -> Result<IngestStats, GraphError> {
         let schemas = self.schemas.lock().unwrap();
         let properties = self.properties.lock().unwrap();
@@ -591,8 +683,8 @@ impl GraphIngestor for MockEngine {
         let act = self.action_nodes.lock().unwrap();
         let param = self.parameter_definitions.lock().unwrap();
 
-        let ifml_count =
-            vc.len() + vcomp.len() + evt.len() + act.len() + param.len();
+        let ifml_count = vc.len() + vcomp.len() + evt.len() + act.len() + param.len();
+        let api_res = self.api_resources.lock().unwrap();
 
         Ok(IngestStats {
             schema_count: schemas.len(),
@@ -600,6 +692,7 @@ impl GraphIngestor for MockEngine {
             codelist_count: codelists.len(),
             enum_value_count: enum_values.values().map(|v| v.len()).sum(),
             ifml_node_count: ifml_count,
+            api_resource_count: api_res.len(),
             duration: self.start_time.elapsed(),
             ..Default::default()
         })
@@ -833,7 +926,10 @@ impl GraphQuerier for MockEngine {
         Ok(vec![])
     }
 
-    async fn get_referenced_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+    async fn get_referenced_schemas(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
         let ref_targets = self.ref_targets.lock().unwrap();
         let mut seen = std::collections::HashSet::new();
         let mut result = Vec::new();
@@ -986,5 +1082,103 @@ impl GraphQuerier for MockEngine {
         // TODO: look up via LexiconReferences edges.
         // MockEngine doesn't store edges, so we can't resolve this relationship.
         Ok(Vec::new())
+    }
+
+    // ── API metamodel query methods ────────────────────────────────────
+
+    async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
+        Ok(self
+            .api_resources
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    async fn get_api_resource(&self, name: &str) -> Result<Option<ApiResourceNode>, GraphError> {
+        Ok(self
+            .api_resources
+            .lock()
+            .unwrap()
+            .values()
+            .find(|r| r.name == name)
+            .cloned())
+    }
+
+    async fn get_api_operations(
+        &self,
+        resource_name: &str,
+    ) -> Result<Vec<ApiOperationNode>, GraphError> {
+        let _ = resource_name;
+        Ok(self
+            .api_operations
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    async fn get_interactions(
+        &self,
+        operation_name: &str,
+    ) -> Result<Vec<InteractionNode>, GraphError> {
+        let _ = operation_name;
+        Ok(self
+            .interactions
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    async fn get_http_endpoints(&self) -> Result<Vec<HttpEndpointNode>, GraphError> {
+        Ok(self
+            .http_endpoints
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    async fn get_error_definitions(&self) -> Result<Vec<ErrorDefinitionNode>, GraphError> {
+        Ok(self
+            .error_definitions
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    async fn get_permissions(&self) -> Result<Vec<PermissionNode>, GraphError> {
+        Ok(self
+            .permissions
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    async fn get_pipelines(&self) -> Result<Vec<PipelineNode>, GraphError> {
+        Ok(self
+            .pipelines
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    async fn get_pipeline_for_endpoint(
+        &self,
+        endpoint_path: &str,
+    ) -> Result<Option<PipelineNode>, GraphError> {
+        let _ = endpoint_path;
+        Ok(None)
     }
 }

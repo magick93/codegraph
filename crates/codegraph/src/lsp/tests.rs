@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::sync::Mutex;
 use auto_lsp::lsp_server::{Connection, Message, Notification, Request, RequestId};
 use auto_lsp::lsp_types::*;
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 use super::{run_lsp_server, GrafeoState, SchemaInfo};
 
@@ -34,9 +34,7 @@ fn make_init_params() -> serde_json::Value {
 
 fn parse_init_result(msg: Message) -> InitializeResult {
     match msg {
-        Message::Response(resp) => {
-            serde_json::from_value(resp.result.unwrap()).unwrap()
-        }
+        Message::Response(resp) => serde_json::from_value(resp.result.unwrap()).unwrap(),
         _ => panic!("Expected response, got {:?}", msg),
     }
 }
@@ -103,16 +101,12 @@ fn open_document(client: &Connection, uri: &str, text: &str) {
         .unwrap();
 }
 
-fn recv_diagnostics(
-    client: &Connection,
-    expected_uri: &str,
-) -> PublishDiagnosticsParams {
+fn recv_diagnostics(client: &Connection, expected_uri: &str) -> PublishDiagnosticsParams {
     loop {
         let msg = client.receiver.recv().unwrap();
         match msg {
             Message::Notification(not) if not.method == "textDocument/publishDiagnostics" => {
-                let params: PublishDiagnosticsParams =
-                    serde_json::from_value(not.params).unwrap();
+                let params: PublishDiagnosticsParams = serde_json::from_value(not.params).unwrap();
                 assert_eq!(params.uri.as_str(), expected_uri);
                 return params;
             }
@@ -250,9 +244,16 @@ fn test_lsp_diagnostic_entity_suffix_stripped() {
 
     let params = recv_diagnostics(&client_conn, "file:///valid.ifml");
     assert!(
-        !params.diagnostics.iter().any(|d| d.message.contains("Entity")),
+        !params
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("Entity")),
         "data: Customer should NOT produce entity error. Got: {:?}",
-        params.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
     );
 
     // Now open a second document with data: Nonexistent — should error
@@ -264,7 +265,10 @@ fn test_lsp_diagnostic_entity_suffix_stripped() {
 
     let params = recv_diagnostics(&client_conn, "file:///invalid.ifml");
     assert!(
-        params.diagnostics.iter().any(|d| d.message.contains("Entity") && d.message.contains("Nonexistent")),
+        params
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("Entity") && d.message.contains("Nonexistent")),
         "data: Nonexistent SHOULD produce entity error"
     );
 
@@ -301,11 +305,16 @@ fn test_lsp_diagnostic_for_missing_entity() {
         "referencing unknown entity 'Order' should produce diagnostics"
     );
     assert!(
-        params.diagnostics.iter().any(|d| {
-            d.message.contains("Entity") && d.message.contains("Order")
-        }),
+        params
+            .diagnostics
+            .iter()
+            .any(|d| { d.message.contains("Entity") && d.message.contains("Order") }),
         "should have error about unknown entity 'Order', got: {:?}",
-        params.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
     );
 
     do_shutdown(&client_conn);
@@ -347,11 +356,11 @@ view "Detail" {
     let params = recv_diagnostics(&client_conn, "file:///test.ifml");
     assert!(
         params.diagnostics.iter().any(|d| {
-            d.message.contains("wrongKey")
-                && d.message.contains("not a declared parameter")
+            d.message.contains("wrongKey") && d.message.contains("not a declared parameter")
         }),
         "Should warn about invalid parameter binding 'wrongKey', got: {:?}",
-        params.diagnostics
+        params
+            .diagnostics
             .iter()
             .map(|d| &d.message)
             .collect::<Vec<_>>()
@@ -378,7 +387,9 @@ view "B" { component "c2" { type: list; data: Order; fields: [name, email]; } }"
     );
 
     let params = recv_diagnostics(&client_conn, "file:///test.ifml");
-    let dups: Vec<&Diagnostic> = params.diagnostics.iter()
+    let dups: Vec<&Diagnostic> = params
+        .diagnostics
+        .iter()
         .filter(|d| d.message.contains("Duplicate"))
         .collect();
     assert!(
@@ -407,7 +418,9 @@ fn test_lsp_duplicate_field_in_same_array() {
     );
 
     let params = recv_diagnostics(&client_conn, "file:///test.ifml");
-    let dups: Vec<&Diagnostic> = params.diagnostics.iter()
+    let dups: Vec<&Diagnostic> = params
+        .diagnostics
+        .iter()
         .filter(|d| d.message.contains("Duplicate"))
         .collect();
     assert!(
@@ -474,8 +487,7 @@ fn test_lsp_completion_with_entity_data() {
         Message::Response(resp) => {
             let result = resp.result.unwrap_or(serde_json::Value::Null);
             assert!(!result.is_null(), "completion should return results");
-            let completion: CompletionResponse =
-                serde_json::from_value(result).unwrap();
+            let completion: CompletionResponse = serde_json::from_value(result).unwrap();
             match completion {
                 CompletionResponse::List(list) => {
                     assert!(
@@ -579,17 +591,13 @@ fn test_lsp_semantic_tokens() {
     let msg = client_conn.receiver.recv().unwrap();
     match msg {
         Message::Response(resp) => {
-            let result: Option<SemanticTokensResult> = serde_json::from_value(
-                resp.result.unwrap_or(serde_json::Value::Null),
-            )
-            .ok()
-            .flatten();
+            let result: Option<SemanticTokensResult> =
+                serde_json::from_value(resp.result.unwrap_or(serde_json::Value::Null))
+                    .ok()
+                    .flatten();
             match result {
                 Some(SemanticTokensResult::Tokens(tokens)) => {
-                    assert!(
-                        !tokens.data.is_empty(),
-                        "Should produce semantic tokens"
-                    );
+                    assert!(!tokens.data.is_empty(), "Should produce semantic tokens");
                 }
                 _ => panic!("Expected SemanticTokensResult::Tokens"),
             }
@@ -652,7 +660,7 @@ fn test_lsp_goto_definition_entity_no_file() {
         Message::Response(resp) => {
             // Result may be None or Null if schema file doesn't exist on disk
             match resp.result {
-                None => {} // result field absent
+                None => {}                       // result field absent
                 Some(val) if val.is_null() => {} // result is null
                 other => panic!("Expected null result (no schema file), got: {:?}", other),
             }
@@ -707,10 +715,8 @@ fn test_lsp_code_action_missing_entity() {
     let msg = client_conn.receiver.recv().unwrap();
     match msg {
         Message::Response(resp) => {
-            let result: Option<Vec<CodeActionOrCommand>> = serde_json::from_value(
-                resp.result.unwrap_or(serde_json::Value::Null),
-            )
-            .ok();
+            let result: Option<Vec<CodeActionOrCommand>> =
+                serde_json::from_value(resp.result.unwrap_or(serde_json::Value::Null)).ok();
             match result {
                 Some(actions) => {
                     assert!(!actions.is_empty(), "Should have at least one code action");

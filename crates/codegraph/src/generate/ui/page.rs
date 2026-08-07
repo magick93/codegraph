@@ -10,6 +10,8 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
+use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment};
+
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::store::UiParentInfo;
 
@@ -142,8 +144,6 @@ impl EntityGenerator for UiPageGenerator {
         let entity_name = schema.rust_type_name.clone();
         let module_name = schema.pg_table_name.clone();
         let domain = domain.to_string();
-        let path_segment = schema.api_path_segment.clone();
-
         if module_name.is_empty() {
             return Ok(Vec::new());
         }
@@ -153,9 +153,10 @@ impl EntityGenerator for UiPageGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
+
+            let operations =
+                resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let dto_config = entity_cfg.map(|ec| &ec.dto);
         let immutable_fields: Vec<String> = dto_config
@@ -218,7 +219,10 @@ impl EntityGenerator for UiPageGenerator {
         // Resolve parent info for child entities.
         // Manual config takes priority over graph detection.
         let parent = {
-            let stripped = crate::generate::api::router::strip_suffix(schema_title, &config.defaults.type_suffix);
+            let stripped = crate::generate::api::router::strip_suffix(
+                schema_title,
+                &config.defaults.type_suffix,
+            );
             let mut result = None;
 
             // 1. Check manual config first
@@ -229,7 +233,9 @@ impl EntityGenerator for UiPageGenerator {
             {
                 if ec.role.as_deref() == Some("child") {
                     if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, &domain).await {
+                        if let Ok(Some(parent_schema)) =
+                            db.get_schema_in_domain(parent_title, &domain).await
+                        {
                             let parent_domain = if config
                                 .domains
                                 .get(&domain)
@@ -255,10 +261,10 @@ impl EntityGenerator for UiPageGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &parent_schema.api_path_segment,
+                                        &resolve_path_segment(None, &parent_schema),
                                     ),
                                 domain: parent_domain,
-                                path_segment: parent_schema.api_path_segment.clone(),
+                                path_segment: resolve_path_segment(None, &parent_schema),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent: gp,
@@ -277,8 +283,10 @@ impl EntityGenerator for UiPageGenerator {
                 .unwrap_or("root");
             if result.is_none() && page_effective_role != "root" {
                 for pc in &self.parent_candidates {
-                    let child_name =
-                        crate::generate::api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
+                    let child_name = crate::generate::api::router::strip_suffix(
+                        &pc.child_title,
+                        &config.defaults.type_suffix,
+                    );
                     if child_name == stripped {
                         let in_explicit = config
                             .domains
@@ -287,16 +295,18 @@ impl EntityGenerator for UiPageGenerator {
                             .unwrap_or(false);
                         let parent_in_domain = in_explicit
                             || db
-                            .get_schema_in_domain(&pc.parent_title, &domain)
-                            .await
-                            .ok()
-                            .flatten()
-                            .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
-                            .unwrap_or(false);
+                                .get_schema_in_domain(&pc.parent_title, &domain)
+                                .await
+                                .ok()
+                                .flatten()
+                                .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
+                                .unwrap_or(false);
                         if !parent_in_domain {
                             break;
                         }
-                        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(&pc.parent_title, &domain).await {
+                        if let Ok(Some(parent_schema)) =
+                            db.get_schema_in_domain(&pc.parent_title, &domain).await
+                        {
                             let gp = super::store::resolve_grandparent(
                                 &pc.parent_title,
                                 &domain,
@@ -309,10 +319,10 @@ impl EntityGenerator for UiPageGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &parent_schema.api_path_segment,
+                                        &resolve_path_segment(None, &parent_schema),
                                     ),
                                 domain: domain.clone(),
-                                path_segment: parent_schema.api_path_segment.clone(),
+                                path_segment: resolve_path_segment(None, &parent_schema),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent: gp,

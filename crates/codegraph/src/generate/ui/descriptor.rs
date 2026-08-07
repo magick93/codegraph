@@ -11,6 +11,8 @@ use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::config::{UiDomainConfig, UiOverrideConfig};
 use codegraph_config::DomainConfig;
 
+use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment};
+
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::wizard_detect::{
     detect_wizard_candidate, humanize, snake_case, ChildInfo, WizardCandidate,
@@ -148,7 +150,6 @@ impl EntityGenerator for UiDescriptorGenerator {
         let entity_name = schema.rust_type_name.clone();
         let module_name = schema.pg_table_name.clone();
         let domain = domain.to_string();
-        let path_segment = schema.api_path_segment.clone();
 
         if module_name.is_empty() {
             return Ok(Vec::new());
@@ -159,15 +160,11 @@ impl EntityGenerator for UiDescriptorGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        // Operations
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
 
-        // Path segment override from entity config
-        let path_segment = entity_cfg
-            .and_then(|ec| ec.path_segment.clone())
-            .unwrap_or(path_segment);
+        // Operations
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         // FTS detection
         let has_fts = entity_cfg

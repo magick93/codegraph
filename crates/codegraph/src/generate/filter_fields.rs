@@ -285,7 +285,9 @@ pub async fn resolve_nested_filter_fields(
                         nested.push(NestedFilterFieldInfo {
                             filter_key: format!(
                                 "{}.{}.{}",
-                                child_field_prefix, cprop_def.rust_field_name, gprop_def.rust_field_name
+                                child_field_prefix,
+                                cprop_def.rust_field_name,
+                                gprop_def.rust_field_name
                             ),
                             sql_table: format!("\"{}\".\"{}\"", schema_name, gc_table_name),
                             sql_schema: schema_name.to_string(),
@@ -341,7 +343,11 @@ pub async fn resolve_nested_filter_fields(
             }
 
             // Resolve the child entity's schema from the graph.
-            let child_schema = db.get_schema_in_domain(config_key, schema_name).await.ok().flatten();
+            let child_schema = db
+                .get_schema_in_domain(config_key, schema_name)
+                .await
+                .ok()
+                .flatten();
             let Some(child_schema) = child_schema else {
                 continue;
             };
@@ -405,7 +411,9 @@ fn is_auto_filterable(prop: &codegraph_core::types::PropertyNode) -> bool {
         | Some(RefClassificationKind::CodelistCheck)
         | Some(RefClassificationKind::InlineEnum) => true,
         // Entity reference FKs are filterable (only actual FK columns, not navigation properties).
-        Some(RefClassificationKind::EntityReference) => resolve_field(prop).column_name.ends_with("_id"),
+        Some(RefClassificationKind::EntityReference) => {
+            resolve_field(prop).column_name.ends_with("_id")
+        }
         // Primitive fields whose name ends with `_id` are natural identifiers.
         Some(RefClassificationKind::PrimitiveWrapper) | None => {
             resolve_field(prop).column_name.ends_with("_id")

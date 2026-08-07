@@ -197,7 +197,7 @@
 				isArray={{ "{" }}{{ field.is_array }}{{ "}" }}
 				fieldName="{{ field.name }}"
 				subFields={[
-					{% for sf in field.structured_sub_fields %}{ name: '{{ sf.name }}', label: '{{ sf.label }}', required: {{ sf.is_required }}, showByDefault: {{ sf.show_by_default }}, description: '{{ sf.description }}' },
+					{% for sf in field.structured_sub_fields %}{ name: '{{ sf.name }}', label: '{{ sf.label }}', required: {{ sf.is_required }}, showByDefault: {{ sf.show_by_default }}, description: `{{ sf.description | safe }}` },
 					{% endfor %}
 				]}
 				bind:value={{ "{" }}{{ field.name }}{{ "}" }}
@@ -223,12 +223,12 @@
 		</Field.Field>
 {% else %}
 		<Field.Field>
-			<Field.Label for="{{ field.name }}">{% raw %}{{% endraw %}m.{{ domain }}_{{ module_name }}_field_{{ field.name }}(){% raw %}}{% endraw %}{% if field.is_required %} <span class="text-destructive">*</span>{% endif %}</Field.Label>
+			<Field.Label for="{{ field.name }}">{% raw %}{{% endraw %}m.{{ domain }}_{{ module_name }}_field_{{ field.name }}(){% raw %}}{% endraw %}{% if field.is_required and not field.nested_type_name %} <span class="text-destructive">*</span>{% endif %}</Field.Label>
 			<Input
 				id="{{ field.name }}"
 				type="{% if field.input_type == "select" or field.input_type == "code" %}text{% else %}{{ field.input_type }}{% endif %}"
 				bind:value={{ "{" }}{{ field.name }}{{ "}" }}
-				{% if field.is_required %}required aria-required="true"{% endif %}
+				{% if field.is_required and not field.nested_type_name %}required aria-required="true"{% endif %}
 				{% if field.input_type == "number" %}step="any"{% endif %}
 				disabled={mode === 'edit' && {{ field.is_immutable }}}
 			/>

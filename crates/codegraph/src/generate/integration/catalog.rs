@@ -38,8 +38,10 @@ impl GlobalGenerator for IntegrationCatalogGenerator {
     ) -> Result<Vec<GeneratedFile>> {
         let ctx: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
-        let handler = render_template_with_project(tera, "integration/catalog_handler.tera", &ctx, project)?;
-        let router = render_template_with_project(tera, "integration/catalog_router.tera", &ctx, project)?;
+        let handler =
+            render_template_with_project(tera, "integration/catalog_handler.tera", &ctx, project)?;
+        let router =
+            render_template_with_project(tera, "integration/catalog_router.tera", &ctx, project)?;
 
         Ok(vec![
             GeneratedFile {

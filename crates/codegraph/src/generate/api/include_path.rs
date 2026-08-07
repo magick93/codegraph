@@ -90,10 +90,28 @@ pub async fn resolve_include_paths(
     match allow_include {
         Some(paths) if paths.is_empty() => Ok(Vec::new()),
         Some(paths) => {
-            resolve_explicit_paths(db, config, domain, schema_title, &source_schema.schema_id, source_entity_name, source_module, paths).await
+            resolve_explicit_paths(
+                db,
+                config,
+                domain,
+                schema_title,
+                &source_schema.schema_id,
+                source_entity_name,
+                source_module,
+                paths,
+            )
+            .await
         }
         None => {
-            resolve_auto_paths(db, config, domain, schema_title, source_entity_name, source_module).await
+            resolve_auto_paths(
+                db,
+                config,
+                domain,
+                schema_title,
+                source_entity_name,
+                source_module,
+            )
+            .await
         }
     }
 }
@@ -115,9 +133,7 @@ async fn resolve_explicit_paths(
     for path in paths {
         let segment_strs: Vec<&str> = path.split('.').collect();
         if segment_strs.len() > 3 {
-            tracing::warn!(
-                "include path '{path}' exceeds max depth of 3 — skipping"
-            );
+            tracing::warn!("include path '{path}' exceeds max depth of 3 — skipping");
             continue;
         }
 
@@ -130,7 +146,14 @@ async fn resolve_explicit_paths(
 
         for &seg in &segment_strs {
             // Resolve the target schema via graph identity (schema_id).
-            let target_schema = resolve_schema_target(db, &current_source_schema_id, current_source_title, seg, domain).await?;
+            let target_schema = resolve_schema_target(
+                db,
+                &current_source_schema_id,
+                current_source_title,
+                seg,
+                domain,
+            )
+            .await?;
             let target_title = target_schema.title.clone();
 
             // Skip force_value_objects — they don't have standalone entity or DTO
@@ -157,6 +180,10 @@ async fn resolve_explicit_paths(
                 break;
             }
 
+            // NOTE: is_entity is a domain-model concept here — it determines whether a
+            // schema is an entity vs a value object for FK resolution and include path
+            // computation. API exposure is handled by ApiResourceNode in the API model layer.
+            //
             // Skip non-entity types — they don't have standalone entity generation
             // or response DTOs, so include paths referencing them would fail.
             if !target_schema.is_entity {
@@ -181,37 +208,53 @@ async fn resolve_explicit_paths(
                 resolve_fk_via_graph(db, current_source_title, &target_title, seg).await?;
 
             // Reverse FK: check config parent_ref first, then graph.
-            let reverse_fk_column = resolve_child_fk_column(
-                config, domain, &target_title, current_source_title, db,
-            ).await?;
+            let reverse_fk_column =
+                resolve_child_fk_column(config, domain, &target_title, current_source_title, db)
+                    .await?;
 
             // Detect VO→entity: when the segment resolves to an entity via a VO
             // allOf chain, the data lives in a child table, not the entity table.
             let mut child_table_override = None;
             let seg_lower_detect = seg.to_lowercase();
-            if let Ok(props) = db.get_properties_by_schema_id(&current_source_schema_id).await {
+            if let Ok(props) = db
+                .get_properties_by_schema_id(&current_source_schema_id)
+                .await
+            {
                 for prop in &props {
                     let p_stem = prop.name.to_lowercase();
-                    let r_stem = prop.rust_field_name
+                    let r_stem = prop
+                        .rust_field_name
                         .strip_suffix("_id")
                         .unwrap_or(&prop.rust_field_name)
                         .to_lowercase();
                     if p_stem != seg_lower_detect && r_stem != seg_lower_detect {
                         continue;
                     }
-                    if let Ok(Some(ref_target)) = db.get_property_ref_target_by_id(&prop.name, &current_source_schema_id).await {
+                    if let Ok(Some(ref_target)) = db
+                        .get_property_ref_target_by_id(&prop.name, &current_source_schema_id)
+                        .await
+                    {
                         if !ref_target.is_entity || ref_target.pg_table_name.is_empty() {
                             // It's a VO — does it extend the resolved entity?
-                            if let Ok(Some(entity)) = find_entity_through_vo(db, &ref_target.title).await {
+                            if let Ok(Some(entity)) =
+                                find_entity_through_vo(db, &ref_target.title).await
+                            {
                                 if entity.schema_id == target_schema.schema_id {
                                     let ct_name = codegraph_naming::truncate_pg_identifier(
                                         &format!("{}_{}", source_module, prop.rust_field_name),
                                     );
                                     let ct_module = format!("{}_{}", domain, ct_name);
                                     let p_fk = format!("{}_id", source_module);
-                                    let child_struct = format!("{}{}",
-                                        strip_suffix(source_entity_name, &config.defaults.type_suffix),
-                                        strip_suffix(&ref_target.rust_type_name, &config.defaults.type_suffix),
+                                    let child_struct = format!(
+                                        "{}{}",
+                                        strip_suffix(
+                                            source_entity_name,
+                                            &config.defaults.type_suffix
+                                        ),
+                                        strip_suffix(
+                                            &ref_target.rust_type_name,
+                                            &config.defaults.type_suffix
+                                        ),
                                     );
                                     child_table_override = Some(ChildTableOverride {
                                         vo_title: ref_target.title.clone(),
@@ -252,7 +295,10 @@ async fn resolve_explicit_paths(
         let alias_snake = path.replace('.', "_");
         // When the segment has a child table override (VO→entity), use its
         // response type (child DTO) instead of the entity's response DTO.
-        let response_rust_type = if let Some(over) = segments.first().and_then(|s| s.child_table_override.as_ref()) {
+        let response_rust_type = if let Some(over) = segments
+            .first()
+            .and_then(|s| s.child_table_override.as_ref())
+        {
             over.response_type.clone()
         } else {
             derive_response_type(&segments)
@@ -330,7 +376,8 @@ async fn resolve_auto_paths(
         // or from graph properties, falling back to convention-based naming.
         // Both fk_column and reverse_fk_column resolve to the same FK on the
         // child entity that references the parent.
-        let fk_column = resolve_child_fk_column(config, domain, target_title, schema_title, db).await?;
+        let fk_column =
+            resolve_child_fk_column(config, domain, target_title, schema_title, db).await?;
         let reverse_fk_column = fk_column.clone();
 
         let alias_seg = codegraph_naming::to_snake_case(super::router::strip_suffix(
@@ -342,8 +389,9 @@ async fn resolve_auto_paths(
         // pointing to this child via ItemsOf?
         let is_array = {
             let props = db.get_properties(schema_title).await.unwrap_or_default();
-            props.iter().any(|p| p.is_array && p.effective_kind() == Some(RefClassificationKind::ValueObject))
-                || true
+            props.iter().any(|p| {
+                p.is_array && p.effective_kind() == Some(RefClassificationKind::ValueObject)
+            }) || true
         };
 
         paths.push(ResolvedIncludePath {
@@ -373,12 +421,10 @@ async fn resolve_auto_paths(
         .unwrap_or_default();
 
     // Collect already-discovered entity names to avoid duplicates.
-    let existing_entity_names: std::collections::HashSet<String> =
-        paths.iter().flat_map(|p| {
-            p.segments
-                .iter()
-                .map(|s| s.schema_title.clone())
-        }).collect();
+    let existing_entity_names: std::collections::HashSet<String> = paths
+        .iter()
+        .flat_map(|p| p.segments.iter().map(|s| s.schema_title.clone()))
+        .collect();
 
     for ref_schema in &referenced {
         let ref_title = &ref_schema.title;
@@ -427,17 +473,19 @@ async fn resolve_auto_paths(
         let target_table = format!("\"{}\".\"{}\"", target_domain, target_module);
 
         // Resolve FK property via graph query.
-        let ref_entity_name =
-            super::router::strip_suffix(ref_title, &config.defaults.type_suffix);
+        let ref_entity_name = super::router::strip_suffix(ref_title, &config.defaults.type_suffix);
         let (fk_column, is_array) = resolve_fk_via_graph(
-            db, schema_title, ref_title,
+            db,
+            schema_title,
+            ref_title,
             &codegraph_naming::to_snake_case(ref_entity_name),
-        ).await?;
+        )
+        .await?;
 
-        let source_entity_name = super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
-        let (reverse_fk_column, _) = resolve_fk_via_graph(
-            db, ref_title, schema_title, &source_entity_name,
-        ).await?;
+        let source_entity_name =
+            super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
+        let (reverse_fk_column, _) =
+            resolve_fk_via_graph(db, ref_title, schema_title, &source_entity_name).await?;
 
         let alias_seg = codegraph_naming::to_snake_case(ref_entity_name);
 
@@ -494,10 +542,14 @@ async fn resolve_schema_target(
     //    edges to find the target. VOs are skipped — Tier 1.5 follows the allOf
     //    chain to find the entity behind a VO.
     let mut vo_titles: Vec<String> = Vec::new();
-    if let Ok(props) = db.get_properties_by_schema_id(current_source_schema_id).await {
+    if let Ok(props) = db
+        .get_properties_by_schema_id(current_source_schema_id)
+        .await
+    {
         for prop in &props {
             let prop_stem = prop.name.to_lowercase();
-            let rust_stem = prop.rust_field_name
+            let rust_stem = prop
+                .rust_field_name
                 .strip_suffix("_id")
                 .unwrap_or(&prop.rust_field_name)
                 .to_lowercase();
@@ -505,7 +557,10 @@ async fn resolve_schema_target(
                 continue;
             }
             // Property matches — follow ReferencesSchema edge
-            if let Ok(Some(target)) = db.get_property_ref_target_by_id(&prop.name, current_source_schema_id).await {
+            if let Ok(Some(target)) = db
+                .get_property_ref_target_by_id(&prop.name, current_source_schema_id)
+                .await
+            {
                 if !target.is_entity || target.pg_table_name.is_empty() {
                     tracing::debug!(target: "resolve_schema", tier=1, prop=%prop.name, target=%target.title, "found VO — queuing for Tier 1.5");
                     vo_titles.push(target.title.clone());
@@ -537,10 +592,11 @@ async fn resolve_schema_target(
 
     // 2. ItemsOf references (array items the source holds).
     //    Discovered via parent_candidates query (one-to-many direction).
-     if let Ok(candidates) = db.get_parent_candidates().await {
+    if let Ok(candidates) = db.get_parent_candidates().await {
         for pc in &candidates {
             if pc.parent_title == current_source_title {
-                let child_stripped = pc.child_title
+                let child_stripped = pc
+                    .child_title
                     .strip_suffix("Type")
                     .unwrap_or(&pc.child_title)
                     .to_lowercase();
@@ -572,7 +628,8 @@ async fn resolve_schema_target(
             }
             // Verify graph evidence: the source must have a property referencing
             // this schema, or an ItemsOf edge to it.
-            if !has_graph_evidence(db, current_source_schema_id, current_source_title, &node).await {
+            if !has_graph_evidence(db, current_source_schema_id, current_source_title, &node).await
+            {
                 tracing::debug!(target: "resolve_schema", tier=3, candidate=%title, "no graph evidence — skipping");
                 continue;
             }
@@ -612,7 +669,10 @@ async fn has_graph_evidence(
     // Check property $ref: does the source have a property referencing this candidate?
     if let Ok(props) = db.get_properties_by_schema_id(source_schema_id).await {
         for prop in &props {
-            if let Ok(Some(target)) = db.get_property_ref_target_by_id(&prop.name, source_schema_id).await {
+            if let Ok(Some(target)) = db
+                .get_property_ref_target_by_id(&prop.name, source_schema_id)
+                .await
+            {
                 if target.schema_id == candidate.schema_id || target.title == candidate.title {
                     return true;
                 }
@@ -668,8 +728,7 @@ async fn resolve_fk_via_graph(
 
     // Priority 2: property whose name or rust_field_name matches the segment.
     for prop in &source_props {
-        if prop.name.to_lowercase() == seg_snake
-            || prop.rust_field_name.to_lowercase() == seg_snake
+        if prop.name.to_lowercase() == seg_snake || prop.rust_field_name.to_lowercase() == seg_snake
         {
             let fd = resolve_field(prop);
             let mut col_name = fd.column_name;
@@ -679,8 +738,11 @@ async fn resolve_fk_via_graph(
             // (is_entity flag) instead of domain config (entity_titles).
             if !col_name.ends_with("_id") {
                 if let Some(ref_title) = prop.ref_target.as_deref().map(|rt| {
-                    rt.rsplit('/').next().unwrap_or(rt)
-                        .strip_suffix(".json#").or_else(|| rt.strip_suffix(".json"))
+                    rt.rsplit('/')
+                        .next()
+                        .unwrap_or(rt)
+                        .strip_suffix(".json#")
+                        .or_else(|| rt.strip_suffix(".json"))
                         .unwrap_or(rt)
                 }) {
                     if let Ok(Some(target)) =

@@ -10,6 +10,8 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
+use super::api_model::resolve_path_segment;
+
 #[derive(Debug, Serialize)]
 pub struct WorkflowActionContext {
     pub entity_name: String,
@@ -151,7 +153,8 @@ impl EntityGenerator for WorkflowActionGenerator {
         let has_dual_status_guards = !dual_status_guards.is_empty();
 
         // Determine role and ancestor_path_params (same logic as handler generator)
-        let stripped_title = super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
+        let stripped_title =
+            super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
         let mut resolved_role = entity_cfg
             .and_then(|ec| ec.role.clone())
             .unwrap_or_else(|| "root".into());
@@ -164,10 +167,12 @@ impl EntityGenerator for WorkflowActionGenerator {
             resolved_role = "child".to_string();
         }
 
-        // Fall back to graph parent_candidates
-        if resolved_role != "child" {
+        // Fall back to graph parent_candidates (only if entity is NOT root,
+        // i.e. explicitly configured as child — matching handler.rs behavior)
+        if resolved_role != "root" {
             for pc in &self.parent_candidates {
-                let child_name = super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
+                let child_name =
+                    super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
                 if child_name == stripped_title {
                     let parent_in_domain = config
                         .domains
@@ -193,7 +198,8 @@ impl EntityGenerator for WorkflowActionGenerator {
             // Check if the parent is itself a child (depth-2)
             let parent_title = entity_cfg.and_then(|ec| ec.parent.clone()).or_else(|| {
                 self.parent_candidates.iter().find_map(|pc| {
-                    let child_name = super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
+                    let child_name =
+                        super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
                     if child_name == stripped_title {
                         Some(pc.parent_title.clone())
                     } else {
@@ -209,8 +215,12 @@ impl EntityGenerator for WorkflowActionGenerator {
                     .map(|ec| ec.role.as_deref() == Some("child"))
                     .unwrap_or(false)
                     || self.parent_candidates.iter().any(|pc| {
-                        let child_name = super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
-                        let parent_name = super::router::strip_suffix(pt, &config.defaults.type_suffix);
+                        let child_name = super::router::strip_suffix(
+                            &pc.child_title,
+                            &config.defaults.type_suffix,
+                        );
+                        let parent_name =
+                            super::router::strip_suffix(pt, &config.defaults.type_suffix);
                         child_name == parent_name
                             && config
                                 .domains
@@ -230,12 +240,13 @@ impl EntityGenerator for WorkflowActionGenerator {
             0
         };
 
-        let param_name = super::router::param_name_from_path_segment(&schema.api_path_segment);
+        let param_name = super::router::param_name_from_path_segment(&resolve_path_segment(entity_cfg, &schema));
         // Resolve parent param name, path segment, and domain for child entities.
         let (parent_param_name, parent_path_segment, parent_domain) = if resolved_role == "child" {
             let pt = entity_cfg.and_then(|ec| ec.parent.clone()).or_else(|| {
                 self.parent_candidates.iter().find_map(|pc| {
-                    let child_name = super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
+                    let child_name =
+                        super::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
                     if child_name == stripped_title {
                         Some(pc.parent_title.clone())
                     } else {
@@ -245,11 +256,7 @@ impl EntityGenerator for WorkflowActionGenerator {
             });
             if let Some(ref pt) = pt {
                 if let Ok(Some(parent_schema)) = db.get_schema_in_domain(pt, &domain).await {
-                    let seg = if !parent_schema.api_path_segment.is_empty() {
-                        parent_schema.api_path_segment.clone()
-                    } else {
-                        codegraph_naming::to_kebab_case(super::router::strip_suffix(pt, &config.defaults.type_suffix))
-                    };
+                    let seg = resolve_path_segment(None, &parent_schema);
                     let param = super::router::param_name_from_path_segment(&seg);
                     let pdomain = parent_schema
                         .domain
@@ -273,7 +280,7 @@ impl EntityGenerator for WorkflowActionGenerator {
             entity_name: entity_name.clone(),
             module_name: module_name.clone(),
             domain: domain.clone(),
-            path_segment: schema.api_path_segment.clone(),
+            path_segment: resolve_path_segment(entity_cfg, &schema),
             tag,
             has_approval_status: workflow.approval_status_field.is_some(),
             status_field: workflow.status_field.clone(),
@@ -293,7 +300,8 @@ impl EntityGenerator for WorkflowActionGenerator {
             parent_domain,
         };
 
-        let content = render_template_with_project(tera, "api/workflow_action.tera", &ctx, project)?;
+        let content =
+            render_template_with_project(tera, "api/workflow_action.tera", &ctx, project)?;
         Ok(vec![GeneratedFile {
             path: self
                 .output_dir

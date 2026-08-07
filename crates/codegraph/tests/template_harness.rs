@@ -177,7 +177,14 @@ async fn candidate_ddl_table() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -237,7 +244,14 @@ async fn candidate_ddl_trigger() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -261,7 +275,14 @@ async fn candidate_ddl_rls() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -295,7 +316,14 @@ async fn candidate_ddl_rls_has_authenticated_policies() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -353,7 +381,14 @@ async fn ddl_with_sqlite_dialect_uses_sqlite_types() {
     let project = test_project_config();
 
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &project)
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        )
         .await
         .unwrap();
 
@@ -393,16 +428,22 @@ async fn scaffold_middleware_supports_dual_auth() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-dual-auth");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
     let middleware_file = files
         .iter()
-        .find(|f| f.path.ends_with("middleware.rs"))
-        .expect("Should generate middleware.rs");
+        .find(|f| f.path.ends_with("middleware/mod.rs"))
+        .expect("Should generate middleware/mod.rs");
     let content = &middleware_file.content;
 
     assert!(
@@ -486,7 +527,14 @@ async fn candidate_entity_model() {
 
     let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -508,7 +556,14 @@ async fn candidate_dto_create() {
     let app_output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto");
     let app_gen = generate::ddd::dto::DtoGenerator::new(&app_output_dir);
     let app_files = app_gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
     let app_create = app_files
@@ -529,7 +584,14 @@ async fn candidate_dto_create() {
     std::fs::create_dir_all(&tmp).unwrap();
     let dt_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let dt_files = dt_gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
     let dt_create = dt_files
@@ -669,7 +731,14 @@ async fn candidate_dto_response() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-resp");
     let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
     let response_file = files
@@ -687,7 +756,14 @@ async fn candidate_dto_response() {
     std::fs::create_dir_all(&tmp).unwrap();
     let dt_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let dt_files = dt_gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
     let dt_response = dt_files
@@ -711,7 +787,14 @@ async fn candidate_command() {
 
     let gen = generate::ddd::command::CommandGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -734,7 +817,14 @@ async fn candidate_query() {
 
     let gen = generate::ddd::query::QueryGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -757,7 +847,14 @@ async fn candidate_event() {
 
     let gen = generate::ddd::event::EventGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -780,7 +877,14 @@ async fn candidate_repository() {
 
     let gen = generate::ddd::repository::RepositoryTraitGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -817,7 +921,14 @@ async fn candidate_handler() {
 
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -887,99 +998,6 @@ async fn candidate_handler() {
         !content.contains("format!(\"Bulk request exceeds"),
         "Bulk size rejection message should be a string literal, not format!()"
     );
-}
-
-fn extract_operation_ids(content: &str) -> Vec<String> {
-    let mut ids = Vec::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(id) = trimmed.strip_prefix("operation_id = \"") {
-            if let Some(end) = id.find('\"') {
-                ids.push(id[..end].to_string());
-            }
-        }
-    }
-    ids
-}
-
-#[tokio::test]
-async fn handler_operation_ids_are_unique_across_domains() {
-    generate::type_registry::register_framework_types();
-    let mock = MockEngine::builder()
-        .with_schema(candidate_schema())
-        .with_properties("CandidateType", candidate_properties())
-        .with_schema(SchemaNode {
-            schema_id: "events/json/PublicEventType.json".to_string(),
-            title: "PublicEventType".to_string(),
-            description: Some("A public event".to_string()),
-            schema_type: "object".to_string(),
-            classification: "entity_reference".to_string(),
-            domain: Some("events".to_string()),
-            rel_path: "events/json/PublicEventType.json".to_string(),
-            pg_type: "UUID".to_string(),
-            rust_type: "Uuid".to_string(),
-            sea_orm_type: "Uuid".to_string(),
-            rust_type_name: "PublicEvent".to_string(),
-            pg_table_name: "public_event".to_string(),
-            api_path_segment: "public-events".to_string(),
-            parent_schema: None,
-            is_entity: true,
-            is_codelist: false,
-            is_primitive_wrapper: false,
-            has_all_of: false,
-            has_one_of: false,
-            has_any_of: false,
-            has_definitions: false,
-        })
-        .build();
-    let config = test_domain_config();
-    let tera = test_tera();
-    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-op-id");
-
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
-
-    let candidate_files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
-        .await
-        .unwrap();
-    let candidate_ids = extract_operation_ids(&candidate_files[0].content);
-
-    let event_files = gen
-        .generate(&mock, "PublicEventType", "events", &config, &tera, &test_project_config())
-        .await
-        .unwrap();
-    let event_ids = extract_operation_ids(&event_files[0].content);
-
-    assert!(
-        !candidate_ids.is_empty(),
-        "Candidate handler should have operation_id values"
-    );
-    assert!(
-        !event_ids.is_empty(),
-        "Event handler should have operation_id values"
-    );
-
-    let mut seen = std::collections::HashSet::new();
-    for id in &candidate_ids {
-        assert!(
-            seen.insert(id.clone()),
-            "Duplicate operation_id in candidate handler: {id}"
-        );
-        assert!(
-            id.contains("recruiting_candidate_"),
-            "Candidate operation_id should be prefixed with domain and entity, got: {id}"
-        );
-    }
-    for id in &event_ids {
-        assert!(
-            seen.insert(id.clone()),
-            "Duplicate operation_id across handlers: {id}"
-        );
-        assert!(
-            id.contains("events_public_event_"),
-            "Event operation_id should be prefixed with domain and entity, got: {id}"
-        );
-    }
 }
 
 // === Router Template Tests (Domain-level) ===
@@ -1254,7 +1272,14 @@ async fn child_handler_uses_find_by_id_scoped_for_ownership() {
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "RewardType",
+            "compensation",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1302,7 +1327,14 @@ async fn child_handler_derives_parent_ref_from_graph() {
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "RewardType",
+            "compensation",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1333,7 +1365,14 @@ async fn child_handler_retains_utoipa_tags() {
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "RewardType",
+            "compensation",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1539,7 +1578,14 @@ async fn array_items_handler_fk_uses_parent_type_name() {
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "RewardType",
+            "compensation",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1607,7 +1653,14 @@ async fn child_handler_nested_path_includes_parent() {
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "RewardType",
+            "compensation",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1637,7 +1690,13 @@ async fn openapi_spec() {
 
     let gen = generate::api::openapi::OpenApiGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1777,9 +1836,15 @@ async fn scaffold_main() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1793,54 +1858,69 @@ async fn scaffold_main() {
         .find(|f| f.path.to_string_lossy().ends_with("main.rs"))
         .expect("Should have main.rs");
     assert!(!main_file.content.is_empty());
+    assert!(
+        main_file.content.contains("server::run_server()"),
+        "main.rs should delegate to server::run_server(). Got:\n{}",
+        main_file.content
+    );
+
+    let server_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("server.rs"))
+        .expect("Should have server.rs");
+    assert!(!server_file.content.is_empty());
     // Swagger UI should be mounted with per-domain URLs
     assert!(
-        main_file
+        server_file
             .content
             .contains("SwaggerUi::new(\"/swagger-ui\")"),
-        "main.rs should mount SwaggerUi"
+        "server.rs should mount SwaggerUi"
     );
     assert!(
-        main_file.content.contains(".urls(vec!["),
-        "main.rs should use .urls() for multi-spec dropdown"
+        server_file.content.contains(".urls(vec!["),
+        "server.rs should use .urls() for multi-spec dropdown"
     );
     assert!(
-        main_file.content.contains("use utoipa::OpenApi"),
-        "main.rs should import utoipa::OpenApi"
+        server_file.content.contains("use utoipa::OpenApi"),
+        "server.rs should import utoipa::OpenApi"
     );
     assert!(
-        main_file
+        server_file
             .content
             .contains("api::openapi::all::AllApiDoc::openapi()"),
-        "main.rs should reference AllApiDoc"
+        "server.rs should reference AllApiDoc"
     );
     assert!(
-        main_file
+        server_file
             .content
             .contains("api::openapi::recruiting::RecruitingApiDoc::openapi()"),
-        "main.rs should reference per-domain RecruitingApiDoc"
+        "server.rs should reference per-domain RecruitingApiDoc"
     );
     assert!(
-        main_file.content.contains("/api-catalog.json"),
-        "main.rs should mount API catalog endpoint"
+        server_file.content.contains("/api-catalog.json"),
+        "server.rs should mount API catalog endpoint"
     );
     assert!(
-        main_file.content.contains("init_tracing"),
-        "Main should init tracing"
+        server_file.content.contains("init_tracing"),
+        "server.rs should init tracing"
     );
     assert!(
-        main_file.content.contains("/health"),
-        "Main should have health endpoint"
+        server_file.content.contains("/health"),
+        "server.rs should have health endpoint"
     );
+    let lib_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("lib.rs"))
+        .expect("Should have lib.rs");
     assert!(
-        main_file.content.contains("mod error"),
-        "Main should include error module"
+        lib_file.content.contains("mod error"),
+        "lib.rs should include error module"
     );
 
     assert!(
-        main_file.content.contains("codegraph_workflow"),
-        "main.rs should reference codegraph_workflow. Got:\n{}",
-        main_file.content
+        server_file.content.contains("codegraph_workflow"),
+        "server.rs should reference codegraph_workflow. Got:\n{}",
+        server_file.content
     );
 
     let cargo_file = files
@@ -1857,9 +1937,15 @@ async fn scaffold_error_module() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-error");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -1896,16 +1982,22 @@ async fn scaffold_generates_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-mw");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
-    let middleware_file = files.iter().find(|f| f.path.ends_with("middleware.rs"));
+    let middleware_file = files.iter().find(|f| f.path.ends_with("middleware/mod.rs"));
     assert!(
         middleware_file.is_some(),
-        "Scaffold should generate middleware.rs"
+        "Scaffold should generate middleware/mod.rs"
     );
     let content = &middleware_file.unwrap().content;
     assert!(
@@ -1915,6 +2007,47 @@ async fn scaffold_generates_middleware() {
     assert!(
         content.contains("ApiKeyInfo"),
         "Middleware should define ApiKeyInfo"
+    );
+}
+
+#[tokio::test]
+async fn test_permission_middleware_generated() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-permission-mw");
+
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let files = gen
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let permission_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("permission.rs"))
+        .expect("Scaffold should generate middleware/permission.rs");
+
+    assert!(
+        permission_file.content.contains("require_permission"),
+        "Permission middleware should contain require_permission function. Got:\n{}",
+        permission_file.content
+    );
+    assert!(
+        permission_file.content.contains("RequiredPermission"),
+        "Permission middleware should contain RequiredPermission struct. Got:\n{}",
+        permission_file.content
+    );
+    assert!(
+        permission_file.content.contains("has_permission"),
+        "Permission middleware should contain has_permission function. Got:\n{}",
+        permission_file.content
     );
 }
 
@@ -1929,7 +2062,14 @@ async fn candidate_test_gen() {
 
     let gen = generate::test::test_gen::TestGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -2084,7 +2224,14 @@ async fn fk_field_consistent_across_ddl_and_entity() {
     // DDL: should have employer_id UUID column
     let ddl_gen = generate::db::ddl::DdlGenerator::new(Path::new("/tmp/test-fk-ddl"));
     let ddl_files = ddl_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
     let ddl_content = &ddl_files[0].content;
@@ -2099,7 +2246,14 @@ async fn fk_field_consistent_across_ddl_and_entity() {
     let entity_gen =
         generate::db::entity::SeaOrmEntityGenerator::new(Path::new("/tmp/test-fk-entity"));
     let entity_files = entity_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
     let entity_content = &entity_files[0].content;
@@ -2121,7 +2275,14 @@ async fn codelist_field_produces_text_fk_in_ddl() {
 
     let ddl_gen = generate::db::ddl::DdlGenerator::new(Path::new("/tmp/test-codelist-ddl"));
     let ddl_files = ddl_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
     let ddl_content = &ddl_files[0].content;
@@ -2184,7 +2345,14 @@ async fn codelist_field_with_code_suffix_no_double_code() {
     let ddl_gen =
         generate::db::ddl::DdlGenerator::new(Path::new("/tmp/test-codelist-no-double-code"));
     let ddl_files = ddl_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
     let ddl_content = &ddl_files[0].content;
@@ -2205,7 +2373,14 @@ async fn codelist_field_with_code_suffix_no_double_code() {
         "/tmp/test-codelist-no-double-code-entity",
     ));
     let entity_files = entity_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
     let entity_content = &entity_files[0].content;
@@ -2299,7 +2474,14 @@ async fn candidate_create_dto_renders_entity_ref_as_id_field() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -2354,7 +2536,13 @@ async fn codelist_enum_template_renders_correctly() {
         ],
     };
 
-    let content = generate::render_template_with_project(&tera, "codelist/enum.tera", &ctx, &test_project_config()).unwrap();
+    let content = generate::render_template_with_project(
+        &tera,
+        "codelist/enum.tera",
+        &ctx,
+        &test_project_config(),
+    )
+    .unwrap();
 
     assert!(
         content.contains("pub enum GenderCodeList"),
@@ -2383,7 +2571,10 @@ async fn codelist_enum_template_renders_correctly() {
         content.contains("Default,"),
         "Codelist enum should derive Default (issue #9)"
     );
-    assert!(content.contains("#[default]"), "First variant should be #[default]");
+    assert!(
+        content.contains("#[default]"),
+        "First variant should be #[default]"
+    );
     assert!(
         content.contains("Male"),
         "Default should be first variant (Male)"
@@ -2415,7 +2606,13 @@ async fn codelist_enum_template_renders_serde_rename() {
         ],
     };
 
-    let content = generate::render_template_with_project(&tera, "codelist/enum.tera", &ctx, &test_project_config()).unwrap();
+    let content = generate::render_template_with_project(
+        &tera,
+        "codelist/enum.tera",
+        &ctx,
+        &test_project_config(),
+    )
+    .unwrap();
 
     assert!(
         content.contains("#[serde(rename = \"USD\")]"),
@@ -2466,7 +2663,14 @@ async fn candidate_ddl_event_trigger() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -2507,7 +2711,13 @@ async fn pgmq_setup_global() {
 
     let gen = generate::db::event_trigger::PgmqSetupGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -2541,7 +2751,13 @@ async fn platform_schema_global() {
 
     let gen = generate::db::platform_schema::PlatformSchemaGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -2595,7 +2811,13 @@ async fn platform_schema_rls_consistency() {
 
     let gen = generate::db::platform_schema::PlatformSchemaGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -2641,7 +2863,14 @@ async fn candidate_enriched_event() {
 
     let gen = generate::ddd::event::EventGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -2690,7 +2919,14 @@ async fn candidate_command_correlation_id() {
 
     let gen = generate::ddd::command::CommandGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -2714,7 +2950,14 @@ async fn workflow_action_calls_service() {
 
     let gen = generate::api::workflow_action::WorkflowActionGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -2815,7 +3058,14 @@ async fn workflow_action_child_entity_renders() {
     let gen = generate::api::workflow_action::WorkflowActionGenerator::new(&output_dir)
         .with_parent_candidates(parent_candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "RewardType",
+            "compensation",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .expect("workflow_action template should render for child entity with workflow");
 
@@ -2845,7 +3095,13 @@ async fn workflow_seed_global() {
 
     let gen = generate::db::workflow_seed::WorkflowSeedGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -2886,7 +3142,14 @@ async fn command_uses_parameterized_set_config() {
 
     let gen = generate::ddd::command::CommandGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -2936,7 +3199,14 @@ async fn query_uses_parameterized_set_config() {
 
     let gen = generate::ddd::query::QueryGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -2959,10 +3229,17 @@ async fn query_uses_parameterized_set_config() {
             .contains("set_config('app.organization_id', $2, true)"),
         "Query should use parameterized set_config for org_id"
     );
-    // Must NOT have $3 (queries don't set correlation_id)
+    // Must set user_id as $3 (template now passes all 3 session vars)
     assert!(
-        !query_file.content.contains("$3"),
-        "Query should only set 2 vars (no correlation_id)"
+        query_file
+            .content
+            .contains("set_config('app.user_id', $3, true)"),
+        "Query should use parameterized set_config for user_id"
+    );
+    // Must NOT have $4 (only 3 vars: api_key, org_id, user_id)
+    assert!(
+        !query_file.content.contains("$4"),
+        "Query should only set 3 vars (api_key, org_id, user_id)"
     );
     // Must NOT use format!()
     assert!(
@@ -2986,60 +3263,66 @@ async fn scaffold_main_has_security_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-security");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
-    let main_file = files
+    let server_file = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("main.rs"))
-        .expect("Should have main.rs");
+        .find(|f| f.path.to_string_lossy().ends_with("server.rs"))
+        .expect("Should have server.rs");
 
     // CORS
     assert!(
-        main_file.content.contains("CorsLayer"),
-        "main.rs should use CorsLayer. Got:\n{}",
-        main_file.content
+        server_file.content.contains("CorsLayer"),
+        "server.rs should use CorsLayer. Got:\n{}",
+        server_file.content
     );
     // Request body limit
     assert!(
-        main_file.content.contains("RequestBodyLimitLayer"),
-        "main.rs should use RequestBodyLimitLayer"
+        server_file.content.contains("RequestBodyLimitLayer"),
+        "server.rs should use RequestBodyLimitLayer"
     );
     // Security headers (lowercase in HeaderName::from_static)
     assert!(
-        main_file.content.contains("x-content-type-options"),
-        "main.rs should set X-Content-Type-Options header"
+        server_file.content.contains("x-content-type-options"),
+        "server.rs should set X-Content-Type-Options header"
     );
     assert!(
-        main_file.content.contains("x-frame-options"),
-        "main.rs should set X-Frame-Options header"
+        server_file.content.contains("x-frame-options"),
+        "server.rs should set X-Frame-Options header"
     );
     // HSTS (conditionally enabled)
     assert!(
-        main_file.content.contains("strict-transport-security"),
-        "main.rs should support HSTS header"
+        server_file.content.contains("strict-transport-security"),
+        "server.rs should support HSTS header"
     );
     assert!(
-        main_file.content.contains("HSTS_ENABLED"),
+        server_file.content.contains("HSTS_ENABLED"),
         "HSTS should be gated on HSTS_ENABLED env var"
     );
     // DATABASE_URL must be required (no fallback)
     assert!(
-        main_file.content.contains("DATABASE_URL")
-            && !main_file
+        server_file.content.contains("DATABASE_URL")
+            && !server_file
                 .content
                 .contains("unwrap_or_else(|_| \"postgres://localhost"),
-        "main.rs should require DATABASE_URL (no fallback). Got:\n{}",
-        main_file.content
+        "server.rs should require DATABASE_URL (no fallback). Got:\n{}",
+        server_file.content
     );
     assert!(
-        !main_file
+        !server_file
             .content
             .contains("unwrap_or_else(|_| \"postgres://localhost"),
-        "main.rs must NOT have insecure DATABASE_URL fallback"
+        "server.rs must NOT have insecure DATABASE_URL fallback"
     );
 
     // Cargo.toml should have tower-http
@@ -3063,25 +3346,31 @@ async fn scaffold_main_has_graceful_shutdown() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shutdown");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
-    let main_file = files
+    let server_file = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("main.rs"))
-        .expect("Should have main.rs");
+        .find(|f| f.path.to_string_lossy().ends_with("server.rs"))
+        .expect("Should have server.rs");
 
     assert!(
-        main_file.content.contains("with_graceful_shutdown"),
-        "main.rs should use with_graceful_shutdown. Got:\n{}",
-        main_file.content
+        server_file.content.contains("with_graceful_shutdown"),
+        "server.rs should use with_graceful_shutdown. Got:\n{}",
+        server_file.content
     );
     assert!(
-        main_file.content.contains("provider.shutdown()"),
-        "main.rs should flush OTel provider on shutdown"
+        server_file.content.contains("provider.shutdown()"),
+        "server.rs should flush OTel provider on shutdown"
     );
 }
 
@@ -3094,25 +3383,31 @@ async fn scaffold_main_has_health_ready() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-health-ready");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
-    let main_file = files
+    let server_file = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("main.rs"))
-        .expect("Should have main.rs");
+        .find(|f| f.path.to_string_lossy().ends_with("server.rs"))
+        .expect("Should have server.rs");
 
     assert!(
-        main_file.content.contains("/health/ready"),
-        "main.rs should have /health/ready route. Got:\n{}",
-        main_file.content
+        server_file.content.contains("/health/ready"),
+        "server.rs should have /health/ready route. Got:\n{}",
+        server_file.content
     );
     assert!(
-        main_file.content.contains("health_ready"),
-        "main.rs should have health_ready handler function"
+        server_file.content.contains("health_ready"),
+        "server.rs should have health_ready handler function"
     );
 }
 
@@ -3127,7 +3422,14 @@ async fn workflow_action_uses_real_identity() {
 
     let gen = generate::api::workflow_action::WorkflowActionGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -3163,7 +3465,14 @@ async fn candidate_ddl_no_tenant_id() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -3337,7 +3646,14 @@ async fn composite_range_collapses_start_end_into_daterange() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "PositionHistoryType", "common", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "PositionHistoryType",
+            "common",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -3680,7 +3996,14 @@ async fn recursive_child_tables_with_full_classification() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
     let files = gen
-        .generate(&engine, "PersonType", "common", &config, &tera, &test_project_config())
+        .generate(
+            &engine,
+            "PersonType",
+            "common",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -3816,7 +4139,14 @@ async fn child_command_accepts_parent_id() {
     let gen = generate::ddd::command::CommandGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "RewardType",
+            "compensation",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -3847,7 +4177,14 @@ async fn child_repository_trait_create_has_parent_id() {
     let gen = generate::ddd::repository::RepositoryTraitGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "RewardType",
+            "compensation",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -3881,7 +4218,14 @@ async fn child_query_has_find_by_id_scoped() {
     let gen =
         generate::ddd::query::QueryGenerator::new(&output_dir).with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "RewardType",
+            "compensation",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -3906,7 +4250,14 @@ async fn child_handler_has_nested_utoipa_path() {
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "RewardType",
+            "compensation",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -3915,13 +4266,13 @@ async fn child_handler_has_nested_utoipa_path() {
 
     // The get_by_id path should include the parent path segment with {parent_id}
     assert!(
-        content.contains("/api/compensation/compensation/{compensation_id}/reward/{reward_id}"),
+        content.contains("/api/v1/compensation/compensation/{compensation_id}/reward/{reward_id}"),
         "Child handler utoipa path must include nested parent path. Got:\n{content}"
     );
 
     // The create path should include only {parent_id}
     assert!(
-        content.contains("/api/compensation/compensation/{compensation_id}/reward"),
+        content.contains("/api/v1/compensation/compensation/{compensation_id}/reward"),
         "Child handler create path must include parent prefix. Got:\n{content}"
     );
 
@@ -3944,7 +4295,14 @@ async fn entity_generator_injects_fk_for_parent_candidate() {
     let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "RewardType",
+            "compensation",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -3974,7 +4332,14 @@ async fn ddl_generator_injects_fk_for_parent_candidate() {
 
     let gen = generate::db::ddl::DdlGenerator::new(&output_dir).with_parent_candidates(candidates);
     let files = gen
-        .generate(&mock, "RewardType", "compensation", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "RewardType",
+            "compensation",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -4009,9 +4374,15 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shadow");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -4037,9 +4408,15 @@ async fn scaffold_generates_build_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-build-rs");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -4061,9 +4438,15 @@ async fn scaffold_main_has_version_endpoint() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-version");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -4072,45 +4455,50 @@ async fn scaffold_main_has_version_endpoint() {
         .find(|f| f.path.to_string_lossy().ends_with("main.rs"))
         .expect("Should have main.rs");
 
-    // shadow-rs macro invocation
+    // shadow-rs macro invocation — still in main.rs
     assert!(
         main_file.content.contains("shadow!(build)"),
         "main.rs should invoke shadow!(build) macro"
     );
 
+    let server_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("server.rs"))
+        .expect("Should have server.rs");
+
     // VersionInfo struct with ToSchema for OpenAPI
     assert!(
-        main_file.content.contains("pub struct VersionInfo"),
-        "main.rs should define VersionInfo struct"
+        server_file.content.contains("pub struct VersionInfo"),
+        "server.rs should define VersionInfo struct"
     );
     assert!(
-        main_file.content.contains("utoipa::ToSchema"),
+        server_file.content.contains("utoipa::ToSchema"),
         "VersionInfo should derive ToSchema for OpenAPI"
     );
 
     // Version handler with utoipa path annotation
     assert!(
-        main_file.content.contains("async fn version()"),
-        "main.rs should have version handler"
+        server_file.content.contains("async fn version()"),
+        "server.rs should have version handler"
     );
     assert!(
-        main_file.content.contains("tag = \"System\""),
+        server_file.content.contains("tag = \"System\""),
         "version endpoint should be tagged under System"
     );
 
     // Route registration
     assert!(
-        main_file.content.contains("\"/version\""),
-        "main.rs should register /version route"
+        server_file.content.contains("\"/version\""),
+        "server.rs should register /version route"
     );
 
     // Key shadow-rs constants used
     assert!(
-        main_file.content.contains("build::SHORT_COMMIT"),
+        server_file.content.contains("build::SHORT_COMMIT"),
         "version handler should use SHORT_COMMIT"
     );
     assert!(
-        main_file.content.contains("build::BUILD_TIME_3339"),
+        server_file.content.contains("build::BUILD_TIME_3339"),
         "version handler should use BUILD_TIME_3339"
     );
 }
@@ -4126,7 +4514,13 @@ async fn webhook_dispatch_generator_produces_dispatch_module() {
 
     let gen = generate::webhook::dispatch::WebhookDispatchGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -4152,7 +4546,13 @@ async fn webhook_endpoint_api_generator_produces_api_and_router() {
 
     let gen = generate::webhook::endpoint_api::WebhookEndpointApiGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, &config, &test_generation_order(), &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -4176,7 +4576,6 @@ async fn webhook_endpoint_api_generator_produces_api_and_router() {
     assert!(router_file.content.contains("list_endpoints"));
     assert!(router_file.content.contains("delete_subscription"));
 }
-
 
 // ── Include Path Resolution Tests ─────────────────────────────────────────────
 
@@ -4216,12 +4615,7 @@ mod include_path_resolution_tests {
         }
     }
 
-    fn ref_property(
-        name: &str,
-        pg_column: &str,
-        ref_target: &str,
-        is_array: bool,
-    ) -> PropertyNode {
+    fn ref_property(name: &str, pg_column: &str, ref_target: &str, is_array: bool) -> PropertyNode {
         PropertyNode {
             name: name.to_string(),
             prop_type: "string".to_string(),
@@ -4238,7 +4632,11 @@ mod include_path_resolution_tests {
             pg_column_name: pg_column.to_string(),
             pg_column_type: "UUID".to_string(),
             rust_field_name: pg_column.to_string(),
-            rust_field_type: if is_array { "Vec<Uuid>".to_string() } else { "Uuid".to_string() },
+            rust_field_type: if is_array {
+                "Vec<Uuid>".to_string()
+            } else {
+                "Uuid".to_string()
+            },
             sea_orm_type: "Uuid".to_string(),
             render_strategy: if is_array {
                 "array_wrapper".to_string()
@@ -4302,10 +4700,7 @@ entities = ["WorkerType"]
         .unwrap();
 
         assert_eq!(paths.len(), 1, "should resolve 1 include path");
-        assert_eq!(
-            paths[0].alias, "person",
-            "alias should match the segment"
-        );
+        assert_eq!(paths[0].alias, "person", "alias should match the segment");
         assert_eq!(
             paths[0].segments.len(),
             1,
@@ -4409,8 +4804,7 @@ entities = ["WorkerType"]
         );
 
         assert_eq!(
-            paths[0].response_rust_type,
-            "DeploymentTypeCombinedResponse",
+            paths[0].response_rust_type, "DeploymentTypeCombinedResponse",
             "multi-segment path should produce enriched response type"
         );
     }
@@ -4431,15 +4825,16 @@ entities = ["WorkerType"]
             .with_ref_target("person", "WorkerType", legal_type.clone())
             .with_properties(
                 "WorkerType",
-                vec![
-                    ref_property("person", "person", "PersonLegalType", false),
-                ],
+                vec![ref_property("person", "person", "PersonLegalType", false)],
             )
             // PersonLegalType allOf → [PersonBaseType, PersonLegalInclusion]
-            .with_allof_targets("PersonLegalType", vec![
-                "PersonBaseType".to_string(),
-                "PersonLegalInclusion".to_string(),
-            ])
+            .with_allof_targets(
+                "PersonLegalType",
+                vec![
+                    "PersonBaseType".to_string(),
+                    "PersonLegalInclusion".to_string(),
+                ],
+            )
             // Both PersonLegalType and PersonType extend PersonBaseType
             .with_extending_schema("PersonBaseType", legal_type.clone())
             .with_extending_schema("PersonBaseType", person_type.clone())
@@ -4491,7 +4886,9 @@ entities = ["WorkerType"]
                     sea_orm_type: "Uuid".to_string(),
                     pg_column_type: "UUID".to_string(),
                     render_strategy: "entity_reference".to_string(),
-                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::ValueObject),
+                    classification_kind: Some(
+                        codegraph_type_contracts::RefClassificationKind::ValueObject,
+                    ),
                     is_required: false,
                     is_nullable: true,
                     is_array: false,
@@ -4511,10 +4908,13 @@ entities = ["WorkerType"]
                     ui_override_inline: None,
                 }],
             )
-            .with_allof_targets("PersonLegalType", vec![
-                "PersonBaseType".to_string(),
-                "PersonLegalInclusion".to_string(),
-            ])
+            .with_allof_targets(
+                "PersonLegalType",
+                vec![
+                    "PersonBaseType".to_string(),
+                    "PersonLegalInclusion".to_string(),
+                ],
+            )
             .with_extending_schema("PersonBaseType", legal_type.clone())
             .with_extending_schema("PersonBaseType", person_type.clone())
             .with_extending_schema("PersonLegalInclusion", legal_type.clone())
@@ -4542,11 +4942,19 @@ operations = ["create", "read", "update", "list"]
 
         let gen = generate::db::entity::SeaOrmEntityGenerator::new(output_dir.path());
         let files = gen
-            .generate(&mock, "WorkerType", "hr", &config, &tera, &test_project_config())
+            .generate(
+                &mock,
+                "WorkerType",
+                "hr",
+                &config,
+                &tera,
+                &test_project_config(),
+            )
             .await
             .unwrap();
 
-        let worker_file = files.iter()
+        let worker_file = files
+            .iter()
             .find(|f| f.path.to_string_lossy().contains("hr_worker"))
             .expect("Should have a main entity file for WorkerType");
         let content = &worker_file.content;
@@ -4590,7 +4998,9 @@ operations = ["create", "read", "update", "list"]
                     sea_orm_type: "Uuid".to_string(),
                     pg_column_type: "UUID".to_string(),
                     render_strategy: "entity_reference".to_string(),
-                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::ValueObject),
+                    classification_kind: Some(
+                        codegraph_type_contracts::RefClassificationKind::ValueObject,
+                    ),
                     is_required: false,
                     is_nullable: true,
                     is_array: false,
@@ -4610,10 +5020,13 @@ operations = ["create", "read", "update", "list"]
                     ui_override_inline: None,
                 }],
             )
-            .with_allof_targets("PersonLegalType", vec![
-                "PersonBaseType".to_string(),
-                "PersonLegalInclusion".to_string(),
-            ])
+            .with_allof_targets(
+                "PersonLegalType",
+                vec![
+                    "PersonBaseType".to_string(),
+                    "PersonLegalInclusion".to_string(),
+                ],
+            )
             .with_extending_schema("PersonBaseType", legal_type.clone())
             .with_extending_schema("PersonBaseType", person_type.clone())
             .with_extending_schema("PersonLegalInclusion", legal_type.clone())
@@ -4732,15 +5145,9 @@ operations = ["create", "read", "update", "list"]
             .build();
 
         let config = hr_domain_config();
-        let paths = resolve_include_paths(
-            &engine,
-            &config,
-            "hr",
-            "WorkerType",
-            None,
-        )
-        .await
-        .unwrap();
+        let paths = resolve_include_paths(&engine, &config, "hr", "WorkerType", None)
+            .await
+            .unwrap();
 
         assert!(
             !paths.is_empty(),
@@ -4796,10 +5203,13 @@ operations = ["create", "read", "update", "list"]
 
     /// Simple struct/field parser using string matching (no regex dependency).
     /// Returns map of struct_name → (field_name → rust_type).
-    fn parse_dto_fields(source: &str) -> std::collections::HashMap<String, std::collections::HashMap<String, String>> {
+    fn parse_dto_fields(
+        source: &str,
+    ) -> std::collections::HashMap<String, std::collections::HashMap<String, String>> {
         let mut result = std::collections::HashMap::new();
         let mut current_struct: Option<String> = None;
-        let mut current_fields: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut current_fields: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         for line in source.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("pub struct ") {
@@ -4813,7 +5223,10 @@ operations = ["create", "read", "update", "list"]
             } else if let Some(stripped) = trimmed.strip_prefix("pub ") {
                 if let Some(colon) = stripped.find(':') {
                     let field_name = stripped[..colon].trim().to_string();
-                    let field_type = stripped[colon + 1..].trim().trim_end_matches(',').to_string();
+                    let field_type = stripped[colon + 1..]
+                        .trim()
+                        .trim_end_matches(',')
+                        .to_string();
                     if !field_name.is_empty() && !field_type.is_empty() {
                         current_fields.insert(field_name, field_type);
                     }
@@ -4828,20 +5241,30 @@ operations = ["create", "read", "update", "list"]
 
     /// Simple struct initializer parser using string matching.
     /// Returns map of struct_name → (field_name → expression).
-    fn parse_repo_assignments(source: &str) -> std::collections::HashMap<String, std::collections::HashMap<String, String>> {
+    fn parse_repo_assignments(
+        source: &str,
+    ) -> std::collections::HashMap<String, std::collections::HashMap<String, String>> {
         let mut result = std::collections::HashMap::new();
         let mut in_struct: Option<String> = None;
-        let mut current_fields: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut current_fields: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         for line in source.lines() {
             let trimmed = line.trim();
             // Detect struct construction: "    SomeType {" or "    Ok(Some(TypeName {"
             if (trimmed.ends_with('{') || trimmed.ends_with(" {"))
-                && (trimmed.contains("Ok(Some(") || trimmed.starts_with("let ") || trimmed.contains("results.push")
-                    || trimmed.contains("leaf_dto") || trimmed.contains("}});") || trimmed.contains(".push("))
+                && (trimmed.contains("Ok(Some(")
+                    || trimmed.starts_with("let ")
+                    || trimmed.contains("results.push")
+                    || trimmed.contains("leaf_dto")
+                    || trimmed.contains("}});")
+                    || trimmed.contains(".push("))
             {
                 // Extract type name
                 let name = if let Some(start) = trimmed.find("Ok(Some(") {
-                    trimmed[start + 8..].trim_end_matches(" {").trim().to_string()
+                    trimmed[start + 8..]
+                        .trim_end_matches(" {")
+                        .trim()
+                        .to_string()
                 } else if let Some(start) = trimmed.find(".push(") {
                     let rest = &trimmed[start + 6..];
                     rest.split('{').next().unwrap_or("").trim().to_string()
@@ -4862,9 +5285,15 @@ operations = ["create", "read", "update", "list"]
                 // Parse field assignment: "    field_name: expression,"
                 if let Some(colon) = trimmed.find(':') {
                     let key = trimmed[..colon].trim().to_string();
-                    let val = trimmed[colon + 1..].trim().trim_end_matches(',').to_string();
-                    if !key.is_empty() && !val.is_empty()
-                        && key != "created_at" && key != "updated_at" && key != "id"
+                    let val = trimmed[colon + 1..]
+                        .trim()
+                        .trim_end_matches(',')
+                        .to_string();
+                    if !key.is_empty()
+                        && !val.is_empty()
+                        && key != "created_at"
+                        && key != "updated_at"
+                        && key != "id"
                         && !key.starts_with("..")
                     {
                         current_fields.insert(key, val);
@@ -4906,18 +5335,34 @@ operations = ["create", "read", "update", "list"]
     /// Check if a DTO field type is compatible with a repository assignment expression pattern.
     fn is_compatible(dto_type: &str, pattern: &ExprPattern) -> bool {
         let dto = dto_type.trim();
-        if dto == "Uuid" || dto == "Option<Uuid>" || dto == "uuid::Uuid" || dto == "Option<uuid::Uuid>" {
+        if dto == "Uuid"
+            || dto == "Option<Uuid>"
+            || dto == "uuid::Uuid"
+            || dto == "Option<uuid::Uuid>"
+        {
             return matches!(pattern, ExprPattern::Direct);
         }
         if dto.contains("IdentifierType") {
-            return matches!(pattern, ExprPattern::SerdeFromValue | ExprPattern::SerdeAndThen);
+            return matches!(
+                pattern,
+                ExprPattern::SerdeFromValue | ExprPattern::SerdeAndThen
+            );
         }
         if dto.ends_with("CodeList") || dto.ends_with("CodeList>") {
             return matches!(pattern, ExprPattern::Parse | ExprPattern::ParseUnwrap);
         }
-        if dto == "String" || dto == "Option<String>" || dto == "bool" || dto == "Option<bool>"
-            || dto == "i32" || dto == "Option<i32>" || dto == "i64" || dto == "Option<i64>"
-            || dto == "f64" || dto == "Option<f64>" || dto.starts_with("chrono::") || dto.starts_with("rust_decimal::")
+        if dto == "String"
+            || dto == "Option<String>"
+            || dto == "bool"
+            || dto == "Option<bool>"
+            || dto == "i32"
+            || dto == "Option<i32>"
+            || dto == "i64"
+            || dto == "Option<i64>"
+            || dto == "f64"
+            || dto == "Option<f64>"
+            || dto.starts_with("chrono::")
+            || dto.starts_with("rust_decimal::")
         {
             return matches!(pattern, ExprPattern::Direct);
         }
@@ -4933,10 +5378,19 @@ operations = ["create", "read", "update", "list"]
             .with_schema(schema_node("OrderType", "test", "order", true))
             .with_schema(schema_node("TestEntityType", "test", "test_entity", true))
             .with_schema(schema_node("ChildType", "test", "child", true))
-            .with_ref_target("test_entity_id", "OrderType", schema_node("TestEntityType", "test", "test_entity", true))
-            .with_ref_target("child_id", "TestEntityType", schema_node("ChildType", "test", "child", true))
-            .with_properties("OrderType", vec![
-                PropertyNode {
+            .with_ref_target(
+                "test_entity_id",
+                "OrderType",
+                schema_node("TestEntityType", "test", "test_entity", true),
+            )
+            .with_ref_target(
+                "child_id",
+                "TestEntityType",
+                schema_node("ChildType", "test", "child", true),
+            )
+            .with_properties(
+                "OrderType",
+                vec![PropertyNode {
                     name: "test_entity_id".to_string(),
                     rust_field_name: "test_entity_id".to_string(),
                     pg_column_name: "test_entity_id".to_string(),
@@ -4944,79 +5398,94 @@ operations = ["create", "read", "update", "list"]
                     rust_field_type: "Uuid".to_string(),
                     sea_orm_type: "Uuid".to_string(),
                     ref_target: Some("TestEntityType".to_string()),
-                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::EntityReference),
+                    classification_kind: Some(
+                        codegraph_type_contracts::RefClassificationKind::EntityReference,
+                    ),
                     render_strategy: "entity_reference".to_string(),
                     ..prop_defaults()
-                },
-            ])
-            .with_properties("TestEntityType", vec![
-                PropertyNode {
-                    name: "language".to_string(),
-                    rust_field_name: "language".to_string(),
-                    pg_column_name: "language_code".to_string(),
-                    rust_field_type: "Option<String>".to_string(),
-                    ref_target: Some("LanguageCodeList".to_string()),
-                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::CodelistReference),
-                    render_strategy: "codelist_reference".to_string(),
-                    ..prop_defaults()
-                },
-                PropertyNode {
-                    name: "package_id".to_string(),
-                    rust_field_name: "package_id".to_string(),
-                    pg_column_name: "package_id".to_string(),
-                    pg_column_type: "JSONB".to_string(),
-                    rust_field_type: "IdentifierType".to_string(),
-                    sea_orm_type: "Json".to_string(),
-                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::StructuredWrapper),
-                    render_strategy: "structured_wrapper".to_string(),
-                    prop_type: "object".to_string(),
-                    ..prop_defaults()
-                },
-                PropertyNode {
-                    name: "assessment_status".to_string(),
-                    rust_field_name: "assessment_status".to_string(),
-                    pg_column_name: "status_code".to_string(),
-                    rust_field_type: "String".to_string(),
-                    ref_target: Some("AssessmentStatusCodeList".to_string()),
-                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::CodelistCheck),
-                    render_strategy: "codelist_check".to_string(),
-                    is_required: true,
-                    is_nullable: false,
-                    ..prop_defaults()
-                },
-                PropertyNode {
-                    name: "person_id".to_string(),
-                    rust_field_name: "person_id".to_string(),
-                    pg_column_name: "person_id".to_string(),
-                    pg_column_type: "UUID".to_string(),
-                    rust_field_type: "Uuid".to_string(),
-                    sea_orm_type: "Uuid".to_string(),
-                    ref_target: Some("PersonType".to_string()),
-                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::EntityReference),
-                    render_strategy: "entity_reference".to_string(),
-                    ..prop_defaults()
-                },
-                PropertyNode {
-                    name: "name".to_string(),
-                    rust_field_name: "name".to_string(),
-                    pg_column_name: "name".to_string(),
-                    pg_column_type: "TEXT".to_string(),
-                    rust_field_type: "Option<String>".to_string(),
-                    ..prop_defaults()
-                },
-                PropertyNode {
-                    name: "child_id".to_string(),
-                    rust_field_name: "child_id".to_string(),
-                    pg_column_name: "child_id".to_string(),
-                    pg_column_type: "UUID".to_string(),
-                    rust_field_type: "Uuid".to_string(),
-                    sea_orm_type: "Uuid".to_string(),
-                    ref_target: Some("ChildType".to_string()),
-                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::EntityReference),
-                    render_strategy: "entity_reference".to_string(),
-                    ..prop_defaults()
-                },
-            ])
+                }],
+            )
+            .with_properties(
+                "TestEntityType",
+                vec![
+                    PropertyNode {
+                        name: "language".to_string(),
+                        rust_field_name: "language".to_string(),
+                        pg_column_name: "language_code".to_string(),
+                        rust_field_type: "Option<String>".to_string(),
+                        ref_target: Some("LanguageCodeList".to_string()),
+                        classification_kind: Some(
+                            codegraph_type_contracts::RefClassificationKind::CodelistReference,
+                        ),
+                        render_strategy: "codelist_reference".to_string(),
+                        ..prop_defaults()
+                    },
+                    PropertyNode {
+                        name: "package_id".to_string(),
+                        rust_field_name: "package_id".to_string(),
+                        pg_column_name: "package_id".to_string(),
+                        pg_column_type: "JSONB".to_string(),
+                        rust_field_type: "IdentifierType".to_string(),
+                        sea_orm_type: "Json".to_string(),
+                        classification_kind: Some(
+                            codegraph_type_contracts::RefClassificationKind::StructuredWrapper,
+                        ),
+                        render_strategy: "structured_wrapper".to_string(),
+                        prop_type: "object".to_string(),
+                        ..prop_defaults()
+                    },
+                    PropertyNode {
+                        name: "assessment_status".to_string(),
+                        rust_field_name: "assessment_status".to_string(),
+                        pg_column_name: "status_code".to_string(),
+                        rust_field_type: "String".to_string(),
+                        ref_target: Some("AssessmentStatusCodeList".to_string()),
+                        classification_kind: Some(
+                            codegraph_type_contracts::RefClassificationKind::CodelistCheck,
+                        ),
+                        render_strategy: "codelist_check".to_string(),
+                        is_required: true,
+                        is_nullable: false,
+                        ..prop_defaults()
+                    },
+                    PropertyNode {
+                        name: "person_id".to_string(),
+                        rust_field_name: "person_id".to_string(),
+                        pg_column_name: "person_id".to_string(),
+                        pg_column_type: "UUID".to_string(),
+                        rust_field_type: "Uuid".to_string(),
+                        sea_orm_type: "Uuid".to_string(),
+                        ref_target: Some("PersonType".to_string()),
+                        classification_kind: Some(
+                            codegraph_type_contracts::RefClassificationKind::EntityReference,
+                        ),
+                        render_strategy: "entity_reference".to_string(),
+                        ..prop_defaults()
+                    },
+                    PropertyNode {
+                        name: "name".to_string(),
+                        rust_field_name: "name".to_string(),
+                        pg_column_name: "name".to_string(),
+                        pg_column_type: "TEXT".to_string(),
+                        rust_field_type: "Option<String>".to_string(),
+                        ..prop_defaults()
+                    },
+                    PropertyNode {
+                        name: "child_id".to_string(),
+                        rust_field_name: "child_id".to_string(),
+                        pg_column_name: "child_id".to_string(),
+                        pg_column_type: "UUID".to_string(),
+                        rust_field_type: "Uuid".to_string(),
+                        sea_orm_type: "Uuid".to_string(),
+                        ref_target: Some("ChildType".to_string()),
+                        classification_kind: Some(
+                            codegraph_type_contracts::RefClassificationKind::EntityReference,
+                        ),
+                        render_strategy: "entity_reference".to_string(),
+                        ..prop_defaults()
+                    },
+                ],
+            )
             .build();
 
         let config = {
@@ -5039,12 +5508,22 @@ operations = ["create", "read", "update", "list"]
 
         // --- Step 1: Generate DTO code (use DomainTypesDtoGenerator for actual structs) ---
         let dto_output = tempfile::TempDir::new().unwrap();
-        let dto_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(dto_output.path().to_path_buf());
+        let dto_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(
+            dto_output.path().to_path_buf(),
+        );
         let dto_files = dto_gen
-            .generate(&mock, "TestEntityType", "test", &config, &test_tera(), &test_project_config())
+            .generate(
+                &mock,
+                "TestEntityType",
+                "test",
+                &config,
+                &test_tera(),
+                &test_project_config(),
+            )
             .await
             .unwrap();
-        let dto_source = dto_files.iter()
+        let dto_source = dto_files
+            .iter()
             .find(|f| f.path.to_string_lossy().contains("dto_response"))
             .map(|f| &f.content)
             .expect("DTO generator should produce dto_response.rs");
@@ -5052,10 +5531,18 @@ operations = ["create", "read", "update", "list"]
         // Also generate include-path compound DTOs for OrderType (dot-notation)
         let dto_include_gen = generate::ddd::dto::DtoGenerator::new(dto_output.path());
         let dto_include_files = dto_include_gen
-            .generate(&mock, "OrderType", "test", &config, &test_tera(), &test_project_config())
+            .generate(
+                &mock,
+                "OrderType",
+                "test",
+                &config,
+                &test_tera(),
+                &test_project_config(),
+            )
             .await
             .unwrap();
-        let dto_included_source = dto_include_files.iter()
+        let dto_included_source = dto_include_files
+            .iter()
             .find(|f| f.path.to_string_lossy().contains("dto_included"))
             .map(|f| f.content.as_str())
             .unwrap_or("");
@@ -5072,14 +5559,29 @@ operations = ["create", "read", "update", "list"]
         // --- Step 3: Generate repository code ---
         use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
         let include_paths = resolve_include_paths(
-            &mock, &config, "test", "OrderType",
-            Some(&vec!["test_entity".to_string(), "test_entity.child".to_string()]),
-        ).await.unwrap();
+            &mock,
+            &config,
+            "test",
+            "OrderType",
+            Some(&vec![
+                "test_entity".to_string(),
+                "test_entity.child".to_string(),
+            ]),
+        )
+        .await
+        .unwrap();
 
         let emitter = RepositoryImplEmitter;
         // Run for both TestEntityType (single-seg target) and OrderType (source with includes)
         let repo_code_test = emitter
-            .emit(&mock, "TestEntityType", "test", &config, None, &include_paths)
+            .emit(
+                &mock,
+                "TestEntityType",
+                "test",
+                &config,
+                None,
+                &include_paths,
+            )
             .await
             .unwrap();
         let repo_code_order = emitter
@@ -5094,12 +5596,11 @@ operations = ["create", "read", "update", "list"]
         // --- Step 5: Assert compatibility ---
         let mut mismatches = Vec::new();
         for (struct_name, fields) in &repo_assignments {
-            let lookup = struct_name
-                .strip_suffix("Response")
-                .unwrap_or(struct_name);
+            let lookup = struct_name.strip_suffix("Response").unwrap_or(struct_name);
             let lookup_with_type = format!("{}Type", lookup);
             // Try both naming conventions
-            let dto_struct = dto_fields.get(struct_name)
+            let dto_struct = dto_fields
+                .get(struct_name)
                 .or_else(|| dto_fields.get(&lookup_with_type));
 
             if let Some(dto_struct) = dto_struct {
@@ -5109,7 +5610,9 @@ operations = ["create", "read", "update", "list"]
                         if !is_compatible(dto_type, &pattern) {
                             mismatches.push(format!(
                                 "Struct '{}' field '{}': DTO type '{}' vs expr '{}' (pattern {:?})",
-                                struct_name, field_name, dto_type,
+                                struct_name,
+                                field_name,
+                                dto_type,
                                 expr.chars().take(80).collect::<String>(),
                                 pattern
                             ));
@@ -5123,7 +5626,11 @@ operations = ["create", "read", "update", "list"]
             panic!(
                 "Type mismatches found in generated code ({} total):\n{}",
                 mismatches.len(),
-                mismatches.iter().map(|m| format!("  - {}", m)).collect::<Vec<_>>().join("\n")
+                mismatches
+                    .iter()
+                    .map(|m| format!("  - {}", m))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             );
         }
     }
@@ -5138,9 +5645,14 @@ operations = ["create", "read", "update", "list"]
             // Only WorkerType has a graph property referencing DeploymentType (ItemsOf).
             // DeploymentType has NO $ref property back to WorkerType — the FK column
             // comes from config parent_ref = "worker_type_id".
-            .with_ref_target("deployment_id", "WorkerType", schema_node("DeploymentType", "hr", "deployment", true))
-            .with_properties("WorkerType", vec![
-                PropertyNode {
+            .with_ref_target(
+                "deployment_id",
+                "WorkerType",
+                schema_node("DeploymentType", "hr", "deployment", true),
+            )
+            .with_properties(
+                "WorkerType",
+                vec![PropertyNode {
                     name: "deployment_id".to_string(),
                     rust_field_name: "deployment_id".to_string(),
                     pg_column_name: "deployment_id".to_string(),
@@ -5148,11 +5660,13 @@ operations = ["create", "read", "update", "list"]
                     rust_field_type: "Uuid".to_string(),
                     sea_orm_type: "Uuid".to_string(),
                     ref_target: Some("DeploymentType".to_string()),
-                    classification_kind: Some(codegraph_type_contracts::RefClassificationKind::EntityReference),
+                    classification_kind: Some(
+                        codegraph_type_contracts::RefClassificationKind::EntityReference,
+                    ),
                     render_strategy: "entity_reference".to_string(),
                     ..prop_defaults()
-                },
-            ])
+                }],
+            )
             .with_parent_candidate(ParentCandidate {
                 child_title: "DeploymentType".to_string(),
                 parent_title: "WorkerType".to_string(),
@@ -5218,9 +5732,18 @@ parent_ref = "worker_type_id"
 
         // Generate DTO code
         let dto_output = tempfile::TempDir::new().unwrap();
-        let dto_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(dto_output.path().to_path_buf());
+        let dto_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(
+            dto_output.path().to_path_buf(),
+        );
         if let Ok(files) = dto_gen
-            .generate(&mock, "WorkerType", "hr", &config, &test_tera(), &test_project_config())
+            .generate(
+                &mock,
+                "WorkerType",
+                "hr",
+                &config,
+                &test_tera(),
+                &test_project_config(),
+            )
             .await
         {
             for f in files {
@@ -5231,7 +5754,14 @@ parent_ref = "worker_type_id"
         // Generate include-path DTO for OrderType
         let dto_include_gen = generate::ddd::dto::DtoGenerator::new(dto_output.path());
         if let Ok(files) = dto_include_gen
-            .generate(&mock, "OrderType", "test", &config, &test_tera(), &test_project_config())
+            .generate(
+                &mock,
+                "OrderType",
+                "test",
+                &config,
+                &test_tera(),
+                &test_project_config(),
+            )
             .await
         {
             for f in files {
@@ -5244,7 +5774,14 @@ parent_ref = "worker_type_id"
         // Generate handler
         let handler_gen = generate::api::handler::HandlerGenerator::new(dto_output.path());
         if let Ok(files) = handler_gen
-            .generate(&mock, "WorkerType", "hr", &config, &test_tera(), &test_project_config())
+            .generate(
+                &mock,
+                "WorkerType",
+                "hr",
+                &config,
+                &test_tera(),
+                &test_project_config(),
+            )
             .await
         {
             for f in files {
@@ -5255,9 +5792,14 @@ parent_ref = "worker_type_id"
         // Generate repository
         use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
         let include_paths = resolve_include_paths(
-            &mock, &config, "hr", "WorkerType",
+            &mock,
+            &config,
+            "hr",
+            "WorkerType",
             Some(&vec!["person".to_string()]),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         let emitter = RepositoryImplEmitter;
         if let Ok(code) = emitter
             .emit(&mock, "WorkerType", "hr", &config, None, &include_paths)
@@ -5292,11 +5834,14 @@ parent_ref = "worker_type_id"
             panic!(
                 "Generated code has {} syntax error(s):\n{}",
                 errors.len(),
-                errors.iter().map(|e| format!("  - {}", e)).collect::<Vec<_>>().join("\n")
+                errors
+                    .iter()
+                    .map(|e| format!("  - {}", e))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             );
         }
     }
-
 }
 // ── Include Feature Tests (E4 + E5) ──────────────────────────────────────────
 
@@ -5492,7 +6037,14 @@ async fn handler_with_include_produces_include_code() {
 
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "WorkerType", "hr", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -5594,7 +6146,14 @@ async fn handler_without_include_omits_include_code() {
 
     let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "WorkerType", "hr", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -5723,8 +6282,7 @@ async fn dto_include_single_level() {
     let mock = setup_include_mock_with_refs();
     let config = include_domain_config();
     let tera = test_tera();
-    let output_dir =
-        std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-single");
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-single");
 
     let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
     let files = gen
@@ -5767,7 +6325,7 @@ async fn dto_include_single_level() {
         "Should contain included field. Got:\n{content}"
     );
     assert!(
-        content.contains("pub meta: crate::api::meta::Meta"),
+        content.contains("pub meta: Meta"),
         "Should contain meta field. Got:\n{content}"
     );
 }
@@ -5777,8 +6335,7 @@ async fn dto_include_not_generated_when_not_configured() {
     let mock = setup_include_mock();
     let config = no_include_domain_config();
     let tera = test_tera();
-    let output_dir =
-        std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-none");
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-none");
 
     let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
     let files = gen
@@ -5988,8 +6545,7 @@ async fn dto_include_dot_notation() {
         .build();
 
     let tera = test_tera();
-    let output_dir =
-        std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-dot");
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-dot");
 
     let config = codegraph_config::config::parse_domain_config_str(
         r#"
@@ -6176,8 +6732,7 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
         .build();
 
     let tera = test_tera();
-    let output_dir =
-        std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-stripped");
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-stripped");
 
     let config = codegraph_config::config::parse_domain_config_str(
         r#"
@@ -6249,8 +6804,6 @@ allow_include = ["deployment.position"]
     );
 }
 
-// === SQLite Dialect Integration Tests ===
-
 /// Verify that SeaOrmEntityGenerator with SQLite dialect uses the SQLite-specific
 /// entity template: no schema_name attribute, primary key without auto_increment = false.
 #[tokio::test]
@@ -6263,7 +6816,14 @@ async fn entity_with_sqlite_dialect_uses_sqlite_template() {
     let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir)
         .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
     let files = gen
-        .generate(&mock, "CandidateType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -6327,18 +6887,45 @@ async fn codelist_with_sqlite_dialect_uses_insert_or_ignore() {
         )
         .build();
 
-    let config = test_domain_config();
     let tera = test_tera();
-    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-codelist");
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-stripped");
+
+    let config = codegraph_config::config::parse_domain_config_str(
+        r#"
+[defaults]
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType", "DeploymentType", "PositionType"]
+
+[domains.hr.entity_config.WorkerType]
+operations = ["create", "read", "update", "list"]
+allow_include = ["deployment.position"]
+"#,
+    )
+    .unwrap();
 
     let gen = CodelistGenerator::new(&output_dir)
         .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
     let files = gen
-        .generate(&engine, "GenderCodeList", "common", &config, &tera, &test_project_config())
+        .generate(
+            &engine,
+            "GenderCodeList",
+            "common",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
-    assert!(!files.is_empty(), "Codelist generator should produce a file");
+    assert!(
+        !files.is_empty(),
+        "Codelist generator should produce a file"
+    );
     let content = &files[0].content;
 
     // SQLite codelist template uses INSERT OR IGNORE
@@ -6480,7 +7067,14 @@ role = "root"
 
     let gen = crate::generate::ui::e2e_test::UiE2eTestGenerator::new(output_dir.path());
     let files = gen
-        .generate(&mock, "WorkerType", "hr", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -6510,10 +7104,7 @@ role = "root"
         content.contains("list with ?include= returns included data"),
         "Should test list with include when has_list"
     );
-    assert!(
-        content.contains("test.afterAll"),
-        "Should include cleanup"
-    );
+    assert!(content.contains("test.afterAll"), "Should include cleanup");
 }
 
 /// Verify handler-generated filter keys use stripped rust_field_name,
@@ -6588,7 +7179,14 @@ async fn handler_filter_keys_use_stripped_codelist_names() {
 
     let gen = codegraph::generate::api::handler::HandlerGenerator::new(&output_dir);
     let files = gen
-        .generate(&mock, "DeploymentType", "recruiting", &config, &tera, &test_project_config())
+        .generate(
+            &mock,
+            "DeploymentType",
+            "recruiting",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
 
@@ -6624,7 +7222,13 @@ async fn pg_only_generators_skipped_for_sqlite_dialect() {
     let gen = BasejumpSetupGenerator::new(&output_dir)
         .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
     let files = gen
-        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &generation_order,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
     assert!(
@@ -6638,7 +7242,13 @@ async fn pg_only_generators_skipped_for_sqlite_dialect() {
     let gen2 = generate::db::event_trigger::PgmqSetupGenerator::new(&output_dir2)
         .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
     let files2 = gen2
-        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &generation_order,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
     assert!(
@@ -6652,7 +7262,13 @@ async fn pg_only_generators_skipped_for_sqlite_dialect() {
     let gen3 = generate::db::platform_schema::PlatformSchemaGenerator::new(&output_dir3)
         .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
     let files3 = gen3
-        .generate(&mock, &config, &generation_order, &tera, &test_project_config())
+        .generate(
+            &mock,
+            &config,
+            &generation_order,
+            &tera,
+            &test_project_config(),
+        )
         .await
         .unwrap();
     assert!(
@@ -6671,7 +7287,7 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-scaffold");
     let project = sqlite_project_config();
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &project)
         .await

@@ -67,6 +67,26 @@ postgres_schema = "compensation"
 depends_on = ["common"]
 entities = ["PayRunType", "CompensationType", "RewardType"]
 
+[domains.events]
+label = "Events"
+schema_dir = "events"
+postgres_schema = "events"
+depends_on = ["common"]
+entities = ["PublicEventType"]
+
+[domains.events.entity_config.PublicEventType]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.rsvp]
+label = "RSVP"
+schema_dir = "rsvp"
+postgres_schema = "rsvp"
+depends_on = ["common", "events"]
+entities = ["RsvpType"]
+
+[domains.rsvp.entity_config.RsvpType]
+operations = ["create", "read", "update", "delete", "list"]
+
 [domains.compensation.entity_config.PayRunType]
 role = "root"
 path_segment = "pay-runs"

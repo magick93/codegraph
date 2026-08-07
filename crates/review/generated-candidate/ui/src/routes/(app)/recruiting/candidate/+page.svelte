@@ -14,9 +14,7 @@
 	import * as m from '$lib/paraglide/messages.js';
 
 
-	const grandparentId = $derived(page.params.candidate_id);
-	const parentId = $derived(page.params.application_id);
-	const basePath = $derived(`/recruiting/candidate/${grandparentId}/application/${parentId}/candidate`);
+	const basePath = '/recruiting/candidate';
 
 
 	interface Props {

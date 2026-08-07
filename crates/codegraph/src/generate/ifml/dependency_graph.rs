@@ -19,7 +19,10 @@ pub fn compute_view_generation_order(navigation_edges: &[(String, String)]) -> V
         // Edge direction: source navigates TO target.
         // For generation we want targets first (they have no dependencies
         // on sources), so we reverse the edge: target -> source in adj list.
-        adjacency.entry(target.clone()).or_default().push(source.clone());
+        adjacency
+            .entry(target.clone())
+            .or_default()
+            .push(source.clone());
         *in_degree.entry(source.clone()).or_insert(0) += 1;
         in_degree.entry(target.clone()).or_insert(0);
 

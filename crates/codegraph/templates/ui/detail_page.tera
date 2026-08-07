@@ -83,7 +83,7 @@
 	async function loadChildren() {
 {% for section in child_sections %}
 		try {
-			const res = await apiGet<any[]>('/api/{{ section.domain }}/{{ section.path_segment }}', { parent_id: item.id });
+			const res = await apiGet<any[]>('/api/{{ project.api_version }}/{{ section.domain }}/{{ section.path_segment }}', { parent_id: item.id });
 			{{ section.module_name }}Items = res ?? [];
 		} catch {
 			{{ section.module_name }}Items = [];
@@ -118,7 +118,7 @@
 
 	async function deleteChild(domain: string, pathSegment: string, childId: string) {
 		try {
-			await apiDelete(`/api/${domain}/${pathSegment}/${childId}`);
+			await apiDelete(`/api/{{ project.api_version }}/${domain}/${pathSegment}/${childId}`);
 			toast.success(m.common_child_deleted());
 			await loadChildren();
 		} catch (e) {

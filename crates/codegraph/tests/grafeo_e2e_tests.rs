@@ -34,9 +34,10 @@ async fn setup_grafeo() -> (GrafeoEngine, codegraph_config::config::DomainConfig
     let config =
         codegraph_config::config::parse_domain_config(Path::new("tests/fixtures/domains.toml"))
             .unwrap();
-    let classifier =
-        codegraph_classifier::config::parse_classifier_config(Path::new("tests/fixtures/classifier.toml"))
-            .unwrap();
+    let classifier = codegraph_classifier::config::parse_classifier_config(Path::new(
+        "tests/fixtures/classifier.toml",
+    ))
+    .unwrap();
     let entity_names = entity_names_from_config(&config);
     let engine = GrafeoEngine::in_memory().unwrap();
 
@@ -284,7 +285,14 @@ async fn grafeo_candidate_create_dto_content() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -335,7 +343,14 @@ async fn grafeo_candidate_response_dto_content() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -384,7 +399,14 @@ async fn grafeo_structured_import_uses_configurable_prefix() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -418,7 +440,14 @@ async fn grafeo_structured_import_respects_custom_prefix() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -526,7 +555,14 @@ async fn grafeo_candidate_update_dto_excludes_immutable() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -575,15 +611,36 @@ async fn grafeo_cross_layer_consistency() {
     let dto_gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
 
     let ddl_files = ddl_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let entity_files = entity_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let dto_files = dto_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -835,7 +892,14 @@ async fn dto_output_uses_correct_types_for_array_and_codelist_fields() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -966,7 +1030,14 @@ async fn child_dto_fields_use_correct_types_in_generated_output() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1014,7 +1085,14 @@ async fn grafeo_candidate_repository_trait_content() {
     let gen =
         codegraph::generate::ddd::repository::RepositoryTraitGenerator::new(Path::new("/tmp/out"));
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1152,7 +1230,14 @@ async fn grafeo_candidate_qualifications_routed_to_child_dtos() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1263,7 +1348,14 @@ async fn grafeo_cross_layer_repository_consistency() {
     std::fs::create_dir_all(&tmp).unwrap();
     let dto_gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let dto_files = dto_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1335,7 +1427,9 @@ async fn grafeo_all_entity_generators_produce_output_for_candidate() {
         ),
         (
             "command",
-            Box::new(codegraph::generate::ddd::command::CommandGenerator::new(out)),
+            Box::new(codegraph::generate::ddd::command::CommandGenerator::new(
+                out,
+            )),
         ),
         (
             "query",
@@ -1347,7 +1441,9 @@ async fn grafeo_all_entity_generators_produce_output_for_candidate() {
         ),
         (
             "handler",
-            Box::new(codegraph::generate::api::handler::HandlerGenerator::new(out)),
+            Box::new(codegraph::generate::api::handler::HandlerGenerator::new(
+                out,
+            )),
         ),
         (
             "test",
@@ -1355,7 +1451,9 @@ async fn grafeo_all_entity_generators_produce_output_for_candidate() {
         ),
         (
             "grpc_proto",
-            Box::new(codegraph::generate::grpc::proto::GrpcProtoGenerator::new(out)),
+            Box::new(codegraph::generate::grpc::proto::GrpcProtoGenerator::new(
+                out,
+            )),
         ),
         (
             "grpc_service",
@@ -1365,7 +1463,14 @@ async fn grafeo_all_entity_generators_produce_output_for_candidate() {
 
     for (name, gen) in &generators {
         let files = gen
-            .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+            .generate(
+                &engine,
+                "CandidateType",
+                "recruiting",
+                &config,
+                &tera,
+                &ProjectConfig::default(),
+            )
             .await
             .unwrap_or_else(|e| panic!("{name} generator failed: {e}"));
 
@@ -1399,7 +1504,14 @@ async fn grafeo_candidate_inline_enum_in_dto() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1428,7 +1540,14 @@ async fn grafeo_candidate_response_dto_nested_value_objects() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1524,7 +1643,14 @@ async fn grafeo_candidate_composite_wrapper_in_dto() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1607,7 +1733,14 @@ async fn composite_currency_column_should_use_enum_in_dto() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1647,7 +1780,14 @@ async fn grafeo_composite_wrapper_ddl_expansion() {
 
     let gen = codegraph::generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"));
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let ddl_content = &files[0].content;
@@ -1795,7 +1935,14 @@ async fn grafeo_composite_wrapper_cross_layer_consistency() {
     // DDL (EntityGenerator trait)
     let ddl_gen = codegraph::generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"));
     let ddl_files = ddl_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let ddl_content = &ddl_files[0].content;
@@ -1806,7 +1953,14 @@ async fn grafeo_composite_wrapper_cross_layer_consistency() {
     std::fs::create_dir_all(&tmp).unwrap();
     let dto_gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let dto_files = dto_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let dto_create = dto_files
@@ -1920,7 +2074,14 @@ async fn grafeo_candidate_child_dtos_via_edges() {
     std::fs::create_dir_all(&tmp).unwrap();
     let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1985,7 +2146,14 @@ async fn grafeo_ddl_generates_child_table_for_qualifications() {
 
     let gen = codegraph::generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"));
     let files = gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -2095,15 +2263,36 @@ async fn grafeo_entity_ref_cross_layer_consistency() {
     let emitter = RepositoryImplEmitter;
 
     let ddl_files = ddl_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let entity_files = entity_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let dto_files = dto_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let repo_code = emitter
@@ -2160,7 +2349,14 @@ async fn grafeo_repository_dto_field_alignment() {
     std::fs::create_dir_all(&tmp).unwrap();
     let dto_gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let dto_files = dto_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let create_dto = dto_files
@@ -2413,7 +2609,10 @@ async fn grafeo_rust_codelist_generator_emits_enum() {
     let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
 
     let gen = RustCodelistGenerator::new(Path::new("/tmp/out"));
-    let files = gen.generate_all(&engine, &tera, &ProjectConfig::default()).await.unwrap();
+    let files = gen
+        .generate_all(&engine, &tera, &ProjectConfig::default())
+        .await
+        .unwrap();
 
     assert!(
         !files.is_empty(),
@@ -2483,7 +2682,10 @@ async fn grafeo_gender_codelist_variants_no_rename_when_pascal() {
     let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
 
     let gen = RustCodelistGenerator::new(Path::new("/tmp/out"));
-    let files = gen.generate_all(&engine, &tera, &ProjectConfig::default()).await.unwrap();
+    let files = gen
+        .generate_all(&engine, &tera, &ProjectConfig::default())
+        .await
+        .unwrap();
 
     let gender_file = files
         .iter()
@@ -2534,9 +2736,10 @@ allow_include = ["application"]
 #[tokio::test]
 async fn grafeo_e2e_include_dto_generated_for_candidate() {
     let config = include_domain_config();
-    let classifier =
-        codegraph_classifier::config::parse_classifier_config(Path::new("tests/fixtures/classifier.toml"))
-            .unwrap();
+    let classifier = codegraph_classifier::config::parse_classifier_config(Path::new(
+        "tests/fixtures/classifier.toml",
+    ))
+    .unwrap();
     let entity_names = entity_names_from_config(&config);
     let engine = GrafeoEngine::in_memory().unwrap();
 
@@ -2561,7 +2764,14 @@ async fn grafeo_e2e_include_dto_generated_for_candidate() {
     let handler_gen = codegraph::generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(parent_candidates);
     let handler_files = handler_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -2592,7 +2802,14 @@ async fn grafeo_e2e_include_dto_generated_for_candidate() {
     // Generate DTO — DtoGenerator (not DomainTypesDtoGenerator) produces dto_included.rs
     let dto_gen = codegraph::generate::ddd::dto::DtoGenerator::new(&output_dir);
     let dto_files = dto_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -2630,9 +2847,10 @@ async fn grafeo_e2e_include_dto_generated_for_candidate() {
 #[tokio::test]
 async fn grafeo_e2e_include_validates_unknown_path() {
     let config = include_domain_config();
-    let classifier =
-        codegraph_classifier::config::parse_classifier_config(Path::new("tests/fixtures/classifier.toml"))
-            .unwrap();
+    let classifier = codegraph_classifier::config::parse_classifier_config(Path::new(
+        "tests/fixtures/classifier.toml",
+    ))
+    .unwrap();
     let entity_names = entity_names_from_config(&config);
     let engine = GrafeoEngine::in_memory().unwrap();
 
@@ -2656,7 +2874,14 @@ async fn grafeo_e2e_include_validates_unknown_path() {
     let handler_gen = codegraph::generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(parent_candidates);
     let handler_files = handler_gen
-        .generate(&engine, "CandidateType", "recruiting", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -2696,7 +2921,9 @@ async fn generated_app_compiles_cleanly() {
     // Compute absolute path to codegraph-type-contracts crate
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
-    let type_contracts_path = workspace_root.join("crates").join("codegraph-type-contracts");
+    let type_contracts_path = workspace_root
+        .join("crates")
+        .join("codegraph-type-contracts");
 
     let project_config = ProjectConfig {
         app_name: "test-app".into(),

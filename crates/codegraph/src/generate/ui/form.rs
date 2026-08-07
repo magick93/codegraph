@@ -13,6 +13,8 @@ use codegraph_core::types::resolve_field;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 
+use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment};
+
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::page::UiField;
 
@@ -41,9 +43,9 @@ pub fn ui_field_from_property(
         .to_string();
     // rust_field_name is sanitized at ingestion (no _code suffix),
     // so it matches the DTO field name directly.
-    let ts_field_name = if is_entity_ref {
-        // EntityReference fields get _id suffix in the backend DTO (added by
-        // the Tera template). The UI field name must match.
+    let ts_field_name = if is_entity_ref && !ts_field_name.ends_with("_id") {
+        // resolve_field already appends _id for EntityReference columns.
+        // Only append if the resolved name doesn't already end in _id.
         format!("{}_id", ts_field_name)
     } else {
         ts_field_name
@@ -186,7 +188,6 @@ impl EntityGenerator for UiFormGenerator {
         let entity_name = schema.rust_type_name.clone();
         let module_name = schema.pg_table_name.clone();
         let domain = domain.to_string();
-        let path_segment = schema.api_path_segment.clone();
 
         if module_name.is_empty() {
             return Ok(Vec::new());
@@ -197,9 +198,10 @@ impl EntityGenerator for UiFormGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
+
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let has_create = operations.contains(&"create".to_string());
         let has_update = operations.contains(&"update".to_string());
