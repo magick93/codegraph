@@ -11,7 +11,7 @@ use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::config::{UiDomainConfig, UiOverrideConfig};
 use codegraph_config::DomainConfig;
 
-use crate::generate::api::api_model::resolve_path_segment;
+use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment};
 
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::wizard_detect::{
@@ -163,9 +163,8 @@ impl EntityGenerator for UiDescriptorGenerator {
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
         // Operations
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         // FTS detection
         let has_fts = entity_cfg

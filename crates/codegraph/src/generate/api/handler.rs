@@ -18,7 +18,7 @@ use codegraph_config::DomainConfig;
 use super::include_path::{resolve_include_paths, ResolvedIncludePath};
 use super::router::{ChildInfo, CrossRefInfo};
 
-use super::api_model::resolve_path_segment;
+use super::api_model::{resolve_entity_operations, resolve_path_segment};
 
 #[derive(Debug, Serialize)]
 pub struct HandlerContext {
@@ -136,9 +136,8 @@ impl EntityGenerator for HandlerGenerator {
 
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let tag = entity_cfg
             .and_then(|ec| ec.tag.clone())

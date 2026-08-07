@@ -6,6 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::api::api_model::resolve_entity_operations;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
@@ -49,35 +50,6 @@ pub struct ScaffoldDomain {
     pub entities: Vec<ScaffoldEntity>,
 }
 
-fn entity_has_command_ops(config: &DomainConfig, domain: &str, entity_name: &str) -> bool {
-    let operations = config
-        .domains
-        .get(domain)
-        .and_then(|d| d.get_entity_config(entity_name))
-        .and_then(|ec| ec.operations.clone())
-        .unwrap_or_else(|| config.defaults.operations.clone());
-    operations
-        .iter()
-        .any(|op| op == "create" || op == "update" || op == "delete")
-}
-
-/// Mirrors `uses_find_by_id` in ddd/query.tera: the query handler's find_by_id
-/// (and thus its hooks argument) exists when the entity can create (bulk path
-/// re-reads created rows) or when it has read access without a parent scope.
-fn entity_has_query_hooks(config: &DomainConfig, domain: &str, entity_name: &str) -> bool {
-    let entity_cfg = config
-        .domains
-        .get(domain)
-        .and_then(|d| d.get_entity_config(entity_name));
-    let operations = entity_cfg
-        .and_then(|ec| ec.operations.clone())
-        .unwrap_or_else(|| config.defaults.operations.clone());
-    let has_create = operations.iter().any(|op| op == "create");
-    let has_read = operations.iter().any(|op| op == "read");
-    let has_config_parent = entity_cfg.and_then(|ec| ec.parent_ref.as_ref()).is_some();
-    has_create || (has_read && !has_config_parent)
-}
-
 pub struct ScaffoldGenerator {
     output_dir: PathBuf,
     has_webhooks: bool,
@@ -117,7 +89,7 @@ impl GlobalGenerator for ScaffoldGenerator {
 
     async fn generate(
         &self,
-        _db: &dyn GraphQuerier,
+        db: &dyn GraphQuerier,
         config: &DomainConfig,
         generation_order: &[GenerationEntry],
         tera: &tera::Tera,
@@ -134,6 +106,20 @@ impl GlobalGenerator for ScaffoldGenerator {
             if !seen_scaffold_entities.insert((entry.domain.clone(), module_name.clone())) {
                 continue;
             }
+            let operations =
+                resolve_entity_operations(db, config, &entry.domain, &stripped).await;
+            let has_commands = operations
+                .iter()
+                .any(|op| op == "create" || op == "update" || op == "delete");
+            let has_create = operations.iter().any(|op| op == "create");
+            let has_read = operations.iter().any(|op| op == "read");
+            let has_config_parent = config
+                .domains
+                .get(&entry.domain)
+                .and_then(|d| d.get_entity_config(&stripped))
+                .and_then(|ec| ec.parent_ref.as_ref())
+                .is_some();
+            let has_query_hooks = has_create || (has_read && !has_config_parent);
             domain_entity_map
                 .entry(entry.domain.clone())
                 .or_default()
@@ -141,8 +127,8 @@ impl GlobalGenerator for ScaffoldGenerator {
                     module_name: module_name.clone(),
                     name: stripped.clone(),
                     domain: entry.domain.clone(),
-                    has_commands: entity_has_command_ops(config, &entry.domain, &stripped),
-                    has_query_hooks: entity_has_query_hooks(config, &entry.domain, &stripped),
+                    has_commands,
+                    has_query_hooks,
                 });
         }
 

@@ -12,7 +12,7 @@ use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
 use codegraph_naming;
 
-use super::api_model::resolve_path_segment;
+use super::api_model::{resolve_entity_operations, resolve_path_segment};
 
 /// Context for the combined "All" OpenAPI spec (`openapi_all.tera`).
 #[derive(Debug, Serialize)]
@@ -132,9 +132,8 @@ impl GlobalGenerator for OpenApiGenerator {
                 }
                 if let Ok(Some(schema)) = db.get_schema_in_domain(entity_name, domain_name).await {
                     let entity_cfg = domain_entry.get_entity_config(entity_name);
-                    let operations = entity_cfg
-                        .and_then(|ec| ec.operations.clone())
-                        .unwrap_or_else(|| config.defaults.operations.clone());
+                    let operations =
+                        resolve_entity_operations(db, config, domain_name, entity_name).await;
 
                     // Resolve role and parent relationship info from entity config.
                     // These mirror the fields populated by HandlerContext so that

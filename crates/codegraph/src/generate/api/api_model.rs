@@ -143,6 +143,37 @@ fn resolve_from_entity_config(
     Ok(results)
 }
 
+/// Resolve the operations list for a single entity.
+/// Tries the graph-based API model first, falls back to EntityConfig.
+/// When no ApiResource nodes exist in the graph, this produces the same
+/// result as the previous `entity_cfg.operations.unwrap_or(defaults)` pattern.
+pub async fn resolve_entity_operations(
+    querier: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain_name: &str,
+    entity_name: &str,
+) -> Vec<String> {
+    let resource_name = entity_name.trim_end_matches("Type");
+    if let Ok(resources) = querier.get_api_resources().await {
+        if let Some(resource) = resources
+            .iter()
+            .find(|r| r.domain == domain_name && r.name == resource_name)
+        {
+            if let Ok(ops) = querier.get_api_operations(&resource.name).await {
+                if !ops.is_empty() {
+                    return ops.iter().map(|op| op.kind.clone()).collect();
+                }
+            }
+        }
+    }
+
+    let domain_entry = config.domains.get(domain_name);
+    domain_entry
+        .and_then(|de| de.get_entity_config(entity_name))
+        .and_then(|c| c.operations.clone())
+        .unwrap_or_else(|| config.defaults.operations.clone())
+}
+
 fn op_kind_to_http(kind: &str) -> (&'static str, &'static str) {
     match kind {
         "list" => ("GET", ""),

@@ -8,6 +8,7 @@ use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::api::api_model::resolve_entity_operations;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
@@ -175,12 +176,8 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
 
             // 2. Generate per-entity mod.rs
             for (entity_name, module_name) in entities {
-                let operations = config
-                    .domains
-                    .get(domain_name)
-                    .and_then(|d| d.get_entity_config(entity_name))
-                    .and_then(|ec| ec.operations.clone())
-                    .unwrap_or_else(|| config.defaults.operations.clone());
+                let operations =
+                    resolve_entity_operations(db, config, domain_name, entity_name).await;
 
                 let entity_mod_ctx = EntityModContext {
                     entity_name: entity_name.clone(),

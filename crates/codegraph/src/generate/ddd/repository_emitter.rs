@@ -5,6 +5,7 @@ use codegraph_naming::quote_pg_column;
 use codegraph_type_contracts::RefClassificationKind;
 
 use crate::error::Result;
+use crate::generate::api::api_model::resolve_entity_operations;
 use crate::generate::api::include_path::ResolvedIncludePath;
 use crate::generate::filter_fields::{
     resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
@@ -1874,12 +1875,8 @@ impl RepositoryImplEmitter {
         let schema_name = domain.to_string();
 
         // Determine enabled operations
-        let operations = config
-            .domains
-            .get(domain)
-            .and_then(|d| d.get_entity_config(schema_title))
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let operations =
+            resolve_entity_operations(db, config, domain, &entity_name).await;
         let has_create = operations.contains(&"create".to_string());
         let has_read = operations.contains(&"read".to_string());
         let has_update = operations.contains(&"update".to_string());

@@ -13,7 +13,7 @@ use codegraph_core::types::resolve_field;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 
-use crate::generate::api::api_model::resolve_path_segment;
+use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment};
 
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::page::UiField;
@@ -200,9 +200,8 @@ impl EntityGenerator for UiFormGenerator {
 
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let has_create = operations.contains(&"create".to_string());
         let has_update = operations.contains(&"update".to_string());

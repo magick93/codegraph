@@ -16,7 +16,7 @@ use crate::types::{
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
 type CodelistPropertyVal = Option<(CodeList, String)>;
 
-/// A caching wrapper around a `&dyn GraphQuerier`.
+    /// A caching wrapper around a `&dyn GraphQuerier`.
 ///
 /// Caches the results of frequently-called query methods (get_schema,
 /// get_properties, etc.) so that multiple generators querying the same
@@ -46,6 +46,8 @@ pub struct CachingQuerier<'a> {
     property_ref_target_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
     property_ref_target_by_id_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
     array_item_schema_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
+    api_resources_cache: RwLock<Option<Vec<ApiResourceNode>>>,
+    api_operations_cache: RwLock<HashMap<String, Vec<ApiOperationNode>>>,
 }
 
 impl<'a> CachingQuerier<'a> {
@@ -72,6 +74,8 @@ impl<'a> CachingQuerier<'a> {
             property_ref_target_cache: RwLock::new(HashMap::new()),
             property_ref_target_by_id_cache: RwLock::new(HashMap::new()),
             array_item_schema_cache: RwLock::new(HashMap::new()),
+            api_resources_cache: RwLock::new(None),
+            api_operations_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -526,7 +530,15 @@ impl GraphQuerier for CachingQuerier<'_> {
     // ── API metamodel query delegation ──────────────────────────────────
 
     async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
-        self.inner.get_api_resources().await
+        if let Some(cached) = self.api_resources_cache.read().unwrap().as_ref() {
+            return Ok(cached.clone());
+        }
+        let result = self.inner.get_api_resources().await?;
+        self.api_resources_cache
+            .write()
+            .unwrap()
+            .replace(result.clone());
+        Ok(result)
     }
 
     async fn get_api_resource(&self, name: &str) -> Result<Option<ApiResourceNode>, GraphError> {
@@ -537,7 +549,20 @@ impl GraphQuerier for CachingQuerier<'_> {
         &self,
         resource_name: &str,
     ) -> Result<Vec<ApiOperationNode>, GraphError> {
-        self.inner.get_api_operations(resource_name).await
+        if let Some(cached) = self
+            .api_operations_cache
+            .read()
+            .unwrap()
+            .get(resource_name)
+        {
+            return Ok(cached.clone());
+        }
+        let result = self.inner.get_api_operations(resource_name).await?;
+        self.api_operations_cache
+            .write()
+            .unwrap()
+            .insert(resource_name.to_string(), result.clone());
+        Ok(result)
     }
 
     async fn get_interactions(

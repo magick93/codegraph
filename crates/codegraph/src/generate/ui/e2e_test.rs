@@ -11,7 +11,7 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
-use crate::generate::api::api_model::resolve_path_segment;
+use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment};
 
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::page::{ChildSection, UiField};
@@ -260,9 +260,8 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let dto_config = entity_cfg.map(|ec| &ec.dto);
         let immutable_fields: Vec<String> = dto_config

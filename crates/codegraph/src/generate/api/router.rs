@@ -12,7 +12,7 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{DomainGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
-use super::api_model::resolve_path_segment;
+use super::api_model::{resolve_entity_operations, resolve_path_segment};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ParentInfo {
@@ -195,9 +195,8 @@ impl DomainGenerator for RouterGenerator {
                         continue;
                     }
                     let entity_name = &schema.rust_type_name;
-                    let operations = entity_cfg
-                        .and_then(|ec| ec.operations.clone())
-                        .unwrap_or_else(|| config.defaults.operations.clone());
+                    let operations =
+                        resolve_entity_operations(db, config, domain, entity_name).await;
 
                     let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
                     let has_workflow = workflow
