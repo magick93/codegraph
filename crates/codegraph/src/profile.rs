@@ -393,6 +393,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("links",                Domain, Api,  &[], &[]),
         cap("ui-domain-layout",     Domain, Ui,   &[], &[]),
         cap("cli_domain",           Domain, Cli,  &[], &[]),
+        cap("errors",               Domain, Common,  &[], &[]),
 
         // ── Global generators ──────────────────────────────────────────
         cap("basejump_setup",       Global, Common, &[], &[]),

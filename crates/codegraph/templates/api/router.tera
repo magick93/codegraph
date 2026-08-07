@@ -5,6 +5,10 @@ use axum::Router;
 
 use crate::app_state::AppState;
 
+// Handwritten extensions — create this file to add custom routes.
+// #[path = "handwritten_routes.rs"]
+// mod handwritten_routes;
+
 pub fn router() -> Router<AppState> {
     Router::new()
 {% for entity in entities %}
@@ -64,5 +68,17 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 {% for child in entity.children %}
         .nest("/{ {{- entity.param_name -}} }/{{ child.path_segment }}", {{ child.module_name }}_routes())
 {% endfor %}
+{% if entity.has_pipeline_layer %}
+        // Pipeline: {{ entity.pipeline_middleware | join(sep=", ") }}
+{% for mw in entity.pipeline_middleware %}
+{% if mw == "auth" %}
+        .route_layer(axum::middleware::from_fn(crate::middleware::auth_middleware))
+{% elif mw == "permission" %}
+        .route_layer(axum::middleware::from_fn(crate::middleware::permission::require_permission))
+{% elif mw == "metrics" %}
+        .route_layer(axum::middleware::from_fn(crate::metrics_middleware::track_metrics))
+{% endif %}
+{% endfor %}
+{% endif %}
 }
 {% endfor %}

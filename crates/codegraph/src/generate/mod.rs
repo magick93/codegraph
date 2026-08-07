@@ -733,6 +733,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(ui::domain_layout::UiDomainLayoutGenerator::new(output_dir))
             as Box<dyn DomainGenerator>,
         Box::new(cli::domain::CliDomainGenerator::new(output_dir)) as Box<dyn DomainGenerator>,
+        Box::new(ddd::errors::ErrorGenerator::new(output_dir)) as Box<dyn DomainGenerator>,
         // gRPC domain generator
         Box::new(grpc::router::GrpcRouterGenerator::new(output_dir)) as Box<dyn DomainGenerator>,
         // atproto domain generators

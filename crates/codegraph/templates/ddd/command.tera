@@ -13,6 +13,7 @@ use super::dto_create::Create{{ entity_name }}Request;
 {% if has_update %}
 use super::dto_update::Update{{ entity_name }}Request;
 {% endif %}
+use super::super::errors::{{ domain | pascal_case }}Error;
 
 /// Set API key + org session variables within a transaction so Postgres RLS policies
 /// can enforce tenant isolation and scope checks. Uses `set_config(..., true)` which
@@ -23,7 +24,7 @@ async fn set_rls_session_vars(
     organization_id: Uuid,
     correlation_id: Uuid,
     user_id: Uuid,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), {{ domain | pascal_case }}Error> {
     tx.execute(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.current_api_key', $1, true), \
@@ -66,11 +67,11 @@ impl {{ entity_name }}CommandHandler {
 {% if has_create %}
 
 {% if parent_ref %}
-    pub async fn create(&self, cmd: Create{{ entity_name }}Request, parent_id: Uuid, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Uuid, Box<dyn std::error::Error>> {
+    pub async fn create(&self, cmd: Create{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, parent_id: Uuid) -> Result<Uuid, {{ domain | pascal_case }}Error> {
         self.create_single_in_tx(cmd, Some(parent_id), &source, correlation_id, api_key_id, organization_id, user_id).await
     }
 {% else %}
-    pub async fn create(&self, cmd: Create{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Uuid, Box<dyn std::error::Error>> {
+    pub async fn create(&self, cmd: Create{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Uuid, {{ domain | pascal_case }}Error> {
         self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id, user_id).await
     }
 {% endif %}
@@ -84,7 +85,8 @@ impl {{ entity_name }}CommandHandler {
         correlation_id: Uuid,
         api_key_id: Uuid,
         organization_id: Uuid,
-        user_id: Uuid,
+        user_id: Uuid,{% if parent_ref %}
+        parent_id: Uuid,{% endif %}
     ) -> Vec<Result<Uuid, crate::error::BulkItemError>> {
         {% if project.hooks_api_crate %}
         // --- before_bulk_create hook (can reject entire batch) ---
@@ -164,7 +166,7 @@ impl {{ entity_name }}CommandHandler {
         api_key_id: Uuid,
         organization_id: Uuid,
         user_id: Uuid,
-    ) -> Result<Uuid, Box<dyn std::error::Error>> {
+    ) -> Result<Uuid, {{ domain | pascal_case }}Error> {
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
@@ -175,11 +177,11 @@ impl {{ entity_name }}CommandHandler {
             match hooks.before_create(&mut ctx, &cmd).await {
                 Ok({{ project.hooks_api_crate }}::HookControl::Abort { reason }) => {
                     tx.rollback().await?;
-                    return Err(reason.into());
+                    return Err({{ domain | pascal_case }}Error::Conflict);
                 }
                 Err(e) => {
                     tx.rollback().await?;
-                    return Err(e.into());
+                    return Err({{ domain | pascal_case }}Error::InternalError(e.to_string()));
                 }
                 Ok({{ project.hooks_api_crate }}::HookControl::Continue) => {}
             }
@@ -196,11 +198,11 @@ impl {{ entity_name }}CommandHandler {
             match hooks.after_create_tx(&mut ctx, id).await {
                 Ok({{ project.hooks_api_crate }}::HookControl::Abort { reason }) => {
                     tx.rollback().await?;
-                    return Err(reason.into());
+                    return Err({{ domain | pascal_case }}Error::Conflict);
                 }
                 Err(e) => {
                     tx.rollback().await?;
-                    return Err(e.into());
+                    return Err({{ domain | pascal_case }}Error::InternalError(e.to_string()));
                 }
                 Ok({{ project.hooks_api_crate }}::HookControl::Continue) => {}
             }
@@ -229,7 +231,7 @@ impl {{ entity_name }}CommandHandler {
 {% endif %}
 {% if has_update %}
 
-    pub async fn update(&self, id: Uuid, cmd: Update{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn update(&self, id: Uuid, cmd: Update{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), {{ domain | pascal_case }}Error> {
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
@@ -240,11 +242,11 @@ impl {{ entity_name }}CommandHandler {
             match hooks.before_update(&mut ctx, id, &cmd).await {
                 Ok({{ project.hooks_api_crate }}::HookControl::Abort { reason }) => {
                     tx.rollback().await?;
-                    return Err(reason.into());
+                    return Err({{ domain | pascal_case }}Error::Conflict);
                 }
                 Err(e) => {
                     tx.rollback().await?;
-                    return Err(e.into());
+                    return Err({{ domain | pascal_case }}Error::InternalError(e.to_string()));
                 }
                 Ok({{ project.hooks_api_crate }}::HookControl::Continue) => {}
             }
@@ -261,11 +263,11 @@ impl {{ entity_name }}CommandHandler {
             match hooks.after_update_tx(&mut ctx, id).await {
                 Ok({{ project.hooks_api_crate }}::HookControl::Abort { reason }) => {
                     tx.rollback().await?;
-                    return Err(reason.into());
+                    return Err({{ domain | pascal_case }}Error::Conflict);
                 }
                 Err(e) => {
                     tx.rollback().await?;
-                    return Err(e.into());
+                    return Err({{ domain | pascal_case }}Error::InternalError(e.to_string()));
                 }
                 Ok({{ project.hooks_api_crate }}::HookControl::Continue) => {}
             }
@@ -294,7 +296,7 @@ impl {{ entity_name }}CommandHandler {
 {% endif %}
 {% if has_delete %}
 
-    pub async fn delete(&self, id: Uuid, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn delete(&self, id: Uuid, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), {{ domain | pascal_case }}Error> {
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
@@ -305,11 +307,11 @@ impl {{ entity_name }}CommandHandler {
             match hooks.before_delete(&mut ctx, id).await {
                 Ok({{ project.hooks_api_crate }}::HookControl::Abort { reason }) => {
                     tx.rollback().await?;
-                    return Err(reason.into());
+                    return Err({{ domain | pascal_case }}Error::Conflict);
                 }
                 Err(e) => {
                     tx.rollback().await?;
-                    return Err(e.into());
+                    return Err({{ domain | pascal_case }}Error::InternalError(e.to_string()));
                 }
                 Ok({{ project.hooks_api_crate }}::HookControl::Continue) => {}
             }
@@ -326,11 +328,11 @@ impl {{ entity_name }}CommandHandler {
             match hooks.after_delete_tx(&mut ctx, id).await {
                 Ok({{ project.hooks_api_crate }}::HookControl::Abort { reason }) => {
                     tx.rollback().await?;
-                    return Err(reason.into());
+                    return Err({{ domain | pascal_case }}Error::Conflict);
                 }
                 Err(e) => {
                     tx.rollback().await?;
-                    return Err(e.into());
+                    return Err({{ domain | pascal_case }}Error::InternalError(e.to_string()));
                 }
                 Ok({{ project.hooks_api_crate }}::HookControl::Continue) => {}
             }

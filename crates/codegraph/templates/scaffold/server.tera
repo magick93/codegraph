@@ -452,7 +452,7 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         .route("/health", axum::routing::get(health))
         .route("/health/ready", axum::routing::get(health_ready))
         .route("/metrics", axum::routing::get(move || std::future::ready(metrics_handle.render())))
-        .nest("/api", api_routes)
+        .nest("/api/{{ project.api_version }}", api_routes)
         .route("/api-catalog.json", axum::routing::get(crate::api::openapi::catalog::api_catalog))
         .merge(
             SwaggerUi::new("/swagger-ui")

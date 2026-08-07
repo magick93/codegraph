@@ -4220,13 +4220,13 @@ async fn child_handler_has_nested_utoipa_path() {
 
     // The get_by_id path should include the parent path segment with {parent_id}
     assert!(
-        content.contains("/api/compensation/compensation/{compensation_id}/reward/{reward_id}"),
+        content.contains("/api/v1/compensation/compensation/{compensation_id}/reward/{reward_id}"),
         "Child handler utoipa path must include nested parent path. Got:\n{content}"
     );
 
     // The create path should include only {parent_id}
     assert!(
-        content.contains("/api/compensation/compensation/{compensation_id}/reward"),
+        content.contains("/api/v1/compensation/compensation/{compensation_id}/reward"),
         "Child handler create path must include parent prefix. Got:\n{content}"
     );
 
