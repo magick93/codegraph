@@ -662,6 +662,73 @@ pub async fn list(
 {% endif %}
 }
 {% endif %}
+{%- if has_fts %}
+{%- if fts_rest_mode == "dedicated" or fts_rest_mode == "both" %}
+
+/// Query parameters for the {{ entity_name }} search endpoint.
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct SearchParams {
+    /// Full-text search query. Supports natural syntax: quoted phrases, OR, -exclude.
+    pub q: String,
+    #[serde(default = "default_page")]
+    pub page: u64,
+    #[serde(default = "default_page_size")]
+    pub page_size: u64,
+}
+
+/// Full-text search for {{ entity_name }} with ranking.
+#[utoipa::path(
+    get,
+{% if role == "child" %}
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/search",
+    params(
+        ("{{ parent_param_name }}" = Uuid, Path, description = "{{ parent_entity }} ID"),
+        SearchParams,
+    ),
+{% else %}
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/search",
+    params(SearchParams),
+{% endif %}
+    tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_search",
+    responses(
+        (status = 200, description = "OK", body = Vec<{{ entity_name }}Response>),
+        (status = 400, description = "Missing or empty q parameter"),
+    )
+)]
+#[tracing::instrument(skip(state, headers), fields(domain = "{{ domain }}", entity = "{{ module_name }}"))]
+pub async fn search(
+    State(state): State<AppState>,
+    Extension(api_key_info): Extension<ApiKeyInfo>,
+    headers: HeaderMap,
+{% if role == "child" %}
+{% if ancestor_path_params >= 2 %}
+    Path((_grandparent_id, _parent_id)): Path<(Uuid, Uuid)>,
+{% else %}
+    Path(_parent_id): Path<Uuid>,
+{% endif %}
+{% endif %}
+    crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<SearchParams>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let correlation_id = extract_correlation_id(&headers);
+    if params.q.trim().is_empty() {
+        return Err(AppError::bad_request("Missing or empty q parameter")
+            .with_correlation_id(correlation_id));
+    }
+    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.search(&params.q, params.page, params.page_size, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to search {{ entity_name }}: {e}"))
+            .with_correlation_id(correlation_id))?;
+    Ok(Json(serde_json::json!({
+        "data": results,
+        "total": total,
+        "page": params.page,
+        "page_size": params.page_size,
+        "meta": { "correlation_id": correlation_id.to_string() }
+    })))
+}
+{% endif -%}
+{% endif %}
 {% if has_embeddings %}
 
 #[derive(Debug, serde::Deserialize, utoipa::ToSchema)]

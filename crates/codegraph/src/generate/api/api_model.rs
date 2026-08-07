@@ -177,6 +177,7 @@ pub async fn resolve_entity_operations(
 fn op_kind_to_http(kind: &str) -> (&'static str, &'static str) {
     match kind {
         "list" => ("GET", ""),
+        "search" => ("GET", "/search"),
         "create" => ("POST", ""),
         "read" => ("GET", "/{id}"),
         "update" => ("PUT", "/{id}"),

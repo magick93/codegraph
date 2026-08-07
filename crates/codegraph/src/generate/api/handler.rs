@@ -57,6 +57,8 @@ pub struct HandlerContext {
     pub has_workflow: bool,
     /// Whether this entity has full-text search enabled.
     pub has_fts: bool,
+    /// REST surface for full-text search: "query_param", "dedicated", or "both".
+    pub fts_rest_mode: String,
     /// Whether this entity has semantic search (pgvector embeddings) enabled.
     pub has_embeddings: bool,
     /// Fields exposed as JSON:API `?filter[field]=value` query params.
@@ -160,6 +162,9 @@ impl EntityGenerator for HandlerGenerator {
         let has_embeddings = search
             .map(|s| !s.embedding_columns.is_empty())
             .unwrap_or(false);
+        let fts_rest_mode = entity_cfg
+            .map(|ec| ec.search.fts_rest_mode.clone())
+            .unwrap_or_else(|| "query_param".to_string());
 
         let filter_fields = resolve_filter_fields(
             db,
@@ -653,6 +658,7 @@ impl EntityGenerator for HandlerGenerator {
             status_field,
             has_workflow,
             has_fts,
+            fts_rest_mode,
             has_embeddings,
             filter_fields,
             nested_filter_fields,
