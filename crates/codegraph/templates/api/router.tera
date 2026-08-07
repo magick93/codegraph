@@ -34,9 +34,6 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 {% else %}
         .route("/", axum::routing::get({{ entity.module_name }}_handler::list))
 {% endif %}
-{% if entity.has_fts %}
-        .route("/search", axum::routing::get({{ entity.module_name }}_handler::search))
-{% endif %}
 {% if entity.has_update and entity.has_delete %}
         .route("/{ {{- entity.param_name -}} }", axum::routing::get({{ entity.module_name }}_handler::get_by_id).put({{ entity.module_name }}_handler::update).delete({{ entity.module_name }}_handler::delete))
 {% elif entity.has_update %}

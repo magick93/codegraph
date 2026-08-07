@@ -213,10 +213,6 @@ impl DomainGenerator for RouterGenerator {
                     let has_embeddings = entity_cfg
                         .map(|ec| !ec.search.embedding_columns.is_empty())
                         .unwrap_or(false);
-                    let has_fts = entity_cfg
-                        .and_then(|ec| ec.search.fts_columns.as_ref())
-                        .map(|cols| !cols.is_empty())
-                        .unwrap_or(false);
                     let fts_rest_mode = entity_cfg
                         .map(|ec| ec.search.fts_rest_mode.clone())
                         .unwrap_or_else(|| "query_param".to_string());
