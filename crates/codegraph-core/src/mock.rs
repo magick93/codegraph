@@ -625,6 +625,37 @@ impl GraphIngestor for MockEngine {
         // Mock: no-op for property classification updates
         Ok(())
     }
+
+    async fn ingest_api_resource(&self, _node: &ApiResourceNode) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
+
+    async fn ingest_api_operation(&self, _node: &ApiOperationNode) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
+
+    async fn ingest_interaction(&self, _node: &InteractionNode) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
+
+    async fn ingest_http_endpoint(&self, _node: &HttpEndpointNode) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
+
+    async fn ingest_pipeline(&self, _node: &PipelineNode) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
+
+    async fn ingest_error_definition(
+        &self,
+        _node: &ErrorDefinitionNode,
+    ) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
+
+    async fn ingest_permission(&self, _node: &PermissionNode) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
 }
 
 #[async_trait]

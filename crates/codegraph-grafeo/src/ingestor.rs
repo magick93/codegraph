@@ -2,10 +2,11 @@ use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    ActionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, DataBindingNode,
-    EdgeProperties, EdgeType, EnumValue, EventNode, IngestStats, LexiconNode, NamespaceNode,
-    ParameterDefinitionNode, PropertyNode, RepositoryNode, SchemaNode, ViewComponentNode,
-    ViewContainerNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode,
+    EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, NamespaceNode,
+    ParameterDefinitionNode, PermissionNode, PipelineNode, PropertyNode, RepositoryNode,
+    SchemaNode, ViewComponentNode, ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -906,5 +907,36 @@ impl GraphIngestor for GrafeoEngine {
             .execute(&query)
             .map_err(|e| GraphError::Query(e.to_string()))?;
         Ok(())
+    }
+
+    async fn ingest_api_resource(&self, node: &ApiResourceNode) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
+
+    async fn ingest_api_operation(&self, node: &ApiOperationNode) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
+
+    async fn ingest_interaction(&self, node: &InteractionNode) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
+
+    async fn ingest_http_endpoint(&self, node: &HttpEndpointNode) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
+
+    async fn ingest_pipeline(&self, node: &PipelineNode) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
+
+    async fn ingest_error_definition(
+        &self,
+        node: &ErrorDefinitionNode,
+    ) -> Result<String, GraphError> {
+        Ok(String::new())
+    }
+
+    async fn ingest_permission(&self, node: &PermissionNode) -> Result<String, GraphError> {
+        Ok(String::new())
     }
 }

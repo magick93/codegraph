@@ -6,10 +6,12 @@ use async_trait::async_trait;
 use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
-    ActionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree,
-    EnumValue, EventNode, Extension, LexiconNode, NamespaceNode, ParameterDefinitionNode,
-    ParentCandidate, PropertyNode, RepositoryNode, SchemaClassificationData, SchemaNode,
-    StructuredSubField, ViewComponentNode, ViewContainerNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension,
+    HttpEndpointNode, InteractionNode, LexiconNode, NamespaceNode, ParameterDefinitionNode,
+    ParentCandidate, PermissionNode, PipelineNode, PropertyNode, RepositoryNode,
+    SchemaClassificationData, SchemaNode, StructuredSubField, ViewComponentNode,
+    ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.

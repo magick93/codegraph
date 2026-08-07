@@ -1,9 +1,11 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree,
-    EnumValue, EventNode, Extension, LexiconNode, NamespaceNode, ParameterDefinitionNode,
-    ParentCandidate, PropertyNode, RepositoryNode, SchemaClassificationData, SchemaNode,
-    StructuredSubField, ViewComponentNode, ViewContainerNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension,
+    HttpEndpointNode, InteractionNode, LexiconNode, NamespaceNode, ParameterDefinitionNode,
+    ParentCandidate, PermissionNode, PipelineNode, PropertyNode, RepositoryNode,
+    SchemaClassificationData, SchemaNode, StructuredSubField, ViewComponentNode,
+    ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -241,6 +243,47 @@ pub trait GraphQuerier: Send + Sync {
     /// Get Lexicons that this Lexicon references (for ref/union types).
     #[allow(unused_variables)]
     async fn get_lexicon_references(&self, nsid: &str) -> Result<Vec<LexiconNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    // ── API metamodel queries ─────────────────────────────────────────
+
+    async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_api_operations(
+        &self,
+        _resource_name: &str,
+    ) -> Result<Vec<ApiOperationNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_http_endpoints(
+        &self,
+        _domain: &str,
+    ) -> Result<Vec<HttpEndpointNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_permissions(
+        &self,
+        _domain: &str,
+    ) -> Result<Vec<PermissionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_pipelines(
+        &self,
+        _domain: &str,
+    ) -> Result<Vec<PipelineNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_error_definitions(
+        &self,
+        _domain: &str,
+    ) -> Result<Vec<ErrorDefinitionNode>, GraphError> {
         Ok(Vec::new())
     }
 }

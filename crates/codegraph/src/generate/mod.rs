@@ -218,6 +218,9 @@ pub struct ProjectConfig {
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
     pub types_import_prefix: String,
+    /// API version prefix used in URL path construction (e.g. "v1" → `/api/v1/...`).
+    #[serde(default)]
+    pub api_version: String,
     /// Git revision SHA used for fallback path dependencies in generated Cargo.toml.
     /// When domain_types_base is empty, the domain types Cargo.toml uses this rev
     /// to reference codegraph-type-contracts as a git dependency.
@@ -274,6 +277,7 @@ impl Default for ProjectConfig {
             codegraph_rev: String::new(),
             database_target: "postgres".to_string(),
             types_import_prefix: "codegraph_type_contracts".into(),
+            api_version: "v1".into(),
             has_atproto: false,
             has_fern: false,
             fern_sdk_languages: vec!["typescript".into()],

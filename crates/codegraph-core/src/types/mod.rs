@@ -1,4 +1,5 @@
 mod atproto;
+mod api;
 mod codelist;
 mod composite;
 mod composition;
@@ -26,4 +27,8 @@ pub use ifml::{
 pub use property::{inject_codelist_properties, PropertyNode};
 pub use schema::{SchemaClassificationData, SchemaNode};
 pub use atproto::{CollectionNode, LexiconNode, NamespaceNode, RepositoryNode};
+pub use api::{
+    ApiOperationNode, ApiResourceNode, ErrorDefinitionNode, HttpEndpointNode, InteractionNode,
+    PermissionNode, PipelineNode,
+};
 pub use stats::IngestStats;

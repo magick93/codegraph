@@ -1,9 +1,10 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, DataBindingNode,
-    EdgeProperties, EdgeType, EnumValue, EventNode, IngestStats, LexiconNode, NamespaceNode,
-    ParameterDefinitionNode, PropertyNode, RepositoryNode, SchemaNode, ViewComponentNode,
-    ViewContainerNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode,
+    EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, NamespaceNode,
+    ParameterDefinitionNode, PermissionNode, PipelineNode, PropertyNode, RepositoryNode,
+    SchemaNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -80,4 +81,23 @@ pub trait GraphIngestor: Send + Sync {
         property_name: &str,
         kind: &str,
     ) -> Result<(), GraphError>;
+
+    // ── API metamodel ingestion ───────────────────────────────────────
+
+    async fn ingest_api_resource(&self, node: &ApiResourceNode) -> Result<String, GraphError>;
+
+    async fn ingest_api_operation(&self, node: &ApiOperationNode) -> Result<String, GraphError>;
+
+    async fn ingest_interaction(&self, node: &InteractionNode) -> Result<String, GraphError>;
+
+    async fn ingest_http_endpoint(&self, node: &HttpEndpointNode) -> Result<String, GraphError>;
+
+    async fn ingest_pipeline(&self, node: &PipelineNode) -> Result<String, GraphError>;
+
+    async fn ingest_error_definition(
+        &self,
+        node: &ErrorDefinitionNode,
+    ) -> Result<String, GraphError>;
+
+    async fn ingest_permission(&self, node: &PermissionNode) -> Result<String, GraphError>;
 }

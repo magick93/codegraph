@@ -428,7 +428,7 @@ async fn scaffold_middleware_supports_dual_auth() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-dual-auth");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(
             &mock,
@@ -1836,7 +1836,7 @@ async fn scaffold_main() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(
             &mock,
@@ -1857,55 +1857,66 @@ async fn scaffold_main() {
         .iter()
         .find(|f| f.path.to_string_lossy().ends_with("main.rs"))
         .expect("Should have main.rs");
+    let server_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("server.rs"))
+        .expect("Should have server.rs");
+
+    // main.rs assertions — module declarations
     assert!(!main_file.content.is_empty());
-    // Swagger UI should be mounted with per-domain URLs
-    assert!(
-        main_file
-            .content
-            .contains("SwaggerUi::new(\"/swagger-ui\")"),
-        "main.rs should mount SwaggerUi"
-    );
-    assert!(
-        main_file.content.contains(".urls(vec!["),
-        "main.rs should use .urls() for multi-spec dropdown"
-    );
-    assert!(
-        main_file.content.contains("use utoipa::OpenApi"),
-        "main.rs should import utoipa::OpenApi"
-    );
-    assert!(
-        main_file
-            .content
-            .contains("api::openapi::all::AllApiDoc::openapi()"),
-        "main.rs should reference AllApiDoc"
-    );
-    assert!(
-        main_file
-            .content
-            .contains("api::openapi::recruiting::RecruitingApiDoc::openapi()"),
-        "main.rs should reference per-domain RecruitingApiDoc"
-    );
-    assert!(
-        main_file.content.contains("/api-catalog.json"),
-        "main.rs should mount API catalog endpoint"
-    );
-    assert!(
-        main_file.content.contains("init_tracing"),
-        "Main should init tracing"
-    );
-    assert!(
-        main_file.content.contains("/health"),
-        "Main should have health endpoint"
-    );
     assert!(
         main_file.content.contains("mod error"),
-        "Main should include error module"
+        "main.rs should include error module"
+    );
+    assert!(
+        main_file.content.contains("mod server"),
+        "main.rs should include server module"
     );
 
+    // server.rs assertions — server logic
+    assert!(!server_file.content.is_empty());
     assert!(
-        main_file.content.contains("codegraph_workflow"),
-        "main.rs should reference codegraph_workflow. Got:\n{}",
-        main_file.content
+        server_file
+            .content
+            .contains("SwaggerUi::new(\"/swagger-ui\")"),
+        "server.rs should mount SwaggerUi"
+    );
+    assert!(
+        server_file.content.contains(".urls(vec!["),
+        "server.rs should use .urls() for multi-spec dropdown"
+    );
+    assert!(
+        server_file.content.contains("use utoipa::OpenApi"),
+        "server.rs should import utoipa::OpenApi"
+    );
+    assert!(
+        server_file
+            .content
+            .contains("api::openapi::all::AllApiDoc::openapi()"),
+        "server.rs should reference AllApiDoc"
+    );
+    assert!(
+        server_file
+            .content
+            .contains("api::openapi::recruiting::RecruitingApiDoc::openapi()"),
+        "server.rs should reference per-domain RecruitingApiDoc"
+    );
+    assert!(
+        server_file.content.contains("/api-catalog.json"),
+        "server.rs should mount API catalog endpoint"
+    );
+    assert!(
+        server_file.content.contains("init_tracing"),
+        "server.rs should init tracing"
+    );
+    assert!(
+        server_file.content.contains("/health"),
+        "server.rs should have health endpoint"
+    );
+    assert!(
+        server_file.content.contains("codegraph_workflow"),
+        "server.rs should reference codegraph_workflow. Got:\n{}",
+        server_file.content
     );
 
     let cargo_file = files
@@ -1922,7 +1933,7 @@ async fn scaffold_error_module() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-error");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(
             &mock,
@@ -1967,7 +1978,7 @@ async fn scaffold_generates_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-mw");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(
             &mock,
@@ -3173,10 +3184,16 @@ async fn query_uses_parameterized_set_config() {
             .contains("set_config('app.organization_id', $2, true)"),
         "Query should use parameterized set_config for org_id"
     );
-    // Must NOT have $3 (queries don't set correlation_id)
     assert!(
-        !query_file.content.contains("$3"),
-        "Query should only set 2 vars (no correlation_id)"
+        query_file
+            .content
+            .contains("set_config('app.user_id', $3, true)"),
+        "Query should use parameterized set_config for user_id"
+    );
+    // Must NOT have $4 (queries don't set correlation_id)
+    assert!(
+        !query_file.content.contains("$4"),
+        "Query should only set 3 vars (no correlation_id)"
     );
     // Must NOT use format!()
     assert!(
@@ -3200,7 +3217,7 @@ async fn scaffold_main_has_security_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-security");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(
             &mock,
@@ -3214,8 +3231,8 @@ async fn scaffold_main_has_security_middleware() {
 
     let main_file = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("main.rs"))
-        .expect("Should have main.rs");
+        .find(|f| f.path.to_string_lossy().ends_with("server.rs"))
+        .expect("Should have server.rs");
 
     // CORS
     assert!(
@@ -3283,7 +3300,7 @@ async fn scaffold_main_has_graceful_shutdown() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shutdown");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(
             &mock,
@@ -3297,8 +3314,8 @@ async fn scaffold_main_has_graceful_shutdown() {
 
     let main_file = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("main.rs"))
-        .expect("Should have main.rs");
+        .find(|f| f.path.to_string_lossy().ends_with("server.rs"))
+        .expect("Should have server.rs");
 
     assert!(
         main_file.content.contains("with_graceful_shutdown"),
@@ -3320,7 +3337,7 @@ async fn scaffold_main_has_health_ready() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-health-ready");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(
             &mock,
@@ -3334,8 +3351,8 @@ async fn scaffold_main_has_health_ready() {
 
     let main_file = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("main.rs"))
-        .expect("Should have main.rs");
+        .find(|f| f.path.to_string_lossy().ends_with("server.rs"))
+        .expect("Should have server.rs");
 
     assert!(
         main_file.content.contains("/health/ready"),
@@ -4096,10 +4113,10 @@ async fn child_command_accepts_parent_id() {
         "Child command create must accept parent_id parameter. Got:\n{content}"
     );
 
-    // Must pass parent_id to repo.create
+    // Must pass parent_id to create_single_in_tx
     assert!(
-        content.contains("repo.create(&tx, cmd, parent_id"),
-        "Child command must pass parent_id to repo.create. Got:\n{content}"
+        content.contains("create_single_in_tx(cmd, Some(parent_id)"),
+        "Child command must pass parent_id to create_single_in_tx. Got:\n{content}"
     );
 }
 
@@ -4311,7 +4328,7 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shadow");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(
             &mock,
@@ -4345,7 +4362,7 @@ async fn scaffold_generates_build_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-build-rs");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(
             &mock,
@@ -4375,7 +4392,7 @@ async fn scaffold_main_has_version_endpoint() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-version");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(
             &mock,
@@ -4389,8 +4406,8 @@ async fn scaffold_main_has_version_endpoint() {
 
     let main_file = files
         .iter()
-        .find(|f| f.path.to_string_lossy().ends_with("main.rs"))
-        .expect("Should have main.rs");
+        .find(|f| f.path.to_string_lossy().ends_with("server.rs"))
+        .expect("Should have server.rs");
 
     // shadow-rs macro invocation
     assert!(
@@ -6257,7 +6274,7 @@ async fn dto_include_single_level() {
         "Should contain included field. Got:\n{content}"
     );
     assert!(
-        content.contains("pub meta: crate::api::meta::Meta"),
+        content.contains("pub meta: Meta"),
         "Should contain meta field. Got:\n{content}"
     );
 }
@@ -7219,7 +7236,7 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-scaffold");
     let project = sqlite_project_config();
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false);
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, "sea-orm");
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &project)
         .await

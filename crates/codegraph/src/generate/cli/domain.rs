@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::generate::render_template_with_project;
+use crate::generate::api::api_model::resolve_path_segment;
 use crate::generate::traits::{DomainGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
@@ -65,10 +66,11 @@ impl DomainGenerator for CliDomainGenerator {
                 if !schema.pg_table_name.is_empty()
                     && seen_modules.insert(schema.pg_table_name.clone())
                 {
+                    let entity_cfg = config.domains.get(domain).and_then(|d| d.get_entity_config(title));
                     entities.push(CliDomainEntity {
                         entity_name: schema.rust_type_name.clone(),
                         module_name: schema.pg_table_name.clone(),
-                        path_segment: schema.api_path_segment.clone(),
+                        path_segment: resolve_path_segment(entity_cfg, &schema),
                     });
                 }
             }

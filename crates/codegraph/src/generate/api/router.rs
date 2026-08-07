@@ -11,6 +11,7 @@ use crate::error::Result;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{DomainGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
+use super::api_model::{resolve_entity_operations, resolve_path_segment};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ParentInfo {
@@ -41,6 +42,7 @@ pub struct CrossRefInfo {
 pub struct RouterContext {
     pub domain: String,
     pub entities: Vec<RouterEntity>,
+    pub has_permission_middleware: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,6 +67,8 @@ pub struct RouterEntity {
     pub media_fields: Vec<String>,
     /// When set, this entity supports the /tree endpoint (self-referencing hierarchy).
     pub hierarchy_field: Option<String>,
+    pub pipeline_middleware: Vec<String>,
+    pub has_pipeline_layer: bool,
 }
 
 pub struct RouterGenerator {
@@ -183,9 +187,7 @@ impl DomainGenerator for RouterGenerator {
                         .domains
                         .get(domain)
                         .and_then(|d| d.get_entity_config(title));
-                    let operations = entity_cfg
-                        .and_then(|ec| ec.operations.clone())
-                        .unwrap_or_else(|| config.defaults.operations.clone());
+                    let operations = resolve_entity_operations(db, config, domain, entity_name).await;
 
                     let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
                     let has_workflow = workflow
@@ -197,12 +199,6 @@ impl DomainGenerator for RouterGenerator {
 
                     let has_embeddings = entity_cfg
                         .map(|ec| !ec.search.embedding_columns.is_empty())
-                        .unwrap_or(false);
-
-                    let search = entity_cfg.map(|ec| &ec.search);
-                    let has_fts = search
-                        .and_then(|s| s.fts_columns.as_ref())
-                        .map(|cols| !cols.is_empty())
                         .unwrap_or(false);
 
                     let media_fields: Vec<String> = db
@@ -223,10 +219,16 @@ impl DomainGenerator for RouterGenerator {
                     module_to_idx.insert(schema.pg_table_name.clone(), entity_idx);
                     title_to_entity_idx.insert(title.clone(), entity_idx);
 
+                    let search = entity_cfg.map(|ec| &ec.search);
+                    let has_fts = search
+                        .and_then(|s| s.fts_columns.as_ref())
+                        .map(|cols| !cols.is_empty())
+                        .unwrap_or(false);
+
                     entities.push(RouterEntity {
                         entity_name: entity_name.clone(),
                         module_name: schema.pg_table_name.clone(),
-                        path_segment: schema.api_path_segment.clone(),
+                        path_segment: resolve_path_segment(entity_cfg, &schema),
                         has_create: operations.contains(&"create".to_string()),
                         has_update: operations.contains(&"update".to_string()),
                         has_delete: operations.contains(&"delete".to_string()),
@@ -243,6 +245,8 @@ impl DomainGenerator for RouterGenerator {
                         cross_refs: vec![],
                         media_fields,
                         hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
+                        pipeline_middleware: Vec::new(),
+                        has_pipeline_layer: false,
                     });
                 }
             }
@@ -425,6 +429,7 @@ impl DomainGenerator for RouterGenerator {
         let ctx = RouterContext {
             domain: domain.to_string(),
             entities,
+            has_permission_middleware: false,
         };
 
         let content = render_template_with_project(tera, "api/router.tera", &ctx, project)?;

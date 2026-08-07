@@ -298,6 +298,12 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             type_contracts_base: meta.type_contracts_base.clone().unwrap_or_default(),
             database_target: database_target_str,
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
+            api_version: resolved
+                .features
+                .get("api_version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("v1")
+                .to_string(),
             codegraph_rev: current_git_rev(),
             has_atproto: plan.has_atproto,
             has_fern: plan.has_fern,
