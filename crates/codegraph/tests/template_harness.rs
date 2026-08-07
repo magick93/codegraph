@@ -3214,10 +3214,17 @@ async fn query_uses_parameterized_set_config() {
             .contains("set_config('app.organization_id', $2, true)"),
         "Query should use parameterized set_config for org_id"
     );
-    // Must NOT have $3 (queries don't set correlation_id)
+    // Must set user_id as $3 (template now passes all 3 session vars)
     assert!(
-        !query_file.content.contains("$3"),
-        "Query should only set 2 vars (no correlation_id)"
+        query_file
+            .content
+            .contains("set_config('app.user_id', $3, true)"),
+        "Query should use parameterized set_config for user_id"
+    );
+    // Must NOT have $4 (only 3 vars: api_key, org_id, user_id)
+    assert!(
+        !query_file.content.contains("$4"),
+        "Query should only set 3 vars (api_key, org_id, user_id)"
     );
     // Must NOT use format!()
     assert!(
@@ -6298,7 +6305,7 @@ async fn dto_include_single_level() {
         "Should contain included field. Got:\n{content}"
     );
     assert!(
-        content.contains("pub meta: crate::api::meta::Meta"),
+        content.contains("pub meta: Meta"),
         "Should contain meta field. Got:\n{content}"
     );
 }
