@@ -8,9 +8,9 @@ const authToken = process.env.TEST_AUTH_TOKEN || '';
 
 {% if has_create %}
 test.describe('{{ entity_name }} — Create', () => {
-  test('POST /api/{{ domain }}/{{ path_segment }} creates a {{ entity_name }}', async ({ request }) => {
+  test('POST /api/{{ project.api_version }}/{{ domain }}/{{ path_segment }} creates a {{ entity_name }}', async ({ request }) => {
     const payload = {{ entity_name }}Fixture.valid();
-    const response = await request.post('/api/{{ domain }}/{{ path_segment }}', {
+    const response = await request.post('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
       data: payload,
     });
@@ -30,14 +30,14 @@ test.describe('{{ entity_name }} — Create', () => {
 
   test('POST without auth rejects with 401', async ({ request }) => {
     const data = {{ entity_name }}Fixture.valid();
-    const response = await request.post('/api/{{ domain }}/{{ path_segment }}', { data });
+    const response = await request.post('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}', { data });
     expect(response.status()).toBe(401);
   });
 
 {% if has_required_fields %}
   test('POST with missing required fields rejects with 422', async ({ request }) => {
     const data = {{ entity_name }}Fixture.missingRequired();
-    const response = await request.post('/api/{{ domain }}/{{ path_segment }}', {
+    const response = await request.post('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
       data,
     });
@@ -49,8 +49,8 @@ test.describe('{{ entity_name }} — Create', () => {
 
 {% if has_read %}
 test.describe('{{ entity_name }} — Read', () => {
-  test('GET /api/{{ domain }}/{{ path_segment }} returns paginated list', async ({ request }) => {
-    const response = await request.get('/api/{{ domain }}/{{ path_segment }}', {
+  test('GET /api/{{ project.api_version }}/{{ domain }}/{{ path_segment }} returns paginated list', async ({ request }) => {
+    const response = await request.get('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
     expect(response.status()).toBe(200);
@@ -59,8 +59,8 @@ test.describe('{{ entity_name }} — Read', () => {
     expect(Array.isArray(body.data)).toBe(true);
   });
 
-  test('GET /api/{{ domain }}/{{ path_segment }}/:id returns 404 for nonexistent', async ({ request }) => {
-    const response = await request.get('/api/{{ domain }}/{{ path_segment }}/00000000-0000-0000-0000-000000000000', {
+  test('GET /api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/:id returns 404 for nonexistent', async ({ request }) => {
+    const response = await request.get('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/00000000-0000-0000-0000-000000000000', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
     expect(response.status()).toBe(404);
@@ -70,8 +70,8 @@ test.describe('{{ entity_name }} — Read', () => {
 
 {% if has_delete %}
 test.describe('{{ entity_name }} — Delete', () => {
-  test('DELETE /api/{{ domain }}/{{ path_segment }}/:id removes a {{ entity_name }}', async ({ request }) => {
-    const created = await request.post('/api/{{ domain }}/{{ path_segment }}', {
+  test('DELETE /api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/:id removes a {{ entity_name }}', async ({ request }) => {
+    const created = await request.post('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
       data: {{ entity_name }}Fixture.valid(),
     });
@@ -79,12 +79,12 @@ test.describe('{{ entity_name }} — Delete', () => {
     const { data } = await created.json();
     const id = data.id;
 
-    const response = await request.delete(`/api/{{ domain }}/{{ path_segment }}/${id}`, {
+    const response = await request.delete(`/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/${id}`, {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
     expect(response.status()).toBe(204);
 
-    const check = await request.get(`/api/{{ domain }}/{{ path_segment }}/${id}`, {
+    const check = await request.get(`/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/${id}`, {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
     expect(check.status()).toBe(404);
@@ -95,7 +95,7 @@ test.describe('{{ entity_name }} — Delete', () => {
 {% if has_list %}
 test.describe('{{ entity_name }} — Pagination', () => {
   test('list supports page_size', async ({ request }) => {
-    const response = await request.get('/api/{{ domain }}/{{ path_segment }}?page=0&page_size=5', {
+    const response = await request.get('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}?page=0&page_size=5', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
     expect(response.status()).toBe(200);
