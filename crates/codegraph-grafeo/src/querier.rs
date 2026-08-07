@@ -1413,6 +1413,13 @@ impl GrafeoEngine {
                             entity_col.classification = Some(
                                 codegraph_type_contracts::RefClassificationKind::EntityReference,
                             );
+                            // VO→entity FK columns are always nullable: the DTO and
+                            // repository generators model the VO as a nested child
+                            // table, so no create command ever supplies a value for
+                            // this column. Deriving nullability from the schema's
+                            // `required` makes required VO refs unmaterializable
+                            // (NOT NULL violation on every create).
+                            entity_col.is_optional = true;
                             if let Some(entity) = &vo_entity {
                                 entity_col.fk_target = Some(FkTarget {
                                     schema: entity

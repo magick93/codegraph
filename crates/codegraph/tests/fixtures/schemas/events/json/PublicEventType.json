@@ -1,0 +1,12 @@
+{
+  "$id": "PublicEventType.json",
+  "title": "PublicEventType",
+  "description": "A public event (entity)",
+  "type": "object",
+  "allOf": [
+    { "$ref": "../../common/json/EventBaseType.json" }
+  ],
+  "properties": {
+    "isPublished": { "type": "boolean", "default": false }
+  }
+}

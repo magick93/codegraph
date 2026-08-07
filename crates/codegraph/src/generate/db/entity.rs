@@ -322,18 +322,18 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     });
                 }
                 Some(RefClassificationKind::EntityReference) => {
-                    let is_nullable = !prop.is_required;
+                    // FK columns are always nullable in the model: entity refs are
+                    // populated via the repository's id resolution and a required
+                    // schema property does not make the generated FK NOT NULL —
+                    // this keeps the entity model aligned with the repository
+                    // emitter (Set(Some(v))) and the DDL.
                     columns.push(EntityColumn {
                         field_name: field_def.rust_field_name,
-                        rust_type: if is_nullable {
-                            "Option<Uuid>".to_string()
-                        } else {
-                            "Uuid".to_string()
-                        },
+                        rust_type: "Option<Uuid>".to_string(),
                         sea_orm_type: "Uuid".to_string(),
                         column_name: field_def.column_name,
                         is_primary_key: false,
-                        is_nullable,
+                        is_nullable: true,
                         pg_cast: None,
                         sea_orm_attr: None,
                     });
@@ -380,7 +380,11 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                         )
                         .await?;
                         if fk_field.ends_with("_id") {
-                            let is_nullable = !prop.is_required;
+                            // VO→entity FK columns are always nullable in the DDL
+                            // (the DTO/repository model the VO as a nested child
+                            // table and never populate the FK), so the model field
+                            // must be Option<Uuid> regardless of schema required.
+                            let is_nullable = true;
                             columns.push(EntityColumn {
                                 field_name: fk_field,
                                 rust_type: if is_nullable {

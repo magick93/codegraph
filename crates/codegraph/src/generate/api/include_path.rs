@@ -706,23 +706,20 @@ async fn resolve_fk_via_graph(
     let source_props = db.get_properties(source_title).await.unwrap_or_default();
 
     // Priority 1: property whose ref_target matches target_title (exact).
+    // Schema titles often contain spaces while ref targets use filenames without
+    // spaces (e.g. title "Campaign Type" vs ref "CampaignType.json").
+    // Compare both the raw title and a space-stripped version.
+    let target_clean: String = target_title.replace(' ', "");
+    let target_stripped: String = codegraph_naming::strip_suffix(&target_clean, "Type");
     for prop in &source_props {
-        let matches = prop
-            .ref_target
-            .as_deref()
-            .map(|rt| {
-                // Handle both plain title refs ("PersonType") and path refs
-                // ("common/json/person/PersonType.json").
-                let rt_clean = rt
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(rt)
-                    .strip_suffix(".json#")
-                    .or_else(|| rt.strip_suffix(".json"))
-                    .unwrap_or(rt);
-                rt_clean == target_title
-            })
-            .unwrap_or(false);
+        let matches = prop.ref_target.as_deref().map(|rt| {
+            // Handle both plain title refs ("PersonType") and path refs
+            // ("common/json/person/PersonType.json").
+            let rt_clean = rt.rsplit('/').next().unwrap_or(rt)
+                .strip_suffix(".json#").or_else(|| rt.strip_suffix(".json"))
+                .unwrap_or(rt);
+            rt_clean == target_title || rt_clean == target_clean || rt_clean == target_stripped
+        }).unwrap_or(false);
         if matches {
             let fd = resolve_field(prop);
             return Ok((fd.column_name, prop.is_array));
@@ -774,7 +771,25 @@ async fn resolve_fk_via_graph(
         }
     }
 
-    // Fallback: convention-based default.
+    // Priority 4: property whose pg_column_name is "{parent_ref_stem}_id"
+    // where parent_ref_stem is the target_title with spaces stripped and Type suffix removed.
+    // This handles array relationships where the child has a generated FK
+    // column named after the parent entity (e.g., events_app_id) instead of
+    // the schema property name (e.g., public_events_id).
+    let parent_ref_stem = codegraph_naming::to_snake_case(
+        &codegraph_naming::strip_suffix(&target_title.replace(' ', ""), "Type"),
+    );
+    if parent_ref_stem != seg_snake {
+        let parent_seg_id = format!("{parent_ref_stem}_id");
+        for prop in &source_props {
+            if prop.pg_column_name.to_lowercase() == parent_seg_id {
+                let fd = resolve_field(prop);
+                return Ok((fd.column_name, prop.is_array));
+            }
+        }
+    }
+
+    // Fallback: convention-based default using seg.
     Ok((seg_id, false))
 }
 
@@ -811,20 +826,22 @@ async fn resolve_child_fk_column(
 
     // Priority 2: graph properties — find the property on the child that
     // references the parent.
-    let seg = codegraph_naming::to_snake_case(super::router::strip_suffix(
-        child_title,
-        &config.defaults.type_suffix,
-    ));
-    let (fk, _) = resolve_fk_via_graph(db, child_title, parent_title, &seg).await?;
-    if !fk.ends_with("_id") {
-        // The resolved column name doesn't look like an FK — fall back.
-        return Ok(format!(
-            "{}_id",
-            codegraph_naming::to_snake_case(super::router::strip_suffix(
-                child_title,
-                &config.defaults.type_suffix
-            ),)
-        ));
+    let child_seg = codegraph_naming::to_snake_case(
+        super::router::strip_suffix(child_title, &config.defaults.type_suffix),
+    );
+    let (fk, _) = resolve_fk_via_graph(db, child_title, parent_title, &child_seg).await?;
+
+    // If the resolved FK matches the child-based convention (child_seg + "_id"),
+    // it's a fallback — the child doesn't have an explicit property referencing
+    // the parent. In this case, prefer the parent-based naming convention
+    // (parent_seg + "_id") which matches how the entity generator creates FK
+    // columns for array relationships (e.g. events_app_id for PublicEvent → EventsApp).
+    let child_based_fk = format!("{}_id", child_seg);
+    let parent_seg = codegraph_naming::to_snake_case(
+        super::router::strip_suffix(parent_title, &config.defaults.type_suffix),
+    );
+    if fk == child_based_fk && parent_seg != child_seg {
+        return Ok(format!("{}_id", parent_seg));
     }
     Ok(fk)
 }

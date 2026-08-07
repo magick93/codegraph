@@ -1812,9 +1812,12 @@ fn generate_mod_files_recursive(dir: &Path, out: &mut Vec<GeneratedFile>) -> Res
         let mod_path = dir.join("mod.rs");
         // Skip if a mod.rs with pub-use re-exports exists (written by a specialised
         // generator like codelist). Always overwrite plain `pub mod` declarations.
+        // Skip if mod.rs was explicitly generated (contains real code beyond
+        // auto-generated pub mod declarations). Check for pub use (codelist)
+        // or use statements (scaffold middleware, etc.).
         let skip = mod_path.exists()
             && fs::read_to_string(&mod_path)
-                .map(|c| c.contains("pub use "))
+                .map(|c| c.contains("pub use ") || c.contains("use "))
                 .unwrap_or(false);
         if !skip {
             let content = modules
