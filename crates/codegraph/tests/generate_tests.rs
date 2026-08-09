@@ -2208,3 +2208,175 @@ async fn ui_form_uses_stripped_names_for_codelist() {
         "form must NOT bind pg_column_name with _code suffix"
     );
 }
+
+/// Regression test: the Playwright fixture generator must honor the schema's
+/// `required` for scalar EntityReference FKs. A required FK must produce a
+/// plain `campaignId: string` field (present in `valid()`); an optional FK
+/// keeps `campaignId?: string | null` and is omitted from `valid()`.
+///
+/// Mirrors the #58/#59 pattern — JSON Schema `required` is the source of truth
+/// across ALL generator layers, including the TS fixture generator.
+#[tokio::test]
+async fn ts_fixture_required_entity_ref_is_required() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "recruiting/json/ApplicationType.json",
+            "ApplicationType",
+            "application",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_schema(mock_schema(
+            "recruiting/json/CandidateType.json",
+            "CandidateType",
+            "candidate",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_properties(
+            "ApplicationType",
+            vec![
+                prop("title", "String", "TEXT", true, None, None, None, false),
+                // Required genuine EntityReference → campaign_id FK.
+                prop(
+                    "candidate_id",
+                    "Uuid",
+                    "UUID",
+                    true,
+                    Some("entity_reference"),
+                    Some(RefClassificationKind::EntityReference),
+                    Some("recruiting/json/CandidateType.json"),
+                    false,
+                ),
+            ],
+        )
+        .with_ref_target(
+            "candidate_id",
+            "ApplicationType",
+            mock_schema(
+                "recruiting/json/CandidateType.json",
+                "CandidateType",
+                "candidate",
+                "recruiting",
+                "entity_reference",
+            ),
+        )
+        .build();
+
+    let config = test_domain_config();
+    let project = test_project_config();
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
+
+    let gen = generate::playwright::ts_entity_gen::TsEntityGenerator::new(Path::new(
+        "/tmp/ts-fixture-required-ref",
+    ));
+    let files = gen
+        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .await
+        .unwrap();
+
+    let fixture = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("fixtures"))
+        .expect("should produce a fixture file")
+        .content
+        .clone();
+
+    // Required FK → plain `candidateId: string` (no `?`, no `| null`).
+    assert!(
+        fixture.contains("candidateId: string;"),
+        "required entity ref FK must be a required TS field. Got:\n{fixture}"
+    );
+    assert!(
+        !fixture.contains("candidateId?:"),
+        "required entity ref FK must NOT be optional in TS. Got:\n{fixture}"
+    );
+    // The valid() fixture must populate the required FK.
+    assert!(
+        fixture.contains("candidateId:"),
+        "required FK must appear in valid() fixture body. Got:\n{fixture}"
+    );
+}
+
+/// Companion case: an optional EntityReference FK keeps `?` / `| null` and is
+/// omitted from `valid()`.
+#[tokio::test]
+async fn ts_fixture_optional_entity_ref_stays_optional() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "recruiting/json/ApplicationType.json",
+            "ApplicationType",
+            "application",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_schema(mock_schema(
+            "recruiting/json/CandidateType.json",
+            "CandidateType",
+            "candidate",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_properties(
+            "ApplicationType",
+            vec![
+                prop("title", "String", "TEXT", true, None, None, None, false),
+                // Optional genuine EntityReference → candidate_id FK.
+                prop(
+                    "candidate_id",
+                    "Uuid",
+                    "UUID",
+                    false,
+                    Some("entity_reference"),
+                    Some(RefClassificationKind::EntityReference),
+                    Some("recruiting/json/CandidateType.json"),
+                    false,
+                ),
+            ],
+        )
+        .with_ref_target(
+            "candidate_id",
+            "ApplicationType",
+            mock_schema(
+                "recruiting/json/CandidateType.json",
+                "CandidateType",
+                "candidate",
+                "recruiting",
+                "entity_reference",
+            ),
+        )
+        .build();
+
+    let config = test_domain_config();
+    let project = test_project_config();
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
+
+    let gen = generate::playwright::ts_entity_gen::TsEntityGenerator::new(Path::new(
+        "/tmp/ts-fixture-optional-ref",
+    ));
+    let files = gen
+        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .await
+        .unwrap();
+
+    let fixture = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("fixtures"))
+        .expect("should produce a fixture file")
+        .content
+        .clone();
+
+    // Optional FK → `candidateId?: string | null` retained, omitted from valid().
+    assert!(
+        fixture.contains("candidateId?: string | null;"),
+        "optional entity ref FK must stay optional in TS. Got:\n{fixture}"
+    );
+    // valid() must NOT contain a bare `candidateId:` assignment (it only emits
+    // required fields). The interface line has `?` so `candidateId?:` is fine.
+    assert!(
+        !fixture.contains("\n      candidateId: "),
+        "optional FK must NOT be populated in valid(). Got:\n{fixture}"
+    );
+}

@@ -105,14 +105,21 @@ async fn expand_vo_fields(
         }
 
         // Scalar entity references — the DDL emits `{prop}_id` FK columns and
-        // the DTO exposes them as flat `{prop}Id` fields.
+        // the DTO exposes them as flat `{prop}Id` fields. Nullability honors the
+        // schema's `required` (JSON schema is the source of truth): a required
+        // FK is a plain `campaignId: string` that the fixture must populate;
+        // an optional FK stays `campaignId?: string | null`.
         if !prop.is_array && kind == Some(RefClassificationKind::EntityReference) {
             let fd = codegraph_core::types::resolve_field(prop);
             if out.iter().any(|f| f.rust_field == fd.rust_field_name) {
                 continue;
             }
-            let rust_type = RustType::Optional {
-                optional: Box::new(RustType::Simple("Uuid".to_string())),
+            let rust_type = if prop.is_required {
+                RustType::Simple("Uuid".to_string())
+            } else {
+                RustType::Optional {
+                    optional: Box::new(RustType::Simple("Uuid".to_string())),
+                }
             };
             out.push(EntityField {
                 name: fd.rust_field_name.to_lower_camel_case(),
@@ -122,7 +129,7 @@ async fn expand_vo_fields(
                 sea_orm_type: "Uuid".to_string(),
                 pg_type: "UUID".to_string(),
                 ts_type: ts_type_for_field(&rust_type),
-                required: false,
+                required: prop.is_required,
                 is_pk: false,
                 is_fk: true,
                 fk_target: prop.ref_target.clone(),
@@ -132,7 +139,7 @@ async fn expand_vo_fields(
                 label: field.label.clone(),
                 inherited: false,
                 is_child_table: false,
-                is_model_optional: true,
+                is_model_optional: !prop.is_required,
             });
             continue;
         }
