@@ -105,7 +105,7 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
             id: Set(id),
             ..Default::default()
         };
-        if let Some(v) = cmd.candidate_id { model.candidate_id = Set(Some(v)); }
+        if let Some(v) = cmd.candidate_id { model.candidate_id = Set(v); }
         match model.update(tx).await {
             Ok(_) => {}
             Err(sea_orm::DbErr::RecordNotUpdated) => { /* RLS hid the row — find_by_id will return 404 */ }

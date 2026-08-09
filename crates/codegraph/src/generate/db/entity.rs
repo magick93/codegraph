@@ -322,18 +322,22 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     });
                 }
                 Some(RefClassificationKind::EntityReference) => {
-                    // FK columns are always nullable in the model: entity refs are
-                    // populated via the repository's id resolution and a required
-                    // schema property does not make the generated FK NOT NULL —
-                    // this keeps the entity model aligned with the repository
-                    // emitter (Set(Some(v))) and the DDL.
+                    // Nullability honors the schema's `required` — the JSON schema is
+                    // the source of truth. A required entity ref produces a NOT NULL
+                    // FK column (Uuid, is_nullable: false) in both the DDL and the
+                    // model; an optional ref produces Option<Uuid>.
+                    let is_nullable = !prop.is_required;
                     columns.push(EntityColumn {
                         field_name: field_def.rust_field_name,
-                        rust_type: "Option<Uuid>".to_string(),
+                        rust_type: if is_nullable {
+                            "Option<Uuid>".to_string()
+                        } else {
+                            "Uuid".to_string()
+                        },
                         sea_orm_type: "Uuid".to_string(),
                         column_name: field_def.column_name,
                         is_primary_key: false,
-                        is_nullable: true,
+                        is_nullable,
                         pg_cast: None,
                         sea_orm_attr: None,
                     });

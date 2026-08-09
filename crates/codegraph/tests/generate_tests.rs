@@ -837,6 +837,140 @@ async fn snapshot_repository_emitter_with_parent_ref() {
     insta::assert_snapshot!("repo_with_parent_ref", code);
 }
 
+/// A REQUIRED genuine EntityReference must be consistent with the JSON schema's
+/// `required` across every layer — the schema is the source of truth:
+///   DDL          → NOT NULL UUID column + FK
+///   entity model → `Uuid` (non-Option)
+///   repository   → `Set(v)` (not Set(Some(v)))
+///   DTO          → `uuid::Uuid` required (non-Option)
+///
+/// This is the inverse of the VO→entity synthetic FK, which is always nullable
+/// (never populated by DTO/repo).
+#[tokio::test]
+async fn required_genuine_entity_ref_is_not_null_across_all_layers() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "recruiting/json/ApplicationType.json",
+            "ApplicationType",
+            "application",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_schema(mock_schema(
+            "recruiting/json/CandidateType.json",
+            "CandidateType",
+            "candidate",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_properties(
+            "ApplicationType",
+            vec![
+                prop("title", "String", "TEXT", true, None, None, None, false),
+                // Required genuine EntityReference → candidate_id FK.
+                prop(
+                    "candidate_id",
+                    "Uuid",
+                    "UUID",
+                    true,
+                    Some("entity_reference"),
+                    Some(RefClassificationKind::EntityReference),
+                    Some("recruiting/json/CandidateType.json"),
+                    false,
+                ),
+            ],
+        )
+        .build();
+
+    let config = test_domain_config();
+    let project = test_project_config();
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
+
+    // 1. Entity model: required ref → Uuid (non-Option).
+    let entity_gen = generate::db::entity::SeaOrmEntityGenerator::new(Path::new("/tmp/out"));
+    let entity_files = entity_gen
+        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .await
+        .unwrap();
+    let entity = entity_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("application.rs"))
+        .expect("should produce application.rs entity file")
+        .content
+        .clone();
+    assert!(
+        entity.contains("pub candidate_id: Uuid,"),
+        "required entity ref must be non-Option Uuid in the model. Got:\n{entity}"
+    );
+    assert!(
+        !entity.contains("pub candidate_id: Option<Uuid>"),
+        "required entity ref must NOT be Option<Uuid>. Got:\n{entity}"
+    );
+
+    // 2. Repository emitter: required ref → Set(v).
+    let emitter = generate::ddd::repository_emitter::RepositoryImplEmitter;
+    let repo_code = emitter
+        .emit(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(
+        repo_code.contains("model.candidate_id = Set(v);"),
+        "required entity ref must emit Set(v). Got:\n{repo_code}"
+    );
+    assert!(
+        !repo_code.contains("model.candidate_id = Set(Some(v));"),
+        "required entity ref must NOT emit Set(Some(v)). Got:\n{repo_code}"
+    );
+    // 3. DTO: required ref → non-Option uuid::Uuid in the CREATE and RESPONSE DTOs.
+    // (The update DTO intentionally makes all fields Option for partial updates.)
+    let tmp = std::env::temp_dir().join("required-genuine-ref-dto");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let dto_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let dto_files = dto_gen
+        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .await
+        .unwrap();
+
+    let create_dto = dto_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_create"))
+        .expect("should produce dto_create file")
+        .content
+        .clone();
+    assert!(
+        create_dto.contains("pub candidate_id: uuid::Uuid"),
+        "create DTO required entity ref must be non-Option uuid::Uuid. Got:\n{create_dto}"
+    );
+    assert!(
+        !create_dto.contains("pub candidate_id: Option<uuid::Uuid>"),
+        "create DTO required entity ref must NOT be Option<uuid::Uuid>. Got:\n{create_dto}"
+    );
+
+    let response_dto = dto_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_response"))
+        .expect("should produce dto_response file")
+        .content
+        .clone();
+    assert!(
+        response_dto.contains("pub candidate_id: uuid::Uuid"),
+        "response DTO required entity ref must be non-Option uuid::Uuid. Got:\n{response_dto}"
+    );
+    assert!(
+        !response_dto.contains("pub candidate_id: Option<uuid::Uuid>"),
+        "response DTO required entity ref must NOT be Option<uuid::Uuid>. Got:\n{response_dto}"
+    );
+}
+
 // === GenerationReport Tests ===
 
 #[test]

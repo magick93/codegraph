@@ -1422,12 +1422,16 @@ async fn build_columns_and_children(
                 is_media: false,
             });
         } else if prop.effective_kind() == Some(RefClassificationKind::EntityReference) {
+            // Nullability honors the schema's `required` (JSON schema is the source
+            // of truth): required refs emit Set(v) against a Uuid model column,
+            // optional refs emit Set(Some(v)) against Option<Uuid>.
+            let is_nullable = !prop.is_required;
             direct_columns.push(TreeColumn {
                 field_name: field_def.rust_field_name,
                 pg_column_name: field_def.column_name,
                 dto_field_name: None,
                 rust_type: "Uuid".to_string(),
-                is_nullable: true,
+                is_nullable,
                 is_entity_ref: true,
                 dto_rust_type: None,
                 is_workflow_managed: is_workflow_field,
