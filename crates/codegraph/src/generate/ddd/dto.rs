@@ -198,7 +198,7 @@ async fn build_child_dto(
                 child_fields.push(DtoField {
                     name: fd.rust_field_name.clone(),
                     rust_type: "uuid::Uuid".to_string(),
-                    is_required: false,
+                    is_required: c.is_required,
                     is_array: false,
                     description: String::new(),
                     render_strategy: "entity_ref".to_string(),
@@ -1196,7 +1196,11 @@ impl DtoGenerator {
                                 prop.effective_kind(),
                                 Some(RefClassificationKind::EntityReference)
                             ) {
-                                "Option<uuid::Uuid>".to_string()
+                                if is_optional {
+                                    "Option<uuid::Uuid>".to_string()
+                                } else {
+                                    "uuid::Uuid".to_string()
+                                }
                             } else if matches!(
                                 prop.effective_kind(),
                                 Some(
