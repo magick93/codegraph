@@ -43,6 +43,16 @@ pub struct IncludeSegment {
     /// FK column on this target's table that references back to the source,
     /// e.g. "worker_id" on the person table
     pub reverse_fk_column: String,
+    /// Whether the FK column on the source table is a REQUIRED genuine
+    /// EntityReference (JSON schema `required`). When true, the repository
+    /// fetch code accesses the field directly (Uuid) instead of via
+    /// Option patterns (Option<Uuid>). VO→entity synthetic FKs are always
+    /// nullable and therefore never required.
+    pub fk_is_required: bool,
+    /// Whether the reverse FK column on the target table is a REQUIRED
+    /// genuine EntityReference. Same semantics as `fk_is_required` but for
+    /// the array/child side of the relationship.
+    pub reverse_fk_is_required: bool,
     /// Whether this is a one-to-many relationship (Vec) vs one-to-one (Option)
     pub is_array: bool,
     /// When the target entity is reached via a VO→entity allOf chain (Tier 1.5),
@@ -272,6 +282,14 @@ async fn resolve_explicit_paths(
                 }
             }
 
+            // Nullability: JSON schema `required` is the source of truth for
+            // genuine EntityReference FKs. VO→entity (child_table_override)
+            // FKs are always nullable.
+            let fk_is_required = child_table_override.is_none()
+                && fk_column_is_required(db, current_source_title, &fk_column).await?;
+            let reverse_fk_is_required =
+                fk_column_is_required(db, &target_title, &reverse_fk_column).await?;
+
             segments.push(IncludeSegment {
                 entity_name: target_entity_name,
                 schema_title: target_schema_title,
@@ -280,6 +298,8 @@ async fn resolve_explicit_paths(
                 table: target_table,
                 fk_column,
                 reverse_fk_column,
+                fk_is_required,
+                reverse_fk_is_required,
                 is_array,
                 child_table_override,
             });
@@ -385,6 +405,12 @@ async fn resolve_auto_paths(
             &config.defaults.type_suffix,
         ));
 
+        // Nullability: JSON schema `required` is the source of truth for
+        // genuine EntityReference FKs. Both point at the same child-side FK.
+        let fk_is_required = fk_column_is_required(db, schema_title, &fk_column).await?;
+        let reverse_fk_is_required =
+            fk_column_is_required(db, target_title, &reverse_fk_column).await?;
+
         // Resolve is_array from the graph: does the parent have an array property
         // pointing to this child via ItemsOf?
         let is_array = {
@@ -404,6 +430,8 @@ async fn resolve_auto_paths(
                 table: target_table,
                 fk_column,
                 reverse_fk_column,
+                fk_is_required,
+                reverse_fk_is_required,
                 is_array,
                 child_table_override: None,
             }],
@@ -489,6 +517,13 @@ async fn resolve_auto_paths(
 
         let alias_seg = codegraph_naming::to_snake_case(ref_entity_name);
 
+        // Nullability: JSON schema `required` is the source of truth for
+        // genuine EntityReference FKs. fk lives on the source, reverse FK on
+        // the referenced (target) schema.
+        let fk_is_required = fk_column_is_required(db, schema_title, &fk_column).await?;
+        let reverse_fk_is_required =
+            fk_column_is_required(db, ref_title, &reverse_fk_column).await?;
+
         paths.push(ResolvedIncludePath {
             alias: alias_seg.clone(),
             segments: vec![IncludeSegment {
@@ -499,6 +534,8 @@ async fn resolve_auto_paths(
                 table: target_table,
                 fk_column,
                 reverse_fk_column,
+                fk_is_required,
+                reverse_fk_is_required,
                 is_array,
                 child_table_override: None,
             }],
@@ -688,6 +725,28 @@ async fn has_graph_evidence(
         }
     }
     false
+}
+
+/// Whether the property backing `fk_column` on `schema_title` is a REQUIRED
+/// genuine EntityReference. The JSON schema's `required` is the source of
+/// truth for FK nullability (see entity.rs): a required genuine entity ref
+/// emits `Uuid` in the entity model / DTOs, so include-path fetch code must
+/// access the field directly instead of via Option patterns.
+///
+/// VO→entity synthetic FK columns are excluded: they are always nullable
+/// (the DTO/repository model the VO as a nested child table), regardless of
+/// the schema's `required`.
+async fn fk_column_is_required(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    fk_column: &str,
+) -> Result<bool> {
+    let props = db.get_properties(schema_title).await?;
+    Ok(props.iter().any(|p| {
+        (resolve_field(p).column_name == fk_column || p.pg_column_name == fk_column)
+            && p.is_required
+            && p.effective_kind() == Some(RefClassificationKind::EntityReference)
+    }))
 }
 
 /// Resolve the FK column and array flag for a source→target relationship
