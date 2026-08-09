@@ -2159,6 +2159,11 @@ async fn openapi_error_schemas_are_defined_by_error_module() {
         false,
         false,
         false,
+        false,
+        false,
+        false,
+        false,
+        false,
         "sea-orm",
     );
     let scaffold_files = scaffold
