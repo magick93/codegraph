@@ -3,7 +3,8 @@ use codegraph::generate::traits::EntityGenerator;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    CodeList, ColumnInfo, CompositionNode, CompositionTree, EnumValue, PropertyNode, SchemaNode,
+    CodeList, ColumnInfo, CompositionNode, CompositionTree, DetectionSource, EnumValue,
+    ParentCandidate, PropertyNode, SchemaNode,
 };
 use codegraph_type_contracts::RefClassificationKind;
 use std::path::Path;
@@ -968,6 +969,148 @@ async fn required_genuine_entity_ref_is_not_null_across_all_layers() {
     assert!(
         !response_dto.contains("pub candidate_id: Option<uuid::Uuid>"),
         "response DTO required entity ref must NOT be Option<uuid::Uuid>. Got:\n{response_dto}"
+    );
+}
+
+/// When a REQUIRED genuine EntityReference is ALSO detected as a ParentCandidate
+/// (ScalarRef), the parent-candidate FK injection path must NOT override the
+/// schema-required nullability. The injection path runs before the property loop
+/// and the dedup keeps the first column — if the injected column hardcodes
+/// nullable, it wins and the model emits Option<Uuid> while the DTO/repo emit
+/// Uuid/Set(v) → E0308.
+#[tokio::test]
+async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "recruiting/json/ApplicationType.json",
+            "ApplicationType",
+            "application",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_schema(mock_schema(
+            "recruiting/json/CandidateType.json",
+            "CandidateType",
+            "candidate",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_properties(
+            "ApplicationType",
+            vec![
+                prop("title", "String", "TEXT", true, None, None, None, false),
+                // Required genuine EntityReference → candidate_id FK.
+                prop(
+                    "candidate_id",
+                    "Uuid",
+                    "UUID",
+                    true,
+                    Some("entity_reference"),
+                    Some(RefClassificationKind::EntityReference),
+                    Some("recruiting/json/CandidateType.json"),
+                    false,
+                ),
+            ],
+        )
+        .build();
+
+    // The relationship is ALSO a parent candidate (ScalarRef): the injection
+    // path fires and previously won dedup with hardcoded nullable output.
+    let parent_candidates = vec![ParentCandidate {
+        child_title: "ApplicationType".to_string(),
+        parent_title: "CandidateType".to_string(),
+        field_name: "candidate".to_string(),
+        source: DetectionSource::ScalarRef,
+    }];
+
+    let config = test_domain_config();
+    let project = test_project_config();
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
+
+    // 1. Entity model: required ref + parent candidate → Uuid (non-Option).
+    let entity_gen = generate::db::entity::SeaOrmEntityGenerator::new(Path::new("/tmp/out"))
+        .with_parent_candidates(parent_candidates.clone());
+    let entity_files = entity_gen
+        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .await
+        .unwrap();
+    let entity = entity_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("application.rs"))
+        .expect("should produce application.rs entity file")
+        .content
+        .clone();
+    assert!(
+        entity.contains("pub candidate_id: Uuid,"),
+        "required entity ref with parent candidate must be non-Option Uuid in the model. Got:\n{entity}"
+    );
+    assert!(
+        !entity.contains("pub candidate_id: Option<Uuid>"),
+        "required entity ref with parent candidate must NOT be Option<Uuid>. Got:\n{entity}"
+    );
+
+    // 2. Repository emitter: required ref → Set(v) (unaffected by injection).
+    let emitter = generate::ddd::repository_emitter::RepositoryImplEmitter;
+    let repo_code = emitter
+        .emit(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(
+        repo_code.contains("model.candidate_id = Set(v);"),
+        "required entity ref must emit Set(v). Got:\n{repo_code}"
+    );
+    assert!(
+        !repo_code.contains("model.candidate_id = Set(Some(v));"),
+        "required entity ref must NOT emit Set(Some(v)). Got:\n{repo_code}"
+    );
+
+    // 3. Create DTO: required ref → non-Option uuid::Uuid (unaffected by injection).
+    let tmp = std::env::temp_dir().join("required-genuine-ref-pc-dto");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let dto_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let dto_files = dto_gen
+        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .await
+        .unwrap();
+    let create_dto = dto_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dto_create"))
+        .expect("should produce dto_create file")
+        .content
+        .clone();
+    assert!(
+        create_dto.contains("pub candidate_id: uuid::Uuid"),
+        "create DTO required entity ref must be non-Option uuid::Uuid. Got:\n{create_dto}"
+    );
+    assert!(
+        !create_dto.contains("pub candidate_id: Option<uuid::Uuid>"),
+        "create DTO required entity ref must NOT be Option<uuid::Uuid>. Got:\n{create_dto}"
+    );
+
+    // 4. DDL: required ref + parent candidate → NOT NULL UUID column.
+    let ddl_gen = generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"))
+        .with_parent_candidates(parent_candidates);
+    let ddl_files = ddl_gen
+        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .await
+        .unwrap();
+    let ddl = ddl_files
+        .iter()
+        .map(|f| f.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        ddl.contains("candidate_id UUID NOT NULL"),
+        "DDL required entity ref with parent candidate must be NOT NULL. Got:\n{ddl}"
     );
 }
 
