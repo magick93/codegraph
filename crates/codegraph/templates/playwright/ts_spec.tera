@@ -3,13 +3,36 @@
 
 import { test, expect } from '@playwright/test';
 import { {{ entity_name }}Fixture } from '../../fixtures/{{ domain }}/{{ module_name }}';
+{% for fk in fk_fields %}
+import { {{ fk.entity_name }}Fixture } from '../../fixtures/{{ fk.target_domain }}/{{ fk.target_module }}';
+{% endfor %}
 
 const authToken = process.env.TEST_AUTH_TOKEN || '';
+{% if fk_fields %}
 
+// Required entity-ref FKs need real parent rows. Created once per file in
+// beforeAll; child fixtures reference the captured parent ids.
+{% for fk in fk_fields %}
+let {{ fk.js_var }}Id: string;
+{% endfor %}
+{% endif %}
 {% if has_create %}
 test.describe('{{ entity_name }} — Create', () => {
+{% if fk_fields %}
+  test.beforeAll(async ({ request }) => {
+{% for fk in fk_fields %}
+    const {{ fk.js_var }}Resp = await request.post('/api/{{ project.api_version }}/{{ fk.target_domain }}/{{ fk.target_path }}', {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      data: {{ fk.entity_name }}Fixture.valid(),
+    });
+    expect({{ fk.js_var }}Resp.status()).toBe(201);
+    const {{ fk.js_var }}Data = await {{ fk.js_var }}Resp.json();
+    {{ fk.js_var }}Id = {{ fk.js_var }}Data.data.id;
+{% endfor %}
+  });
+{% endif %}
   test('POST /api/{{ project.api_version }}/{{ domain }}/{{ path_segment }} creates a {{ entity_name }}', async ({ request }) => {
-    const payload = {{ entity_name }}Fixture.valid();
+    const payload = {{ entity_name }}Fixture.valid({% if fk_fields %}{ {% for fk in fk_fields %}{{ fk.name }}: {{ fk.js_var }}Id{% if not loop.last %}, {% endif %}{% endfor %} }{% endif %});
     const response = await request.post('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
       data: payload,
@@ -29,7 +52,7 @@ test.describe('{{ entity_name }} — Create', () => {
   });
 
   test('POST without auth rejects with 401', async ({ request }) => {
-    const data = {{ entity_name }}Fixture.valid();
+    const data = {{ entity_name }}Fixture.valid({% if fk_fields %}{ {% for fk in fk_fields %}{{ fk.name }}: {{ fk.js_var }}Id{% if not loop.last %}, {% endif %}{% endfor %} }{% endif %});
     const response = await request.post('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}', { data });
     expect(response.status()).toBe(401);
   });
@@ -73,7 +96,7 @@ test.describe('{{ entity_name }} — Delete', () => {
   test('DELETE /api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/:id removes a {{ entity_name }}', async ({ request }) => {
     const created = await request.post('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
-      data: {{ entity_name }}Fixture.valid(),
+      data: {{ entity_name }}Fixture.valid({% if fk_fields %}{ {% for fk in fk_fields %}{{ fk.name }}: {{ fk.js_var }}Id{% if not loop.last %}, {% endif %}{% endfor %} }{% endif %}),
     });
     expect(created.status()).toBe(201);
     const { data } = await created.json();

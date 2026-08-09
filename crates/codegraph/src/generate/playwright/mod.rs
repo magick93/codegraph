@@ -67,6 +67,11 @@ pub struct TsEntityContext {
     /// True when at least one create field is required (gates the
     /// missing-required-fields test in ts_spec.tera).
     pub has_required_fields: bool,
+    /// Required entity-ref FK fields (with target metadata) — drives the
+    /// parent-creation `beforeAll` in ts_spec.tera and `withParent*` helpers
+    /// in ts_fixture.tera. Always serialized (empty vec when no required FKs)
+    /// so Tera templates can safely reference it.
+    pub fk_fields: Vec<TsFkField>,
     pub schema_name: String,
     /// Whether this entity has full-text search (search.fts_* config).
     pub has_fts: bool,
@@ -86,6 +91,37 @@ pub struct TsFieldDef {
     pub ts_type: String,
     pub required: bool,
     pub example_value: String,
+    /// FK target metadata for required entity-ref FKs — used by the spec
+    /// generator to create parent rows in `beforeAll` so the child fixture
+    /// can reference a real parent id. None for non-FK / optional-FK fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fk_target_domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fk_target_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fk_target_module: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fk_target_entity_name: Option<String>,
+    /// JS-safe variable name for the captured parent id (camelCase of
+    /// `name`), present when `fk_target_entity_name` is Some.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub js_var: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TsFkField {
+    /// camelCase create-DTO field name, e.g. "campaignId".
+    pub name: String,
+    /// PascalCase target entity name, e.g. "Campaign".
+    pub entity_name: String,
+    /// Domain of the FK target entity, e.g. "campaigns".
+    pub target_domain: String,
+    /// REST path segment of the FK target, e.g. "campaign".
+    pub target_path: String,
+    /// snake_case module of the FK target, e.g. "campaign".
+    pub target_module: String,
+    /// JS-safe variable name for the captured parent id, e.g. "campaignId".
+    pub js_var: String,
 }
 
 /// Per-entity summary for global generators.

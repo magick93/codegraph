@@ -2,6 +2,9 @@
 // E2E tests for full-text search on {{ entity_name }}
 
 import { test, expect } from '@playwright/test';
+{% for fk in fk_fields %}
+import { {{ fk.entity_name }}Fixture } from '../../fixtures/{{ fk.target_domain }}/{{ fk.target_module }}';
+{% endfor %}
 
 const authToken = process.env.TEST_AUTH_TOKEN || '';
 
@@ -17,13 +20,25 @@ test.describe('FTS search — {{ entity_name }}', () => {
   let createdId: string;
   let searchTerm: string;
   let payload: Record<string, unknown>;
+{% for fk in fk_fields %}
+  let {{ fk.js_var }}Id: string;
+{% endfor %}
 
   test.beforeAll(async ({ request }) => {
+{% for fk in fk_fields %}
+    const {{ fk.js_var }}Resp = await request.post('/api/{{ project.api_version }}/{{ fk.target_domain }}/{{ fk.target_path }}', {
+      headers,
+      data: {{ fk.entity_name }}Fixture.valid(),
+    });
+    expect({{ fk.js_var }}Resp.status()).toBe(201);
+    const {{ fk.js_var }}Data = await {{ fk.js_var }}Resp.json();
+    {{ fk.js_var }}Id = {{ fk.js_var }}Data.data.id;
+{% endfor %}
     searchTerm = uniqueTerm();
     payload = {
 {% for field in create_fields %}
 {% if field.required %}
-      {{ field.name }}: {% if field.name == fts_search_field %}`${searchTerm} accessibility`{% else %}{{ field.example_value }}{% endif %},
+      {{ field.name }}: {% if field.name == fts_search_field %}`${searchTerm} accessibility`{% elif field.js_var is defined and field.js_var %}{{ field.js_var }}Id{% else %}{{ field.example_value }}{% endif %},
 {% endif %}
 {% endfor %}
 {% if fts_search_field and not fts_search_field_required %}

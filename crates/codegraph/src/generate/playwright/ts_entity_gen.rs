@@ -14,7 +14,7 @@ use heck::ToLowerCamelCase;
 use crate::error::Result;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
-use super::{TsEntityContext, TsFieldDef};
+use super::{TsEntityContext, TsFkField, TsFieldDef};
 
 /// Scalar (non-array) ValueObject / CompositeWrapper / MediaWrapper properties
 /// are stored as flattened child columns on the main table (the Create DTO
@@ -204,6 +204,42 @@ pub struct TsEntityGenerator {
     output_dir: PathBuf,
 }
 
+/// Resolve FK-target metadata for a required entity-ref field so the spec
+/// generator can create a real parent row in `beforeAll`. Returns None for
+/// non-FK, optional-FK, or unresolvable targets.
+async fn resolve_fk_target_meta(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    field: &EntityField,
+) -> Option<(String, String, String, String)> {
+    if !field.is_fk || !field.required {
+        return None;
+    }
+    // Map the entity field back to its source property to resolve the target.
+    let props = db.get_properties(schema_title).await.unwrap_or_default();
+    let prop = props.iter().find(|p| {
+        let fd = codegraph_core::types::resolve_field(p);
+        fd.rust_field_name == field.rust_field || p.pg_column_name == field.column
+    })?;
+    let target = db
+        .get_property_ref_target(&prop.name, schema_title)
+        .await
+        .ok()
+        .flatten()?;
+    let domain = target.domain.clone().unwrap_or_default();
+    let path = if target.api_path_segment.is_empty() {
+        target.pg_table_name.replace('_', "-")
+    } else {
+        target.api_path_segment.clone()
+    };
+    Some((
+        domain,
+        path,
+        target.pg_table_name.clone(),
+        target.rust_type_name.clone(),
+    ))
+}
+
 impl TsEntityGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
@@ -236,16 +272,26 @@ impl EntityGenerator for TsEntityGenerator {
         let properties = db.get_properties_in_domain(schema_title, domain).await?;
         let fields = expand_vo_fields(db, schema_title, &model.fields, &properties).await?;
 
-        let create_fields: Vec<TsFieldDef> = fields
-            .iter()
-            .map(|f| TsFieldDef {
+        let mut create_fields: Vec<TsFieldDef> = Vec::with_capacity(fields.len());
+        for f in &fields {
+            let (fk_target_domain, fk_target_path, fk_target_module, fk_target_entity_name) =
+                match resolve_fk_target_meta(db, schema_title, f).await {
+                    Some((d, p, m, e)) => (Some(d), Some(p), Some(m), Some(e)),
+                    None => (None, None, None, None),
+                };
+            create_fields.push(TsFieldDef {
                 name: f.name.clone(),
                 label: f.label.clone(),
                 ts_type: f.ts_type.clone(),
                 required: f.required,
                 example_value: f.example_value.clone(),
-            })
-            .collect();
+                fk_target_domain,
+                fk_target_path,
+                fk_target_module,
+                fk_target_entity_name: fk_target_entity_name.clone(),
+                js_var: fk_target_entity_name.map(|_| f.name.to_lower_camel_case()),
+            });
+        }
 
         // Full-text search detection — mirrors ui/e2e_test.rs.
         let entity_cfg = config
@@ -376,6 +422,18 @@ impl EntityGenerator for TsEntityGenerator {
         };
 
         let has_required_fields = create_fields.iter().any(|f| f.required);
+        let fk_fields: Vec<TsFkField> = create_fields
+            .iter()
+            .filter(|f| f.fk_target_entity_name.is_some())
+            .map(|f| TsFkField {
+                name: f.name.clone(),
+                entity_name: f.fk_target_entity_name.clone().unwrap_or_default(),
+                target_domain: f.fk_target_domain.clone().unwrap_or_default(),
+                target_path: f.fk_target_path.clone().unwrap_or_default(),
+                target_module: f.fk_target_module.clone().unwrap_or_default(),
+                js_var: f.name.to_lower_camel_case(),
+            })
+            .collect();
 
         let ctx = TsEntityContext {
             entity_name: model.name.clone(),
@@ -390,6 +448,7 @@ impl EntityGenerator for TsEntityGenerator {
             has_list: model.operations.list,
             create_fields,
             has_required_fields,
+            fk_fields,
             schema_name: model.entity_module.clone(),
             has_fts,
             fts_search_field: fts_search_field.clone(),

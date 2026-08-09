@@ -2297,6 +2297,27 @@ async fn ts_fixture_required_entity_ref_is_required() {
         fixture.contains("candidateId:"),
         "required FK must appear in valid() fixture body. Got:\n{fixture}"
     );
+
+    // The spec must create a real parent row and thread its id into the child
+    // payload (Issue #61) — the all-zeros placeholder would violate the FK.
+    let spec = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains(".spec.ts"))
+        .expect("should produce a spec file")
+        .content
+        .clone();
+    assert!(
+        spec.contains("CandidateFixture"),
+        "spec must import the parent fixture for beforeAll parent creation. Got:\n{spec}"
+    );
+    assert!(
+        spec.contains("candidateIdId"),
+        "spec must capture a parent id variable. Got:\n{spec}"
+    );
+    assert!(
+        spec.contains("Fixture.valid({ candidateId: candidateIdId })"),
+        "spec create payload must reference the real parent id. Got:\n{spec}"
+    );
 }
 
 /// Companion case: an optional EntityReference FK keeps `?` / `| null` and is

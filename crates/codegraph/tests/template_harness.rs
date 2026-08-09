@@ -7482,3 +7482,5 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
         cargo_file.content
     );
 }
+
+

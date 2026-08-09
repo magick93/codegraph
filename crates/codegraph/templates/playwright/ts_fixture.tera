@@ -8,13 +8,14 @@ export interface Create{{ entity_name }}Dto {
 }
 
 export class {{ entity_name }}Fixture {
-  static valid(): Create{{ entity_name }}Dto {
+  static valid(overrides: Partial<Create{{ entity_name }}Dto> = {}): Create{{ entity_name }}Dto {
     return {
 {% for field in create_fields %}
 {% if field.required %}
       {{ field.name }}: {{ field.example_value }},
 {% endif %}
 {% endfor %}
+      ...overrides,
     } as Create{{ entity_name }}Dto;
   }
 
@@ -26,4 +27,11 @@ export class {{ entity_name }}Fixture {
   static withOptionalFields(overrides: Partial<Create{{ entity_name }}Dto>): Create{{ entity_name }}Dto {
     return { ...this.valid(), ...overrides };
   }
+{% if fk_fields %}
+{% for field in fk_fields %}
+  static withParent{{ field.entity_name }}(parentId: string): Create{{ entity_name }}Dto {
+    return { ...this.valid(), {{ field.name }}: parentId };
+  }
+{% endfor %}
+{% endif %}
 }
