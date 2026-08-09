@@ -226,16 +226,26 @@ async fn resolve_fk_target_meta(
         .await
         .ok()
         .flatten()?;
+    // Only genuine entity targets need parent-creation — scalar VOs (e.g.
+    // startDate → DateType) are stored inline, not as FK rows.
+    if !target.is_entity {
+        return None;
+    }
     let domain = target.domain.clone().unwrap_or_default();
     let path = if target.api_path_segment.is_empty() {
         target.pg_table_name.replace('_', "-")
     } else {
         target.api_path_segment.clone()
     };
+    let module = format!(
+        "{}_{}",
+        target.domain.as_deref().unwrap_or("public"),
+        target.pg_table_name
+    );
     Some((
         domain,
         path,
-        target.pg_table_name.clone(),
+        module,
         target.rust_type_name.clone(),
     ))
 }

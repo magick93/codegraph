@@ -65,7 +65,7 @@ async-trait = "0.1"
 garde = { version = "0.22", features = ["derive"] }
 rust_decimal = { version = "1", features = ["serde-with-str"] }
 jsonwebtoken = "9"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 {% if project.codegraph_rev %}codegraph-workflow = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }
 codegraph-type-contracts = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }{% endif %}
 shadow-rs = { version = "1", default-features = false }
@@ -88,7 +88,7 @@ p256 = { version = "0.13", features = ["ecdsa"] }
 k256 = "0.13"
 anyhow = "1"
 thiserror = "2"
-tokio-tungstenite = "0.21"
+tokio-tungstenite = { version = "0.21", features = ["__rustls-tls"] }
 futures = "0.3"
 serde_cbor = "0.11"
 {% endif %}
