@@ -198,6 +198,101 @@ async fn test_generation_ordering_respects_domain_order() {
     assert_eq!(order[1].domain, "recruiting");
 }
 
+/// Issue #64: a title graph-discovered in a higher-priority domain (cross-domain
+/// allOf reference) but EXPLICITLY configured in a lower-priority domain must be
+/// assigned to the configured domain. The old global `seen_titles` dedup let the
+/// first domain claim it, so per-domain generators (openapi domain files, CLI,
+/// links) silently lost the entity for its real domain.
+#[tokio::test]
+async fn test_generation_ordering_configured_domain_wins_over_discovery() {
+    // PositionType physically lives in "common" (cross-domain allOf extension
+    // schema), so it is graph-discovered by common. Screening explicitly
+    // configures it via entities = ["PositionType"].
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "common/json/PositionType.json",
+            "PositionType",
+            "position",
+            "common",
+            "entity_reference",
+        ))
+        .build();
+
+    let config_str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = []
+
+[domains.screening]
+label = "Screening"
+schema_dir = "screening"
+postgres_schema = "screening"
+depends_on = ["common"]
+entities = ["PositionType"]
+"#;
+    let config = codegraph_config::config::parse_domain_config_str(config_str).unwrap();
+    let order = generate::compute_generation_order(&mock, &config)
+        .await
+        .unwrap();
+
+    // The entity must appear exactly once, assigned to its configured domain.
+    assert_eq!(order.len(), 1, "PositionType should appear exactly once. Got: {order:?}");
+    assert_eq!(
+        order[0].domain, "screening",
+        "configured domain must win over graph discovery. Got: {order:?}"
+    );
+    assert_eq!(order[0].schema_title, "PositionType");
+}
+
+/// Issue #64 companion: when NO domain explicitly configures a cross-domain
+/// title, the first (highest-priority) domain claiming it keeps it — entity
+/// generators must still run it exactly once.
+#[tokio::test]
+async fn test_generation_ordering_undiscovered_title_stays_in_first_domain() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "common/json/PositionType.json",
+            "PositionType",
+            "position",
+            "common",
+            "entity_reference",
+        ))
+        .build();
+
+    let config_str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = []
+
+[domains.screening]
+label = "Screening"
+schema_dir = "screening"
+postgres_schema = "screening"
+depends_on = ["common"]
+entities = []
+"#;
+    let config = codegraph_config::config::parse_domain_config_str(config_str).unwrap();
+    let order = generate::compute_generation_order(&mock, &config)
+        .await
+        .unwrap();
+
+    assert_eq!(order.len(), 1, "PositionType should appear exactly once. Got: {order:?}");
+    assert_eq!(
+        order[0].domain, "common",
+        "first-discovering domain keeps the title when nothing configures it. Got: {order:?}"
+    );
+}
+
 #[tokio::test]
 async fn test_generation_ordering_excludes_inline_def_schemas() {
     // Build an inline-def schema (parent_schema is set — like #/definitions/AssessmentScoreType)

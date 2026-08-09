@@ -2237,6 +2237,25 @@ async fn openapi_error_schemas_are_defined_by_error_module() {
              --- openapi/all.rs (usage) ---\n{openapi_content}"
         );
     }
+
+    // Issue #63: ErrorBody embeds `Vec<FieldError>` and derives Clone + ToSchema,
+    // so FieldError must carry both derives or the generated app fails E0277.
+    assert!(
+        error_content.contains(
+            "#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]\npub struct FieldError"
+        ),
+        "Issue #63 regression: FieldError must derive Clone + utoipa::ToSchema \
+         (ErrorBody embeds Vec<FieldError>).\n--- error.rs ---\n{error_content}"
+    );
+    // ErrorBody/ErrorResponse themselves must derive Clone + ToSchema.
+    for ty in ["ErrorBody", "ErrorResponse"] {
+        assert!(
+            error_content.contains(&format!(
+                "#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]\npub struct {ty}"
+            )),
+            "Issue #63 regression: {ty} must derive Clone + utoipa::ToSchema.\n--- error.rs ---\n{error_content}"
+        );
+    }
 }
 
 #[tokio::test]
