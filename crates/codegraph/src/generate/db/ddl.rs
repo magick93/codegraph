@@ -986,36 +986,34 @@ impl DdlGenerator {
         }
 
         // Inject FK column for parent-child relationships detected from the schema graph.
+        // Honor the schema's `required` when the FK corresponds to a real property;
+        // synthetic ArrayItems FKs (no child-side property) stay nullable.
         let entity_cfg = config
             .domains
             .get(domain)
             .and_then(|d| d.get_entity_config(&schema.rust_type_name));
+        let ddl_props = db.get_properties(schema_title).await.unwrap_or_default();
         if let Some(fk_col) = crate::generate::resolve_parent_fk_column(
             schema_title,
             &self.parent_candidates,
             entity_cfg,
             &config.defaults.type_suffix,
         ) {
-            // Honor the schema's `required` when the FK corresponds to a real
-            // property on this schema (e.g. a ScalarRef to an entity): the JSON
-            // schema is the source of truth, so a required entity ref must stay
-            // NOT NULL even though the parent-candidate injection runs first and
-            // wins the dedup. Only synthetic ArrayItems FKs (no child-side
-            // property) default to nullable.
-            let fk_is_required = db
-                .get_properties(schema_title)
-                .await
-                .unwrap_or_default()
-                .iter()
-                .any(|p| {
-                    (codegraph_core::types::resolve_field(p).column_name == fk_col
-                        || p.pg_column_name == fk_col)
-                        && p.is_required
-                });
+            let is_required = ddl_props.iter().any(|p| {
+                codegraph_core::types::resolve_field(p).rust_field_name == fk_col
+                    || p.pg_column_name == fk_col
+            }) && ddl_props.iter().find_map(|p| {
+                let fd = codegraph_core::types::resolve_field(p);
+                if fd.rust_field_name == fk_col || p.pg_column_name == fk_col {
+                    Some(p.is_required)
+                } else {
+                    None
+                }
+            }).unwrap_or(false);
             columns.push(ColumnDef {
                 name: fk_col.clone(),
                 pg_type: "UUID".to_string(),
-                nullable: !fk_is_required,
+                nullable: !is_required,
                 default: None,
                 is_primary_key: false,
                 is_array: false,

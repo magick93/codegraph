@@ -972,12 +972,18 @@ async fn required_genuine_entity_ref_is_not_null_across_all_layers() {
     );
 }
 
-/// When a REQUIRED genuine EntityReference is ALSO detected as a ParentCandidate
-/// (ScalarRef), the parent-candidate FK injection path must NOT override the
-/// schema-required nullability. The injection path runs before the property loop
-/// and the dedup keeps the first column — if the injected column hardcodes
-/// nullable, it wins and the model emits Option<Uuid> while the DTO/repo emit
-/// Uuid/Set(v) → E0308.
+/// Regression test: a required genuine EntityReference that is ALSO detected as
+/// a parent candidate (ScalarRef) must stay non-nullable across ALL layers.
+///
+/// The parent-candidates injection in `entity.rs` historically hardcoded
+/// `Option<Uuid>` / `is_nullable: true` and won the dedup over the
+/// property-driven EntityReference branch, producing:
+///   - entity model: `candidate_id: Option<Uuid>`   (contradicts schema required)
+///   - DDL:          `candidate_id UUID` (nullable) (contradicts schema required)
+/// while the DTO and repository emitter correctly honored `required`
+/// (`uuid::Uuid` / `Set(v)`), causing E0308 type mismatches at build time.
+///
+/// JSON Schema `required` is the source of truth: all layers must agree.
 #[tokio::test]
 async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers() {
     let mock = MockEngine::builder()
@@ -999,7 +1005,9 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
             "ApplicationType",
             vec![
                 prop("title", "String", "TEXT", true, None, None, None, false),
-                // Required genuine EntityReference → candidate_id FK.
+                // Required genuine EntityReference → candidate_id FK. This is
+                // ALSO detected as a ScalarRef parent candidate, which triggers
+                // the parent-candidates injection path in entity.rs/ddl.rs.
                 prop(
                     "candidate_id",
                     "Uuid",
@@ -1012,16 +1020,24 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
                 ),
             ],
         )
+        .with_ref_target(
+            "candidate_id",
+            "ApplicationType",
+            mock_schema(
+                "recruiting/json/CandidateType.json",
+                "CandidateType",
+                "candidate",
+                "recruiting",
+                "entity_reference",
+            ),
+        )
+        .with_parent_candidate(ParentCandidate {
+            child_title: "ApplicationType".to_string(),
+            parent_title: "CandidateType".to_string(),
+            field_name: "candidate_id".to_string(),
+            source: DetectionSource::ScalarRef,
+        })
         .build();
-
-    // The relationship is ALSO a parent candidate (ScalarRef): the injection
-    // path fires and previously won dedup with hardcoded nullable output.
-    let parent_candidates = vec![ParentCandidate {
-        child_title: "ApplicationType".to_string(),
-        parent_title: "CandidateType".to_string(),
-        field_name: "candidate".to_string(),
-        source: DetectionSource::ScalarRef,
-    }];
 
     let config = test_domain_config();
     let project = test_project_config();
@@ -1029,8 +1045,7 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
 
     // 1. Entity model: required ref + parent candidate → Uuid (non-Option).
-    let entity_gen = generate::db::entity::SeaOrmEntityGenerator::new(Path::new("/tmp/out"))
-        .with_parent_candidates(parent_candidates.clone());
+    let entity_gen = generate::db::entity::SeaOrmEntityGenerator::new(Path::new("/tmp/out"));
     let entity_files = entity_gen
         .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
         .await
@@ -1050,7 +1065,7 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
         "required entity ref with parent candidate must NOT be Option<Uuid>. Got:\n{entity}"
     );
 
-    // 2. Repository emitter: required ref → Set(v) (unaffected by injection).
+    // 2. Repository emitter: required ref → Set(v).
     let emitter = generate::ddd::repository_emitter::RepositoryImplEmitter;
     let repo_code = emitter
         .emit(
@@ -1072,8 +1087,8 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
         "required entity ref must NOT emit Set(Some(v)). Got:\n{repo_code}"
     );
 
-    // 3. Create DTO: required ref → non-Option uuid::Uuid (unaffected by injection).
-    let tmp = std::env::temp_dir().join("required-genuine-ref-pc-dto");
+    // 3. DTO: required ref → non-Option uuid::Uuid in the CREATE DTO.
+    let tmp = std::env::temp_dir().join("required-parent-candidate-dto");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     let dto_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
@@ -1081,6 +1096,7 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
         .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
         .await
         .unwrap();
+
     let create_dto = dto_files
         .iter()
         .find(|f| f.path.to_string_lossy().contains("dto_create"))
@@ -1094,23 +1110,6 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
     assert!(
         !create_dto.contains("pub candidate_id: Option<uuid::Uuid>"),
         "create DTO required entity ref must NOT be Option<uuid::Uuid>. Got:\n{create_dto}"
-    );
-
-    // 4. DDL: required ref + parent candidate → NOT NULL UUID column.
-    let ddl_gen = generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"))
-        .with_parent_candidates(parent_candidates);
-    let ddl_files = ddl_gen
-        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
-        .await
-        .unwrap();
-    let ddl = ddl_files
-        .iter()
-        .map(|f| f.content.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        ddl.contains("candidate_id UUID NOT NULL"),
-        "DDL required entity ref with parent candidate must be NOT NULL. Got:\n{ddl}"
     );
 }
 

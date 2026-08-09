@@ -1554,16 +1554,12 @@ impl GrafeoEngine {
                             entity_col.classification = Some(
                                 codegraph_type_contracts::RefClassificationKind::EntityReference,
                             );
-                            // VO→entity FK columns are always nullable: the DTO and
-                            // repository generators model the VO as a nested child
-                            // table, so no create command ever supplies a value for
-                            // this column. Deriving nullability from the schema's
-                            // `required` makes required VO refs unmaterializable
-                            // (NOT NULL violation on every create).
-                            //
-                            // Genuine entity targets are NOT overridden: the base
-                            // column already derived `is_optional: !prop.is_required`
-                            // so the schema's `required` is honored (source of truth).
+                            // VO→entity synthetic FK columns are always nullable: the
+                            // DTO and repository generators model the VO as a nested
+                            // child table, so no create command ever supplies a value
+                            // for this column. Genuine EntityReference columns honor
+                            // the schema's `required` (is_optional was already derived
+                            // from !prop.is_required above).
                             if vo_entity.is_some() {
                                 entity_col.is_optional = true;
                             }
