@@ -46,9 +46,7 @@ use utoipa::OpenApi;
 {% endfor %}
         crate::error::ErrorResponse,
         crate::error::ErrorBody,
-{% if requires_error_detail_schema %}
         crate::error::FieldError,
-{% endif %}
     )),
     security(("ApiKeyAuth" = [])),
     tags(
