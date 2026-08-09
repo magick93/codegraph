@@ -1113,6 +1113,201 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
     );
 }
 
+/// Issue #59: include-path fetch generation must not assume FK fields are
+/// `Option<uuid::Uuid>`. When the schema marks a genuine EntityReference as
+/// `required`, the entity model emits `Uuid` and the DTO emits `uuid::Uuid`,
+/// so the repository fetch code must access the field directly (no
+/// `.and_then()` / `if let Some` / `match ... Some(v)`). Optional FKs must
+/// keep the Option patterns.
+#[tokio::test]
+async fn required_include_fk_emits_direct_lookup_not_option_patterns() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "surveys/json/SurveyType.json",
+            "SurveyType",
+            "survey",
+            "surveys",
+            "entity_reference",
+        ))
+        .with_schema(mock_schema(
+            "surveys/json/SurveyResponseType.json",
+            "SurveyResponseType",
+            "survey_response",
+            "surveys",
+            "entity_reference",
+        ))
+        .with_properties(
+            "SurveyResponseType",
+            vec![
+                prop("title", "String", "TEXT", true, None, None, None, false),
+                // Required genuine EntityReference → survey_id FK is Uuid.
+                prop(
+                    "survey_id",
+                    "Uuid",
+                    "UUID",
+                    true,
+                    Some("entity_reference"),
+                    Some(RefClassificationKind::EntityReference),
+                    Some("surveys/json/SurveyType.json"),
+                    false,
+                ),
+            ],
+        )
+        .build();
+
+    let config = test_domain_config();
+
+    // Required-FK include path: survey_id is a required genuine EntityReference.
+    let required_path = codegraph::generate::api::include_path::ResolvedIncludePath {
+        alias: "survey".to_string(),
+        segments: vec![codegraph::generate::api::include_path::IncludeSegment {
+            entity_name: "SurveyType".to_string(),
+            schema_title: "SurveyType".to_string(),
+            module_name: "survey".to_string(),
+            domain: "surveys".to_string(),
+            table: "\"surveys\".\"survey\"".to_string(),
+            fk_column: "survey_id".to_string(),
+            reverse_fk_column: "survey_id".to_string(),
+            fk_is_required: true,
+            reverse_fk_is_required: false,
+            is_array: false,
+            child_table_override: None,
+        }],
+        response_rust_type: "SurveyResponse".to_string(),
+        fetch_method: "fetch_survey_for_survey_response".to_string(),
+        batch_fetch_method: "fetch_survey_batch_for_survey_response".to_string(),
+    };
+
+    let emitter = generate::ddd::repository_emitter::RepositoryImplEmitter;
+    let code = emitter
+        .emit(
+            &mock,
+            "SurveyResponseType",
+            "surveys",
+            &config,
+            None,
+            &[required_path],
+        )
+        .await
+        .unwrap();
+
+    // Batch one-to-one lookup: direct target lookup, no inner .and_then on the FK.
+    assert!(
+        code.contains("target_by_id.get(&s.survey_id).cloned()"),
+        "required FK must look up the target directly. Got:\n{code}"
+    );
+    assert!(
+        !code.contains("s.survey_id.and_then(|fk|"),
+        "required FK must NOT use .and_then() on the FK field. Got:\n{code}"
+    );
+    // Batch FK collection: no `if let Some(fk) = source.survey_id`.
+    assert!(
+        !code.contains("if let Some(fk) = source.survey_id"),
+        "required FK must NOT use `if let Some` to collect. Got:\n{code}"
+    );
+    assert!(
+        code.contains("fk_values.push(source.survey_id);"),
+        "required FK must be pushed directly into fk_values. Got:\n{code}"
+    );
+    // Single fetch: no `match source.survey_id { Some(v) => ... }`.
+    assert!(
+        !code.contains("match source.survey_id"),
+        "required FK must NOT use match on the FK field. Got:\n{code}"
+    );
+    assert!(
+        code.contains("let fk_value = source.survey_id;"),
+        "required FK must be read directly in the single fetch. Got:\n{code}"
+    );
+}
+
+/// Optional FK include paths must keep the Option patterns
+/// (`.and_then()`, `if let Some`, `match ... Some(v)`) — the regression test
+/// for the required case must not have removed the optional path.
+#[tokio::test]
+async fn optional_include_fk_keeps_option_patterns() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "common/json/PersonType.json",
+            "PersonType",
+            "person",
+            "common",
+            "entity_reference",
+        ))
+        .with_schema(mock_schema(
+            "common/json/WorkerType.json",
+            "WorkerType",
+            "worker",
+            "common",
+            "entity_reference",
+        ))
+        .with_properties(
+            "WorkerType",
+            vec![
+                prop("title", "String", "TEXT", true, None, None, None, false),
+                // Optional genuine EntityReference → person_id FK is Option<Uuid>.
+                prop(
+                    "person_id",
+                    "Uuid",
+                    "UUID",
+                    false,
+                    Some("entity_reference"),
+                    Some(RefClassificationKind::EntityReference),
+                    Some("common/json/PersonType.json"),
+                    false,
+                ),
+            ],
+        )
+        .build();
+
+    let config = test_domain_config();
+
+    let optional_path = codegraph::generate::api::include_path::ResolvedIncludePath {
+        alias: "person".to_string(),
+        segments: vec![codegraph::generate::api::include_path::IncludeSegment {
+            entity_name: "PersonType".to_string(),
+            schema_title: "PersonType".to_string(),
+            module_name: "person".to_string(),
+            domain: "common".to_string(),
+            table: "\"common\".\"person\"".to_string(),
+            fk_column: "person_id".to_string(),
+            reverse_fk_column: "worker_id".to_string(),
+            fk_is_required: false,
+            reverse_fk_is_required: false,
+            is_array: false,
+            child_table_override: None,
+        }],
+        response_rust_type: "PersonResponse".to_string(),
+        fetch_method: "fetch_person_for_worker".to_string(),
+        batch_fetch_method: "fetch_person_batch_for_worker".to_string(),
+    };
+
+    let emitter = generate::ddd::repository_emitter::RepositoryImplEmitter;
+    let code = emitter
+        .emit(
+            &mock,
+            "WorkerType",
+            "common",
+            &config,
+            None,
+            &[optional_path],
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        code.contains("s.person_id.and_then(|fk| target_by_id.get(&fk).cloned())"),
+        "optional FK must keep the .and_then() lookup. Got:\n{code}"
+    );
+    assert!(
+        code.contains("if let Some(fk) = source.person_id"),
+        "optional FK must keep the if-let collection. Got:\n{code}"
+    );
+    assert!(
+        code.contains("let fk_value = match source.person_id"),
+        "optional FK must keep the match on the FK field. Got:\n{code}"
+    );
+}
+
 // === GenerationReport Tests ===
 
 #[test]
