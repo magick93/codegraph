@@ -797,7 +797,7 @@ async fn build_child_table_info(
                     field_name: field_def.rust_field_name,
                     pg_column_name: field_def.column_name,
                     rust_type: "Uuid".to_string(),
-                    is_nullable: true,
+                    is_nullable: !c.is_required,
                     dto_rust_type: None,
                     pg_cast: None,
                 });

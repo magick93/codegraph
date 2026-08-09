@@ -1,6 +1,5 @@
 ---
 source: crates/codegraph/tests/rest_snapshot_tests.rs
-assertion_line: 159
 expression: "&all_file.content"
 ---
 //! Combined OpenAPI documentation for HR Open API.
@@ -51,7 +50,7 @@ use utoipa::OpenApi;
 
         crate::error::ErrorResponse,
         crate::error::ErrorBody,
-
+        crate::error::FieldError,
     )),
     security(("ApiKeyAuth" = [])),
     tags(

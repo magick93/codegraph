@@ -2141,6 +2141,99 @@ async fn scaffold_error_module() {
     );
 }
 
+/// Structural regression guard for issue #62: every `crate::error::X` type
+/// referenced by the OpenAPI `all.rs` output must be defined by the scaffold
+/// `error.rs` output. The content-only snapshot test could not catch this —
+/// the pre-fix snapshot literally asserted the broken references (E0425 in
+/// generated apps).
+#[tokio::test]
+async fn openapi_error_schemas_are_defined_by_error_module() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-openapi-error-refs");
+
+    let scaffold = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
+    let scaffold_files = scaffold
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let error_file = scaffold_files
+        .iter()
+        .find(|f| f.path.ends_with("error.rs"))
+        .expect("Should generate error.rs");
+    let error_content = &error_file.content;
+
+    let openapi = generate::api::openapi::OpenApiGenerator::new(&output_dir);
+    let openapi_files = openapi
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let all_file = openapi_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("openapi/all.rs"))
+        .expect("Should produce openapi/all.rs");
+    let openapi_content = &all_file.content;
+
+    // Manual scan (no regex dependency): read the identifier after each
+    // `crate::error::` occurrence.
+    let mut referenced: Vec<String> = Vec::new();
+    for chunk in openapi_content.split("crate::error::").skip(1) {
+        let ident: String = chunk
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !ident.is_empty() && !referenced.contains(&ident) {
+            referenced.push(ident);
+        }
+    }
+
+    assert!(
+        !referenced.is_empty(),
+        "openapi/all.rs must reference at least one crate::error:: type. Got:\n{openapi_content}"
+    );
+
+    for required in ["ErrorResponse", "ErrorBody", "FieldError"] {
+        assert!(
+            referenced.iter().any(|t| t == required),
+            "openapi/all.rs must reference crate::error::{required}. Got: {referenced:?}\n{openapi_content}"
+        );
+    }
+
+    for ty in &referenced {
+        assert!(
+            error_content.contains(&format!("pub struct {ty}"))
+                || error_content.contains(&format!("pub enum {ty}")),
+            "Issue #62 regression: openapi/all.rs references crate::error::{ty} but \
+             error.rs does not define it.\n\
+             Referenced types: {referenced:?}\n\
+             --- error.rs (definitions) ---\n{error_content}\n\
+             --- openapi/all.rs (usage) ---\n{openapi_content}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn scaffold_generates_middleware() {
     let mock = setup_mock().await;
