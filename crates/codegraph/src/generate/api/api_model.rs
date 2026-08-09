@@ -201,3 +201,18 @@ pub fn resolve_path_segment(
             }
         })
 }
+
+/// Like resolve_path_segment but falls back to a domain-config lookup when
+/// `ec` is `None`. Use this when the entity config may exist in the domain
+/// config but isn't readily available at the call site.
+pub fn resolve_path_segment_with_config(
+    ec: Option<&EntityConfig>,
+    schema_node: &SchemaNode,
+    config: &DomainConfig,
+) -> String {
+    let effective_ec = ec.or_else(|| {
+        let domain = schema_node.domain.as_deref()?;
+        config.domains.get(domain)?.get_entity_config(&schema_node.title)
+    });
+    resolve_path_segment(effective_ec, schema_node)
+}

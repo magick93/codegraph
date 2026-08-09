@@ -83,7 +83,7 @@ impl EntityGenerator for PlaywrightEntityGenerator {
         }
 
         let all_fields =
-            collect_ui_fields(db, schema_title, &immutable_fields, Some(domain)).await?;
+            collect_ui_fields(db, schema_title, &immutable_fields, Some(domain), config).await?;
         let create_fields = all_fields
             .iter()
             .filter(|f| !excluded.contains(&f.name))

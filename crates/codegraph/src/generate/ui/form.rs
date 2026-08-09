@@ -225,7 +225,7 @@ impl EntityGenerator for UiFormGenerator {
             }
         }
 
-        let fields = collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain)).await?;
+        let fields = collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
 
         let create_fields: Vec<UiField> = fields
             .iter()

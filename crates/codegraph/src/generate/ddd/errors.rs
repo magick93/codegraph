@@ -56,20 +56,25 @@ impl DomainGenerator for ErrorGenerator {
             crate::error::Error::Config(format!("failed to query error definitions: {e}"))
         })?;
 
+        let mut seen_codes: std::collections::HashSet<String> = std::collections::HashSet::new();
         let domain_errors: Vec<ErrorDef> = all_errors
             .iter()
             .filter(|e| {
                 e.domain.as_deref() == Some(domain)
                     || e.domain.as_deref() == Some("common")
             })
-            .map(|e| {
+            .filter_map(|e| {
                 let normalized = e.code.replace('-', "_").replace(' ', "_");
                 let variant_name = codegraph_naming::to_pascal_case(&normalized);
-                ErrorDef {
-                    code: e.code.clone(),
-                    description: e.description.clone(),
-                    http_status: e.http_status,
-                    variant_name,
+                if seen_codes.insert(variant_name.clone()) {
+                    Some(ErrorDef {
+                        code: e.code.clone(),
+                        description: e.description.clone(),
+                        http_status: e.http_status,
+                        variant_name,
+                    })
+                } else {
+                    None
                 }
             })
             .collect();

@@ -10,7 +10,7 @@ use super::form::{field_name_to_label, ui_field_from_property};
 use super::page::{ChildSection, UiField};
 use crate::error::Result;
 use crate::generate::api::router;
-use crate::generate::api::api_model::resolve_path_segment;
+use crate::generate::api::api_model::{resolve_path_segment, resolve_path_segment_with_config};
 
 /// Collects UI fields from graph properties, applying standard classification
 /// and codelist value resolution. Shared across page, form, and type generators.
@@ -19,6 +19,7 @@ pub async fn collect_ui_fields(
     schema_title: &str,
     immutable_fields: &[String],
     current_domain: Option<&str>,
+    config: &DomainConfig,
 ) -> Result<Vec<UiField>> {
     let all_props = match current_domain {
         Some(domain) => db.get_properties_in_domain(schema_title, domain).await?,
@@ -299,7 +300,7 @@ pub async fn collect_ui_fields(
                 if let Some(ref_schema) = resolved {
                     if let Some(ref domain) = ref_schema.domain {
                         field.ref_api_path =
-                            Some(format!("/{}/{}", domain, resolve_path_segment(None, &ref_schema)));
+                            Some(format!("/{}/{}", domain, resolve_path_segment_with_config(None, &ref_schema, config)));
                     }
                 }
             }
@@ -410,7 +411,7 @@ pub async fn collect_child_sections(
             // Collect scalar fields for the child
             let immutable_fields: Vec<String> = Vec::new();
             let fields =
-                collect_ui_fields(db, config_key, &immutable_fields, Some(domain_name)).await?;
+                collect_ui_fields(db, config_key, &immutable_fields, Some(domain_name), domain_config).await?;
 
             // Check if this child has its own children (for nested accordions)
             let grandchildren = db.get_child_schemas(config_key).await.unwrap_or_default();
@@ -444,7 +445,7 @@ pub async fn collect_child_sections(
             let path_segment = resolve_path_segment(None, &child);
             let immutable_fields: Vec<String> = Vec::new();
             let fields =
-                collect_ui_fields(db, &child.title, &immutable_fields, Some(current_domain))
+                collect_ui_fields(db, &child.title, &immutable_fields, Some(current_domain), domain_config)
                     .await?;
 
             let grandchildren = db.get_child_schemas(&child.title).await.unwrap_or_default();

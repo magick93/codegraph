@@ -185,13 +185,32 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             entity_cfg,
             &config.defaults.type_suffix,
         ) {
+            // Honor the schema's `required` when the FK corresponds to a real
+            // property on this schema (e.g. a ScalarRef to an entity): the JSON
+            // schema is the source of truth, so a required entity ref must stay
+            // NOT NULL even though the parent-candidate injection runs first and
+            // wins the dedup. Only synthetic ArrayItems FKs (no child-side
+            // property) default to nullable.
+            let prop_is_required = props
+                .iter()
+                .find(|p| {
+                    codegraph_core::types::resolve_field(p).column_name == fk_field
+                        || p.pg_column_name == fk_field
+                })
+                .map(|p| p.is_required)
+                .unwrap_or(false);
+            let is_nullable = !prop_is_required;
             columns.push(EntityColumn {
                 field_name: fk_field.clone(),
-                rust_type: "Option<Uuid>".to_string(),
+                rust_type: if is_nullable {
+                    "Option<Uuid>".to_string()
+                } else {
+                    "Uuid".to_string()
+                },
                 sea_orm_type: "Uuid".to_string(),
                 column_name: fk_field,
                 is_primary_key: false,
-                is_nullable: true,
+                is_nullable,
                 pg_cast: None,
                 sea_orm_attr: None,
             });

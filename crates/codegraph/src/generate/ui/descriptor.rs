@@ -191,7 +191,7 @@ impl EntityGenerator for UiDescriptorGenerator {
 
         // Collect base UI fields
         let ui_fields =
-            collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain)).await?;
+            collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
 
         // Get raw properties for validation metadata and UI override data
         let properties = db.get_properties(schema_title).await?;

@@ -1560,7 +1560,13 @@ impl GrafeoEngine {
                             // this column. Deriving nullability from the schema's
                             // `required` makes required VO refs unmaterializable
                             // (NOT NULL violation on every create).
-                            entity_col.is_optional = true;
+                            //
+                            // Genuine entity targets are NOT overridden: the base
+                            // column already derived `is_optional: !prop.is_required`
+                            // so the schema's `required` is honored (source of truth).
+                            if vo_entity.is_some() {
+                                entity_col.is_optional = true;
+                            }
                             if let Some(entity) = &vo_entity {
                                 entity_col.fk_target = Some(FkTarget {
                                     schema: entity

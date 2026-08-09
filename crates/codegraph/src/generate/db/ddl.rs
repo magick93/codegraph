@@ -996,10 +996,26 @@ impl DdlGenerator {
             entity_cfg,
             &config.defaults.type_suffix,
         ) {
+            // Honor the schema's `required` when the FK corresponds to a real
+            // property on this schema (e.g. a ScalarRef to an entity): the JSON
+            // schema is the source of truth, so a required entity ref must stay
+            // NOT NULL even though the parent-candidate injection runs first and
+            // wins the dedup. Only synthetic ArrayItems FKs (no child-side
+            // property) default to nullable.
+            let fk_is_required = db
+                .get_properties(schema_title)
+                .await
+                .unwrap_or_default()
+                .iter()
+                .any(|p| {
+                    (codegraph_core::types::resolve_field(p).column_name == fk_col
+                        || p.pg_column_name == fk_col)
+                        && p.is_required
+                });
             columns.push(ColumnDef {
                 name: fk_col.clone(),
                 pg_type: "UUID".to_string(),
-                nullable: true,
+                nullable: !fk_is_required,
                 default: None,
                 is_primary_key: false,
                 is_array: false,
