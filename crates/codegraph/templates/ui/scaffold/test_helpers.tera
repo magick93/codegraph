@@ -22,7 +22,7 @@ export async function createEntityViaApi(
   path: string,
   data: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
-  const res = await fetch(`${BASE_URL}/api${path}`, {
+  const res = await fetch(`${BASE_URL}/api/v1${path}`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify(data),
@@ -36,7 +36,7 @@ export async function createEntityViaApi(
 
 /** Delete an entity via the API (bypasses UI for fast teardown). */
 export async function deleteEntityViaApi(path: string, id: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/api${path}/${id}`, {
+  const res = await fetch(`${BASE_URL}/api/v1${path}/${id}`, {
     method: 'DELETE',
     headers: authHeaders(),
   });
@@ -73,7 +73,7 @@ export async function bulkCreateEntitiesViaApi(
   path: string,
   items: Record<string, unknown>[],
 ): Promise<{ success: Record<string, unknown>[]; failed: { index: number; error: string }[] }> {
-  const res = await fetch(`${BASE_URL}/api${path}`, {
+  const res = await fetch(`${BASE_URL}/api/v1${path}`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify(items),
@@ -90,7 +90,7 @@ export async function bulkCreateRaw(
   body: unknown,
   headers?: Record<string, string>,
 ): Promise<Response> {
-  return fetch(`${BASE_URL}/api${path}`, {
+  return fetch(`${BASE_URL}/api/v1${path}`, {
     method: 'POST',
     headers: headers ?? authHeaders(),
     body: JSON.stringify(body),
@@ -185,7 +185,7 @@ export async function createEntityAsAcme(
   path: string,
   data: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const response = await fetch(`${API_URL}/api${path}`, {
+  const response = await fetch(`${API_URL}/api/v1${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -210,7 +210,7 @@ export async function deleteEntityAsAcme(
   path: string,
   id: string,
 ): Promise<void> {
-  const response = await fetch(`${API_URL}/api${path}/${id}`, {
+  const response = await fetch(`${API_URL}/api/v1${path}/${id}`, {
     method: 'DELETE',
     headers: {
       'Content-Type': 'application/json',
@@ -256,7 +256,7 @@ export async function bulkCreateEntitiesAsAcme(
   path: string,
   items: Record<string, unknown>[],
 ): Promise<{ success: Record<string, unknown>[]; failed: { index: number; error: string }[] }> {
-  const response = await fetch(`${API_URL}/api${path}`, {
+  const response = await fetch(`${API_URL}/api/v1${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -280,7 +280,7 @@ export async function createEntityAsHighfive(
   path: string,
   data: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const response = await fetch(`${API_URL}/api${path}`, {
+  const response = await fetch(`${API_URL}/api/v1${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

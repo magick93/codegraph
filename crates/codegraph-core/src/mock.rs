@@ -26,6 +26,13 @@ pub struct MockEngine {
     action_nodes: Mutex<HashMap<String, ActionNode>>,
     parameter_definitions: Mutex<HashMap<String, ParameterDefinitionNode>>,
     data_bindings: Mutex<HashMap<String, DataBindingNode>>,
+    api_resources: Mutex<HashMap<String, ApiResourceNode>>,
+    api_operations: Mutex<HashMap<String, ApiOperationNode>>,
+    interactions: Mutex<HashMap<String, InteractionNode>>,
+    http_endpoints: Mutex<HashMap<String, HttpEndpointNode>>,
+    pipelines: Mutex<HashMap<String, PipelineNode>>,
+    error_definitions: Mutex<HashMap<String, ErrorDefinitionNode>>,
+    permissions: Mutex<HashMap<String, PermissionNode>>,
     start_time: Instant,
 }
 
@@ -49,6 +56,13 @@ impl MockEngine {
             action_nodes: Mutex::new(HashMap::new()),
             parameter_definitions: Mutex::new(HashMap::new()),
             data_bindings: Mutex::new(HashMap::new()),
+            api_resources: Mutex::new(HashMap::new()),
+            api_operations: Mutex::new(HashMap::new()),
+            interactions: Mutex::new(HashMap::new()),
+            http_endpoints: Mutex::new(HashMap::new()),
+            pipelines: Mutex::new(HashMap::new()),
+            error_definitions: Mutex::new(HashMap::new()),
+            permissions: Mutex::new(HashMap::new()),
             start_time: Instant::now(),
         }
     }
@@ -515,6 +529,80 @@ impl GraphIngestor for MockEngine {
         Ok(id)
     }
 
+    // ── API metamodel ingestion ───────────────────────────────────────
+
+    async fn ingest_api_resource(&self, node: &ApiResourceNode) -> Result<String, GraphError> {
+        let id = format!("ar:{}", node.name);
+        self.api_resources
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_api_operation(
+        &self,
+        node: &ApiOperationNode,
+    ) -> Result<String, GraphError> {
+        let id = format!("ao:{}", node.name);
+        self.api_operations
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_interaction(&self, node: &InteractionNode) -> Result<String, GraphError> {
+        let id = format!("ia:{}", Uuid::new_v4());
+        self.interactions
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_http_endpoint(
+        &self,
+        node: &HttpEndpointNode,
+    ) -> Result<String, GraphError> {
+        let id = format!("he:{}", Uuid::new_v4());
+        self.http_endpoints
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_pipeline(&self, node: &PipelineNode) -> Result<String, GraphError> {
+        let id = format!("pl:{}", node.name);
+        self.pipelines
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_error_definition(
+        &self,
+        node: &ErrorDefinitionNode,
+    ) -> Result<String, GraphError> {
+        let id = format!("ed:{}", node.code);
+        self.error_definitions
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_permission(&self, node: &PermissionNode) -> Result<String, GraphError> {
+        let id = format!("pm:{}", node.name);
+        self.permissions
+            .lock()
+            .unwrap()
+            .insert(id.clone(), node.clone());
+        Ok(id)
+    }
+
     async fn finalize(&self) -> Result<IngestStats, GraphError> {
         let schemas = self.schemas.lock().unwrap();
         let properties = self.properties.lock().unwrap();
@@ -527,6 +615,7 @@ impl GraphIngestor for MockEngine {
         let param = self.parameter_definitions.lock().unwrap();
 
         let ifml_count = vc.len() + vcomp.len() + evt.len() + act.len() + param.len();
+        let api_res = self.api_resources.lock().unwrap();
 
         Ok(IngestStats {
             schema_count: schemas.len(),
@@ -534,6 +623,7 @@ impl GraphIngestor for MockEngine {
             codelist_count: codelists.len(),
             enum_value_count: enum_values.values().map(|v| v.len()).sum(),
             ifml_node_count: ifml_count,
+            api_resource_count: api_res.len(),
             duration: self.start_time.elapsed(),
             ..Default::default()
         })

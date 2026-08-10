@@ -11,6 +11,8 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
+use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment, resolve_path_segment_with_config};
+
 /// Parent entity metadata exposed to the store template.
 #[derive(Debug, Clone, Serialize)]
 pub struct UiParentInfo {
@@ -84,10 +86,10 @@ pub async fn resolve_grandparent(
                     };
                     return Some(UiGrandparentInfo {
                         param_name: crate::generate::api::router::param_name_from_path_segment(
-                            &gp_schema.api_path_segment,
+                            &resolve_path_segment_with_config(None, &gp_schema, config),
                         ),
                         domain: gp_domain,
-                        path_segment: gp_schema.api_path_segment.clone(),
+                        path_segment: resolve_path_segment_with_config(None, &gp_schema, config),
                         entity_name: gp_schema.rust_type_name.clone(),
                     });
                 }
@@ -124,10 +126,10 @@ pub async fn resolve_grandparent(
             if let Ok(Some(gp_schema)) = db.get_schema_in_domain(&pc.parent_title, domain).await {
                 return Some(UiGrandparentInfo {
                     param_name: crate::generate::api::router::param_name_from_path_segment(
-                        &gp_schema.api_path_segment,
+                        &resolve_path_segment_with_config(None, &gp_schema, config),
                     ),
                     domain: domain.to_string(),
-                    path_segment: gp_schema.api_path_segment.clone(),
+                    path_segment: resolve_path_segment_with_config(None, &gp_schema, config),
                     entity_name: gp_schema.rust_type_name.clone(),
                 });
             }
@@ -179,8 +181,6 @@ impl EntityGenerator for UiStoreGenerator {
         let entity_name = schema.rust_type_name.clone();
         let module_name = schema.pg_table_name.clone();
         let domain = domain.to_string();
-        let path_segment = schema.api_path_segment.clone();
-
         if module_name.is_empty() {
             return Ok(Vec::new());
         }
@@ -190,9 +190,10 @@ impl EntityGenerator for UiStoreGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
+
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
         let has_workflow = workflow
@@ -244,10 +245,10 @@ impl EntityGenerator for UiStoreGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &parent_schema.api_path_segment,
+                                        &resolve_path_segment_with_config(None, &parent_schema, config),
                                     ),
                                 domain: parent_domain,
-                                path_segment: parent_schema.api_path_segment.clone(),
+                                path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent: gp,
@@ -302,10 +303,10 @@ impl EntityGenerator for UiStoreGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &parent_schema.api_path_segment,
+                                        &resolve_path_segment_with_config(None, &parent_schema, config),
                                     ),
                                 domain: domain.clone(),
-                                path_segment: parent_schema.api_path_segment.clone(),
+                                path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent: gp,

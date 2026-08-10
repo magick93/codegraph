@@ -18,6 +18,8 @@ use codegraph_config::DomainConfig;
 use super::include_path::{resolve_include_paths, ResolvedIncludePath};
 use super::router::{ChildInfo, CrossRefInfo};
 
+use super::api_model::{resolve_entity_operations, resolve_path_segment};
+
 #[derive(Debug, Serialize)]
 pub struct HandlerContext {
     pub entity_name: String,
@@ -55,6 +57,8 @@ pub struct HandlerContext {
     pub has_workflow: bool,
     /// Whether this entity has full-text search enabled.
     pub has_fts: bool,
+    /// REST surface for full-text search: "query_param", "dedicated", or "both".
+    pub fts_rest_mode: String,
     /// Whether this entity has semantic search (pgvector embeddings) enabled.
     pub has_embeddings: bool,
     /// Fields exposed as JSON:API `?filter[field]=value` query params.
@@ -122,7 +126,6 @@ impl EntityGenerator for HandlerGenerator {
         let entity_name = schema.rust_type_name.clone();
         let module_name = schema.pg_table_name.clone();
         let domain = domain.to_string();
-        let path_segment = schema.api_path_segment.clone();
 
         if module_name.is_empty() {
             return Ok(Vec::new());
@@ -133,9 +136,10 @@ impl EntityGenerator for HandlerGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
+
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let tag = entity_cfg
             .and_then(|ec| ec.tag.clone())
@@ -158,6 +162,9 @@ impl EntityGenerator for HandlerGenerator {
         let has_embeddings = search
             .map(|s| !s.embedding_columns.is_empty())
             .unwrap_or(false);
+        let fts_rest_mode = entity_cfg
+            .map(|ec| ec.search.fts_rest_mode.clone())
+            .unwrap_or_else(|| "query_param".to_string());
 
         let filter_fields = resolve_filter_fields(
             db,
@@ -198,7 +205,7 @@ impl EntityGenerator for HandlerGenerator {
                     if let Ok(Some(parent_schema)) =
                         db.get_schema_in_domain(parent_title, &domain).await
                     {
-                        resolved_parent_path_segment = Some(parent_schema.api_path_segment.clone());
+                        resolved_parent_path_segment = Some(resolve_path_segment(None, &parent_schema));
                         resolved_parent_module_name = Some(parent_schema.pg_table_name.clone());
                         resolved_parent_domain = if config
                             .domains
@@ -267,7 +274,7 @@ impl EntityGenerator for HandlerGenerator {
                     if let Ok(Some(parent_schema)) =
                         db.get_schema_in_domain(&pc.parent_title, &domain).await
                     {
-                        resolved_parent_path_segment = Some(parent_schema.api_path_segment.clone());
+                        resolved_parent_path_segment = Some(resolve_path_segment(None, &parent_schema));
                         resolved_parent_module_name = Some(parent_schema.pg_table_name.clone());
                         resolved_parent_domain = Some(domain.clone());
                     } else {
@@ -296,7 +303,7 @@ impl EntityGenerator for HandlerGenerator {
                     resolved_children.push(ChildInfo {
                         entity_name: child_schema.rust_type_name.clone(),
                         module_name: child_schema.pg_table_name.clone(),
-                        path_segment: child_schema.api_path_segment.clone(),
+                        path_segment: resolve_path_segment(None, &child_schema),
                     });
                 } else {
                     resolved_children.push(ChildInfo {
@@ -331,7 +338,7 @@ impl EntityGenerator for HandlerGenerator {
                                         resolved_children.push(ChildInfo {
                                             entity_name: child_schema.rust_type_name.clone(),
                                             module_name: child_schema.pg_table_name.clone(),
-                                            path_segment: child_schema.api_path_segment.clone(),
+                                            path_segment: resolve_path_segment(None, &child_schema),
                                         });
                                     } else {
                                         resolved_children.push(ChildInfo {
@@ -393,7 +400,7 @@ impl EntityGenerator for HandlerGenerator {
                             entity_name: ref_entity_name.to_string(),
                             module_name: ref_schema.pg_table_name.clone(),
                             domain: ref_domain,
-                            path_segment: ref_schema.api_path_segment.clone(),
+                            path_segment: resolve_path_segment(None, &ref_schema),
                             fk_column: fk_col,
                             link_rel,
                         });
@@ -501,14 +508,7 @@ impl EntityGenerator for HandlerGenerator {
                 });
                 if let Some(ref gpt) = gp_title {
                     if let Ok(Some(gp_schema)) = db.get_schema_in_domain(gpt, &domain).await {
-                        let gp_seg = if !gp_schema.api_path_segment.is_empty() {
-                            gp_schema.api_path_segment.clone()
-                        } else {
-                            codegraph_naming::to_kebab_case(super::router::strip_suffix(
-                                gpt,
-                                &config.defaults.type_suffix,
-                            ))
-                        };
+                        let gp_seg = resolve_path_segment(None, &gp_schema);
                         let gp_param = super::router::param_name_from_path_segment(&gp_seg);
                         // Grandparent domain: look up which domain owns it.
                         let gp_domain = config
@@ -658,6 +658,7 @@ impl EntityGenerator for HandlerGenerator {
             status_field,
             has_workflow,
             has_fts,
+            fts_rest_mode,
             has_embeddings,
             filter_fields,
             nested_filter_fields,

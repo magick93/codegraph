@@ -35,7 +35,7 @@ test.describe('Webhook Delivery', () => {
 
     // 2. Subscribe to timecard events via API
     const subResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
       {
         method: 'POST',
         headers: {
@@ -53,7 +53,7 @@ test.describe('Webhook Delivery', () => {
 
     // 3. Create a timecard entity via the API to trigger an event
     // All timecard fields are optional, so empty {} creates a valid entity.
-    await createEntityAsAcme(orgContext, '/timecard/timecard', {});
+    await createEntityAsAcme(orgContext, '/timecard/timecards', {});
 
     // 4. Wait for dispatch worker to drain queue backlog and deliver
     await ownerPage.waitForTimeout(30000);
@@ -98,7 +98,7 @@ test.describe('Webhook Delivery', () => {
 
     // 2. Subscribe via API
     const subResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
       {
         method: 'POST',
         headers: {
@@ -115,7 +115,7 @@ test.describe('Webhook Delivery', () => {
     expect(subResp.ok).toBeTruthy();
 
     // 3. Trigger an event
-    await createEntityAsAcme(orgContext, '/timecard/timecard', {});
+    await createEntityAsAcme(orgContext, '/timecard/timecards', {});
 
     // 4. Wait for dispatch worker to drain queue backlog and attempt delivery
     await ownerPage.waitForTimeout(30000);
@@ -133,7 +133,7 @@ test.describe('Webhook Delivery', () => {
     test.setTimeout(180000);
     // Create endpoint via API with custom headers
     const createResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints`,
       {
         method: 'POST',
         headers: {
@@ -153,7 +153,7 @@ test.describe('Webhook Delivery', () => {
 
     // Subscribe to timecard events
     const subResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
       {
         method: 'POST',
         headers: {
@@ -166,7 +166,7 @@ test.describe('Webhook Delivery', () => {
     expect(subResp.ok).toBeTruthy();
 
     // Trigger event
-    await createEntityAsAcme(orgContext, '/timecard/timecard', {}).catch(() => {});
+    await createEntityAsAcme(orgContext, '/timecard/timecards', {}).catch(() => {});
 
     // Wait for delivery
     await ownerPage.waitForTimeout(30000);
@@ -198,7 +198,7 @@ test.describe('Webhook Delivery', () => {
 
     // Subscribe with a NON-matching event type
     const subResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
       {
         method: 'POST',
         headers: {
@@ -215,7 +215,7 @@ test.describe('Webhook Delivery', () => {
     expect(subResp.ok).toBeTruthy();
 
     // Trigger a 'created' event — should NOT be delivered
-    await createEntityAsAcme(orgContext, '/timecard/timecard', {}).catch(() => {});
+    await createEntityAsAcme(orgContext, '/timecard/timecards', {}).catch(() => {});
 
     await ownerPage.waitForTimeout(30000);
 
@@ -247,7 +247,7 @@ test.describe('Webhook Delivery', () => {
 
     // Subscribe to recruiting domain events
     const subResp = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}/subscriptions`,
       {
         method: 'POST',
         headers: {
@@ -261,7 +261,7 @@ test.describe('Webhook Delivery', () => {
 
     // Trigger a recruiting event by creating a candidate
     // Note: The entity path may vary - this is the path for the candidate entity
-    await createEntityAsAcme(orgContext, '/recruiting/candidate', {
+    await createEntityAsAcme(orgContext, '/recruiting/candidates', {
       name: 'Test Candidate',
     }).catch(() => {});
 

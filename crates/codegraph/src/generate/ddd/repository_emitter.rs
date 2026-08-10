@@ -5,6 +5,7 @@ use codegraph_naming::quote_pg_column;
 use codegraph_type_contracts::RefClassificationKind;
 
 use crate::error::Result;
+use crate::generate::api::api_model::resolve_entity_operations;
 use crate::generate::api::include_path::ResolvedIncludePath;
 use crate::generate::filter_fields::{
     resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
@@ -792,7 +793,7 @@ async fn build_child_table_info(
                     field_name: field_def.rust_field_name,
                     pg_column_name: field_def.column_name,
                     rust_type: "Uuid".to_string(),
-                    is_nullable: true,
+                    is_nullable: !c.is_required,
                     dto_rust_type: None,
                     pg_cast: None,
                 });
@@ -1417,12 +1418,16 @@ async fn build_columns_and_children(
                 is_media: false,
             });
         } else if prop.effective_kind() == Some(RefClassificationKind::EntityReference) {
+            // Nullability honors the schema's `required` (JSON schema is the source
+            // of truth): required refs emit Set(v) against a Uuid model column,
+            // optional refs emit Set(Some(v)) against Option<Uuid>.
+            let is_nullable = !prop.is_required;
             direct_columns.push(TreeColumn {
                 field_name: field_def.rust_field_name,
                 pg_column_name: field_def.column_name,
                 dto_field_name: None,
                 rust_type: "Uuid".to_string(),
-                is_nullable: !prop.is_required,
+                is_nullable,
                 is_entity_ref: true,
                 dto_rust_type: None,
                 is_workflow_managed: is_workflow_field,
@@ -1449,7 +1454,7 @@ async fn build_columns_and_children(
                     pg_column_name: format!("{}_id", field_def.column_name),
                     dto_field_name: None,
                     rust_type: "Uuid".to_string(),
-                    is_nullable: !prop.is_required,
+                    is_nullable: true,
                     is_entity_ref: true,
                     dto_rust_type: None,
                     is_workflow_managed: is_workflow_field,
@@ -1874,12 +1879,8 @@ impl RepositoryImplEmitter {
         let schema_name = domain.to_string();
 
         // Determine enabled operations
-        let operations = config
-            .domains
-            .get(domain)
-            .and_then(|d| d.get_entity_config(schema_title))
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let operations =
+            resolve_entity_operations(db, config, domain, &entity_name).await;
         let has_create = operations.contains(&"create".to_string());
         let has_read = operations.contains(&"read".to_string());
         let has_update = operations.contains(&"update".to_string());
@@ -3925,15 +3926,25 @@ impl RepositoryImplEmitter {
             writeln!(code, "            Some(s) => s,").unwrap();
             writeln!(code, "            None => return Ok(None),").unwrap();
             writeln!(code, "        }};").unwrap();
-            writeln!(
-                code,
-                "        let fk_value = match source.{} {{",
-                seg.fk_column
-            )
-            .unwrap();
-            writeln!(code, "            Some(v) => v,").unwrap();
-            writeln!(code, "            None => return Ok(None),").unwrap();
-            writeln!(code, "        }};").unwrap();
+            if seg.fk_is_required {
+                // Required genuine EntityReference: the FK field is a plain Uuid.
+                writeln!(
+                    code,
+                    "        let fk_value = source.{};",
+                    seg.fk_column
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    code,
+                    "        let fk_value = match source.{} {{",
+                    seg.fk_column
+                )
+                .unwrap();
+                writeln!(code, "            Some(v) => v,").unwrap();
+                writeln!(code, "            None => return Ok(None),").unwrap();
+                writeln!(code, "        }};").unwrap();
+            }
             writeln!(
                 code,
                 "        let target = crate::entity::{}::Entity::find()",
@@ -4086,15 +4097,25 @@ impl RepositoryImplEmitter {
             .unwrap();
             writeln!(code, "        }}").unwrap();
             writeln!(code, "        for row in rows {{").unwrap();
-            writeln!(
-                code,
-                "            let key = match row.{} {{",
-                seg.reverse_fk_column
-            )
-            .unwrap();
-            writeln!(code, "                Some(v) => v,").unwrap();
-            writeln!(code, "                None => continue,").unwrap();
-            writeln!(code, "            }};").unwrap();
+            if seg.reverse_fk_is_required {
+                // Required reverse FK (genuine EntityReference): plain Uuid.
+                writeln!(
+                    code,
+                    "            let key = row.{};",
+                    seg.reverse_fk_column
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    code,
+                    "            let key = match row.{} {{",
+                    seg.reverse_fk_column
+                )
+                .unwrap();
+                writeln!(code, "                Some(v) => v,").unwrap();
+                writeln!(code, "                None => continue,").unwrap();
+                writeln!(code, "            }};").unwrap();
+            }
             writeln!(
                 code,
                 "            result.entry(key).or_default().push({} {{",
@@ -4134,14 +4155,24 @@ impl RepositoryImplEmitter {
             writeln!(code, "            .await?;").unwrap();
             writeln!(code, "        let mut fk_values: Vec<Uuid> = Vec::new();").unwrap();
             writeln!(code, "        for source in &sources {{").unwrap();
-            writeln!(
-                code,
-                "            if let Some(fk) = source.{} {{",
-                seg.fk_column
-            )
-            .unwrap();
-            writeln!(code, "                fk_values.push(fk);").unwrap();
-            writeln!(code, "            }}").unwrap();
+            if seg.fk_is_required {
+                // Required genuine EntityReference: FK field is a plain Uuid.
+                writeln!(
+                    code,
+                    "            fk_values.push(source.{});",
+                    seg.fk_column
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    code,
+                    "            if let Some(fk) = source.{} {{",
+                    seg.fk_column
+                )
+                .unwrap();
+                writeln!(code, "                fk_values.push(fk);").unwrap();
+                writeln!(code, "            }}").unwrap();
+            }
             writeln!(code, "        }}").unwrap();
             writeln!(
                 code,
@@ -4185,12 +4216,23 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code, "        for id in source_ids {{").unwrap();
-            writeln!(
-                code,
-                "            let found = sources.iter().find(|s| s.id == *id).and_then(|s| s.{}.and_then(|fk| target_by_id.get(&fk).cloned()));",
-                seg.fk_column
-            )
-            .unwrap();
+            if seg.fk_is_required {
+                // Required genuine EntityReference: FK field is a plain Uuid,
+                // so look up the target directly (the outer find is still Option).
+                writeln!(
+                    code,
+                    "            let found = sources.iter().find(|s| s.id == *id).and_then(|s| target_by_id.get(&s.{}).cloned());",
+                    seg.fk_column
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    code,
+                    "            let found = sources.iter().find(|s| s.id == *id).and_then(|s| s.{}.and_then(|fk| target_by_id.get(&fk).cloned()));",
+                    seg.fk_column
+                )
+                .unwrap();
+            }
             writeln!(code, "            result.insert(*id, found);").unwrap();
             writeln!(code, "        }}").unwrap();
         }
@@ -4269,15 +4311,25 @@ impl RepositoryImplEmitter {
         writeln!(code, "            Some(s) => s,").unwrap();
         writeln!(code, "            None => return Ok(None),").unwrap();
         writeln!(code, "        }};").unwrap();
-        writeln!(
-            code,
-            "        let fk_value = match intermediate.{} {{",
-            seg1.fk_column
-        )
-        .unwrap();
-        writeln!(code, "            Some(v) => v,").unwrap();
-        writeln!(code, "            None => return Ok(None),").unwrap();
-        writeln!(code, "        }};").unwrap();
+        if seg1.fk_is_required {
+            // Required genuine EntityReference: FK field is a plain Uuid.
+            writeln!(
+                code,
+                "        let fk_value = intermediate.{};",
+                seg1.fk_column
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "        let fk_value = match intermediate.{} {{",
+                seg1.fk_column
+            )
+            .unwrap();
+            writeln!(code, "            Some(v) => v,").unwrap();
+            writeln!(code, "            None => return Ok(None),").unwrap();
+            writeln!(code, "        }};").unwrap();
+        }
         writeln!(
             code,
             "        let leaf = crate::entity::{}::Entity::find()",

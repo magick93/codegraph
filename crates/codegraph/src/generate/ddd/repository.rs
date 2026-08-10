@@ -7,6 +7,7 @@ use codegraph_core::types::ParentCandidate;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::api::api_model::resolve_entity_operations;
 use crate::generate::api::include_path::resolve_include_paths;
 use crate::generate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
 use crate::generate::render_template_with_project;
@@ -90,9 +91,8 @@ impl EntityGenerator for RepositoryTraitGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(schema_title));
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let search = entity_cfg.map(|ec| &ec.search);
         let has_fts = search

@@ -1,8 +1,10 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, CodeList, CompositeColumn, CompositeRange, CompositionTree, EnumValue, EventNode,
-    Extension, ParameterDefinitionNode, ParentCandidate, PropertyNode, SchemaClassificationData,
-    SchemaNode, StructuredSubField, ViewComponentNode, ViewContainerNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
+    CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension, HttpEndpointNode,
+    InteractionNode, ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode,
+    PropertyNode, SchemaClassificationData, SchemaNode, StructuredSubField, ViewComponentNode,
+    ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -204,6 +206,53 @@ pub trait GraphQuerier: Send + Sync {
     async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
         Ok(Vec::new())
     }
+
+    // ── API metamodel query methods ─────────────────────────────────────
+
+    async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_api_resource(&self, _name: &str) -> Result<Option<ApiResourceNode>, GraphError> {
+        Ok(None)
+    }
+
+    async fn get_api_operations(
+        &self,
+        _resource_name: &str,
+    ) -> Result<Vec<ApiOperationNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_interactions(
+        &self,
+        _operation_name: &str,
+    ) -> Result<Vec<InteractionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_http_endpoints(&self) -> Result<Vec<HttpEndpointNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_error_definitions(&self) -> Result<Vec<ErrorDefinitionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_permissions(&self) -> Result<Vec<PermissionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_pipelines(&self) -> Result<Vec<PipelineNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_pipeline_for_endpoint(
+        &self,
+        _endpoint_path: &str,
+    ) -> Result<Option<PipelineNode>, GraphError> {
+        Ok(None)
+    }
 }
 
 /// Check if a VO (value object) schema extends an entity through its allOf
@@ -213,10 +262,30 @@ pub trait GraphQuerier: Send + Sync {
 /// Example: PersonLegalType (VO) allOf → [PersonBaseType, PersonLegalInclusion].
 /// PersonType (entity) also allOf → PersonBaseType and PersonLegalInclusion.
 /// `find_entity_extended_by_vo(db, "PersonLegalType")` returns PersonType.
+///
+/// Entities that extend the VO **directly** take priority: the allOf-parent walk
+/// is ambiguous for shared base VOs (e.g. EventBaseType allOf → PersonBaseType,
+/// which nearly every entity extends), so it can resolve to an unrelated entity.
 pub async fn find_entity_extended_by_vo(
     db: &dyn GraphQuerier,
     vo_title: &str,
 ) -> Result<Option<SchemaNode>, GraphError> {
+    // Tier 1: entities that extend the VO itself.
+    if let Ok(extenders) = db.get_schemas_that_extend(vo_title).await {
+        for extender in &extenders {
+            if extender.title != vo_title
+                && extender.is_entity
+                && !extender.pg_table_name.is_empty()
+            {
+                if let Some(auth) = db.get_schema_by_id(&extender.schema_id).await? {
+                    return Ok(Some(auth));
+                }
+                return Ok(Some(extender.clone()));
+            }
+        }
+    }
+
+    // Tier 2: fall back to the allOf-parent walk.
     let allof_targets = db.get_allof_targets(vo_title).await?;
     for parent_def in &allof_targets {
         if let Ok(extenders) = db.get_schemas_that_extend(parent_def).await {

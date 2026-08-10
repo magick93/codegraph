@@ -89,6 +89,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
                 &entry.schema_title,
                 &no_immutables,
                 Some(&entry.domain),
+                config,
             )
             .await
             {

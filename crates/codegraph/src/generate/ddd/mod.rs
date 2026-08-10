@@ -1,5 +1,6 @@
 pub mod command;
 pub mod dto;
+pub mod errors;
 pub mod event;
 pub mod query;
 pub mod repository;

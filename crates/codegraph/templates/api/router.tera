@@ -5,6 +5,10 @@ use axum::Router;
 
 use crate::app_state::AppState;
 
+// Handwritten extensions — create this file to add custom routes.
+// #[path = "handwritten_routes.rs"]
+// mod handwritten_routes;
+
 pub fn router() -> Router<AppState> {
     Router::new()
 {% for entity in entities %}
@@ -45,6 +49,9 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 {% if entity.has_embeddings %}
         .route("/semantic-search", axum::routing::post({{ entity.module_name }}_handler::semantic_search))
 {% endif %}
+{%- if entity.has_fts and entity.fts_rest_mode != "query_param" %}
+        .route("/search", axum::routing::get({{ entity.module_name }}_handler::search))
+{% endif %}
 {% if entity.has_workflow %}
         .route("/{ {{- entity.param_name -}} }/actions/transition", axum::routing::post({{ entity.module_name }}_workflow::transition))
 {% if entity.has_approval_status %}
@@ -61,5 +68,17 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 {% for child in entity.children %}
         .nest("/{ {{- entity.param_name -}} }/{{ child.path_segment }}", {{ child.module_name }}_routes())
 {% endfor %}
+{% if entity.has_pipeline_layer %}
+        // Pipeline: {{ entity.pipeline_middleware | join(sep=", ") }}
+{% for mw in entity.pipeline_middleware %}
+{% if mw == "auth" %}
+        .route_layer(axum::middleware::from_fn(crate::middleware::auth_middleware))
+{% elif mw == "permission" %}
+        .route_layer(axum::middleware::from_fn(crate::middleware::permission::require_permission))
+{% elif mw == "metrics" %}
+        .route_layer(axum::middleware::from_fn(crate::middleware::metrics_middleware::track_metrics))
+{% endif %}
+{% endfor %}
+{% endif %}
 }
 {% endfor %}

@@ -13,6 +13,8 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
+use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment};
+
 #[derive(Debug, Serialize)]
 pub struct CliCommandContext {
     pub entity_name: String,
@@ -74,7 +76,6 @@ impl EntityGenerator for CliCommandGenerator {
 
         let entity_name = schema.rust_type_name.clone();
         let module_name = schema.pg_table_name.clone();
-        let path_segment = schema.api_path_segment.clone();
 
         if module_name.is_empty() {
             return Ok(Vec::new());
@@ -85,9 +86,10 @@ impl EntityGenerator for CliCommandGenerator {
             .get(domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
+
+        let operations =
+            resolve_entity_operations(db, config, domain, &entity_name).await;
 
         let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
         let has_workflow = workflow

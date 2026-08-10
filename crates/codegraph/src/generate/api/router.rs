@@ -12,6 +12,8 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{DomainGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
+use super::api_model::{resolve_entity_operations, resolve_path_segment};
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ParentInfo {
     pub entity_name: String,
@@ -41,6 +43,7 @@ pub struct CrossRefInfo {
 pub struct RouterContext {
     pub domain: String,
     pub entities: Vec<RouterEntity>,
+    pub has_permission_middleware: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,6 +57,10 @@ pub struct RouterEntity {
     pub has_workflow: bool,
     pub has_approval_status: bool,
     pub has_embeddings: bool,
+    /// Whether this entity has full-text search enabled.
+    pub has_fts: bool,
+    /// REST surface for full-text search: "query_param", "dedicated", or "both".
+    pub fts_rest_mode: String,
     pub role: String,
     /// Named path parameter for this entity's ID (e.g. `"worker_id"`).
     pub param_name: String,
@@ -63,6 +70,10 @@ pub struct RouterEntity {
     pub media_fields: Vec<String>,
     /// When set, this entity supports the /tree endpoint (self-referencing hierarchy).
     pub hierarchy_field: Option<String>,
+    /// Middleware names from the Pipeline that applies to this entity's endpoints.
+    pub pipeline_middleware: Vec<String>,
+    /// True when a non-empty pipeline middleware list exists.
+    pub has_pipeline_layer: bool,
 }
 
 pub struct RouterGenerator {
@@ -169,6 +180,17 @@ impl DomainGenerator for RouterGenerator {
         let mut title_to_entity_idx: HashMap<String, usize> = HashMap::new();
 
         for title in entity_titles {
+            let entity_cfg = config
+                .domains
+                .get(domain)
+                .and_then(|d| d.get_entity_config(title));
+            let generation_mode = entity_cfg
+                .and_then(|ec| ec.generation_mode.as_deref())
+                .unwrap_or(&config.defaults.generation_mode);
+            if generation_mode == "handler_only" || generation_mode == "ddd_only" {
+                continue;
+            }
+
             if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain).await {
                 if !schema.pg_table_name.is_empty() {
                     // Dedup by module name to prevent duplicate route functions
@@ -177,13 +199,8 @@ impl DomainGenerator for RouterGenerator {
                         continue;
                     }
                     let entity_name = &schema.rust_type_name;
-                    let entity_cfg = config
-                        .domains
-                        .get(domain)
-                        .and_then(|d| d.get_entity_config(title));
-                    let operations = entity_cfg
-                        .and_then(|ec| ec.operations.clone())
-                        .unwrap_or_else(|| config.defaults.operations.clone());
+                    let operations =
+                        resolve_entity_operations(db, config, domain, entity_name).await;
 
                     let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
                     let has_workflow = workflow
@@ -196,6 +213,13 @@ impl DomainGenerator for RouterGenerator {
                     let has_embeddings = entity_cfg
                         .map(|ec| !ec.search.embedding_columns.is_empty())
                         .unwrap_or(false);
+                    let has_fts = entity_cfg
+                        .and_then(|ec| ec.search.fts_columns.as_ref())
+                        .map(|cols| !cols.is_empty())
+                        .unwrap_or(false);
+                    let fts_rest_mode = entity_cfg
+                        .map(|ec| ec.search.fts_rest_mode.clone())
+                        .unwrap_or_else(|| "query_param".to_string());
 
                     let media_fields: Vec<String> = db
                         .get_properties(title)
@@ -218,22 +242,26 @@ impl DomainGenerator for RouterGenerator {
                     entities.push(RouterEntity {
                         entity_name: entity_name.clone(),
                         module_name: schema.pg_table_name.clone(),
-                        path_segment: schema.api_path_segment.clone(),
+                        path_segment: resolve_path_segment(entity_cfg, &schema),
                         has_create: operations.contains(&"create".to_string()),
                         has_update: operations.contains(&"update".to_string()),
                         has_delete: operations.contains(&"delete".to_string()),
                         has_workflow,
                         has_approval_status,
                         has_embeddings,
+                        has_fts,
+                        fts_rest_mode,
                         role: entity_cfg
                             .and_then(|ec| ec.role.clone())
                             .unwrap_or_else(|| "root".into()),
-                        param_name: param_name_from_path_segment(&schema.api_path_segment),
+                        param_name: param_name_from_path_segment(&resolve_path_segment(entity_cfg, &schema)),
                         parent: None,
                         children: vec![],
                         cross_refs: vec![],
                         media_fields,
                         hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
+                        pipeline_middleware: Vec::new(),
+                        has_pipeline_layer: false,
                     });
                 }
             }
@@ -413,9 +441,31 @@ impl DomainGenerator for RouterGenerator {
             }
         }
 
+        let perms = db.get_permissions().await.unwrap_or_default();
+        let has_permission_middleware = !perms.is_empty();
+
+        let pipelines = db.get_pipelines().await.unwrap_or_default();
+        let endpoints = db.get_http_endpoints().await.unwrap_or_default();
+
+        for entity in &mut entities {
+            let base_path = format!("/api/v1/{}/{}", domain, entity.path_segment);
+            if let Some(endpoint) = endpoints
+                .iter()
+                .find(|ep| ep.path_template.starts_with(&base_path))
+            {
+                if let Ok(Some(pipeline)) =
+                    db.get_pipeline_for_endpoint(&endpoint.path_template).await
+                {
+                    entity.pipeline_middleware = pipeline.middleware.unwrap_or_default();
+                    entity.has_pipeline_layer = !entity.pipeline_middleware.is_empty();
+                }
+            }
+        }
+
         let ctx = RouterContext {
             domain: domain.to_string(),
             entities,
+            has_permission_middleware,
         };
 
         let content = render_template_with_project(tera, "api/router.tera", &ctx, project)?;

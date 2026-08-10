@@ -6,6 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::api::api_model::resolve_entity_operations;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
@@ -61,14 +62,8 @@ impl EntityGenerator for TestGenerator {
             return Ok(Vec::new());
         }
 
-        let entity_cfg = config
-            .domains
-            .get(&domain)
-            .and_then(|d| d.get_entity_config(&entity_name));
-
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let has_create = operations.contains(&"create".to_string());
 

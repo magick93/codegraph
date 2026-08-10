@@ -44,6 +44,9 @@ use utoipa::OpenApi;
         crate::domain::{{ domain.name }}::{{ entity.module_name }}::dto_response::{{ entity.entity_name }}Response,
 {% endfor %}
 {% endfor %}
+        crate::error::ErrorResponse,
+        crate::error::ErrorBody,
+        crate::error::FieldError,
     )),
     security(("ApiKeyAuth" = [])),
     tags(

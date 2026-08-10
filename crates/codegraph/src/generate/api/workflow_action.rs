@@ -10,6 +10,8 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
+use super::api_model::resolve_path_segment;
+
 #[derive(Debug, Serialize)]
 pub struct WorkflowActionContext {
     pub entity_name: String,
@@ -238,7 +240,7 @@ impl EntityGenerator for WorkflowActionGenerator {
             0
         };
 
-        let param_name = super::router::param_name_from_path_segment(&schema.api_path_segment);
+        let param_name = super::router::param_name_from_path_segment(&resolve_path_segment(entity_cfg, &schema));
         // Resolve parent param name, path segment, and domain for child entities.
         let (parent_param_name, parent_path_segment, parent_domain) = if resolved_role == "child" {
             let pt = entity_cfg.and_then(|ec| ec.parent.clone()).or_else(|| {
@@ -254,14 +256,7 @@ impl EntityGenerator for WorkflowActionGenerator {
             });
             if let Some(ref pt) = pt {
                 if let Ok(Some(parent_schema)) = db.get_schema_in_domain(pt, &domain).await {
-                    let seg = if !parent_schema.api_path_segment.is_empty() {
-                        parent_schema.api_path_segment.clone()
-                    } else {
-                        codegraph_naming::to_kebab_case(super::router::strip_suffix(
-                            pt,
-                            &config.defaults.type_suffix,
-                        ))
-                    };
+                    let seg = resolve_path_segment(None, &parent_schema);
                     let param = super::router::param_name_from_path_segment(&seg);
                     let pdomain = parent_schema
                         .domain
@@ -285,7 +280,7 @@ impl EntityGenerator for WorkflowActionGenerator {
             entity_name: entity_name.clone(),
             module_name: module_name.clone(),
             domain: domain.clone(),
-            path_segment: schema.api_path_segment.clone(),
+            path_segment: resolve_path_segment(entity_cfg, &schema),
             tag,
             has_approval_status: workflow.approval_status_field.is_some(),
             status_field: workflow.status_field.clone(),

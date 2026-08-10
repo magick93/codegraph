@@ -34,6 +34,10 @@ fn default_max_bulk_size() -> usize {
     100
 }
 
+fn default_generation_mode() -> String {
+    "full".to_string()
+}
+
 fn default_type_suffix() -> String {
     "Type".to_string()
 }
@@ -67,6 +71,20 @@ pub struct DefaultsConfig {
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
     #[serde(default = "default_types_import_prefix")]
     pub types_import_prefix: String,
+    /// Default generation mode for entities.
+    /// "full" (default): generate everything.
+    /// "handler_only": generate handler but not router.
+    /// "ddd_only": generate DDD layer (repo, command, query) but not API layer.
+    /// "none": skip all generation for this entity.
+    #[serde(default = "default_generation_mode")]
+    pub generation_mode: String,
+    /// API version prefix used in URL path construction (e.g. "v1" → `/api/v1/...`).
+    #[serde(default = "default_api_version")]
+    pub api_version: String,
+}
+
+fn default_api_version() -> String {
+    "v1".to_string()
 }
 
 impl Default for DefaultsConfig {
@@ -79,6 +97,8 @@ impl Default for DefaultsConfig {
             max_bulk_size: default_max_bulk_size(),
             type_suffix: default_type_suffix(),
             types_import_prefix: default_types_import_prefix(),
+            generation_mode: default_generation_mode(),
+            api_version: default_api_version(),
         }
     }
 }
@@ -315,6 +335,28 @@ pub struct EntityConfig {
     /// Explicit `[]` = disable includes for this entity.
     #[serde(default)]
     pub allow_include: Option<Vec<String>>,
+    /// Generation mode for this entity's handlers/routes.
+    /// "full" (default): generate everything.
+    /// "handler_only": generate handler but not router.
+    /// "ddd_only": generate DDD layer (repo, command, query) but not API layer.
+    /// "none": skip all generation for this entity.
+    #[serde(default)]
+    pub generation_mode: Option<String>,
+    /// Custom per-entity error definitions keyed by error code
+    /// (e.g. "DUPLICATE_EMAIL"). These are ingested as additional
+    /// ErrorDefinition nodes for the entity's domain.
+    #[serde(default)]
+    pub errors: std::collections::HashMap<String, ErrorDefConfig>,
+    /// Operations that do not require a permission check (public endpoints).
+    /// E.g. ["read", "list"] to allow unauthenticated access to read operations.
+    #[serde(default)]
+    pub public_operations: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorDefConfig {
+    pub description: String,
+    pub http_status: i32,
 }
 
 /// Configuration for resolving a related entity into a tree response.
@@ -332,6 +374,10 @@ pub struct TreeIncludeConfig {
 
 fn default_fts_language() -> String {
     "english".to_string()
+}
+
+fn default_fts_rest_mode() -> String {
+    "query_param".to_string()
 }
 
 fn default_embedding_dimensions() -> u32 {
@@ -361,6 +407,12 @@ pub struct SearchConfig {
     /// Vector dimensions for pgvector (default: 1536 for OpenAI text-embedding-ada-002).
     #[serde(default = "default_embedding_dimensions")]
     pub embedding_dimensions: u32,
+    /// REST surface for full-text search. "query_param" (default) exposes FTS
+    /// via ?q= on the list route; "dedicated" generates a standalone
+    /// GET /{entity}/search endpoint with a typed SearchParams struct;
+    /// "both" enables both surfaces.
+    #[serde(default = "default_fts_rest_mode")]
+    pub fts_rest_mode: String,
 }
 
 impl Default for SearchConfig {
@@ -369,6 +421,7 @@ impl Default for SearchConfig {
             fts_columns: None,
             fts_weights: HashMap::new(),
             fts_language: default_fts_language(),
+            fts_rest_mode: default_fts_rest_mode(),
             embedding_columns: Vec::new(),
             embedding_dimensions: default_embedding_dimensions(),
         }
@@ -778,6 +831,7 @@ role = "root"
         assert_eq!(person.search.fts_language, "english");
         assert!(person.search.embedding_columns.is_empty());
         assert_eq!(person.search.embedding_dimensions, 1536);
+        assert_eq!(person.search.fts_rest_mode, "query_param");
     }
 
     #[test]

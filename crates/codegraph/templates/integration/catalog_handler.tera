@@ -14,7 +14,7 @@ use crate::middleware::AuthInfo;
 /// List all available integrations in the catalog.
 #[utoipa::path(
     get,
-    path = "/api/integrations/catalog",
+    path = "/api/{{ project.api_version }}/integrations/catalog",
     tag = "Integrations",
     responses(
         (status = 200, description = "OK"),
@@ -50,7 +50,7 @@ pub async fn list_catalog(
 /// List installations for the current tenant.
 #[utoipa::path(
     get,
-    path = "/api/integrations/installations",
+    path = "/api/{{ project.api_version }}/integrations/installations",
     tag = "Integrations",
     responses(
         (status = 200, description = "OK"),
@@ -98,7 +98,7 @@ pub struct InstallRequest {
 
 #[utoipa::path(
     post,
-    path = "/api/integrations/installations",
+    path = "/api/{{ project.api_version }}/integrations/installations",
     tag = "Integrations",
     request_body = InstallRequest,
     responses(
@@ -166,7 +166,7 @@ pub async fn install_integration(
 /// Uninstall an integration.
 #[utoipa::path(
     delete,
-    path = "/api/integrations/installations/{id}",
+    path = "/api/{{ project.api_version }}/integrations/installations/{id}",
     tag = "Integrations",
     params(("id" = Uuid, Path, description = "Installation ID")),
     responses(
@@ -309,7 +309,7 @@ pub async fn update_installation_settings(
 /// List extension points.
 #[utoipa::path(
     get,
-    path = "/api/integrations/extension-points",
+    path = "/api/{{ project.api_version }}/integrations/extension-points",
     tag = "Integrations",
     responses(
         (status = 200, description = "OK"),

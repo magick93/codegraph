@@ -51,6 +51,7 @@ async fn main() -> codegraph::error::Result<()> {
             )
             .await
         }
+        cli::Commands::Migrate(args) => cmd_migrate(args).await,
         cli::Commands::Classify {
             schemas,
             classifier,
@@ -202,6 +203,20 @@ async fn cmd_generate(
         None => None,
     };
 
+    let api_resources = be
+        .querier()
+        .get_api_resources()
+        .await
+        .map_err(codegraph::error::Error::Graph)?;
+    if api_resources.is_empty() {
+        println!(
+            "No API model nodes found — auto-seeding from domain configuration..."
+        );
+        let stats = codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &config)
+            .await?;
+        println!("Auto-seeded: {stats}");
+    }
+
     // cmd_generate uses a pre-populated backend; schema base dir is unknown here.
     // Pass an empty path so UiCodelistGenerator skips gracefully.
     run_validation(be.querier(), &config).await?;
@@ -227,6 +242,30 @@ async fn cmd_generate(
     if report.has_errors() {
         eprintln!("Generation completed with errors. Some entities were skipped.");
     }
+    Ok(())
+}
+
+async fn cmd_migrate(args: cli::MigrateArgs) -> codegraph::error::Result<()> {
+    let domain_config = codegraph_config::config::parse_domain_config(&args.config)
+        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
+
+    let be = create_backend(&BackendConfig::default())
+        .await
+        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
+
+    println!(
+        "Ingesting API model from domain configuration '{}'...",
+        args.config.display()
+    );
+    let stats =
+        codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config).await?;
+
+    println!("Migration complete: {stats}");
+    println!(
+        "{} API resources, {} operations, {} endpoints, {} interactions created",
+        stats.resources, stats.operations, stats.endpoints, stats.interactions
+    );
+
     Ok(())
 }
 
@@ -298,6 +337,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             database_target: database_target_str,
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
             codegraph_rev: current_git_rev(),
+            api_version: domain_config.defaults.api_version.clone(),
         });
 
         println!(
@@ -357,6 +397,14 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             total_stats.actions += stats.actions;
         }
         println!("Pass 1b complete: {total_stats}");
+    }
+
+    // Pass 1c: Ingest API model from domain configuration
+    {
+        let api_stats =
+            codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config)
+                .await?;
+        println!("Pass 1c complete: {api_stats}");
     }
 
     // Auto-classify

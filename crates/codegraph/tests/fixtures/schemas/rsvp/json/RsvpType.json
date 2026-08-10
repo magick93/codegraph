@@ -1,0 +1,18 @@
+{
+  "$id": "RsvpType.json",
+  "title": "RsvpType",
+  "description": "An RSVP record referencing an event via a required value-object ref",
+  "type": "object",
+  "properties": {
+    "event": {
+      "$ref": "../../common/json/EventBaseType.json",
+      "description": "The event this RSVP is for (required value object that resolves to an entity)"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["Confirmed", "Pending", "Cancelled"]
+    },
+    "timestamp": { "type": "string", "format": "date-time" }
+  },
+  "required": ["event", "status", "timestamp"]
+}

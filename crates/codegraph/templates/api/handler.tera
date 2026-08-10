@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 {% if handler_imports %}{% for import in handler_imports %}{{ import }}
 {% endfor %}{% endif -%}
+use crate::domain::{{ domain }}::errors::{{ domain | pascal_case }}Error;
 {% if has_create %}
 
 /// Accepts either a single item or an array of items for creation.
@@ -45,10 +46,10 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
 #[utoipa::path(
     post,
 {% if role == "child" %}
-    path = "/api/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}",
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}",
     params(("{{ parent_param_name }}" = Uuid, Path, description = "{{ parent_entity }} ID")),
 {% else %}
-    path = "/api/{{ domain }}/{{ path_segment }}",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}",
 {% endif %}
     tag = "{{ tag }}",
     request_body(
@@ -99,10 +100,10 @@ pub async fn create(
 {% else %}
             let id = state.{{ domain }}_{{ module_name }}_commands.create(item, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
 {% endif %}
-                .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to create {{ entity_name }}: {e}"))
+                .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to create {{ entity_name }}: {e}"))
                     .with_correlation_id(correlation_id))?;
             let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-                .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
+                .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
                     .with_correlation_id(correlation_id))?
                 .ok_or_else(|| AppError::internal("Created entity not found")
                     .with_correlation_id(correlation_id))?;
@@ -161,7 +162,7 @@ pub async fn create(
 #[utoipa::path(
     get,
 {% if role == "child" %}
-    path = "/api/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }",
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }",
     params(
         ("{{ parent_param_name }}" = Uuid, Path, description = "{{ parent_entity }} ID"),
         ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
@@ -170,7 +171,7 @@ pub async fn create(
 {% endif %}
     ),
 {% else %}
-    path = "/api/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }",
 {% if has_include %}
     params(
         ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
@@ -207,13 +208,13 @@ pub async fn get_by_id(
     let correlation_id = extract_correlation_id(&headers);
 {% if role == "child" %}
     let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
+        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found under parent {parent_id}"))
             .with_correlation_id(correlation_id))?;
 {% if ancestor_path_params >= 2 %}
     let self_link = format!(
-        "/api/{}/{}/{}/{}/{}/{}",
+        "/api/{{ project.api_version }}/{}/{}/{}/{}/{}/{}",
         "{{ grandparent_domain | default(value=domain) }}",
         "{{ grandparent_path_segment }}",
         _grandparent_id,
@@ -222,7 +223,7 @@ pub async fn get_by_id(
         "{{ path_segment }}",
     );
     let parent_link = format!(
-        "/api/{}/{}/{}/{}/{}",
+        "/api/{{ project.api_version }}/{}/{}/{}/{}/{}",
         "{{ grandparent_domain | default(value=domain) }}",
         "{{ grandparent_path_segment }}",
         _grandparent_id,
@@ -247,7 +248,7 @@ pub async fn get_by_id(
 {% endif %}
 {% else %}
     let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
+        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found"))
             .with_correlation_id(correlation_id))?;
@@ -302,17 +303,17 @@ pub async fn get_by_id(
 {% if ipath.segments | length == 1 %}
 {% if ipath.segments[0].is_array %}
                 included.{{ ipath.segments[0].module_name }} = Some(repo.{{ ipath.fetch_method }}(&tx, id).await
-                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
+                    .map_err(|e| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id))?);
 {% else %}
                 included.{{ ipath.segments[0].module_name }} = repo.{{ ipath.fetch_method }}(&tx, id).await
-                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
+                    .map_err(|e| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id))?;
 {% endif %}
 {% else %}
                 // Dot-notation path: merge into combined response
                 let leaf_resp = repo.{{ ipath.fetch_method }}(&tx, id).await
-                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
+                    .map_err(|e| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id))?;
                 if let Some(val) = leaf_resp {
                     if let Some(ref mut combined) = included.{{ ipath.segments[0].module_name }} {
@@ -353,13 +354,13 @@ pub async fn get_by_id(
 #[utoipa::path(
     put,
 {% if role == "child" %}
-    path = "/api/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }",
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }",
     params(
         ("{{ parent_param_name }}" = Uuid, Path, description = "{{ parent_entity }} ID"),
         ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
     ),
 {% else %}
-    path = "/api/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }",
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
     tag = "{{ tag }}",
@@ -390,7 +391,7 @@ pub async fn update(
 {% if role == "child" %}
     // Verify ownership before update: entity must belong to the parent
     state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
+        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found under parent {parent_id}"))
             .with_correlation_id(correlation_id))?;
@@ -410,10 +411,10 @@ pub async fn update(
     }
 
     state.{{ domain }}_{{ module_name }}_commands.update(id, body, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to update {{ entity_name }}: {e}"))
+        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to update {{ entity_name }}: {e}"))
             .with_correlation_id(correlation_id))?;
     let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
+        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found"))
             .with_correlation_id(correlation_id))?;
@@ -429,13 +430,13 @@ pub async fn update(
 #[utoipa::path(
     delete,
 {% if role == "child" %}
-    path = "/api/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }",
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }",
     params(
         ("{{ parent_param_name }}" = Uuid, Path, description = "{{ parent_entity }} ID"),
         ("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID"),
     ),
 {% else %}
-    path = "/api/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }",
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
     tag = "{{ tag }}",
@@ -463,13 +464,13 @@ pub async fn delete(
 {% if role == "child" %}
     // Verify ownership before delete: entity must belong to the parent
     state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
+        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found under parent {parent_id}"))
             .with_correlation_id(correlation_id))?;
 {% endif %}
     state.{{ domain }}_{{ module_name }}_commands.delete(id, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| {
+        .map_err(|e: {{ domain | pascal_case }}Error| {
             let msg = e.to_string();
             if msg.contains("Entity not found") {
                 AppError::not_found(format!("{{ entity_name }} {id} not found"))
@@ -537,13 +538,13 @@ const ALLOWED_INCLUDE_KEYS: &[&str] = &[
 #[utoipa::path(
     get,
 {% if role == "child" %}
-    path = "/api/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}",
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}",
     params(
         ("{{ parent_param_name }}" = Uuid, Path, description = "{{ parent_entity }} ID"),
         ListParams,
     ),
 {% else %}
-    path = "/api/{{ domain }}/{{ path_segment }}",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}",
     params(ListParams),
 {% endif %}
     tag = "{{ tag }}",
@@ -571,7 +572,7 @@ pub async fn list(
     if let Some(ref q) = params.q {
         if !q.is_empty() {
             let (results, total) = state.{{ domain }}_{{ module_name }}_queries.search(q, params.page, params.page_size, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-                .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to search {{ entity_name }}: {e}"))
+                .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to search {{ entity_name }}: {e}"))
                     .with_correlation_id(correlation_id))?;
             return Ok(Json(serde_json::json!({
                 "data": results,
@@ -602,7 +603,7 @@ pub async fn list(
     filters.insert("{{ parent_ref }}".to_string(), parent_id.to_string());
 {% endif %}
     let (results, total) = state.{{ domain }}_{{ module_name }}_queries.list_filtered(params.page, params.page_size, &filters, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to list {{ entity_name }}: {e}"))
+        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to list {{ entity_name }}: {e}"))
             .with_correlation_id(correlation_id))?;
 {% if has_include %}
     let include_paths: Vec<String> = params.include
@@ -629,7 +630,7 @@ pub async fn list(
             included_map.insert(
                 "{{ ipath.segments[0].module_name }}".to_string(),
                 serde_json::to_value(repo.{{ ipath.batch_fetch_method }}(&tx, &ids).await
-                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
+                    .map_err(|e| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
                         .with_correlation_id(correlation_id))?).unwrap_or_default(),
             );
         }
@@ -661,6 +662,73 @@ pub async fn list(
 {% endif %}
 }
 {% endif %}
+{%- if has_fts %}
+{%- if fts_rest_mode == "dedicated" or fts_rest_mode == "both" %}
+
+/// Query parameters for the {{ entity_name }} search endpoint.
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct SearchParams {
+    /// Full-text search query. Supports natural syntax: quoted phrases, OR, -exclude.
+    pub q: String,
+    #[serde(default = "default_page")]
+    pub page: u64,
+    #[serde(default = "default_page_size")]
+    pub page_size: u64,
+}
+
+/// Full-text search for {{ entity_name }} with ranking.
+#[utoipa::path(
+    get,
+{% if role == "child" %}
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/search",
+    params(
+        ("{{ parent_param_name }}" = Uuid, Path, description = "{{ parent_entity }} ID"),
+        SearchParams,
+    ),
+{% else %}
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/search",
+    params(SearchParams),
+{% endif %}
+    tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_search",
+    responses(
+        (status = 200, description = "OK", body = Vec<{{ entity_name }}Response>),
+        (status = 400, description = "Missing or empty q parameter"),
+    )
+)]
+#[tracing::instrument(skip(state, headers), fields(domain = "{{ domain }}", entity = "{{ module_name }}"))]
+pub async fn search(
+    State(state): State<AppState>,
+    Extension(api_key_info): Extension<ApiKeyInfo>,
+    headers: HeaderMap,
+{% if role == "child" %}
+{% if ancestor_path_params >= 2 %}
+    Path((_grandparent_id, _parent_id)): Path<(Uuid, Uuid)>,
+{% else %}
+    Path(_parent_id): Path<Uuid>,
+{% endif %}
+{% endif %}
+    crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<SearchParams>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let correlation_id = extract_correlation_id(&headers);
+    if params.q.trim().is_empty() {
+        return Err(AppError::bad_request("Missing or empty q parameter")
+            .with_correlation_id(correlation_id));
+    }
+    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.search(&params.q, params.page, params.page_size, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to search {{ entity_name }}: {e}"))
+            .with_correlation_id(correlation_id))?;
+    Ok(Json(serde_json::json!({
+        "data": results,
+        "total": total,
+        "page": params.page,
+        "page_size": params.page_size,
+        "meta": { "correlation_id": correlation_id.to_string() }
+    })))
+}
+{% endif -%}
+{% endif %}
 {% if has_embeddings %}
 
 #[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
@@ -677,7 +745,7 @@ fn default_semantic_limit() -> u64 { 10 }
 /// Semantic similarity search for {{ entity_name }}.
 #[utoipa::path(
     post,
-    path = "/api/{{ domain }}/{{ path_segment }}/semantic-search",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/semantic-search",
     tag = "{{ tag }}",
     request_body = SemanticSearchRequest,
     responses(
@@ -693,7 +761,7 @@ pub async fn semantic_search(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
     let results = state.{{ domain }}_{{ module_name }}_queries.semantic_search(&body.embedding, body.limit, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to run semantic search for {{ entity_name }}: {e}"))
+        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to run semantic search for {{ entity_name }}: {e}"))
             .with_correlation_id(correlation_id))?;
     Ok(Json(serde_json::json!({
         "data": results,
@@ -714,9 +782,9 @@ pub struct TreeParams {
 #[utoipa::path(
     get,
 {% if role == "child" %}
-    path = "/api/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/tree",
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/tree",
 {% else %}
-    path = "/api/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/tree",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/tree",
 {% endif %}
     tag = "{{ tag }}",
     params(
@@ -781,4 +849,30 @@ pub async fn tree(
 
     Ok(Json(rows))
 }
+{% endif %}
+{% if has_create or has_read or has_update or has_delete or has_list %}
+// --- Trait-based extensibility ---
+// Uncomment and implement to override generated handler behavior:
+//
+// #[async_trait]
+// pub trait Custom{{ entity_name }}Handlers {
+//     async fn custom_create(
+//         &self,
+//         state: axum::extract::State<AppState>,
+//         headers: axum::http::HeaderMap,
+//         Json(body): axum::Json<Create{{ entity_name }}Request>,
+//     ) -> Result<axum::response::Response, AppError>;
+// }
+//
+// impl Custom{{ entity_name }}Handlers for AppState {
+//     async fn custom_create(
+//         &self,
+//         state: axum::extract::State<AppState>,
+//         headers: axum::http::HeaderMap,
+//         Json(body): axum::Json<Create{{ entity_name }}Request>,
+//     ) -> Result<axum::response::Response, AppError> {
+//         // Your custom logic here
+//         todo!()
+//     }
+// }
 {% endif %}

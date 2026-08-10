@@ -13,6 +13,8 @@ use codegraph_core::types::resolve_field;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 
+use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment};
+
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::page::UiField;
 
@@ -186,7 +188,6 @@ impl EntityGenerator for UiFormGenerator {
         let entity_name = schema.rust_type_name.clone();
         let module_name = schema.pg_table_name.clone();
         let domain = domain.to_string();
-        let path_segment = schema.api_path_segment.clone();
 
         if module_name.is_empty() {
             return Ok(Vec::new());
@@ -197,9 +198,10 @@ impl EntityGenerator for UiFormGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations = entity_cfg
-            .and_then(|ec| ec.operations.clone())
-            .unwrap_or_else(|| config.defaults.operations.clone());
+        let path_segment = resolve_path_segment(entity_cfg, &schema);
+
+        let operations =
+            resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let has_create = operations.contains(&"create".to_string());
         let has_update = operations.contains(&"update".to_string());
@@ -223,7 +225,7 @@ impl EntityGenerator for UiFormGenerator {
             }
         }
 
-        let fields = collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain)).await?;
+        let fields = collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
 
         let create_fields: Vec<UiField> = fields
             .iter()

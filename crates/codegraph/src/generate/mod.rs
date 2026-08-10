@@ -211,6 +211,9 @@ pub struct ProjectConfig {
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
     pub types_import_prefix: String,
+    /// API version prefix used in URL path construction (e.g. "v1" → `/api/v1/...`).
+    #[serde(default)]
+    pub api_version: String,
     /// Git revision SHA used for fallback path dependencies in generated Cargo.toml.
     /// When domain_types_base is empty, the domain types Cargo.toml uses this rev
     /// to reference codegraph-type-contracts as a git dependency.
@@ -236,6 +239,7 @@ impl Default for ProjectConfig {
             codegraph_rev: String::new(),
             database_target: "postgres".to_string(),
             types_import_prefix: "codegraph_type_contracts".into(),
+            api_version: "v1".into(),
         }
     }
 }
@@ -264,6 +268,30 @@ pub struct GenerationEntry {
     pub domain: String,
     pub pg_schema: String,
     pub is_cyclic: bool,
+}
+
+/// Returns true if the generator name is an API-layer entity generator
+/// (handler, workflow, media, test, UI, CLI, gRPC, playwright).
+/// DDD generators (ddl, entity, repo, command, query, event, dto, lifecycle_trait,
+/// domain_types) are NOT considered API generators.
+pub fn is_api_entity_generator(name: &str) -> bool {
+    matches!(
+        name,
+        "handler"
+            | "workflow_action"
+            | "media_route"
+            | "test"
+            | "ui-page"
+            | "ui-form"
+            | "ui-store"
+            | "ui-e2e-test"
+            | "playwright-entity"
+            | "ui-descriptor"
+            | "ui-shell"
+            | "cli_command"
+            | "grpc_proto"
+            | "grpc_service"
+    )
 }
 
 /// Configuration for the code generation pipeline.
@@ -465,6 +493,14 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let has_grpc = build_plan
         .map(|bp| bp.has_global_gen("grpc_scaffold"))
         .unwrap_or(false);
+    let has_admin_cli = build_plan
+        .and_then(|bp| bp.features.get("has_admin_cli"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let migration_strategy = build_plan
+        .and_then(|bp| bp.features.get("migration_strategy"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("sea-orm");
 
     let order = compute_generation_order(db, config).await?;
     let mut report = report::GenerationReport::new();
@@ -623,6 +659,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     .collect::<Vec<_>>();
 
     let domain_gens: Vec<Box<dyn DomainGenerator>> = vec![
+        Box::new(ddd::errors::ErrorGenerator::new(output_dir)) as Box<dyn DomainGenerator>,
         Box::new(
             api::router::RouterGenerator::new(output_dir)
                 .with_parent_candidates(parent_candidates.clone()),
@@ -659,6 +696,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             has_webhooks,
             has_reports,
             has_grpc,
+            has_admin_cli,
+            migration_strategy,
         )) as Box<dyn GlobalGenerator>,
         Box::new(ui::scaffold::UiScaffoldGenerator::new(
             output_dir,
@@ -763,9 +802,23 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // Within each entity, generators run sequentially.
     let mut entity_results: Vec<(Vec<GeneratedFile>, Vec<report::GenerationError>)> = Vec::new();
     for entry in &order {
+        let generation_mode = config
+            .domains
+            .get(&entry.domain)
+            .and_then(|d| d.get_entity_config(&entry.schema_title))
+            .and_then(|ec| ec.generation_mode.as_deref())
+            .unwrap_or(&config.defaults.generation_mode);
+
+        if generation_mode == "none" {
+            continue;
+        }
+
         let mut entity_files = Vec::new();
         let mut errors = Vec::new();
         for gen in entity_gens.iter() {
+            if generation_mode == "ddd_only" && is_api_entity_generator(gen.name()) {
+                continue;
+            }
             match gen
                 .generate(
                     db,
@@ -1041,6 +1094,7 @@ pub async fn compute_generation_order(
     // Inline/local definitions (parent_schema.is_some()) are excluded since
     // they are generated recursively as child entities from their parent.
     let mut graph_entities_by_domain: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut all_entity_titles: HashSet<String> = HashSet::new();
     for schema in &all_schemas {
         if schema.pg_table_name.is_empty() {
             continue;
@@ -1048,6 +1102,7 @@ pub async fn compute_generation_order(
         if schema.parent_schema.is_some() {
             continue;
         }
+        all_entity_titles.insert(schema.title.clone());
         let domain = schema.domain.as_deref().unwrap_or("");
         if domain.is_empty() || !domain_rank.contains_key(domain) {
             continue;
@@ -1061,6 +1116,17 @@ pub async fn compute_generation_order(
     let mut entries = Vec::new();
     let mut seen_entries = HashSet::new();
     let mut seen_titles: HashSet<String> = HashSet::new();
+
+    // Track which domain currently claims each title, plus whether that claim
+    // came from an explicit config `entities` entry or just graph discovery.
+    // When a title is claimed by a domain that only discovered it via the graph
+    // (cross-domain allOf reference) and a later domain explicitly configures it,
+    // the entry is reassigned to the configured domain. This keeps entity
+    // generators running each title exactly once (no duplicate DDL) while
+    // per-domain generators (openapi, CLI, links) attribute the entity to the
+    // domain that actually owns it.
+    let mut title_claim_domain: HashMap<String, String> = HashMap::new();
+    let mut title_claim_explicit: HashMap<String, bool> = HashMap::new();
 
     for domain_name in &domain_order {
         let domain_entry = match config.domains.get(domain_name.as_str()) {
@@ -1080,10 +1146,14 @@ pub async fn compute_generation_order(
             .cloned()
             .unwrap_or_default();
 
-        // Collect titles: explicitly configured entities + graph-discovered entities
+        // Collect titles: explicitly configured entities + graph-discovered entities.
+        // Explicitly configured entities are honored even when the schema
+        // physically lives in another domain (cross-domain allOf references) —
+        // the graph check only guards against config entries whose schema does
+        // not exist at all.
         let mut domain_titles: BTreeSet<String> = BTreeSet::new();
         for title in &domain_entry.entities {
-            if graph_entities.contains(title.as_str()) {
+            if all_entity_titles.contains(title.as_str()) {
                 domain_titles.insert(title.clone());
             }
         }
@@ -1101,16 +1171,52 @@ pub async fn compute_generation_order(
             if !seen_entries.insert((title.clone(), domain_name.clone())) {
                 continue;
             }
-            if !seen_titles.insert(title.clone()) {
-                continue; // already assigned to a higher-priority domain
+            let explicitly_configured = domain_entry.entities.iter().any(|e| e == title);
+            match seen_titles.get(title.as_str()) {
+                None => {
+                    // First claim.
+                    seen_titles.insert(title.clone());
+                    title_claim_domain.insert(title.clone(), domain_name.clone());
+                    title_claim_explicit.insert(title.clone(), explicitly_configured);
+                    entries.push(GenerationEntry {
+                        schema_title: title.clone(),
+                        domain: domain_name.clone(),
+                        pg_schema: domain_name.clone(),
+                        is_cyclic: false,
+                    });
+                }
+                Some(_) => {
+                    // Already claimed. Reassign to this domain only if this domain
+                    // explicitly configures the title and the current claim came
+                    // from graph discovery alone (cross-domain reference).
+                    let claiming_domain = title_claim_domain
+                        .get(title.as_str())
+                        .cloned()
+                        .unwrap_or_default();
+                    let claim_was_explicit = title_claim_explicit
+                        .get(title.as_str())
+                        .copied()
+                        .unwrap_or(false);
+                    if explicitly_configured && !claim_was_explicit {
+                        // Remove the discovery-only claim, replace with the
+                        // configured domain's entry.
+                        if let Some(pos) = entries.iter().position(|e| {
+                            e.schema_title == *title && e.domain == claiming_domain
+                        }) {
+                            entries.remove(pos);
+                        }
+                        seen_titles.insert(title.clone());
+                        title_claim_domain.insert(title.clone(), domain_name.clone());
+                        title_claim_explicit.insert(title.clone(), true);
+                        entries.push(GenerationEntry {
+                            schema_title: title.clone(),
+                            domain: domain_name.clone(),
+                            pg_schema: domain_name.clone(),
+                            is_cyclic: false,
+                        });
+                    }
+                }
             }
-
-            entries.push(GenerationEntry {
-                schema_title: title.clone(),
-                domain: domain_name.clone(),
-                pg_schema: domain_name.clone(),
-                is_cyclic: false,
-            });
         }
     }
 
@@ -1759,9 +1865,12 @@ fn generate_mod_files_recursive(dir: &Path, out: &mut Vec<GeneratedFile>) -> Res
         let mod_path = dir.join("mod.rs");
         // Skip if a mod.rs with pub-use re-exports exists (written by a specialised
         // generator like codelist). Always overwrite plain `pub mod` declarations.
+        // Skip if mod.rs was explicitly generated (contains real code beyond
+        // auto-generated pub mod declarations). Check for pub use (codelist)
+        // or use statements (scaffold middleware, etc.).
         let skip = mod_path.exists()
             && fs::read_to_string(&mod_path)
-                .map(|c| c.contains("pub use "))
+                .map(|c| c.contains("pub use ") || c.contains("use "))
                 .unwrap_or(false);
         if !skip {
             let content = modules

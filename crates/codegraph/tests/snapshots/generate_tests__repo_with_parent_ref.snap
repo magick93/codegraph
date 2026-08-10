@@ -1,5 +1,6 @@
 ---
 source: crates/codegraph/tests/generate_tests.rs
+assertion_line: 837
 expression: code
 ---
 //! Generated repository implementation for Application.
@@ -7,8 +8,7 @@ expression: code
 
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
@@ -25,7 +25,7 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
     async fn create(
         &self,
         tx: &DatabaseTransaction,
-        cmd: CreateApplicationRequest,
+        _cmd: CreateApplicationRequest,
         parent_id: Uuid,
     ) -> Result<Uuid, Box<dyn std::error::Error>> {
         let id = Uuid::new_v4();
@@ -105,7 +105,7 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
             id: Set(id),
             ..Default::default()
         };
-        if let Some(v) = cmd.candidate_id { model.candidate_id = Set(Some(v)); }
+        if let Some(v) = cmd.candidate_id { model.candidate_id = Set(v); }
         match model.update(tx).await {
             Ok(_) => {}
             Err(sea_orm::DbErr::RecordNotUpdated) => { /* RLS hid the row — find_by_id will return 404 */ }

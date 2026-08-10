@@ -68,7 +68,7 @@ test.describe('Webhook Management', () => {
 
     // Try to access the ACME endpoint with HighFive's API key
     const response = await fetch(
-      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/webhooks/webhook-endpoints/${endpointId}`,
+      `${process.env.PUBLIC_API_URL ?? 'http://localhost:3000'}/api/{{ project.api_version }}/webhooks/webhook-endpoints/${endpointId}`,
       {
         headers: {
           Authorization: `Bearer ${orgContext.highfive.apiKey}`,

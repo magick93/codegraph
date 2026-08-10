@@ -102,7 +102,7 @@ test.describe('{{ entity_name }} Manager Team', () => {
 {% for dep in entity_ref_deps %}
     if (depIds['{{ dep.field_name }}']) {
       try {
-        await fetch(`${baseUrl}/api{{ dep.api_path }}/${depIds['{{ dep.field_name }}']}`, {
+        await fetch(`${baseUrl}/api/v1{{ dep.api_path }}/${depIds['{{ dep.field_name }}']}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
         });

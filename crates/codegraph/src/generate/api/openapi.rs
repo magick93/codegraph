@@ -12,6 +12,8 @@ use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
 use codegraph_naming;
 
+use super::api_model::{resolve_entity_operations, resolve_path_segment};
+
 /// Context for the combined "All" OpenAPI spec (`openapi_all.tera`).
 #[derive(Debug, Serialize)]
 pub struct OpenApiContext {
@@ -130,9 +132,8 @@ impl GlobalGenerator for OpenApiGenerator {
                 }
                 if let Ok(Some(schema)) = db.get_schema_in_domain(entity_name, domain_name).await {
                     let entity_cfg = domain_entry.get_entity_config(entity_name);
-                    let operations = entity_cfg
-                        .and_then(|ec| ec.operations.clone())
-                        .unwrap_or_else(|| config.defaults.operations.clone());
+                    let operations =
+                        resolve_entity_operations(db, config, domain_name, entity_name).await;
 
                     // Resolve role and parent relationship info from entity config.
                     // These mirror the fields populated by HandlerContext so that
@@ -148,7 +149,7 @@ impl GlobalGenerator for OpenApiGenerator {
                                 db.get_schema_in_domain(pname, domain_name).await
                             {
                                 (
-                                    Some(parent_schema.api_path_segment.clone()),
+                                    Some(resolve_path_segment(None, &parent_schema)),
                                     Some(parent_schema.rust_type_name.clone()),
                                     parent_schema.domain.clone(),
                                 )
@@ -166,7 +167,7 @@ impl GlobalGenerator for OpenApiGenerator {
                     entities.push(OpenApiEntity {
                         entity_name: schema.rust_type_name.clone(),
                         module_name: schema.pg_table_name.clone(),
-                        path_segment: schema.api_path_segment.clone(),
+                        path_segment: resolve_path_segment(entity_cfg, &schema),
                         tag: schema.rust_type_name.clone(),
                         has_create: operations.contains(&"create".to_string()),
                         has_read: operations.contains(&"read".to_string()),
@@ -209,7 +210,7 @@ impl GlobalGenerator for OpenApiGenerator {
         // 2. Combined "All" spec
         let all_ctx = OpenApiContext {
             title: crate::generate::get_project_config().api_title.clone(),
-            version: "1.0.0".to_string(),
+            version: project.api_version.clone(),
             domains: domains.clone(),
         };
         let all_content =
@@ -227,7 +228,7 @@ impl GlobalGenerator for OpenApiGenerator {
                     crate::generate::get_project_config().api_title,
                     domain.label
                 ),
-                version: "1.0.0".to_string(),
+                version: project.api_version.clone(),
                 domain_name: domain.name.clone(),
                 domain_label: domain.label.clone(),
                 entities: domain.entities.clone(),

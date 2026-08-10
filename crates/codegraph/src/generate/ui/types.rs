@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use super::common::collect_ui_fields;
 use crate::error::Result;
+use crate::generate::api::api_model::resolve_entity_operations;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
@@ -101,9 +102,8 @@ impl GlobalGenerator for UiTypeGenerator {
                 .get(&domain)
                 .and_then(|d| d.get_entity_config(&entity_name));
 
-            let operations = entity_cfg
-                .and_then(|ec| ec.operations.clone())
-                .unwrap_or_else(|| config.defaults.operations.clone());
+            let operations =
+                resolve_entity_operations(db, config, &domain, &entity_name).await;
 
             let dto_config = entity_cfg.map(|ec| &ec.dto);
             let immutable_fields: Vec<String> = dto_config
@@ -124,7 +124,7 @@ impl GlobalGenerator for UiTypeGenerator {
             }
 
             let ui_fields =
-                collect_ui_fields(db, &entry.schema_title, &immutable_fields, Some(&domain))
+                collect_ui_fields(db, &entry.schema_title, &immutable_fields, Some(&domain), config)
                     .await?;
             let mut response_fields = Vec::new();
             let mut create_fields = Vec::new();
@@ -178,7 +178,7 @@ impl GlobalGenerator for UiTypeGenerator {
                     // Resolve the nested type's TS interface name and fields.
                     let nested_ts_name = field.ts_type.clone();
                     if let Some(nt_fields) =
-                        collect_nested_type_fields(db, schema_title_for_ref, Some(&entity.domain))
+                        collect_nested_type_fields(db, schema_title_for_ref, Some(&entity.domain), config)
                             .await
                     {
                         nested_types.push(UiNestedType {
@@ -215,8 +215,9 @@ async fn collect_nested_type_fields(
     db: &dyn GraphQuerier,
     schema_title: &str,
     domain: Option<&str>,
+    config: &DomainConfig,
 ) -> Option<Vec<UiTypeField>> {
-    let fields = collect_ui_fields(db, schema_title, &[], domain)
+    let fields = collect_ui_fields(db, schema_title, &[], domain, config)
         .await
         .ok()?;
     Some(

@@ -156,6 +156,54 @@ fn node_type_ddl() -> Vec<&'static str> {
             name STRING NOT NULL,
             domain STRING
         )",
+        // ApiResource — API metamodel
+        "CREATE NODE TYPE IF NOT EXISTS ApiResource (
+            name STRING NOT NULL,
+            schema_title STRING NOT NULL,
+            domain STRING NOT NULL,
+            label STRING,
+            path_segment STRING NOT NULL
+        )",
+        // ApiOperation — API metamodel
+        "CREATE NODE TYPE IF NOT EXISTS ApiOperation (
+            name STRING NOT NULL,
+            kind STRING NOT NULL,
+            input_schema STRING,
+            output_schema STRING NOT NULL,
+            paging BOOLEAN NOT NULL DEFAULT false,
+            sorting BOOLEAN NOT NULL DEFAULT false,
+            filtering BOOLEAN NOT NULL DEFAULT false,
+            domain STRING
+        )",
+        // Interaction — API metamodel
+        "CREATE NODE TYPE IF NOT EXISTS Interaction (
+            transport STRING NOT NULL,
+            domain STRING
+        )",
+        // HttpEndpoint — API metamodel
+        "CREATE NODE TYPE IF NOT EXISTS HttpEndpoint (
+            method STRING NOT NULL,
+            path_template STRING NOT NULL,
+            domain STRING
+        )",
+        // Pipeline — API metamodel
+        "CREATE NODE TYPE IF NOT EXISTS Pipeline (
+            name STRING NOT NULL,
+            middleware STRING,
+            domain STRING
+        )",
+        // ErrorDefinition — API metamodel
+        "CREATE NODE TYPE IF NOT EXISTS ErrorDefinition (
+            code STRING NOT NULL,
+            description STRING NOT NULL,
+            http_status INTEGER NOT NULL,
+            domain STRING
+        )",
+        // Permission — API metamodel
+        "CREATE NODE TYPE IF NOT EXISTS Permission (
+            name STRING NOT NULL,
+            domain STRING
+        )",
     ]
 }
 
@@ -191,5 +239,16 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS HasModuleDefinition",
         "CREATE EDGE TYPE IF NOT EXISTS HasViewComponentPart (role STRING)",
         "CREATE EDGE TYPE IF NOT EXISTS HasConditionalExpr",
+        // API metamodel edge types
+        "CREATE EDGE TYPE IF NOT EXISTS ExposesResource",
+        "CREATE EDGE TYPE IF NOT EXISTS BindsToSchema",
+        "CREATE EDGE TYPE IF NOT EXISTS HasOperation",
+        "CREATE EDGE TYPE IF NOT EXISTS InputBoundTo",
+        "CREATE EDGE TYPE IF NOT EXISTS OutputBoundTo",
+        "CREATE EDGE TYPE IF NOT EXISTS CanReturnError",
+        "CREATE EDGE TYPE IF NOT EXISTS RequiresPermission",
+        "CREATE EDGE TYPE IF NOT EXISTS HasInteraction",
+        "CREATE EDGE TYPE IF NOT EXISTS BindsHttpEndpoint",
+        "CREATE EDGE TYPE IF NOT EXISTS UsesPipeline",
     ]
 }

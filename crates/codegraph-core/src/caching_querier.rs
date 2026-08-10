@@ -6,15 +6,17 @@ use async_trait::async_trait;
 use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
-    ActionNode, CodeList, CompositeColumn, CompositeRange, CompositionTree, EnumValue, EventNode,
-    Extension, ParameterDefinitionNode, ParentCandidate, PropertyNode, SchemaClassificationData,
-    SchemaNode, StructuredSubField, ViewComponentNode, ViewContainerNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
+    CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension, HttpEndpointNode,
+    InteractionNode, ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode,
+    PropertyNode, SchemaClassificationData, SchemaNode, StructuredSubField, ViewComponentNode,
+    ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
 type CodelistPropertyVal = Option<(CodeList, String)>;
 
-/// A caching wrapper around a `&dyn GraphQuerier`.
+    /// A caching wrapper around a `&dyn GraphQuerier`.
 ///
 /// Caches the results of frequently-called query methods (get_schema,
 /// get_properties, etc.) so that multiple generators querying the same
@@ -44,6 +46,8 @@ pub struct CachingQuerier<'a> {
     property_ref_target_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
     property_ref_target_by_id_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
     array_item_schema_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
+    api_resources_cache: RwLock<Option<Vec<ApiResourceNode>>>,
+    api_operations_cache: RwLock<HashMap<String, Vec<ApiOperationNode>>>,
 }
 
 impl<'a> CachingQuerier<'a> {
@@ -70,6 +74,8 @@ impl<'a> CachingQuerier<'a> {
             property_ref_target_cache: RwLock::new(HashMap::new()),
             property_ref_target_by_id_cache: RwLock::new(HashMap::new()),
             array_item_schema_cache: RwLock::new(HashMap::new()),
+            api_resources_cache: RwLock::new(None),
+            api_operations_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -519,5 +525,73 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
         self.inner.get_ifml_parameters().await
+    }
+
+    // ── API metamodel query delegation ──────────────────────────────────
+
+    async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
+        if let Some(cached) = self.api_resources_cache.read().unwrap().as_ref() {
+            return Ok(cached.clone());
+        }
+        let result = self.inner.get_api_resources().await?;
+        self.api_resources_cache
+            .write()
+            .unwrap()
+            .replace(result.clone());
+        Ok(result)
+    }
+
+    async fn get_api_resource(&self, name: &str) -> Result<Option<ApiResourceNode>, GraphError> {
+        self.inner.get_api_resource(name).await
+    }
+
+    async fn get_api_operations(
+        &self,
+        resource_name: &str,
+    ) -> Result<Vec<ApiOperationNode>, GraphError> {
+        if let Some(cached) = self
+            .api_operations_cache
+            .read()
+            .unwrap()
+            .get(resource_name)
+        {
+            return Ok(cached.clone());
+        }
+        let result = self.inner.get_api_operations(resource_name).await?;
+        self.api_operations_cache
+            .write()
+            .unwrap()
+            .insert(resource_name.to_string(), result.clone());
+        Ok(result)
+    }
+
+    async fn get_interactions(
+        &self,
+        operation_name: &str,
+    ) -> Result<Vec<InteractionNode>, GraphError> {
+        self.inner.get_interactions(operation_name).await
+    }
+
+    async fn get_http_endpoints(&self) -> Result<Vec<HttpEndpointNode>, GraphError> {
+        self.inner.get_http_endpoints().await
+    }
+
+    async fn get_error_definitions(&self) -> Result<Vec<ErrorDefinitionNode>, GraphError> {
+        self.inner.get_error_definitions().await
+    }
+
+    async fn get_permissions(&self) -> Result<Vec<PermissionNode>, GraphError> {
+        self.inner.get_permissions().await
+    }
+
+    async fn get_pipelines(&self) -> Result<Vec<PipelineNode>, GraphError> {
+        self.inner.get_pipelines().await
+    }
+
+    async fn get_pipeline_for_endpoint(
+        &self,
+        endpoint_path: &str,
+    ) -> Result<Option<PipelineNode>, GraphError> {
+        self.inner.get_pipeline_for_endpoint(endpoint_path).await
     }
 }

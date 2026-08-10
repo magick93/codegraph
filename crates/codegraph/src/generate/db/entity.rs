@@ -185,13 +185,32 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             entity_cfg,
             &config.defaults.type_suffix,
         ) {
+            // Honor the schema's `required` when the FK corresponds to a real
+            // property on this schema (e.g. a ScalarRef to an entity): the JSON
+            // schema is the source of truth, so a required entity ref must stay
+            // NOT NULL even though the parent-candidate injection runs first and
+            // wins the dedup. Only synthetic ArrayItems FKs (no child-side
+            // property) default to nullable.
+            let prop_is_required = props
+                .iter()
+                .find(|p| {
+                    codegraph_core::types::resolve_field(p).column_name == fk_field
+                        || p.pg_column_name == fk_field
+                })
+                .map(|p| p.is_required)
+                .unwrap_or(false);
+            let is_nullable = !prop_is_required;
             columns.push(EntityColumn {
                 field_name: fk_field.clone(),
-                rust_type: "Option<Uuid>".to_string(),
+                rust_type: if is_nullable {
+                    "Option<Uuid>".to_string()
+                } else {
+                    "Uuid".to_string()
+                },
                 sea_orm_type: "Uuid".to_string(),
                 column_name: fk_field,
                 is_primary_key: false,
-                is_nullable: true,
+                is_nullable,
                 pg_cast: None,
                 sea_orm_attr: None,
             });
@@ -322,6 +341,10 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     });
                 }
                 Some(RefClassificationKind::EntityReference) => {
+                    // Nullability honors the schema's `required` — the JSON schema is
+                    // the source of truth. A required entity ref produces a NOT NULL
+                    // FK column (Uuid, is_nullable: false) in both the DDL and the
+                    // model; an optional ref produces Option<Uuid>.
                     let is_nullable = !prop.is_required;
                     columns.push(EntityColumn {
                         field_name: field_def.rust_field_name,
@@ -380,7 +403,11 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                         )
                         .await?;
                         if fk_field.ends_with("_id") {
-                            let is_nullable = !prop.is_required;
+                            // VO→entity FK columns are always nullable in the DDL
+                            // (the DTO/repository model the VO as a nested child
+                            // table and never populate the FK), so the model field
+                            // must be Option<Uuid> regardless of schema required.
+                            let is_nullable = true;
                             columns.push(EntityColumn {
                                 field_name: fk_field,
                                 rust_type: if is_nullable {

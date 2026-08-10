@@ -5,6 +5,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::generate::api::api_model::resolve_entity_operations;
 use crate::generate::api::include_path::{resolve_include_paths, ResolvedIncludePath};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
@@ -197,7 +198,7 @@ async fn build_child_dto(
                 child_fields.push(DtoField {
                     name: fd.rust_field_name.clone(),
                     rust_type: "uuid::Uuid".to_string(),
-                    is_required: false,
+                    is_required: c.is_required,
                     is_array: false,
                     description: String::new(),
                     render_strategy: "entity_ref".to_string(),
@@ -406,9 +407,8 @@ pub async fn build_dto_context(
         .get(&domain)
         .and_then(|d| d.get_entity_config(&entity_name));
 
-    let operations = entity_cfg
-        .and_then(|ec| ec.operations.clone())
-        .unwrap_or_else(|| config.defaults.operations.clone());
+    let operations =
+        resolve_entity_operations(db, config, &domain, &entity_name).await;
 
     let dto_config = entity_cfg.map(|ec| &ec.dto);
     let mut immutable_fields = dto_config
@@ -1196,7 +1196,11 @@ impl DtoGenerator {
                                 prop.effective_kind(),
                                 Some(RefClassificationKind::EntityReference)
                             ) {
-                                "Option<uuid::Uuid>".to_string()
+                                if is_optional {
+                                    "Option<uuid::Uuid>".to_string()
+                                } else {
+                                    "uuid::Uuid".to_string()
+                                }
                             } else if matches!(
                                 prop.effective_kind(),
                                 Some(

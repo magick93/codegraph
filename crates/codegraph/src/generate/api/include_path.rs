@@ -43,6 +43,16 @@ pub struct IncludeSegment {
     /// FK column on this target's table that references back to the source,
     /// e.g. "worker_id" on the person table
     pub reverse_fk_column: String,
+    /// Whether the FK column on the source table is a REQUIRED genuine
+    /// EntityReference (JSON schema `required`). When true, the repository
+    /// fetch code accesses the field directly (Uuid) instead of via
+    /// Option patterns (Option<Uuid>). VO→entity synthetic FKs are always
+    /// nullable and therefore never required.
+    pub fk_is_required: bool,
+    /// Whether the reverse FK column on the target table is a REQUIRED
+    /// genuine EntityReference. Same semantics as `fk_is_required` but for
+    /// the array/child side of the relationship.
+    pub reverse_fk_is_required: bool,
     /// Whether this is a one-to-many relationship (Vec) vs one-to-one (Option)
     pub is_array: bool,
     /// When the target entity is reached via a VO→entity allOf chain (Tier 1.5),
@@ -180,6 +190,10 @@ async fn resolve_explicit_paths(
                 break;
             }
 
+            // NOTE: is_entity is a domain-model concept here — it determines whether a
+            // schema is an entity vs a value object for FK resolution and include path
+            // computation. API exposure is handled by ApiResourceNode in the API model layer.
+            //
             // Skip non-entity types — they don't have standalone entity generation
             // or response DTOs, so include paths referencing them would fail.
             if !target_schema.is_entity {
@@ -268,6 +282,14 @@ async fn resolve_explicit_paths(
                 }
             }
 
+            // Nullability: JSON schema `required` is the source of truth for
+            // genuine EntityReference FKs. VO→entity (child_table_override)
+            // FKs are always nullable.
+            let fk_is_required = child_table_override.is_none()
+                && fk_column_is_required(db, current_source_title, &fk_column).await?;
+            let reverse_fk_is_required =
+                fk_column_is_required(db, &target_title, &reverse_fk_column).await?;
+
             segments.push(IncludeSegment {
                 entity_name: target_entity_name,
                 schema_title: target_schema_title,
@@ -276,6 +298,8 @@ async fn resolve_explicit_paths(
                 table: target_table,
                 fk_column,
                 reverse_fk_column,
+                fk_is_required,
+                reverse_fk_is_required,
                 is_array,
                 child_table_override,
             });
@@ -381,6 +405,12 @@ async fn resolve_auto_paths(
             &config.defaults.type_suffix,
         ));
 
+        // Nullability: JSON schema `required` is the source of truth for
+        // genuine EntityReference FKs. Both point at the same child-side FK.
+        let fk_is_required = fk_column_is_required(db, schema_title, &fk_column).await?;
+        let reverse_fk_is_required =
+            fk_column_is_required(db, target_title, &reverse_fk_column).await?;
+
         // Resolve is_array from the graph: does the parent have an array property
         // pointing to this child via ItemsOf?
         let is_array = {
@@ -400,6 +430,8 @@ async fn resolve_auto_paths(
                 table: target_table,
                 fk_column,
                 reverse_fk_column,
+                fk_is_required,
+                reverse_fk_is_required,
                 is_array,
                 child_table_override: None,
             }],
@@ -485,6 +517,13 @@ async fn resolve_auto_paths(
 
         let alias_seg = codegraph_naming::to_snake_case(ref_entity_name);
 
+        // Nullability: JSON schema `required` is the source of truth for
+        // genuine EntityReference FKs. fk lives on the source, reverse FK on
+        // the referenced (target) schema.
+        let fk_is_required = fk_column_is_required(db, schema_title, &fk_column).await?;
+        let reverse_fk_is_required =
+            fk_column_is_required(db, ref_title, &reverse_fk_column).await?;
+
         paths.push(ResolvedIncludePath {
             alias: alias_seg.clone(),
             segments: vec![IncludeSegment {
@@ -495,6 +534,8 @@ async fn resolve_auto_paths(
                 table: target_table,
                 fk_column,
                 reverse_fk_column,
+                fk_is_required,
+                reverse_fk_is_required,
                 is_array,
                 child_table_override: None,
             }],
@@ -686,6 +727,28 @@ async fn has_graph_evidence(
     false
 }
 
+/// Whether the property backing `fk_column` on `schema_title` is a REQUIRED
+/// genuine EntityReference. The JSON schema's `required` is the source of
+/// truth for FK nullability (see entity.rs): a required genuine entity ref
+/// emits `Uuid` in the entity model / DTOs, so include-path fetch code must
+/// access the field directly instead of via Option patterns.
+///
+/// VO→entity synthetic FK columns are excluded: they are always nullable
+/// (the DTO/repository model the VO as a nested child table), regardless of
+/// the schema's `required`.
+async fn fk_column_is_required(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    fk_column: &str,
+) -> Result<bool> {
+    let props = db.get_properties(schema_title).await?;
+    Ok(props.iter().any(|p| {
+        (resolve_field(p).column_name == fk_column || p.pg_column_name == fk_column)
+            && p.is_required
+            && p.effective_kind() == Some(RefClassificationKind::EntityReference)
+    }))
+}
+
 /// Resolve the FK column and array flag for a source→target relationship
 /// by querying the source entity's properties from the graph.
 ///
@@ -702,23 +765,20 @@ async fn resolve_fk_via_graph(
     let source_props = db.get_properties(source_title).await.unwrap_or_default();
 
     // Priority 1: property whose ref_target matches target_title (exact).
+    // Schema titles often contain spaces while ref targets use filenames without
+    // spaces (e.g. title "Campaign Type" vs ref "CampaignType.json").
+    // Compare both the raw title and a space-stripped version.
+    let target_clean: String = target_title.replace(' ', "");
+    let target_stripped: String = codegraph_naming::strip_suffix(&target_clean, "Type");
     for prop in &source_props {
-        let matches = prop
-            .ref_target
-            .as_deref()
-            .map(|rt| {
-                // Handle both plain title refs ("PersonType") and path refs
-                // ("common/json/person/PersonType.json").
-                let rt_clean = rt
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(rt)
-                    .strip_suffix(".json#")
-                    .or_else(|| rt.strip_suffix(".json"))
-                    .unwrap_or(rt);
-                rt_clean == target_title
-            })
-            .unwrap_or(false);
+        let matches = prop.ref_target.as_deref().map(|rt| {
+            // Handle both plain title refs ("PersonType") and path refs
+            // ("common/json/person/PersonType.json").
+            let rt_clean = rt.rsplit('/').next().unwrap_or(rt)
+                .strip_suffix(".json#").or_else(|| rt.strip_suffix(".json"))
+                .unwrap_or(rt);
+            rt_clean == target_title || rt_clean == target_clean || rt_clean == target_stripped
+        }).unwrap_or(false);
         if matches {
             let fd = resolve_field(prop);
             return Ok((fd.column_name, prop.is_array));
@@ -770,7 +830,25 @@ async fn resolve_fk_via_graph(
         }
     }
 
-    // Fallback: convention-based default.
+    // Priority 4: property whose pg_column_name is "{parent_ref_stem}_id"
+    // where parent_ref_stem is the target_title with spaces stripped and Type suffix removed.
+    // This handles array relationships where the child has a generated FK
+    // column named after the parent entity (e.g., events_app_id) instead of
+    // the schema property name (e.g., public_events_id).
+    let parent_ref_stem = codegraph_naming::to_snake_case(
+        &codegraph_naming::strip_suffix(&target_title.replace(' ', ""), "Type"),
+    );
+    if parent_ref_stem != seg_snake {
+        let parent_seg_id = format!("{parent_ref_stem}_id");
+        for prop in &source_props {
+            if prop.pg_column_name.to_lowercase() == parent_seg_id {
+                let fd = resolve_field(prop);
+                return Ok((fd.column_name, prop.is_array));
+            }
+        }
+    }
+
+    // Fallback: convention-based default using seg.
     Ok((seg_id, false))
 }
 
@@ -807,20 +885,22 @@ async fn resolve_child_fk_column(
 
     // Priority 2: graph properties — find the property on the child that
     // references the parent.
-    let seg = codegraph_naming::to_snake_case(super::router::strip_suffix(
-        child_title,
-        &config.defaults.type_suffix,
-    ));
-    let (fk, _) = resolve_fk_via_graph(db, child_title, parent_title, &seg).await?;
-    if !fk.ends_with("_id") {
-        // The resolved column name doesn't look like an FK — fall back.
-        return Ok(format!(
-            "{}_id",
-            codegraph_naming::to_snake_case(super::router::strip_suffix(
-                child_title,
-                &config.defaults.type_suffix
-            ),)
-        ));
+    let child_seg = codegraph_naming::to_snake_case(
+        super::router::strip_suffix(child_title, &config.defaults.type_suffix),
+    );
+    let (fk, _) = resolve_fk_via_graph(db, child_title, parent_title, &child_seg).await?;
+
+    // If the resolved FK matches the child-based convention (child_seg + "_id"),
+    // it's a fallback — the child doesn't have an explicit property referencing
+    // the parent. In this case, prefer the parent-based naming convention
+    // (parent_seg + "_id") which matches how the entity generator creates FK
+    // columns for array relationships (e.g. events_app_id for PublicEvent → EventsApp).
+    let child_based_fk = format!("{}_id", child_seg);
+    let parent_seg = codegraph_naming::to_snake_case(
+        super::router::strip_suffix(parent_title, &config.defaults.type_suffix),
+    );
+    if fk == child_based_fk && parent_seg != child_seg {
+        return Ok(format!("{}_id", parent_seg));
     }
     Ok(fk)
 }
