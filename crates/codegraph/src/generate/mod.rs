@@ -714,13 +714,17 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 .map(|b| b.to_path_buf())
                 .unwrap_or_else(|| output_dir.to_path_buf()),
         )) as Box<dyn GlobalGenerator>,
-        Box::new(
-            domain_types::scaffold::DomainTypesScaffoldGenerator::new_with_base(
-                domain_types_base
-                    .map(|b| b.to_path_buf())
-                    .unwrap_or_else(|| output_dir.to_path_buf()),
-            ),
-        ) as Box<dyn GlobalGenerator>,
+        {
+            let dt_base = domain_types_base
+                .map(|b| b.to_path_buf())
+                .unwrap_or_else(|| output_dir.to_path_buf());
+            let gen: Box<dyn GlobalGenerator> = if domain_types_base.is_some() {
+                Box::new(domain_types::scaffold::DomainTypesScaffoldGenerator::new_colocated(dt_base))
+            } else {
+                Box::new(domain_types::scaffold::DomainTypesScaffoldGenerator::new_with_base(dt_base))
+            };
+            gen
+        } as Box<dyn GlobalGenerator>,
         Box::new(cli::scaffold::CliScaffoldGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
         Box::new(db::report_view::ReportViewGenerator::new(output_dir).with_dialect(make_dialect()))
             as Box<dyn GlobalGenerator>,
@@ -986,7 +990,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
-    // Global generators — run in parallel, fatal on failure
+    // Global generators — run in parallel, errors reported but non-fatal
     let global_results: Vec<_> = futures::future::join_all(
         global_gens
             .iter()
@@ -994,12 +998,22 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     )
     .await;
 
-    for result in global_results {
-        let files = result?;
-        for file in &files {
-            write_output(file)?;
+    for (gen, result) in global_gens.iter().zip(global_results) {
+        match result {
+            Ok(files) => {
+                for file in &files {
+                    write_output(file)?;
+                }
+                report.files.extend(files);
+            }
+            Err(e) => {
+                report.errors.push(report::GenerationError {
+                    entity: "(global)".into(),
+                    generator: gen.name().to_string(),
+                    source: e,
+                });
+            }
         }
-        report.files.extend(files);
     }
 
     // Validate that every entity in the generation order has entity-specific files
