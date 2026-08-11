@@ -3170,6 +3170,9 @@ impl RepositoryImplEmitter {
             "        filters: &std::collections::HashMap<String, String>,"
         )
         .unwrap();
+        if tree.is_auditable {
+            writeln!(code, "        include_deleted: bool,").unwrap();
+        }
         writeln!(
             code,
             "    ) -> Result<(Vec<{}Response>, u64), Box<dyn std::error::Error>> {{",
@@ -3312,27 +3315,47 @@ impl RepositoryImplEmitter {
 
         writeln!(
             code,
-            "        let query = crate::entity::{}::Entity::find()",
+            "        let{} query = crate::entity::{}::Entity::find()",
+            if tree.is_auditable { " mut" } else { "" },
             tree.entity_module
         )
         .unwrap();
         if has_any_filters {
-            writeln!(code, "            .filter(condition)").unwrap();
+            if tree.is_auditable {
+                writeln!(
+                    code,
+                    "            .filter(condition);"
+                )
+                .unwrap();
+            } else {
+                writeln!(code, "            .filter(condition)").unwrap();
+            }
+        } else if tree.is_auditable {
+            writeln!(code, ";").unwrap();
         }
         if tree.is_auditable {
+            writeln!(code, "        if !include_deleted {{").unwrap();
             writeln!(
                 code,
-                "            .filter(crate::entity::{}::Column::DeletedAt.is_null())",
+                "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
+                tree.entity_module
+            )
+            .unwrap();
+            writeln!(code, "        }}").unwrap();
+            writeln!(
+                code,
+                "        let query = query.order_by_desc(crate::entity::{}::Column::CreatedAt);",
+                tree.entity_module
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "            .order_by_desc(crate::entity::{}::Column::CreatedAt);",
                 tree.entity_module
             )
             .unwrap();
         }
-        writeln!(
-            code,
-            "            .order_by_desc(crate::entity::{}::Column::CreatedAt);",
-            tree.entity_module
-        )
-        .unwrap();
         writeln!(
             code,
             "        let paginator = query.paginate(db, page_size);"
@@ -3397,6 +3420,9 @@ impl RepositoryImplEmitter {
         writeln!(code, "        query: &str,").unwrap();
         writeln!(code, "        page: u64,").unwrap();
         writeln!(code, "        page_size: u64,").unwrap();
+        if tree.is_auditable {
+            writeln!(code, "        include_deleted: bool,").unwrap();
+        }
         writeln!(
             code,
             "    ) -> Result<(Vec<uuid::Uuid>, u64), Box<dyn std::error::Error>> {{"
@@ -3408,12 +3434,22 @@ impl RepositoryImplEmitter {
         )
         .unwrap();
         writeln!(code, "            DatabaseBackend::Postgres,").unwrap();
-        writeln!(
-            code,
-            "            \"SELECT COUNT(*) AS count FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1)\",",
-            tree.schema_name, q(&tree.table_name), tree.fts_language
-        )
-        .unwrap();
+        if tree.is_auditable {
+            writeln!(
+                code,
+                "            if include_deleted {{ \"SELECT COUNT(*) AS count FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1)\" }} else {{ \"SELECT COUNT(*) AS count FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) AND deleted_at IS NULL\" }},",
+                tree.schema_name, q(&tree.table_name), tree.fts_language,
+                tree.schema_name, q(&tree.table_name), tree.fts_language,
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "            \"SELECT COUNT(*) AS count FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1)\",",
+                tree.schema_name, q(&tree.table_name), tree.fts_language
+            )
+            .unwrap();
+        }
         writeln!(code, "            vec![query.into()],").unwrap();
         writeln!(code, "        );").unwrap();
         writeln!(
@@ -3436,12 +3472,22 @@ impl RepositoryImplEmitter {
         writeln!(code, "        let offset = page * page_size;").unwrap();
         writeln!(code, "        let stmt = Statement::from_sql_and_values(").unwrap();
         writeln!(code, "            DatabaseBackend::Postgres,").unwrap();
-        writeln!(
-            code,
-            "            \"SELECT id FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) ORDER BY ts_rank(search_tsv, websearch_to_tsquery('{}', $1)) DESC LIMIT $2 OFFSET $3\",",
-            tree.schema_name, q(&tree.table_name), tree.fts_language, tree.fts_language
-        )
-        .unwrap();
+        if tree.is_auditable {
+            writeln!(
+                code,
+                "            if include_deleted {{ \"SELECT id FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) ORDER BY ts_rank(search_tsv, websearch_to_tsquery('{}', $1)) DESC LIMIT $2 OFFSET $3\" }} else {{ \"SELECT id FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) AND deleted_at IS NULL ORDER BY ts_rank(search_tsv, websearch_to_tsquery('{}', $1)) DESC LIMIT $2 OFFSET $3\" }},",
+                tree.schema_name, q(&tree.table_name), tree.fts_language, tree.fts_language,
+                tree.schema_name, q(&tree.table_name), tree.fts_language, tree.fts_language,
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "            \"SELECT id FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) ORDER BY ts_rank(search_tsv, websearch_to_tsquery('{}', $1)) DESC LIMIT $2 OFFSET $3\",",
+                tree.schema_name, q(&tree.table_name), tree.fts_language, tree.fts_language
+            )
+            .unwrap();
+        }
         writeln!(
             code,
             "            vec![query.into(), (page_size as i64).into(), (offset as i64).into()],"
@@ -3475,6 +3521,9 @@ impl RepositoryImplEmitter {
         writeln!(code, "        db: &DatabaseTransaction,").unwrap();
         writeln!(code, "        embedding: &[f32],").unwrap();
         writeln!(code, "        limit: u64,").unwrap();
+        if tree.is_auditable {
+            writeln!(code, "        include_deleted: bool,").unwrap();
+        }
         writeln!(
             code,
             "    ) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error>> {{"
@@ -3484,14 +3533,25 @@ impl RepositoryImplEmitter {
         writeln!(code, "        let stmt = Statement::from_sql_and_values(").unwrap();
         writeln!(code, "            DatabaseBackend::Postgres,").unwrap();
         let emb_col = format!("{}_embedding", tree.table_name);
-        writeln!(
-            code,
-            "            \"SELECT id FROM {schema}.{table} ORDER BY {col} <=> $1::vector LIMIT $2\",",
-            schema = tree.schema_name,
-            table = q(&tree.table_name),
-            col = emb_col
-        )
-        .unwrap();
+        if tree.is_auditable {
+            writeln!(
+                code,
+                "            if include_deleted {{ \"SELECT id FROM {schema}.{table} ORDER BY {col} <=> $1::vector LIMIT $2\" }} else {{ \"SELECT id FROM {schema}.{table} WHERE deleted_at IS NULL ORDER BY {col} <=> $1::vector LIMIT $2\" }},",
+                schema = tree.schema_name,
+                table = q(&tree.table_name),
+                col = emb_col
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "            \"SELECT id FROM {schema}.{table} ORDER BY {col} <=> $1::vector LIMIT $2\",",
+                schema = tree.schema_name,
+                table = q(&tree.table_name),
+                col = emb_col
+            )
+            .unwrap();
+        }
         writeln!(
             code,
             "            vec![vec_str.into(), (limit as i64).into()],"

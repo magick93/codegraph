@@ -31,7 +31,8 @@ pub trait {{ entity_name }}Repository: Send + Sync {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
-    ) -> Result<Option<{{ entity_name }}Response>, Box<dyn std::error::Error>>;
+{% if is_auditable %}        include_deleted: bool,
+{% endif %}    ) -> Result<Option<{{ entity_name }}Response>, Box<dyn std::error::Error>>;
 {% endif %}
 {% if has_read %}
 {% if parent_ref %}
@@ -42,7 +43,8 @@ pub trait {{ entity_name }}Repository: Send + Sync {
         db: &DatabaseTransaction,
         id: Uuid,
         parent_id: Uuid,
-    ) -> Result<Option<{{ entity_name }}Response>, Box<dyn std::error::Error>>;
+{% if is_auditable %}        include_deleted: bool,
+{% endif %}    ) -> Result<Option<{{ entity_name }}Response>, Box<dyn std::error::Error>>;
 {% endif %}
 {% endif %}
 
@@ -93,7 +95,8 @@ pub trait {{ entity_name }}Repository: Send + Sync {
         query: &str,
         page: u64,
         page_size: u64,
-    ) -> Result<(Vec<Uuid>, u64), Box<dyn std::error::Error>>;
+{% if is_auditable %}        include_deleted: bool,
+{% endif %}    ) -> Result<(Vec<Uuid>, u64), Box<dyn std::error::Error>>;
 {% endif %}
 {% if has_embeddings %}
 
@@ -104,7 +107,8 @@ pub trait {{ entity_name }}Repository: Send + Sync {
         db: &DatabaseTransaction,
         embedding: &[f32],
         limit: u64,
-    ) -> Result<Vec<Uuid>, Box<dyn std::error::Error>>;
+{% if is_auditable %}        include_deleted: bool,
+{% endif %}    ) -> Result<Vec<Uuid>, Box<dyn std::error::Error>>;
 {% endif %}
 {% if hierarchy_field %}
 
