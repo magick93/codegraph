@@ -46,6 +46,20 @@ pub enum EdgeType {
     HasInteraction,
     BindsHttpEndpoint,
     UsesPipeline,
+
+    // Persistence metamodel edge types
+    HasPolicy,
+    PolicyAppliesTo,
+    HasRelationship,
+    RelationshipSource,
+    RelationshipTarget,
+    PolicyOnRelationship,
+
+    // Security metamodel edge types
+    TenantOwns,
+    HasMembership,
+    MembershipInTenant,
+    HasRole,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -65,4 +79,8 @@ pub struct EdgeProperties {
     pub component_type: Option<String>,
     pub direction: Option<String>,
     pub expression: Option<String>,
+    pub soft_delete_cascade: Option<String>,
+    pub relationship_name: Option<String>,
+    pub propagation_trigger: Option<String>,
+    pub policy_name: Option<String>,
 }

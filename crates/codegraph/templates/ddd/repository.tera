@@ -64,6 +64,16 @@ pub trait {{ entity_name }}Repository: Send + Sync {
 {% endif %}
 
 {% if has_list %}
+{% if is_auditable %}
+    async fn list(
+        &self,
+        db: &DatabaseTransaction,
+        page: u64,
+        page_size: u64,
+        filters: &std::collections::HashMap<String, String>,
+        include_deleted: bool,
+    ) -> Result<(Vec<{{ entity_name }}Response>, u64), Box<dyn std::error::Error>>;
+{% else %}
     async fn list(
         &self,
         db: &DatabaseTransaction,
@@ -71,6 +81,7 @@ pub trait {{ entity_name }}Repository: Send + Sync {
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
     ) -> Result<(Vec<{{ entity_name }}Response>, u64), Box<dyn std::error::Error>>;
+{% endif %}
 {% endif %}
 {% if has_fts %}
 

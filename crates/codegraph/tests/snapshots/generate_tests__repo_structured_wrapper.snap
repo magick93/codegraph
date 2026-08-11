@@ -47,11 +47,16 @@ impl CandidateRepository for CandidateRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<CandidateResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::recruiting_candidate::Entity::find()
-            .filter(crate::entity::recruiting_candidate::Column::Id.eq(id))
-            .filter(crate::entity::recruiting_candidate::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::recruiting_candidate::Entity::find()
+            .filter(crate::entity::recruiting_candidate::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::recruiting_candidate::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {

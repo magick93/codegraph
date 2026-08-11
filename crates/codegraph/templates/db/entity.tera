@@ -40,3 +40,31 @@ pub enum Relation {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
+
+{% if has_soft_delete %}
+impl Entity {
+{% if soft_delete_visibility == "exclude_by_default" or soft_delete_visibility == "include_by_default" %}
+    /// Exclude soft-deleted rows.
+    pub fn active() -> Select<Entity> {
+        Entity::find().filter(Column::{{ soft_delete_column | upper_camel }}.is_null())
+    }
+
+    {% if soft_delete_visibility == "explicit_only" %}
+    /// Include only soft-deleted rows.
+    pub fn deleted_only() -> Select<Entity> {
+        Entity::find().filter(Column::{{ soft_delete_column | upper_camel }}.is_not_null())
+    }
+    {% endif %}
+
+    /// Include all rows including soft-deleted.
+    pub fn including_deleted() -> Select<Entity> {
+        Entity::find()
+    }
+{% elif soft_delete_visibility == "explicit_only" %}
+    /// All rows (caller must explicitly choose active/deleted scope).
+    pub fn all_rows() -> Select<Entity> {
+        Entity::find()
+    }
+{% endif %}
+}
+{% endif %}

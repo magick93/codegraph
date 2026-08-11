@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::ParentCandidate;
+use codegraph_core::types::{ParentCandidate, PolicyKind, SoftDeleteVisibility};
 use serde::Serialize;
 
 use crate::error::Result;
@@ -37,6 +37,12 @@ pub struct RepositoryContext {
     /// Whether tree_include is configured (changes find_tree return type).
     #[serde(default)]
     pub tree_include: bool,
+    /// Whether this entity has soft-delete / audit tracking enabled.
+    #[serde(default)]
+    pub is_auditable: bool,
+    /// The soft-delete visibility mode: "exclude_by_default", "include_by_default", or "explicit_only".
+    #[serde(default)]
+    pub soft_delete_visibility: String,
 }
 
 pub struct RepositoryTraitGenerator {
@@ -159,6 +165,42 @@ impl EntityGenerator for RepositoryTraitGenerator {
             Vec::new()
         };
 
+        // Query policies to determine audit and soft-delete behavior.
+        let policies = db.get_policies_for_schema(schema_title).await?;
+        let has_audit_policy = policies.iter().any(|p| matches!(p.kind, PolicyKind::Audit(_)));
+        let is_auditable = if has_audit_policy {
+            policies
+                .iter()
+                .find_map(|p| {
+                    if let PolicyKind::Audit(ref a) = p.kind {
+                        Some(a.track_deleted)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false)
+        } else {
+            config
+                .domains
+                .get(&domain)
+                .and_then(|d| d.auditable)
+                .unwrap_or(true)
+        };
+        let soft_delete_visibility = policies
+            .iter()
+            .find_map(|p| {
+                if let PolicyKind::SoftDelete(ref sd) = p.kind {
+                    Some(match sd.visibility {
+                        SoftDeleteVisibility::ExcludeByDefault => "exclude_by_default".to_string(),
+                        SoftDeleteVisibility::IncludeByDefault => "include_by_default".to_string(),
+                        SoftDeleteVisibility::ExplicitOnly => "explicit_only".to_string(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "exclude_by_default".to_string());
+
         let ctx = RepositoryContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -171,6 +213,8 @@ impl EntityGenerator for RepositoryTraitGenerator {
             parent_ref: parent_ref.clone(),
             hierarchy_field,
             tree_include,
+            is_auditable,
+            soft_delete_visibility,
             entity_name,
             module_name: module_name.clone(),
             domain: domain.clone(),

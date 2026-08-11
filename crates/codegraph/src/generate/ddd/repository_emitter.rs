@@ -1,6 +1,9 @@
 use std::fmt::Write;
 
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::{
+    AuditPolicy, DeletionPropagation, PolicyKind, SoftDeleteMarker, SoftDeleteVisibility,
+};
 use codegraph_naming::quote_pg_column;
 use codegraph_type_contracts::RefClassificationKind;
 
@@ -98,6 +101,16 @@ struct EntityTree {
     has_embeddings: bool,
     fts_language: String,
     is_auditable: bool,
+    /// Soft-delete visibility mode: "exclude_by_default", "include_by_default", or "explicit_only".
+    soft_delete_visibility: String,
+    /// Soft-delete marker column name (e.g. "deleted_at").
+    soft_delete_column: Option<String>,
+    /// How deletions propagate to children: "restrict", "cascade", "soft_cascade", or "ignore".
+    soft_delete_cascade: String,
+    /// Whether the audit policy tracks the updating user (for `updated_by` column).
+    track_updated_user: bool,
+    /// Whether the audit policy tracks the deleting user (for `deleted_by` column).
+    track_deleted_user: bool,
     filter_fields: Vec<FilterFieldInfo>,
     nested_filter_fields: Vec<NestedFilterFieldInfo>,
     /// FK column for parent-scoped lookups (child entities only).
@@ -1894,11 +1907,63 @@ impl RepositoryImplEmitter {
             .map(|wf| wf.generate_action_endpoints)
             .unwrap_or(false);
 
-        let is_auditable = config
-            .domains
-            .get(domain)
-            .and_then(|d| d.auditable)
-            .unwrap_or(true);
+        let policies = db.get_policies_for_schema(schema_title).await?;
+        let has_audit_policy = policies.iter().any(|p| matches!(p.kind, PolicyKind::Audit(_)));
+        let soft_delete_policy = policies.iter().find_map(|p| {
+            if let PolicyKind::SoftDelete(ref sd) = p.kind {
+                Some(sd.clone())
+            } else {
+                None
+            }
+        });
+        let audit_policy: Option<AuditPolicy> = policies.iter().find_map(|p| {
+            if let PolicyKind::Audit(ref a) = p.kind {
+                Some(a.clone())
+            } else {
+                None
+            }
+        });
+
+        let is_auditable = if has_audit_policy {
+            audit_policy
+                .as_ref()
+                .map(|a| a.track_deleted)
+                .unwrap_or(false)
+        } else {
+            config
+                .domains
+                .get(domain)
+                .and_then(|d| d.auditable)
+                .unwrap_or(true)
+        };
+
+        let soft_delete_visibility = soft_delete_policy
+            .as_ref()
+            .map(|sd| match sd.visibility {
+                SoftDeleteVisibility::ExcludeByDefault => "exclude_by_default".to_string(),
+                SoftDeleteVisibility::IncludeByDefault => "include_by_default".to_string(),
+                SoftDeleteVisibility::ExplicitOnly => "explicit_only".to_string(),
+            })
+            .unwrap_or_else(|| "exclude_by_default".to_string());
+
+        let soft_delete_column = soft_delete_policy.as_ref().map(|sd| match &sd.marker {
+            SoftDeleteMarker::Timestamp(name)
+            | SoftDeleteMarker::Boolean(name)
+            | SoftDeleteMarker::Status(name) => name.clone(),
+        });
+
+        let soft_delete_cascade = soft_delete_policy
+            .as_ref()
+            .map(|sd| match sd.cascade {
+                DeletionPropagation::Restrict => "restrict".to_string(),
+                DeletionPropagation::Cascade => "cascade".to_string(),
+                DeletionPropagation::SoftCascade => "soft_cascade".to_string(),
+                DeletionPropagation::Ignore => "ignore".to_string(),
+            })
+            .unwrap_or_else(|| "restrict".to_string());
+
+        let track_updated_user = audit_policy.as_ref().map(|a| a.track_updated).unwrap_or(false);
+        let track_deleted_user = audit_policy.as_ref().map(|a| a.track_deleted).unwrap_or(false);
 
         // Workflow-managed fields are excluded from create/update DTOs but
         // included in response DTOs. Mark them so the repository can include
@@ -2120,6 +2185,11 @@ impl RepositoryImplEmitter {
             hierarchy_field,
             tree_include,
             is_auditable,
+            soft_delete_visibility,
+            soft_delete_column,
+            soft_delete_cascade,
+            track_updated_user,
+            track_deleted_user,
         })
     }
 
@@ -2537,37 +2607,63 @@ impl RepositoryImplEmitter {
         writeln!(code, "        &self,").unwrap();
         writeln!(code, "        db: &DatabaseTransaction,").unwrap();
         writeln!(code, "        id: Uuid,").unwrap();
+        if tree.is_auditable {
+            writeln!(code, "        include_deleted: bool,").unwrap();
+        }
         writeln!(
             code,
             "    ) -> Result<Option<{}Response>, Box<dyn std::error::Error>> {{",
             tree.entity_name
         )
         .unwrap();
-        writeln!(
-            code,
-            // Use find().filter() instead of find_by_id() because SeaORM's
-            // find_by_id() requires the primary key type to impl Into<Value>,
-            // which fails for composite keys and custom ID wrappers.
-            "        let row = crate::entity::{}::Entity::find()",
-            tree.entity_module
-        )
-        .unwrap();
-        writeln!(
-            code,
-            "            .filter(crate::entity::{}::Column::Id.eq(id))",
-            tree.entity_module
-        )
-        .unwrap();
         if tree.is_auditable {
             writeln!(
                 code,
-                "            .filter(crate::entity::{}::Column::DeletedAt.is_null())",
+                "        let mut query = crate::entity::{}::Entity::find()",
                 tree.entity_module
             )
             .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.eq(id));",
+                tree.entity_module
+            )
+            .unwrap();
+            writeln!(code).unwrap();
+            writeln!(
+                code,
+                "        if !include_deleted {{"
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
+                tree.entity_module
+            )
+            .unwrap();
+            writeln!(code, "        }}").unwrap();
+            writeln!(code).unwrap();
+            writeln!(code, "        let row = query.one(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+        } else {
+            writeln!(
+                code,
+                // Use find().filter() instead of find_by_id() because SeaORM's
+                // find_by_id() requires the primary key type to impl Into<Value>,
+                // which fails for composite keys and custom ID wrappers.
+                "        let row = crate::entity::{}::Entity::find()",
+                tree.entity_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.eq(id))",
+                tree.entity_module
+            )
+            .unwrap();
+            writeln!(code, "            .one(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
         }
-        writeln!(code, "            .one(db)").unwrap();
-        writeln!(code, "            .await?;").unwrap();
         writeln!(code).unwrap();
         writeln!(code, "        let row = match row {{").unwrap();
         writeln!(code, "            Some(r) => r,").unwrap();
@@ -2592,40 +2688,72 @@ impl RepositoryImplEmitter {
         writeln!(code, "        db: &DatabaseTransaction,").unwrap();
         writeln!(code, "        id: Uuid,").unwrap();
         writeln!(code, "        parent_id: Uuid,").unwrap();
+        if tree.is_auditable {
+            writeln!(code, "        include_deleted: bool,").unwrap();
+        }
         writeln!(
             code,
             "    ) -> Result<Option<{}Response>, Box<dyn std::error::Error>> {{",
             tree.entity_name
         )
         .unwrap();
-        writeln!(
-            code,
-            "        let row = crate::entity::{}::Entity::find()",
-            tree.entity_module
-        )
-        .unwrap();
-        writeln!(
-            code,
-            "            .filter(crate::entity::{}::Column::Id.eq(id))",
-            tree.entity_module
-        )
-        .unwrap();
-        writeln!(
-            code,
-            "            .filter(crate::entity::{}::Column::{}.eq(parent_id))",
-            tree.entity_module, pascal_col
-        )
-        .unwrap();
         if tree.is_auditable {
             writeln!(
                 code,
-                "            .filter(crate::entity::{}::Column::DeletedAt.is_null())",
+                "        let mut query = crate::entity::{}::Entity::find()",
                 tree.entity_module
             )
             .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.eq(id))",
+                tree.entity_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::{}.eq(parent_id));",
+                tree.entity_module, pascal_col
+            )
+            .unwrap();
+            writeln!(code).unwrap();
+            writeln!(
+                code,
+                "        if !include_deleted {{"
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
+                tree.entity_module
+            )
+            .unwrap();
+            writeln!(code, "        }}").unwrap();
+            writeln!(code).unwrap();
+            writeln!(code, "        let row = query.one(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
+        } else {
+            writeln!(
+                code,
+                "        let row = crate::entity::{}::Entity::find()",
+                tree.entity_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::Id.eq(id))",
+                tree.entity_module
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            .filter(crate::entity::{}::Column::{}.eq(parent_id))",
+                tree.entity_module, pascal_col
+            )
+            .unwrap();
+            writeln!(code, "            .one(db)").unwrap();
+            writeln!(code, "            .await?;").unwrap();
         }
-        writeln!(code, "            .one(db)").unwrap();
-        writeln!(code, "            .await?;").unwrap();
         writeln!(code).unwrap();
         writeln!(code, "        let row = match row {{").unwrap();
         writeln!(code, "            Some(r) => r,").unwrap();

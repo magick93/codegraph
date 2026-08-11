@@ -655,6 +655,7 @@ dependencies = [
  "grafeo-core",
  "grafeo-engine",
  "rust_decimal",
+ "serde",
  "serde_json",
  "tokio",
  "uuid",

@@ -1,6 +1,5 @@
 ---
 source: crates/codegraph/tests/generate_tests.rs
-assertion_line: 837
 expression: code
 ---
 //! Generated repository implementation for Application.
@@ -46,11 +45,16 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<ApplicationResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::recruiting_application::Entity::find()
-            .filter(crate::entity::recruiting_application::Column::Id.eq(id))
-            .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::recruiting_application::Entity::find()
+            .filter(crate::entity::recruiting_application::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::recruiting_application::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -72,12 +76,17 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
         db: &DatabaseTransaction,
         id: Uuid,
         parent_id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<ApplicationResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::recruiting_application::Entity::find()
+        let mut query = crate::entity::recruiting_application::Entity::find()
             .filter(crate::entity::recruiting_application::Column::Id.eq(id))
-            .filter(crate::entity::recruiting_application::Column::CandidateId.eq(parent_id))
-            .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
-            .one(db)
+            .filter(crate::entity::recruiting_application::Column::CandidateId.eq(parent_id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::recruiting_application::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
