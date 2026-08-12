@@ -1,4 +1,5 @@
 pub mod command;
+pub mod cornucopia_repo;
 pub mod dto;
 pub mod errors;
 pub mod event;

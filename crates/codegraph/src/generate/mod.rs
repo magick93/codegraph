@@ -1,6 +1,7 @@
 pub mod codelist;
 pub mod filter_fields;
 pub mod ifml;
+pub mod persistence;
 pub mod report;
 pub mod template_engine;
 pub mod traits;
@@ -207,6 +208,9 @@ pub struct ProjectConfig {
     /// Database target dialect for SQL generation ("postgres" or "sqlite").
     /// Used by DB templates to branch on dialect-specific syntax.
     pub database_target: String,
+    /// Persistence provider for entity/repository code generation ("sea_orm" or "cornucopia").
+    /// Used by templates to select provider-specific rendering paths.
+    pub persistence_provider: String,
     /// Import prefix for structured wrapper types in generated re-exports.
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
@@ -238,6 +242,7 @@ impl Default for ProjectConfig {
             type_contracts_base: String::new(),
             codegraph_rev: String::new(),
             database_target: "postgres".to_string(),
+            persistence_provider: "sea_orm".to_string(),
             types_import_prefix: "codegraph_type_contracts".into(),
             api_version: "v1".into(),
         }
@@ -579,6 +584,14 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 .with_parent_candidates(parent_candidates.clone()),
         ) as Box<dyn EntityGenerator>,
         Box::new(
+            db::cornucopia_queries::CornucopiaQueryGenerator::new(output_dir)
+                .with_parent_candidates(parent_candidates.clone()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(
+            ddd::cornucopia_repo::CornucopiaRepoGenerator::new(output_dir)
+                .with_parent_candidates(parent_candidates.clone()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(
             ddd::repository::RepositoryTraitGenerator::new(output_dir)
                 .with_parent_candidates(parent_candidates.clone()),
         ) as Box<dyn EntityGenerator>,
@@ -690,6 +703,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(
             db::workflow_seed::WorkflowSeedGenerator::new(output_dir).with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
+        Box::new(db::cornucopia_config::CornucopiaConfigGenerator::new(output_dir))
+            as Box<dyn GlobalGenerator>,
         Box::new(api::openapi::OpenApiGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
         Box::new(scaffold::gen::ScaffoldGenerator::new(
             output_dir,

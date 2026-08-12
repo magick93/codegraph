@@ -6,6 +6,7 @@ mod discovery;
 mod edge;
 mod field_def;
 mod ifml;
+mod persistence;
 mod policy;
 mod property;
 mod relationship;
@@ -29,6 +30,11 @@ pub use field_def::{
 pub use ifml::{
     ActionNode, DataBindingNode, DataFlowData, EventNode, NavigationFlowData,
     ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
+};
+pub use persistence::{
+    AuditEffect, AuditTimestampKind, AuditUserKind, PersistenceChildTable, PersistenceColumn,
+    PersistenceColumnRole, PersistenceEntity, PersistenceEntityRelation, PersistencePolicies,
+    RetentionEffect, RowSecurityEffect, SoftDeleteEffect, TenantIsolationEffect,
 };
 pub use policy::{
     AuditPolicy, DeletionPropagation, PolicyKind, PolicyNode, RetentionPolicy, RowOperation,

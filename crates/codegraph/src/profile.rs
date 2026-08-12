@@ -1,10 +1,49 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
 use crate::generate::db::dialect::DatabaseTarget;
+
+/// The persistence provider backend for code generation.
+///
+/// Selects which ORM/query framework generates entity models and repository
+/// implementations. The DDL generator is provider-agnostic and always runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistenceProvider {
+    SeaOrm,
+    Cornucopia,
+}
+
+impl PersistenceProvider {
+    pub fn from_config(s: &str) -> Self {
+        match s {
+            "cornucopia" => Self::Cornucopia,
+            _ => Self::SeaOrm,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SeaOrm => "sea_orm",
+            Self::Cornucopia => "cornucopia",
+        }
+    }
+}
+
+impl Default for PersistenceProvider {
+    fn default() -> Self {
+        Self::SeaOrm
+    }
+}
+
+impl fmt::Display for PersistenceProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Generator kind — determines how the build planner invokes the generator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,6 +183,8 @@ pub struct BuildPlan {
     pub template_pack_path: Option<PathBuf>,
     /// Database target dialect for SQL generation (default: Postgres).
     pub database_target: DatabaseTarget,
+    /// Persistence provider for entity/repository code generation (default: SeaOrm).
+    pub persistence_provider: PersistenceProvider,
     pub features: toml::Table,
 }
 
@@ -207,6 +248,14 @@ impl BuildPlan {
             .map(DatabaseTarget::from_config)
             .unwrap_or_default();
 
+        // Parse persistence_provider from features (default: SeaOrm)
+        let persistence_provider = profile
+            .features
+            .get("persistence_provider")
+            .and_then(|v| v.as_str())
+            .map(PersistenceProvider::from_config)
+            .unwrap_or_default();
+
         Ok(BuildPlan {
             entity_generators: entity_gens,
             domain_generators: domain_gens,
@@ -215,6 +264,7 @@ impl BuildPlan {
             ifml_frameworks: profile.ifml_frameworks.clone(),
             template_pack_path: profile.template_pack_path.clone(),
             database_target,
+            persistence_provider,
             features: profile.features.clone(),
         })
     }
@@ -279,6 +329,11 @@ impl BuildPlan {
         self.database_target
     }
 
+    /// Returns the persistence provider for this build plan.
+    pub fn persistence_provider(&self) -> PersistenceProvider {
+        self.persistence_provider
+    }
+
     /// Returns the IFML framework targets configured for this build plan.
     pub fn ifml_framework_targets(&self) -> Vec<&IfmlFrameworkTarget> {
         self.ifml_frameworks.iter().collect()
@@ -319,6 +374,9 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         // ── Entity generators ──────────────────────────────────────────
         cap("ddl",                  Entity, Api,  &[], &[]),
         cap("sea_orm_entity",       Entity, Api,  &[], &[]),
+        cap("cornucopia_queries",   Entity, Api,  &[], &[]),
+        cap("cornucopia_config",    Global, Common, &[], &[]),
+        cap("cornucopia_repo",      Entity, Api,  &[], &[]),
         cap("codelist",             Entity, Api,  &[], &[]),
         cap("dto",                  Entity, Api,  &[], &[]),
         cap("repository",           Entity, Api,  &[], &[]),
