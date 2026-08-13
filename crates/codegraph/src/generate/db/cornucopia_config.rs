@@ -169,6 +169,7 @@ publish = false
 [dependencies]
 postgres-types = { version = "0.2", features = ["derive"] }
 postgres-protocol = "0.6"
+postgres = { version = "0.19", optional = true, features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
 tokio-postgres = { version = "0.7", default-features = false, features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
 futures = "0.3"
 deadpool-postgres = { version = "0.14", optional = true }
