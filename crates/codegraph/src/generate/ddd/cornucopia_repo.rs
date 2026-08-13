@@ -834,7 +834,14 @@ fn emit_filter_checks(code: &mut String, tree: &EntityTree, pad: &str) {
 /// `{Entity}Response { ... }` struct literal. The caller supplies the prefix
 /// (`Ok(Some(`, `items.push(`, `let resp = `) and closing punctuation.
 fn emit_response_expr(tree: &EntityTree, code: &mut String, row_var: &str, pad: &str, prefix: &str) {
-    emit_child_reads_cornucopia(tree, code, &tree.child_tables, row_var, pad);
+    emit_child_reads_cornucopia(
+        tree,
+        code,
+        &tree.child_tables,
+        &format!("{row_var}.id"),
+        true,
+        pad,
+    );
     writeln!(code).unwrap();
     writeln!(code, "{pad}{prefix}{}Response {{", tree.entity_name).unwrap();
     writeln!(code, "{pad}    id: {row_var}.id,").unwrap();
@@ -858,7 +865,8 @@ fn emit_child_reads_cornucopia(
     tree: &EntityTree,
     code: &mut String,
     children: &[ChildTableInfo],
-    parent_row_var: &str,
+    parent_id_expr: &str,
+    _parent_has_cols: bool,
     pad: &str,
 ) {
     let qmod = qmod(tree);
@@ -877,7 +885,7 @@ fn emit_child_reads_cornucopia(
         writeln!(code, "{pad}let {field}_rows = {{", field = child.field_name).unwrap();
         writeln!(
             code,
-            "{pad}    let rows = {qmod}::list_{snake}_{child_table}().bind(db, &{parent_row_var}.id).all().await.map_err(|e| e.to_string())?;",
+            "{pad}    let rows = {qmod}::list_{snake}_{child_table}().bind(db, &{parent_id_expr}).all().await.map_err(|e| e.to_string())?;",
             child_table = child.sql_table_name,
         )
         .unwrap();
@@ -885,18 +893,17 @@ fn emit_child_reads_cornucopia(
         writeln!(code, "{pad}    for child_row in rows {{").unwrap();
         // Nested grandchildren.
         if !child.child_tables.is_empty() {
-            let needs_id = child
-                .child_tables
-                .iter()
-                .any(|gc| !gc.columns.is_empty() || !gc.child_tables.is_empty());
-            if needs_id {
-                writeln!(code, "{pad}        let child_row_id = child_row.id;").unwrap();
-            }
+            let grandchild_id_expr = if child.columns.is_empty() {
+                "child_row".to_string()
+            } else {
+                "child_row.id".to_string()
+            };
             emit_child_reads_cornucopia(
                 tree,
                 code,
                 &child.child_tables,
-                "child_row",
+                &grandchild_id_expr,
+                !child.columns.is_empty(),
                 &format!("{pad}    "),
             );
         }
