@@ -318,8 +318,13 @@ fn write_create_query(
     }
 
     if insert_cols.is_empty() {
+        // Entities whose data lives entirely in child tables (or system-managed
+        // columns) still need a create query — Postgres fills the defaults.
         sql.push_str(&format!(
-            "-- No writable data columns for entity: {entity_name}\n\n"
+            "--! create_{entity_name} () : (id)\n\
+             --- Create a new {entity_name} (defaults only).\n\
+             INSERT INTO {table} DEFAULT VALUES\n\
+             RETURNING \"id\";\n\n",
         ));
         return;
     }
@@ -360,8 +365,14 @@ fn write_update_query(
         .collect();
 
     if updatable.is_empty() {
+        // No writable columns — emit a no-op update so the repository API
+        // stays uniform (and the audit trigger still fires).
         sql.push_str(&format!(
-            "-- No updatable data columns for entity: {entity_name}\n\n"
+            "--! update_{entity_name} (id)\n\
+             --- No-op update for {entity_name}.\n\
+             UPDATE {table}\n\
+             SET \"updated_at\" = \"updated_at\"\n\
+             WHERE \"id\" = :id;\n\n",
         ));
         return;
     }

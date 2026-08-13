@@ -571,13 +571,23 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
     // In-memory filtering on the typed rows.
     for ff in &tree.filter_fields {
         let field = &ff.field_name;
-        writeln!(
-            code,
-            "        if let Some(val) = filters.get(\"{field}\") {{\n\
-             \x20           rows.retain(|r| r.{field}.to_string() == *val);\n\
-             \x20       }}"
-        )
-        .unwrap();
+        if ff.is_nullable {
+            writeln!(
+                code,
+                "        if let Some(val) = filters.get(\"{field}\") {{\n\
+                 \x20           rows.retain(|r| r.{field}.as_ref().map(|v| v.to_string()).as_deref() == Some(val.as_str()));\n\
+                 \x20       }}"
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "        if let Some(val) = filters.get(\"{field}\") {{\n\
+                 \x20           rows.retain(|r| r.{field}.to_string() == *val);\n\
+                 \x20       }}"
+            )
+            .unwrap();
+        }
     }
 
     // Build responses (child hydration happens after filtering).
