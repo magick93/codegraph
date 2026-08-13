@@ -246,18 +246,17 @@ fn emit_adapter_create(tree: &EntityTree, code: &mut String) {
     }
     writeln!(code, "    ) -> Result<Uuid, Box<dyn std::error::Error>> {{").unwrap();
 
-    // Bind args: data columns in tree order, with the parent FK bound from
-    // `parent_id` (mirrors the SeaORM create).
+    // Bind args: data columns in tree order; child entities append the parent
+    // FK bind at the end (the SQL's trailing :parent_id param).
     let mut args: Vec<String> = Vec::new();
     for col in &tree.direct_columns {
         if col.is_workflow_managed || col.is_composite_range || col.is_media {
             continue;
         }
-        if is_parent_fk_col(col, tree) {
-            args.push("&parent_id".to_string());
-            continue;
-        }
         args.push(create_bind_expr(col));
+    }
+    if tree.parent_ref.is_some() {
+        args.push("&parent_id".to_string());
     }
     if args.is_empty() {
         writeln!(
@@ -297,11 +296,6 @@ fn emit_adapter_create(tree: &EntityTree, code: &mut String) {
     writeln!(code, "    }}").unwrap();
 }
 
-fn is_parent_fk_col(col: &crate::generate::ddd::repository_emitter::TreeColumn, tree: &EntityTree) -> bool {
-    tree.parent_ref.as_ref().is_some_and(|pr| {
-        col.field_name.eq_ignore_ascii_case(pr) || col.pg_column_name.eq_ignore_ascii_case(pr)
-    })
-}
 
 /// Bind expression for a single column on the create path.
 ///

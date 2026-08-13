@@ -452,7 +452,20 @@ fn write_create_query(
     tree: &EntityTree,
     pg_types: &std::collections::HashMap<String, String>,
 ) {
-    let writable: Vec<&TreeColumn> = tree.direct_columns.iter().filter(|c| is_writable_col(c)).collect();
+    // The parent FK column (when present in direct_columns) is bound from the
+    // path parameter as a trailing :parent_id — keep it out of the DTO-driven
+    // column list.
+    let writable: Vec<&TreeColumn> = tree
+        .direct_columns
+        .iter()
+        .filter(|c| is_writable_col(c))
+        .filter(|c| {
+            !tree
+                .parent_ref
+                .as_ref()
+                .is_some_and(|pr| c.pg_column_name.eq_ignore_ascii_case(pr))
+        })
+        .collect();
 
     if writable.is_empty() {
         // Entities whose data lives entirely in child tables (or system-managed
@@ -466,11 +479,11 @@ fn write_create_query(
         return;
     }
 
-    let insert_cols: Vec<String> = writable
+    let mut insert_cols: Vec<String> = writable
         .iter()
         .map(|c| format!("\"{}\"", c.pg_column_name))
         .collect();
-    let insert_params: Vec<String> = writable
+    let mut insert_params: Vec<String> = writable
         .iter()
         .map(|c| {
             if c.is_structured_wrapper || is_array_col(c) {
@@ -480,7 +493,14 @@ fn write_create_query(
             }
         })
         .collect();
-    let param_defs: Vec<String> = writable.iter().map(|c| param_sig(c)).collect();
+    let mut param_defs: Vec<String> = writable.iter().map(|c| param_sig(c)).collect();
+    // Child entities: the parent FK column is not part of the DTO — bind it
+    // from the path parameter via a trailing :parent_id param.
+    if let Some(ref parent_fk) = tree.parent_ref {
+        insert_cols.push(format!("\"{parent_fk}\""));
+        insert_params.push(":parent_id".to_string());
+        param_defs.push("parent_id".to_string());
+    }
 
     sql.push_str(&format!(
         "--! create_{entity_name} ({}) : (id)\n\
