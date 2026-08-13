@@ -845,6 +845,9 @@ fn emit_child_reads_cornucopia(
         }
         writeln!(code, "{pad}        items.push({}Response {{", child.struct_name).unwrap();
         for col in &child.columns {
+            if col.pg_column_name == child.parent_fk_column {
+                continue;
+            }
             emit_child_col_read_value_cornucopia(code, col, &format!("{pad}            "));
         }
         emit_child_field_population(code, &child.child_tables, &format!("{pad}            "));
@@ -921,6 +924,9 @@ fn emit_child_insert_one(
     writeln!(code, "{pad}let child_id = Uuid::new_v4();").unwrap();
     let mut binds: Vec<String> = vec!["&child_id".to_string(), format!("&{parent_id_var}")];
     for col in &child.columns {
+        if col.pg_column_name == child.parent_fk_column {
+            continue;
+        }
         binds.push(child_bind_expr(col, item_var));
     }
     writeln!(
