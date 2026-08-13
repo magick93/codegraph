@@ -509,12 +509,13 @@ fn emit_adapter_update(tree: &EntityTree, code: &mut String) {
     let binds = update_bind_args(tree);
     writeln!(
         code,
-        "        {qmod}::update_{snake}().bind(tx, &id{args}).await.map_err(|e| e.to_string())?;",
+        "        {qmod}::update_{snake}().bind(tx, {binds}{id_arg}).await.map_err(|e| e.to_string())?;",
         snake = tree.table_name,
-        args = if binds.is_empty() {
-            String::new()
+        binds = binds.join(", "),
+        id_arg = if binds.is_empty() {
+            "&id".to_string()
         } else {
-            format!(", {}", binds.join(", "))
+            ", &id".to_string()
         },
     )
     .unwrap();
@@ -575,80 +576,61 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
     )
     .unwrap();
     writeln!(code, "        let page_size_i = page_size as i64;").unwrap();
+    writeln!(code, "        let total = if include_deleted {{").unwrap();
+    writeln!(
+        code,
+        "            {qmod}::count_{snake}_including_deleted().bind(db).one().await.map_err(|e| e.to_string())?",
+        snake = tree.table_name
+    )
+    .unwrap();
+    writeln!(code, "        }} else {{").unwrap();
+    writeln!(
+        code,
+        "            {qmod}::count_{snake}().bind(db).one().await.map_err(|e| e.to_string())?",
+        snake = tree.table_name
+    )
+    .unwrap();
+    writeln!(code, "        }};").unwrap();
+    writeln!(code, "        let mut items = Vec::new();").unwrap();
     if tree.is_auditable {
-        writeln!(code, "        let rows = if include_deleted {{").unwrap();
+        writeln!(code, "        if include_deleted {{").unwrap();
         writeln!(
             code,
-            "            {qmod}::list_{snake}_including_deleted().bind(db, &offset, &page_size_i).all().await.map_err(|e| e.to_string())?",
+            "            for row in {qmod}::list_{snake}_including_deleted().bind(db, &page_size_i, &offset).all().await.map_err(|e| e.to_string())? {{",
             snake = tree.table_name
         )
         .unwrap();
+        emit_filter_checks(code, tree, "                ");
+        emit_response_expr(tree, code, "row", "                    ", "                    items.push(");
+        writeln!(code, "                    );").unwrap();
+        writeln!(code, "                }}").unwrap();
+        writeln!(code, "            }}").unwrap();
         writeln!(code, "        }} else {{").unwrap();
         writeln!(
             code,
-            "            {qmod}::list_{snake}().bind(db, &offset, &page_size_i).all().await.map_err(|e| e.to_string())?",
+            "            for row in {qmod}::list_{snake}().bind(db, &page_size_i, &offset).all().await.map_err(|e| e.to_string())? {{",
             snake = tree.table_name
         )
         .unwrap();
-        writeln!(code, "        }};").unwrap();
-        writeln!(code, "        let total = if include_deleted {{").unwrap();
-        writeln!(
-            code,
-            "            {qmod}::count_{snake}_including_deleted().bind(db).one().await.map_err(|e| e.to_string())?",
-            snake = tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "        }} else {{").unwrap();
-        writeln!(
-            code,
-            "            {qmod}::count_{snake}().bind(db).one().await.map_err(|e| e.to_string())?",
-            snake = tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "        }};").unwrap();
+        emit_filter_checks(code, tree, "                ");
+        emit_response_expr(tree, code, "row", "                    ", "                    items.push(");
+        writeln!(code, "                    );").unwrap();
+        writeln!(code, "                }}").unwrap();
+        writeln!(code, "            }}").unwrap();
+        writeln!(code, "        }}").unwrap();
     } else {
         writeln!(
             code,
-            "        let rows = {qmod}::list_{snake}().bind(db, &offset, &page_size_i).all().await.map_err(|e| e.to_string())?;",
+            "        for row in {qmod}::list_{snake}().bind(db, &page_size_i, &offset).all().await.map_err(|e| e.to_string())? {{",
             snake = tree.table_name
         )
         .unwrap();
-        writeln!(
-            code,
-            "        let total = {qmod}::count_{snake}().bind(db).one().await.map_err(|e| e.to_string())?;",
-            snake = tree.table_name
-        )
-        .unwrap();
+        emit_filter_checks(code, tree, "            ");
+        emit_response_expr(tree, code, "row", "                ", "                items.push(");
+        writeln!(code, "                );").unwrap();
+        writeln!(code, "            }}").unwrap();
+        writeln!(code, "        }}").unwrap();
     }
-
-    // In-memory filtering on the typed rows.
-    for ff in &tree.filter_fields {
-        let field = &ff.field_name;
-        if ff.is_nullable {
-            writeln!(
-                code,
-                "        if let Some(val) = filters.get(\"{field}\") {{\n\
-                 \x20           rows.retain(|r| r.{field}.as_ref().map(|v| v.to_string()).as_deref() == Some(val.as_str()));\n\
-                 \x20       }}"
-            )
-            .unwrap();
-        } else {
-            writeln!(
-                code,
-                "        if let Some(val) = filters.get(\"{field}\") {{\n\
-                 \x20           rows.retain(|r| r.{field}.to_string() == *val);\n\
-                 \x20       }}"
-            )
-            .unwrap();
-        }
-    }
-
-    // Build responses (child hydration happens after filtering).
-    writeln!(code, "        let mut items = Vec::with_capacity(rows.len());").unwrap();
-    writeln!(code, "        for row in rows {{").unwrap();
-    emit_response_expr(tree, code, "row", "            ", "            items.push(");
-    writeln!(code, "            );").unwrap();
-    writeln!(code, "        }}").unwrap();
     writeln!(code, "        Ok((items, total))").unwrap();
     writeln!(code, "    }}").unwrap();
 }
@@ -685,14 +667,14 @@ fn emit_adapter_search(tree: &EntityTree, code: &mut String) {
         writeln!(code, "        let ids = if include_deleted {{").unwrap();
         writeln!(
             code,
-            "            {qmod}::search_{snake}_including_deleted().bind(db, &query.to_string(), &offset, &page_size_i).all().await.map_err(|e| e.to_string())?",
+            "            {qmod}::search_{snake}_including_deleted().bind(db, &query.to_string(), &page_size_i, &offset).all().await.map_err(|e| e.to_string())?",
             snake = tree.table_name
         )
         .unwrap();
         writeln!(code, "        }} else {{").unwrap();
         writeln!(
             code,
-            "            {qmod}::search_{snake}().bind(db, &query.to_string(), &offset, &page_size_i).all().await.map_err(|e| e.to_string())?",
+            "            {qmod}::search_{snake}().bind(db, &query.to_string(), &page_size_i, &offset).all().await.map_err(|e| e.to_string())?",
             snake = tree.table_name
         )
         .unwrap();
@@ -715,7 +697,7 @@ fn emit_adapter_search(tree: &EntityTree, code: &mut String) {
     } else {
         writeln!(
             code,
-            "        let ids = {qmod}::search_{snake}().bind(db, &query.to_string(), &offset, &page_size_i).all().await.map_err(|e| e.to_string())?;",
+            "        let ids = {qmod}::search_{snake}().bind(db, &query.to_string(), &page_size_i, &offset).all().await.map_err(|e| e.to_string())?;",
             snake = tree.table_name
         )
         .unwrap();
@@ -824,6 +806,30 @@ fn emit_adapter_tree(tree: &EntityTree, code: &mut String) {
     writeln!(code, "        }}").unwrap();
     writeln!(code, "        Ok(items)").unwrap();
     writeln!(code, "    }}").unwrap();
+}
+
+/// Emit in-memory filter checks for a list row (continue-on-mismatch).
+fn emit_filter_checks(code: &mut String, tree: &EntityTree, pad: &str) {
+    for ff in &tree.filter_fields {
+        let field = &ff.field_name;
+        if ff.is_nullable {
+            writeln!(
+                code,
+                "{pad}if let Some(val) = filters.get(\"{field}\") {{\n\
+                 {pad}    if r.{field}.as_ref().map(|v| v.to_string()).as_deref() != Some(val.as_str()) {{ continue; }}\n\
+                 {pad}}}"
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "{pad}if let Some(val) = filters.get(\"{field}\") {{\n\
+                 {pad}    if r.{field}.to_string() != *val {{ continue; }}\n\
+                 {pad}}}"
+            )
+            .unwrap();
+        }
+    }
 }
 
 /// Emit a response construction expression: child-table reads + the
