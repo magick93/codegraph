@@ -695,19 +695,23 @@ fn emit_adapter_semantic_search(tree: &EntityTree, code: &mut String) {
     }
     writeln!(code, "    ) -> Result<Vec<Uuid>, Box<dyn std::error::Error>> {{").unwrap();
     writeln!(code, "        let limit_i = limit as i64;").unwrap();
-    writeln!(code, "        let vec = pgvector::Vector::from(embedding.to_vec());").unwrap();
+    writeln!(
+        code,
+        "        let vec_str = format!(\"[{{}}]\", embedding.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(\",\"));"
+    )
+    .unwrap();
     if tree.is_auditable {
         writeln!(code, "        let ids = if include_deleted {{").unwrap();
         writeln!(
             code,
-            "            {qmod}::semantic_{snake}_including_deleted().bind(db, &vec, &limit_i).all().await.map_err(|e| e.to_string())?",
+            "            {qmod}::semantic_{snake}_including_deleted().bind(db, &vec_str, &limit_i).all().await.map_err(|e| e.to_string())?",
             snake = tree.table_name
         )
         .unwrap();
         writeln!(code, "        }} else {{").unwrap();
         writeln!(
             code,
-            "            {qmod}::semantic_{snake}().bind(db, &vec, &limit_i).all().await.map_err(|e| e.to_string())?",
+            "            {qmod}::semantic_{snake}().bind(db, &vec_str, &limit_i).all().await.map_err(|e| e.to_string())?",
             snake = tree.table_name
         )
         .unwrap();
@@ -715,7 +719,7 @@ fn emit_adapter_semantic_search(tree: &EntityTree, code: &mut String) {
     } else {
         writeln!(
             code,
-            "        let ids = {qmod}::semantic_{snake}().bind(db, &vec, &limit_i).all().await.map_err(|e| e.to_string())?;",
+            "        let ids = {qmod}::semantic_{snake}().bind(db, &vec_str, &limit_i).all().await.map_err(|e| e.to_string())?;",
             snake = tree.table_name
         )
         .unwrap();
