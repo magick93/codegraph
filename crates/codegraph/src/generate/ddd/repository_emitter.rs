@@ -2298,7 +2298,7 @@ impl RepositoryImplEmitter {
         writeln!(code, "#[async_trait]").unwrap();
         writeln!(
             code,
-            "impl {}Repository for {}RepositoryImpl {{",
+            "impl {}Repository<sea_orm::DatabaseTransaction> for {}RepositoryImpl {{",
             tree.entity_name, tree.entity_name
         )
         .unwrap();
