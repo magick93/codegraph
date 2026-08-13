@@ -184,7 +184,12 @@ fn render_entity_sql(
             write_search_queries(&mut sql, &table, entity_name, soft_delete_col, &fts_language);
         }
         if !search.embedding_columns.is_empty() {
-            write_embedding_queries(&mut sql, &table, entity_name, soft_delete_col);
+            // The DDL generator names the vector column `{column}_embedding`
+            // from the first configured embedding column.
+            if let Some(first) = search.embedding_columns.first() {
+                let emb_col = format!("{}_embedding", first);
+                write_embedding_queries(&mut sql, &table, entity_name, soft_delete_col, &emb_col);
+            }
         }
     }
     let hierarchy_field = entity_cfg.and_then(|ec| ec.hierarchy_field.clone());
@@ -600,6 +605,7 @@ fn write_embedding_queries(
     table: &str,
     entity_name: &str,
     soft_delete_col: Option<&str>,
+    emb_col: &str,
 ) {
     for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
         if include_deleted && soft_delete_col.is_none() {
@@ -617,8 +623,8 @@ fn write_embedding_queries(
              --- Semantic similarity search over {entity_name}.\n\
              SELECT \"id\"\n\
              FROM {table}\n\
-             WHERE embedding IS NOT NULL{extra}\n\
-             ORDER BY embedding <=> :embedding\n\
+             WHERE \"{emb_col}\" IS NOT NULL{extra}\n\
+             ORDER BY \"{emb_col}\" <=> :embedding\n\
              LIMIT :limit;\n\n",
         ));
     }
