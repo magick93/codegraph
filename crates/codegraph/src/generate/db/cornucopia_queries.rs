@@ -122,6 +122,27 @@ fn pg_cast_for(col: &TreeColumn) -> String {
     .to_string()
 }
 
+/// Postgres cast target for a child-table column.
+fn child_pg_cast_for(col: &crate::generate::ddd::repository_emitter::ChildColumn) -> String {
+    if let Some(ref cast) = col.pg_cast {
+        return cast.clone();
+    }
+    match col.rust_type.as_str() {
+        "Uuid" | "uuid::Uuid" => "uuid",
+        "i32" => "int4",
+        "i64" => "int8",
+        "f32" => "float4",
+        "f64" => "float8",
+        "bool" => "bool",
+        "Decimal" | "rust_decimal::Decimal" => "numeric",
+        "NaiveDate" | "chrono::NaiveDate" => "date",
+        "DateTime<Utc>" | "chrono::DateTime<chrono::Utc>" => "timestamptz",
+        "serde_json::Value" | "Vec<serde_json::Value>" => "jsonb",
+        _ => "text",
+    }
+    .to_string()
+}
+
 /// Whether the column is bound typed (arrays) rather than as text.
 fn is_array_col(col: &TreeColumn) -> bool {
     col.is_array || col.rust_type.starts_with("Vec<")
@@ -515,10 +536,8 @@ fn write_child_queries(
         let pname = c.field_name.trim_start_matches("r#");
         if c.rust_type.starts_with("Vec<") {
             insert_vals.push(format!(":{}", pname));
-        } else if let Some(ref cast) = c.pg_cast {
-            insert_vals.push(format!(":{}::text::{}", pname, cast));
         } else {
-            insert_vals.push(format!(":{}::text", pname));
+            insert_vals.push(format!(":{}::text::{}", pname, child_pg_cast_for(c)));
         }
         param_defs.push(pname.to_string());
     }
