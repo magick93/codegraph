@@ -283,10 +283,8 @@ fn emit_adapter_create(tree: &EntityTree, code: &mut String) {
         }
         let field = &child.field_name;
         if child.is_array {
-            writeln!(code, "        if let Some(items) = &cmd.{field} {{").unwrap();
-            writeln!(code, "            for item in items {{").unwrap();
-            emit_child_insert_one(code, tree, child, "item", "id", 4);
-            writeln!(code, "            }}").unwrap();
+            writeln!(code, "        for item in &cmd.{field} {{").unwrap();
+            emit_child_insert_one(code, tree, child, "item", "id", 3);
             writeln!(code, "        }}").unwrap();
         } else {
             writeln!(code, "        if let Some(item) = &cmd.{field} {{").unwrap();
@@ -960,20 +958,25 @@ fn emit_child_insert_one(
         if grandchild.columns.is_empty() && grandchild.child_tables.is_empty() {
             continue;
         }
-        writeln!(
-            code,
-            "{pad}if let Some(gitems) = &{item_var}.{} {{",
-            grandchild.field_name
-        )
-        .unwrap();
         if grandchild.is_array {
-            writeln!(code, "{pad}    for gitem in gitems {{").unwrap();
-            emit_child_insert_one(code, tree, grandchild, "gitem", "child_id", indent + 2);
-            writeln!(code, "{pad}    }}").unwrap();
+            writeln!(
+                code,
+                "{pad}for gitem in &{item_var}.{} {{",
+                grandchild.field_name
+            )
+            .unwrap();
+            emit_child_insert_one(code, tree, grandchild, "gitem", "child_id", indent + 1);
+            writeln!(code, "{pad}}}").unwrap();
         } else {
-            emit_child_insert_one(code, tree, grandchild, "gitems", "child_id", indent + 1);
+            writeln!(
+                code,
+                "{pad}if let Some(gitem) = &{item_var}.{} {{",
+                grandchild.field_name
+            )
+            .unwrap();
+            emit_child_insert_one(code, tree, grandchild, "gitem", "child_id", indent + 1);
+            writeln!(code, "{pad}}}").unwrap();
         }
-        writeln!(code, "{pad}}}").unwrap();
     }
 }
 
