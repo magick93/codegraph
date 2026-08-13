@@ -64,9 +64,21 @@ impl GlobalGenerator for CornucopiaConfigGenerator {
                 path: base.join("Cargo.toml"),
                 content: initial_manifest(),
             },
+            // Placeholder lib target — cargo validates the manifest's targets
+            // before build.rs runs, so the crate must have a lib.rs from the
+            // very first build. `gen_live()` overwrites it with the real
+            // generated module tree.
+            GeneratedFile {
+                path: base.join("src").join("lib.rs"),
+                content: PLACEHOLDER_LIB_RS.to_string(),
+            },
         ])
     }
 }
+
+const PLACEHOLDER_LIB_RS: &str = r#"//! Placeholder library target for the cornucopia-queries crate.
+//! Overwritten on the first build by `cornucopia::gen_live()` in build.rs.
+"#;
 
 const BUILD_RS: &str = r#"//! Cornucopia code generation — connects to the live Postgres database,
 //! introspects the query annotations in ../queries, and emits the typed
