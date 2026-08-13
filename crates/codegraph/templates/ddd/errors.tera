@@ -38,3 +38,17 @@ impl From<sea_orm::DbErr> for {{ domain | pascal_case }}Error {
         Self::InternalError(e.to_string())
     }
 }
+{% if project.persistence_provider == "cornucopia" %}
+
+impl From<tokio_postgres::Error> for {{ domain | pascal_case }}Error {
+    fn from(e: tokio_postgres::Error) -> Self {
+        Self::InternalError(e.to_string())
+    }
+}
+
+impl From<deadpool_postgres::PoolError> for {{ domain | pascal_case }}Error {
+    fn from(e: deadpool_postgres::PoolError) -> Self {
+        Self::InternalError(e.to_string())
+    }
+}
+{% endif %}

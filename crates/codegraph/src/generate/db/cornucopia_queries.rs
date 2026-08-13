@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::{PersistenceColumnRole, SoftDeleteEffect};
+use codegraph_core::types::{PersistenceColumn, PersistenceColumnRole};
 
 use crate::error::Result;
 use crate::generate::persistence::build_persistence_entity;
@@ -10,6 +10,16 @@ use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
+/// Generates annotated Cornucopia SQL files for an entity's CRUD surface.
+///
+/// One file per entity at `queries/{domain}/{table}.sql`. Each annotated query
+/// block (`--! name (params) : (returns)`) becomes a typed Rust function in the
+/// generated `cornucopia-queries` crate.
+///
+/// Tenant isolation is NOT expressed in the SQL: the DDL trigger fills the
+/// tenant column from `app.organization_id` on INSERT and Postgres RLS
+/// (`SET LOCAL ROLE app_user` in the query/command layers) filters reads —
+/// exactly like the SeaORM backend.
 pub struct CornucopiaQueryGenerator {
     output_dir: PathBuf,
     parent_candidates: Vec<codegraph_core::types::ParentCandidate>,
@@ -60,106 +70,16 @@ impl EntityGenerator for CornucopiaQueryGenerator {
         )
         .await?;
 
-        let mut sql = String::with_capacity(4096);
-
-        let table = format!("\"{}\".\"{}\"", entity.schema_name, entity.table_name);
-        let pk = "id";
-        let tenant_col = entity
-            .columns
-            .iter()
-            .find(|c| c.role == PersistenceColumnRole::TenantScope);
-        let tenant_field = tenant_col.map(|c| c.field_name.as_str());
-
-        let sd_effect: Option<&SoftDeleteEffect> = entity.policies.soft_delete.as_ref();
-        let soft_delete_col = sd_effect.map(|e| e.marker_column.as_str());
-
-        let data_cols: Vec<_> = entity
-            .columns
-            .iter()
-            .filter(|c| matches!(c.role, PersistenceColumnRole::Data | PersistenceColumnRole::ForeignKey { .. }))
-            .collect();
-        let return_cols: Vec<_> = entity
-            .columns
-            .iter()
-            .filter(|c| {
-                matches!(
-                    c.role,
-                    PersistenceColumnRole::Data
-                        | PersistenceColumnRole::PrimaryKey
-                        | PersistenceColumnRole::ForeignKey { .. }
-                        | PersistenceColumnRole::TenantScope
-                        | PersistenceColumnRole::SoftDeleteMarker
-                        | PersistenceColumnRole::AuditTimestamp { .. }
-                        | PersistenceColumnRole::AuditFlag
-                        | PersistenceColumnRole::HierarchyParent
-                )
-            })
-            .collect();
+        if entity.table_name.is_empty() {
+            return Ok(Vec::new());
+        }
 
         let entity_name = codegraph_naming::to_snake_case(&codegraph_naming::strip_suffix(
             &entity.rust_type_name,
             &config.defaults.type_suffix,
         ));
-        let module = format!("{}_{}", domain, entity.table_name);
 
-        // ── File header ──────────────────────────────────────────────
-        write_sql_header(&mut sql, schema_title, &entity, domain);
-
-        // ── List active (non-deleted) ─────────────────────────────────
-        write_list_query(
-            &mut sql,
-            &table,
-            &entity_name,
-            &entity,
-            tenant_field,
-            soft_delete_col,
-            &return_cols,
-        );
-
-        // ── Get by ID ─────────────────────────────────────────────────
-        write_get_by_id_query(
-            &mut sql,
-            &table,
-            &entity_name,
-            tenant_field,
-            soft_delete_col,
-            &return_cols,
-        );
-
-        // ── Create ────────────────────────────────────────────────────
-        write_create_query(
-            &mut sql,
-            &table,
-            &entity_name,
-            &entity,
-            &data_cols,
-            tenant_field,
-            &return_cols,
-        );
-
-        // ── Update ────────────────────────────────────────────────────
-        write_update_query(
-            &mut sql,
-            &table,
-            &entity_name,
-            &entity,
-            &data_cols,
-            tenant_field,
-            soft_delete_col,
-        );
-
-        // ── Soft-delete ───────────────────────────────────────────────
-        if soft_delete_col.is_some() {
-            write_soft_delete_query(
-                &mut sql,
-                &table,
-                &entity_name,
-                tenant_field,
-                soft_delete_col,
-            );
-        } else {
-            write_hard_delete_query(&mut sql, &table, &entity_name, tenant_field);
-        }
+        let sql = render_entity_sql(schema_title, domain, config, &entity, &entity_name);
 
         let rel_path = format!("queries/{}/{}.sql", domain, entity.table_name);
         Ok(vec![GeneratedFile {
@@ -169,137 +89,213 @@ impl EntityGenerator for CornucopiaQueryGenerator {
     }
 }
 
-fn write_sql_header(
-    sql: &mut String,
+/// Render the full SQL file for one entity.
+fn render_entity_sql(
     schema_title: &str,
-    entity: &codegraph_core::types::PersistenceEntity,
     domain: &str,
-) {
-    let _ = format!(
-        "-- Cornucopia queries for {} (domain: {})\n\
-         -- Generated by codegraph — persistence_provider = \"cornucopia\"\n\
-         -- Schema: {}\n\n",
-        schema_title, domain, entity.table_name,
-    );
-}
-
-fn write_list_query(
-    sql: &mut String,
-    table: &str,
-    entity_name: &str,
+    config: &DomainConfig,
     entity: &codegraph_core::types::PersistenceEntity,
-    tenant_field: Option<&str>,
-    soft_delete_col: Option<&str>,
-    return_cols: &[&codegraph_core::types::PersistenceColumn],
-) {
-    let col_list = return_cols
+    entity_name: &str,
+) -> String {
+    let mut sql = String::with_capacity(16 * 1024);
+
+    let table = format!("\"{}\".\"{}\"", entity.schema_name, entity.table_name);
+    let soft_delete_col = entity
+        .policies
+        .soft_delete
+        .as_ref()
+        .map(|e| e.marker_column.as_str());
+    let is_auditable = soft_delete_col.is_some();
+
+    let return_cols: Vec<&PersistenceColumn> = entity
+        .columns
         .iter()
-        .map(|c| format!("\"{}\"", c.column_name))
-        .collect::<Vec<_>>()
-        .join(", ");
+        .filter(|c| {
+            matches!(
+                c.role,
+                PersistenceColumnRole::Data
+                    | PersistenceColumnRole::PrimaryKey
+                    | PersistenceColumnRole::ForeignKey { .. }
+                    | PersistenceColumnRole::TenantScope
+                    | PersistenceColumnRole::SoftDeleteMarker
+                    | PersistenceColumnRole::AuditTimestamp { .. }
+                    | PersistenceColumnRole::AuditUser { .. }
+                    | PersistenceColumnRole::AuditFlag
+                    | PersistenceColumnRole::HierarchyParent
+            )
+        })
+        .collect();
 
-    let nullable_hints = return_cols
+    let data_cols: Vec<&PersistenceColumn> = entity
+        .columns
         .iter()
-        .map(|c| if c.is_nullable { format!("{}?", c.field_name) } else { c.field_name.clone() })
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let mut params = String::new();
-    let mut where_clauses = Vec::new();
-    if let Some(tf) = tenant_field {
-        params.push_str(&format!("{}", tf));
-        where_clauses.push(format!("\"{}\" = :{}", tf, tf));
-    }
-    if let Some(sd) = soft_delete_col {
-        where_clauses.push(format!("\"{}\" IS NULL", sd));
-    }
-
-    let where_clause = if where_clauses.is_empty() {
-        String::new()
-    } else {
-        format!("\n  WHERE {}", where_clauses.join("\n    AND "))
-    };
-
-    let param_list = if params.is_empty() {
-        String::new()
-    } else {
-        format!(" ({})", params)
-    };
+        .filter(|c| {
+            matches!(
+                c.role,
+                PersistenceColumnRole::Data | PersistenceColumnRole::ForeignKey { .. }
+            )
+        })
+        .collect();
 
     sql.push_str(&format!(
-        "--! list_{0}{1} : ({2})\n\
-         --- List all active {0} records.\n\
-         SELECT {3}\n\
-         FROM {4}{5}\n\
-         ORDER BY \"created_at\" DESC;\n\n",
-        entity_name, param_list, nullable_hints, col_list, table, where_clause,
+        "-- Cornucopia queries for {} (domain: {})\n\
+         -- Generated by codegraph — persistence_provider = \"cornucopia\"\n\n",
+        schema_title, domain,
     ));
+
+    // ── list (+ count) ─────────────────────────────────────────────────
+    write_list_queries(&mut sql, &table, entity_name, soft_delete_col, &return_cols);
+
+    // ── get by id ──────────────────────────────────────────────────────
+    write_get_queries(&mut sql, &table, entity_name, soft_delete_col, &return_cols);
+
+    // ── create ─────────────────────────────────────────────────────────
+    write_create_query(&mut sql, &table, entity_name, &data_cols);
+
+    // ── update (COALESCE so missing Option fields keep existing values) ─
+    write_update_query(&mut sql, &table, entity_name, &data_cols, soft_delete_col);
+
+    // ── delete ─────────────────────────────────────────────────────────
+    write_delete_query(&mut sql, &table, entity_name, soft_delete_col);
+
+    // ── child tables (VO tables) ───────────────────────────────────────
+    for child in &entity.child_tables {
+        write_child_queries(&mut sql, &entity.schema_name, entity_name, child);
+    }
+
+    // ── FTS / embeddings / tree ────────────────────────────────────────
+    let entity_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(schema_title));
+    let search = entity_cfg.map(|ec| &ec.search);
+    if let Some(search) = search {
+        if !search.fts_weights.is_empty() {
+            let fts_language = search.fts_language.clone();
+            write_search_queries(&mut sql, &table, entity_name, soft_delete_col, &fts_language);
+        }
+        if !search.embedding_columns.is_empty() {
+            write_embedding_queries(&mut sql, &table, entity_name, soft_delete_col);
+        }
+    }
+    let hierarchy_field = entity_cfg.and_then(|ec| ec.hierarchy_field.clone());
+    if let Some(hf) = hierarchy_field {
+        write_tree_query(&mut sql, &table, entity_name, &hf, &return_cols);
+    }
+
+    let _ = is_auditable;
+    sql
 }
 
-fn write_get_by_id_query(
+fn col_list(cols: &[&PersistenceColumn]) -> String {
+    cols.iter()
+        .map(|c| format!("\"{}\"", c.column_name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn nullable_hints(cols: &[&PersistenceColumn]) -> String {
+    cols.iter()
+        .map(|c| {
+            let name = c.field_name.trim_start_matches("r#");
+            if c.is_nullable {
+                format!("{}?", name)
+            } else {
+                name.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn write_list_queries(
     sql: &mut String,
     table: &str,
     entity_name: &str,
-    tenant_field: Option<&str>,
     soft_delete_col: Option<&str>,
-    return_cols: &[&codegraph_core::types::PersistenceColumn],
+    return_cols: &[&PersistenceColumn],
 ) {
-    let col_list = return_cols
-        .iter()
-        .map(|c| format!("\"{}\"", c.column_name))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let cols = col_list(return_cols);
+    let hints = nullable_hints(return_cols);
 
-    let nullable_hints = return_cols
-        .iter()
-        .map(|c| if c.is_nullable { format!("{}?", c.field_name) } else { c.field_name.clone() })
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let mut params = vec!["id".to_string()];
-    let mut where_clauses = vec!["\"id\" = :id".to_string()];
-    if let Some(tf) = tenant_field {
-        params.push(tf.to_string());
-        where_clauses.push(format!("\"{}\" = :{}", tf, tf));
+    for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
+        if include_deleted && soft_delete_col.is_none() {
+            continue;
+        }
+        let where_clause = if !include_deleted {
+            soft_delete_col
+                .map(|sd| format!("\n  WHERE \"{sd}\" IS NULL"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        sql.push_str(&format!(
+            "--! list_{entity_name}{suffix} (offset, page_size) : ({hints})\n\
+             --- List {entity_name} records.\n\
+             SELECT {cols}\n\
+             FROM {table}{where_clause}\n\
+             ORDER BY \"created_at\" DESC\n\
+             LIMIT :page_size OFFSET :offset;\n\n",
+        ));
+        let count_where_clause = if include_deleted {
+            String::new()
+        } else {
+            soft_delete_col
+                .map(|sd| format!("\n  WHERE \"{sd}\" IS NULL"))
+                .unwrap_or_default()
+        };
+        sql.push_str(&format!(
+            "--! count_{entity_name}{suffix} () : (count)\n\
+             --- Count of {entity_name} records.\n\
+             SELECT COUNT(*) AS \"count\"\n\
+             FROM {table}{count_where_clause};\n\n",
+        ));
     }
-    if let Some(sd) = soft_delete_col {
-        where_clauses.push(format!("\"{}\" IS NULL", sd));
+}
+
+fn write_get_queries(
+    sql: &mut String,
+    table: &str,
+    entity_name: &str,
+    soft_delete_col: Option<&str>,
+    return_cols: &[&PersistenceColumn],
+) {
+    let cols = col_list(return_cols);
+    let hints = nullable_hints(return_cols);
+
+    for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
+        if include_deleted && soft_delete_col.is_none() {
+            continue;
+        }
+        let mut clauses = vec!["\"id\" = :id".to_string()];
+        if !include_deleted {
+            if let Some(sd) = soft_delete_col {
+                clauses.push(format!("\"{}\" IS NULL", sd));
+            }
+        }
+        sql.push_str(&format!(
+            "--! get_{entity_name}{suffix} (id) : ({hints})\n\
+             --- Get a single {entity_name} by ID.\n\
+             SELECT {cols}\n\
+             FROM {table}\n\
+             WHERE {};\n\n",
+            clauses.join("\n    AND "),
+        ));
     }
-
-    let param_list = params.join(", ");
-    let where_clause = where_clauses.join("\n    AND ");
-
-    sql.push_str(&format!(
-        "--! get_{0} ({1}) : ({2})\n\
-         --- Get a single {0} by ID.\n\
-         SELECT {3}\n\
-         FROM {4}\n\
-         WHERE {5};\n\n",
-        entity_name, param_list, nullable_hints, col_list, table, where_clause,
-    ));
 }
 
 fn write_create_query(
     sql: &mut String,
     table: &str,
     entity_name: &str,
-    entity: &codegraph_core::types::PersistenceEntity,
-    data_cols: &[&codegraph_core::types::PersistenceColumn],
-    tenant_field: Option<&str>,
-    return_cols: &[&codegraph_core::types::PersistenceColumn],
+    data_cols: &[&PersistenceColumn],
 ) {
     let mut insert_cols = Vec::new();
     let mut insert_params = Vec::new();
     let mut param_defs = Vec::new();
 
-    if let Some(tf) = tenant_field {
-        insert_cols.push(format!("\"{}\"", tf));
-        insert_params.push(format!(":{}", tf));
-        param_defs.push(tf.to_string());
-    }
-
     for col in data_cols {
-        let is_create_col = !matches!(
+        let role_skip = matches!(
             col.role,
             PersistenceColumnRole::AuditTimestamp { .. }
                 | PersistenceColumnRole::AuditUser { .. }
@@ -308,46 +304,35 @@ fn write_create_query(
                 | PersistenceColumnRole::PrimaryKey
                 | PersistenceColumnRole::TenantScope
         );
-        if is_create_col {
-            insert_cols.push(format!("\"{}\"", col.column_name));
-            insert_params.push(format!(":{}", col.field_name));
-            param_defs.push(col.field_name.clone());
+        if role_skip {
+            continue;
         }
+        insert_cols.push(format!("\"{}\"", col.column_name));
+        if let Some(ref cast) = col.pg_cast {
+            // Bind as text and cast in SQL so the DTO's string representation works.
+            insert_params.push(format!(":{}::text::{}", col.field_name, cast));
+        } else {
+            insert_params.push(format!(":{}", col.field_name));
+        }
+        param_defs.push(col.field_name.clone());
     }
 
     if insert_cols.is_empty() {
         sql.push_str(&format!(
-            "-- No writable data columns for entity: {}\n\n",
-            entity_name
+            "-- No writable data columns for entity: {entity_name}\n\n"
         ));
         return;
     }
 
-    let return_col_list = return_cols
-        .iter()
-        .map(|c| format!("\"{}\"", c.column_name))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let return_hints = return_cols
-        .iter()
-        .map(|c| if c.is_nullable { format!("{}?", c.field_name) } else { c.field_name.clone() })
-        .collect::<Vec<_>>()
-        .join(", ");
-
     sql.push_str(&format!(
-        "--! create_{0} ({1}) : ({2})\n\
-         --- Create a new {0}.\n\
-         INSERT INTO {3} ({4})\n\
-         VALUES ({5})\n\
-         RETURNING {6};\n\n",
-        entity_name,
+        "--! create_{entity_name} ({}) : (id)\n\
+         --- Create a new {entity_name}.\n\
+         INSERT INTO {table} ({})\n\
+         VALUES ({})\n\
+         RETURNING \"id\";\n\n",
         param_defs.join(", "),
-        return_hints,
-        table,
         insert_cols.join(", "),
         insert_params.join(", "),
-        return_col_list,
     ));
 }
 
@@ -355,13 +340,12 @@ fn write_update_query(
     sql: &mut String,
     table: &str,
     entity_name: &str,
-    entity: &codegraph_core::types::PersistenceEntity,
-    data_cols: &[&codegraph_core::types::PersistenceColumn],
-    tenant_field: Option<&str>,
+    data_cols: &[&PersistenceColumn],
     soft_delete_col: Option<&str>,
 ) {
-    let updatable: Vec<_> = data_cols
+    let updatable: Vec<&PersistenceColumn> = data_cols
         .iter()
+        .copied()
         .filter(|c| {
             !matches!(
                 c.role,
@@ -377,15 +361,28 @@ fn write_update_query(
 
     if updatable.is_empty() {
         sql.push_str(&format!(
-            "-- No updatable data columns for entity: {}\n\n",
-            entity_name
+            "-- No updatable data columns for entity: {entity_name}\n\n"
         ));
         return;
     }
 
+    // COALESCE keeps existing values when the update DTO leaves a field unset
+    // (update request fields are Option<T>; None binds as NULL).
     let set_clauses = updatable
         .iter()
-        .map(|c| format!("\"{}\" = :{}", c.column_name, c.field_name))
+        .map(|c| {
+            if let Some(ref cast) = c.pg_cast {
+                format!(
+                    "\"{}\" = COALESCE(:{}::text::{}, \"{}\")",
+                    c.column_name, c.field_name, cast, c.column_name
+                )
+            } else {
+                format!(
+                    "\"{}\" = COALESCE(:{}, \"{}\")",
+                    c.column_name, c.field_name, c.column_name
+                )
+            }
+        })
         .collect::<Vec<_>>()
         .join(",\n    ");
 
@@ -393,83 +390,233 @@ fn write_update_query(
     for c in &updatable {
         params.push(c.field_name.clone());
     }
-    if let Some(tf) = tenant_field {
-        params.push(tf.to_string());
-    }
 
     let mut where_clauses = vec!["\"id\" = :id".to_string()];
-    if let Some(tf) = tenant_field {
-        where_clauses.push(format!("\"{}\" = :{}", tf, tf));
-    }
     if let Some(sd) = soft_delete_col {
         where_clauses.push(format!("\"{}\" IS NULL", sd));
     }
 
     sql.push_str(&format!(
-        "--! update_{0} ({1})\n\
-         --- Update an existing {0}.\n\
-         UPDATE {2}\n\
-         SET {3}\n\
-         WHERE {4};\n\n",
-        entity_name,
+        "--! update_{entity_name} ({})\n\
+         --- Update an existing {entity_name}.\n\
+         UPDATE {table}\n\
+         SET {set_clauses}\n\
+         WHERE {};\n\n",
         params.join(", "),
-        table,
-        set_clauses,
         where_clauses.join("\n  AND "),
     ));
 }
 
-fn write_soft_delete_query(
+fn write_delete_query(
     sql: &mut String,
     table: &str,
     entity_name: &str,
-    tenant_field: Option<&str>,
     soft_delete_col: Option<&str>,
 ) {
-    let sd_col = soft_delete_col.unwrap_or("deleted_at");
-    let mut params = vec!["id".to_string()];
     let mut where_clauses = vec!["\"id\" = :id".to_string()];
-    if let Some(tf) = tenant_field {
-        params.push(tf.to_string());
-        where_clauses.push(format!("\"{}\" = :{}", tf, tf));
+    if let Some(sd) = soft_delete_col {
+        where_clauses.push(format!("\"{}\" IS NULL", sd));
     }
-    where_clauses.push(format!("\"{}\" IS NULL", sd_col));
-
-    sql.push_str(&format!(
-        "--! delete_{0} ({1})\n\
-         --- Soft-delete a {0} by setting the deletion marker.\n\
-         UPDATE {2}\n\
-         SET \"{3}\" = NOW()\n\
-         WHERE {4};\n\n",
-        entity_name,
-        params.join(", "),
-        table,
-        sd_col,
-        where_clauses.join("\n  AND "),
-    ));
+    match soft_delete_col {
+        Some(sd) => {
+            sql.push_str(&format!(
+                "--! delete_{entity_name} (id)\n\
+                 --- Soft-delete a {entity_name} by setting the deletion marker.\n\
+                 UPDATE {table}\n\
+                 SET \"{sd}\" = NOW()\n\
+                 WHERE {};\n\n",
+                where_clauses.join("\n  AND "),
+            ));
+        }
+        None => {
+            sql.push_str(&format!(
+                "--! delete_{entity_name} (id)\n\
+                 --- Hard-delete a {entity_name}.\n\
+                 DELETE FROM {table}\n\
+                 WHERE {};\n\n",
+                where_clauses.join("\n  AND "),
+            ));
+        }
+    }
 }
 
-fn write_hard_delete_query(
+/// Emit list/insert/delete queries for a child (value-object) table.
+fn write_child_queries(
+    sql: &mut String,
+    schema_name: &str,
+    entity_name: &str,
+    child: &codegraph_core::types::PersistenceChildTable,
+) {
+    let child_table = format!("\"{}\".\"{}\"", schema_name, child.table_name);
+    let fk = &child.parent_fk_column;
+    let col_names: Vec<String> = child
+        .columns
+        .iter()
+        .map(|c| format!("\"{}\"", c.column_name))
+        .collect();
+
+    if col_names.is_empty() {
+        sql.push_str(&format!(
+            "--! list_{entity_name}_{child} ({fk}) : (id)\n\
+             --- Child rows for {entity_name}.\n\
+             SELECT \"id\"\n\
+             FROM {table}\n\
+             WHERE \"{fk}\" = :{fk};\n\n",
+            child = child.table_name,
+            table = child_table,
+        ));
+    } else {
+        let hints: Vec<String> = child
+            .columns
+            .iter()
+            .map(|c| {
+                let name = c.field_name.trim_start_matches("r#");
+                if c.is_nullable {
+                    format!("{}?", name)
+                } else {
+                    name.to_string()
+                }
+            })
+            .collect();
+        sql.push_str(&format!(
+            "--! list_{entity_name}_{child} ({fk}) : (id, {hints})\n\
+             --- Child rows for {entity_name}.\n\
+             SELECT \"id\", {cols}\n\
+             FROM {table}\n\
+             WHERE \"{fk}\" = :{fk};\n\n",
+            child = child.table_name,
+            hints = hints.join(", "),
+            cols = col_names.join(", "),
+            table = child_table,
+        ));
+    }
+
+    // Insert a child row (id generated by the adapter).
+    let mut insert_cols = vec!["\"id\"".to_string(), format!("\"{}\"", fk)];
+    let mut insert_vals = vec![":id".to_string(), format!(":{}", fk)];
+    let mut param_defs = vec!["id".to_string(), fk.clone()];
+    for c in &child.columns {
+        insert_cols.push(format!("\"{}\"", c.column_name));
+        if let Some(ref cast) = c.pg_cast {
+            // Bind as text and cast in SQL so the DTO's string representation works.
+            insert_vals.push(format!(":{}::text::{}", c.field_name, cast));
+        } else {
+            insert_vals.push(format!(":{}", c.field_name));
+        }
+        param_defs.push(c.field_name.clone());
+    }
+    sql.push_str(&format!(
+        "--! insert_{entity_name}_{child} ({})\n\
+         --- Insert a child row for {entity_name}.\n\
+         INSERT INTO {table} ({})\n\
+         VALUES ({});\n\n",
+        param_defs.join(", "),
+        insert_cols.join(", "),
+        insert_vals.join(", "),
+        child = child.table_name,
+        table = child_table,
+    ));
+
+    // Delete child rows by parent FK (used when replacing children on update).
+    sql.push_str(&format!(
+        "--! delete_{entity_name}_{child} ({fk})\n\
+         --- Delete child rows for {entity_name}.\n\
+         DELETE FROM {table}\n\
+         WHERE \"{fk}\" = :{fk};\n\n",
+        child = child.table_name,
+        table = child_table,
+    ));
+
+    // Nested grandchildren.
+    for grandchild in &child.child_tables {
+        write_child_queries(sql, schema_name, entity_name, grandchild);
+    }
+}
+
+fn write_search_queries(
     sql: &mut String,
     table: &str,
     entity_name: &str,
-    tenant_field: Option<&str>,
+    soft_delete_col: Option<&str>,
+    fts_language: &str,
 ) {
-    let mut params = vec!["id".to_string()];
-    let mut where_clauses = vec!["\"id\" = :id".to_string()];
-    if let Some(tf) = tenant_field {
-        params.push(tf.to_string());
-        where_clauses.push(format!("\"{}\" = :{}", tf, tf));
+    for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
+        if include_deleted && soft_delete_col.is_none() {
+            continue;
+        }
+        let extra = if !include_deleted {
+            soft_delete_col
+                .map(|sd| format!(" AND \"{sd}\" IS NULL"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        sql.push_str(&format!(
+            "--! search_{entity_name}{suffix} (q, offset, page_size) : (id)\n\
+             --- Full-text search over {entity_name}.\n\
+             SELECT \"id\"\n\
+             FROM {table}\n\
+             WHERE search_tsv @@ websearch_to_tsquery('{fts_language}', :q){extra}\n\
+             ORDER BY ts_rank(search_tsv, websearch_to_tsquery('{fts_language}', :q)) DESC\n\
+             LIMIT :page_size OFFSET :offset;\n\n",
+        ));
+        sql.push_str(&format!(
+            "--! search_count_{entity_name}{suffix} (q) : (count)\n\
+             --- Count of full-text search matches for {entity_name}.\n\
+             SELECT COUNT(*) AS \"count\"\n\
+             FROM {table}\n\
+             WHERE search_tsv @@ websearch_to_tsquery('{fts_language}', :q){extra};\n\n",
+        ));
     }
+}
 
+fn write_embedding_queries(
+    sql: &mut String,
+    table: &str,
+    entity_name: &str,
+    soft_delete_col: Option<&str>,
+) {
+    for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
+        if include_deleted && soft_delete_col.is_none() {
+            continue;
+        }
+        let extra = if !include_deleted {
+            soft_delete_col
+                .map(|sd| format!(" AND \"{sd}\" IS NULL"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        sql.push_str(&format!(
+            "--! semantic_{entity_name}{suffix} (embedding, limit) : (id)\n\
+             --- Semantic similarity search over {entity_name}.\n\
+             SELECT \"id\"\n\
+             FROM {table}\n\
+             WHERE embedding IS NOT NULL{extra}\n\
+             ORDER BY embedding <=> :embedding\n\
+             LIMIT :limit;\n\n",
+        ));
+    }
+}
+
+fn write_tree_query(
+    sql: &mut String,
+    table: &str,
+    entity_name: &str,
+    hierarchy_field: &str,
+    return_cols: &[&PersistenceColumn],
+) {
+    let cols = col_list(return_cols);
+    let hints = nullable_hints(return_cols);
     sql.push_str(&format!(
-        "--! delete_{0} ({1})\n\
-         --- Hard-delete a {0}.\n\
-         DELETE FROM {2}\n\
-         WHERE {3};\n\n",
-        entity_name,
-        params.join(", "),
-        table,
-        where_clauses.join("\n  AND "),
+        "--! tree_{entity_name} (root_id, max_depth) : ({hints})\n\
+         --- Recursive subtree rooted at a {entity_name}.\n\
+         WITH RECURSIVE tree AS (\n\
+         \x20 SELECT {cols}, 0 AS _tree_depth FROM {table} WHERE \"id\" = :root_id\n\
+         \x20 UNION ALL\n\
+         \x20 SELECT c.{cols}, t._tree_depth + 1 AS _tree_depth FROM {table} c JOIN tree t ON c.\"{hierarchy_field}\" = t.\"id\"\n\
+         \x20 WHERE (:max_depth IS NULL OR t._tree_depth < :max_depth)\n\
+         )\n\
+         SELECT {cols} FROM tree ORDER BY _tree_depth, \"created_at\";\n\n",
     ));
 }

@@ -1100,9 +1100,9 @@ async fn grafeo_candidate_repository_trait_content() {
     let repo_file = files.first().unwrap();
     let content = &repo_file.content;
 
-    // Trait declaration
+    // Trait declaration (generic over the client type C — provider-agnostic)
     assert!(
-        content.contains("pub trait CandidateRepository: Send + Sync"),
+        content.contains("pub trait CandidateRepository<C>: Send + Sync"),
         "missing trait declaration"
     );
 

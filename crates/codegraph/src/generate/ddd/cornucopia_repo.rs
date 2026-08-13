@@ -1,15 +1,25 @@
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::PersistenceColumnRole;
 
 use crate::error::Result;
-use crate::generate::persistence::build_persistence_entity;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
+use super::repository_emitter::{
+    emit_child_field_population, emit_entity_to_dto_field, ChildColumn, ChildTableInfo,
+    EntityTree, RepositoryImplEmitter,
+};
+
+/// Generates the Cornucopia repository adapter implementing the entity's
+/// `{Entity}Repository<C>` trait for any `C: cornucopia_queries::client::GenericClient`.
+///
+/// The trait itself is backend-generic; the SeaORM implementation lives in
+/// `repository_impl.rs` and this Cornucopia adapter lives in
+/// `cornucopia_repository_impl.rs`. The app wiring picks one per build.
 pub struct CornucopiaRepoGenerator {
     output_dir: PathBuf,
     parent_candidates: Vec<codegraph_core::types::ParentCandidate>,
@@ -49,215 +59,36 @@ impl EntityGenerator for CornucopiaRepoGenerator {
         domain: &str,
         config: &DomainConfig,
         _tera: &tera::Tera,
-        _project: &ProjectConfig,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let entity = build_persistence_entity(
-            db,
-            schema_title,
-            domain,
-            config,
-            &self.parent_candidates,
-        )
-        .await?;
-
-        if entity.table_name.is_empty() {
+        // Cornucopia adapter only makes sense when the provider is cornucopia.
+        if !project.is_cornucopia() {
             return Ok(Vec::new());
         }
 
-        let entity_name = codegraph_naming::strip_suffix(
-            &entity.rust_type_name,
-            &config.defaults.type_suffix,
-        );
-        let snake_name = codegraph_naming::to_snake_case(&entity_name);
-        let module_name = format!("{}_{}", domain, entity.table_name);
+        // Resolve the parent FK the same way the SeaORM emitter does.
+        let parent_ref = crate::generate::resolve_parent_fk_column_same_domain(
+            schema_title,
+            &self.parent_candidates,
+            config
+                .domains
+                .get(domain)
+                .and_then(|d| d.get_entity_config(schema_title)),
+            &domain.to_string(),
+            config,
+            db,
+        )
+        .await;
 
-        let has_soft_delete = entity.policies.soft_delete.is_some();
-        let tenant_col = entity
-            .columns
-            .iter()
-            .find(|c| c.role == PersistenceColumnRole::TenantScope);
-        let has_tenant = tenant_col.is_some();
+        let tree = RepositoryImplEmitter
+            .query_entity_tree(db, schema_title, domain, config, parent_ref.as_deref())
+            .await?;
 
-        let data_cols: Vec<_> = entity
-            .columns
-            .iter()
-            .filter(|c| matches!(c.role, PersistenceColumnRole::Data | PersistenceColumnRole::ForeignKey { .. }))
-            .collect();
-
-        let mut code = String::with_capacity(4096);
-
-        // ── Header ─────────────────────────────────────────────────────
-        code.push_str(&format!(
-            "// Generated repository adapter for {} (Cornucopia backend)\n\
-             // schema: {}, domain: {}\n\n",
-            entity_name, entity.title, domain,
-        ));
-
-        code.push_str("use async_trait::async_trait;\n");
-        code.push_str("use uuid::Uuid;\n");
-        code.push_str(&format!(
-            "use super::super::repository::{}Repository;\n",
-            entity_name,
-        ));
-        code.push_str(&format!(
-            "use cornucopia_queries::queries::{}::{};\n\n",
-            domain, entity.table_name,
-        ));
-
-        // ── Repository struct ──────────────────────────────────────────
-        code.push_str(&format!(
-            "#[derive(Clone)]\n\
-             pub struct {0}RepositoryImpl;\n\n",
-            entity_name,
-        ));
-
-        // ── Trait implementation ───────────────────────────────────────
-        code.push_str(&format!(
-            "#[async_trait]\n\
-             impl {0}Repository for {0}RepositoryImpl {{\n",
-            entity_name,
-        ));
-
-        // find_by_id
-        if has_tenant {
-            code.push_str(&format!(
-                "    async fn find_by_id(\n\
-                 &self,\n\
-                 db: &impl cornucopia_queries::client::GenericClient,\n\
-                 id: Uuid,\n\
-                 ) -> Result<Option<{0}Response>, String> {{\n\
-                 let row = get_{1}().bind(db, &id).opt().await\n\
-                 .map_err(|e| e.to_string())?;\n\
-                 Ok(row.map(|r| r.into()))\n\
-                 }}\n\n",
-                entity_name, snake_name,
-            ));
-        } else {
-            code.push_str(&format!(
-                "    async fn find_by_id(\n\
-                 &self,\n\
-                 db: &impl cornucopia_queries::client::GenericClient,\n\
-                 id: Uuid,\n\
-                 ) -> Result<Option<{0}Response>, String> {{\n\
-                 let row = get_{1}().bind(db, &id).opt().await\n\
-                 .map_err(|e| e.to_string())?;\n\
-                 Ok(row.map(|r| r.into()))\n\
-                 }}\n\n",
-                entity_name, snake_name,
-            ));
+        if tree.table_name.is_empty() {
+            return Ok(Vec::new());
         }
 
-        // create — placeholder (adapter in user space)
-        code.push_str(&format!(
-            "    async fn create(\n\
-                 &self,\n\
-                 client: &impl cornucopia_queries::client::GenericClient,\n\
-                 cmd: Create{0}Request,\n\
-                 ) -> Result<Uuid, String> {{\n\
-                 let row = create_{1}().bind(\n\
-                 client,\n\
-                 // ... bind fields from cmd ...\n\
-                 ).one().await.map_err(|e| e.to_string())?;\n\
-                 Ok(row.id)\n\
-                 }}\n\n",
-            entity_name, snake_name,
-        ));
-
-        // update
-        code.push_str(&format!(
-            "    async fn update(\n\
-                 &self,\n\
-                 client: &impl cornucopia_queries::client::GenericClient,\n\
-                 id: Uuid,\n\
-                 cmd: Update{0}Request,\n\
-                 ) -> Result<(), String> {{\n\
-                 update_{1}().bind(\n\
-                 client,\n\
-                 &id,\n\
-                 // ... bind fields from cmd ...\n\
-                 ).await.map_err(|e| e.to_string())?;\n\
-                 Ok(())\n\
-                 }}\n\n",
-            entity_name, snake_name,
-        ));
-
-        // delete
-        if has_soft_delete {
-            code.push_str(&format!(
-                "    async fn delete(\n\
-                 &self,\n\
-                 client: &impl cornucopia_queries::client::GenericClient,\n\
-                 id: Uuid,\n\
-                 ) -> Result<(), String> {{\n\
-                 delete_{0}().bind(client, &id).await.map_err(|e| e.to_string())?;\n\
-                 Ok(())\n\
-                 }}\n\n",
-                snake_name,
-            ));
-        } else {
-            code.push_str(&format!(
-                "    async fn delete(\n\
-                 &self,\n\
-                 client: &impl cornucopia_queries::client::GenericClient,\n\
-                 id: Uuid,\n\
-                 ) -> Result<(), String> {{\n\
-                 delete_{0}().bind(client, &id).await.map_err(|e| e.to_string())?;\n\
-                 Ok(())\n\
-                 }}\n\n",
-                snake_name,
-            ));
-        }
-
-        // list
-        if has_tenant {
-            code.push_str(&format!(
-                "    async fn list(\n\
-                 &self,\n\
-                 client: &impl cornucopia_queries::client::GenericClient,\n\
-                 tenant_id: Uuid,\n\
-                 page: u64,\n\
-                 page_size: u64,\n\
-                 ) -> Result<(Vec<{0}Response>, u64), String> {{\n\
-                 let all = list_{1}().bind(client, &tenant_id).all().await\n\
-                 .map_err(|e| e.to_string())?;\n\
-                 // Paginate in application layer or add LIMIT/OFFSET params to query\n\
-                 let total = all.len() as u64;\n\
-                 let paged = all.into_iter()\n\
-                 .skip(((page - 1) * page_size) as usize)\n\
-                 .take(page_size as usize)\n\
-                 .map(|r| r.into())\n\
-                 .collect();\n\
-                 Ok((paged, total))\n\
-                 }}\n\n",
-                entity_name,
-                snake_name,
-            ));
-        } else {
-            code.push_str(&format!(
-                "    async fn list(\n\
-                 &self,\n\
-                 client: &impl cornucopia_queries::client::GenericClient,\n\
-                 page: u64,\n\
-                 page_size: u64,\n\
-                 ) -> Result<(Vec<{0}Response>, u64), String> {{\n\
-                 // For entities without tenant scoping, list without tenant filter\n\
-                 // This is a placeholder — actual impl depends on the entity's needs\n\
-                 let all = list_{1}().bind(client).all().await\n\
-                 .map_err(|e| e.to_string())?;\n\
-                 let total = all.len() as u64;\n\
-                 let paged = all.into_iter()\n\
-                 .skip(((page - 1) * page_size) as usize)\n\
-                 .take(page_size as usize)\n\
-                 .map(|r| r.into())\n\
-                 .collect();\n\
-                 Ok((paged, total))\n\
-                 }}\n\n",
-                entity_name,
-                snake_name,
-            ));
-        }
-
-        code.push_str("}\n");
+        let code = emit_adapter(&tree, domain);
 
         Ok(vec![GeneratedFile {
             path: self
@@ -265,9 +96,888 @@ impl EntityGenerator for CornucopiaRepoGenerator {
                 .join("src")
                 .join("domain")
                 .join(domain)
-                .join(&module_name)
+                .join(&tree.module_name)
                 .join("cornucopia_repository_impl.rs"),
             content: code,
         }])
     }
+}
+
+/// Cornucopia module alias for this entity's generated queries.
+/// The SQL file is `queries/{domain}/{table}.sql`, so the module path inside
+/// the generated crate is `cornucopia_queries::queries::{domain}::{table}`.
+fn query_module(tree: &EntityTree) -> String {
+    tree.table_name.clone()
+}
+
+/// Emit the complete adapter file for one entity.
+fn emit_adapter(tree: &EntityTree, domain: &str) -> String {
+    let entity_name = &tree.entity_name;
+    let mut code = String::with_capacity(32 * 1024);
+
+    writeln!(
+        code,
+        "//! Cornucopia repository adapter for {entity_name}.\n\
+         //! Generated by {} — DO NOT EDIT.",
+        crate::generate::get_project_config().generator_name
+    )
+    .unwrap();
+    writeln!(code).unwrap();
+    writeln!(code, "use async_trait::async_trait;").unwrap();
+    writeln!(code, "use uuid::Uuid;").unwrap();
+    writeln!(code).unwrap();
+    writeln!(code, "use cornucopia_queries::client::GenericClient;").unwrap();
+    writeln!(
+        code,
+        "use cornucopia_queries::queries::{domain}::{qmod};",
+        domain = domain,
+        qmod = query_module(tree),
+    )
+    .unwrap();
+    writeln!(code, "use super::repository::{entity_name}Repository;").unwrap();
+    writeln!(code, "use super::dto_response::{entity_name}Response;").unwrap();
+    let mut imported = std::collections::HashSet::new();
+    for child in crate::generate::ddd::repository_emitter::flatten_child_tables(&tree.child_tables)
+    {
+        if imported.insert(child.struct_name.clone()) {
+            writeln!(
+                code,
+                "use super::dto_response::{}Response;",
+                child.struct_name
+            )
+            .unwrap();
+        }
+    }
+    if tree.has_create {
+        writeln!(code, "use super::dto_create::Create{entity_name}Request;").unwrap();
+    }
+    if tree.has_update {
+        writeln!(code, "use super::dto_update::Update{entity_name}Request;").unwrap();
+    }
+    writeln!(code).unwrap();
+    writeln!(
+        code,
+        "/// Cornucopia (SQL-first) repository for {entity_name}.\n\
+         #[derive(Clone)]\n\
+         pub struct {entity_name}RepositoryImpl;"
+    )
+    .unwrap();
+    writeln!(code).unwrap();
+    writeln!(code, "#[async_trait]").unwrap();
+    writeln!(
+        code,
+        "impl<C> {entity_name}Repository<C> for {entity_name}RepositoryImpl"
+    )
+    .unwrap();
+    writeln!(code, "where").unwrap();
+    writeln!(code, "    C: GenericClient + Sync,").unwrap();
+    writeln!(code, "{{").unwrap();
+
+    // ── create ──────────────────────────────────────────────────────────
+    if tree.has_create {
+        emit_adapter_create(tree, &mut code);
+    }
+
+    // ── find_by_id ──────────────────────────────────────────────────────
+    let needs_find_by_id = tree.has_create
+        || (tree.has_read && tree.parent_ref.is_none())
+        || tree.has_fts
+        || tree.has_embeddings;
+    if needs_find_by_id {
+        emit_adapter_find_by_id(tree, &mut code);
+    }
+
+    // ── find_by_id_scoped ───────────────────────────────────────────────
+    if tree.parent_ref.is_some() {
+        emit_adapter_find_by_id_scoped(tree, &mut code);
+    }
+
+    // ── update ──────────────────────────────────────────────────────────
+    if tree.has_update {
+        emit_adapter_update(tree, &mut code);
+    }
+
+    // ── delete ──────────────────────────────────────────────────────────
+    if tree.has_delete {
+        emit_adapter_delete(tree, &mut code);
+    }
+
+    // ── list (always emitted — matches the SeaORM implementation) ─────
+    emit_adapter_list(tree, &mut code);
+
+    // ── search (FTS) ────────────────────────────────────────────────────
+    if tree.has_fts {
+        emit_adapter_search(tree, &mut code);
+    }
+
+    // ── semantic search ─────────────────────────────────────────────────
+    if tree.has_embeddings {
+        emit_adapter_semantic_search(tree, &mut code);
+    }
+
+    // ── tree ────────────────────────────────────────────────────────────
+    if tree.hierarchy_field.is_some() {
+        emit_adapter_tree(tree, &mut code);
+    }
+
+    writeln!(code, "}}").unwrap();
+    code
+}
+
+fn qmod(tree: &EntityTree) -> String {
+    tree.table_name.clone()
+}
+
+/// Emit create: insert parent row, then insert child rows.
+fn emit_adapter_create(tree: &EntityTree, code: &mut String) {
+    let entity_name = &tree.entity_name;
+    let qmod = qmod(tree);
+    writeln!(code).unwrap();
+    writeln!(
+        code,
+        "    async fn create(\n\
+         \x20       &self,\n\
+         \x20       tx: &C,\n\
+         \x20       cmd: Create{entity_name}Request,"
+    )
+    .unwrap();
+    if tree.parent_ref.is_some() {
+        writeln!(code, "        parent_id: Uuid,").unwrap();
+    }
+    writeln!(code, "    ) -> Result<Uuid, Box<dyn std::error::Error>> {{").unwrap();
+
+    // Bind args: data columns in tree order, with the parent FK bound from
+    // `parent_id` (mirrors the SeaORM create).
+    let mut args: Vec<String> = Vec::new();
+    for col in &tree.direct_columns {
+        if col.is_workflow_managed || col.is_composite_range || col.is_media {
+            continue;
+        }
+        if is_parent_fk_col(col, tree) {
+            args.push("&parent_id".to_string());
+            continue;
+        }
+        args.push(create_bind_expr(col));
+    }
+    if args.is_empty() {
+        writeln!(
+            code,
+            "        let id = {qmod}::create_{snake}().bind(tx).one().await.map_err(|e| e.to_string())?;",
+            snake = tree.table_name
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            code,
+            "        let id = {qmod}::create_{snake}().bind(tx, {args}).one().await.map_err(|e| e.to_string())?;",
+            snake = tree.table_name,
+            args = args.join(", "),
+        )
+        .unwrap();
+    }
+
+    // Child table inserts.
+    for child in &tree.child_tables {
+        if child.columns.is_empty() && child.child_tables.is_empty() {
+            continue;
+        }
+        let field = &child.field_name;
+        writeln!(code, "        if let Some(items) = &cmd.{field} {{").unwrap();
+        writeln!(code, "            for item in items {{").unwrap();
+        emit_child_insert_one(code, tree, child, "item", "id", 4);
+        writeln!(code, "            }}").unwrap();
+        writeln!(code, "        }}").unwrap();
+    }
+
+    writeln!(code, "        Ok(id)").unwrap();
+    writeln!(code, "    }}").unwrap();
+}
+
+fn is_parent_fk_col(col: &crate::generate::ddd::repository_emitter::TreeColumn, tree: &EntityTree) -> bool {
+    tree.parent_ref.as_ref().is_some_and(|pr| {
+        col.field_name.eq_ignore_ascii_case(pr) || col.pg_column_name.eq_ignore_ascii_case(pr)
+    })
+}
+
+/// Bind expression for a single column on the create path.
+fn create_bind_expr(col: &crate::generate::ddd::repository_emitter::TreeColumn) -> String {
+    let field = &col.field_name;
+    if col.is_structured_wrapper {
+        if col.is_nullable {
+            format!("&cmd.{field}.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default())")
+        } else {
+            format!("&serde_json::to_value(&cmd.{field}).unwrap_or_default()")
+        }
+    } else if col.dto_rust_type.is_some() {
+        if col.is_array {
+            format!(
+                "&cmd.{field}.iter().map(|x| x.to_string()).collect::<Vec<String>>()"
+            )
+        } else if col.is_nullable {
+            format!("&cmd.{field}.as_ref().map(|v| v.to_string())")
+        } else {
+            format!("&cmd.{field}.to_string()")
+        }
+    } else if col.pg_cast.is_some() {
+        if col.is_nullable {
+            format!("&cmd.{field}.as_ref().map(|v| v.to_string())")
+        } else {
+            format!("&cmd.{field}.to_string()")
+        }
+    } else {
+        format!("&cmd.{field}")
+    }
+}
+
+/// Emit find_by_id: get row, hydrate children, build response.
+fn emit_adapter_find_by_id(tree: &EntityTree, code: &mut String) {
+    let entity_name = &tree.entity_name;
+    let qmod = qmod(tree);
+    writeln!(code).unwrap();
+    writeln!(
+        code,
+        "    async fn find_by_id(\n\
+         \x20       &self,\n\
+         \x20       db: &C,\n\
+         \x20       id: Uuid,"
+    )
+    .unwrap();
+    if tree.is_auditable {
+        writeln!(code, "        include_deleted: bool,").unwrap();
+    }
+    writeln!(
+        code,
+        "    ) -> Result<Option<{entity_name}Response>, Box<dyn std::error::Error>> {{"
+    )
+    .unwrap();
+    if tree.is_auditable {
+        writeln!(code, "        let row = if include_deleted {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::get_{snake}_including_deleted().bind(db, &id).opt().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }} else {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }};").unwrap();
+    } else {
+        writeln!(
+            code,
+            "        let row = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())?;",
+            snake = tree.table_name
+        )
+        .unwrap();
+    }
+    writeln!(code, "        let Some(row) = row else {{ return Ok(None) }};").unwrap();
+    emit_response_expr(tree, code, "row", "        ", "Ok(Some(");
+    writeln!(code, "        ))").unwrap();
+    writeln!(code, "    }}").unwrap();
+}
+
+/// Emit find_by_id_scoped: get row and verify parent FK ownership.
+fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut String) {
+    let entity_name = &tree.entity_name;
+    let qmod = qmod(tree);
+    let parent_fk = tree.parent_ref.as_deref().unwrap_or("parent_id");
+    writeln!(code).unwrap();
+    writeln!(
+        code,
+        "    async fn find_by_id_scoped(\n\
+         \x20       &self,\n\
+         \x20       db: &C,\n\
+         \x20       id: Uuid,\n\
+         \x20       parent_id: Uuid,"
+    )
+    .unwrap();
+    if tree.is_auditable {
+        writeln!(code, "        include_deleted: bool,").unwrap();
+    }
+    writeln!(
+        code,
+        "    ) -> Result<Option<{entity_name}Response>, Box<dyn std::error::Error>> {{"
+    )
+    .unwrap();
+    if tree.is_auditable {
+        writeln!(code, "        let row = if include_deleted {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::get_{snake}_including_deleted().bind(db, &id).opt().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }} else {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }};").unwrap();
+    } else {
+        writeln!(
+            code,
+            "        let row = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())?;",
+            snake = tree.table_name
+        )
+        .unwrap();
+    }
+    writeln!(code, "        let Some(row) = row else {{ return Ok(None) }};").unwrap();
+    writeln!(
+        code,
+        "        if row.{parent_fk} != parent_id {{ return Ok(None); }}"
+    )
+    .unwrap();
+    emit_response_expr(tree, code, "row", "        ", "Ok(Some(");
+    writeln!(code, "        ))").unwrap();
+    writeln!(code, "    }}").unwrap();
+}
+
+/// Emit update: COALESCE-based partial update, then replace child rows.
+fn emit_adapter_update(tree: &EntityTree, code: &mut String) {
+    let entity_name = &tree.entity_name;
+    let qmod = qmod(tree);
+    writeln!(code).unwrap();
+    writeln!(
+        code,
+        "    async fn update(\n\
+         \x20       &self,\n\
+         \x20       tx: &C,\n\
+         \x20       id: Uuid,\n\
+         \x20       cmd: Update{entity_name}Request,\n\
+         \x20   ) -> Result<(), Box<dyn std::error::Error>> {{"
+    )
+    .unwrap();
+    let binds = update_bind_args(tree);
+    writeln!(
+        code,
+        "        {qmod}::update_{snake}().bind(tx, &id{args}).await.map_err(|e| e.to_string())?;",
+        snake = tree.table_name,
+        args = if binds.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", binds.join(", "))
+        },
+    )
+    .unwrap();
+    emit_child_replace(tree, &mut *code);
+    writeln!(code, "        Ok(())").unwrap();
+    writeln!(code, "    }}").unwrap();
+}
+
+/// Emit delete: soft/hard delete of the parent row.
+fn emit_adapter_delete(tree: &EntityTree, code: &mut String) {
+    let qmod = qmod(tree);
+    writeln!(code).unwrap();
+    writeln!(
+        code,
+        "    async fn delete(\n\
+         \x20       &self,\n\
+         \x20       tx: &C,\n\
+         \x20       id: Uuid,\n\
+         \x20   ) -> Result<(), Box<dyn std::error::Error>> {{"
+    )
+    .unwrap();
+    writeln!(
+        code,
+        "        {qmod}::delete_{snake}().bind(tx, &id).await.map_err(|e| e.to_string())?;",
+        snake = tree.table_name
+    )
+    .unwrap();
+    writeln!(code, "        Ok(())").unwrap();
+    writeln!(code, "    }}").unwrap();
+}
+
+/// Emit list: paged rows + count, with in-memory filters.
+fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
+    let entity_name = &tree.entity_name;
+    let qmod = qmod(tree);
+    writeln!(code).unwrap();
+    writeln!(
+        code,
+        "    async fn list(\n\
+         \x20       &self,\n\
+         \x20       db: &C,\n\
+         \x20       page: u64,\n\
+         \x20       page_size: u64,\n\
+         \x20       filters: &std::collections::HashMap<String, String>,"
+    )
+    .unwrap();
+    if tree.is_auditable {
+        writeln!(code, "        include_deleted: bool,").unwrap();
+    }
+    writeln!(
+        code,
+        "    ) -> Result<(Vec<{entity_name}Response>, u64), Box<dyn std::error::Error>> {{"
+    )
+    .unwrap();
+    writeln!(
+        code,
+        "        let offset = ((page.saturating_sub(1)).saturating_mul(page_size)) as i64;"
+    )
+    .unwrap();
+    writeln!(code, "        let page_size_i = page_size as i64;").unwrap();
+    if tree.is_auditable {
+        writeln!(code, "        let rows = if include_deleted {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::list_{snake}_including_deleted().bind(db, &offset, &page_size_i).all().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }} else {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::list_{snake}().bind(db, &offset, &page_size_i).all().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }};").unwrap();
+        writeln!(code, "        let total = if include_deleted {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::count_{snake}_including_deleted().bind(db).one().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }} else {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::count_{snake}().bind(db).one().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }};").unwrap();
+    } else {
+        writeln!(
+            code,
+            "        let rows = {qmod}::list_{snake}().bind(db, &offset, &page_size_i).all().await.map_err(|e| e.to_string())?;",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "        let total = {qmod}::count_{snake}().bind(db).one().await.map_err(|e| e.to_string())?;",
+            snake = tree.table_name
+        )
+        .unwrap();
+    }
+
+    // In-memory filtering on the typed rows.
+    for ff in &tree.filter_fields {
+        let field = &ff.field_name;
+        writeln!(
+            code,
+            "        if let Some(val) = filters.get(\"{field}\") {{\n\
+             \x20           rows.retain(|r| r.{field}.to_string() == *val);\n\
+             \x20       }}"
+        )
+        .unwrap();
+    }
+
+    // Build responses (child hydration happens after filtering).
+    writeln!(code, "        let mut items = Vec::with_capacity(rows.len());").unwrap();
+    writeln!(code, "        for row in rows {{").unwrap();
+    emit_response_expr(tree, code, "row", "            ", "            items.push(");
+    writeln!(code, "            );").unwrap();
+    writeln!(code, "        }}").unwrap();
+    writeln!(code, "        Ok((items, total))").unwrap();
+    writeln!(code, "    }}").unwrap();
+}
+
+/// Emit FTS search: ranked ids + count.
+fn emit_adapter_search(tree: &EntityTree, code: &mut String) {
+    let qmod = qmod(tree);
+    writeln!(code).unwrap();
+    writeln!(
+        code,
+        "    async fn search_ids(\n\
+         \x20       &self,\n\
+         \x20       db: &C,\n\
+         \x20       query: &str,\n\
+         \x20       page: u64,\n\
+         \x20       page_size: u64,"
+    )
+    .unwrap();
+    if tree.is_auditable {
+        writeln!(code, "        include_deleted: bool,").unwrap();
+    }
+    writeln!(
+        code,
+        "    ) -> Result<(Vec<Uuid>, u64), Box<dyn std::error::Error>> {{"
+    )
+    .unwrap();
+    writeln!(
+        code,
+        "        let offset = ((page.saturating_sub(1)).saturating_mul(page_size)) as i64;"
+    )
+    .unwrap();
+    writeln!(code, "        let page_size_i = page_size as i64;").unwrap();
+    if tree.is_auditable {
+        writeln!(code, "        let ids = if include_deleted {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::search_{snake}_including_deleted().bind(db, &query.to_string(), &offset, &page_size_i).all().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }} else {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::search_{snake}().bind(db, &query.to_string(), &offset, &page_size_i).all().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }};").unwrap();
+        writeln!(code, "        let total = if include_deleted {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::search_count_{snake}_including_deleted().bind(db, &query.to_string()).one().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }} else {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::search_count_{snake}().bind(db, &query.to_string()).one().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }};").unwrap();
+    } else {
+        writeln!(
+            code,
+            "        let ids = {qmod}::search_{snake}().bind(db, &query.to_string(), &offset, &page_size_i).all().await.map_err(|e| e.to_string())?;",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "        let total = {qmod}::search_count_{snake}().bind(db, &query.to_string()).one().await.map_err(|e| e.to_string())?;",
+            snake = tree.table_name
+        )
+        .unwrap();
+    }
+    writeln!(code, "        Ok((ids, total))").unwrap();
+    writeln!(code, "    }}").unwrap();
+}
+
+/// Emit semantic (pgvector) search.
+fn emit_adapter_semantic_search(tree: &EntityTree, code: &mut String) {
+    let qmod = qmod(tree);
+    writeln!(code).unwrap();
+    writeln!(
+        code,
+        "    async fn semantic_search_ids(\n\
+         \x20       &self,\n\
+         \x20       db: &C,\n\
+         \x20       embedding: &[f32],\n\
+         \x20       limit: u64,"
+    )
+    .unwrap();
+    if tree.is_auditable {
+        writeln!(code, "        include_deleted: bool,").unwrap();
+    }
+    writeln!(code, "    ) -> Result<Vec<Uuid>, Box<dyn std::error::Error>> {{").unwrap();
+    writeln!(code, "        let limit_i = limit as i64;").unwrap();
+    writeln!(code, "        let vec = pgvector::Vector::from(embedding.to_vec());").unwrap();
+    if tree.is_auditable {
+        writeln!(code, "        let ids = if include_deleted {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::semantic_{snake}_including_deleted().bind(db, &vec, &limit_i).all().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }} else {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::semantic_{snake}().bind(db, &vec, &limit_i).all().await.map_err(|e| e.to_string())?",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(code, "        }};").unwrap();
+    } else {
+        writeln!(
+            code,
+            "        let ids = {qmod}::semantic_{snake}().bind(db, &vec, &limit_i).all().await.map_err(|e| e.to_string())?;",
+            snake = tree.table_name
+        )
+        .unwrap();
+    }
+    writeln!(code, "        Ok(ids)").unwrap();
+    writeln!(code, "    }}").unwrap();
+}
+
+/// Emit recursive tree query.
+fn emit_adapter_tree(tree: &EntityTree, code: &mut String) {
+    let entity_name = &tree.entity_name;
+    let qmod = qmod(tree);
+    let as_json = !tree.tree_include.is_empty();
+    let ret = if as_json {
+        "serde_json::Value".to_string()
+    } else {
+        format!("{entity_name}Response")
+    };
+    writeln!(code).unwrap();
+    writeln!(
+        code,
+        "    async fn find_tree(\n\
+         \x20       &self,\n\
+         \x20       db: &C,\n\
+         \x20       root_id: Uuid,\n\
+         \x20       max_depth: Option<i32>,\n\
+         \x20   ) -> Result<Vec<{ret}>, Box<dyn std::error::Error>> {{"
+    )
+    .unwrap();
+    writeln!(
+        code,
+        "        let rows = {qmod}::tree_{snake}().bind(db, &root_id, &max_depth).all().await.map_err(|e| e.to_string())?;",
+        snake = tree.table_name
+    )
+    .unwrap();
+    writeln!(code, "        let mut items = Vec::with_capacity(rows.len());").unwrap();
+    writeln!(code, "        for row in rows {{").unwrap();
+    emit_response_expr(tree, code, "row", "            ", "            let resp = ");
+    writeln!(code, "            ;").unwrap();
+    if as_json {
+        writeln!(
+            code,
+            "            items.push(serde_json::to_value(resp).map_err(|e| e.to_string())?);"
+        )
+        .unwrap();
+    } else {
+        writeln!(code, "            items.push(resp);").unwrap();
+    }
+    writeln!(code, "        }}").unwrap();
+    writeln!(code, "        Ok(items)").unwrap();
+    writeln!(code, "    }}").unwrap();
+}
+
+/// Emit a response construction expression: child-table reads + the
+/// `{Entity}Response { ... }` struct literal. The caller supplies the prefix
+/// (`Ok(Some(`, `items.push(`, `let resp = `) and closing punctuation.
+fn emit_response_expr(tree: &EntityTree, code: &mut String, row_var: &str, pad: &str, prefix: &str) {
+    emit_child_reads_cornucopia(tree, code, &tree.child_tables, row_var, pad);
+    writeln!(code).unwrap();
+    writeln!(code, "{pad}{prefix}{}Response {{", tree.entity_name).unwrap();
+    writeln!(code, "{pad}    id: {row_var}.id,").unwrap();
+    for col in &tree.direct_columns {
+        if col.is_composite_range {
+            continue;
+        }
+        emit_entity_to_dto_field(code, col, row_var, &format!("{pad}    "));
+    }
+    emit_child_field_population(code, &tree.child_tables, &format!("{pad}    "));
+    if tree.has_workflow {
+        writeln!(code, "{pad}    workflow_state: None,").unwrap();
+    }
+    writeln!(code, "{pad}    created_at: {row_var}.created_at,").unwrap();
+    writeln!(code, "{pad}    updated_at: {row_var}.updated_at,").unwrap();
+    writeln!(code, "{pad}}}").unwrap();
+}
+
+/// Emit Cornucopia child-table reads (typed query functions instead of raw SQL).
+fn emit_child_reads_cornucopia(
+    tree: &EntityTree,
+    code: &mut String,
+    children: &[ChildTableInfo],
+    parent_row_var: &str,
+    pad: &str,
+) {
+    let qmod = qmod(tree);
+    let snake = &tree.table_name;
+    for child in children {
+        if child.columns.is_empty() && child.child_tables.is_empty() {
+            writeln!(
+                code,
+                "{pad}let {field}_rows: Vec<{struct_name}Response> = Vec::new();",
+                field = child.field_name,
+                struct_name = child.struct_name,
+            )
+            .unwrap();
+            continue;
+        }
+        writeln!(code, "{pad}let {field}_rows = {{", field = child.field_name).unwrap();
+        writeln!(
+            code,
+            "{pad}    let rows = {qmod}::list_{snake}_{child_table}().bind(db, &{parent_row_var}.id).all().await.map_err(|e| e.to_string())?;",
+            child_table = child.sql_table_name,
+        )
+        .unwrap();
+        writeln!(code, "{pad}    let mut items = Vec::with_capacity(rows.len());").unwrap();
+        writeln!(code, "{pad}    for child_row in rows {{").unwrap();
+        // Nested grandchildren.
+        if !child.child_tables.is_empty() {
+            let needs_id = child
+                .child_tables
+                .iter()
+                .any(|gc| !gc.columns.is_empty() || !gc.child_tables.is_empty());
+            if needs_id {
+                writeln!(code, "{pad}        let child_row_id = child_row.id;").unwrap();
+            }
+            emit_child_reads_cornucopia(
+                tree,
+                code,
+                &child.child_tables,
+                "child_row",
+                &format!("{pad}    "),
+            );
+        }
+        writeln!(code, "{pad}        items.push({}Response {{", child.struct_name).unwrap();
+        for col in &child.columns {
+            emit_child_col_read_value_cornucopia(code, col, &format!("{pad}            "));
+        }
+        emit_child_field_population(code, &child.child_tables, &format!("{pad}            "));
+        writeln!(code, "{pad}        }});").unwrap();
+        writeln!(code, "{pad}    }}").unwrap();
+        writeln!(code, "{pad}    items").unwrap();
+        writeln!(code, "{pad}}};").unwrap();
+    }
+}
+
+/// Emit a single child column mapping from a typed Cornucopia row.
+fn emit_child_col_read_value_cornucopia(code: &mut String, col: &ChildColumn, pad: &str) {
+    if col.dto_rust_type.is_some() {
+        if col.is_nullable {
+            writeln!(
+                code,
+                "{pad}{field}: child_row.{field}.and_then(|v| v.parse().ok()),",
+                field = col.field_name,
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "{pad}{field}: child_row.{field}.parse().unwrap_or_default(),",
+                field = col.field_name,
+            )
+            .unwrap();
+        }
+    } else {
+        writeln!(
+            code,
+            "{pad}{field}: child_row.{field},",
+            field = col.field_name,
+        )
+        .unwrap();
+    }
+}
+
+/// Emit child replacement code for update (delete then insert).
+fn emit_child_replace(tree: &EntityTree, code: &mut String) {
+    let qmod = qmod(tree);
+    let snake = &tree.table_name;
+    for child in &tree.child_tables {
+        if child.columns.is_empty() && child.child_tables.is_empty() {
+            continue;
+        }
+        let field = &child.field_name;
+        writeln!(code, "        if let Some(items) = &cmd.{field} {{").unwrap();
+        writeln!(
+            code,
+            "            {qmod}::delete_{snake}_{child_table}().bind(tx, &id).await.map_err(|e| e.to_string())?;",
+            child_table = child.sql_table_name,
+        )
+        .unwrap();
+        writeln!(code, "            for item in items {{").unwrap();
+        emit_child_insert_one(code, tree, child, "item", "id", 4);
+        writeln!(code, "            }}").unwrap();
+        writeln!(code, "        }}").unwrap();
+    }
+}
+
+/// Emit a single child insert call (+ nested children).
+fn emit_child_insert_one(
+    code: &mut String,
+    tree: &EntityTree,
+    child: &ChildTableInfo,
+    item_var: &str,
+    parent_id_var: &str,
+    indent: usize,
+) {
+    let qmod = qmod(tree);
+    let snake = &tree.table_name;
+    let pad = "    ".repeat(indent);
+    writeln!(code, "{pad}let child_id = Uuid::new_v4();").unwrap();
+    let mut binds: Vec<String> = vec!["&child_id".to_string(), format!("&{parent_id_var}")];
+    for col in &child.columns {
+        binds.push(child_bind_expr(col, item_var));
+    }
+    writeln!(
+        code,
+        "{pad}{qmod}::insert_{snake}_{child_table}().bind(tx, {}).await.map_err(|e| e.to_string())?;",
+        binds.join(", "),
+        child_table = child.sql_table_name,
+    )
+    .unwrap();
+    for grandchild in &child.child_tables {
+        if grandchild.columns.is_empty() && grandchild.child_tables.is_empty() {
+            continue;
+        }
+        writeln!(
+            code,
+            "{pad}if let Some(gitems) = &{item_var}.{} {{",
+            grandchild.field_name
+        )
+        .unwrap();
+        writeln!(code, "{pad}    for gitem in gitems {{").unwrap();
+        emit_child_insert_one(code, tree, grandchild, "gitem", "child_id", indent + 2);
+        writeln!(code, "{pad}    }}").unwrap();
+        writeln!(code, "{pad}}}").unwrap();
+    }
+}
+
+/// Rust bind expression for a child column.
+fn child_bind_expr(col: &ChildColumn, item_var: &str) -> String {
+    let field = &col.field_name;
+    if col.dto_rust_type.is_some() {
+        if col.is_nullable {
+            format!("&{item_var}.{field}.as_ref().map(|v| v.to_string())")
+        } else {
+            format!("&{item_var}.{field}.to_string()")
+        }
+    } else if col.pg_cast.is_some() {
+        if col.is_nullable {
+            format!("&{item_var}.{field}.as_ref().map(|v| v.to_string())")
+        } else {
+            format!("&{item_var}.{field}.to_string()")
+        }
+    } else {
+        format!("&{item_var}.{field}")
+    }
+}
+
+/// Rust bind expressions for the main update query (COALESCE semantics).
+fn update_bind_args(tree: &EntityTree) -> Vec<String> {
+    let mut args = Vec::new();
+    for col in &tree.direct_columns {
+        if col.is_workflow_managed || col.is_composite_range || col.is_media {
+            continue;
+        }
+        let field = &col.field_name;
+        if col.is_structured_wrapper {
+            args.push(format!(
+                "&cmd.{field}.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default())"
+            ));
+        } else if col.dto_rust_type.is_some() {
+            if col.is_array {
+                args.push(format!(
+                    "&cmd.{field}.as_ref().map(|v| v.iter().map(|x| x.to_string()).collect::<Vec<String>>())"
+                ));
+            } else {
+                args.push(format!("&cmd.{field}.as_ref().map(|v| v.to_string())"));
+            }
+        } else if col.pg_cast.is_some() {
+            args.push(format!("&cmd.{field}.as_ref().map(|v| v.to_string())"));
+        } else {
+            args.push(format!("&cmd.{field}"));
+        }
+    }
+    args
 }

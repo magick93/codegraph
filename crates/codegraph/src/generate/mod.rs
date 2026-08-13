@@ -225,6 +225,21 @@ pub struct ProjectConfig {
     pub codegraph_rev: String,
 }
 
+impl ProjectConfig {
+    /// The persistence provider as a typed enum (parsed from the config string).
+    pub fn persistence_provider_enum(&self) -> crate::profile::PersistenceProvider {
+        crate::profile::PersistenceProvider::from_config(&self.persistence_provider)
+    }
+
+    /// True when entity/repository code generation targets the Cornucopia backend.
+    pub fn is_cornucopia(&self) -> bool {
+        matches!(
+            self.persistence_provider_enum(),
+            crate::profile::PersistenceProvider::Cornucopia
+        )
+    }
+}
+
 impl Default for ProjectConfig {
     fn default() -> Self {
         Self {

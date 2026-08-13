@@ -64,109 +64,109 @@ const MAX_CHILD_DEPTH: usize = 10;
 
 /// Resolved tree_include entry with concrete table/column names.
 #[derive(Debug)]
-struct TreeIncludeResolved {
+pub struct TreeIncludeResolved {
     /// Response field alias (e.g. "deployed_worker").
-    alias: String,
+    pub alias: String,
     /// Schema-qualified via table name (e.g. "common.deployment").
-    via_table: String,
+    pub via_table: String,
     /// FK column on via_entity referencing the hierarchy entity (e.g. "position_id").
-    via_fk_column: String,
+    pub via_fk_column: String,
     /// Schema-qualified parent table name (e.g. "common.worker").
-    parent_table: String,
+    pub parent_table: String,
     /// FK column on via_entity referencing its parent (e.g. "worker_type_id").
-    parent_ref_column: String,
+    pub parent_ref_column: String,
     /// Worker detail JOIN chain: (schema.table, fk_column_on_child, referenced_column_on_parent).
     /// Built from the composition tree of the parent entity.
-    worker_detail_joins: Vec<(String, String, String)>,
+    pub worker_detail_joins: Vec<(String, String, String)>,
 }
 
 /// Tree representation of an entity's value object structure.
 #[allow(dead_code)]
 #[derive(Debug)]
-struct EntityTree {
-    entity_name: String,
-    module_name: String,
-    schema_name: String,
-    table_name: String,
+pub struct EntityTree {
+    pub entity_name: String,
+    pub module_name: String,
+    pub schema_name: String,
+    pub table_name: String,
     /// Domain-prefixed entity module name: `{schema_name}_{table_name}`.
-    entity_module: String,
-    direct_columns: Vec<TreeColumn>,
-    child_tables: Vec<ChildTableInfo>,
-    has_create: bool,
-    has_read: bool,
-    has_update: bool,
-    has_delete: bool,
-    has_workflow: bool,
-    has_fts: bool,
-    has_embeddings: bool,
-    fts_language: String,
-    is_auditable: bool,
+    pub entity_module: String,
+    pub direct_columns: Vec<TreeColumn>,
+    pub child_tables: Vec<ChildTableInfo>,
+    pub has_create: bool,
+    pub has_read: bool,
+    pub has_update: bool,
+    pub has_delete: bool,
+    pub has_workflow: bool,
+    pub has_fts: bool,
+    pub has_embeddings: bool,
+    pub fts_language: String,
+    pub is_auditable: bool,
     /// Soft-delete visibility mode: "exclude_by_default", "include_by_default", or "explicit_only".
-    soft_delete_visibility: String,
+    pub soft_delete_visibility: String,
     /// Soft-delete marker column name (e.g. "deleted_at").
-    soft_delete_column: Option<String>,
+    pub soft_delete_column: Option<String>,
     /// How deletions propagate to children: "restrict", "cascade", "soft_cascade", or "ignore".
-    soft_delete_cascade: String,
+    pub soft_delete_cascade: String,
     /// Whether the audit policy tracks the updating user (for `updated_by` column).
-    track_updated_user: bool,
+    pub track_updated_user: bool,
     /// Whether the audit policy tracks the deleting user (for `deleted_by` column).
-    track_deleted_user: bool,
-    filter_fields: Vec<FilterFieldInfo>,
-    nested_filter_fields: Vec<NestedFilterFieldInfo>,
+    pub track_deleted_user: bool,
+    pub filter_fields: Vec<FilterFieldInfo>,
+    pub nested_filter_fields: Vec<NestedFilterFieldInfo>,
     /// FK column for parent-scoped lookups (child entities only).
-    parent_ref: Option<String>,
+    pub parent_ref: Option<String>,
     /// Self-referential FK column for tree/hierarchy queries (e.g. "parent_id").
-    hierarchy_field: Option<String>,
+    pub hierarchy_field: Option<String>,
     /// Resolved tree_include entries for JOIN-ing related data into tree responses.
-    tree_include: Vec<TreeIncludeResolved>,
+    pub tree_include: Vec<TreeIncludeResolved>,
 }
 
 #[allow(dead_code)]
 #[derive(Debug)]
-struct TreeColumn {
+pub struct TreeColumn {
     /// Entity model field name (e.g. `gender_code` for codelist refs).
-    field_name: String,
+    pub field_name: String,
     /// PostgreSQL column name (e.g. `gender_code`). May differ from `field_name`
     /// when the snake_case name is a Rust keyword (field gets `r#` prefix).
-    pg_column_name: String,
+    pub pg_column_name: String,
     /// DTO field name — the API-facing name (e.g. `gender`).
     /// When None, same as `field_name`.
-    dto_field_name: Option<String>,
-    rust_type: String,
-    is_nullable: bool,
+    pub dto_field_name: Option<String>,
+    pub rust_type: String,
+    pub is_nullable: bool,
     /// Whether this column is an entity reference FK (excluded from Response DTO construction)
-    is_entity_ref: bool,
+    pub is_entity_ref: bool,
     /// When the DTO uses a different type than the entity column (e.g. codelist enum
     /// `CurrencyCodeList` vs entity `String`), this holds the DTO type name.
     /// The emitter uses `.to_string()` for DTO→entity and `.parse()` for entity→DTO.
-    dto_rust_type: Option<String>,
+    pub dto_rust_type: Option<String>,
     /// Whether this column is a workflow-managed field (status, approval_status).
     /// These are excluded from create/update but included in responses.
-    is_workflow_managed: bool,
+    pub is_workflow_managed: bool,
     /// Whether this is an array column (Vec<T>). When true AND dto_rust_type is set,
     /// conversion needs .into_iter().map(|v| v.to_string()).collect() instead of .to_string().
-    is_array: bool,
+    pub is_array: bool,
     /// When this column is a PostgreSQL range type, holds the lowercased PG cast
     /// (e.g. `"tstzrange"`) so INSERT/UPDATE SQL can include `$N::tstzrange`.
-    pg_cast: Option<String>,
+    pub pg_cast: Option<String>,
     /// True when this column was synthesised by composite-range collapsing
     /// (start/end → TSTZRANGE). These columns exist in the entity model and DDL
     /// but are NOT present on DTOs, so create/update/response must skip them.
-    is_composite_range: bool,
+    pub is_composite_range: bool,
     /// True when this column is a StructuredWrapper field stored as JSONB.
     /// The entity model holds `serde_json::Value` but the DTO may use
     /// `Vec<serde_json::Value>` when the property is an array. Emits
     /// serialization/deserialization conversions between the two.
-    is_structured_wrapper: bool,
+    pub is_structured_wrapper: bool,
     /// True when this column is a media URL/MIME-type field managed by the
     /// dedicated upload/download handlers. Included in responses but excluded
     /// from create/update commands since media is set via separate endpoints.
-    is_media: bool,
+    pub is_media: bool,
 }
 
 impl TreeColumn {
     /// Returns the DTO field name (falls back to `field_name`).
-    fn dto_name(&self) -> &str {
+    pub fn dto_name(&self) -> &str {
         self.dto_field_name.as_deref().unwrap_or(&self.field_name)
     }
 }
@@ -176,7 +176,7 @@ impl TreeColumn {
 /// Handles codelist enum parsing, JSONB deserialization, and plain copy.
 /// `pad` is the indentation prefix (e.g. `"            "`).
 /// `row_var` is the variable name holding the entity row (e.g. `"row"`).
-fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_var: &str, pad: &str) {
+pub(crate) fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_var: &str, pad: &str) {
     let dto_field = col.dto_name();
     let entity_field = &col.field_name;
     // StructuredWrapper must take priority over dto_rust_type — it uses
@@ -229,7 +229,7 @@ fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_var: &str, 
 ///
 /// For array children: `field: field_rows,`
 /// For single children: `field: field_rows.into_iter().next(),`
-fn emit_child_field_population(code: &mut String, children: &[ChildTableInfo], pad: &str) {
+pub(crate) fn emit_child_field_population(code: &mut String, children: &[ChildTableInfo], pad: &str) {
     for child in children {
         if child.is_array {
             writeln!(
@@ -274,38 +274,38 @@ fn emit_response_construction(code: &mut String, tree: &EntityTree) {
 /// Tracks a child (value object) table that the repository must persist and read.
 #[allow(dead_code)]
 #[derive(Debug)]
-struct ChildTableInfo {
+pub struct ChildTableInfo {
     /// Rust field name on parent DTO (e.g. "person_name")
-    field_name: String,
+    pub field_name: String,
     /// DTO struct name prefix (e.g. "CandidatePersonName")
-    struct_name: String,
+    pub struct_name: String,
     /// SQL table name (e.g. "candidate_person_name")
-    sql_table_name: String,
+    pub sql_table_name: String,
     /// SQL schema name (e.g. "recruiting")
-    sql_schema_name: String,
+    pub sql_schema_name: String,
     /// Parent FK column (e.g. "candidate_id")
-    parent_fk_column: String,
+    pub parent_fk_column: String,
     /// Whether this child is an array (Vec) or single (Option)
-    is_array: bool,
+    pub is_array: bool,
     /// Columns in the child table (excluding id and parent FK)
-    columns: Vec<ChildColumn>,
+    pub columns: Vec<ChildColumn>,
     /// Nested child tables (ValueObject properties within this child table)
-    child_tables: Vec<ChildTableInfo>,
+    pub child_tables: Vec<ChildTableInfo>,
 }
 
 #[allow(dead_code)]
 #[derive(Debug)]
-struct ChildColumn {
-    field_name: String,
-    pg_column_name: String,
-    rust_type: String,
-    is_nullable: bool,
+pub struct ChildColumn {
+    pub field_name: String,
+    pub pg_column_name: String,
+    pub rust_type: String,
+    pub is_nullable: bool,
     /// When the DTO uses a different type than the entity column (e.g. codelist enum
     /// `GenderCodeList` vs entity `String`), this holds the DTO type name.
-    dto_rust_type: Option<String>,
+    pub dto_rust_type: Option<String>,
     /// When this column is a PostgreSQL range type, holds the lowercased PG cast
     /// (e.g. `"tstzrange"`) so INSERT SQL can include `$N::tstzrange`.
-    pg_cast: Option<String>,
+    pub pg_cast: Option<String>,
 }
 
 /// Returns the sea_orm `Value::*` expression for a typed NULL, based on the Rust type.
@@ -909,7 +909,7 @@ async fn build_child_table_info(
 
 /// Flatten a nested child table tree into a depth-first ordered list.
 /// Each entry retains its correct `parent_fk_column` and `sql_table_name`.
-fn flatten_child_tables(children: &[ChildTableInfo]) -> Vec<&ChildTableInfo> {
+pub(crate) fn flatten_child_tables(children: &[ChildTableInfo]) -> Vec<&ChildTableInfo> {
     let mut result = Vec::new();
     for child in children {
         result.push(child);
@@ -1874,7 +1874,7 @@ impl RepositoryImplEmitter {
         Ok(code)
     }
 
-    async fn query_entity_tree(
+    pub async fn query_entity_tree(
         &self,
         db: &dyn GraphQuerier,
         schema_title: &str,
