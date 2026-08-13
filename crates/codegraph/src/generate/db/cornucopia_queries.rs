@@ -132,7 +132,9 @@ fn render_entity_sql(
         .filter(|c| {
             matches!(
                 c.role,
-                PersistenceColumnRole::Data | PersistenceColumnRole::ForeignKey { .. }
+                PersistenceColumnRole::Data
+                    | PersistenceColumnRole::ForeignKey { .. }
+                    | PersistenceColumnRole::HierarchyParent
             )
         })
         .collect();
@@ -310,11 +312,11 @@ fn write_create_query(
         insert_cols.push(format!("\"{}\"", col.column_name));
         if let Some(ref cast) = col.pg_cast {
             // Bind as text and cast in SQL so the DTO's string representation works.
-            insert_params.push(format!(":{}::text::{}", col.field_name, cast));
+            insert_params.push(format!(":{}::text::{}", col.field_name.trim_start_matches("r#"), cast));
         } else {
-            insert_params.push(format!(":{}", col.field_name));
+            insert_params.push(format!(":{}", col.field_name.trim_start_matches("r#")));
         }
-        param_defs.push(col.field_name.clone());
+        param_defs.push(col.field_name.trim_start_matches("r#").to_string());
     }
 
     if insert_cols.is_empty() {
@@ -399,7 +401,7 @@ fn write_update_query(
 
     let mut params = vec!["id".to_string()];
     for c in &updatable {
-        params.push(c.field_name.clone());
+        params.push(c.field_name.trim_start_matches("r#").to_string());
     }
 
     let mut where_clauses = vec!["\"id\" = :id".to_string()];
