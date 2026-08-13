@@ -103,7 +103,7 @@ impl {{ entity_name }}CommandHandler {
         hooks: Option<Arc<dyn {{ project.hooks_api_crate }}::generated::{{ domain }}::{{ module_name }}::{{ entity_name }}Lifecycle>>,
 {% endif %}
     ) -> Self {
-        Self { repo, {% if project.persistence_provider == "cornucopia" %}pool, {% endif %}db{% if project.hooks_api_crate %}, hooks{% endif %} }
+        Self { repo, {% if project.persistence_provider == "cornucopia" %}pool, {% endif %}db{% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}, hooks{% endif %} }
     }
 {% if has_create %}
 
@@ -220,7 +220,7 @@ impl {{ entity_name }}CommandHandler {
 {% endif %}
         set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
-        {% if project.hooks_api_crate %}
+        {% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}
         // --- before_create hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = {{ project.hooks_api_crate }}::TxContext::new(&tx, correlation_id, organization_id, api_key_id, source);
@@ -263,7 +263,7 @@ impl {{ entity_name }}CommandHandler {
             })?;
 {% endif %}
 
-        {% if project.hooks_api_crate %}
+        {% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}
         // --- after_create_tx hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = {{ project.hooks_api_crate }}::TxContext::new(&tx, correlation_id, organization_id, api_key_id, source);
@@ -314,7 +314,7 @@ impl {{ entity_name }}CommandHandler {
 {% endif %}
         set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
-        {% if project.hooks_api_crate %}
+        {% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}
         // --- before_update hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = {{ project.hooks_api_crate }}::TxContext::new(&tx, correlation_id, organization_id, api_key_id, &source);
@@ -342,7 +342,7 @@ impl {{ entity_name }}CommandHandler {
                 }
             })?;
 
-        {% if project.hooks_api_crate %}
+        {% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}
         // --- after_update_tx hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = {{ project.hooks_api_crate }}::TxContext::new(&tx, correlation_id, organization_id, api_key_id, &source);
@@ -393,7 +393,7 @@ impl {{ entity_name }}CommandHandler {
 {% endif %}
         set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
-        {% if project.hooks_api_crate %}
+        {% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}
         // --- before_delete hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = {{ project.hooks_api_crate }}::TxContext::new(&tx, correlation_id, organization_id, api_key_id, &source);
@@ -421,7 +421,7 @@ impl {{ entity_name }}CommandHandler {
                 }
             })?;
 
-        {% if project.hooks_api_crate %}
+        {% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}
         // --- after_delete_tx hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = {{ project.hooks_api_crate }}::TxContext::new(&tx, correlation_id, organization_id, api_key_id, &source);
