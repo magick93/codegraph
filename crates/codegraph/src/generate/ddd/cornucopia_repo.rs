@@ -579,14 +579,14 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
     writeln!(code, "        let total = if include_deleted {{").unwrap();
     writeln!(
         code,
-        "            {qmod}::count_{snake}_including_deleted().bind(db).one().await.map_err(|e| e.to_string())?",
+        "            {qmod}::count_{snake}_including_deleted().bind(db).one().await.map_err(|e| e.to_string())? as u64",
         snake = tree.table_name
     )
     .unwrap();
     writeln!(code, "        }} else {{").unwrap();
     writeln!(
         code,
-        "            {qmod}::count_{snake}().bind(db).one().await.map_err(|e| e.to_string())?",
+        "            {qmod}::count_{snake}().bind(db).one().await.map_err(|e| e.to_string())? as u64",
         snake = tree.table_name
     )
     .unwrap();
