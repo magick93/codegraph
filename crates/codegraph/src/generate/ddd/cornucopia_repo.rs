@@ -313,10 +313,10 @@ fn create_bind_expr(col: &crate::generate::ddd::repository_emitter::TreeColumn) 
     if col.is_structured_wrapper {
         if col.is_nullable {
             format!(
-                "&cmd.{field}.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default().to_string())"
+                "&cmd.{field}.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default())"
             )
         } else {
-            format!("&serde_json::to_value(&cmd.{field}).unwrap_or_default().to_string()")
+            format!("&serde_json::to_value(&cmd.{field}).unwrap_or_default()")
         }
     } else if col.is_array || col.rust_type.starts_with("Vec<") {
         if col.dto_rust_type.is_some() {
@@ -434,36 +434,24 @@ fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut String) {
         writeln!(code, "        let response = if include_deleted {{").unwrap();
         writeln!(
             code,
-            "            if let Some(row) = {qmod}::get_{snake}_including_deleted().bind(db, &id).opt().await.map_err(|e| e.to_string())? {{",
+            "            if let Some(row) = {qmod}::get_{snake}_scoped_including_deleted().bind(db, &id, &parent_id).opt().await.map_err(|e| e.to_string())? {{",
             snake = tree.table_name
         )
         .unwrap();
-        writeln!(
-            code,
-            "                if row.{parent_fk} != parent_id {{ None }} else {{"
-        )
-        .unwrap();
-        emit_response_expr(tree, code, "row", "                    ", "                    Some(");
-        writeln!(code, "                    )").unwrap();
-        writeln!(code, "                }}").unwrap();
+        emit_response_expr(tree, code, "row", "                ", "                Some(");
+        writeln!(code, "                )").unwrap();
         writeln!(code, "            }} else {{").unwrap();
         writeln!(code, "                None").unwrap();
         writeln!(code, "            }}").unwrap();
         writeln!(code, "        }} else {{").unwrap();
         writeln!(
             code,
-            "            if let Some(row) = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())? {{",
+            "            if let Some(row) = {qmod}::get_{snake}_scoped().bind(db, &id, &parent_id).opt().await.map_err(|e| e.to_string())? {{",
             snake = tree.table_name
         )
         .unwrap();
-        writeln!(
-            code,
-            "                if row.{parent_fk} != parent_id {{ None }} else {{"
-        )
-        .unwrap();
-        emit_response_expr(tree, code, "row", "                    ", "                    Some(");
-        writeln!(code, "                    )").unwrap();
-        writeln!(code, "                }}").unwrap();
+        emit_response_expr(tree, code, "row", "                ", "                Some(");
+        writeln!(code, "                )").unwrap();
         writeln!(code, "            }} else {{").unwrap();
         writeln!(code, "                None").unwrap();
         writeln!(code, "            }}").unwrap();
@@ -471,18 +459,12 @@ fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut String) {
     } else {
         writeln!(
             code,
-            "        let response = if let Some(row) = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())? {{",
+            "        let response = if let Some(row) = {qmod}::get_{snake}_scoped().bind(db, &id, &parent_id).opt().await.map_err(|e| e.to_string())? {{",
             snake = tree.table_name
         )
         .unwrap();
-        writeln!(
-            code,
-            "            if row.{parent_fk} != parent_id {{ None }} else {{"
-        )
-        .unwrap();
-        emit_response_expr(tree, code, "row", "                ", "                Some(");
-        writeln!(code, "                )").unwrap();
-        writeln!(code, "            }}").unwrap();
+        emit_response_expr(tree, code, "row", "            ", "            Some(");
+        writeln!(code, "            )").unwrap();
         writeln!(code, "        }} else {{").unwrap();
         writeln!(code, "            None").unwrap();
         writeln!(code, "        }};").unwrap();
@@ -1066,7 +1048,7 @@ fn update_bind_args(tree: &EntityTree) -> Vec<String> {
         let field = &col.field_name;
         if col.is_structured_wrapper {
             args.push(format!(
-                "&cmd.{field}.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default().to_string())"
+                "&cmd.{field}.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default())"
             ));
         } else if col.is_array || col.rust_type.starts_with("Vec<") {
             if col.dto_rust_type.is_some() {

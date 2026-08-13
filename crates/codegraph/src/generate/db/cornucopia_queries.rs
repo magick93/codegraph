@@ -222,6 +222,16 @@ fn render_entity_sql(
 
     // ── get by id ──────────────────────────────────────────────────────
     write_get_queries(&mut sql, &table, &entity_name, soft_delete_col, &row_cols);
+    if let Some(ref parent_fk) = tree.parent_ref {
+        write_get_scoped_queries(
+            &mut sql,
+            &table,
+            &entity_name,
+            soft_delete_col,
+            &row_cols,
+            parent_fk,
+        );
+    }
 
     // ── create ─────────────────────────────────────────────────────────
     write_create_query(&mut sql, &table, &entity_name, tree, pg_types);
@@ -333,6 +343,38 @@ fn write_list_queries(
     }
 }
 
+fn write_get_scoped_queries(
+    sql: &mut String,
+    table: &str,
+    entity_name: &str,
+    soft_delete_col: Option<&str>,
+    row_cols: &[&TreeColumn],
+    parent_fk: &str,
+) {
+    let cols = row_col_list(row_cols);
+    let hints = row_hints(row_cols);
+
+    for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
+        let mut clauses = vec![
+            "\"id\" = :id".to_string(),
+            format!("\"{parent_fk}\" = :parent_id"),
+        ];
+        if !include_deleted {
+            if let Some(sd) = soft_delete_col {
+                clauses.push(format!("\"{}\" IS NULL", sd));
+            }
+        }
+        sql.push_str(&format!(
+            "--! get_{entity_name}_scoped{suffix} (id, parent_id) : ({hints})\n\
+             --- Get a single {entity_name} by ID, scoped to its parent.\n\
+             SELECT {cols}\n\
+             FROM {table}\n\
+             WHERE {};\n\n",
+            clauses.join("\n    AND "),
+        ));
+    }
+}
+
 fn write_get_queries(
     sql: &mut String,
     table: &str,
@@ -406,7 +448,7 @@ fn write_create_query(
     let insert_params: Vec<String> = writable
         .iter()
         .map(|c| {
-            if is_array_col(c) {
+            if c.is_structured_wrapper || is_array_col(c) {
                 format!(":{}", param_name(c))
             } else {
                 format!(":{}::text::{}", param_name(c), pg_cast_for(c, pg_types))
@@ -451,7 +493,7 @@ fn write_update_query(
     let set_clauses = updatable
         .iter()
         .map(|c| {
-            if is_array_col(c) {
+            if c.is_structured_wrapper || is_array_col(c) {
                 format!(
                     "\"{}\" = COALESCE(:{}, \"{}\")",
                     c.pg_column_name,
