@@ -1158,7 +1158,7 @@ async fn grafeo_candidate_repository_impl_content() {
 
     // Implements trait
     assert!(
-        code.contains("impl CandidateRepository for CandidateRepositoryImpl"),
+        code.contains("impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryImpl"),
         "missing trait impl"
     );
 

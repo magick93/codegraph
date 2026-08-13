@@ -103,7 +103,7 @@ impl {{ entity_name }}CommandHandler {
         hooks: Option<Arc<dyn {{ project.hooks_api_crate }}::generated::{{ domain }}::{{ module_name }}::{{ entity_name }}Lifecycle>>,
 {% endif %}
     ) -> Self {
-        Self { repo, {% if project.persistence_provider == "cornucopia" %}pool, {% endif %}db{% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}, hooks{% endif %} }
+        Self { repo, {% if project.persistence_provider == "cornucopia" %}pool, {% endif %}db{% if project.hooks_api_crate %}, hooks{% endif %} }
     }
 {% if has_create %}
 

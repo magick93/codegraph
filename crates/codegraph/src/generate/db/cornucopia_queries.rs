@@ -98,6 +98,35 @@ impl EntityGenerator for CornucopiaQueryGenerator {
     }
 }
 
+
+/// The Postgres cast target for a column — explicit range casts win; otherwise
+/// derive from the DTO rust type. Scalar params bind as text (Option<String>
+/// binds NULL cleanly) and cast in SQL.
+fn pg_cast_for(col: &TreeColumn) -> String {
+    if let Some(ref cast) = col.pg_cast {
+        return cast.clone();
+    }
+    match col.rust_type.as_str() {
+        "Uuid" | "uuid::Uuid" => "uuid",
+        "i32" => "int4",
+        "i64" => "int8",
+        "f32" => "float4",
+        "f64" => "float8",
+        "bool" => "bool",
+        "Decimal" | "rust_decimal::Decimal" => "numeric",
+        "NaiveDate" | "chrono::NaiveDate" => "date",
+        "DateTime<Utc>" | "chrono::DateTime<chrono::Utc>" => "timestamptz",
+        "serde_json::Value" | "Vec<serde_json::Value>" => "jsonb",
+        _ => "text",
+    }
+    .to_string()
+}
+
+/// Whether the column is bound typed (arrays) rather than as text.
+fn is_array_col(col: &TreeColumn) -> bool {
+    col.is_array || col.rust_type.starts_with("Vec<")
+}
+
 /// The snake_case entity name used to prefix query function names.
 fn snake_name(tree: &EntityTree) -> String {
     codegraph_naming::to_snake_case(&tree.entity_name)
@@ -304,10 +333,10 @@ fn write_create_query(sql: &mut String, table: &str, entity_name: &str, tree: &E
     let insert_params: Vec<String> = writable
         .iter()
         .map(|c| {
-            if let Some(ref cast) = c.pg_cast {
-                format!(":{}::text::{}", param_name(c), cast)
-            } else {
+            if is_array_col(c) {
                 format!(":{}", param_name(c))
+            } else {
+                format!(":{}::text::{}", param_name(c), pg_cast_for(c))
             }
         })
         .collect();
@@ -348,19 +377,19 @@ fn write_update_query(
     let set_clauses = updatable
         .iter()
         .map(|c| {
-            if let Some(ref cast) = c.pg_cast {
-                format!(
-                    "\"{}\" = COALESCE(:{}::text::{}, \"{}\")",
-                    c.pg_column_name,
-                    param_name(c),
-                    cast,
-                    c.pg_column_name
-                )
-            } else {
+            if is_array_col(c) {
                 format!(
                     "\"{}\" = COALESCE(:{}, \"{}\")",
                     c.pg_column_name,
                     param_name(c),
+                    c.pg_column_name
+                )
+            } else {
+                format!(
+                    "\"{}\" = COALESCE(:{}::text::{}, \"{}\")",
+                    c.pg_column_name,
+                    param_name(c),
+                    pg_cast_for(c),
                     c.pg_column_name
                 )
             }
@@ -484,10 +513,12 @@ fn write_child_queries(
     for c in &data_cols {
         insert_cols.push(format!("\"{}\"", c.pg_column_name));
         let pname = c.field_name.trim_start_matches("r#");
-        if let Some(ref cast) = c.pg_cast {
+        if c.rust_type.starts_with("Vec<") {
+            insert_vals.push(format!(":{}", pname));
+        } else if let Some(ref cast) = c.pg_cast {
             insert_vals.push(format!(":{}::text::{}", pname, cast));
         } else {
-            insert_vals.push(format!(":{}", pname));
+            insert_vals.push(format!(":{}::text", pname));
         }
         param_defs.push(pname.to_string());
     }

@@ -20,7 +20,7 @@ use super::dto_response::CandidatePersonNameResponse;
 pub struct CandidateRepositoryImpl;
 
 #[async_trait]
-impl CandidateRepository for CandidateRepositoryImpl {
+impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "recruiting.candidate"))]
     async fn create(
         &self,

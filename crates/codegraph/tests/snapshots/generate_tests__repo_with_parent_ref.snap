@@ -19,7 +19,7 @@ use super::dto_response::ApplicationResponse;
 pub struct ApplicationRepositoryImpl;
 
 #[async_trait]
-impl ApplicationRepository for ApplicationRepositoryImpl {
+impl ApplicationRepository<sea_orm::DatabaseTransaction> for ApplicationRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "recruiting.application"))]
     async fn create(
         &self,

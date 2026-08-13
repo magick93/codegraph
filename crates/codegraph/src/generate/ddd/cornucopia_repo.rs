@@ -282,11 +282,17 @@ fn emit_adapter_create(tree: &EntityTree, code: &mut String) {
             continue;
         }
         let field = &child.field_name;
-        writeln!(code, "        if let Some(items) = &cmd.{field} {{").unwrap();
-        writeln!(code, "            for item in items {{").unwrap();
-        emit_child_insert_one(code, tree, child, "item", "id", 4);
-        writeln!(code, "            }}").unwrap();
-        writeln!(code, "        }}").unwrap();
+        if child.is_array {
+            writeln!(code, "        if let Some(items) = &cmd.{field} {{").unwrap();
+            writeln!(code, "            for item in items {{").unwrap();
+            emit_child_insert_one(code, tree, child, "item", "id", 4);
+            writeln!(code, "            }}").unwrap();
+            writeln!(code, "        }}").unwrap();
+        } else {
+            writeln!(code, "        if let Some(item) = &cmd.{field} {{").unwrap();
+            emit_child_insert_one(code, tree, child, "item", "id", 3);
+            writeln!(code, "        }}").unwrap();
+        }
     }
 
     writeln!(code, "        Ok(id)").unwrap();
@@ -300,32 +306,42 @@ fn is_parent_fk_col(col: &crate::generate::ddd::repository_emitter::TreeColumn, 
 }
 
 /// Bind expression for a single column on the create path.
+///
+/// Scalar columns bind as text (`Option<String>` for nullable DTO fields —
+/// NULL binds cleanly) because the SQL casts `:param::text::{type}`. Array
+/// columns bind typed (`Vec<T>` / `Option<Vec<T>>`).
 fn create_bind_expr(col: &crate::generate::ddd::repository_emitter::TreeColumn) -> String {
     let field = &col.field_name;
     if col.is_structured_wrapper {
         if col.is_nullable {
-            format!("&cmd.{field}.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default())")
-        } else {
-            format!("&serde_json::to_value(&cmd.{field}).unwrap_or_default()")
-        }
-    } else if col.dto_rust_type.is_some() {
-        if col.is_array {
             format!(
-                "&cmd.{field}.iter().map(|x| x.to_string()).collect::<Vec<String>>()"
+                "&cmd.{field}.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default().to_string())"
             )
-        } else if col.is_nullable {
-            format!("&cmd.{field}.as_ref().map(|v| v.to_string())")
         } else {
-            format!("&cmd.{field}.to_string()")
+            format!("&serde_json::to_value(&cmd.{field}).unwrap_or_default().to_string()")
         }
-    } else if col.pg_cast.is_some() {
+    } else if col.is_array || col.rust_type.starts_with("Vec<") {
+        if col.dto_rust_type.is_some() {
+            if col.is_nullable {
+                format!(
+                    "&cmd.{field}.as_ref().map(|v| v.iter().map(|x| x.to_string()).collect::<Vec<String>>())"
+                )
+            } else {
+                format!("&cmd.{field}.iter().map(|x| x.to_string()).collect::<Vec<String>>()")
+            }
+        } else {
+            format!("&cmd.{field}")
+        }
+    } else if col.dto_rust_type.is_some() || col.pg_cast.is_some() {
         if col.is_nullable {
             format!("&cmd.{field}.as_ref().map(|v| v.to_string())")
         } else {
             format!("&cmd.{field}.to_string()")
         }
+    } else if col.is_nullable {
+        format!("&cmd.{field}.as_ref().map(|v| v.to_string())")
     } else {
-        format!("&cmd.{field}")
+        format!("&cmd.{field}.to_string()")
     }
 }
 
@@ -902,9 +918,13 @@ fn emit_child_replace(tree: &EntityTree, code: &mut String) {
             child_table = child.sql_table_name,
         )
         .unwrap();
-        writeln!(code, "            for item in items {{").unwrap();
-        emit_child_insert_one(code, tree, child, "item", "id", 4);
-        writeln!(code, "            }}").unwrap();
+        if child.is_array {
+            writeln!(code, "            for item in items {{").unwrap();
+            emit_child_insert_one(code, tree, child, "item", "id", 4);
+            writeln!(code, "            }}").unwrap();
+        } else {
+            emit_child_insert_one(code, tree, child, "items", "id", 4);
+        }
         writeln!(code, "        }}").unwrap();
     }
 }
@@ -946,9 +966,13 @@ fn emit_child_insert_one(
             grandchild.field_name
         )
         .unwrap();
-        writeln!(code, "{pad}    for gitem in gitems {{").unwrap();
-        emit_child_insert_one(code, tree, grandchild, "gitem", "child_id", indent + 2);
-        writeln!(code, "{pad}    }}").unwrap();
+        if grandchild.is_array {
+            writeln!(code, "{pad}    for gitem in gitems {{").unwrap();
+            emit_child_insert_one(code, tree, grandchild, "gitem", "child_id", indent + 2);
+            writeln!(code, "{pad}    }}").unwrap();
+        } else {
+            emit_child_insert_one(code, tree, grandchild, "gitems", "child_id", indent + 1);
+        }
         writeln!(code, "{pad}}}").unwrap();
     }
 }
@@ -956,20 +980,26 @@ fn emit_child_insert_one(
 /// Rust bind expression for a child column.
 fn child_bind_expr(col: &ChildColumn, item_var: &str) -> String {
     let field = &col.field_name;
-    if col.dto_rust_type.is_some() {
+    if col.rust_type.starts_with("Vec<") {
+        if col.dto_rust_type.is_some() {
+            if col.is_nullable {
+                format!("&{item_var}.{field}.as_ref().map(|v| v.iter().map(|x| x.to_string()).collect::<Vec<String>>())")
+            } else {
+                format!("&{item_var}.{field}.iter().map(|x| x.to_string()).collect::<Vec<String>>()")
+            }
+        } else {
+            format!("&{item_var}.{field}")
+        }
+    } else if col.dto_rust_type.is_some() || col.pg_cast.is_some() {
         if col.is_nullable {
             format!("&{item_var}.{field}.as_ref().map(|v| v.to_string())")
         } else {
             format!("&{item_var}.{field}.to_string()")
         }
-    } else if col.pg_cast.is_some() {
-        if col.is_nullable {
-            format!("&{item_var}.{field}.as_ref().map(|v| v.to_string())")
-        } else {
-            format!("&{item_var}.{field}.to_string()")
-        }
+    } else if col.is_nullable {
+        format!("&{item_var}.{field}.as_ref().map(|v| v.to_string())")
     } else {
-        format!("&{item_var}.{field}")
+        format!("&{item_var}.{field}.to_string()")
     }
 }
 
@@ -983,20 +1013,20 @@ fn update_bind_args(tree: &EntityTree) -> Vec<String> {
         let field = &col.field_name;
         if col.is_structured_wrapper {
             args.push(format!(
-                "&cmd.{field}.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default())"
+                "&cmd.{field}.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default().to_string())"
             ));
-        } else if col.dto_rust_type.is_some() {
-            if col.is_array {
+        } else if col.is_array || col.rust_type.starts_with("Vec<") {
+            if col.dto_rust_type.is_some() {
                 args.push(format!(
                     "&cmd.{field}.as_ref().map(|v| v.iter().map(|x| x.to_string()).collect::<Vec<String>>())"
                 ));
             } else {
-                args.push(format!("&cmd.{field}.as_ref().map(|v| v.to_string())"));
+                args.push(format!("&cmd.{field}"));
             }
-        } else if col.pg_cast.is_some() {
+        } else if col.dto_rust_type.is_some() || col.pg_cast.is_some() {
             args.push(format!("&cmd.{field}.as_ref().map(|v| v.to_string())"));
         } else {
-            args.push(format!("&cmd.{field}"));
+            args.push(format!("&cmd.{field}.as_ref().map(|v| v.to_string())"));
         }
     }
     args
