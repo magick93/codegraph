@@ -247,7 +247,7 @@ fn write_list_queries(
                 .unwrap_or_default()
         };
         sql.push_str(&format!(
-            "--! count_{entity_name}{suffix} () : (count)\n\
+            "--! count_{entity_name}{suffix} : (count)\n\
              --- Count of {entity_name} records.\n\
              SELECT COUNT(*) AS \"count\"\n\
              FROM {table}{count_where_clause};\n\n",
