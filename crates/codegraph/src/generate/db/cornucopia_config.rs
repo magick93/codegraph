@@ -171,7 +171,7 @@ postgres-types = { version = "0.2", features = ["derive"] }
 postgres-protocol = "0.6"
 tokio-postgres = { version = "0.7", default-features = false, features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
 futures = "0.3"
-deadpool-postgres = "0.14"
+deadpool-postgres = { version = "0.14", optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["serde"] }
 rust_decimal = { version = "1", features = ["db-postgres"] }
