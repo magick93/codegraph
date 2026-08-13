@@ -515,7 +515,9 @@ fn write_update_query(
 
     let mut params = vec!["id".to_string()];
     for c in &updatable {
-        params.push(param_sig(c));
+        // Update DTO fields are all Option<T> — mark every param nullable so
+        // Option binds compile and NULL keeps existing values via COALESCE.
+        params.push(format!("{}?", param_name(c)));
     }
 
     let mut where_clauses = vec!["\"id\" = :id".to_string()];
