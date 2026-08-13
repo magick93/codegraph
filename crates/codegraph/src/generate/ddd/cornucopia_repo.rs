@@ -365,32 +365,45 @@ fn emit_adapter_find_by_id(tree: &EntityTree, code: &mut String) {
     )
     .unwrap();
     if tree.is_auditable {
-        writeln!(code, "        let row = if include_deleted {{").unwrap();
+        writeln!(code, "        let response = if include_deleted {{").unwrap();
         writeln!(
             code,
-            "            {qmod}::get_{snake}_including_deleted().bind(db, &id).opt().await.map_err(|e| e.to_string())?",
+            "            if let Some(row) = {qmod}::get_{snake}_including_deleted().bind(db, &id).opt().await.map_err(|e| e.to_string())? {{",
             snake = tree.table_name
         )
         .unwrap();
+        emit_response_expr(tree, code, "row", "                ", "                Some(");
+        writeln!(code, "                )").unwrap();
+        writeln!(code, "            }} else {{").unwrap();
+        writeln!(code, "                None").unwrap();
+        writeln!(code, "            }}").unwrap();
         writeln!(code, "        }} else {{").unwrap();
         writeln!(
             code,
-            "            {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())?",
+            "            if let Some(row) = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())? {{",
             snake = tree.table_name
         )
         .unwrap();
+        emit_response_expr(tree, code, "row", "                ", "                Some(");
+        writeln!(code, "                )").unwrap();
+        writeln!(code, "            }} else {{").unwrap();
+        writeln!(code, "                None").unwrap();
+        writeln!(code, "            }}").unwrap();
         writeln!(code, "        }};").unwrap();
     } else {
         writeln!(
             code,
-            "        let row = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())?;",
+            "        let response = if let Some(row) = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())? {{",
             snake = tree.table_name
         )
         .unwrap();
+        emit_response_expr(tree, code, "row", "            ", "            Some(");
+        writeln!(code, "            )").unwrap();
+        writeln!(code, "        }} else {{").unwrap();
+        writeln!(code, "            None").unwrap();
+        writeln!(code, "        }};").unwrap();
     }
-    writeln!(code, "        let Some(row) = row else {{ return Ok(None) }};").unwrap();
-    emit_response_expr(tree, code, "row", "        ", "Ok(Some(");
-    writeln!(code, "        ))").unwrap();
+    writeln!(code, "        Ok(response)").unwrap();
     writeln!(code, "    }}").unwrap();
 }
 
@@ -418,37 +431,63 @@ fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut String) {
     )
     .unwrap();
     if tree.is_auditable {
-        writeln!(code, "        let row = if include_deleted {{").unwrap();
+        writeln!(code, "        let response = if include_deleted {{").unwrap();
         writeln!(
             code,
-            "            {qmod}::get_{snake}_including_deleted().bind(db, &id).opt().await.map_err(|e| e.to_string())?",
+            "            if let Some(row) = {qmod}::get_{snake}_including_deleted().bind(db, &id).opt().await.map_err(|e| e.to_string())? {{",
             snake = tree.table_name
         )
         .unwrap();
+        writeln!(
+            code,
+            "                if row.{parent_fk} != parent_id {{ None }} else {{"
+        )
+        .unwrap();
+        emit_response_expr(tree, code, "row", "                    ", "                    Some(");
+        writeln!(code, "                    )").unwrap();
+        writeln!(code, "                }}").unwrap();
+        writeln!(code, "            }} else {{").unwrap();
+        writeln!(code, "                None").unwrap();
+        writeln!(code, "            }}").unwrap();
         writeln!(code, "        }} else {{").unwrap();
         writeln!(
             code,
-            "            {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())?",
+            "            if let Some(row) = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())? {{",
             snake = tree.table_name
         )
         .unwrap();
+        writeln!(
+            code,
+            "                if row.{parent_fk} != parent_id {{ None }} else {{"
+        )
+        .unwrap();
+        emit_response_expr(tree, code, "row", "                    ", "                    Some(");
+        writeln!(code, "                    )").unwrap();
+        writeln!(code, "                }}").unwrap();
+        writeln!(code, "            }} else {{").unwrap();
+        writeln!(code, "                None").unwrap();
+        writeln!(code, "            }}").unwrap();
         writeln!(code, "        }};").unwrap();
     } else {
         writeln!(
             code,
-            "        let row = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())?;",
+            "        let response = if let Some(row) = {qmod}::get_{snake}().bind(db, &id).opt().await.map_err(|e| e.to_string())? {{",
             snake = tree.table_name
         )
         .unwrap();
+        writeln!(
+            code,
+            "            if row.{parent_fk} != parent_id {{ None }} else {{"
+        )
+        .unwrap();
+        emit_response_expr(tree, code, "row", "                ", "                Some(");
+        writeln!(code, "                )").unwrap();
+        writeln!(code, "            }}").unwrap();
+        writeln!(code, "        }} else {{").unwrap();
+        writeln!(code, "            None").unwrap();
+        writeln!(code, "        }};").unwrap();
     }
-    writeln!(code, "        let Some(row) = row else {{ return Ok(None) }};").unwrap();
-    writeln!(
-        code,
-        "        if row.{parent_fk} != parent_id {{ return Ok(None); }}"
-    )
-    .unwrap();
-    emit_response_expr(tree, code, "row", "        ", "Ok(Some(");
-    writeln!(code, "        ))").unwrap();
+    writeln!(code, "        Ok(response)").unwrap();
     writeln!(code, "    }}").unwrap();
 }
 

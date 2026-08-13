@@ -152,7 +152,7 @@ fn cornucopia_toml() -> String {
     toml.push_str(
         "\"pg_catalog.varchar\" = { rust-type = \"String\", is-copy = false }\n",
     );
-    toml.push_str("\"pg_catalog.timestamptz\" = \"chrono::DateTime<chrono::FixedOffset>\"\n");
+    toml.push_str("\"pg_catalog.timestamptz\" = \"chrono::DateTime<chrono::Utc>\"\n");
     toml.push_str("\"pg_catalog.timestamp\" = \"chrono::NaiveDateTime\"\n");
     toml.push_str("\"pg_catalog.bool\" = \"bool\"\n");
     toml.push_str("\"pg_catalog.int4\" = \"i32\"\n");
