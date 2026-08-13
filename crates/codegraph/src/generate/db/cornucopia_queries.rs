@@ -369,6 +369,15 @@ fn param_name(col: &TreeColumn) -> String {
     col.field_name.trim_start_matches("r#").to_string()
 }
 
+/// Annotation param name with the cornucopia `?` nullable marker.
+fn param_sig(col: &TreeColumn) -> String {
+    if col.is_nullable {
+        format!("{}?", param_name(col))
+    } else {
+        param_name(col)
+    }
+}
+
 fn write_create_query(
     sql: &mut String,
     table: &str,
@@ -404,7 +413,7 @@ fn write_create_query(
             }
         })
         .collect();
-    let param_defs: Vec<String> = writable.iter().map(|c| param_name(c)).collect();
+    let param_defs: Vec<String> = writable.iter().map(|c| param_sig(c)).collect();
 
     sql.push_str(&format!(
         "--! create_{entity_name} ({}) : (id)\n\
@@ -464,7 +473,7 @@ fn write_update_query(
 
     let mut params = vec!["id".to_string()];
     for c in &updatable {
-        params.push(param_name(c));
+        params.push(param_sig(c));
     }
 
     let mut where_clauses = vec!["\"id\" = :id".to_string()];
@@ -583,7 +592,11 @@ fn write_child_queries(
         } else {
             insert_vals.push(format!(":{}::text::{}", pname, child_pg_cast_for(c)));
         }
-        param_defs.push(pname.to_string());
+        param_defs.push(if c.is_nullable {
+            format!("{}?", pname)
+        } else {
+            pname.to_string()
+        });
     }
     sql.push_str(&format!(
         "--! insert_{entity_name}_{child} ({})\n\
