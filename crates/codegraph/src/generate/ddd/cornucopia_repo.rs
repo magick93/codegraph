@@ -614,7 +614,6 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
         emit_filter_checks(code, tree, "                ");
         emit_response_expr(tree, code, "row", "                    ", "                    items.push(");
         writeln!(code, "                    );").unwrap();
-        writeln!(code, "                }}").unwrap();
         writeln!(code, "            }}").unwrap();
         writeln!(code, "        }}").unwrap();
     } else {
