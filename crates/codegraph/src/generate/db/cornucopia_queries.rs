@@ -218,10 +218,10 @@ fn render_entity_sql(
     ));
 
     // ── list (+ count) ─────────────────────────────────────────────────
-    write_list_queries(&mut sql, &table, &entity_name, soft_delete_col, &row_cols);
+    write_list_queries(&mut sql, &table, &entity_name, soft_delete_col, &row_cols, pg_types);
 
     // ── get by id ──────────────────────────────────────────────────────
-    write_get_queries(&mut sql, &table, &entity_name, soft_delete_col, &row_cols);
+    write_get_queries(&mut sql, &table, &entity_name, soft_delete_col, &row_cols, pg_types);
     if let Some(ref parent_fk) = tree.parent_ref {
         write_get_scoped_queries(
             &mut sql,
@@ -230,6 +230,7 @@ fn render_entity_sql(
             soft_delete_col,
             &row_cols,
             parent_fk,
+            pg_types,
         );
     }
 
@@ -270,20 +271,41 @@ fn render_entity_sql(
         }
     }
     if let Some(ref hf) = tree.hierarchy_field {
-        write_tree_query(&mut sql, &table, &entity_name, hf, &row_cols);
+        write_tree_query(&mut sql, &table, &entity_name, hf, &row_cols, pg_types);
     }
 
     sql
 }
 
-fn row_col_list(cols: &[&TreeColumn]) -> String {
+fn row_col_list(cols: &[&TreeColumn], pg_types: &std::collections::HashMap<String, String>) -> String {
     let mut names: Vec<String> = vec!["\"id\"".to_string()];
     for c in cols {
-        names.push(format!("\"{}\"", c.pg_column_name));
+        if needs_text_cast(c, pg_types) {
+            names.push(format!("\"{}\"::text", c.pg_column_name));
+        } else {
+            names.push(format!("\"{}\"", c.pg_column_name));
+        }
     }
     names.push("\"created_at\"".to_string());
     names.push("\"updated_at\"".to_string());
     names.join(", ")
+}
+
+/// Whether a column's DB type needs an explicit `::text` cast in SELECT lists
+/// because its mapped Rust type (String) cannot be read directly by
+/// tokio-postgres (ranges, geometry/geography, vector).
+fn needs_text_cast(col: &TreeColumn, pg_types: &std::collections::HashMap<String, String>) -> bool {
+    if col.pg_cast.is_some() {
+        return true;
+    }
+    let Some(pg) = pg_types.get(&col.pg_column_name) else {
+        return false;
+    };
+    let pg_upper = pg.to_uppercase();
+    pg_upper.contains("GEOMETRY")
+        || pg_upper.contains("GEOGRAPHY")
+        || pg_upper.contains("VECTOR")
+        || pg_upper.contains("RANGE")
 }
 
 fn row_hints(cols: &[&TreeColumn]) -> String {
@@ -307,8 +329,9 @@ fn write_list_queries(
     entity_name: &str,
     soft_delete_col: Option<&str>,
     row_cols: &[&TreeColumn],
+    pg_types: &std::collections::HashMap<String, String>,
 ) {
-    let cols = row_col_list(row_cols);
+    let cols = row_col_list(row_cols, pg_types);
     let hints = row_hints(row_cols);
 
     for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
@@ -350,8 +373,9 @@ fn write_get_scoped_queries(
     soft_delete_col: Option<&str>,
     row_cols: &[&TreeColumn],
     parent_fk: &str,
+    pg_types: &std::collections::HashMap<String, String>,
 ) {
-    let cols = row_col_list(row_cols);
+    let cols = row_col_list(row_cols, pg_types);
     let hints = row_hints(row_cols);
 
     for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
@@ -381,8 +405,9 @@ fn write_get_queries(
     entity_name: &str,
     soft_delete_col: Option<&str>,
     row_cols: &[&TreeColumn],
+    pg_types: &std::collections::HashMap<String, String>,
 ) {
-    let cols = row_col_list(row_cols);
+    let cols = row_col_list(row_cols, pg_types);
     let hints = row_hints(row_cols);
 
     for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
@@ -583,7 +608,15 @@ fn write_child_queries(
     let data_cols: Vec<_> = child.columns.iter().collect();
     let col_names: Vec<String> = data_cols
         .iter()
-        .map(|c| format!("\"{}\"", c.pg_column_name))
+        .map(|c| {
+            if c.pg_cast.is_some() {
+                // Range/geometry columns: the DTO holds strings — cast to text
+                // so tokio-postgres can deserialize them.
+                format!("\"{}\"::text", c.pg_column_name)
+            } else {
+                format!("\"{}\"", c.pg_column_name)
+            }
+        })
         .collect();
 
     if col_names.is_empty() {
@@ -737,10 +770,17 @@ fn write_tree_query(
     entity_name: &str,
     hierarchy_field: &str,
     row_cols: &[&TreeColumn],
+    pg_types: &std::collections::HashMap<String, String>,
 ) {
-    let cols = row_col_list(row_cols);
+    let cols = row_col_list(row_cols, pg_types);
     let prefixed: Vec<String> = std::iter::once("c.\"id\"".to_string())
-        .chain(row_cols.iter().map(|c| format!("c.\"{}\"", c.pg_column_name)))
+        .chain(row_cols.iter().map(|c| {
+            if needs_text_cast(c, pg_types) {
+                format!("c.\"{}\"::text", c.pg_column_name)
+            } else {
+                format!("c.\"{}\"", c.pg_column_name)
+            }
+        }))
         .chain(std::iter::once("c.\"created_at\"".to_string()))
         .chain(std::iter::once("c.\"updated_at\"".to_string()))
         .collect();
