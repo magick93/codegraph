@@ -387,12 +387,17 @@ fn write_update_query(
             if let Some(ref cast) = c.pg_cast {
                 format!(
                     "\"{}\" = COALESCE(:{}::text::{}, \"{}\")",
-                    c.column_name, c.field_name, cast, c.column_name
+                    c.column_name,
+                    c.field_name.trim_start_matches("r#"),
+                    cast,
+                    c.column_name
                 )
             } else {
                 format!(
                     "\"{}\" = COALESCE(:{}, \"{}\")",
-                    c.column_name, c.field_name, c.column_name
+                    c.column_name,
+                    c.field_name.trim_start_matches("r#"),
+                    c.column_name
                 )
             }
         })
@@ -512,11 +517,11 @@ fn write_child_queries(
         insert_cols.push(format!("\"{}\"", c.column_name));
         if let Some(ref cast) = c.pg_cast {
             // Bind as text and cast in SQL so the DTO's string representation works.
-            insert_vals.push(format!(":{}::text::{}", c.field_name, cast));
+            insert_vals.push(format!(":{}::text::{}", c.field_name.trim_start_matches("r#"), cast));
         } else {
-            insert_vals.push(format!(":{}", c.field_name));
+            insert_vals.push(format!(":{}", c.field_name.trim_start_matches("r#")));
         }
-        param_defs.push(c.field_name.clone());
+        param_defs.push(c.field_name.trim_start_matches("r#").to_string());
     }
     sql.push_str(&format!(
         "--! insert_{entity_name}_{child} ({})\n\
