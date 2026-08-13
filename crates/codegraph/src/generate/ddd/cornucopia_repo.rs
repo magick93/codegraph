@@ -891,9 +891,6 @@ fn emit_child_reads_cornucopia(
         }
         writeln!(code, "{pad}        items.push({}Response {{", child.struct_name).unwrap();
         for col in &child.columns {
-            if col.pg_column_name == child.parent_fk_column {
-                continue;
-            }
             emit_child_col_read_value_cornucopia(code, col, &format!("{pad}            "));
         }
         emit_child_field_population(code, &child.child_tables, &format!("{pad}            "));

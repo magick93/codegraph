@@ -578,12 +578,9 @@ fn write_child_queries(
 ) {
     let child_table = format!("\"{}\".\"{}\"", schema_name, child.sql_table_name);
     let fk = &child.parent_fk_column;
-    // The parent FK column is bound separately; exclude it from the data columns.
-    let data_cols: Vec<_> = child
-        .columns
-        .iter()
-        .filter(|c| c.pg_column_name != *fk)
-        .collect();
+    // All child columns participate in the row return (the FK is a real
+    // property on the child DTO); only the INSERT excludes it.
+    let data_cols: Vec<_> = child.columns.iter().collect();
     let col_names: Vec<String> = data_cols
         .iter()
         .map(|c| format!("\"{}\"", c.pg_column_name))
@@ -629,6 +626,9 @@ fn write_child_queries(
     let mut insert_vals = vec![":id".to_string(), format!(":{}", fk)];
     let mut param_defs = vec!["id".to_string(), fk.clone()];
     for c in &data_cols {
+        if c.pg_column_name == *fk {
+            continue;
+        }
         insert_cols.push(format!("\"{}\"", c.pg_column_name));
         let pname = c.field_name.trim_start_matches("r#");
         if c.rust_type.starts_with("Vec<") {
@@ -746,7 +746,7 @@ fn write_tree_query(
         .collect();
     let hints = row_hints(row_cols);
     sql.push_str(&format!(
-        "--! tree_{entity_name} (root_id, max_depth) : ({hints})\n\
+        "--! tree_{entity_name} (root_id, max_depth?) : ({hints})\n\
          --- Recursive subtree rooted at a {entity_name}.\n\
          WITH RECURSIVE tree AS (\n\
          \x20 SELECT {cols}, 0 AS _tree_depth FROM {table} WHERE \"id\" = :root_id\n\
