@@ -624,7 +624,7 @@ fn write_embedding_queries(
              SELECT \"id\"\n\
              FROM {table}\n\
              WHERE \"{emb_col}\" IS NOT NULL{extra}\n\
-             ORDER BY \"{emb_col}\" <=> :embedding::vector\n\
+             ORDER BY \"{emb_col}\" <=> :embedding::text::vector\n\
              LIMIT :limit;\n\n",
         ));
     }
