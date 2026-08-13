@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
+use crate::generate::persistence::build_persistence_entity;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
@@ -88,7 +89,24 @@ impl EntityGenerator for CornucopiaQueryGenerator {
             return Ok(Vec::new());
         }
 
-        let sql = render_entity_sql(schema_title, domain, config, &tree);
+        // Column → PostgreSQL type name, from the persistence IR (used to
+        // derive SQL casts for columns whose rust_type doesn't reveal the DB
+        // type, e.g. geometry/geography columns stored as String).
+        let entity_ir = build_persistence_entity(
+            db,
+            schema_title,
+            domain,
+            config,
+            &self.parent_candidates,
+        )
+        .await?;
+        let pg_types: std::collections::HashMap<String, String> = entity_ir
+            .columns
+            .iter()
+            .map(|c| (c.column_name.clone(), c.pg_type.clone()))
+            .collect();
+
+        let sql = render_entity_sql(schema_title, domain, config, &tree, &pg_types);
 
         let rel_path = format!("queries/{}/{}.sql", domain, tree.table_name);
         Ok(vec![GeneratedFile {
@@ -102,9 +120,19 @@ impl EntityGenerator for CornucopiaQueryGenerator {
 /// The Postgres cast target for a column — explicit range casts win; otherwise
 /// derive from the DTO rust type. Scalar params bind as text (Option<String>
 /// binds NULL cleanly) and cast in SQL.
-fn pg_cast_for(col: &TreeColumn) -> String {
+fn pg_cast_for(col: &TreeColumn, pg_types: &std::collections::HashMap<String, String>) -> String {
     if let Some(ref cast) = col.pg_cast {
         return cast.clone();
+    }
+    if let Some(pg) = pg_types.get(&col.pg_column_name) {
+        match pg.as_str() {
+            "extensions.geometry" | "public.geometry" => return "geometry".to_string(),
+            "extensions.geography" | "public.geography" => return "geography".to_string(),
+            "extensions.vector" | "public.vector" => return "vector".to_string(),
+            "pg_catalog.tstzrange" => return "tstzrange".to_string(),
+            "pg_catalog.daterange" => return "daterange".to_string(),
+            _ => {}
+        }
     }
     match col.rust_type.as_str() {
         "Uuid" | "uuid::Uuid" => "uuid",
@@ -159,6 +187,7 @@ fn render_entity_sql(
     domain: &str,
     config: &DomainConfig,
     tree: &EntityTree,
+    pg_types: &std::collections::HashMap<String, String>,
 ) -> String {
     let mut sql = String::with_capacity(16 * 1024);
 
@@ -187,10 +216,10 @@ fn render_entity_sql(
     write_get_queries(&mut sql, &table, &entity_name, soft_delete_col, &row_cols);
 
     // ── create ─────────────────────────────────────────────────────────
-    write_create_query(&mut sql, &table, &entity_name, tree);
+    write_create_query(&mut sql, &table, &entity_name, tree, pg_types);
 
     // ── update (COALESCE so missing Option fields keep existing values) ─
-    write_update_query(&mut sql, &table, &entity_name, tree, soft_delete_col);
+    write_update_query(&mut sql, &table, &entity_name, tree, soft_delete_col, pg_types);
 
     // ── delete ─────────────────────────────────────────────────────────
     write_delete_query(&mut sql, &table, &entity_name, soft_delete_col);
@@ -332,7 +361,13 @@ fn param_name(col: &TreeColumn) -> String {
     col.field_name.trim_start_matches("r#").to_string()
 }
 
-fn write_create_query(sql: &mut String, table: &str, entity_name: &str, tree: &EntityTree) {
+fn write_create_query(
+    sql: &mut String,
+    table: &str,
+    entity_name: &str,
+    tree: &EntityTree,
+    pg_types: &std::collections::HashMap<String, String>,
+) {
     let writable: Vec<&TreeColumn> = tree.direct_columns.iter().filter(|c| is_writable_col(c)).collect();
 
     if writable.is_empty() {
@@ -357,7 +392,7 @@ fn write_create_query(sql: &mut String, table: &str, entity_name: &str, tree: &E
             if is_array_col(c) {
                 format!(":{}", param_name(c))
             } else {
-                format!(":{}::text::{}", param_name(c), pg_cast_for(c))
+                format!(":{}::text::{}", param_name(c), pg_cast_for(c, pg_types))
             }
         })
         .collect();
@@ -381,6 +416,7 @@ fn write_update_query(
     entity_name: &str,
     tree: &EntityTree,
     soft_delete_col: Option<&str>,
+    pg_types: &std::collections::HashMap<String, String>,
 ) {
     let updatable: Vec<&TreeColumn> = tree.direct_columns.iter().filter(|c| is_writable_col(c)).collect();
 
@@ -410,7 +446,7 @@ fn write_update_query(
                     "\"{}\" = COALESCE(:{}::text::{}, \"{}\")",
                     c.pg_column_name,
                     param_name(c),
-                    pg_cast_for(c),
+                    pg_cast_for(c, pg_types),
                     c.pg_column_name
                 )
             }
