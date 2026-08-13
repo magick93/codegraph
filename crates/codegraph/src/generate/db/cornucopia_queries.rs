@@ -633,7 +633,7 @@ fn write_tree_query(
          \x20 SELECT {cols}, 0 AS _tree_depth FROM {table} WHERE \"id\" = :root_id\n\
          \x20 UNION ALL\n\
          \x20 SELECT {prefixed}, t._tree_depth + 1 AS _tree_depth FROM {table} c JOIN tree t ON c.\"{hierarchy_field}\" = t.\"id\"\n\
-         \x20 WHERE (:max_depth IS NULL OR t._tree_depth < :max_depth)\n\
+         \x20 WHERE (:max_depth::int4 IS NULL OR t._tree_depth < :max_depth::int4)\n\
          )\n\
          SELECT {cols} FROM tree ORDER BY _tree_depth, \"created_at\";\n\n",
     ));
