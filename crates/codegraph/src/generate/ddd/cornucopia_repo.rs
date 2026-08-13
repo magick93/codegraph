@@ -283,11 +283,11 @@ fn emit_adapter_create(tree: &EntityTree, code: &mut String) {
         let field = &child.field_name;
         if child.is_array {
             writeln!(code, "        for item in &cmd.{field} {{").unwrap();
-            emit_child_insert_one(code, tree, child, "item", "id", 3);
+            emit_child_insert_one(code, tree, child, "item", "id", "child_id", 3);
             writeln!(code, "        }}").unwrap();
         } else {
             writeln!(code, "        if let Some(item) = &cmd.{field} {{").unwrap();
-            emit_child_insert_one(code, tree, child, "item", "id", 3);
+            emit_child_insert_one(code, tree, child, "item", "id", "child_id", 3);
             writeln!(code, "        }}").unwrap();
         }
     }
@@ -960,10 +960,10 @@ fn emit_child_replace(tree: &EntityTree, code: &mut String) {
         .unwrap();
         if child.is_array {
             writeln!(code, "            for item in items {{").unwrap();
-            emit_child_insert_one(code, tree, child, "item", "id", 4);
+            emit_child_insert_one(code, tree, child, "item", "id", "child_id", 4);
             writeln!(code, "            }}").unwrap();
         } else {
-            emit_child_insert_one(code, tree, child, "items", "id", 4);
+            emit_child_insert_one(code, tree, child, "items", "id", "child_id", 4);
         }
         writeln!(code, "        }}").unwrap();
     }
@@ -976,13 +976,14 @@ fn emit_child_insert_one(
     child: &ChildTableInfo,
     item_var: &str,
     parent_id_var: &str,
+    id_var: &str,
     indent: usize,
 ) {
     let qmod = qmod(tree);
     let snake = &tree.table_name;
     let pad = "    ".repeat(indent);
-    writeln!(code, "{pad}let child_id = Uuid::new_v4();").unwrap();
-    let mut binds: Vec<String> = vec!["&child_id".to_string(), format!("&{parent_id_var}")];
+    writeln!(code, "{pad}let {id_var} = Uuid::new_v4();").unwrap();
+    let mut binds: Vec<String> = vec![format!("&{id_var}"), format!("&{parent_id_var}")];
     for col in &child.columns {
         if col.pg_column_name == child.parent_fk_column {
             continue;
@@ -996,10 +997,13 @@ fn emit_child_insert_one(
         child_table = child.sql_table_name,
     )
     .unwrap();
+    let mut depth = 0usize;
     for grandchild in &child.child_tables {
         if grandchild.columns.is_empty() && grandchild.child_tables.is_empty() {
             continue;
         }
+        let gc_id_var = format!("{id_var}_gc{depth}");
+        depth += 1;
         if grandchild.is_array {
             writeln!(
                 code,
@@ -1007,7 +1011,15 @@ fn emit_child_insert_one(
                 grandchild.field_name
             )
             .unwrap();
-            emit_child_insert_one(code, tree, grandchild, "gitem", "child_id", indent + 1);
+            emit_child_insert_one(
+                code,
+                tree,
+                grandchild,
+                "gitem",
+                id_var,
+                &gc_id_var,
+                indent + 1,
+            );
             writeln!(code, "{pad}}}").unwrap();
         } else {
             writeln!(
@@ -1016,7 +1028,15 @@ fn emit_child_insert_one(
                 grandchild.field_name
             )
             .unwrap();
-            emit_child_insert_one(code, tree, grandchild, "gitem", "child_id", indent + 1);
+            emit_child_insert_one(
+                code,
+                tree,
+                grandchild,
+                "gitem",
+                id_var,
+                &gc_id_var,
+                indent + 1,
+            );
             writeln!(code, "{pad}}}").unwrap();
         }
     }
