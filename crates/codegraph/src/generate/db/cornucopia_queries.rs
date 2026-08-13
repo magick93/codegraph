@@ -620,6 +620,11 @@ fn write_tree_query(
     return_cols: &[&PersistenceColumn],
 ) {
     let cols = col_list(return_cols);
+    let prefixed = return_cols
+        .iter()
+        .map(|c| format!("c.\"{}\"", c.column_name))
+        .collect::<Vec<_>>()
+        .join(", ");
     let hints = nullable_hints(return_cols);
     sql.push_str(&format!(
         "--! tree_{entity_name} (root_id, max_depth) : ({hints})\n\
@@ -627,7 +632,7 @@ fn write_tree_query(
          WITH RECURSIVE tree AS (\n\
          \x20 SELECT {cols}, 0 AS _tree_depth FROM {table} WHERE \"id\" = :root_id\n\
          \x20 UNION ALL\n\
-         \x20 SELECT c.{cols}, t._tree_depth + 1 AS _tree_depth FROM {table} c JOIN tree t ON c.\"{hierarchy_field}\" = t.\"id\"\n\
+         \x20 SELECT {prefixed}, t._tree_depth + 1 AS _tree_depth FROM {table} c JOIN tree t ON c.\"{hierarchy_field}\" = t.\"id\"\n\
          \x20 WHERE (:max_depth IS NULL OR t._tree_depth < :max_depth)\n\
          )\n\
          SELECT {cols} FROM tree ORDER BY _tree_depth, \"created_at\";\n\n",
