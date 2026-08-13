@@ -323,7 +323,7 @@ fn write_create_query(
         // Entities whose data lives entirely in child tables (or system-managed
         // columns) still need a create query — Postgres fills the defaults.
         sql.push_str(&format!(
-            "--! create_{entity_name} () : (id)\n\
+            "--! create_{entity_name} : (id)\n\
              --- Create a new {entity_name} (defaults only).\n\
              INSERT INTO {table} DEFAULT VALUES\n\
              RETURNING \"id\";\n\n",
