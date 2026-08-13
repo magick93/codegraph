@@ -172,7 +172,14 @@ fn render_entity_sql(
         .and_then(|d| d.get_entity_config(schema_title));
     let search = entity_cfg.map(|ec| &ec.search);
     if let Some(search) = search {
-        if !search.fts_weights.is_empty() {
+        // Match the SeaORM emitter: FTS is enabled only when fts_columns are
+        // resolved (the DDL generator creates search_tsv from those).
+        let has_fts = search
+            .fts_columns
+            .as_ref()
+            .map(|cols| !cols.is_empty())
+            .unwrap_or(false);
+        if has_fts {
             let fts_language = search.fts_language.clone();
             write_search_queries(&mut sql, &table, entity_name, soft_delete_col, &fts_language);
         }
