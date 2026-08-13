@@ -146,7 +146,12 @@ fn cornucopia_toml() -> String {
     toml.push_str("# Codegraph type mappings — covers all classified property types\n");
     toml.push_str("[types.mapping]\n");
     toml.push_str("\"pg_catalog.uuid\" = \"uuid::Uuid\"\n");
-    toml.push_str("\"pg_catalog.text\" = \"String\"\n");
+    toml.push_str(
+        "\"pg_catalog.text\" = { rust-type = \"String\", is-copy = false }\n",
+    );
+    toml.push_str(
+        "\"pg_catalog.varchar\" = { rust-type = \"String\", is-copy = false }\n",
+    );
     toml.push_str("\"pg_catalog.timestamptz\" = \"chrono::DateTime<chrono::FixedOffset>\"\n");
     toml.push_str("\"pg_catalog.timestamp\" = \"chrono::NaiveDateTime\"\n");
     toml.push_str("\"pg_catalog.bool\" = \"bool\"\n");
@@ -154,25 +159,32 @@ fn cornucopia_toml() -> String {
     toml.push_str("\"pg_catalog.int8\" = \"i64\"\n");
     toml.push_str("\"pg_catalog.float4\" = \"f32\"\n");
     toml.push_str("\"pg_catalog.float8\" = \"f64\"\n");
-    toml.push_str("\"pg_catalog.jsonb\" = \"serde_json::Value\"\n");
-    toml.push_str("\"pg_catalog.json\" = \"serde_json::Value\"\n");
+    toml.push_str(
+        "\"pg_catalog.jsonb\" = { rust-type = \"serde_json::Value\", is-copy = false }\n",
+    );
+    toml.push_str(
+        "\"pg_catalog.json\" = { rust-type = \"serde_json::Value\", is-copy = false }\n",
+    );
     toml.push_str("\"pg_catalog.date\" = \"chrono::NaiveDate\"\n");
-    toml.push_str("\"pg_catalog.bytea\" = \"Vec<u8>\"\n");
+    toml.push_str("\"pg_catalog.bytea\" = { rust-type = \"Vec<u8>\", is-copy = false }\n");
     toml.push_str("\"pg_catalog.numeric\" = \"rust_decimal::Decimal\"\n");
     toml.push_str("\"pg_catalog.inet\" = \"std::net::IpAddr\"\n");
-    toml.push_str("\"pg_catalog.varchar\" = \"String\"\n");
-    toml.push_str("\"pg_catalog.tstzrange\" = \"String\"\n");
-    toml.push_str("\"pg_catalog.daterange\" = \"String\"\n");
-    toml.push_str("\"pg_catalog.tsrange\" = \"String\"\n");
-    toml.push_str("\"pg_catalog.int4range\" = \"String\"\n");
-    toml.push_str("\"pg_catalog.int8range\" = \"String\"\n");
-    toml.push_str("\"pg_catalog.numrange\" = \"String\"\n");
-    toml.push_str("\"public.vector\" = \"pgvector::Vector\"\n");
-    toml.push_str("\"extensions.vector\" = \"pgvector::Vector\"\n");
-    toml.push_str("\"public.geometry\" = \"String\"\n");
-    toml.push_str("\"extensions.geometry\" = \"String\"\n");
-    toml.push_str("\"public.geography\" = \"String\"\n");
-    toml.push_str("\"extensions.geography\" = \"String\"\n");
+    toml.push_str("\"pg_catalog.tstzrange\" = { rust-type = \"String\", is-copy = false }\n");
+    toml.push_str("\"pg_catalog.daterange\" = { rust-type = \"String\", is-copy = false }\n");
+    toml.push_str("\"pg_catalog.tsrange\" = { rust-type = \"String\", is-copy = false }\n");
+    toml.push_str("\"pg_catalog.int4range\" = { rust-type = \"String\", is-copy = false }\n");
+    toml.push_str("\"pg_catalog.int8range\" = { rust-type = \"String\", is-copy = false }\n");
+    toml.push_str("\"pg_catalog.numrange\" = { rust-type = \"String\", is-copy = false }\n");
+    toml.push_str(
+        "\"public.vector\" = { rust-type = \"pgvector::Vector\", is-copy = false }\n",
+    );
+    toml.push_str(
+        "\"extensions.vector\" = { rust-type = \"pgvector::Vector\", is-copy = false }\n",
+    );
+    toml.push_str("\"public.geometry\" = { rust-type = \"String\", is-copy = false }\n");
+    toml.push_str("\"extensions.geometry\" = { rust-type = \"String\", is-copy = false }\n");
+    toml.push_str("\"public.geography\" = { rust-type = \"String\", is-copy = false }\n");
+    toml.push_str("\"extensions.geography\" = { rust-type = \"String\", is-copy = false }\n");
     toml
 }
 
