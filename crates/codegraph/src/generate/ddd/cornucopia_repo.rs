@@ -603,7 +603,6 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
         emit_filter_checks(code, tree, "                ");
         emit_response_expr(tree, code, "row", "                    ", "                    items.push(");
         writeln!(code, "                    );").unwrap();
-        writeln!(code, "                }}").unwrap();
         writeln!(code, "            }}").unwrap();
         writeln!(code, "        }} else {{").unwrap();
         writeln!(
@@ -816,7 +815,7 @@ fn emit_filter_checks(code: &mut String, tree: &EntityTree, pad: &str) {
             writeln!(
                 code,
                 "{pad}if let Some(val) = filters.get(\"{field}\") {{\n\
-                 {pad}    if r.{field}.as_ref().map(|v| v.to_string()).as_deref() != Some(val.as_str()) {{ continue; }}\n\
+                 {pad}    if row.{field}.as_ref().map(|v| v.to_string()).as_deref() != Some(val.as_str()) {{ continue; }}\n\
                  {pad}}}"
             )
             .unwrap();
@@ -824,7 +823,7 @@ fn emit_filter_checks(code: &mut String, tree: &EntityTree, pad: &str) {
             writeln!(
                 code,
                 "{pad}if let Some(val) = filters.get(\"{field}\") {{\n\
-                 {pad}    if r.{field}.to_string() != *val {{ continue; }}\n\
+                 {pad}    if row.{field}.to_string() != *val {{ continue; }}\n\
                  {pad}}}"
             )
             .unwrap();
