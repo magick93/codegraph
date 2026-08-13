@@ -168,6 +168,7 @@ fn cornucopia_toml() -> String {
     toml.push_str("\"pg_catalog.int8range\" = \"String\"\n");
     toml.push_str("\"pg_catalog.numrange\" = \"String\"\n");
     toml.push_str("\"public.vector\" = \"pgvector::Vector\"\n");
+    toml.push_str("\"extensions.vector\" = \"pgvector::Vector\"\n");
     toml
 }
 
