@@ -919,6 +919,25 @@ fn emit_child_col_read_value_cornucopia(code: &mut String, col: &ChildColumn, pa
             )
             .unwrap();
         }
+    } else if col.rust_type == "serde_json::Value" {
+        // The DTO types this field as a structured wrapper; the DB column may
+        // be JSONB (identity) or a scalar such as UUID (serialize to a JSON
+        // string). serde_json::to_value handles both uniformly.
+        if col.is_nullable {
+            writeln!(
+                code,
+                "{pad}{field}: child_row.{field}.map(|v| serde_json::to_value(v).ok()).flatten(),",
+                field = col.field_name,
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                code,
+                "{pad}{field}: serde_json::to_value(child_row.{field}).unwrap_or(serde_json::Value::Null),",
+                field = col.field_name,
+            )
+            .unwrap();
+        }
     } else {
         writeln!(
             code,
