@@ -103,10 +103,19 @@ fn main() {
 
     let db_url = std::env::var("CORNUCOPIA_DATABASE_URL")
         .expect("CORNUCOPIA_DATABASE_URL must be set to build cornucopia queries");
-    let client = cornucopia::conn::from_url(&db_url)
-        .expect("failed to connect to Postgres for cornucopia codegen");
 
-    cornucopia::gen_live(&client, config).expect("cornucopia codegen failed");
+    let rt = tokio::runtime::Runtime::new().expect("failed to start tokio runtime");
+    rt.block_on(async {
+        let (client, conn) = tokio_postgres::connect(&db_url, tokio_postgres::NoTls)
+            .await
+            .expect("failed to connect to Postgres for cornucopia codegen");
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                eprintln!("cornucopia codegen connection error: {e}");
+            }
+        });
+        cornucopia::gen_live(&client, config).expect("cornucopia codegen failed");
+    });
 
     println!("cargo:rerun-if-changed=cornucopia.toml");
     println!("cargo:rerun-if-changed=../queries");
@@ -129,7 +138,9 @@ fn cornucopia_toml() -> String {
     toml.push_str("[manifest.dependencies]\n");
     toml.push_str("pgvector = \"0.3\"\n\n");
     toml.push_str("[manifest.build-dependencies]\n");
-    toml.push_str("cornucopia = \"1.0\"\n\n");
+    toml.push_str("cornucopia = \"1.0\"\n");
+    toml.push_str("tokio = { version = \"1\", features = [\"rt\", \"macros\"] }\n");
+    toml.push_str("tokio-postgres = \"0.7\"\n\n");
     toml.push_str("[types]\n");
     toml.push_str("derive-traits = [\"serde::Serialize\", \"serde::Deserialize\"]\n\n");
     toml.push_str("# Codegraph type mappings — covers all classified property types\n");
@@ -187,6 +198,8 @@ wasm-async = ["tokio-postgres/js", "chrono/wasmbind"]
 
 [build-dependencies]
 cornucopia = "1.0"
+tokio = { version = "1", features = ["rt", "macros"] }
+tokio-postgres = "0.7"
 "#
     .to_string()
 }
