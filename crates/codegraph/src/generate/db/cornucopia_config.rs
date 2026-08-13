@@ -161,6 +161,12 @@ fn cornucopia_toml() -> String {
     toml.push_str("\"pg_catalog.numeric\" = \"rust_decimal::Decimal\"\n");
     toml.push_str("\"pg_catalog.inet\" = \"std::net::IpAddr\"\n");
     toml.push_str("\"pg_catalog.varchar\" = \"String\"\n");
+    toml.push_str("\"pg_catalog.tstzrange\" = \"String\"\n");
+    toml.push_str("\"pg_catalog.daterange\" = \"String\"\n");
+    toml.push_str("\"pg_catalog.tsrange\" = \"String\"\n");
+    toml.push_str("\"pg_catalog.int4range\" = \"String\"\n");
+    toml.push_str("\"pg_catalog.int8range\" = \"String\"\n");
+    toml.push_str("\"pg_catalog.numrange\" = \"String\"\n");
     toml.push_str("\"public.vector\" = \"pgvector::Vector\"\n");
     toml
 }
