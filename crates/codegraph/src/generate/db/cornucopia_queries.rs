@@ -125,13 +125,21 @@ fn pg_cast_for(col: &TreeColumn, pg_types: &std::collections::HashMap<String, St
         return cast.clone();
     }
     if let Some(pg) = pg_types.get(&col.pg_column_name) {
-        match pg.as_str() {
-            "extensions.geometry" | "public.geometry" => return "geometry".to_string(),
-            "extensions.geography" | "public.geography" => return "geography".to_string(),
-            "extensions.vector" | "public.vector" => return "vector".to_string(),
-            "pg_catalog.tstzrange" => return "tstzrange".to_string(),
-            "pg_catalog.daterange" => return "daterange".to_string(),
-            _ => {}
+        let pg_upper = pg.to_uppercase();
+        if pg_upper.contains("GEOMETRY") {
+            return "geometry".to_string();
+        }
+        if pg_upper.contains("GEOGRAPHY") {
+            return "geography".to_string();
+        }
+        if pg_upper.contains("VECTOR") {
+            return "vector".to_string();
+        }
+        if pg_upper.contains("TSTZRANGE") {
+            return "tstzrange".to_string();
+        }
+        if pg_upper.contains("DATERANGE") {
+            return "daterange".to_string();
         }
     }
     match col.rust_type.as_str() {
