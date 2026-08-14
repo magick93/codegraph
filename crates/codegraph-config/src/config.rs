@@ -145,6 +145,34 @@ pub struct DomainEntry {
     /// Domain tier for progressive disclosure: "core" or "extended".
     #[serde(default = "default_tier")]
     pub tier: String,
+    /// Cloudflare Worker name for this domain's worker.
+    /// When None, consumers default to `{app_name}-{domain}` at template/context
+    /// build time. Only meaningful under the Workers deployment topology.
+    #[serde(default)]
+    pub worker_name: Option<String>,
+    /// Optional custom domain / route pattern for this domain's worker
+    /// (e.g. "api.example.com/payroll/*"). When None, the gateway default
+    /// route (`/{domain}/*`) is used.
+    #[serde(default)]
+    pub custom_domain: Option<String>,
+    /// Names of other domain workers this worker can call via Cloudflare
+    /// service bindings. When None, consumers fall back to `depends_on`.
+    #[serde(default)]
+    pub service_bindings: Option<Vec<String>>,
+    /// Hyperdrive binding name for the database connection.
+    /// When None, consumers default to "HYPERDRIVE".
+    #[serde(default)]
+    pub hyperdrive_binding: Option<String>,
+    /// Cron expressions for scheduled handlers on this domain's worker.
+    /// Each entry becomes a cron trigger in the worker's wrangler config.
+    #[serde(default)]
+    pub cron_triggers: Option<Vec<String>>,
+    /// How cross-domain `include` queries are satisfied: "sql" (default) or
+    /// "http". "sql" assumes shared database access; "http" routes include
+    /// resolution through the owning domain's worker over service bindings.
+    /// When None, consumers default to "sql".
+    #[serde(default)]
+    pub remote_include_mode: Option<String>,
 }
 
 fn default_tier() -> String {
@@ -187,6 +215,40 @@ impl DomainEntry {
                     }
                 })
             })
+    }
+
+    /// Resolved Cloudflare Worker name: the explicit `worker_name`, or `default`
+    /// (conventionally `{app_name}-{domain}`) when unset.
+    pub fn worker_name_or(&self, default: &str) -> String {
+        self.worker_name
+            .clone()
+            .unwrap_or_else(|| default.to_string())
+    }
+
+    /// Service bindings to declare for this worker.
+    ///
+    /// Falls back to `depends_on` when `service_bindings` is unset.
+    pub fn service_bindings_or_depends(&self) -> Vec<&str> {
+        match &self.service_bindings {
+            Some(bindings) => bindings.iter().map(String::as_str).collect(),
+            None => self.depends_on.iter().map(String::as_str).collect(),
+        }
+    }
+
+    /// Resolved Hyperdrive binding name: the explicit `hyperdrive_binding`,
+    /// or `default` (conventionally "HYPERDRIVE") when unset.
+    pub fn hyperdrive_binding_or(&self, default: &str) -> String {
+        self.hyperdrive_binding
+            .clone()
+            .unwrap_or_else(|| default.to_string())
+    }
+
+    /// Resolved cross-domain include mode: the explicit `remote_include_mode`,
+    /// or `default` (conventionally "sql") when unset.
+    pub fn remote_include_mode_or(&self, default: &str) -> String {
+        self.remote_include_mode
+            .clone()
+            .unwrap_or_else(|| default.to_string())
     }
 }
 
@@ -1168,5 +1230,76 @@ allow_include = ["person"]
             worker.allow_include.as_deref(),
             Some(&["person".to_string()][..])
         );
+    }
+
+    #[test]
+    fn parse_worker_topology_keys_all_present() {
+        let toml = r#"
+[domains.payroll]
+label = "Payroll"
+schema_dir = "payroll"
+postgres_schema = "payroll"
+depends_on = ["common", "timecard"]
+worker_name = "hr-payroll-worker"
+custom_domain = "api.example.com/payroll/*"
+service_bindings = ["common", "timecard"]
+hyperdrive_binding = "PAYROLL_DB"
+cron_triggers = ["0 0 * * *", "*/15 * * * *"]
+remote_include_mode = "http"
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        let payroll = &config.domains["payroll"];
+        assert_eq!(payroll.worker_name.as_deref(), Some("hr-payroll-worker"));
+        assert_eq!(
+            payroll.custom_domain.as_deref(),
+            Some("api.example.com/payroll/*")
+        );
+        assert_eq!(
+            payroll.service_bindings.as_deref(),
+            Some(&["common".to_string(), "timecard".to_string()][..])
+        );
+        assert_eq!(payroll.hyperdrive_binding.as_deref(), Some("PAYROLL_DB"));
+        assert_eq!(
+            payroll.cron_triggers.as_deref(),
+            Some(&["0 0 * * *".to_string(), "*/15 * * * *".to_string()][..])
+        );
+        assert_eq!(payroll.remote_include_mode.as_deref(), Some("http"));
+
+        // Accessors return explicit values when set.
+        assert_eq!(
+            payroll.worker_name_or("hr-app-payroll"),
+            "hr-payroll-worker"
+        );
+        assert_eq!(payroll.hyperdrive_binding_or("HYPERDRIVE"), "PAYROLL_DB");
+        assert_eq!(payroll.remote_include_mode_or("sql"), "http");
+        assert_eq!(
+            payroll.service_bindings_or_depends(),
+            vec!["common", "timecard"]
+        );
+    }
+
+    #[test]
+    fn parse_worker_topology_keys_absent_use_serde_defaults() {
+        let toml = r#"
+[domains.payroll]
+label = "Payroll"
+schema_dir = "payroll"
+postgres_schema = "payroll"
+depends_on = ["common"]
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        let payroll = &config.domains["payroll"];
+        assert!(payroll.worker_name.is_none());
+        assert!(payroll.custom_domain.is_none());
+        assert!(payroll.service_bindings.is_none());
+        assert!(payroll.hyperdrive_binding.is_none());
+        assert!(payroll.cron_triggers.is_none());
+        assert!(payroll.remote_include_mode.is_none());
+
+        // Accessors fall back to defaults.
+        assert_eq!(payroll.worker_name_or("hr-app-payroll"), "hr-app-payroll");
+        assert_eq!(payroll.hyperdrive_binding_or("HYPERDRIVE"), "HYPERDRIVE");
+        assert_eq!(payroll.remote_include_mode_or("sql"), "sql");
+        assert_eq!(payroll.service_bindings_or_depends(), vec!["common"]);
     }
 }

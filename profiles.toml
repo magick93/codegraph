@@ -28,6 +28,7 @@ ifml_backend = true
 grpc_backend = true
 ops_backend = true
 persistence_provider = "sea_orm"   # "sea_orm" (default) | "cornucopia"
+deployment_topology = "monolith"   # "monolith" (default) | "workers"
 
 [profiles.default.api]
 generators = [

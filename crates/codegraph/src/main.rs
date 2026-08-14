@@ -209,11 +209,8 @@ async fn cmd_generate(
         .await
         .map_err(codegraph::error::Error::Graph)?;
     if api_resources.is_empty() {
-        println!(
-            "No API model nodes found — auto-seeding from domain configuration..."
-        );
-        let stats = codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &config)
-            .await?;
+        println!("No API model nodes found — auto-seeding from domain configuration...");
+        let stats = codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &config).await?;
         println!("Auto-seeded: {stats}");
     }
 
@@ -313,6 +310,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
         domain_types_base_path = meta.domain_types_base.as_ref().map(|p| output.join(p));
         let database_target_str = plan.database_target().to_string();
         let persistence_provider_str = plan.persistence_provider().to_string();
+        let deployment_topology_str = plan.deployment_topology().to_string();
         project_config = Some(ProjectConfig {
             app_name: meta.app_name.clone().unwrap_or_else(|| "app".into()),
             domain_types_crate: meta
@@ -337,6 +335,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
             type_contracts_base: meta.type_contracts_base.clone().unwrap_or_default(),
             database_target: database_target_str,
             persistence_provider: persistence_provider_str,
+            deployment_topology: deployment_topology_str,
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
             codegraph_rev: current_git_rev(),
             api_version: domain_config.defaults.api_version.clone(),
@@ -404,8 +403,7 @@ async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
     // Pass 1c: Ingest API model from domain configuration
     {
         let api_stats =
-            codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config)
-                .await?;
+            codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config).await?;
         println!("Pass 1c complete: {api_stats}");
     }
 

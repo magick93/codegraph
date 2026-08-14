@@ -695,6 +695,56 @@ struct built from `PolicyNode` graph data. Policy effects drive:
 4. Add capability entries in `profile.rs` `base_capabilities()`
 5. Add `persistence_provider` entry in `profiles.toml` features
 6. Unit tests + snapshot tests for the new output format
+
+## Deployment Topology System
+
+### Overview
+
+`DeploymentTopology` selects the shape of the generated backend: today's
+single-crate axum server (`Monolith`, default) or one Cloudflare Worker per
+bounded-context domain behind a gateway (`Workers`). Configuration plumbing
+only for now — generator output behavior is unchanged.
+
+### DeploymentTopology enum
+
+Defined at `crates/codegraph/src/profile.rs` (next to `PersistenceProvider`):
+
+| Variant | Config value | Backend shape |
+|---------|-------------|---------------|
+| `Monolith` | `"monolith"` (default) | Single-crate axum server (today's behavior) |
+| `Workers` | `"workers"` | One Cloudflare Worker per domain + gateway |
+
+### Profile configuration
+
+```toml
+[profiles.default.features]
+deployment_topology = "monolith"   # "monolith" (default) | "workers"
+```
+
+Unlike `persistence_provider` (which silently defaults on unknown values),
+unknown `deployment_topology` values are a hard configuration error in
+`BuildPlan::from_profile()`. The value is stored on `BuildPlan` and propagated
+to generators via `ProjectConfig.deployment_topology` (available in Tera
+templates as `project.deployment_topology`).
+
+### Per-domain worker config (domains.toml)
+
+All keys on `DomainEntry` in `crates/codegraph-config/src/config.rs` are
+optional (`#[serde(default)]`), so existing domains.toml files parse unchanged:
+
+| Key | Type | Default | Semantics |
+|-----|------|---------|-----------|
+| `worker_name` | `Option<String>` | `{app_name}-{domain}` (via `worker_name_or()`) | Cloudflare Worker name for this domain |
+| `custom_domain` | `Option<String>` | None (gateway default route `/{domain}/*`) | Custom domain / route pattern |
+| `service_bindings` | `Option<Vec<String>>` | `depends_on` (via `service_bindings_or_depends()`) | Other domain workers this worker can call |
+| `hyperdrive_binding` | `Option<String>` | `"HYPERDRIVE"` (via `hyperdrive_binding_or()`) | Hyperdrive binding name |
+| `cron_triggers` | `Option<Vec<String>>` | None | Cron expressions for scheduled handlers |
+| `remote_include_mode` | `Option<String>` | `"sql"` (via `remote_include_mode_or()`) | `"sql"` or `"http"` — how cross-domain `include` queries are satisfied |
+
+Convenience accessors on `DomainEntry`: `worker_name_or(default)`,
+`service_bindings_or_depends()`, `hyperdrive_binding_or(default)`,
+`remote_include_mode_or(default)`.
+
 ## Code conventions
 
 - No `unwrap()` in production code. Use `thiserror` + `?` propagation.

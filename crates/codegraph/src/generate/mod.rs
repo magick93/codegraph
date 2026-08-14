@@ -212,6 +212,9 @@ pub struct ProjectConfig {
     /// Persistence provider for entity/repository code generation ("sea_orm" or "cornucopia").
     /// Used by templates to select provider-specific rendering paths.
     pub persistence_provider: String,
+    /// Deployment topology for the generated application ("monolith" or "workers").
+    /// Used by templates to select topology-specific rendering paths.
+    pub deployment_topology: String,
     /// Import prefix for structured wrapper types in generated re-exports.
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
@@ -239,6 +242,23 @@ impl ProjectConfig {
             crate::profile::PersistenceProvider::Cornucopia
         )
     }
+
+    /// The deployment topology as a typed enum (parsed from the config string).
+    ///
+    /// The string is validated at `BuildPlan` construction time, so an invalid
+    /// value here falls back to the default (Monolith).
+    pub fn deployment_topology_enum(&self) -> crate::profile::DeploymentTopology {
+        crate::profile::DeploymentTopology::from_config(&self.deployment_topology)
+            .unwrap_or_default()
+    }
+
+    /// True when the generated app is split into per-domain Cloudflare Workers.
+    pub fn is_workers_topology(&self) -> bool {
+        matches!(
+            self.deployment_topology_enum(),
+            crate::profile::DeploymentTopology::Workers
+        )
+    }
 }
 
 impl Default for ProjectConfig {
@@ -259,6 +279,7 @@ impl Default for ProjectConfig {
             codegraph_rev: String::new(),
             database_target: "postgres".to_string(),
             persistence_provider: "sea_orm".to_string(),
+            deployment_topology: "monolith".to_string(),
             types_import_prefix: "codegraph_type_contracts".into(),
             api_version: "v1".into(),
         }
@@ -725,8 +746,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(
             db::workflow_seed::WorkflowSeedGenerator::new(output_dir).with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
-        Box::new(db::cornucopia_config::CornucopiaConfigGenerator::new(output_dir))
-            as Box<dyn GlobalGenerator>,
+        Box::new(db::cornucopia_config::CornucopiaConfigGenerator::new(
+            output_dir,
+        )) as Box<dyn GlobalGenerator>,
         Box::new(api::openapi::OpenApiGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
         Box::new(scaffold::gen::ScaffoldGenerator::new(
             output_dir,
@@ -1245,9 +1267,10 @@ pub async fn compute_generation_order(
                     if explicitly_configured && !claim_was_explicit {
                         // Remove the discovery-only claim, replace with the
                         // configured domain's entry.
-                        if let Some(pos) = entries.iter().position(|e| {
-                            e.schema_title == *title && e.domain == claiming_domain
-                        }) {
+                        if let Some(pos) = entries
+                            .iter()
+                            .position(|e| e.schema_title == *title && e.domain == claiming_domain)
+                        {
                             entries.remove(pos);
                         }
                         seen_titles.insert(title.clone());
