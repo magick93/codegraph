@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::PolicyKind;
 use serde::Serialize;
 
 use crate::error::Result;
@@ -45,6 +46,9 @@ pub struct WorkflowActionContext {
     pub parent_path_segment: Option<String>,
     /// Domain of the parent entity (child entities only).
     pub parent_domain: Option<String>,
+    /// When true, the entity has a soft-delete audit policy and the query layer
+    /// expects an `include_deleted: bool` argument on read methods.
+    pub is_auditable: bool,
 }
 
 /// A single transition rule for template rendering.
@@ -276,6 +280,20 @@ impl EntityGenerator for WorkflowActionGenerator {
             (None, None, None)
         };
 
+        // Soft-delete audit policy detection (mirrors handler.rs / query.rs).
+        let policies = db.get_policies_for_schema(schema_title).await?;
+        let is_auditable = if policies.is_empty() {
+            config
+                .domains
+                .get(&domain)
+                .and_then(|d| d.auditable)
+                .unwrap_or(true)
+        } else {
+            policies
+                .iter()
+                .any(|p| matches!(&p.kind, PolicyKind::Audit(a) if a.track_deleted))
+        };
+
         let ctx = WorkflowActionContext {
             entity_name: entity_name.clone(),
             module_name: module_name.clone(),
@@ -298,6 +316,7 @@ impl EntityGenerator for WorkflowActionGenerator {
             parent_param_name,
             parent_path_segment,
             parent_domain,
+            is_auditable,
         };
 
         let content =

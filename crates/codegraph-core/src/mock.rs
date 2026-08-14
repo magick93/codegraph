@@ -33,6 +33,11 @@ pub struct MockEngine {
     pipelines: Mutex<HashMap<String, PipelineNode>>,
     error_definitions: Mutex<HashMap<String, ErrorDefinitionNode>>,
     permissions: Mutex<HashMap<String, PermissionNode>>,
+    policies: Mutex<HashMap<String, PolicyNode>>,
+    relationships: Mutex<HashMap<String, RelationshipNode>>,
+    security_identities: Mutex<HashMap<String, SecurityIdentityNode>>,
+    memberships: Mutex<Vec<MembershipNode>>,
+    tenants: Mutex<HashMap<String, TenantNode>>,
     start_time: Instant,
 }
 
@@ -63,6 +68,11 @@ impl MockEngine {
             pipelines: Mutex::new(HashMap::new()),
             error_definitions: Mutex::new(HashMap::new()),
             permissions: Mutex::new(HashMap::new()),
+            policies: Mutex::new(HashMap::new()),
+            relationships: Mutex::new(HashMap::new()),
+            security_identities: Mutex::new(HashMap::new()),
+            memberships: Mutex::new(Vec::new()),
+            tenants: Mutex::new(HashMap::new()),
             start_time: Instant::now(),
         }
     }
@@ -603,6 +613,58 @@ impl GraphIngestor for MockEngine {
         Ok(id)
     }
 
+    // ── Persistence metamodel ingestion ───────────────────────────────
+
+    async fn ingest_policy(&self, policy: &PolicyNode) -> Result<(), GraphError> {
+        self.policies
+            .lock()
+            .unwrap()
+            .insert(policy.name.clone(), policy.clone());
+        Ok(())
+    }
+
+    async fn ingest_relationship(&self, rel: &RelationshipNode) -> Result<(), GraphError> {
+        self.relationships
+            .lock()
+            .unwrap()
+            .insert(rel.name.clone(), rel.clone());
+        Ok(())
+    }
+
+    async fn ingest_relationships(&self, rels: &[RelationshipNode]) -> Result<(), GraphError> {
+        for rel in rels {
+            self.relationships
+                .lock()
+                .unwrap()
+                .insert(rel.name.clone(), rel.clone());
+        }
+        Ok(())
+    }
+
+    async fn ingest_security_identity(
+        &self,
+        id: &SecurityIdentityNode,
+    ) -> Result<(), GraphError> {
+        self.security_identities
+            .lock()
+            .unwrap()
+            .insert(id.name.clone(), id.clone());
+        Ok(())
+    }
+
+    async fn ingest_membership(&self, m: &MembershipNode) -> Result<(), GraphError> {
+        self.memberships.lock().unwrap().push(m.clone());
+        Ok(())
+    }
+
+    async fn ingest_tenant(&self, t: &TenantNode) -> Result<(), GraphError> {
+        self.tenants
+            .lock()
+            .unwrap()
+            .insert(t.name.clone(), t.clone());
+        Ok(())
+    }
+
     async fn finalize(&self) -> Result<IngestStats, GraphError> {
         let schemas = self.schemas.lock().unwrap();
         let properties = self.properties.lock().unwrap();
@@ -953,5 +1015,72 @@ impl GraphQuerier for MockEngine {
 
     async fn get_generation_order(&self) -> Result<Vec<String>, GraphError> {
         Ok(self.get_entity_names().await?)
+    }
+
+    // ── Persistence metamodel queries ─────────────────────────────────
+
+    async fn get_policies_for_schema(&self, schema_title: &str) -> Result<Vec<PolicyNode>, GraphError> {
+        Ok(self
+            .policies
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|p| p.target_schema == schema_title)
+            .cloned()
+            .collect())
+    }
+
+    async fn get_relationships_for_schema(&self, schema_title: &str) -> Result<Vec<RelationshipNode>, GraphError> {
+        Ok(self
+            .relationships
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|r| r.source_schema == schema_title || r.target_schema == schema_title)
+            .cloned()
+            .collect())
+    }
+
+    async fn get_relationship_by_name(&self, name: &str) -> Result<Option<RelationshipNode>, GraphError> {
+        Ok(self.relationships.lock().unwrap().get(name).cloned())
+    }
+
+    async fn list_all_policies(&self) -> Result<Vec<PolicyNode>, GraphError> {
+        Ok(self.policies.lock().unwrap().values().cloned().collect())
+    }
+
+    async fn list_all_relationships(&self) -> Result<Vec<RelationshipNode>, GraphError> {
+        Ok(self.relationships.lock().unwrap().values().cloned().collect())
+    }
+
+    // ── Security metamodel queries ─────────────────────────────────────
+
+    async fn get_security_identity(&self, subject: &str) -> Result<Option<SecurityIdentityNode>, GraphError> {
+        Ok(self
+            .security_identities
+            .lock()
+            .unwrap()
+            .values()
+            .find(|id| id.subject == subject)
+            .cloned())
+    }
+
+    async fn get_memberships_for_identity(&self, identity_name: &str) -> Result<Vec<MembershipNode>, GraphError> {
+        Ok(self
+            .memberships
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|m| m.identity == identity_name)
+            .cloned()
+            .collect())
+    }
+
+    async fn get_tenant(&self, name: &str) -> Result<Option<TenantNode>, GraphError> {
+        Ok(self.tenants.lock().unwrap().get(name).cloned())
+    }
+
+    async fn list_all_tenants(&self) -> Result<Vec<TenantNode>, GraphError> {
+        Ok(self.tenants.lock().unwrap().values().cloned().collect())
     }
 }

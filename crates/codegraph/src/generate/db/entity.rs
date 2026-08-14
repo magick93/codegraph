@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::resolve_field;
-use codegraph_core::types::PropertyNode;
+use codegraph_core::types::{
+    AuditPolicy, PolicyKind, PropertyNode, SoftDeleteMarker, SoftDeletePolicy,
+    SoftDeleteVisibility, TenantIsolationPolicy, TenantStrategy,
+};
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
@@ -28,6 +31,9 @@ pub struct EntityContext {
     pub relations: Vec<EntityRelation>,
     /// Import paths for structured JSONB wrapper types used by columns.
     pub structured_imports: Vec<String>,
+    pub has_soft_delete: bool,
+    pub soft_delete_column: Option<String>,
+    pub soft_delete_visibility: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -134,6 +140,26 @@ impl EntityGenerator for SeaOrmEntityGenerator {
         // For codelist entities with no graph properties (enum-only JSON schema),
         // inject the three columns created by the codelist DDL template.
         codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist, domain);
+
+        // Query policies from the persistence metamodel.
+        // When policies are present, they drive audit/tenant/soft-delete column decisions.
+        // When empty, fall back to existing domains.toml-based behavior for backward compat.
+        let policies = db.get_policies_for_schema(schema_title).await?;
+
+        let audit_policy: Option<&AuditPolicy> = policies.iter().find_map(|p| match &p.kind {
+            PolicyKind::Audit(a) => Some(a),
+            _ => None,
+        });
+        let soft_delete_policy: Option<&SoftDeletePolicy> =
+            policies.iter().find_map(|p| match &p.kind {
+                PolicyKind::SoftDelete(sd) => Some(sd),
+                _ => None,
+            });
+        let tenant_policy: Option<&TenantIsolationPolicy> =
+            policies.iter().find_map(|p| match &p.kind {
+                PolicyKind::TenantIsolation(ti) => Some(ti),
+                _ => None,
+            });
 
         // Composite range: collapse start/end fields into a single range column
         let composite_range = db.get_composite_range(schema_title).await.ok().flatten();
@@ -437,19 +463,31 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             columns.retain(|c| seen_fields.insert(c.field_name.clone()));
         }
 
-        // Add platform_organization_id for tenant-scoped entities (must match DDL)
-        let is_tenant_scoped = !is_global_entity(table_name, config);
-        if is_tenant_scoped {
+        // Add tenant column — policy-driven when TenantIsolationPolicy exists,
+        // otherwise fall back to legacy config-based behavior.
+        let (is_tenant_scoped, tenant_column_name): (bool, String) =
+            if let Some(ti) = tenant_policy {
+                match &ti.strategy {
+                    TenantStrategy::Column { property } => (true, property.clone()),
+                    _ => (true, String::new()),
+                }
+            } else {
+                (
+                    !is_global_entity(table_name, config),
+                    "platform_organization_id".to_string(),
+                )
+            };
+        if is_tenant_scoped && !tenant_column_name.is_empty() {
             columns.insert(
                 1, // After id, before other columns
                 EntityColumn {
-                    field_name: "platform_organization_id".to_string(),
+                    field_name: tenant_column_name.clone(),
                     rust_type: "Uuid".to_string(),
                     sea_orm_type: self
                         .dialect
                         .map_sea_orm_type("Uuid")
                         .unwrap_or("Uuid".to_string()),
-                    column_name: "platform_organization_id".to_string(),
+                    column_name: tenant_column_name,
                     is_primary_key: false,
                     is_nullable: false,
                     pg_cast: None,
@@ -458,45 +496,110 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             );
         }
 
-        // Add timestamp columns
-        columns.push(EntityColumn {
-            field_name: "created_at".to_string(),
-            rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-            sea_orm_type: "TimestampWithTimeZone".to_string(),
-            column_name: "created_at".to_string(),
-            is_primary_key: false,
-            is_nullable: false,
-            pg_cast: None,
-            sea_orm_attr: None,
-        });
-        columns.push(EntityColumn {
-            field_name: "updated_at".to_string(),
-            rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-            sea_orm_type: "TimestampWithTimeZone".to_string(),
-            column_name: "updated_at".to_string(),
-            is_primary_key: false,
-            is_nullable: false,
-            pg_cast: None,
-            sea_orm_attr: None,
-        });
-
-        // Add soft-delete / audit columns for auditable root entities
-        let is_auditable = config
-            .domains
-            .get(domain)
-            .and_then(|d| d.auditable)
-            .unwrap_or(true);
-        if is_auditable {
+        // Add timestamp columns — policy-driven when AuditPolicy exists,
+        // otherwise unconditional (backward compat: all entities get timestamps).
+        if let Some(audit) = audit_policy {
+            if audit.track_created {
+                columns.push(EntityColumn {
+                    field_name: "created_at".to_string(),
+                    rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
+                    sea_orm_type: "TimestampWithTimeZone".to_string(),
+                    column_name: "created_at".to_string(),
+                    is_primary_key: false,
+                    is_nullable: false,
+                    pg_cast: None,
+                    sea_orm_attr: None,
+                });
+            }
+            if audit.track_updated {
+                columns.push(EntityColumn {
+                    field_name: "updated_at".to_string(),
+                    rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
+                    sea_orm_type: "TimestampWithTimeZone".to_string(),
+                    column_name: "updated_at".to_string(),
+                    is_primary_key: false,
+                    is_nullable: false,
+                    pg_cast: None,
+                    sea_orm_attr: None,
+                });
+            }
+        } else {
+            // Backward compat: always add timestamps when no AuditPolicy present
             columns.push(EntityColumn {
-                field_name: "deleted_at".to_string(),
-                rust_type: "Option<DateTimeWithTimeZone>".to_string(),
+                field_name: "created_at".to_string(),
+                rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
                 sea_orm_type: "TimestampWithTimeZone".to_string(),
-                column_name: "deleted_at".to_string(),
+                column_name: "created_at".to_string(),
+                is_primary_key: false,
+                is_nullable: false,
+                pg_cast: None,
+                sea_orm_attr: None,
+            });
+            columns.push(EntityColumn {
+                field_name: "updated_at".to_string(),
+                rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
+                sea_orm_type: "TimestampWithTimeZone".to_string(),
+                column_name: "updated_at".to_string(),
+                is_primary_key: false,
+                is_nullable: false,
+                pg_cast: None,
+                sea_orm_attr: None,
+            });
+        }
+
+        // Add soft-delete marker column from policy (before audit block).
+        // The soft-delete policy takes precedence for the marker column name/type.
+        // Track which field names are consumed by the soft-delete marker to avoid
+        // adding them again in the audit block below.
+        let mut soft_delete_marker_field: Option<String> = None;
+        if let Some(sd) = soft_delete_policy {
+            let (marker_name, marker_type) = match &sd.marker {
+                SoftDeleteMarker::Timestamp(name) => {
+                    (name.clone(), "chrono::DateTime<chrono::Utc>")
+                }
+                SoftDeleteMarker::Boolean(name) => (name.clone(), "bool"),
+                SoftDeleteMarker::Status(name) => (name.clone(), "String"),
+            };
+            soft_delete_marker_field = Some(marker_name.clone());
+            columns.push(EntityColumn {
+                field_name: marker_name.clone(),
+                rust_type: format!("Option<{}>", marker_type),
+                sea_orm_type: "TimestampWithTimeZone".to_string(),
+                column_name: marker_name,
                 is_primary_key: false,
                 is_nullable: true,
                 pg_cast: None,
                 sea_orm_attr: None,
             });
+        }
+
+        // Add soft-delete / audit columns for auditable root entities
+        let is_auditable = if let Some(audit) = audit_policy {
+            // Policy-driven: auditable only if the policy requests delete tracking
+            audit.track_deleted
+        } else {
+            // Backward compat: use domain-level auditable flag
+            config
+                .domains
+                .get(domain)
+                .and_then(|d| d.auditable)
+                .unwrap_or(true)
+        };
+        if is_auditable {
+            // Only add deleted_at column if soft-delete marker is not already providing
+            // a timestamp-based marker (avoid duplicate column).
+            if soft_delete_marker_field.as_deref() != Some("deleted_at") {
+                columns.push(EntityColumn {
+                    field_name: "deleted_at".to_string(),
+                    rust_type: "Option<chrono::DateTime<chrono::Utc>>".to_string(),
+                    sea_orm_type: "TimestampWithTimeZone".to_string(),
+                    column_name: "deleted_at".to_string(),
+                    is_primary_key: false,
+                    is_nullable: true,
+                    pg_cast: None,
+                    sea_orm_attr: None,
+                });
+            }
             columns.push(EntityColumn {
                 field_name: "deleted_by".to_string(),
                 rust_type: "Option<Uuid>".to_string(),
@@ -587,6 +690,21 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             columns,
             relations,
             structured_imports,
+            has_soft_delete: soft_delete_policy.is_some(),
+            soft_delete_column: soft_delete_policy.as_ref().map(|sd| match &sd.marker {
+                SoftDeleteMarker::Timestamp(name) => name.clone(),
+                SoftDeleteMarker::Boolean(name) => name.clone(),
+                SoftDeleteMarker::Status(name) => name.clone(),
+            }),
+            soft_delete_visibility: soft_delete_policy
+                .as_ref()
+                .map(|sd| match sd.visibility {
+                    SoftDeleteVisibility::ExcludeByDefault => "exclude_by_default",
+                    SoftDeleteVisibility::IncludeByDefault => "include_by_default",
+                    SoftDeleteVisibility::ExplicitOnly => "explicit_only",
+                })
+                .unwrap_or("exclude_by_default")
+                .to_string(),
         };
 
         let content = render_template_with_project(
@@ -1032,6 +1150,9 @@ async fn build_child_entity(
         columns,
         relations: Vec::new(),
         structured_imports,
+        has_soft_delete: false,
+        soft_delete_column: None,
+        soft_delete_visibility: "exclude_by_default".to_string(),
     };
 
     let content =
@@ -1173,6 +1294,9 @@ fn build_codelist_child_entity(
         columns,
         relations: Vec::new(),
         structured_imports: Vec::new(),
+        has_soft_delete: false,
+        soft_delete_column: None,
+        soft_delete_visibility: "exclude_by_default".to_string(),
     };
 
     let content =

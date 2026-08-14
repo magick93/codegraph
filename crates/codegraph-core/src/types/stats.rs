@@ -14,5 +14,8 @@ pub struct IngestStats {
     pub domain_count: usize,
     pub ifml_node_count: usize,
     pub api_resource_count: usize,
+    pub policy_count: usize,
+    pub relationship_count: usize,
+    pub security_node_count: usize,
     pub duration: Duration,
 }

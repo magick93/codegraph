@@ -1,7 +1,9 @@
 use codegraph_core::error::GraphError;
 use codegraph_core::types::{
-    CodeList, CompositeColumn, CompositeRange, EnumValue, Extension, PropertyNode, SchemaNode,
-    StructuredSubField,
+    Cardinality, CodeList, CompositeColumn, CompositeRange, EnumValue, Extension, ForeignKeySpec,
+    MembershipNode, MembershipStatus, Ownership, PolicyKind, PolicyNode, PropagationRule,
+    PropertyNode, RelationshipNode, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, TenantStrategy,
 };
 use codegraph_type_contracts::RefClassificationKind;
 use std::collections::HashMap;
@@ -240,5 +242,101 @@ pub fn row_to_structured_sub_field(
             .get_opt_string(row, "p.description")?
             .unwrap_or_default(),
         is_required: reader.get_bool(row, "p.is_required")?,
+    })
+}
+
+pub fn row_to_policy_node(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+) -> Result<PolicyNode, GraphError> {
+    let kind_json = reader.get_string(row, "kind_json")?;
+    let kind: PolicyKind = serde_json::from_str(&kind_json)
+        .map_err(|e| GraphError::Query(format!("Failed to parse policy kind: {}", e)))?;
+    Ok(PolicyNode {
+        name: reader.get_string(row, "name")?,
+        kind,
+        target_schema: reader.get_string(row, "target_schema")?,
+        domain: reader.get_opt_string(row, "domain")?,
+    })
+}
+
+pub fn row_to_relationship_node(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+) -> Result<RelationshipNode, GraphError> {
+    let cardinality_str = reader.get_string(row, "cardinality")?;
+    let ownership_str = reader.get_string(row, "ownership")?;
+    let fk_json = reader.get_string(row, "fk_json")?;
+    let propagation_json = reader.get_string(row, "propagation_json")?;
+
+    let cardinality: Cardinality =
+        serde_json::from_str(&format!("\"{}\"", cardinality_str))
+            .or_else(|_| serde_json::from_str(&cardinality_str))
+            .unwrap_or(Cardinality::OneToMany);
+    let ownership: Ownership = serde_json::from_str(&format!("\"{}\"", ownership_str))
+        .or_else(|_| serde_json::from_str(&ownership_str))
+        .unwrap_or(Ownership::References);
+    let foreign_key: Option<ForeignKeySpec> = serde_json::from_str(&fk_json).ok();
+    let propagation: Vec<PropagationRule> =
+        serde_json::from_str(&propagation_json).unwrap_or_default();
+
+    Ok(RelationshipNode {
+        name: reader.get_string(row, "name")?,
+        source_schema: reader.get_string(row, "source_schema")?,
+        target_schema: reader.get_string(row, "target_schema")?,
+        cardinality,
+        ownership,
+        foreign_key,
+        propagation,
+        domain: reader.get_opt_string(row, "domain")?,
+    })
+}
+
+pub fn row_to_security_identity_node(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+) -> Result<SecurityIdentityNode, GraphError> {
+    Ok(SecurityIdentityNode {
+        name: reader.get_string(row, "name")?,
+        subject: reader.get_string(row, "subject")?,
+        domain: reader.get_opt_string(row, "domain")?,
+    })
+}
+
+pub fn row_to_membership_node(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+) -> Result<MembershipNode, GraphError> {
+    let status_str = reader.get_string(row, "status")?;
+    let roles_json = reader.get_string(row, "roles_json")?;
+
+    let status: MembershipStatus =
+        serde_json::from_str(&format!("\"{}\"", status_str))
+            .or_else(|_| serde_json::from_str(&status_str))
+            .unwrap_or(MembershipStatus::Active);
+    let roles: Vec<String> = serde_json::from_str(&roles_json).unwrap_or_default();
+
+    Ok(MembershipNode {
+        identity: reader.get_string(row, "identity")?,
+        tenant: reader.get_string(row, "tenant")?,
+        status,
+        roles,
+        valid_from: reader.get_opt_string(row, "valid_from")?,
+        valid_until: reader.get_opt_string(row, "valid_until")?,
+    })
+}
+
+pub fn row_to_tenant_node(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+) -> Result<TenantNode, GraphError> {
+    let strategy_json = reader.get_string(row, "strategy_json")?;
+    let strategy: TenantStrategy = serde_json::from_str(&strategy_json)
+        .map_err(|e| GraphError::Query(format!("Failed to parse tenant strategy: {}", e)))?;
+    Ok(TenantNode {
+        name: reader.get_string(row, "name")?,
+        label: reader.get_string(row, "label")?,
+        strategy,
+        domain: reader.get_opt_string(row, "domain")?,
     })
 }

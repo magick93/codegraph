@@ -1,5 +1,7 @@
 pub mod basejump_setup;
 pub mod codelist;
+pub mod cornucopia_config;
+pub mod cornucopia_queries;
 pub mod ddl;
 pub mod dialect;
 pub mod entity;

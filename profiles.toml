@@ -26,6 +26,7 @@ validation_level = "strict"
 offline_mode = false
 ifml_backend = true
 grpc_backend = true
+persistence_provider = "sea_orm"   # "sea_orm" (default) | "cornucopia"
 
 [profiles.default.api]
 generators = [
