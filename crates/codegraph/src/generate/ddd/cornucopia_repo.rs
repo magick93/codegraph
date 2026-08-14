@@ -891,8 +891,16 @@ fn emit_filter_checks(code: &mut String, tree: &EntityTree, pad: &str) {
         }
     }
     // Nested (dot-notation) filters: parent-id membership via helper queries.
+    // Mirror the SQL generator's gating — only emit for tables that exist.
     let qmod = qmod(tree);
+    let vo_pattern = format!("{}_id", tree.table_name);
+    let mut real_vo_tables = std::collections::HashSet::new();
+    collect_child_table_names(&tree.child_tables, &mut real_vo_tables);
     for nf in &tree.nested_filter_fields {
+        let is_vo_style = nf.parent_fk_column == vo_pattern;
+        if is_vo_style && !real_vo_tables.contains(&nf.sql_table_name) {
+            continue;
+        }
         let qname = nf.filter_key.replace('.', "_");
         writeln!(
             code,
@@ -906,6 +914,17 @@ fn emit_filter_checks(code: &mut String, tree: &EntityTree, pad: &str) {
             pad = pad,
         )
         .unwrap();
+    }
+}
+
+/// Collect all (recursive) child-table SQL names for an entity.
+fn collect_child_table_names(
+    children: &[ChildTableInfo],
+    out: &mut std::collections::HashSet<String>,
+) {
+    for child in children {
+        out.insert(child.sql_table_name.clone());
+        collect_child_table_names(&child.child_tables, out);
     }
 }
 

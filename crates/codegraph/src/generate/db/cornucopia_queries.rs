@@ -729,8 +729,34 @@ fn write_child_queries(
 /// Emit one helper query per nested (dot-notation) filter. The adapter uses
 /// these to filter rows in memory by parent-id membership — the equivalent of
 /// the SeaORM EXISTS subqueries.
+/// Collect all (recursive) child-table SQL names for an entity.
+fn collect_child_table_names(
+    children: &[ChildTableInfo],
+    out: &mut std::collections::HashSet<String>,
+) {
+    for child in children {
+        out.insert(child.sql_table_name.clone());
+        collect_child_table_names(&child.child_tables, out);
+    }
+}
+
 fn write_nested_filter_queries(sql: &mut String, tree: &EntityTree) {
+    // The nested-filter resolver over-generates VO child tables (the DDL may
+    // flatten a VO into a scalar column instead). Only emit helper queries for
+    // tables that actually exist:
+    //   - VO children the DDL materialized (present in tree.child_tables), or
+    //   - child-entity filters (parent FK is not the plain {parent_table}_id).
+    let vo_pattern = format!("{}_id", tree.table_name);
+    let real_vo_tables: std::collections::HashSet<String> = {
+        let mut set = std::collections::HashSet::new();
+        collect_child_table_names(&tree.child_tables, &mut set);
+        set
+    };
     for nf in &tree.nested_filter_fields {
+        let is_vo_style = nf.parent_fk_column == vo_pattern;
+        if is_vo_style && !real_vo_tables.contains(&nf.sql_table_name) {
+            continue;
+        }
         let qname = nf.filter_key.replace('.', "_");
         let leaf_cast = nested_filter_cast(&nf.rust_type);
         let val_param = if leaf_cast.is_empty() {
