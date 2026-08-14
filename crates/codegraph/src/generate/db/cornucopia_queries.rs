@@ -807,6 +807,10 @@ fn nested_filter_cast(rust_type: &str) -> &'static str {
         .unwrap_or(rust_type);
     match base {
         "Uuid" | "uuid::Uuid" => "uuid",
+        // Entity reference types (e.g. "OrganizationType") are always UUID FK columns.
+        ty if ty.ends_with("Type") && ty.chars().next().map_or(false, |c| c.is_uppercase()) => {
+            "uuid"
+        }
         "i32" => "int4",
         "i64" => "int8",
         "f32" => "float4",
