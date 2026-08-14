@@ -754,7 +754,10 @@ fn write_nested_filter_queries(sql: &mut String, tree: &EntityTree) {
     };
     for nf in &tree.nested_filter_fields {
         let is_vo_style = nf.parent_fk_column == vo_pattern;
-        if is_vo_style && !real_vo_tables.contains(&nf.sql_table_name) {
+        let is_child_entity =
+            nf.intermediate_join.is_none() && !is_vo_style;
+        let is_real_table = real_vo_tables.contains(&nf.sql_table_name);
+        if !is_real_table && !is_child_entity {
             continue;
         }
         let qname = nf.filter_key.replace('.', "_");
