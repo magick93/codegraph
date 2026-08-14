@@ -1050,8 +1050,22 @@ pub async fn reclassify_with_entities(
     querier: &dyn codegraph_core::traits::GraphQuerier,
     entity_names: &HashSet<String>,
 ) -> Result<()> {
-    let is_entity =
-        |name: &str| entity_names.contains(name) || entity_names.contains(&format!("{}Type", name));
+    // Match schema titles AND filename stems. Stems may differ in case and
+    // word separators (e.g. "risk-assessment" vs title "Risk Assessment"),
+    // so compare on a normalized form (lowercase alphanumerics only).
+    fn normalize(name: &str) -> String {
+        name.chars()
+            .filter(|c| c.is_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    }
+    let normalized_entities: HashSet<String> = entity_names.iter().map(|n| normalize(n)).collect();
+    let is_entity = |name: &str| {
+        entity_names.contains(name)
+            || entity_names.contains(&format!("{}Type", name))
+            || normalized_entities.contains(&normalize(name))
+            || normalized_entities.contains(&normalize(&format!("{}Type", name)))
+    };
 
     // Update schema nodes
     let schemas = querier.list_schemas(None).await.map_err(Error::Graph)?;
