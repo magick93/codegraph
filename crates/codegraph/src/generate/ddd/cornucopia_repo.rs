@@ -577,8 +577,10 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
         )
         .unwrap();
         emit_filter_checks(code, tree, "                ");
-        emit_response_expr(tree, code, "row", "                    ", "                    items.push(");
-        writeln!(code, "                    );").unwrap();
+        emit_response_expr(tree, code, "row", "                    ", "                    let resp = ");
+        writeln!(code, "                    ;").unwrap();
+        emit_nested_filter_checks(code, tree);
+        writeln!(code, "                    items.push(resp);").unwrap();
         writeln!(code, "            }}").unwrap();
         writeln!(code, "        }} else {{").unwrap();
         writeln!(
@@ -588,8 +590,10 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
         )
         .unwrap();
         emit_filter_checks(code, tree, "                ");
-        emit_response_expr(tree, code, "row", "                    ", "                    items.push(");
-        writeln!(code, "                    );").unwrap();
+        emit_response_expr(tree, code, "row", "                    ", "                    let resp = ");
+        writeln!(code, "                    ;").unwrap();
+        emit_nested_filter_checks(code, tree);
+        writeln!(code, "                    items.push(resp);").unwrap();
         writeln!(code, "            }}").unwrap();
         writeln!(code, "        }}").unwrap();
     } else {
@@ -600,8 +604,10 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
         )
         .unwrap();
         emit_filter_checks(code, tree, "            ");
-        emit_response_expr(tree, code, "row", "                ", "                items.push(");
-        writeln!(code, "                );").unwrap();
+        emit_response_expr(tree, code, "row", "                ", "                let resp = ");
+        writeln!(code, "                ;").unwrap();
+        emit_nested_filter_checks(code, tree);
+        writeln!(code, "                items.push(resp);").unwrap();
         writeln!(code, "            }}").unwrap();
         writeln!(code, "        }}").unwrap();
     }
@@ -609,7 +615,6 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
     // be expressed in the static list SQL — apply them on the hydrated
     // responses (matches the SeaORM EXISTS semantics: keep the row when ANY
     // matching child exists).
-    emit_nested_filter_checks(code, tree);
     writeln!(code, "        Ok((items, total))").unwrap();
     writeln!(code, "    }}").unwrap();
 }
@@ -622,7 +627,7 @@ fn emit_nested_filter_checks(code: &mut String, tree: &EntityTree) {
             continue;
         }
         let leaf_col = &nf.pg_column_name;
-        let expr = nested_nav_expr(&path, leaf_col, nf.is_nullable, "item");
+        let expr = nested_nav_expr(&path, leaf_col, nf.is_nullable, "resp");
         writeln!(
             code,
             "        if let Some(val) = filters.get(\"{key}\") {{\n\
@@ -890,8 +895,10 @@ fn emit_filter_checks(code: &mut String, tree: &EntityTree, pad: &str) {
             .unwrap();
         }
     }
-    // Nested (dot-notation) filters: parent-id membership via helper queries.
-    // Mirror the SQL generator's gating — only emit for tables that exist.
+    // Child-ENTITY nested filters (dot-notation referencing a real child
+    // entity table, e.g. deployment.organization_id) cannot be expressed via
+    // the response navigation — apply parent-id membership via the helper
+    // query. VO-child nested filters are handled on the hydrated response.
     let qmod = qmod(tree);
     let vo_pattern = format!("{}_id", tree.table_name);
     let mut real_vo_tables = std::collections::HashSet::new();
@@ -900,8 +907,7 @@ fn emit_filter_checks(code: &mut String, tree: &EntityTree, pad: &str) {
         let is_vo_style = nf.parent_fk_column == vo_pattern;
         let is_child_entity =
             nf.intermediate_join.is_none() && !is_vo_style;
-        let is_real_table = real_vo_tables.contains(&nf.sql_table_name);
-        if !is_real_table && !is_child_entity {
+        if real_vo_tables.contains(&nf.sql_table_name) || !is_child_entity {
             continue;
         }
         let qname = nf.filter_key.replace('.', "_");
