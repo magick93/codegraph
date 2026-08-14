@@ -1089,8 +1089,33 @@ pub async fn reclassify_with_entities(
             .map_err(Error::Graph)?;
         for prop in &properties {
             if let Some(ref ref_target) = prop.ref_target {
-                let ref_stem = extract_ref_stem(ref_target);
-                let target_is_entity = is_entity(ref_stem);
+                // Resolve the target schema through the graph (ReferencesSchema /
+                // ItemsOf edges) and classify by its TITLE. Stem-based matching
+                // breaks when the filename differs from the title (e.g.
+                // eta.schema.json vs title "Estimated Time of Completion").
+                let target_title = if prop.is_array {
+                    querier
+                        .get_array_item_schema(&prop.name, &schema.title)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|s| s.title)
+                } else {
+                    querier
+                        .get_property_ref_target(&prop.name, &schema.title)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|s| s.title)
+                };
+                let target_is_entity = match target_title.as_deref() {
+                    Some(title) => is_entity(title),
+                    None => {
+                        // Fallback: stem matching (normalized).
+                        let ref_stem = extract_ref_stem(ref_target);
+                        is_entity(ref_stem)
+                    }
+                };
                 let current_is_entity_ref = prop.classification_kind
                     == Some(codegraph_type_contracts::RefClassificationKind::EntityReference);
 

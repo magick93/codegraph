@@ -263,6 +263,11 @@ fn emit_response_construction(code: &mut String, tree: &EntityTree) {
         if col.is_composite_range {
             continue;
         }
+        // Schema-defined created_at/updated_at are emitted by the trailing
+        // standard fields below — avoid duplicate struct fields.
+        if col.field_name == "created_at" || col.field_name == "updated_at" {
+            continue;
+        }
         emit_entity_to_dto_field(code, col, "row", "            ");
     }
     emit_child_field_population(code, &tree.child_tables, "            ");
@@ -3642,6 +3647,9 @@ impl RepositoryImplEmitter {
             if col.is_composite_range {
                 continue;
             }
+            if col.field_name == "created_at" || col.field_name == "updated_at" {
+                continue;
+            }
             emit_entity_to_dto_field(code, col, "row", "                ");
         }
         emit_child_field_population(code, &tree.child_tables, "                ");
@@ -3930,6 +3938,9 @@ impl RepositoryImplEmitter {
         writeln!(code, "                id: row.id,").unwrap();
         for col in &tree.direct_columns {
             if col.is_composite_range {
+                continue;
+            }
+            if col.field_name == "created_at" || col.field_name == "updated_at" {
                 continue;
             }
             emit_entity_to_dto_field(code, col, "row", "                ");
