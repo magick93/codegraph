@@ -579,6 +579,122 @@ setups), hooks, extensions.
 3. Unit tests alongside; `cargo test -p codegraph-ops`.
 4. If the generated manifest needs new seed values, extend
    `OpsManifest` in `codegraph-config` + the generator in `generate/ops.rs`.
+
+## Persistence Provider System
+
+### Overview
+
+Codegraph supports swappable persistence backends via the `PersistenceProvider`
+enum. The DDL generator is always provider-agnostic (it generates SQL, not
+ORM code). The entity model and repository implementation are provider-specific
+and selected by the `persistence_provider` feature flag.
+
+### Three-layer architecture
+
+```
+                         JSON Schema + Policies
+                                 │
+                                 ▼
+                     GraphQuerier (Grafeo graph)
+                                 │
+                                 ▼
+                     build_persistence_entity()
+                                 │
+                                 ▼
+                     PersistenceEntity (IR)        ← ORM-agnostic
+                                 │
+                    ┌────────────┼────────────┐
+                    ▼            ▼            ▼
+              SeaOrmBackend  Cornucopia    (future:
+              (entity.tera,  Backend       Diesel,
+               repo emitter) (.sql files,  SQLx, ...)
+                              cornucopia.toml)
+```
+
+### PersistenceProvider enum
+
+Defined at `crates/codegraph/src/profile.rs:15`:
+
+| Variant | Config value | Entity model | Repository | Query layer |
+|---------|-------------|--------------|------------|-------------|
+| `SeaOrm` | `"sea_orm"` (default) | `sea_orm_entity` generator → `#[derive(DeriveEntityModel)]` structs | `repository` + `repository_emitter` → SeaORM ActiveModel/QueryBuilder | `query` generator → SeaORM `EntityTrait::find()` |
+| `Cornucopia` | `"cornucopia"` | `cornucopia_queries` generator → `queries/{domain}/{entity}.sql` annotated SQL files | `cornucopia_repo` generator → wrapper around Cornucopia query functions | Cornucopia-generated typed query structs via `bind()/all()/one()/opt()` |
+
+### Profile configuration
+
+```toml
+[profiles.default.features]
+persistence_provider = "sea_orm"   # "sea_orm" (default) | "cornucopia"
+
+# SeaORM profile — existing generators
+[profiles.default.api]
+generators = ["ddl", "sea_orm_entity", "dto", "repository", "command", "query", ...]
+
+# Cornucopia profile — alternative generators
+[profiles.cornucopia.api]
+generators = ["ddl", "cornucopia_queries", "cornucopia_repo", "cornucopia_config", "dto", ...]
+```
+
+The `persistence_provider` value is parsed from `[features]` into
+`BuildPlan.persistence_provider` and propagated to generators via
+`ProjectConfig.persistence_provider` (available in all Tera templates).
+
+### PersistenceEntity IR
+
+Defined at `crates/codegraph-core/src/types/persistence.rs`:
+
+| Type | Purpose |
+|------|---------|
+| `PersistenceEntity` | Top-level ORM-agnostic model: title, table_name, schema_name, rust_type_name, columns, child_tables, relations, policies |
+| `PersistenceColumn` | Column descriptor: field_name, column_name, rust_type, pg_type, is_primary_key, is_nullable, is_jsonb, is_range, pg_cast, role |
+| `PersistenceColumnRole` | Semantic role: Data, PrimaryKey, TenantScope, SoftDeleteMarker, AuditTimestamp, AuditUser, AuditFlag, ForeignKey, HierarchyParent |
+| `PersistenceChildTable` | Child table from a ValueObject property: table_name, struct_name, parent_fk, columns |
+| `PersistenceEntityRelation` | Relationship: name, relation_type, related_entity, from/to_column, is_self_ref |
+| `PersistencePolicies` | Policy effects translated to ORM-agnostic form: SoftDeleteEffect, TenantIsolationEffect, RowSecurityEffect, AuditEffect, RetentionEffect |
+
+### build_persistence_entity() builder
+
+Defined at `crates/codegraph/src/generate/persistence.rs` — the single source
+of truth for extracting entity structure + policies from the graph. Both
+`SeaOrmEntityGenerator` and `CornucopiaQueryGenerator` call it.
+
+### Key files
+
+| File | Role |
+|------|------|
+| `crates/codegraph-core/src/types/persistence.rs` | IR types: PersistenceEntity, PersistenceColumn, policy effects |
+| `crates/codegraph/src/profile.rs` | `PersistenceProvider` enum + `from_config()` + `BuildPlan` field |
+| `crates/codegraph/src/generate/persistence.rs` | `build_persistence_entity()` — graph → IR builder |
+| `crates/codegraph/src/generate/db/entity.rs` | `SeaOrmEntityGenerator` — SeaORM model emission (existing, unchanged) |
+| `crates/codegraph/src/generate/ddd/repository_emitter.rs` | SeaORM repository impl emitter (existing, unchanged) |
+| `crates/codegraph/src/generate/db/cornucopia_queries.rs` | `CornucopiaQueryGenerator` — annotated SQL file generation |
+| `crates/codegraph/src/generate/db/cornucopia_config.rs` | `CornucopiaConfigGenerator` — `cornucopia.toml` with type mappings |
+| `crates/codegraph/src/generate/ddd/cornucopia_repo.rs` | `CornucopiaRepoGenerator` — repository adapter wrapper |
+| `crates/codegraph/src/generate/mod.rs` | `ProjectConfig.persistence_provider` + generator dispatch |
+| `profiles.toml` | `persistence_provider` feature flag |
+
+### Policy-aware query generation
+
+Both SeaORM and Cornucopia backends consume the same `PersistencePolicies`
+struct built from `PolicyNode` graph data. Policy effects drive:
+
+| Policy | SeaORM effect | Cornucopia SQL effect |
+|--------|--------------|----------------------|
+| `SoftDelete` | `Entity::active()` / `including_deleted()` scopes | `WHERE deleted_at IS NULL` in SELECT, `UPDATE SET deleted_at = NOW()` for delete |
+| `TenantIsolation` | `platform_organization_id` FK column + RLS session vars | `WHERE tenant_column = :tenant_id` on every query |
+| `RowSecurity` | RLS template with `RowSecurityPolicy` | Inline `USING`/`CHECK` expressions (future) |
+| `Audit` | `created_at`, `updated_at`, `updated_by`, `deleted_by` columns | Same columns in RETURNING clauses + trigger queries |
+| `Retention` | Column + archive strategy | Time-partitioned WHERE clauses (future) |
+
+### Adding a new persistence provider
+
+1. Add a variant to `PersistenceProvider` in `profile.rs`
+2. Create generators that consume `build_persistence_entity()` and emit
+   provider-specific output (e.g. `diesel_entity.rs`, `sqlx_repo.rs`)
+3. Register generators in `generate/mod.rs` entity/generator vecs
+4. Add capability entries in `profile.rs` `base_capabilities()`
+5. Add `persistence_provider` entry in `profiles.toml` features
+6. Unit tests + snapshot tests for the new output format
 ## Code conventions
 
 - No `unwrap()` in production code. Use `thiserror` + `?` propagation.
@@ -587,12 +703,14 @@ setups), hooks, extensions.
 - 59+ generators in `crates/codegraph/src/generate/` organized by target (api, db, ddd, ui, cli, etc.).
 - IFML-specific generators in `crates/codegraph/src/generate/ifml/`.
 - gRPC-specific generators in `crates/codegraph/src/generate/grpc/`.
+- Cornucopia-specific generators in `crates/codegraph/src/generate/db/cornucopia_*.rs` and `crates/codegraph/src/generate/ddd/cornucopia_repo.rs`.
 - New node/edge types go in `crates/codegraph-core/src/types/` + `crates/codegraph-grafeo/src/schema_ddl.rs`.
 - New GraphIngestor/GraphQuerier trait methods need implementations in Grafeo engine AND MockEngine AND CachingQuerier.
 - New gRPC generators need registration in `generate/mod.rs`, a capability entry in `profile.rs`, and an entry in `profiles.toml`.
+- New persistence provider generators need a `PersistenceProvider` variant, generator capability entries, and registration in `generate/mod.rs`.
 - New DB generators (or modifications to existing ones) must use the `SqlDialect` trait (see `crates/codegraph/src/generate/db/dialect.rs`) for type mapping and feature gating instead of hardcoding PostgreSQL types.
 - When adding new template files for a dialect, place them in `templates/db/<dialect>/` and the generator selects the right template path based on `database_target`.
-- The `project.database_target` variable is available in all Tera templates via `ProjectConfig`.
+- The `project.database_target` and `project.persistence_provider` variables are available in all Tera templates via `ProjectConfig`.
 
 ## Cross-Domain Schema Deduplication
 

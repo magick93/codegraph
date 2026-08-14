@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::ParentCandidate;
+use codegraph_core::types::{ParentCandidate, PolicyKind};
 use serde::Serialize;
 
 use crate::error::Result;
@@ -26,6 +26,9 @@ pub struct QueryContext {
     pub filter_fields: Vec<FilterFieldInfo>,
     /// FK column for parent-scoped lookups (child entities only).
     pub parent_ref: Option<String>,
+    /// Whether this entity supports soft-delete/audit.
+    #[serde(default)]
+    pub is_auditable: bool,
 }
 
 pub struct QueryGenerator {
@@ -112,6 +115,13 @@ impl EntityGenerator for QueryGenerator {
         )
         .await;
 
+        let policies = db.get_policies_for_schema(schema_title).await?;
+        let is_auditable = if policies.is_empty() {
+            config.domains.get(&domain).and_then(|d| d.auditable).unwrap_or(true)
+        } else {
+            policies.iter().any(|p| matches!(&p.kind, PolicyKind::Audit(a) if a.track_deleted))
+        };
+
         let ctx = QueryContext {
             has_read: operations.contains(&"read".to_string()),
             has_create: operations.contains(&"create".to_string()),
@@ -123,6 +133,7 @@ impl EntityGenerator for QueryGenerator {
             entity_name,
             module_name: module_name.clone(),
             domain: domain.clone(),
+            is_auditable,
         };
 
         let content = render_template_with_project(tera, "ddd/query.tera", &ctx, project)?;

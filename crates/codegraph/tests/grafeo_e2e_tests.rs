@@ -1100,9 +1100,9 @@ async fn grafeo_candidate_repository_trait_content() {
     let repo_file = files.first().unwrap();
     let content = &repo_file.content;
 
-    // Trait declaration
+    // Trait declaration (generic over the client type C — provider-agnostic)
     assert!(
-        content.contains("pub trait CandidateRepository: Send + Sync"),
+        content.contains("pub trait CandidateRepository<C>: Send + Sync"),
         "missing trait declaration"
     );
 
@@ -1158,7 +1158,7 @@ async fn grafeo_candidate_repository_impl_content() {
 
     // Implements trait
     assert!(
-        code.contains("impl CandidateRepository for CandidateRepositoryImpl"),
+        code.contains("impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryImpl"),
         "missing trait impl"
     );
 

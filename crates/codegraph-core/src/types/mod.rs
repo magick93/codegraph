@@ -6,8 +6,12 @@ mod discovery;
 mod edge;
 mod field_def;
 mod ifml;
+mod persistence;
+mod policy;
 mod property;
+mod relationship;
 mod schema;
+mod security;
 mod stats;
 
 pub use api::{
@@ -27,6 +31,22 @@ pub use ifml::{
     ActionNode, DataBindingNode, DataFlowData, EventNode, NavigationFlowData,
     ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
 };
+pub use persistence::{
+    AuditEffect, AuditTimestampKind, AuditUserKind, PersistenceChildTable, PersistenceColumn,
+    PersistenceColumnRole, PersistenceEntity, PersistenceEntityRelation, PersistencePolicies,
+    RetentionEffect, RowSecurityEffect, SoftDeleteEffect, TenantIsolationEffect,
+};
+pub use policy::{
+    AuditPolicy, DeletionPropagation, PolicyKind, PolicyNode, RetentionPolicy, RowOperation,
+    RowSecurityPolicy, SoftDeleteMarker, SoftDeletePolicy, SoftDeleteVisibility,
+    TenantIsolationPolicy, TenantPropagation, TenantStrategy,
+};
 pub use property::{inject_codelist_properties, PropertyNode};
+pub use relationship::{
+    Cardinality, ForeignKeySpec, Ownership, PropagationRule, PropagationTrigger, RelationshipNode,
+};
 pub use schema::{SchemaClassificationData, SchemaNode};
+pub use security::{
+    MembershipNode, MembershipStatus, Scope, ScopeKind, SecurityIdentityNode, TenantNode,
+};
 pub use stats::IngestStats;

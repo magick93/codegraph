@@ -1,6 +1,5 @@
 ---
 source: crates/codegraph/tests/generate_tests.rs
-assertion_line: 837
 expression: code
 ---
 //! Generated repository implementation for Application.
@@ -20,7 +19,7 @@ use super::dto_response::ApplicationResponse;
 pub struct ApplicationRepositoryImpl;
 
 #[async_trait]
-impl ApplicationRepository for ApplicationRepositoryImpl {
+impl ApplicationRepository<sea_orm::DatabaseTransaction> for ApplicationRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "recruiting.application"))]
     async fn create(
         &self,
@@ -46,11 +45,16 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<ApplicationResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::recruiting_application::Entity::find()
-            .filter(crate::entity::recruiting_application::Column::Id.eq(id))
-            .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::recruiting_application::Entity::find()
+            .filter(crate::entity::recruiting_application::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::recruiting_application::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -72,12 +76,17 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
         db: &DatabaseTransaction,
         id: Uuid,
         parent_id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<ApplicationResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::recruiting_application::Entity::find()
+        let mut query = crate::entity::recruiting_application::Entity::find()
             .filter(crate::entity::recruiting_application::Column::Id.eq(id))
-            .filter(crate::entity::recruiting_application::Column::CandidateId.eq(parent_id))
-            .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
-            .one(db)
+            .filter(crate::entity::recruiting_application::Column::CandidateId.eq(parent_id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::recruiting_application::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -144,6 +153,7 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
         page: u64,
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
+        include_deleted: bool,
     ) -> Result<(Vec<ApplicationResponse>, u64), Box<dyn std::error::Error>> {
         let mut condition = sea_orm::Condition::all();
         if let Some(val) = filters.get("candidate_id") {
@@ -154,10 +164,12 @@ impl ApplicationRepository for ApplicationRepositoryImpl {
             let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid UUID for filter 'candidate_id': {e}")))?;
             condition = condition.add(crate::entity::recruiting_application::Column::CandidateId.eq(parsed));
         }
-        let query = crate::entity::recruiting_application::Entity::find()
-            .filter(condition)
-            .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
-            .order_by_desc(crate::entity::recruiting_application::Column::CreatedAt);
+        let mut query = crate::entity::recruiting_application::Entity::find()
+            .filter(condition);
+        if !include_deleted {
+            query = query.filter(crate::entity::recruiting_application::Column::DeletedAt.is_null());
+        }
+        let query = query.order_by_desc(crate::entity::recruiting_application::Column::CreatedAt);
         let paginator = query.paginate(db, page_size);
 
         let total = paginator.num_items().await?;
