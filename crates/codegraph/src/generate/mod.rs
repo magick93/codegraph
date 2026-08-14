@@ -57,7 +57,13 @@ pub fn fk_column_for_candidate(
         codegraph_core::types::DetectionSource::ArrayItems => {
             codegraph_naming::to_snake_case(parent_name) + "_id"
         }
-        _ => codegraph_naming::to_snake_case(&pc.field_name) + "_id",
+        // ScalarRef: the FK column already exists on the child — it is the
+        // child's own reference property (e.g. `tenantId` → `tenant_id`).
+        // Apply ensure_id_suffix instead of unconditionally appending `_id`
+        // so Id-suffixed schema properties don't produce `tenant_id_id`.
+        _ => codegraph_core::types::ensure_id_suffix(&codegraph_naming::to_snake_case(
+            &pc.field_name,
+        )),
     }
 }
 

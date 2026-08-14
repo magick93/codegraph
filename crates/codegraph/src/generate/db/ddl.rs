@@ -1162,6 +1162,29 @@ impl DdlGenerator {
                 if !is_fk_candidate {
                     continue;
                 }
+                // ValueObject refs only become FK columns when they resolve to a
+                // known entity (directly or through an allOf chain). Pure VOs are
+                // materialized as child tables — an FK to their (nonexistent)
+                // table would break migrations.
+                if kind == Some(RefClassificationKind::ValueObject) {
+                    let target = db
+                        .get_property_ref_target(&prop.name, schema_title)
+                        .await
+                        .ok()
+                        .flatten();
+                    let targets_entity = match &target {
+                        Some(t) if t.is_entity => true,
+                        Some(t) => codegraph_core::traits::find_entity_extended_by_vo(db, &t.title)
+                            .await
+                            .ok()
+                            .flatten()
+                            .is_some(),
+                        None => false,
+                    };
+                    if !targets_entity {
+                        continue;
+                    }
+                }
                 let base = prop
                     .rust_field_name
                     .strip_prefix("r#")
