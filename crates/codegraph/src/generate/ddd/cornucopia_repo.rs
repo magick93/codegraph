@@ -615,6 +615,11 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
     // be expressed in the static list SQL — apply them on the hydrated
     // responses (matches the SeaORM EXISTS semantics: keep the row when ANY
     // matching child exists).
+    // Nested filters are applied in memory after pagination, so the DB count
+    // no longer reflects the filtered total — use the filtered page size.
+    if !tree.nested_filter_fields.is_empty() {
+        writeln!(code, "        let total = items.len() as u64;").unwrap();
+    }
     writeln!(code, "        Ok((items, total))").unwrap();
     writeln!(code, "    }}").unwrap();
 }
