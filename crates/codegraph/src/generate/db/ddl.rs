@@ -1162,6 +1162,12 @@ impl DdlGenerator {
                 if !is_fk_candidate {
                     continue;
                 }
+                // Array entity refs are junction/FK-on-child relationships
+                // materialized elsewhere (child tables, child-side FKs) — never
+                // columns on this table.
+                if prop.is_array {
+                    continue;
+                }
                 // ValueObject refs only become FK columns when they resolve to a
                 // known entity (directly or through an allOf chain). Pure VOs are
                 // materialized as child tables — an FK to their (nonexistent)
