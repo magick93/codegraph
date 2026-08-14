@@ -248,6 +248,9 @@ fn render_entity_sql(
         write_child_queries(&mut sql, &tree.schema_name, &entity_name, child);
     }
 
+    // ── nested filter helpers (child/grandchild EXISTS equivalents) ─────
+    write_nested_filter_queries(&mut sql, tree);
+
     // ── FTS / embeddings / tree ────────────────────────────────────────
     if tree.has_fts {
         write_search_queries(
@@ -720,6 +723,70 @@ fn write_child_queries(
     // Nested grandchildren.
     for grandchild in &child.child_tables {
         write_child_queries(sql, schema_name, entity_name, grandchild);
+    }
+}
+
+/// Emit one helper query per nested (dot-notation) filter. The adapter uses
+/// these to filter rows in memory by parent-id membership — the equivalent of
+/// the SeaORM EXISTS subqueries.
+fn write_nested_filter_queries(sql: &mut String, tree: &EntityTree) {
+    for nf in &tree.nested_filter_fields {
+        let qname = nf.filter_key.replace('.', "_");
+        let leaf_cast = nested_filter_cast(&nf.rust_type);
+        let val_param = if leaf_cast.is_empty() {
+            ":val".to_string()
+        } else {
+            format!(":val::text::{leaf_cast}")
+        };
+        if let Some(ref ij) = nf.intermediate_join {
+            sql.push_str(&format!(
+                "--! filter_{qname} (val) : ({fk})\n\
+                 --- Nested filter helper: parent ids with a matching grandchild.\n\
+                 SELECT _i.\"{fk}\"\n\
+                 FROM \"{ij_schema}\".\"{ij_table}\" _i\n\
+                 WHERE EXISTS (SELECT 1 FROM \"{schema}\".\"{table}\" _gc\n\
+                 \x20       WHERE _gc.\"{gc_fk}\" = _i.\"id\" AND _gc.\"{col}\" = {val_param});\n\n",
+                fk = ij.parent_fk_column,
+                ij_schema = ij.sql_schema,
+                ij_table = ij.sql_table_name,
+                schema = nf.sql_schema,
+                table = nf.sql_table_name,
+                gc_fk = nf.parent_fk_column,
+                col = nf.pg_column_name,
+            ));
+        } else {
+            sql.push_str(&format!(
+                "--! filter_{qname} (val) : ({fk})\n\
+                 --- Nested filter helper: parent ids with a matching child.\n\
+                 SELECT \"{fk}\"\n\
+                 FROM \"{schema}\".\"{table}\"\n\
+                 WHERE \"{col}\" = {val_param};\n\n",
+                fk = nf.parent_fk_column,
+                schema = nf.sql_schema,
+                table = nf.sql_table_name,
+                col = nf.pg_column_name,
+            ));
+        }
+    }
+}
+
+/// Postgres cast target for a nested-filter value ("" = plain text compare).
+fn nested_filter_cast(rust_type: &str) -> &'static str {
+    let base = rust_type
+        .strip_prefix("Option<")
+        .and_then(|s| s.strip_suffix('>'))
+        .unwrap_or(rust_type);
+    match base {
+        "Uuid" | "uuid::Uuid" => "uuid",
+        "i32" => "int4",
+        "i64" => "int8",
+        "f32" => "float4",
+        "f64" => "float8",
+        "bool" => "bool",
+        "Decimal" | "rust_decimal::Decimal" => "numeric",
+        "NaiveDate" | "chrono::NaiveDate" => "date",
+        "DateTime<Utc>" | "chrono::DateTime<chrono::Utc>" => "timestamptz",
+        _ => "",
     }
 }
 

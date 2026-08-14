@@ -605,8 +605,94 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
         writeln!(code, "            }}").unwrap();
         writeln!(code, "        }}").unwrap();
     }
+    // Nested filters (dot-notation, e.g. deployment.organization_id) cannot
+    // be expressed in the static list SQL — apply them on the hydrated
+    // responses (matches the SeaORM EXISTS semantics: keep the row when ANY
+    // matching child exists).
+    emit_nested_filter_checks(code, tree);
     writeln!(code, "        Ok((items, total))").unwrap();
     writeln!(code, "    }}").unwrap();
+}
+
+/// Emit nested-filter checks on the hydrated response `items`.
+fn emit_nested_filter_checks(code: &mut String, tree: &EntityTree) {
+    for nf in &tree.nested_filter_fields {
+        let mut path: Vec<(String, bool)> = Vec::new();
+        if !find_child_path(&tree.child_tables, &nf.sql_table_name, &mut path) {
+            continue;
+        }
+        let leaf_col = &nf.pg_column_name;
+        let expr = nested_nav_expr(&path, leaf_col, nf.is_nullable, "item");
+        writeln!(
+            code,
+            "        if let Some(val) = filters.get(\"{key}\") {{\n\
+             \x20           if !({expr}) {{ continue; }}\n\
+             \x20       }}",
+            key = nf.filter_key,
+            expr = expr,
+        )
+        .unwrap();
+    }
+}
+
+/// Find the response field path from the entity to the child table with the
+/// given SQL table name. Each entry is (response field name, is_array).
+fn find_child_path(
+    children: &[ChildTableInfo],
+    target_table: &str,
+    out: &mut Vec<(String, bool)>,
+) -> bool {
+    for child in children {
+        if child.sql_table_name == target_table {
+            out.push((child.field_name.clone(), child.is_array));
+            return true;
+        }
+        let mut sub = vec![(child.field_name.clone(), child.is_array)];
+        if find_child_path(&child.child_tables, target_table, &mut sub) {
+            out.append(&mut sub);
+            return true;
+        }
+    }
+    false
+}
+
+/// Build a Rust expression that navigates from the list item to the leaf
+/// child column and compares it to the filter value (bound as `val`).
+///
+/// `path` lists the response field names from the entity root to the leaf
+/// child table, each with its array-ness. The expression returns `true` when
+/// ANY descendant matches, mirroring the SeaORM EXISTS semantics.
+fn nested_nav_expr(
+    path: &[(String, bool)],
+    leaf_col: &str,
+    leaf_nullable: bool,
+    var: &str,
+) -> String {
+    if path.len() == 1 {
+        let (field, is_array) = &path[0];
+        let container = format!("{var}.{field}");
+        let leaf_check = if leaf_nullable {
+            format!(
+                "leaf.{leaf_col}.as_ref().map(|v| v.to_string()).as_deref() == Some(val.as_str())"
+            )
+        } else {
+            format!("leaf.{leaf_col}.to_string() == *val")
+        };
+        if *is_array {
+            format!("{container}.iter().any(|leaf| {leaf_check})")
+        } else {
+            format!("{container}.as_ref().map_or(false, |leaf| {leaf_check})")
+        }
+    } else {
+        let (field, is_array) = &path[0];
+        let inner = nested_nav_expr(&path[1..], leaf_col, leaf_nullable, "c");
+        let sub = format!("{var}.{field}");
+        if *is_array {
+            format!("{sub}.iter().any(|c| {inner})")
+        } else {
+            format!("{sub}.as_ref().map_or(false, |c| {inner})")
+        }
+    }
 }
 
 /// Emit FTS search: ranked ids + count.
@@ -803,6 +889,23 @@ fn emit_filter_checks(code: &mut String, tree: &EntityTree, pad: &str) {
             )
             .unwrap();
         }
+    }
+    // Nested (dot-notation) filters: parent-id membership via helper queries.
+    let qmod = qmod(tree);
+    for nf in &tree.nested_filter_fields {
+        let qname = nf.filter_key.replace('.', "_");
+        writeln!(
+            code,
+            "{pad}if let Some(val) = filters.get(\"{key}\") {{\n\
+             {pad}    let ids = {qmod}::filter_{qname}().bind(db, val).all().await.map_err(|e| e.to_string())?;\n\
+             {pad}    if !ids.contains(&row.id) {{ continue; }}\n\
+             {pad}}}",
+            key = nf.filter_key,
+            qmod = qmod,
+            qname = qname,
+            pad = pad,
+        )
+        .unwrap();
     }
 }
 
