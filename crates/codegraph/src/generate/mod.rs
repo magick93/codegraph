@@ -462,7 +462,12 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let suffix = &config.defaults.type_suffix;
     for (domain_name, domain_entry) in &config.domains {
         for entity_title in &domain_entry.entities {
-            let entity_name = codegraph_naming::strip_suffix(entity_title, suffix);
+            // Match the naming used by the DTO generators: strip the configured
+            // suffix, then PascalCase what remains (titles may contain spaces,
+            // e.g. "Validation Issue" -> "ValidationIssue").
+            let entity_name = codegraph_naming::to_pascal_case(&codegraph_naming::strip_suffix(
+                entity_title, suffix,
+            ));
             let module_name = codegraph_naming::to_snake_case(&entity_name);
             let base = || -> Vec<String> {
                 vec![
