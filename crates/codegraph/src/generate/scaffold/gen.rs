@@ -107,13 +107,16 @@ impl GlobalGenerator for ScaffoldGenerator {
         let mut seen_scaffold_entities = std::collections::HashSet::new();
         for entry in generation_order {
             let stripped = config.defaults.strip_suffix(&entry.schema_title);
+            // Titles may contain spaces (e.g. "Review Decision") — sanitize to
+            // PascalCase so generated Rust identifiers compile.
+            let entity_name = codegraph_naming::to_pascal_case(&stripped);
             let module_name = codegraph_naming::to_snake_case(&stripped);
             // Dedup by (domain, module_name) to prevent cross-domain name collisions
             if !seen_scaffold_entities.insert((entry.domain.clone(), module_name.clone())) {
                 continue;
             }
             let operations =
-                resolve_entity_operations(db, config, &entry.domain, &stripped).await;
+                resolve_entity_operations(db, config, &entry.domain, &entity_name).await;
             let has_commands = operations
                 .iter()
                 .any(|op| op == "create" || op == "update" || op == "delete");
@@ -122,7 +125,7 @@ impl GlobalGenerator for ScaffoldGenerator {
             let has_config_parent = config
                 .domains
                 .get(&entry.domain)
-                .and_then(|d| d.get_entity_config(&stripped))
+                .and_then(|d| d.get_entity_config(&entity_name))
                 .and_then(|ec| ec.parent_ref.as_ref())
                 .is_some();
             let has_query_hooks = has_create || (has_read && !has_config_parent);
@@ -131,7 +134,7 @@ impl GlobalGenerator for ScaffoldGenerator {
                 .or_default()
                 .push(ScaffoldEntity {
                     module_name: module_name.clone(),
-                    name: stripped.clone(),
+                    name: entity_name,
                     domain: entry.domain.clone(),
                     has_commands,
                     has_query_hooks,

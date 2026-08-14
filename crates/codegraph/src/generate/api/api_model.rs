@@ -147,13 +147,20 @@ fn resolve_from_entity_config(
 /// Tries the graph-based API model first, falls back to EntityConfig.
 /// When no ApiResource nodes exist in the graph, this produces the same
 /// result as the previous `entity_cfg.operations.unwrap_or(defaults)` pattern.
+/// Normalize an entity/resource name for API-model lookups: strip the "Type"
+/// suffix and PascalCase whatever remains (titles may contain spaces, e.g.
+/// "Review Decision" → "ReviewDecision").
+pub fn normalized_resource_name(name: &str) -> String {
+    codegraph_naming::to_pascal_case(name.trim_end_matches("Type"))
+}
+
 pub async fn resolve_entity_operations(
     querier: &dyn GraphQuerier,
     config: &DomainConfig,
     domain_name: &str,
     entity_name: &str,
 ) -> Vec<String> {
-    let resource_name = entity_name.trim_end_matches("Type");
+    let resource_name = normalized_resource_name(entity_name);
     if let Ok(resources) = querier.get_api_resources().await {
         if let Some(resource) = resources
             .iter()

@@ -88,7 +88,9 @@ pub async fn ingest_api_model(
                 .unwrap_or(&config.defaults.operations);
 
             let schema_title = entity_name.clone();
-            let resource_name = entity_name.trim_end_matches("Type");
+            let resource_name = crate::generate::api::api_model::normalized_resource_name(
+                entity_name,
+            );
 
             let resource_id = db
                 .ingest_api_resource(&ApiResourceNode {
