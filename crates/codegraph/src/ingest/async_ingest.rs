@@ -1040,7 +1040,10 @@ fn extract_ref_stem(ref_path: &str) -> &str {
     if ref_path.starts_with("#/") {
         return filename;
     }
-    filename.strip_suffix(".json").unwrap_or(filename)
+    filename
+        .strip_suffix(".schema.json")
+        .or_else(|| filename.strip_suffix(".json"))
+        .unwrap_or(filename)
 }
 
 /// Pass 2: Update entity flags and re-classify property $ref targets.
