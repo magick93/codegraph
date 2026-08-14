@@ -96,7 +96,11 @@ pub async fn run_cli(config: &OpsConfig, args: &CliArgs) -> OpsResult<()> {
     output::info(format!(
         "CLI: {} (token: {})",
         binary.display(),
-        if api_key.is_some() { "provisioned" } else { "test-token" }
+        if api_key.is_some() {
+            "provisioned"
+        } else {
+            "test-token"
+        }
     ));
 
     // Clear the log between runs.
@@ -138,13 +142,25 @@ pub async fn run_cli(config: &OpsConfig, args: &CliArgs) -> OpsResult<()> {
     } else {
         counters.fail("config show");
     }
-    let (_, code) = invoke_cli(&binary, &api_url, token, &["config", "set-url", api_url.as_str()], false);
+    let (_, code) = invoke_cli(
+        &binary,
+        &api_url,
+        token,
+        &["config", "set-url", api_url.as_str()],
+        false,
+    );
     if code == 0 {
         counters.pass("config set-url");
     } else {
         counters.fail("config set-url");
     }
-    let (_, code) = invoke_cli(&binary, &api_url, token, &["config", "set-token", "test-token"], false);
+    let (_, code) = invoke_cli(
+        &binary,
+        &api_url,
+        token,
+        &["config", "set-token", "test-token"],
+        false,
+    );
     if code == 0 {
         counters.pass("config set-token");
     } else {
@@ -157,15 +173,29 @@ pub async fn run_cli(config: &OpsConfig, args: &CliArgs) -> OpsResult<()> {
         return finish(config, counters, binary);
     };
     let Some(domain) = domain_from_entity(&smoke.entity) else {
-        output::warn(format!("smoke.entity {:?} has no domain — skipping CRUD", smoke.entity));
+        output::warn(format!(
+            "smoke.entity {:?} has no domain — skipping CRUD",
+            smoke.entity
+        ));
         return finish(config, counters, binary);
     };
     let Some(entity) = entity_from_path(&smoke.entity) else {
-        output::warn(format!("smoke.entity {:?} has no entity — skipping CRUD", smoke.entity));
+        output::warn(format!(
+            "smoke.entity {:?} has no entity — skipping CRUD",
+            smoke.entity
+        ));
         return finish(config, counters, binary);
     };
     output::section("CRUD lifecycle");
-    crud_cycle(&mut counters, &binary, &api_url, token, domain, entity, &smoke.create_body);
+    crud_cycle(
+        &mut counters,
+        &binary,
+        &api_url,
+        token,
+        domain,
+        entity,
+        &smoke.create_body,
+    );
 
     // 5. Error handling
     output::section("Error handling");
@@ -173,7 +203,12 @@ pub async fn run_cli(config: &OpsConfig, args: &CliArgs) -> OpsResult<()> {
         &binary,
         &api_url,
         token,
-        &[domain, entity, "get", "00000000-0000-0000-0000-000000000000"],
+        &[
+            domain,
+            entity,
+            "get",
+            "00000000-0000-0000-0000-000000000000",
+        ],
         true,
     );
     if code != 0 {
@@ -247,7 +282,13 @@ fn crud_cycle(
     }
     let id = id.expect("id is Some after successful create");
 
-    let (out, code) = invoke_cli(binary, api_url, token, &[domain, entity, "get", id.as_str()], true);
+    let (out, code) = invoke_cli(
+        binary,
+        api_url,
+        token,
+        &[domain, entity, "get", id.as_str()],
+        true,
+    );
     if code == 0 && extract_id(&out).as_deref() == Some(id.as_str()) {
         counters.pass("get by id");
     } else {
@@ -267,14 +308,26 @@ fn crud_cycle(
         counters.fail("list should return a data array");
     }
 
-    let (_, code) = invoke_cli(binary, api_url, token, &[domain, entity, "delete", id.as_str()], false);
+    let (_, code) = invoke_cli(
+        binary,
+        api_url,
+        token,
+        &[domain, entity, "delete", id.as_str()],
+        false,
+    );
     if code == 0 {
         counters.pass("delete");
     } else {
         counters.fail("delete");
     }
 
-    let (_, code) = invoke_cli(binary, api_url, token, &[domain, entity, "get", id.as_str()], true);
+    let (_, code) = invoke_cli(
+        binary,
+        api_url,
+        token,
+        &[domain, entity, "get", id.as_str()],
+        true,
+    );
     if code != 0 {
         counters.pass("get after delete fails (expected)");
     } else {
@@ -342,7 +395,13 @@ fn prepare_cli_binary(config: &OpsConfig, skip_build: bool) -> OpsResult<PathBuf
 
 /// Run `{binary} --url {url} --token {token} [--output json] {args...}`,
 /// appending combined output to the suite log. Returns (output, exit code).
-fn invoke_cli(binary: &Path, url: &str, token: &str, args: &[&str], json_output: bool) -> (String, i32) {
+fn invoke_cli(
+    binary: &Path,
+    url: &str,
+    token: &str,
+    args: &[&str],
+    json_output: bool,
+) -> (String, i32) {
     let mut cmd = Command::new(binary);
     cmd.arg("--url").arg(url).arg("--token").arg(token);
     if json_output {
@@ -445,8 +504,7 @@ mod tests {
     #[test]
     fn extract_id_from_envelope() {
         assert_eq!(
-            extract_id(r#"{"data": {"id": "abc-123", "name": "x"}, "meta": {}}"#)
-                .as_deref(),
+            extract_id(r#"{"data": {"id": "abc-123", "name": "x"}, "meta": {}}"#).as_deref(),
             Some("abc-123")
         );
     }
@@ -469,7 +527,10 @@ mod tests {
 
     #[test]
     fn domain_and_entity_from_route() {
-        assert_eq!(domain_from_entity("recruiting/candidate"), Some("recruiting"));
+        assert_eq!(
+            domain_from_entity("recruiting/candidate"),
+            Some("recruiting")
+        );
         assert_eq!(entity_from_path("recruiting/candidate"), Some("candidate"));
         assert_eq!(domain_from_entity("candidate"), Some("candidate"));
         assert_eq!(entity_from_path("candidate"), None);
@@ -480,7 +541,10 @@ mod tests {
 
     #[test]
     fn contains_any_is_case_insensitive() {
-        assert!(contains_any("Usage: hr-app [OPTIONS]", &["usage", "commands"]));
+        assert!(contains_any(
+            "Usage: hr-app [OPTIONS]",
+            &["usage", "commands"]
+        ));
         assert!(contains_any("Commands:", &["usage", "commands"]));
         assert!(!contains_any("nothing here", &["usage", "commands"]));
     }

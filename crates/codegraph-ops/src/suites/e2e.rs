@@ -32,8 +32,7 @@ pub async fn run_e2e(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
 
     if config.manifest.supabase.is_none() {
         return Err(OpsError::Config(
-            "e2e requires a manifest [[supabase]] section (dir + standard local keys)"
-                .to_string(),
+            "e2e requires a manifest [[supabase]] section (dir + standard local keys)".to_string(),
         ));
     }
     if config.manifest.database.e2e.is_none() {
@@ -78,8 +77,12 @@ pub async fn run_e2e(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         if let Some(binary) = binary {
             crate::ext::run_hooks(config, "pre_generate").await?;
             output::info(format!("Building {binary} (release)..."));
-            run_blocking("cargo", &["build", "-p", binary, "--release"], &config.root_dir)
-                .map_err(|e| OpsError::TestFailure(format!("graph binary build failed: {e}")))?;
+            run_blocking(
+                "cargo",
+                &["build", "-p", binary, "--release"],
+                &config.root_dir,
+            )
+            .map_err(|e| OpsError::TestFailure(format!("graph binary build failed: {e}")))?;
             let gen_bin = config.root_dir.join("target").join("release").join(binary);
             if !gen_bin.is_file() {
                 return Err(OpsError::TestFailure(format!(
@@ -117,9 +120,8 @@ pub async fn run_e2e(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         ));
     }
     output::info("Resetting database (npx supabase db reset)...");
-    run_blocking("npx", &["supabase", "db", "reset"], supabase_dir).map_err(|e| {
-        OpsError::TestFailure(format!("supabase db reset failed: {e}"))
-    })?;
+    run_blocking("npx", &["supabase", "db", "reset"], supabase_dir)
+        .map_err(|e| OpsError::TestFailure(format!("supabase db reset failed: {e}")))?;
     output::ok("Database reset with migrations");
 
     let seed = supabase_dir.join("supabase").join("seed.sql");
@@ -149,14 +151,13 @@ pub async fn run_e2e(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         run_blocking("cargo", &build_args, &config.app_dir)
             .map_err(|e| OpsError::TestFailure(format!("app build failed: {e}")))?;
     }
-    let binary = pick_binary(&config.app_dir, &config.app_binary_name(), args.release).ok_or_else(
-        || {
+    let binary =
+        pick_binary(&config.app_dir, &config.app_binary_name(), args.release).ok_or_else(|| {
             OpsError::TestFailure(format!(
                 "no app binary under {} — run without --skip-build",
                 config.app_dir.join("target").display()
             ))
-        },
-    )?;
+        })?;
     output::ok(format!("Using binary {}", binary.display()));
 
     // 6. Services.
@@ -235,8 +236,14 @@ pub async fn run_e2e(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
 
     // 7. Playwright.
     output::section("E2E 6. Playwright Tests");
-    if let Err(e) = run_blocking("npx", &["playwright", "install", "chromium"], &config.ui_dir) {
-        output::warn(format!("playwright install chromium failed (continuing): {e}"));
+    if let Err(e) = run_blocking(
+        "npx",
+        &["playwright", "install", "chromium"],
+        &config.ui_dir,
+    ) {
+        output::warn(format!(
+            "playwright install chromium failed (continuing): {e}"
+        ));
     }
     let mut cmd = Command::new("npx");
     cmd.arg("playwright").arg("test");
@@ -287,11 +294,7 @@ fn generate_args(config: &OpsConfig) -> Vec<String> {
         .expect("caller checks schemas_dir")
         .to_string_lossy()
         .into_owned();
-    let mut args = vec![
-        "run".to_string(),
-        "--schemas".to_string(),
-        schemas,
-    ];
+    let mut args = vec!["run".to_string(), "--schemas".to_string(), schemas];
     if let Some(classifier) = &config.manifest.classifier {
         args.push("--classifier".to_string());
         args.push(classifier.to_string_lossy().into_owned());
@@ -361,7 +364,10 @@ fn supabase_health_url(config: &OpsConfig) -> String {
 
 /// First existing candidate path (system chromium fallback for Playwright).
 fn find_chromium(candidates: &[&Path]) -> Option<PathBuf> {
-    candidates.iter().find(|p| p.is_file()).map(|p| p.to_path_buf())
+    candidates
+        .iter()
+        .find(|p| p.is_file())
+        .map(|p| p.to_path_buf())
 }
 
 /// True when `curl -sf` succeeds against `url`.
@@ -384,10 +390,7 @@ fn run_blocking(bin: &str, args: &[&str], cwd: &Path) -> OpsResult<()> {
         .current_dir(cwd)
         .output()
         .map_err(|e| {
-            OpsError::Command(format!(
-                "failed to spawn {bin} in {}: {e}",
-                cwd.display()
-            ))
+            OpsError::Command(format!("failed to spawn {bin} in {}: {e}", cwd.display()))
         })?;
     if out.status.success() {
         return Ok(());

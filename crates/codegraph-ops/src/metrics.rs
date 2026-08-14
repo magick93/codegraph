@@ -117,10 +117,7 @@ impl Metrics {
         println!();
         println!(
             "  {}",
-            output::dim(format!(
-                "{:<52} {:>10} {:>6}",
-                "Stage", "Duration", "% Tot"
-            ))
+            output::dim(format!("{:<52} {:>10} {:>6}", "Stage", "Duration", "% Tot"))
         );
         for stage in stages.iter() {
             let pct = stage.duration_secs * 100 / total;
@@ -175,12 +172,7 @@ impl Metrics {
 /// Format seconds as "1h 2m 3s" / "2m 3s" / "3s".
 pub fn format_duration(secs: u64) -> String {
     if secs >= 3600 {
-        format!(
-            "{}h {}m {}s",
-            secs / 3600,
-            (secs % 3600) / 60,
-            secs % 60
-        )
+        format!("{}h {}m {}s", secs / 3600, (secs % 3600) / 60, secs % 60)
     } else if secs >= 60 {
         format!("{}m {}s", secs / 60, secs % 60)
     } else {

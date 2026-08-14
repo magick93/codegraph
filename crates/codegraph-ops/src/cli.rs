@@ -9,7 +9,6 @@
 
 use std::path::PathBuf;
 
-
 use clap::{Parser, Subcommand};
 
 use crate::config::OpsConfig;
@@ -291,7 +290,9 @@ pub async fn main() -> i32 {
     match result {
         Ok(()) => {
             if let Some(path) = &cli.metrics {
-                let _ = config.metrics.append_tsv(path, subcommand_name(&cli.command));
+                let _ = config
+                    .metrics
+                    .append_tsv(path, subcommand_name(&cli.command));
             } else {
                 config.metrics.print_summary();
             }
@@ -421,19 +422,20 @@ mod tests {
     #[test]
     fn playwright_args_assembly() {
         let cli = Cli::try_parse_from([
-            "testkit",
-            "e2e",
-            "--headed",
-            "--grep",
-            "Owner",
-            "--grep",
-            "CRUD",
+            "testkit", "e2e", "--headed", "--grep", "Owner", "--grep", "CRUD",
         ])
         .unwrap();
         let args = build_playwright_args(&cli, &["--retries=2".to_string()]);
         assert_eq!(
             args,
-            vec!["--headed", "--grep", "Owner", "--grep", "CRUD", "--retries=2"]
+            vec![
+                "--headed",
+                "--grep",
+                "Owner",
+                "--grep",
+                "CRUD",
+                "--retries=2"
+            ]
         );
     }
 }

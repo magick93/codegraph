@@ -119,9 +119,9 @@ pub async fn run_smoke(args: &SmokeArgs) -> OpsResult<()> {
                 .and_then(|c| c.as_str())
                 .unwrap_or("unknown");
             match &args.expected_commit {
-                Some(expected) if expected != commit => output::warn(format!(
-                    "expected commit {expected} but got {commit}"
-                )),
+                Some(expected) if expected != commit => {
+                    output::warn(format!("expected commit {expected} but got {commit}"))
+                }
                 Some(_) => output::ok(format!("version — commit {commit}")),
                 None => output::ok(format!("version — commit {commit}")),
             }

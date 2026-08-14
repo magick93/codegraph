@@ -49,8 +49,9 @@ impl OpsConfig {
     /// Load `codegraph-ops.toml` from `manifest_path` and resolve all paths
     /// relative to its parent directory.
     pub fn load(manifest_path: &Path) -> OpsResult<Self> {
-        let raw = std::fs::read_to_string(manifest_path)
-            .map_err(|e| OpsError::Config(format!("cannot read {}: {e}", manifest_path.display())))?;
+        let raw = std::fs::read_to_string(manifest_path).map_err(|e| {
+            OpsError::Config(format!("cannot read {}: {e}", manifest_path.display()))
+        })?;
         let manifest: OpsManifest = toml::from_str(&raw).map_err(|e| {
             OpsError::Config(format!("invalid manifest {}: {e}", manifest_path.display()))
         })?;
@@ -69,21 +70,11 @@ impl OpsConfig {
             .clone()
             .map(|d| root_dir.join(d))
             .unwrap_or_else(|| app_dir.join("ui"));
-        let supabase_dir = manifest
-            .supabase
-            .as_ref()
-            .map(|s| root_dir.join(&s.dir));
-        let hurl_dir = manifest
-            .hurl
-            .as_ref()
-            .map(|h| root_dir.join(&h.dir));
+        let supabase_dir = manifest.supabase.as_ref().map(|s| root_dir.join(&s.dir));
+        let hurl_dir = manifest.hurl.as_ref().map(|h| root_dir.join(&h.dir));
 
         let api_db = pg_target(&manifest.database.api, "api");
-        let e2e_db = manifest
-            .database
-            .e2e
-            .as_ref()
-            .map(|t| pg_target(t, "e2e"));
+        let e2e_db = manifest.database.e2e.as_ref().map(|t| pg_target(t, "e2e"));
         let e2e_app_db = manifest
             .database
             .e2e_app

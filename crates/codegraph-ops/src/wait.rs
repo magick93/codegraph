@@ -41,7 +41,9 @@ pub async fn wait_for_port(port: u16, max_secs: u64, label: &str) -> OpsResult<(
             return Ok(());
         }
         if Instant::now() >= deadline {
-            output::fail(format!("{label} did not become ready on port {port} within {max_secs}s"));
+            output::fail(format!(
+                "{label} did not become ready on port {port} within {max_secs}s"
+            ));
             return Err(crate::error::OpsError::Timeout(format!(
                 "{label} not ready on port {port} within {max_secs}s"
             )));

@@ -124,7 +124,10 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         counters.pass("hurl installed");
     } else {
         counters.fail_test("hurl not found");
-        return Err(OpsError::MissingTool("hurl", "install hurl or set manifest.hurl = none"));
+        return Err(OpsError::MissingTool(
+            "hurl",
+            "install hurl or set manifest.hurl = none",
+        ));
     }
 
     if config.manifest.smoke.is_some() {
@@ -137,7 +140,10 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
             counters.pass("python3 installed");
         } else {
             counters.fail_test("python3 not found");
-            return Err(OpsError::MissingTool("python3", "install python3 for smoke JSON checks"));
+            return Err(OpsError::MissingTool(
+                "python3",
+                "install python3 for smoke JSON checks",
+            ));
         }
     } else {
         output::warn("no smoke entity configured — skipping python checks");
@@ -196,7 +202,11 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         // init
         let init_out = config.root_dir.join("ops-init-test.toml");
         let _ = std::fs::remove_file(&init_out);
-        let _ = run_capture(&binary, &["init", "--output", init_out.to_str().unwrap_or("")], config.root_dir.as_path());
+        let _ = run_capture(
+            &binary,
+            &["init", "--output", init_out.to_str().unwrap_or("")],
+            config.root_dir.as_path(),
+        );
         if init_out.is_file()
             && std::fs::read_to_string(&init_out)
                 .map(|c| c.contains("bind_addr"))
@@ -215,10 +225,16 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
             config.root_dir.as_path(),
             &[("DATABASE_URL", config.api_db.url().as_str())],
         );
-        if ["PASS", "FAIL", "WARN"].iter().any(|w| doctor.output_contains(w)) {
+        if ["PASS", "FAIL", "WARN"]
+            .iter()
+            .any(|w| doctor.output_contains(w))
+        {
             counters.pass("doctor runs checks");
         } else {
-            output::warn(format!("doctor output unexpected: {}", doctor.stdout.trim()));
+            output::warn(format!(
+                "doctor output unexpected: {}",
+                doctor.stdout.trim()
+            ));
         }
         // stop/status --help
         if run_capture(&binary, &["stop", "--help"], config.root_dir.as_path())
@@ -241,7 +257,9 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         }
         // start + status + stop integration
         let probe_port = 30099;
-        let pid_file = config.root_dir.join(format!("{}-{probe_port}.pid", config.app_binary_name()));
+        let pid_file = config
+            .root_dir
+            .join(format!("{}-{probe_port}.pid", config.app_binary_name()));
         let _ = std::fs::remove_file(&pid_file);
         let mut start_cmd = Command::new(&binary);
         start_cmd
@@ -261,13 +279,27 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         } else {
             counters.fail_test("start: no PID file created");
         }
-        let status_out = run_capture(&binary, &["status", "--bind-addr", &format!("127.0.0.1:{probe_port}")], config.root_dir.as_path());
+        let status_out = run_capture(
+            &binary,
+            &["status", "--bind-addr", &format!("127.0.0.1:{probe_port}")],
+            config.root_dir.as_path(),
+        );
         if status_out.output_contains("running") {
             counters.pass("status detects running server");
         } else {
             counters.fail_test("status output unexpected");
         }
-        let _ = run_capture(&binary, &["stop", "--bind-addr", &format!("127.0.0.1:{probe_port}"), "--timeout", "10"], config.root_dir.as_path());
+        let _ = run_capture(
+            &binary,
+            &[
+                "stop",
+                "--bind-addr",
+                &format!("127.0.0.1:{probe_port}"),
+                "--timeout",
+                "10",
+            ],
+            config.root_dir.as_path(),
+        );
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         if !probe.alive() {
             counters.pass("stop kills server");
@@ -340,12 +372,20 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
             .and_then(|h| h.org_id_a.clone())
             .unwrap_or_else(|| "00000000-0000-0000-0000-000000000001".to_string());
         if let Ok(key) = provision_api_key(config, &org_a, "ops-test-key").await {
-            counters.pass(format!("API key provisioned (prefix: {})", &key[..key.len().min(7)]));
+            counters.pass(format!(
+                "API key provisioned (prefix: {})",
+                &key[..key.len().min(7)]
+            ));
             auth_header = Some(format!("Authorization: Bearer {key}"));
         } else {
             counters.fail_test("could not extract API key");
         }
-        if let Some(org_b) = config.manifest.hurl.as_ref().and_then(|h| h.org_id_b.clone()) {
+        if let Some(org_b) = config
+            .manifest
+            .hurl
+            .as_ref()
+            .and_then(|h| h.org_id_b.clone())
+        {
             if let Ok(key) = provision_api_key(config, &org_b, "ops-test-key-b").await {
                 counters.pass("Org B API key provisioned");
                 api_key_b = Some(key);
@@ -385,7 +425,8 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     } else {
         counters.fail_test("Swagger UI: not 200");
     }
-    if let Ok(200) = http_status(&format!("{}/api-docs/openapi.json", config.api_url()), &[]).await {
+    if let Ok(200) = http_status(&format!("{}/api-docs/openapi.json", config.api_url()), &[]).await
+    {
         counters.pass("OpenAPI JSON reachable");
     } else {
         counters.fail_test("OpenAPI JSON: not 200");
@@ -408,7 +449,10 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
                 .collect();
             files.sort();
             for f in files {
-                let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let name = f
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 if hurl.skip.contains(&name) {
                     continue;
                 }
@@ -441,7 +485,10 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
                 }
             }
         } else {
-            output::warn(format!("hurl dir {} missing — skipping", hurl_dir.display()));
+            output::warn(format!(
+                "hurl dir {} missing — skipping",
+                hurl_dir.display()
+            ));
         }
     } else {
         output::info("no hurl config — skipping hurl tests");
@@ -462,7 +509,12 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
             headers_all.push((k, v.trim_start()));
         }
         // POST create
-        let resp = http_post_body(&format!("{}/api/{entity}", config.api_url()), &smoke.create_body, &headers_all).await;
+        let resp = http_post_body(
+            &format!("{}/api/{entity}", config.api_url()),
+            &smoke.create_body,
+            &headers_all,
+        )
+        .await;
         let (status, body) = match resp {
             Ok((s, b)) => (s, b),
             Err(e) => {
@@ -492,7 +544,12 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         }
         // GET by id
         if !smoke_id.is_empty() {
-            match http_status(&format!("{}/api/{entity}/{smoke_id}", config.api_url()), &[]).await {
+            match http_status(
+                &format!("{}/api/{entity}/{smoke_id}", config.api_url()),
+                &[],
+            )
+            .await
+            {
                 Ok(200) => counters.pass("GET /{entity}/{{id}} -> 200"),
                 Ok(s) => counters.fail_test(format!("GET /{entity}/{{id}} -> {s}")),
                 Err(e) => counters.fail_test(format!("GET /{entity}/{{id}}: {e}")),
@@ -500,7 +557,10 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         }
         // GET zero-uuid -> 404
         match http_status(
-            &format!("{}/api/{entity}/00000000-0000-0000-0000-000000000000", config.api_url()),
+            &format!(
+                "{}/api/{entity}/00000000-0000-0000-0000-000000000000",
+                config.api_url()
+            ),
             &[],
         )
         .await
@@ -510,7 +570,12 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
             Err(e) => counters.fail_test(format!("GET /{entity}/zero-uuid: {e}")),
         }
         // GET list
-        match http_get_body(&format!("{}/api/{entity}?page=0&page_size=10", config.api_url()), &[]).await {
+        match http_get_body(
+            &format!("{}/api/{entity}?page=0&page_size=10", config.api_url()),
+            &[],
+        )
+        .await
+        {
             Ok((status, body)) if status == "200" => {
                 counters.pass("GET /{entity} (list) -> 200");
                 let is_array = parse_json(&body)
@@ -543,12 +608,16 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     .unwrap_or_default();
     let poi_count: i64 = poi.trim().parse().unwrap_or(0);
     if poi_count > 0 {
-        counters.pass(format!("{poi_count} columns named platform_organization_id"));
+        counters.pass(format!(
+            "{poi_count} columns named platform_organization_id"
+        ));
     } else {
         output::info("no platform_organization_id columns (tenant isolation may be disabled)");
     }
 
-    let rls = psql_query(&config.api_db, "SELECT count(*) FROM pg_policies;").await.unwrap_or_default();
+    let rls = psql_query(&config.api_db, "SELECT count(*) FROM pg_policies;")
+        .await
+        .unwrap_or_default();
     let rls_count: i64 = rls.trim().parse().unwrap_or(0);
     if rls_count > 0 {
         counters.pass(format!("RLS policies: {rls_count}"));
@@ -604,7 +673,9 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         .hurl
         .as_ref()
         .map(|h| config.root_dir.join(&h.dir).join(&isolation_file));
-    if let (Some(path), Some(key_a), Some(key_b)) = (isolation_path, auth_header.as_ref(), api_key_b.as_ref()) {
+    if let (Some(path), Some(key_a), Some(key_b)) =
+        (isolation_path, auth_header.as_ref(), api_key_b.as_ref())
+    {
         if path.is_file() {
             let key_a = key_a.trim_start_matches("Authorization: Bearer ");
             let out = Command::new("hurl")
@@ -644,14 +715,24 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     config.metrics.begin("Axum server log check");
 
     let error_count = std::fs::read_to_string(&config.log_file)
-        .map(|c| strip_ansi(&c).lines().filter(|l| l.contains(" ERROR ")).count())
+        .map(|c| {
+            strip_ansi(&c)
+                .lines()
+                .filter(|l| l.contains(" ERROR "))
+                .count()
+        })
         .unwrap_or(0);
     if error_count == 0 {
         counters.pass("No errors in server log");
     } else {
         counters.fail_test(format!("Server log contains {error_count} error(s)"));
         let content = std::fs::read_to_string(&config.log_file).unwrap_or_default();
-        for line in strip_ansi(&content).lines().filter(|l| l.contains(" ERROR ")).rev().take(5) {
+        for line in strip_ansi(&content)
+            .lines()
+            .filter(|l| l.contains(" ERROR "))
+            .rev()
+            .take(5)
+        {
             println!("    {line}");
         }
     }
@@ -747,7 +828,10 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
 
 /// Whether the release binary is the one to use.
 fn is_release_binary(config: &OpsConfig) -> bool {
-    let release = config.app_dir.join("target/release").join(config.app_binary_name());
+    let release = config
+        .app_dir
+        .join("target/release")
+        .join(config.app_binary_name());
     release.is_file()
 }
 
@@ -826,7 +910,12 @@ impl CapturedOutput {
     }
 }
 
-fn run_capture_env(binary: &Path, args: &[&str], cwd: &Path, envs: &[(&str, &str)]) -> CapturedOutput {
+fn run_capture_env(
+    binary: &Path,
+    args: &[&str],
+    cwd: &Path,
+    envs: &[(&str, &str)],
+) -> CapturedOutput {
     let mut cmd = Command::new(binary);
     cmd.args(args).current_dir(cwd);
     for (k, v) in envs {
@@ -864,9 +953,17 @@ async fn http_get_body(url: &str, headers: &[(&str, &str)]) -> OpsResult<(String
 }
 
 /// POST an HTTP URL with a JSON body, returning (status, body).
-async fn http_post_body(url: &str, data: &str, headers: &[(&str, &str)]) -> OpsResult<(String, String)> {
+async fn http_post_body(
+    url: &str,
+    data: &str,
+    headers: &[(&str, &str)],
+) -> OpsResult<(String, String)> {
     let mut cmd = Command::new("curl");
-    cmd.arg("-s").arg("-X").arg("POST").arg("-w").arg("\n%{http_code}");
+    cmd.arg("-s")
+        .arg("-X")
+        .arg("POST")
+        .arg("-w")
+        .arg("\n%{http_code}");
     for (k, v) in headers {
         cmd.arg("-H").arg(format!("{k}: {v}"));
     }
@@ -880,14 +977,19 @@ async fn http_post_body(url: &str, data: &str, headers: &[(&str, &str)]) -> OpsR
 /// GET an HTTP URL, returning just the status code.
 async fn http_status(url: &str, headers: &[(&str, &str)]) -> OpsResult<u16> {
     let mut cmd = Command::new("curl");
-    cmd.arg("-s").arg("-o").arg("/dev/null").arg("-w").arg("%{http_code}");
+    cmd.arg("-s")
+        .arg("-o")
+        .arg("/dev/null")
+        .arg("-w")
+        .arg("%{http_code}");
     for (k, v) in headers {
         cmd.arg("-H").arg(format!("{k}: {v}"));
     }
     cmd.arg(url);
     let out = cmd.output()?;
     let code = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    code.parse::<u16>().map_err(|e| OpsError::Http(format!("bad status {code:?}: {e}")))
+    code.parse::<u16>()
+        .map_err(|e| OpsError::Http(format!("bad status {code:?}: {e}")))
 }
 
 fn print_log_tail(log_path: &Path, n: usize) {
@@ -938,7 +1040,11 @@ fn parse_requests(hurl_output: &str) -> usize {
 /// Regenerate the app via the graph binary; returns captured combined output.
 fn regenerate(config: &OpsConfig, graph_binary: &str) -> String {
     let mut cmd = Command::new("cargo");
-    cmd.arg("run").arg("-p").arg(graph_binary).arg("--").arg("run")
+    cmd.arg("run")
+        .arg("-p")
+        .arg(graph_binary)
+        .arg("--")
+        .arg("run")
         .current_dir(&config.root_dir);
     if let Some(schemas) = &config.manifest.schemas_dir {
         cmd.arg("--schemas").arg(schemas);
@@ -982,7 +1088,9 @@ mod tests {
 
     #[test]
     fn parses_hurl_success_and_requests() {
-        assert!(parse_requests("Succeeded files: 1\nExecuted files: 1\nRequests: 12 request\n") > 0);
+        assert!(
+            parse_requests("Succeeded files: 1\nExecuted files: 1\nRequests: 12 request\n") > 0
+        );
         assert_eq!(parse_requests("no data"), 0);
     }
 

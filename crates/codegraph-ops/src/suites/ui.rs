@@ -110,8 +110,14 @@ pub async fn run_ui(config: &OpsConfig, args: &UiArgs) -> OpsResult<()> {
     output::ok(format!("SvelteKit preview ready at {ui_url}"));
 
     // 7. Install the Playwright browser (best-effort).
-    if let Err(e) = run_quiet("npx", &["playwright", "install", "chromium"], &config.ui_dir) {
-        output::warn(format!("playwright install chromium failed (continuing): {e}"));
+    if let Err(e) = run_quiet(
+        "npx",
+        &["playwright", "install", "chromium"],
+        &config.ui_dir,
+    ) {
+        output::warn(format!(
+            "playwright install chromium failed (continuing): {e}"
+        ));
     }
 
     // 8. Run the Playwright suite.
@@ -154,7 +160,10 @@ pub async fn run_ui(config: &OpsConfig, args: &UiArgs) -> OpsResult<()> {
 pub fn playwright_env(config: &OpsConfig, api_key: Option<&str>) -> Vec<(String, String)> {
     let mut env = vec![
         ("PUBLIC_API_URL".to_string(), config.api_url()),
-        ("PUBLIC_API_KEY".to_string(), api_key.unwrap_or("").to_string()),
+        (
+            "PUBLIC_API_KEY".to_string(),
+            api_key.unwrap_or("").to_string(),
+        ),
         ("SUPABASE_URL".to_string(), supabase_base_url(config)),
         ("SUPABASE_ANON_KEY".to_string(), config.anon_key.clone()),
         (
@@ -390,7 +399,10 @@ mod tests {
             map.get("DATABASE_URL").unwrap(),
             "postgres://postgres:postgres@localhost:54322/postgres"
         );
-        assert_eq!(map.get("PUBLIC_SVELTEKIT_URL").unwrap(), "http://localhost:5173");
+        assert_eq!(
+            map.get("PUBLIC_SVELTEKIT_URL").unwrap(),
+            "http://localhost:5173"
+        );
     }
 
     #[test]

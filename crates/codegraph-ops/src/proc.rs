@@ -81,7 +81,10 @@ impl ManagedProcess {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             waited += 1;
             if reaped(&mut self.child) {
-                ok(format!("{} shut down gracefully after {}s", self.label, waited));
+                ok(format!(
+                    "{} shut down gracefully after {}s",
+                    self.label, waited
+                ));
                 self.child = None;
                 return ShutdownOutcome::Graceful { seconds: waited };
             }
@@ -97,9 +100,14 @@ impl ManagedProcess {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             if reaped(&mut self.child) {
-                warn(format!("{} force-killed after {}s", self.label, timeout_secs));
+                warn(format!(
+                    "{} force-killed after {}s",
+                    self.label, timeout_secs
+                ));
                 self.child = None;
-                return ShutdownOutcome::ForceKilled { seconds: timeout_secs };
+                return ShutdownOutcome::ForceKilled {
+                    seconds: timeout_secs,
+                };
             }
             if std::time::Instant::now() >= deadline {
                 break;
@@ -108,7 +116,9 @@ impl ManagedProcess {
         }
         warn(format!("{} (pid {pid}) could not be killed", self.label));
         self.child = None;
-        ShutdownOutcome::ForceKilled { seconds: timeout_secs }
+        ShutdownOutcome::ForceKilled {
+            seconds: timeout_secs,
+        }
     }
 }
 
@@ -236,7 +246,11 @@ mod tests {
             "unexpected outcome: {outcome:?}"
         );
         assert!(!proc.alive());
-        assert_ne!(unsafe { libc::kill(pid as i32, 0) }, 0, "pid {pid} still alive");
+        assert_ne!(
+            unsafe { libc::kill(pid as i32, 0) },
+            0,
+            "pid {pid} still alive"
+        );
     }
 
     #[cfg(unix)]

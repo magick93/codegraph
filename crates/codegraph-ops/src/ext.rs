@@ -93,13 +93,19 @@ pub async fn run_extension(name: &str, config: &OpsConfig, args: &[String]) -> O
         output::warn(format!(
             "extension {name} requires the API running — run 'api --keep' first"
         ));
-        registry().lock().expect("extension registry poisoned").push(ext);
+        registry()
+            .lock()
+            .expect("extension registry poisoned")
+            .push(ext);
         return Err(OpsError::Config(format!(
             "extension {name} requires the API running"
         )));
     }
     let result = ext.run(&ctx).await;
-    registry().lock().expect("extension registry poisoned").push(ext);
+    registry()
+        .lock()
+        .expect("extension registry poisoned")
+        .push(ext);
     result
 }
 
@@ -110,7 +116,11 @@ pub async fn run_extension(name: &str, config: &OpsConfig, args: &[String]) -> O
 /// with Err(Command) including stderr/stdout tail. If no hooks match, Ok.
 pub async fn run_hooks(config: &OpsConfig, point: &str) -> OpsResult<()> {
     let mut ran = 0usize;
-    for hook in config.hooks.iter().filter(|h| h.on.as_deref() == Some(point)) {
+    for hook in config
+        .hooks
+        .iter()
+        .filter(|h| h.on.as_deref() == Some(point))
+    {
         output::info(format!("hook {} ({point})", hook.name));
         run_exec(&hook.exec, &hook.args, &config.root_dir).await?;
         ran += 1;
@@ -185,7 +195,7 @@ fn tail(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use codegraph_config::{OpsDatabase, OpsDbTarget, OpsExtension, OpsHook, OpsManifest};
-    
+
     use std::sync::atomic::{AtomicBool, Ordering};
 
     struct FakeExtension {
@@ -268,7 +278,9 @@ mod tests {
     async fn unknown_extension_is_config_error() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_with(minimal_manifest(), dir.path());
-        let err = run_extension("does-not-exist", &cfg, &[]).await.unwrap_err();
+        let err = run_extension("does-not-exist", &cfg, &[])
+            .await
+            .unwrap_err();
         assert!(matches!(err, OpsError::Config(_)), "got {err:?}");
         assert!(err.to_string().contains("does-not-exist"));
     }
@@ -314,7 +326,10 @@ mod tests {
         let cfg = config_with(manifest, dir.path());
         let err = run_extension("failing-ext", &cfg, &[]).await.unwrap_err();
         assert!(matches!(err, OpsError::Command(_)), "got {err:?}");
-        assert!(err.to_string().contains("boom"), "tail should show stdout: {err}");
+        assert!(
+            err.to_string().contains("boom"),
+            "tail should show stdout: {err}"
+        );
     }
 
     #[tokio::test]

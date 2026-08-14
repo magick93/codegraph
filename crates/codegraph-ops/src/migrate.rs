@@ -187,7 +187,10 @@ fn write_phase1_file(original: &Path, content: &str) -> OpsResult<PathBuf> {
 /// `supabase db reset` applies them. First removes ALL existing symlinks in
 /// `supabase_mig_dir` (stale links from previous runs). Returns the count
 /// linked. Logs via [`output::ok`].
-pub fn link_migrations_to_supabase(migration_dir: &Path, supabase_mig_dir: &Path) -> OpsResult<usize> {
+pub fn link_migrations_to_supabase(
+    migration_dir: &Path,
+    supabase_mig_dir: &Path,
+) -> OpsResult<usize> {
     if !supabase_mig_dir.is_dir() {
         std::fs::create_dir_all(supabase_mig_dir)?;
     }
@@ -296,9 +299,9 @@ async fn apply_phases(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<
         .map(|s| format!("CREATE SCHEMA IF NOT EXISTS {s};"))
         .collect::<Vec<String>>()
         .join("\n");
-    crate::db::psql_exec(target, &schema_sql).await.map_err(|e| {
-        OpsError::Command(format!("phase 0 (CREATE SCHEMA) failed: {e}"))
-    })?;
+    crate::db::psql_exec(target, &schema_sql)
+        .await
+        .map_err(|e| OpsError::Command(format!("phase 0 (CREATE SCHEMA) failed: {e}")))?;
     output::ok("All schemas created");
 
     // Phase 1: CREATE TABLE + codelists, without FK lines. Errors are
@@ -392,11 +395,23 @@ mod tests {
     #[test]
     fn classifies_files_by_suffix() {
         assert_eq!(classify_file("common_core.sql"), FileKind::Tables);
-        assert_eq!(classify_file("recruiting_candidate_rls.sql"), FileKind::RlsTriggers);
-        assert_eq!(classify_file("recruiting_candidate_trigger.sql"), FileKind::RlsTriggers);
+        assert_eq!(
+            classify_file("recruiting_candidate_rls.sql"),
+            FileKind::RlsTriggers
+        );
+        assert_eq!(
+            classify_file("recruiting_candidate_trigger.sql"),
+            FileKind::RlsTriggers
+        );
         assert_eq!(classify_file("recruiting_candidate_fts.sql"), FileKind::Aux);
-        assert_eq!(classify_file("recruiting_candidate_embedding.sql"), FileKind::Aux);
-        assert_eq!(classify_file("recruiting_offer_process_history_view.sql"), FileKind::Aux);
+        assert_eq!(
+            classify_file("recruiting_candidate_embedding.sql"),
+            FileKind::Aux
+        );
+        assert_eq!(
+            classify_file("recruiting_offer_process_history_view.sql"),
+            FileKind::Aux
+        );
         assert_eq!(classify_file("basejump_config.sql"), FileKind::Skip);
         assert_eq!(classify_file("pgmq_migration.sql"), FileKind::Skip);
         assert_eq!(classify_file("readme.txt"), FileKind::Skip);
@@ -461,7 +476,9 @@ mod tests {
 
     #[test]
     fn is_fk_line_matches_only_constraint_additions() {
-        assert!(is_fk_line("ALTER TABLE a ADD CONSTRAINT a_fk FOREIGN KEY (b) REFERENCES c(id);"));
+        assert!(is_fk_line(
+            "ALTER TABLE a ADD CONSTRAINT a_fk FOREIGN KEY (b) REFERENCES c(id);"
+        ));
         assert!(!is_fk_line("ALTER TABLE a DROP CONSTRAINT a_fk;"));
         assert!(!is_fk_line("ALTER TABLE a ALTER COLUMN b SET NOT NULL;"));
         assert!(!is_fk_line("ALTER TABLE a ADD COLUMN b uuid;"));

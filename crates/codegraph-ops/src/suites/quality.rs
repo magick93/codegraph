@@ -211,7 +211,12 @@ mod tests {
     #[test]
     fn run_step_ok_returns_stdout() {
         let dir = tempfile::tempdir().unwrap();
-        let out = run_step("sh", &["-c".to_string(), "printf hello".to_string()], dir.path()).unwrap();
+        let out = run_step(
+            "sh",
+            &["-c".to_string(), "printf hello".to_string()],
+            dir.path(),
+        )
+        .unwrap();
         assert_eq!(out.trim(), "hello");
     }
 

@@ -231,6 +231,176 @@ async fn ops_generator_direct_call_manifest_roundtrips() {
     );
 }
 
+/// The testkit Cargo.toml must pin the codegraph-ops dependency to the
+/// codegraph git rev when `project.codegraph_rev` is set (external consumers
+/// depend on codegraph crates via git, so the relative path fallback would
+/// not exist in their repo).
+#[tokio::test]
+async fn testkit_cargo_uses_git_rev_when_pinned() {
+    let (engine, config, tera, output_dir) = mock_test_setup();
+
+    let gen = codegraph::generate::ops::OpsManifestGenerator::new(
+        output_dir.path(),
+        true, // has_cli
+        true, // has_ui
+        true, // has_admin_cli
+        true, // has_grpc
+    );
+    let project = codegraph::generate::ProjectConfig {
+        codegraph_rev: "abc123".into(),
+        ..codegraph::generate::ProjectConfig::default()
+    };
+    let files = gen
+        .generate(&engine, &config, &[], &tera, &project)
+        .await
+        .expect("ops generator failed");
+
+    let cargo = files
+        .iter()
+        .find(|f| f.path.ends_with("testkit/Cargo.toml"))
+        .expect("testkit/Cargo.toml");
+    assert!(
+        cargo
+            .content
+            .contains(r#"git = "https://github.com/magick93/codegraph.git""#),
+        "testkit Cargo.toml should pin codegraph-ops via git. Got:\n{}",
+        cargo.content
+    );
+    assert!(
+        cargo.content.contains(r#"rev = "abc123""#),
+        "testkit Cargo.toml should pin the codegraph rev. Got:\n{}",
+        cargo.content
+    );
+    assert!(
+        !cargo.content.contains("path ="),
+        "testkit Cargo.toml should not use a path dependency when a rev is pinned. Got:\n{}",
+        cargo.content
+    );
+}
+
+/// With an empty `project.codegraph_rev` (the default), the testkit Cargo.toml
+/// falls back to the path dependency into the codegraph workspace.
+#[tokio::test]
+async fn testkit_cargo_uses_path_when_rev_empty() {
+    let (engine, config, tera, output_dir) = mock_test_setup();
+
+    let gen = codegraph::generate::ops::OpsManifestGenerator::new(
+        output_dir.path(),
+        true, // has_cli
+        true, // has_ui
+        true, // has_admin_cli
+        true, // has_grpc
+    );
+    let files = gen
+        .generate(
+            &engine,
+            &config,
+            &[],
+            &tera,
+            &codegraph::generate::ProjectConfig::default(),
+        )
+        .await
+        .expect("ops generator failed");
+
+    let cargo = files
+        .iter()
+        .find(|f| f.path.ends_with("testkit/Cargo.toml"))
+        .expect("testkit/Cargo.toml");
+    assert!(
+        cargo.content.contains("path ="),
+        "testkit Cargo.toml should use a path dependency when no rev is pinned. Got:\n{}",
+        cargo.content
+    );
+    assert!(
+        !cargo.content.contains("rev ="),
+        "testkit Cargo.toml should not pin a git rev when codegraph_rev is empty. Got:\n{}",
+        cargo.content
+    );
+}
+
+/// The emitted testkit crate must actually compile. The codegraph-ops path
+/// dependency is rewritten to an absolute path so the test is hermetic
+/// regardless of where the tempdir lives (the generated relative path only
+/// resolves when the output sits inside the codegraph workspace).
+#[tokio::test]
+#[ignore = "slow: compiles codegraph-ops; run in CI"]
+async fn testkit_crate_compiles() {
+    let (engine, config, tera, output_dir) = mock_test_setup();
+
+    let gen = codegraph::generate::ops::OpsManifestGenerator::new(
+        output_dir.path(),
+        true, // has_cli
+        true, // has_ui
+        true, // has_admin_cli
+        true, // has_grpc
+    );
+    let files = gen
+        .generate(
+            &engine,
+            &config,
+            &[],
+            &tera,
+            &codegraph::generate::ProjectConfig::default(),
+        )
+        .await
+        .expect("ops generator failed");
+
+    let manifest = files
+        .iter()
+        .find(|f| f.path.ends_with("codegraph-ops.toml"))
+        .expect("codegraph-ops.toml");
+    let cargo = files
+        .iter()
+        .find(|f| f.path.ends_with("testkit/Cargo.toml"))
+        .expect("testkit/Cargo.toml");
+    let main = files
+        .iter()
+        .find(|f| f.path.ends_with("testkit/src/main.rs"))
+        .expect("testkit/src/main.rs");
+
+    let ops_abs = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.join("codegraph-ops"))
+        .expect("codegraph workspace crates dir");
+    let ops_abs = ops_abs
+        .canonicalize()
+        .expect("codegraph-ops crate should exist in the workspace");
+
+    let cargo_content = cargo
+        .content
+        .lines()
+        .map(|line| {
+            if line.starts_with("codegraph-ops") {
+                format!("codegraph-ops = {{ path = \"{}\" }}", ops_abs.display())
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let root = output_dir.path();
+    std::fs::write(root.join("codegraph-ops.toml"), &manifest.content).expect("write manifest");
+    std::fs::create_dir_all(root.join("testkit").join("src")).expect("mkdir testkit/src");
+    std::fs::write(root.join("testkit").join("Cargo.toml"), &cargo_content)
+        .expect("write Cargo.toml");
+    std::fs::write(
+        root.join("testkit").join("src").join("main.rs"),
+        &main.content,
+    )
+    .expect("write main.rs");
+
+    let status = std::process::Command::new("cargo")
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(root.join("testkit").join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(root.join("target"))
+        .status()
+        .expect("spawn cargo build");
+    assert!(status.success(), "cargo build of generated testkit failed");
+}
+
 /// Capability flags must mirror the build plan: only the grpc scaffold flag
 /// is off when grpc is not in the plan.
 #[tokio::test]

@@ -135,10 +135,7 @@ async fn run_psql(mut cmd: Command) -> OpsResult<Output> {
 }
 
 fn command_failure(kind: &str, sql: &str, out: &Output) -> OpsError {
-    OpsError::Command(format!(
-        "psql {kind} failed: {sql}\n{}",
-        stderr_tail(out)
-    ))
+    OpsError::Command(format!("psql {kind} failed: {sql}\n{}", stderr_tail(out)))
 }
 
 fn stderr_tail(out: &Output) -> String {
@@ -195,12 +192,10 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE t (x int);
 CREATE EXTENSION IF NOT EXISTS uuid-ossp;
 "#;
-        assert_eq!(parse_extension_names(content), vec![
-            "pgcrypto",
-            "pg_trgm",
-            "pgcrypto",
-            "uuid-ossp"
-        ]);
+        assert_eq!(
+            parse_extension_names(content),
+            vec!["pgcrypto", "pg_trgm", "pgcrypto", "uuid-ossp"]
+        );
     }
 
     #[test]
@@ -226,11 +221,16 @@ CREATE EXTENSION IF NOT EXISTS uuid-ossp;
             "CREATE EXTENSION IF NOT EXISTS \"pgcrypto\" WITH SCHEMA public;\nCREATE EXTENSION IF NOT EXISTS pgcrypto;\nCREATE EXTENSION IF NOT EXISTS pg_trgm;\n",
         )
         .unwrap();
-        std::fs::write(dir.path().join("002_other.sql"), "CREATE TABLE t (x int);\n").unwrap();
+        std::fs::write(
+            dir.path().join("002_other.sql"),
+            "CREATE TABLE t (x int);\n",
+        )
+        .unwrap();
         let target = dead_target();
         match missing_extensions(dir.path(), &target).await {
             Ok(names) => assert!(names.is_empty(), "unexpected missing: {names:?}"),
-            Err(OpsError::MissingTool("psql", _)) => { /* psql not installed — nothing to check */ }
+            Err(OpsError::MissingTool("psql", _)) => { /* psql not installed — nothing to check */
+            }
             Err(e) => panic!("unexpected error: {e}"),
         }
     }
@@ -244,6 +244,7 @@ CREATE EXTENSION IF NOT EXISTS uuid-ossp;
     #[tokio::test]
     async fn advisory_lock_reports_failure() {
         let target = dead_target();
-        if let Ok(()) = advisory_lock(&target, 42).await { /* psql present and something answered on port 1 — unexpected but ok */ }
+        if let Ok(()) = advisory_lock(&target, 42).await { /* psql present and something answered on port 1 — unexpected but ok */
+        }
     }
 }
