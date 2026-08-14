@@ -2470,6 +2470,7 @@ impl RepositoryImplEmitter {
             .iter()
             .any(|c| !c.columns.is_empty() || !c.child_tables.is_empty());
         let needs_raw_sql = has_meaningful_children
+            || !tree.junction_tables.is_empty()
             || tree.has_fts
             || tree.has_embeddings
             || has_range_cols
