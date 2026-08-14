@@ -371,6 +371,11 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     // the source of truth. A required entity ref produces a NOT NULL
                     // FK column (Uuid, is_nullable: false) in both the DDL and the
                     // model; an optional ref produces Option<Uuid>.
+                    // Array entity refs are junction child tables (persisted via
+                    // raw SQL in the repository), never columns on this model.
+                    if prop.is_array {
+                        continue;
+                    }
                     let is_nullable = !prop.is_required;
                     columns.push(EntityColumn {
                         field_name: field_def.rust_field_name,

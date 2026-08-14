@@ -685,7 +685,18 @@ fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts
             }
         }
         Some(RefClassificationKind::EntityReference) => {
-            let col_name = format!("{}_id", raw_name);
+            // Array entity refs are represented as junction child tables
+            // (CompositionNodes), never as columns on the parent table.
+            if col.is_array {
+                return None;
+            }
+            // Only append `_id` when the schema-side column name doesn't
+            // already carry the suffix (e.g. `tenantId` -> `tenant_id`).
+            let col_name = if raw_name.ends_with("_id") {
+                raw_name.to_string()
+            } else {
+                format!("{}_id", raw_name)
+            };
             if !description.is_empty() {
                 comments.push(ColumnComment {
                     column: col_name.clone(),

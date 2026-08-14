@@ -591,6 +591,63 @@ pub async fn build_dto_context(
             continue;
         }
 
+        // Array of entity refs:
+        //  - Junction (no back-reference on the target schema): the DTO carries
+        //    a Vec<uuid::Uuid> of related ids, persisted into the junction table.
+        //  - FK-on-child (target has a `<parent>_id` column, e.g. party.case_id
+        //    for case.party_ids): no field on the parent DTO — children are
+        //    managed through their own endpoints.
+        if prop.is_array
+            && prop.effective_kind() == Some(RefClassificationKind::EntityReference)
+        {
+            let target = db
+                .get_array_item_schema(&prop.name, schema_title)
+                .await
+                .ok()
+                .flatten();
+            let back_ref = format!(
+                "{}_id",
+                codegraph_naming::truncate_pg_identifier(&module_name)
+            );
+            let has_back_ref = match &target {
+                Some(t) => db
+                    .get_properties(&t.title)
+                    .await
+                    .map(|ps| {
+                        ps.iter().any(|p| {
+                            p.pg_column_name == back_ref
+                                || p.pg_column_name
+                                    == format!(
+                                        "{}_id",
+                                        codegraph_naming::to_snake_case(schema_title)
+                                    )
+                        })
+                    })
+                    .unwrap_or(false),
+                None => false,
+            };
+            if !has_back_ref {
+                let field_def = codegraph_core::types::resolve_field(prop);
+                fields.push(DtoField {
+                    name: field_def.rust_field_name.clone(),
+                    rust_type: "uuid::Uuid".to_string(),
+                    is_required: prop.is_required,
+                    is_array: true,
+                    description: prop.description.clone().unwrap_or_default(),
+                    render_strategy: "entity_ref".to_string(),
+                    is_entity_ref: true,
+                    is_hierarchy_field: false,
+                    min_length: None,
+                    max_length: None,
+                    minimum: None,
+                    maximum: None,
+                    pattern: None,
+                    format: None,
+                });
+            }
+            continue;
+        }
+
         // Codelist array properties → synthetic child DTO with a single "code" field.
         if prop.is_array
             && matches!(
