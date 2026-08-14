@@ -76,6 +76,9 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
 
         for entry in generation_order {
             let stripped = config.defaults.strip_suffix(&entry.schema_title);
+            // Titles may contain spaces (e.g. "Review Decision") — sanitize to
+            // a PascalCase Rust identifier matching rust_type_name.
+            let entity_name = codegraph_naming::to_pascal_case(&stripped);
             let module_name = codegraph_naming::to_snake_case(&stripped);
 
             if seen_domains.insert(entry.domain.clone()) {
@@ -90,7 +93,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
             domain_entity_map
                 .entry(entry.domain.clone())
                 .or_default()
-                .push((stripped, module_name));
+                .push((entity_name, module_name));
         }
 
         let src_dir = &self.src_dir;

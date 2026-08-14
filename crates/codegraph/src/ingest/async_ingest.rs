@@ -888,7 +888,7 @@ fn classify_single_property(
         let synthetic_name = format!(
             "{}{}{}",
             domain.to_upper_camel_case(),
-            strip_suffix(schema_title, suffix),
+            sanitize_rust_type_name(&strip_suffix(schema_title, suffix)),
             prop_name.to_upper_camel_case(),
         );
         let kind = codegraph_type_contracts::RefClassificationKind::CodelistCheck;
