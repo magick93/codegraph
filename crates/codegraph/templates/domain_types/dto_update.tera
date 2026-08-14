@@ -38,7 +38,11 @@ pub struct Update{{ entity_name }}Request {
     #[garde(skip)]
 {%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
+{%- if field.is_array %}
+    pub {{ field.name }}: Option<Vec<uuid::Uuid>>,
+{%- else %}
     pub {{ field.name }}: Option<uuid::Uuid>,
+{%- endif %}
 {%- endif %}
 {%- endif %}
 {%- endfor %}
