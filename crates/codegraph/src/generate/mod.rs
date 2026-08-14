@@ -14,6 +14,7 @@ pub mod domain_types;
 pub mod grpc;
 pub mod hooks;
 pub mod integration;
+pub mod ops;
 pub mod playwright;
 pub mod scaffold;
 pub mod test;
@@ -493,6 +494,12 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let has_grpc = build_plan
         .map(|bp| bp.has_global_gen("grpc_scaffold"))
         .unwrap_or(false);
+    let has_cli = build_plan
+        .map(|bp| bp.has_global_gen("cli_scaffold"))
+        .unwrap_or(true);
+    let has_ui = build_plan
+        .map(|bp| bp.has_global_gen("ui_scaffold"))
+        .unwrap_or(true);
     let has_admin_cli = build_plan
         .and_then(|bp| bp.features.get("has_admin_cli"))
         .and_then(|v| v.as_bool())
@@ -739,6 +746,14 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         // gRPC global generator
         Box::new(grpc::scaffold::GrpcScaffoldGenerator::new(output_dir))
             as Box<dyn GlobalGenerator>,
+        // ops harness manifest + testkit crate
+        Box::new(ops::OpsManifestGenerator::new(
+            output_dir,
+            has_cli,
+            has_ui,
+            has_admin_cli,
+            has_grpc,
+        )) as Box<dyn GlobalGenerator>,
     ]
     .into_iter()
     .filter(|gen| plan_has_global(gen.name()))

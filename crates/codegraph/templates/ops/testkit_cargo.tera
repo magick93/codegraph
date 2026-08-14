@@ -1,0 +1,8 @@
+[package]
+name = "testkit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+codegraph-ops = { path = "{{ codegraph_ops_path }}" }
+tokio = { version = "1", features = ["full"] }

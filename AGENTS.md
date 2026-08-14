@@ -2,20 +2,21 @@
 
 ## Project structure
 
-Workspace root `Cargo.toml` with 10 crates:
+Workspace root `Cargo.toml` with 11 crates:
 
 | Crate | Purpose |
 |-------|---------|
-| `codegraph` | Main binary: CLI, ingest, classify, validate, 58+ generators |
+| `codegraph` | Main binary: CLI, ingest, classify, validate, 59+ generators |
 | `codegraph-core` | Graph data model: `GraphQuerier`, `GraphIngestor`, node/edge types |
 | `codegraph-grafeo` | Grafeo graph database adapter implementing core traits |
 | `codegraph-backend` | Backend factory (currently Grafeo-only) |
 | `codegraph-type-contracts` | Type system: PgType, RustType, DddFieldProjection |
 | `codegraph-naming` | Identifier naming: snake_case, PascalCase, PG identifier handling |
 | `codegraph-classifier` | Config-driven JSON schema type classification |
-| `codegraph-config` | Domain config parsing (`domains.toml`, classifier.toml, profiles.toml) |
+| `codegraph-config` | Domain config parsing (`domains.toml`, classifier.toml, profiles.toml) + `OpsManifest` |
 | `codegraph-ext-points` | Extension points config types |
 | `codegraph-workflow` | Generic state machine workflow engine (SeaORM) |
+| `codegraph-ops` | Rust test & deploy harness (see "Ops Harness" section) |
 
 ## IFML Integration (feat/ifml-integration branch)
 
@@ -343,6 +344,11 @@ cargo test -p codegraph --test grpc_compile_tests   # Level 3: protoc compilatio
 # Profile smoke tests (includes gRPC profile validation)
 cargo test -p codegraph --test profile_smoke_tests
 
+# Ops harness tests (codegraph-ops + ops generator)
+cargo test -p codegraph-ops            # 77 harness tests (suites, proc, db, migrate, ext, metrics)
+cargo test -p codegraph --test ops_generator_tests  # 4 tests: manifest + testkit emission, OpsConfig::load contract
+cargo clippy -p codegraph-ops --all-targets         # must be warning-free
+
 # Full pipeline integration (requires protoc)
 cargo test -p codegraph --test grafeo_e2e_tests -- grafeo_all_entity_generators_produce_output_for_candidate
 
@@ -499,12 +505,86 @@ Generators select the template directory based on the dialect. The existing
 4. Register the dialect in `dialect_for_target()`
 5. Unit tests in `dialect.rs` `#[cfg(test)]` block
 
+## Ops Harness (codegraph-ops + `ops` generator)
+
+### Overview
+
+`crates/codegraph-ops` is a Rust test & deploy harness for codegraph-generated
+apps — a re-imagining of the hand-written bash suite (`test.sh`,
+`lib/common.sh`, `lib/migrate.sh`, `deploy/smoke-test.sh`,
+`scripts/quality-check.sh`) that hr-specs used to maintain. It is
+configuration-driven and extension-pluggable so every codegraph consumer
+shares the same harness while keeping their project-specifics (Xero/Stripe/IRD
+integrations, UI-sync rsync steps, integration migrations) as manifest hooks
+and extensions.
+
+### Architecture layers
+
+| Layer | Location | Notes |
+|-------|----------|-------|
+| **Manifest types** | `crates/codegraph-config/src/ops_manifest.rs` | `OpsManifest` (serde TOML): app name, servers/ports, db targets, supabase, capabilities, hurl, hooks, extensions, smoke entity |
+| **Harness crate** | `crates/codegraph-ops/` | Runtime: `cli.rs` (clap), `config.rs` (`OpsConfig` resolution), `proc.rs` (SIGTERM→SIGKILL supervision, `Supervisor`), `db.rs` (psql wrapper, extension validation), `migrate.rs` (phased migrations, supabase symlinks), `suites/*` (api, cli, ui, e2e, smoke, quality), `ext.rs` (extension protocol + hooks), `metrics.rs` (stage TSV export), `wait.rs`, `env.rs`, `pg.rs` (`PgTarget`) |
+| **Generator** | `crates/codegraph/src/generate/ops.rs` | Global generator `ops` — emits `codegraph-ops.toml` + `testkit/` crate into generated output |
+| **Templates** | `crates/codegraph/templates/ops/` | `testkit_cargo.tera`, `testkit_main.tera` (shadowable via `--template-dir`) |
+| **Profile gating** | `profiles.toml` + `profile.rs` | `ops_backend` feature; `cap("ops", Global, Common, &["ops_backend"], &[])` |
+| **Contract test** | `crates/codegraph/tests/ops_generator_tests.rs` | Emitted manifest must parse via `OpsConfig::load` (cross-crate) |
+
+### Subcommands (run via the generated testkit binary)
+
+```
+cargo run -p testkit -- api        # preflight, migrate, hurl, curl smoke, RLS, shutdown
+cargo run -p testkit -- cli        # CLI e2e (starts API first)
+cargo run -p testkit -- e2e        # Supabase → generate → migrate → build → Playwright
+cargo run -p testkit -- ui         # Playwright only (API must be running)
+cargo run -p testkit -- full       # api then e2e
+cargo run -p testkit -- smoke      # remote deployment smoke test
+cargo run -p testkit -- quality    # cargo test/clippy/fmt + generate + check
+cargo run -p testkit -- clean      # stop services, remove generated output
+cargo run -p testkit -- ext <name> # run a test extension
+cargo run -p testkit -- ext --list # list registered extensions
+```
+
+Global flags: `--config FILE` (manifest path), `--keep`, `--skip-build`,
+`--skip-generate`, `--release`, `--verbose`, `--metrics FILE` (TSV),
+`--headed`, `--grep PATTERN` (repeatable).
+
+`smoke` flags: `--api-url`, `--web-url`, `--expected-commit`,
+`--auth-health-url`, `--worker URL` (repeatable for worker pings).
+
+`quality` accepts extra cargo gate names (e.g. `doc`) as trailing args.
+
+### Extension protocol
+
+- `ext::TestExtension` trait: `name()`, `requires_api_running()`,
+  `run(&OpsContext)` — consumers register via `register_extension()` in their
+  own wrapper binary.
+- Manifest `[[extensions]]` entries with `exec` run out-of-process via `sh -c`
+  (language-agnostic; how hr-specs' Xero/Stripe/IRD-style integrations plug in).
+- Manifest `[[hooks]]` entries run at pipeline points: `pre_generate`,
+  `post_generate`, `post_migrate`, `pre_e2e`, `post_e2e`, `pre_api`,
+  `post_api`, `pre_playwright`.
+
+### Manifest (`codegraph-ops.toml`)
+
+Seeded by the generator from `ProjectConfig`/`BuildPlan` (app name, ports,
+db targets, capabilities). Consumers extend: `database.*.reset_sql`/`seed_sql`,
+`supabase` dir + keys, `hurl.dir`/`skip`/org ids, `smoke.entity` (entity used
+for the api suite's curl CRUD checks), `ui_dir` override (for monorepo sync
+setups), hooks, extensions.
+
+### Adding a feature to the harness
+
+1. Module in `crates/codegraph-ops/src/` (or a new suite in `suites/`).
+2. Wire the subcommand in `cli.rs` + flag plumbing.
+3. Unit tests alongside; `cargo test -p codegraph-ops`.
+4. If the generated manifest needs new seed values, extend
+   `OpsManifest` in `codegraph-config` + the generator in `generate/ops.rs`.
 ## Code conventions
 
 - No `unwrap()` in production code. Use `thiserror` + `?` propagation.
 - Imports grouped: std → external → internal → current crate, separated by blank lines.
 - Templates in `crates/codegraph/templates/` use Tera syntax.
-- 58+ generators in `crates/codegraph/src/generate/` organized by target (api, db, ddd, ui, cli, etc.).
+- 59+ generators in `crates/codegraph/src/generate/` organized by target (api, db, ddd, ui, cli, etc.).
 - IFML-specific generators in `crates/codegraph/src/generate/ifml/`.
 - gRPC-specific generators in `crates/codegraph/src/generate/grpc/`.
 - New node/edge types go in `crates/codegraph-core/src/types/` + `crates/codegraph-grafeo/src/schema_ddl.rs`.

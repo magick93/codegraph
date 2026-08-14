@@ -40,6 +40,7 @@ syn = "2"
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 codegraph-grafeo = { path = "../codegraph-grafeo" }
+codegraph-ops = { path = "../codegraph-ops" }
 tempfile = "3"
 insta = { version = "1", features = ["glob"] }
 syn = { version = "2", features = ["full", "parsing"] }

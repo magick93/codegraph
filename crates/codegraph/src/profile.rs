@@ -373,6 +373,9 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("webhook_dispatch",     Global, Common, &[], &[]),
         cap("webhook_endpoint_api", Global, Common, &[], &[]),
 
+        // ── ops harness generators ──────────────────────────────────────
+        cap("ops",                  Global, Common, &["ops_backend"], &[]),
+
         // ── gRPC generators ────────────────────────────────────────────
         cap("grpc_proto",           Entity,  Api, &["grpc_backend"], &[]),
         cap("grpc_service",         Entity,  Api, &["grpc_backend"], &[]),

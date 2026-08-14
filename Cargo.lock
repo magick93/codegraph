@@ -564,6 +564,7 @@ dependencies = [
  "codegraph-grafeo",
  "codegraph-ifml-dsl",
  "codegraph-naming",
+ "codegraph-ops",
  "codegraph-type-contracts",
  "futures",
  "heck 0.5.0",
@@ -676,6 +677,23 @@ name = "codegraph-naming"
 version = "0.1.0"
 dependencies = [
  "heck 0.5.0",
+]
+
+[[package]]
+name = "codegraph-ops"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "codegraph-config",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+ "url",
 ]
 
 [[package]]

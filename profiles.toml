@@ -26,6 +26,7 @@ validation_level = "strict"
 offline_mode = false
 ifml_backend = true
 grpc_backend = true
+ops_backend = true
 
 [profiles.default.api]
 generators = [
@@ -42,6 +43,8 @@ generators = [
     "webhook_dispatch", "webhook_endpoint_api",
     # gRPC
     "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",
+    # Ops harness
+    "ops",
 ]
 output = "review/generated-candidate/"
 scripts.post_gen = ["echo post-gen check skipped"]
