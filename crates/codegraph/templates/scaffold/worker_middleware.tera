@@ -118,6 +118,21 @@ fn reject_unauthorized(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
+/// Metrics middleware — no-op in the worker slice.
+///
+/// The monolith records Prometheus metrics through the `metrics` crate;
+/// worker crates keep the middleware point so entities with
+/// `pipeline.middleware = ["metrics"]` compile unchanged, but record
+/// nothing until Workers Observability parity lands.
+pub mod metrics_middleware {
+    use axum::{middleware::Next, response::Response};
+
+    pub async fn track_metrics(req: axum::extract::Request, next: Next) -> Response {
+        // TODO(worker-observability): emit request metrics via Workers Observability.
+        next.run(req).await
+    }
+}
+
 /// Per-operation permission middleware — inline worker variant of the
 /// monolith `middleware/permission.rs`. Route-level pipeline middleware
 /// (`pipeline.middleware = ["permission"]`) compiles unchanged against this

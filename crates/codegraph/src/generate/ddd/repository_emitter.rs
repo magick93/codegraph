@@ -1842,10 +1842,22 @@ impl RepositoryImplEmitter {
             // These types (e.g. DeploymentCombinedResponse) are generated in the
             // current entity's dto_included.rs but may not yet be registered in the
             // type registry when the repository emitter runs (DTO generator runs later).
+            // Skip types that resolve_imports already imported above — emitting both
+            // `use crate::domain::..::dto_included::Type;` and
+            // `use super::dto_included::Type;` for the same module is an E0252
+            // "defined multiple times" compile error.
             let mut seen_enriched = std::collections::HashSet::new();
             for path in &include_paths {
                 if path.segments.len() > 1 && seen_enriched.insert(path.response_rust_type.clone())
                 {
+                    let already_imported = !type_registry::resolve_imports(
+                        &[path.response_rust_type.clone()],
+                        &caller_base,
+                    )
+                    .is_empty();
+                    if already_imported {
+                        continue;
+                    }
                     writeln!(
                         code,
                         "use super::dto_included::{};",

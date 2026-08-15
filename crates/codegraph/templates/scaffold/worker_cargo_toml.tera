@@ -42,6 +42,7 @@ worker = { workspace = true, optional = true }
 codegraph-workflow = { workspace = true }
 codegraph-type-contracts = { workspace = true }
 {% if domain_types_path %}{{ project.domain_types_crate | replace(from="_", to="-") }} = { path = "{{ domain_types_path }}" }{% endif %}
+{% if hooks_api_path %}{{ project.hooks_api_crate | replace(from="_", to="-") }} = { path = "{{ hooks_api_path }}" }{% endif %}
 {% if project.persistence_provider == "cornucopia" %}
 tokio-postgres = { workspace = true }
 deadpool-postgres = { workspace = true }

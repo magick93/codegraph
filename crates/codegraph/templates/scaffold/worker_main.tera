@@ -4,6 +4,7 @@
 
 mod api;
 mod app_state;
+mod codelist;
 mod domain;
 mod entity;
 mod error;

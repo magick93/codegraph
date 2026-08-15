@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::generate::api::api_model::resolve_entity_operations;
-use crate::generate::api::include_path::resolve_include_paths;
+use crate::generate::api::include_path::resolve_include_paths_for_topology;
 use crate::generate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
@@ -153,12 +153,13 @@ impl EntityGenerator for RepositoryTraitGenerator {
             .map(|r| r == "root")
             .unwrap_or(true);
         let include_paths = if has_explicit_include || is_root {
-            resolve_include_paths(
+            resolve_include_paths_for_topology(
                 db,
                 config,
                 &domain,
                 schema_title,
                 entity_cfg.and_then(|ec| ec.allow_include.as_ref()),
+                project.is_workers_topology(),
             )
             .await?
         } else {

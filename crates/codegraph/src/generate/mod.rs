@@ -1164,6 +1164,38 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
+    // In workers topology each worker crate gets its own `src/codelist/mod.rs`
+    // re-exporting exactly the codelists its routed DTO code references
+    // (`crate::codelist::<Name>`).  The root-anchored scan above finds
+    // nothing in workers topology (domain/api source lives under
+    // `workers/{domain}/src/`), so the worker `lib.rs`'s `pub mod codelist;`
+    // would otherwise not compile.  Monolith topology never enters this
+    // branch, keeping the root output byte-identical.
+    if workers_topology {
+        let worker_codelist_gen = codelist::rust_enum::RustCodelistGenerator::new(output_dir);
+        for (domain, _entity_titles) in group_by_domain(&order) {
+            let worker_base = output_dir.join("workers").join(&domain);
+            match worker_codelist_gen
+                .generate_reexport_mod_for(db, &worker_base)
+                .await
+            {
+                Ok(files) => {
+                    for file in &files {
+                        write_output(file)?;
+                    }
+                    report.files.extend(files);
+                }
+                Err(e) => {
+                    report.errors.push(report::GenerationError {
+                        entity: format!("(worker-codelists:{domain})"),
+                        generator: "rust_enum".into(),
+                        source: e,
+                    });
+                }
+            }
+        }
+    }
+
     // Per-domain generators — run all (domain, generator) pairs in parallel.
     //
     // In workers topology the domain generator set is constructed per domain

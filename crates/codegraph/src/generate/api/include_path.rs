@@ -89,6 +89,29 @@ pub async fn resolve_include_paths(
     schema_title: &str,
     allow_include: Option<&Vec<String>>,
 ) -> Result<Vec<ResolvedIncludePath>> {
+    // Monolith behaviour: cross-domain include paths stay (same-DB joins).
+    resolve_include_paths_for_topology(db, config, domain, schema_title, allow_include, false)
+        .await
+}
+
+/// [`resolve_include_paths`] with an explicit workers-topology flag.
+///
+/// In workers topology, include paths that cross a domain boundary are
+/// dropped: the generated fetch code would reference the target domain's
+/// `crate::domain::{domain}/...` and `crate::entity/{module}/...` modules,
+/// which live in a *different* worker crate.
+///
+/// TODO(worker-remote-includes): fetch cross-domain includes over the target
+/// worker's API (service binding) instead of same-DB SQL; until then the
+/// workers compile gate keeps only same-domain includes.
+pub async fn resolve_include_paths_for_topology(
+    db: &dyn GraphQuerier,
+    config: &codegraph_config::DomainConfig,
+    domain: &str,
+    schema_title: &str,
+    allow_include: Option<&Vec<String>>,
+    workers_topology: bool,
+) -> Result<Vec<ResolvedIncludePath>> {
     let source_schema = db
         .get_schema_in_domain(schema_title, domain)
         .await?
@@ -100,7 +123,7 @@ pub async fn resolve_include_paths(
     match allow_include {
         Some(paths) if paths.is_empty() => Ok(Vec::new()),
         Some(paths) => {
-            resolve_explicit_paths(
+            let resolved = resolve_explicit_paths(
                 db,
                 config,
                 domain,
@@ -110,10 +133,11 @@ pub async fn resolve_include_paths(
                 source_module,
                 paths,
             )
-            .await
+            .await?;
+            Ok(filter_cross_domain_paths(domain, resolved, workers_topology))
         }
         None => {
-            resolve_auto_paths(
+            let resolved = resolve_auto_paths(
                 db,
                 config,
                 domain,
@@ -121,9 +145,40 @@ pub async fn resolve_include_paths(
                 source_entity_name,
                 source_module,
             )
-            .await
+            .await?;
+            Ok(filter_cross_domain_paths(domain, resolved, workers_topology))
         }
     }
+}
+
+/// Drop include paths with cross-domain segments when `workers_topology` is
+/// set; monolith keeps them.
+fn filter_cross_domain_paths(
+    source_domain: &str,
+    paths: Vec<ResolvedIncludePath>,
+    workers_topology: bool,
+) -> Vec<ResolvedIncludePath> {
+    if !workers_topology {
+        return paths;
+    }
+    paths
+        .into_iter()
+        .filter(|path| {
+            let cross_domain = path
+                .segments
+                .iter()
+                .any(|seg| seg.domain != source_domain);
+            if cross_domain {
+                tracing::warn!(
+                    include_path = %path.alias,
+                    source_domain = %source_domain,
+                    "dropping cross-domain include path in workers topology \
+                     (TODO(worker-remote-includes))"
+                );
+            }
+            !cross_domain
+        })
+        .collect()
 }
 
 // ── Explicit path resolution ──────────────────────────────────────────

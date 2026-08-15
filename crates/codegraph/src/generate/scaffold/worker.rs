@@ -69,6 +69,9 @@ pub struct WorkerDomain {
     pub cron_triggers: Vec<String>,
     /// Path to the domain-types crate relative to this worker's crate dir.
     pub domain_types_path: String,
+    /// Path to the hooks-api crate relative to this worker's crate dir
+    /// (empty when hooks are disabled).
+    pub hooks_api_path: String,
 }
 
 /// Context for the workers scaffold templates.
@@ -129,6 +132,7 @@ pub fn build_worker_domains(
                     .and_then(|e| e.cron_triggers.clone())
                     .unwrap_or_default(),
                 domain_types_path: String::new(),
+                hooks_api_path: String::new(),
             }
         })
         .collect()
@@ -185,6 +189,15 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
             format!("../../{domain_types_rel}")
         };
 
+        // Hooks-api crate path, same re-basing (empty when hooks are disabled).
+        let hooks_api_rel = resolve_path(&project.hooks_api_base, &abs_output);
+        let worker_hooks_api_path = if hooks_api_rel.is_empty() || project.hooks_api_crate.is_empty()
+        {
+            String::new()
+        } else {
+            format!("../../{hooks_api_rel}")
+        };
+
         let app_name = project.app_name.clone();
         let gateway_name = format!("{app_name}-gateway");
         let gateway_lib_name = codegraph_naming::to_snake_case(&gateway_name);
@@ -192,6 +205,7 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         let mut domains = build_worker_domains(&app_name, config, scaffold_domains);
         for domain in &mut domains {
             domain.domain_types_path = worker_domain_types_path.clone();
+            domain.hooks_api_path = worker_hooks_api_path.clone();
         }
 
         let ctx = WorkerScaffoldContext {
@@ -322,6 +336,32 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
                 path: base.join("src").join("middleware.rs"),
                 content: middleware,
             });
+
+            // Shared API metadata type — routed handlers reference
+            // `crate::api::meta::Meta`, so each worker crate needs its own
+            // copy (same template as the monolith scaffold).
+            let meta = render_template_with_project(tera, "scaffold/meta.tera", domain, project)?;
+            files.push(GeneratedFile {
+                path: base.join("src").join("api").join("meta.rs"),
+                content: meta,
+            });
+
+            // Hook registry re-export — worker_app_state.rs references
+            // `crate::hooks::HookRegistry`; the registry itself lives in the
+            // shared hooks-api crate (single source of truth for all domains'
+            // lifecycle traits), so each worker re-exports it from there.
+            if !project.hooks_api_crate.is_empty() {
+                let hooks_mod = render_template_with_project(
+                    tera,
+                    "scaffold/worker_hooks_mod.tera",
+                    domain,
+                    project,
+                )?;
+                files.push(GeneratedFile {
+                    path: base.join("src").join("hooks").join("mod.rs"),
+                    content: hooks_mod,
+                });
+            }
 
             let wrangler = render_template_with_project(
                 tera,

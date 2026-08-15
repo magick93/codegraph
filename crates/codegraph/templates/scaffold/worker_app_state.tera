@@ -46,6 +46,9 @@ impl AppState {
                 pool.clone(),
 {% endif %}
                 db.clone(),
+{% if project.hooks_api_crate %}
+                None,
+{% endif %}
             ),
             {{ name }}_{{ entity.module_name }}_queries: crate::domain::{{ name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler::new(
                 Arc::new(
@@ -55,6 +58,9 @@ impl AppState {
                 pool.clone(),
 {% endif %}
                 db.clone(),
+{% if project.hooks_api_crate %}
+                None,
+{% endif %}
             ),
 {% endfor %}
             db: db.clone(),

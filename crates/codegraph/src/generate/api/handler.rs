@@ -15,7 +15,9 @@ use crate::generate::type_registry;
 use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
-use super::include_path::{resolve_include_paths, ResolvedIncludePath};
+use super::include_path::{
+    resolve_include_paths_for_topology, ResolvedIncludePath,
+};
 use super::router::{ChildInfo, CrossRefInfo};
 
 use super::api_model::{resolve_entity_operations, resolve_path_segment};
@@ -552,8 +554,15 @@ impl EntityGenerator for HandlerGenerator {
             .unwrap_or(true);
         let include_paths = if has_explicit_include || is_root {
             if let Some(ec) = entity_cfg {
-                resolve_include_paths(db, config, &domain, schema_title, ec.allow_include.as_ref())
-                    .await?
+                resolve_include_paths_for_topology(
+                    db,
+                    config,
+                    &domain,
+                    schema_title,
+                    ec.allow_include.as_ref(),
+                    project.is_workers_topology(),
+                )
+                .await?
             } else {
                 Vec::new()
             }
