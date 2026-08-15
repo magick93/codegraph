@@ -2,26 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
-use codegraph::generate::ProjectConfig;
 use codegraph_backend::{create_backend, BackendConfig};
 
 mod cli;
-
-/// Arguments for the `run` subcommand.
-struct RunArgs<'a> {
-    schemas: &'a Path,
-    classifier: &'a Path,
-    config_path: &'a Path,
-    output: &'a Path,
-    extension_points_path: Option<&'a Path>,
-    profile_name: &'a str,
-    variant: Option<&'a str>,
-    profiles_config_path: Option<PathBuf>,
-    no_post_gen: bool,
-    template_dir: &'a [PathBuf],
-    ifml_files: &'a [PathBuf],
-    ifml_framework: &'a [String],
-}
 
 #[tokio::main]
 async fn main() -> codegraph::error::Result<()> {
@@ -42,7 +25,7 @@ async fn main() -> codegraph::error::Result<()> {
             template_dir,
             ifml_framework,
         } => {
-            cmd_generate(
+            codegraph::driver::generate(
                 &config,
                 &output,
                 extension_points.as_deref(),
@@ -58,7 +41,20 @@ async fn main() -> codegraph::error::Result<()> {
             config,
             domain,
             format,
-        } => cmd_classify(&schemas, &classifier, &config, domain.as_deref(), format).await,
+        } => {
+            let format = match format {
+                cli::ClassifyFormat::Table => codegraph::driver::ClassifyFormat::Table,
+                cli::ClassifyFormat::Json => codegraph::driver::ClassifyFormat::Json,
+            };
+            codegraph::driver::classify(
+                &schemas,
+                &classifier,
+                &config,
+                domain.as_deref(),
+                format,
+            )
+            .await
+        }
         cli::Commands::Run {
             schemas,
             classifier,
@@ -73,7 +69,7 @@ async fn main() -> codegraph::error::Result<()> {
             ifml_files,
             ifml_framework,
         } => {
-            cmd_run(RunArgs {
+            codegraph::driver::run(codegraph::driver::RunArgs {
                 schemas: &schemas,
                 classifier: &classifier,
                 config_path: &config,
@@ -86,6 +82,7 @@ async fn main() -> codegraph::error::Result<()> {
                 template_dir: &template_dir,
                 ifml_files: &ifml_files,
                 ifml_framework: &ifml_framework,
+                codegraph_rev: None,
             })
             .await
         }
@@ -94,153 +91,62 @@ async fn main() -> codegraph::error::Result<()> {
             classifier,
             config,
         } => cmd_lsp(&schemas, classifier.as_deref(), config.as_deref()).await,
-    }
-}
-
-async fn run_validation(
-    querier: &dyn codegraph_core::traits::GraphQuerier,
-    config: &codegraph_config::DomainConfig,
-) -> codegraph::error::Result<()> {
-    let issues = codegraph::validate::ValidationPass::run(querier, config).await;
-    let errors: Vec<_> = issues
-        .iter()
-        .filter(|i| matches!(i.severity, codegraph::validate::Severity::Error))
-        .collect();
-    if !errors.is_empty() {
-        for e in &errors {
-            eprintln!("  ERR  {} [{}]: {}", e.entity, e.check, e.message);
+        cli::Commands::Init {
+            name,
+            output,
+            domains,
+            database_target,
+            persistence_provider,
+            deployment_topology,
+            grpc,
+            ifml,
+            no_ops,
+            rev,
+            codegraph_path,
+            force,
+            template_dir,
+        } => {
+            let args = codegraph::init::commands::InitArgs {
+                name,
+                output_dir: output.unwrap_or_else(|| PathBuf::from(".")),
+                domains: domains.unwrap_or_else(|| vec!["common".to_string()]),
+                database_target,
+                persistence_provider,
+                deployment_topology,
+                grpc,
+                ifml,
+                ops: !no_ops,
+                rev,
+                codegraph_path,
+                force,
+                template_dirs: template_dir,
+            };
+            codegraph::init::commands::cmd_init(&args)
         }
-        return Err(codegraph::error::Error::Validation(format!(
-            "{} validation errors found",
-            errors.len()
-        )));
-    }
-    for w in issues
-        .iter()
-        .filter(|i| matches!(i.severity, codegraph::validate::Severity::Warning))
-    {
-        eprintln!("  WARN {} [{}]: {}", w.entity, w.check, w.message);
-    }
-    Ok(())
-}
-
-fn load_ui_overrides(
-    config_path: &Path,
-) -> codegraph::error::Result<codegraph_config::UiOverrideConfig> {
-    let parent = config_path.parent().ok_or_else(|| {
-        codegraph::error::Error::Config(format!(
-            "Config path '{}' has no parent directory",
-            config_path.display()
-        ))
-    })?;
-    let path = parent.join("ui-overrides.toml");
-    if path.exists() {
-        codegraph_config::parse_ui_overrides_config(&path)
-            .map_err(|e| codegraph::error::Error::Config(e.to_string()))
-    } else {
-        Ok(codegraph_config::UiOverrideConfig::default())
+        cli::Commands::Doctor {
+            config,
+            schemas,
+            classifier,
+            profiles_config,
+        } => {
+            let args = codegraph::init::commands::DoctorArgs {
+                config,
+                schemas,
+                classifier,
+                profiles_config,
+            };
+            codegraph::init::commands::cmd_doctor(&args)
+        }
+        cli::Commands::Add { target } => match target {
+            cli::AddTarget::Domain { name } => codegraph::init::commands::cmd_add_domain(
+                &PathBuf::from("domains.toml"),
+                &PathBuf::from("schemas"),
+                &name,
+            ),
+        },
     }
 }
 
-fn load_seed_config(config_path: &Path) -> Option<PathBuf> {
-    let path = config_path.parent()?.join("seed.toml");
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
-}
-
-fn load_ui_domains(
-    config_path: &Path,
-) -> codegraph::error::Result<codegraph_config::UiDomainConfig> {
-    let parent = config_path.parent().ok_or_else(|| {
-        codegraph::error::Error::Config(format!(
-            "Config path '{}' has no parent directory",
-            config_path.display()
-        ))
-    })?;
-    let path = parent.join("ui-domains.toml");
-    if path.exists() {
-        codegraph_config::parse_ui_domains_config(&path)
-            .map_err(|e| codegraph::error::Error::Config(e.to_string()))
-    } else {
-        Ok(codegraph_config::UiDomainConfig::default())
-    }
-}
-
-async fn cmd_generate(
-    config_path: &Path,
-    output: &Path,
-    extension_points_path: Option<&Path>,
-    template_dir: &[PathBuf],
-    ifml_frameworks: &[String],
-) -> codegraph::error::Result<()> {
-    let config = codegraph_config::config::parse_domain_config(config_path)
-        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
-
-    let backend_config = BackendConfig::default();
-    let be = create_backend(&backend_config)
-        .await
-        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
-
-    let ui_overrides = load_ui_overrides(config_path)?;
-    let ui_domains = load_ui_domains(config_path)?;
-
-    let tera = if template_dir.is_empty() {
-        let td = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-        codegraph::generate::template_engine::create_tera(&td)?
-    } else {
-        let dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
-        codegraph::generate::template_engine::create_tera_with_overrides(&dirs)?
-    };
-
-    let ext_config = match extension_points_path {
-        Some(path) => Some(
-            codegraph_ext_points::parse_extension_points(path)
-                .map_err(|e| codegraph::error::Error::Config(e.to_string()))?,
-        ),
-        None => None,
-    };
-
-    let api_resources = be
-        .querier()
-        .get_api_resources()
-        .await
-        .map_err(codegraph::error::Error::Graph)?;
-    if api_resources.is_empty() {
-        println!("No API model nodes found — auto-seeding from domain configuration...");
-        let stats = codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &config).await?;
-        println!("Auto-seeded: {stats}");
-    }
-
-    // cmd_generate uses a pre-populated backend; schema base dir is unknown here.
-    // Pass an empty path so UiCodelistGenerator skips gracefully.
-    run_validation(be.querier(), &config).await?;
-    let report =
-        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
-            db: be.querier(),
-            config: &config,
-            output_dir: output,
-            tera: &tera,
-            ui_overrides: &ui_overrides,
-            ui_domains: &ui_domains,
-            schema_base_dir: Path::new(""),
-            seed_config: load_seed_config(config_path).as_deref(),
-            domain_types_base: None,
-            hooks_base: None,
-            ext_points: ext_config.as_ref(),
-            build_plan: None,
-            ifml_frameworks: ifml_frameworks.to_vec(),
-            project_config: None,
-        })
-        .await?;
-    print!("{}", report.summary());
-    if report.has_errors() {
-        eprintln!("Generation completed with errors. Some entities were skipped.");
-    }
-    Ok(())
-}
 
 async fn cmd_migrate(args: cli::MigrateArgs) -> codegraph::error::Result<()> {
     let domain_config = codegraph_config::config::parse_domain_config(&args.config)
@@ -262,361 +168,6 @@ async fn cmd_migrate(args: cli::MigrateArgs) -> codegraph::error::Result<()> {
         "{} API resources, {} operations, {} endpoints, {} interactions created",
         stats.resources, stats.operations, stats.endpoints, stats.interactions
     );
-
-    Ok(())
-}
-
-async fn cmd_run(args: RunArgs<'_>) -> codegraph::error::Result<()> {
-    let RunArgs {
-        schemas,
-        classifier,
-        config_path,
-        output,
-        extension_points_path,
-        profile_name,
-        variant,
-        profiles_config_path,
-        no_post_gen,
-        template_dir,
-        ifml_files,
-        ifml_framework,
-    } = args;
-
-    let backend_config = BackendConfig::default();
-    let be = create_backend(&backend_config)
-        .await
-        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
-
-    let domain_config = codegraph_config::config::parse_domain_config(config_path)
-        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
-    let classifier_config = codegraph_classifier::config::parse_classifier_config(classifier)
-        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
-
-    let ui_overrides = load_ui_overrides(config_path)?;
-    let ui_domains = load_ui_domains(config_path)?;
-
-    // Load and resolve the profile.
-    let profiles_path = profiles_config_path.unwrap_or_else(|| PathBuf::from("profiles.toml"));
-    let registry = codegraph::profile::CapabilityRegistry::new();
-    let mut project_config: Option<ProjectConfig> = None;
-    let mut domain_types_base_path: Option<PathBuf> = None;
-    let build_plan = if profiles_path.exists() || profile_name != "default" {
-        let resolved =
-            codegraph::profile::load_and_resolve_profile(&profiles_path, profile_name, variant)?;
-        let plan = codegraph::profile::BuildPlan::from_profile(&resolved, &registry)?;
-
-        // Build project config from profile meta (optional fields override defaults).
-        let meta = &resolved.meta;
-        domain_types_base_path = meta.domain_types_base.as_ref().map(|p| output.join(p));
-        let database_target_str = plan.database_target().to_string();
-        let persistence_provider_str = plan.persistence_provider().to_string();
-        let deployment_topology_str = plan.deployment_topology().to_string();
-        project_config = Some(ProjectConfig {
-            app_name: meta.app_name.clone().unwrap_or_else(|| "app".into()),
-            domain_types_crate: meta
-                .domain_types_crate
-                .clone()
-                .unwrap_or_else(|| "domain_types".into()),
-            hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_default(),
-            api_title: meta
-                .api_title
-                .clone()
-                .unwrap_or_else(|| "HR Open API".into()),
-            generator_name: meta
-                .generator_name
-                .clone()
-                .unwrap_or_else(|| "codegraph".into()),
-            domain_types_base: meta.domain_types_base.clone().unwrap_or_default(),
-            hooks_api_base: meta.hooks_api_base.clone().unwrap_or_default(),
-            extensions_base: meta.extensions_base.clone().unwrap_or_default(),
-            app_config_base: meta.app_config_base.clone().unwrap_or_default(),
-            decision_engine_base: meta.decision_engine_base.clone().unwrap_or_default(),
-            codegraph_workflow_base: meta.codegraph_workflow_base.clone().unwrap_or_default(),
-            type_contracts_base: meta.type_contracts_base.clone().unwrap_or_default(),
-            database_target: database_target_str,
-            persistence_provider: persistence_provider_str,
-            deployment_topology: deployment_topology_str,
-            types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
-            codegraph_rev: current_git_rev(),
-            api_version: domain_config.defaults.api_version.clone(),
-        });
-
-        println!(
-            "Using profile \"{}\" (variant: {:?}) — {} entity, {} domain, {} global generators",
-            resolved.meta.name,
-            variant,
-            plan.entity_generators.len(),
-            plan.domain_generators.len(),
-            plan.global_generators.len(),
-        );
-        Some(plan)
-    } else {
-        // profiles.toml doesn't exist and profile is "default" —
-        // backward compat: run all generators without a plan.
-        eprintln!(
-            "Warning: profiles.toml not found at {} — running all generators (no profile filtering)",
-            profiles_path.display()
-        );
-        None
-    };
-
-    // Pass 1: Ingest all schemas (no entity classification)
-    let empty_entities = HashSet::new();
-    let ingest_result = codegraph::ingest::async_ingest::ingest_schemas(
-        be.ingestor(),
-        schemas,
-        &classifier_config,
-        &empty_entities,
-        &ui_overrides,
-        &domain_config.defaults.type_suffix,
-    )
-    .await?;
-    println!(
-        "Pass 1 complete: {} schemas ingested",
-        ingest_result.schemas_created
-    );
-
-    // Pass 1b: Ingest IFML DSL files (if provided)
-    if !ifml_files.is_empty() {
-        println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
-        let mut total_stats = codegraph::ingest::ifml_ingest::IfmlIngestStats::default();
-        for ifml_path in ifml_files {
-            let model = codegraph_ifml_dsl::parse_ifml_file(ifml_path).map_err(|e| {
-                codegraph::error::Error::Config(format!(
-                    "Failed to parse IFML file '{}': {}",
-                    ifml_path.display(),
-                    e
-                ))
-            })?;
-            let stats =
-                codegraph::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
-            total_stats.view_containers += stats.view_containers;
-            total_stats.containers += stats.containers;
-            total_stats.components += stats.components;
-            total_stats.events += stats.events;
-            total_stats.parameters += stats.parameters;
-            total_stats.actions += stats.actions;
-        }
-        println!("Pass 1b complete: {total_stats}");
-    }
-
-    // Pass 1c: Ingest API model from domain configuration
-    {
-        let api_stats =
-            codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config).await?;
-        println!("Pass 1c complete: {api_stats}");
-    }
-
-    // Auto-classify
-    let classifier_types: HashSet<String> = classifier_config
-        .primitive_wrappers
-        .keys()
-        .cloned()
-        .chain(classifier_config.array_wrappers.keys().cloned())
-        .chain(classifier_config.range_wrappers.keys().cloned())
-        .chain(
-            classifier_config
-                .composite_wrappers
-                .iter()
-                .map(|cw| cw.schema.clone()),
-        )
-        .collect();
-
-    let all_data = be
-        .querier()
-        .get_classification_data()
-        .await
-        .map_err(codegraph::error::Error::Graph)?;
-
-    let naming_rules = classifier_config.naming_rules.clone();
-    let auto_classifier = codegraph::classify::AutoClassifier::new(classifier_types, naming_rules);
-    let mut entity_names = HashSet::new();
-
-    let mut sorted_domain_names: Vec<&String> = domain_config.domains.keys().collect();
-    sorted_domain_names.sort();
-    for domain_name in &sorted_domain_names {
-        let domain_entry = &domain_config.domains[domain_name.as_str()];
-        let domain_schemas: Vec<_> = all_data
-            .iter()
-            .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
-            .cloned()
-            .collect();
-        let result = auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
-        for score in &result.entities {
-            entity_names.insert(score.title.clone());
-        }
-    }
-
-    // Also include legacy entities[] for backward compat during migration
-    for domain_entry in domain_config.domains.values() {
-        for entity in &domain_entry.entities {
-            entity_names.insert(entity.clone());
-        }
-    }
-
-    println!("Auto-classified {} entities", entity_names.len());
-
-    // Pass 2: Update graph with entity flags
-    codegraph::ingest::async_ingest::reclassify_with_entities(
-        be.ingestor(),
-        be.querier(),
-        &entity_names,
-    )
-    .await?;
-
-    let override_dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
-
-    // When the profile-template-pack PR lands, template_pack from the resolved
-    // profile variant can be appended to override_dirs here.
-
-    let tera = if override_dirs.is_empty() {
-        let td = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-        codegraph::generate::template_engine::create_tera(&td)?
-    } else {
-        codegraph::generate::template_engine::create_tera_with_overrides(&override_dirs)?
-    };
-
-    let ext_config = match extension_points_path {
-        Some(path) => Some(
-            codegraph_ext_points::parse_extension_points(path)
-                .map_err(|e| codegraph::error::Error::Config(e.to_string()))?,
-        ),
-        None => None,
-    };
-
-    run_validation(be.querier(), &domain_config).await?;
-
-    let report =
-        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
-            db: be.querier(),
-            config: &domain_config,
-            output_dir: output,
-            tera: &tera,
-            ui_overrides: &ui_overrides,
-            ui_domains: &ui_domains,
-            schema_base_dir: schemas,
-            seed_config: load_seed_config(config_path).as_deref(),
-            domain_types_base: domain_types_base_path.as_deref(),
-            hooks_base: None,
-            ext_points: ext_config.as_ref(),
-            build_plan: build_plan.as_ref(),
-            ifml_frameworks: ifml_framework.to_vec(),
-            project_config: project_config.as_ref(),
-        })
-        .await?;
-
-    print!("{}", report.summary());
-    if report.has_errors() {
-        eprintln!("Generation completed with errors. Some entities were skipped.");
-    }
-
-    // Run post-generation scripts from the profile plan.
-    if let Some(ref plan) = build_plan {
-        if !no_post_gen && !plan.post_gen_scripts.is_empty() {
-            println!("\nPost-generation scripts:");
-            for (section, scripts) in &plan.post_gen_scripts {
-                for cmd in scripts {
-                    println!("  [{section}] {cmd}");
-                    let status = std::process::Command::new("sh")
-                        .arg("-c")
-                        .arg(cmd)
-                        .status()
-                        .map_err(|e| {
-                            codegraph::error::Error::Config(format!(
-                                "failed to run post_gen script [{section}] {cmd}: {e}"
-                            ))
-                        })?;
-                    if !status.success() {
-                        let code = status.code().unwrap_or(-1);
-                        return Err(codegraph::error::Error::Config(format!(
-                            "post_gen script [{section}] {cmd} failed (exit {code})"
-                        )));
-                    }
-                }
-            }
-        }
-    }
-
-    println!("Done.");
-    Ok(())
-}
-
-async fn cmd_classify(
-    schemas: &Path,
-    classifier_path: &Path,
-    config_path: &Path,
-    domain_filter: Option<&str>,
-    format: cli::ClassifyFormat,
-) -> codegraph::error::Result<()> {
-    let domain_config = codegraph_config::config::parse_domain_config(config_path)
-        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
-    let classifier_config = codegraph_classifier::config::parse_classifier_config(classifier_path)
-        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
-
-    let classifier_types: HashSet<String> = classifier_config
-        .primitive_wrappers
-        .keys()
-        .cloned()
-        .chain(classifier_config.array_wrappers.keys().cloned())
-        .chain(classifier_config.range_wrappers.keys().cloned())
-        .chain(
-            classifier_config
-                .composite_wrappers
-                .iter()
-                .map(|cw| cw.schema.clone()),
-        )
-        .collect();
-
-    let backend_config = BackendConfig::default();
-    let be = create_backend(&backend_config)
-        .await
-        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
-
-    let ui_overrides = load_ui_overrides(config_path)?;
-
-    let empty_entities = HashSet::new();
-    codegraph::ingest::async_ingest::ingest_schemas(
-        be.ingestor(),
-        schemas,
-        &classifier_config,
-        &empty_entities,
-        &ui_overrides,
-        &domain_config.defaults.type_suffix,
-    )
-    .await?;
-
-    let all_data = be
-        .querier()
-        .get_classification_data()
-        .await
-        .map_err(codegraph::error::Error::Graph)?;
-
-    let naming_rules = classifier_config.naming_rules.clone();
-    let auto_classifier = codegraph::classify::AutoClassifier::new(classifier_types, naming_rules);
-    let mut results = Vec::new();
-
-    let mut sorted_domain_names: Vec<&String> = domain_config.domains.keys().collect();
-    sorted_domain_names.sort();
-    for domain_name in &sorted_domain_names {
-        let domain_entry = &domain_config.domains[domain_name.as_str()];
-        let domain_schemas: Vec<_> = all_data
-            .iter()
-            .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
-            .cloned()
-            .collect();
-
-        let result = auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
-        results.push(result);
-    }
-
-    results.sort_by(|a, b| a.domain.cmp(&b.domain));
-
-    match format {
-        cli::ClassifyFormat::Table => {
-            codegraph::classify::output::format_table(&results, domain_filter)
-        }
-        cli::ClassifyFormat::Json => codegraph::classify::output::format_json(&results),
-    }
 
     Ok(())
 }
@@ -777,13 +328,3 @@ async fn cmd_lsp(
     Ok(())
 }
 
-/// Return the current Git revision hash, or an empty string if unavailable.
-fn current_git_rev() -> String {
-    std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default()
-}

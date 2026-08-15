@@ -6,7 +6,7 @@ Workspace root `Cargo.toml` with 13 crates:
 
 | Crate | Purpose |
 |-------|---------|
-| `codegraph` | Main binary: CLI, ingest, classify, validate, 59+ generators |
+| `codegraph` | Main binary: CLI, ingest, classify, validate, 59+ generators + project init/doctor/add-domain lifecycle |
 | `codegraph-core` | Graph data model: `GraphQuerier`, `GraphIngestor`, node/edge types |
 | `codegraph-grafeo` | Grafeo graph database adapter implementing core traits |
 | `codegraph-backend` | Backend factory (currently Grafeo-only) |
@@ -334,6 +334,7 @@ cargo test -p codegraph-ifml-dsl          # 20 DSL parser tests
 cargo test -p codegraph -- lsp            # 5 LSP server tests
 cargo test -p codegraph --test ifml_e2e_tests  # 5 E2E tests
 cargo test -p codegraph --lib -- ifml     # 6 dependency graph tests
+cargo test -p codegraph --test init_tests # project lifecycle integration tests
 
 # Dialect tests
 cargo test -p codegraph --lib -- generate::db::dialect  # 12 dialect unit tests
@@ -386,6 +387,122 @@ cargo run -- run --schemas <dir> --classifier classifier.toml \
 cargo run -- classify --schemas <dir> --classifier classifier.toml \
   --config domains.toml
 ```
+
+## Project Initialization (init / doctor / add domain)
+
+### Overview
+
+`codegraph init [NAME]` scaffolds a consumer monorepo. `codegraph doctor`
+validates the result, and `codegraph add domain <name>` grows it. The
+scaffold is generated from 16 Tera templates in
+`crates/codegraph/templates/project/` (see "Templates & context" below).
+
+### Scaffolded file tree
+
+| File | Purpose |
+|------|---------|
+| `Cargo.toml` | Workspace: members `{name}-graph` + `ops/testkit`; codegraph crates as `git+rev` deps (or `path` deps with `--codegraph-path`); `exclude = ["generated"]` |
+| `{name}-graph/Cargo.toml`, `{name}-graph/src/main.rs` | Wrapper binary: clap `Run`/`Classify`/`Generate`/`Doctor` calling `codegraph::driver` |
+| `domains.toml` | Example domain entry (`entities = ["ItemType"]` on the first domain) |
+| `classifier.toml` | Classifier config seed |
+| `profiles.toml` | Profile meta (`domain_types_base`) + feature flags (`ops_backend`, `grpc_backend`, `ifml_backend`, `database_target`, `persistence_provider`, `deployment_topology`) |
+| `extension-points.toml` | Extension points config |
+| `schemas/{domain}/example.json` | Example entity schema (`ItemType`) |
+| `codegraph-ops.toml` | Seeded ops manifest (see "Ops Harness" section) |
+| `ops/testkit/Cargo.toml`, `ops/testkit/src/main.rs` | Testkit workspace member |
+| `hurl/health.hurl` | Health-check hurl file |
+| `justfile` | Recipes: `generate`, `classify`, `doctor`, `api`, `e2e`, `full`, `clean` |
+| `.gitignore` | Ignores `generated/` |
+| `README.md` | Getting-started readme |
+| `.github/workflows/ci.yml` | CI workflow |
+
+### Layout decisions
+
+- **Rev pinning**: `crates/codegraph/build.rs` embeds the checkout's git rev
+  at build time (`cargo:rustc-env=CODEGRAPH_GIT_REV`, exposed via
+  `codegraph::rev::codegraph_rev()`). `init` uses it as the default `rev` for
+  the workspace's codegraph deps, so the scaffold pins the exact codegraph
+  revision that generated it. `--rev <sha>` overrides.
+- **`--codegraph-path <dir>`**: switches all codegraph deps to local path
+  deps (`{dir}/crates/...`) instead of `git+rev`, for local development.
+- **`generated/`**: all generator output lands there; it is excluded from the
+  workspace and gitignored. The wrapper binary and config stay in the repo.
+- **Safety**: init refuses to overwrite existing files unless `--force`, and
+  a path containment guard keeps writes inside the project dir.
+
+### Subcommand reference
+
+#### `codegraph init [NAME]`
+
+`NAME` prompts interactively when omitted.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--output <dir>` | `./{name}` | Parent dir to create the project in |
+| `--domains a,b` | `common` | Comma-separated domain names |
+| `--database-target` | `postgres` | DB dialect (`postgres`/`sqlite`) |
+| `--persistence-provider` | `sea_orm` | `sea_orm`/`cornucopia` |
+| `--deployment-topology` | `monolith` | `monolith`/`workers` |
+| `--grpc`, `--ifml` | off | Enable gRPC / IFML features in `profiles.toml` |
+| `--no-ops` | off | Disable the ops testkit |
+| `--rev <sha>` | embedded rev | Codegraph git rev to pin |
+| `--codegraph-path <dir>` | none | Path deps to a local codegraph checkout |
+| `--force` | off | Overwrite existing files |
+| `--template-dir <dir>` | repeatable | Additional template dirs (later take precedence) |
+
+#### `codegraph doctor`
+
+| Flag | Default | Checks |
+|------|---------|--------|
+| `--config` | `domains.toml` | domains.toml parses |
+| `--schemas` | `schemas` | schemas dir contains JSON schema(s) |
+| `--classifier` | `classifier.toml` | classifier.toml parses |
+| `--profiles-config` | optional | profiles.toml parses + BuildPlan capability validation |
+
+Hard failures (non-zero exit): domains.toml, classifier.toml, profiles.toml,
+schemas dir, codegraph-ops.toml (`OpsConfig::load`). Warnings only: missing
+profiles.toml / codegraph-ops.toml, Cargo.toml rev pins vs the binary's
+embedded rev (mismatch WARN), missing `psql`/`npx`/`hurl` tools.
+
+#### `codegraph add domain <name>`
+
+Appends a `[domains.<name>]` entry (label, schema_dir, postgres_schema) to
+`domains.toml` and creates `schemas/<name>/example.json`. Rejects duplicate
+domain names.
+
+### Lifecycle walkthrough
+
+```bash
+codegraph init my-app                       # scaffold (add --codegraph-path ~/git/codegraph for local dev)
+cd my-app
+just doctor                                 # validates config + toolchain
+just generate                               # wrapper run -> generated/ (excluded from workspace)
+just api                                    # ops testkit api suite (preflight, migrate, hurl, curl, RLS)
+just e2e                                    # ops testkit e2e (Supabase -> generate -> migrate -> build -> Playwright)
+just full                                   # api then e2e
+```
+
+Note: a freshly scaffolded minimal project's generated output does not yet
+compile out of the box — pre-existing generator assumptions about
+hooks/codelists/error modules (tracked in issue #71). Consumers with richer
+schemas (hr-specs style) are unaffected.
+
+### Templates & context
+
+Project templates live in `crates/codegraph/templates/project/` (16
+templates, shadowable via `--template-dir`). The render context is
+`ProjectTemplateContext` in `crates/codegraph/src/init/context.rs`, and the
+canonical (template, output-path) list is `PROJECT_TEMPLATES` in the same
+file; output paths support `{graph}` and `{domain}` placeholders.
+
+Adding a new template:
+
+1. Add `project/<name>.tera` under `crates/codegraph/templates/project/`.
+2. Append its `(template, output)` pair to `PROJECT_TEMPLATES` in
+   `crates/codegraph/src/init/context.rs`.
+3. Add any new fields to `ProjectTemplateContext` (it serializes into the
+   Tera context).
+4. Update the `init` tests / `file_tree()` expectations if the layout changed.
 
 ## Template Overrides
 

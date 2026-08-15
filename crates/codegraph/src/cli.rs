@@ -114,6 +114,77 @@ pub enum Commands {
     /// Reads domains.toml and creates ApiResource/Operation/Endpoint
     /// nodes in an existing graph database.
     Migrate(MigrateArgs),
+    /// Scaffold a new consumer project (domains.toml, schemas, workspace, ops harness)
+    Init {
+        /// Project name (kebab-case); prompts interactively when omitted.
+        name: Option<String>,
+
+        /// Parent directory to create the project in (default: ./<name>)
+        #[arg(long)]
+        output: Option<PathBuf>,
+
+        /// Domain names, comma-separated (default: common)
+        #[arg(long, value_delimiter = ',')]
+        domains: Option<Vec<String>>,
+
+        #[arg(long, default_value = "postgres")]
+        database_target: String,
+
+        #[arg(long, default_value = "sea_orm")]
+        persistence_provider: String,
+
+        #[arg(long, default_value = "monolith")]
+        deployment_topology: String,
+
+        #[arg(long)]
+        grpc: bool,
+
+        #[arg(long)]
+        ifml: bool,
+
+        #[arg(long = "no-ops")]
+        no_ops: bool,
+
+        /// Codegraph git rev to pin (default: this binary's rev)
+        #[arg(long)]
+        rev: Option<String>,
+
+        /// Use local path deps to this codegraph checkout instead of git+rev
+        #[arg(long)]
+        codegraph_path: Option<PathBuf>,
+
+        #[arg(long)]
+        force: bool,
+
+        /// Paths to additional template directories (later dirs take precedence)
+        #[arg(long)]
+        template_dir: Vec<PathBuf>,
+    },
+    /// Validate an existing consumer project's configuration and toolchain
+    Doctor {
+        #[arg(long, default_value = "domains.toml")]
+        config: PathBuf,
+
+        #[arg(long, default_value = "schemas")]
+        schemas: PathBuf,
+
+        #[arg(long, default_value = "classifier.toml")]
+        classifier: PathBuf,
+
+        #[arg(long)]
+        profiles_config: Option<PathBuf>,
+    },
+    /// Add to an existing consumer project
+    Add {
+        #[command(subcommand)]
+        target: AddTarget,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AddTarget {
+    /// Add a domain (schemas dir + domains.toml entry).
+    Domain { name: String },
 }
 
 #[derive(Parser, Debug)]
