@@ -501,7 +501,7 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
                                 String::from_utf8_lossy(&out.stdout),
                                 String::from_utf8_lossy(&out.stderr)
                             );
-                            if stdout.contains("100.0%") {
+                            if hurl_suite_passed(&stdout) {
                                 (true, parse_requests(&stdout), Vec::new())
                             } else {
                                 (
@@ -550,11 +550,20 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
 
     if let Some(smoke) = &config.manifest.smoke {
         let entity = &smoke.entity;
+        // Generated routers nest under the plural path segment resolved from
+        // the domain config / graph (e.g. `/api/v1/recruiting/candidates`),
+        // not the singular entity slug. The manifest carries the resolved
+        // route when known; otherwise pluralize the entity segment with the
+        // same simple rules the codegen templates use.
+        let route = smoke
+            .route
+            .clone()
+            .unwrap_or_else(|| pluralize_entity_route(entity));
         let api_base = format!(
             "{}/api/{}/{}",
             config.api_url(),
             config.manifest.api_version,
-            entity
+            route
         );
         let headers: Vec<(&str, &str)> = vec![("Content-Type", "application/json")];
         let mut headers_all: Vec<(&str, &str)> = headers.clone();
@@ -729,7 +738,7 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
             match out {
                 Ok(o) => {
                     let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
-                    if stdout.contains("100.0%") {
+                    if hurl_suite_passed(&stdout) {
                         counters.pass("RLS isolation");
                     } else {
                         counters.fail_test("RLS isolation");
@@ -972,6 +981,62 @@ fn run_capture_env(
     CapturedOutput { stdout }
 }
 
+/// Whether a `hurl --test` run passed, based on its summary block.
+///
+/// Hurl prints a summary like:
+///
+/// ```text
+/// Executed files:    2
+/// Executed requests: 10 (333.3/s)
+/// Succeeded files:   2 (100.0%)
+/// Failed files:      0 (0.0%)
+/// ```
+///
+/// A naive `contains("100.0%")` check is a false positive: a fully-failed run
+/// prints `Failed files: 2 (100.0%)`. The authoritative signal is the
+/// `Failed files:` count — the suite passed iff it is 0.
+fn hurl_suite_passed(stdout: &str) -> bool {
+    for line in stdout.lines() {
+        let t = line.trim();
+        let Some(rest) = t.strip_prefix("Failed files:") else {
+            continue;
+        };
+        return rest
+            .split_whitespace()
+            .next()
+            .and_then(|n| n.trim().parse::<u32>().ok())
+            == Some(0);
+    }
+    // No `Failed files:` summary at all (unexpected output) — never claim pass.
+    false
+}
+
+/// Pluralize the last path segment of a smoke entity route using the same
+/// simple rules as the codegen `pluralize` Tera filter (append `s`; `s`-final
+/// → `es`; `y`-final not preceded by ey/ay/oy → `ies`). Used when the
+/// manifest doesn't carry the resolved plural route.
+fn pluralize_entity_route(entity: &str) -> String {
+    let (prefix, seg) = match entity.rsplit_once('/') {
+        Some((p, s)) => (Some(p), s),
+        None => (None, entity),
+    };
+    let plural = if seg.ends_with('s') {
+        format!("{seg}es")
+    } else if seg.ends_with('y')
+        && !seg.ends_with("ey")
+        && !seg.ends_with("ay")
+        && !seg.ends_with("oy")
+    {
+        format!("{}ies", &seg[..seg.len() - 1])
+    } else {
+        format!("{seg}s")
+    };
+    match prefix {
+        Some(p) => format!("{p}/{plural}"),
+        None => plural,
+    }
+}
+
 /// Split a `curl -w "\n%{http_code}"` response into (body, status).
 fn split_status_body(text: &str) -> (String, String) {
     let mut lines: Vec<&str> = text.split('\n').collect();
@@ -1142,6 +1207,56 @@ mod tests {
             parse_requests("Succeeded files: 1\nExecuted files: 1\nRequests: 12 request\n") > 0
         );
         assert_eq!(parse_requests("no data"), 0);
+    }
+
+    #[test]
+    fn hurl_pass_check_is_not_fooled_by_failed_files_percentage() {
+        // Real hurl 7 summary lines (aligned columns preserved as-is).
+        let success = "Executed files:    1\nExecuted requests: 1 (333.3/s)\n\
+                       Succeeded files:   1 (100.0%)\nFailed files:      0 (0.0%)\nDuration: 3 ms";
+        assert!(
+            hurl_suite_passed(success),
+            "a run with Failed files: 0 must pass"
+        );
+
+        // Regression: the old `contains("100.0%")` check also matched this.
+        let failure = "Executed files:    1\nExecuted requests: 0 (0.0/s)\n\
+                       Succeeded files:   0 (0.0%)\nFailed files:      1 (100.0%)\nDuration: 1 ms";
+        assert!(
+            !hurl_suite_passed(failure),
+            "Failed files: 1 (100.0%) must NOT count as a pass"
+        );
+
+        let mixed =
+            "Executed files:    3\nSucceeded files:   2 (66.7%)\nFailed files:      1 (33.3%)";
+        assert!(!hurl_suite_passed(mixed));
+
+        // Unexpected output (no summary) never claims a pass.
+        assert!(!hurl_suite_passed("hurl: command not found"));
+        assert!(!hurl_suite_passed(""));
+    }
+
+    #[test]
+    fn pluralizes_smoke_entity_route() {
+        assert_eq!(
+            pluralize_entity_route("recruiting/candidate"),
+            "recruiting/candidates"
+        );
+        assert_eq!(
+            pluralize_entity_route("compensation/pay-run"),
+            "compensation/pay-runs"
+        );
+        assert_eq!(pluralize_entity_route("common/address"), "common/addresses");
+        assert_eq!(pluralize_entity_route("common/status"), "common/statuses");
+        assert_eq!(
+            pluralize_entity_route("recruiting/category"),
+            "recruiting/categories"
+        );
+        assert_eq!(pluralize_entity_route("candidate"), "candidates");
+        assert_eq!(
+            pluralize_entity_route("common/employment-permit"),
+            "common/employment-permits"
+        );
     }
 
     #[test]

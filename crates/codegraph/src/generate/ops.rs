@@ -30,6 +30,35 @@ fn entity_segment(schema_title: &str) -> String {
     heck::ToSnakeCase::to_snake_case(stripped)
 }
 
+/// Resolve the route segment the generated routers actually nest the entity
+/// under, mirroring `api::api_model::resolve_path_segment`:
+/// `entity_config.<title>.path_segment` override wins (this is where plural
+/// segments like `candidates` come from), then the graph's `api_path_segment`,
+/// then the snake_case convention.
+async fn resolve_ops_route_segment(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    entry: &GenerationEntry,
+) -> String {
+    if let Some(seg) = config
+        .domains
+        .get(&entry.domain)
+        .and_then(|d| d.get_entity_config(&entry.schema_title))
+        .and_then(|ec| ec.path_segment.clone())
+    {
+        return seg;
+    }
+    if let Ok(Some(node)) = db
+        .get_schema_in_domain(&entry.schema_title, &entry.domain)
+        .await
+    {
+        if !node.api_path_segment.is_empty() {
+            return node.api_path_segment;
+        }
+    }
+    entity_segment(&entry.schema_title)
+}
+
 /// Context for the testkit Cargo.toml template.
 #[derive(Debug, Serialize)]
 pub struct TestkitContext {
@@ -105,16 +134,31 @@ impl GlobalGenerator for OpsManifestGenerator {
 
     async fn generate(
         &self,
-        _db: &dyn GraphQuerier,
-        _config: &DomainConfig,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
         generation_order: &[GenerationEntry],
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let smoke = generation_order.first().map(|entry| OpsSmoke {
-            entity: format!("{}/{}", entry.domain, entity_segment(&entry.schema_title)),
-            create_body: "{}".to_string(),
-        });
+        let smoke = if let Some(entry) = generation_order.first() {
+            let domain = entry.domain.clone();
+            let entity = format!("{}/{}", domain, entity_segment(&entry.schema_title));
+            // Carry the resolved plural route path (e.g. `recruiting/candidates`)
+            // so the harness hits the exact route the generated routers nest
+            // under (`/api/{api_version}/{route}`).
+            let route = format!(
+                "{}/{}",
+                domain,
+                resolve_ops_route_segment(db, config, entry).await
+            );
+            Some(OpsSmoke {
+                entity,
+                route: Some(route),
+                create_body: "{}".to_string(),
+            })
+        } else {
+            None
+        };
         let manifest = OpsManifest {
             app_name: project.app_name.clone(),
             graph_binary: None,
@@ -127,7 +171,7 @@ impl GlobalGenerator for OpsManifestGenerator {
             output_dir: PathBuf::from("."),
             ui_dir: None,
             smoke,
-            api_version: _config.defaults.api_version.clone(),
+            api_version: config.defaults.api_version.clone(),
             servers: OpsServers::default(),
             database: OpsDatabase {
                 api: default_api_db_target(5432),
