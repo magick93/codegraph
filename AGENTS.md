@@ -6,7 +6,7 @@ Workspace root `Cargo.toml` with 13 crates:
 
 | Crate | Purpose |
 |-------|---------|
-| `codegraph` | Main binary: CLI, ingest, classify, validate, 59+ generators + project init/doctor/add-domain lifecycle |
+| `codegraph` | Main binary: CLI, ingest, classify, validate, 60+ generators + project init/doctor/add-domain lifecycle |
 | `codegraph-core` | Graph data model: `GraphQuerier`, `GraphIngestor`, node/edge types |
 | `codegraph-grafeo` | Grafeo graph database adapter implementing core traits |
 | `codegraph-backend` | Backend factory (currently Grafeo-only) |
@@ -386,6 +386,16 @@ cargo run -- run --schemas <dir> --classifier classifier.toml \
 # Classify only (show entity/VO decisions)
 cargo run -- classify --schemas <dir> --classifier classifier.toml \
   --config domains.toml
+
+# Scaffold a new consumer project (interactive when NAME omitted)
+cargo run -- init my-app --codegraph-path ~/git/codegraph
+
+# Validate an existing consumer project
+cargo run -- doctor --config domains.toml --schemas schemas \
+  --classifier classifier.toml --profiles-config profiles.toml
+
+# Grow an existing project with a new domain
+cargo run -- add domain billing
 ```
 
 ## Project Initialization (init / doctor / add domain)
@@ -394,7 +404,7 @@ cargo run -- classify --schemas <dir> --classifier classifier.toml \
 
 `codegraph init [NAME]` scaffolds a consumer monorepo. `codegraph doctor`
 validates the result, and `codegraph add domain <name>` grows it. The
-scaffold is generated from 16 Tera templates in
+scaffold is generated from 17 Tera templates in
 `crates/codegraph/templates/project/` (see "Templates & context" below).
 
 ### Scaffolded file tree
@@ -403,15 +413,15 @@ scaffold is generated from 16 Tera templates in
 |------|---------|
 | `Cargo.toml` | Workspace: members `{name}-graph` + `ops/testkit`; codegraph crates as `git+rev` deps (or `path` deps with `--codegraph-path`); `exclude = ["generated"]` |
 | `{name}-graph/Cargo.toml`, `{name}-graph/src/main.rs` | Wrapper binary: clap `Run`/`Classify`/`Generate`/`Doctor` calling `codegraph::driver` |
-| `domains.toml` | Example domain entry (`entities = ["ItemType"]` on the first domain) |
+| `domains.toml` | Example domain entry (`entities = ["TodoListType", "TodoItemType"]` on the first domain) |
 | `classifier.toml` | Classifier config seed |
-| `profiles.toml` | Profile meta (`domain_types_base`) + feature flags (`ops_backend`, `grpc_backend`, `ifml_backend`, `database_target`, `persistence_provider`, `deployment_topology`) |
+| `profiles.toml` | Profile meta (`name`/`version`/`app_name`, `domain_types_base`) + feature flags (`ops_backend`, `grpc_backend`, `ifml_backend`, `has_admin_cli`, `database_target`, `persistence_provider`, `deployment_topology`) |
 | `extension-points.toml` | Extension points config |
-| `schemas/{domain}/example.json` | Example entity schema (`ItemType`) |
+| `schemas/{domain}/todo_list.json`, `schemas/{domain}/todo_item.json` | Hello-world TODO starter schemas |
 | `codegraph-ops.toml` | Seeded ops manifest (see "Ops Harness" section) |
 | `ops/testkit/Cargo.toml`, `ops/testkit/src/main.rs` | Testkit workspace member |
 | `hurl/health.hurl` | Health-check hurl file |
-| `justfile` | Recipes: `generate`, `classify`, `doctor`, `api`, `e2e`, `full`, `clean` |
+| `justfile` | Recipes: `generate`, `classify`, `doctor`, `api`, `full`, `clean` |
 | `.gitignore` | Ignores `generated/` |
 | `README.md` | Getting-started readme |
 | `.github/workflows/ci.yml` | CI workflow |
@@ -444,7 +454,7 @@ scaffold is generated from 16 Tera templates in
 | `--persistence-provider` | `sea_orm` | `sea_orm`/`cornucopia` |
 | `--deployment-topology` | `monolith` | `monolith`/`workers` |
 | `--grpc`, `--ifml` | off | Enable gRPC / IFML features in `profiles.toml` |
-| `--no-ops` | off | Disable the ops testkit |
+| `--no-ops` | off | Disable the ops generator/profile feature (testkit member still scaffolded) |
 | `--rev <sha>` | embedded rev | Codegraph git rev to pin |
 | `--codegraph-path <dir>` | none | Path deps to a local codegraph checkout |
 | `--force` | off | Overwrite existing files |
@@ -506,7 +516,7 @@ just full                                   # api then e2e
 
 ### Templates & context
 
-Project templates live in `crates/codegraph/templates/project/` (16
+Project templates live in `crates/codegraph/templates/project/` (17
 templates, shadowable via `--template-dir`). The render context is
 `ProjectTemplateContext` in `crates/codegraph/src/init/context.rs`, and the
 canonical (template, output-path) list is `PROJECT_TEMPLATES` in the same
@@ -525,7 +535,7 @@ Adding a new template:
 
 ### The `--template-dir` flag
 
-Available on both `generate` and `run` commands. May be specified multiple times; later directories take precedence.
+Available on `generate`, `run`, and `init` commands. May be specified multiple times; later directories take precedence.
 
 ```
 Paths to additional template directories. Templates in these directories
@@ -652,7 +662,8 @@ Generators select the template directory based on the dialect. The existing
 `crates/codegraph-ops` is a Rust test & deploy harness for codegraph-generated
 apps — a re-imagining of the hand-written bash suite (`test.sh`,
 `lib/common.sh`, `lib/migrate.sh`, `deploy/smoke-test.sh`,
-`scripts/quality-check.sh`) that hr-specs used to maintain. It is
+`scripts/quality-check.sh`) that hr-specs used to maintain (hr-specs has been
+ported onto the harness; its bash suite is deleted). It is
 configuration-driven and extension-pluggable so every codegraph consumer
 shares the same harness while keeping their project-specifics (Xero/Stripe/IRD
 integrations, UI-sync rsync steps, integration migrations) as manifest hooks
@@ -662,7 +673,7 @@ and extensions.
 
 | Layer | Location | Notes |
 |-------|----------|-------|
-| **Manifest types** | `crates/codegraph-config/src/ops_manifest.rs` | `OpsManifest` (serde TOML): app name, servers/ports, db targets, supabase, capabilities, hurl, hooks, extensions, smoke entity |
+| **Manifest types** | `crates/codegraph-config/src/ops_manifest.rs` | `OpsManifest` (serde TOML): app name, servers/ports, db targets, supabase, capabilities, hurl, hooks, extensions, smoke entity, api version |
 | **Harness crate** | `crates/codegraph-ops/` | Runtime: `cli.rs` (clap), `config.rs` (`OpsConfig` resolution), `proc.rs` (SIGTERM→SIGKILL supervision, `Supervisor`), `db.rs` (psql wrapper, extension validation), `migrate.rs` (phased migrations, supabase symlinks), `suites/*` (api, cli, ui, e2e, smoke, quality), `ext.rs` (extension protocol + hooks), `metrics.rs` (stage TSV export), `wait.rs`, `env.rs`, `pg.rs` (`PgTarget`) |
 | **Generator** | `crates/codegraph/src/generate/ops.rs` | Global generator `ops` — emits `codegraph-ops.toml` + `testkit/` crate into generated output |
 | **Templates** | `crates/codegraph/templates/ops/` | `testkit_cargo.tera`, `testkit_main.tera` (shadowable via `--template-dir`) |
@@ -721,10 +732,11 @@ through unchanged.
 ### Manifest (`codegraph-ops.toml`)
 
 Seeded by the generator from `ProjectConfig`/`BuildPlan` (app name, ports,
-db targets, capabilities). Consumers extend: `database.*.reset_sql`/`seed_sql`,
-`supabase` dir + keys, `hurl.dir`/`skip`/org ids, `smoke.entity` (entity used
-for the api suite's curl CRUD checks), `ui_dir` override (for monorepo sync
-setups), hooks, extensions.
+db targets, capabilities, api version). Consumers extend:
+`database.*.reset_sql`/`seed_sql`, `supabase` dir + keys,
+`hurl.dir`/`skip`/org ids, `smoke.entity` (entity used for the api suite's
+curl CRUD checks) + `api_version` (route prefix, default `v1`), `ui_dir`
+override (for monorepo sync setups), hooks, extensions.
 
 ### Consumer integration guide
 
@@ -968,7 +980,7 @@ Convenience accessors on `DomainEntry`: `worker_name_or(default)`,
 - No `unwrap()` in production code. Use `thiserror` + `?` propagation.
 - Imports grouped: std → external → internal → current crate, separated by blank lines.
 - Templates in `crates/codegraph/templates/` use Tera syntax.
-- 59+ generators in `crates/codegraph/src/generate/` organized by target (api, db, ddd, ui, cli, etc.).
+- 60+ generators in `crates/codegraph/src/generate/` organized by target (api, db, ddd, ui, cli, etc.).
 - IFML-specific generators in `crates/codegraph/src/generate/ifml/`.
 - gRPC-specific generators in `crates/codegraph/src/generate/grpc/`.
 - Cornucopia-specific generators in `crates/codegraph/src/generate/db/cornucopia_*.rs` and `crates/codegraph/src/generate/ddd/cornucopia_repo.rs`.
