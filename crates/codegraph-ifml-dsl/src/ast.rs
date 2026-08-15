@@ -27,6 +27,13 @@ pub struct ViewDeclaration {
     pub containers: Vec<ContainerDeclaration>,
     pub components: Vec<ComponentDeclaration>,
     pub events: Vec<EventHandler>,
+    pub position: Option<Position>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Position {
+    pub x: f64,
+    pub y: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -37,6 +44,7 @@ pub struct ContainerDeclaration {
     pub properties: Vec<PropertyAssignment>,
     pub components: Vec<ComponentDeclaration>,
     pub events: Vec<EventHandler>,
+    pub position: Option<Position>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -50,6 +58,14 @@ pub struct ComponentDeclaration {
 pub struct PropertyAssignment {
     pub key: String,
     pub value: ValueExpression,
+    #[serde(skip, default)]
+    pub span: Option<(usize, usize)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ObjectMember {
+    pub key: String,
+    pub value: ValueExpression,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -59,6 +75,7 @@ pub enum ValueExpression {
     Number(f64),
     Bool(bool),
     Array(Vec<ValueExpression>),
+    Object(Vec<ObjectMember>),
     Call(String, Vec<ValueExpression>),
     FieldAccess {
         object: Box<ValueExpression>,

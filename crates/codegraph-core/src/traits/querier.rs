@@ -1,11 +1,11 @@
 use crate::error::GraphError;
 use crate::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
-    CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension, HttpEndpointNode,
-    InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData,
-    SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    CompositionTree, DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension,
+    HttpEndpointNode, InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate,
+    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode,
+    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -208,6 +208,11 @@ pub trait GraphQuerier: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Get resolved data bindings: component → entity title + bound fields.
+    async fn get_data_bindings(&self) -> Result<Vec<DataBindingResolution>, GraphError> {
+        Ok(Vec::new())
+    }
+
     // ── API metamodel query methods ─────────────────────────────────────
 
     async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
@@ -215,6 +220,20 @@ pub trait GraphQuerier: Send + Sync {
     }
 
     async fn get_api_resource(&self, _name: &str) -> Result<Option<ApiResourceNode>, GraphError> {
+        Ok(None)
+    }
+
+    async fn get_api_operation(
+        &self,
+        _name: &str,
+    ) -> Result<Option<ApiOperationNode>, GraphError> {
+        Ok(None)
+    }
+
+    async fn get_http_endpoint_for_operation(
+        &self,
+        _operation_name: &str,
+    ) -> Result<Option<HttpEndpointNode>, GraphError> {
         Ok(None)
     }
 

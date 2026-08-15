@@ -38,6 +38,8 @@ pub struct IfmlComponent {
     /// JSON Schema entity name
     pub entity: Option<String>,
     pub fields: Vec<String>,
+    /// (field_name, rust_field_type) pairs resolved from the bound schema
+    pub fields_with_types: Vec<(String, String)>,
     pub filter: Option<String>,
     pub properties: HashMap<String, String>,
     pub events: Vec<IfmlEvent>,

@@ -92,9 +92,39 @@ pub enum Commands {
         /// Paths to IFML DSL (.ifml) files
         #[arg(long)]
         ifml_files: Vec<PathBuf>,
+        /// Paths to OpenAPI 3.0/3.1 spec files (JSON) to import into the graph
+        #[arg(long)]
+        openapi_files: Vec<PathBuf>,
         /// IFML framework targets for code generation (e.g. svelte, react)
         #[arg(long)]
         ifml_framework: Vec<String>,
+    },
+    /// IFML-only UI generation: ingest .ifml DSL files and emit framework routes
+    IfmlGenerate {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        /// Paths to IFML DSL (.ifml) files
+        #[arg(long, required = true)]
+        ifml_files: Vec<PathBuf>,
+        /// Path to JSON schema directory (enables entity resolution enrichment)
+        #[arg(long)]
+        schemas: Option<PathBuf>,
+        /// Path to classifier.toml (required only with --schemas)
+        #[arg(long)]
+        classifier: Option<PathBuf>,
+        /// IFML framework targets for code generation (e.g. svelte, react)
+        #[arg(long, default_values = ["svelte"])]
+        framework: Vec<String>,
+        /// Path to profiles.toml (optional)
+        #[arg(long)]
+        profiles_config: Option<PathBuf>,
+        /// Paths to additional template directories. Templates in these directories
+        /// shadow codegraph's built-in templates by name. May be specified multiple
+        /// times; later directories take precedence.
+        #[arg(long)]
+        template_dir: Vec<PathBuf>,
     },
     /// Start the IFML Language Server Protocol server
     Lsp {

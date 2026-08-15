@@ -69,11 +69,22 @@ property_assignment = {
     identifier ~ ":" ~ value_expression ~ ";"
 }
 
-value_expression = { logical_or | array_literal }
+value_expression = { logical_or | array_literal | object_literal }
 
 array_literal = {
     "[" ~ (value_expression ~ ("," ~ value_expression)*)? ~ "]"
 }
+
+object_literal = {
+    "{" ~
+        (object_member ~ (";" ~ object_member)*)? ~
+        ";"? ~
+    "}"
+}
+
+object_member = { identifier ~ ":" ~ object_member_value }
+
+object_member_value = { logical_or | array_literal }
 
 // ── Event handlers ────────────────────────────────────────────────
 event_handler = {

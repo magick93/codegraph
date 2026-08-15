@@ -97,6 +97,7 @@ pub struct PageComponentContext {
     component_type: String,
     entity: String,
     fields: Vec<String>,
+    fields_with_types: Vec<(String, String)>,
     filter: String,
 }
 
@@ -132,6 +133,7 @@ fn render_page_svelte(
                 component_type: c.component_type.clone(),
                 entity: c.entity.clone().unwrap_or_default(),
                 fields: c.fields.clone(),
+                fields_with_types: c.fields_with_types.clone(),
                 filter: c.filter.clone().unwrap_or_default(),
             })
             .collect(),

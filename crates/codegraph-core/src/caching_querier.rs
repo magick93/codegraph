@@ -7,11 +7,11 @@ use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
-    CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension, HttpEndpointNode,
-    InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData,
-    SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    CompositionTree, DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension,
+    HttpEndpointNode, InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate,
+    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode,
+    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -550,6 +550,10 @@ impl GraphQuerier for CachingQuerier<'_> {
         self.inner.get_ifml_parameters().await
     }
 
+    async fn get_data_bindings(&self) -> Result<Vec<DataBindingResolution>, GraphError> {
+        self.inner.get_data_bindings().await
+    }
+
     // ── API metamodel query delegation ──────────────────────────────────
 
     async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
@@ -566,6 +570,20 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn get_api_resource(&self, name: &str) -> Result<Option<ApiResourceNode>, GraphError> {
         self.inner.get_api_resource(name).await
+    }
+
+    async fn get_api_operation(
+        &self,
+        name: &str,
+    ) -> Result<Option<ApiOperationNode>, GraphError> {
+        self.inner.get_api_operation(name).await
+    }
+
+    async fn get_http_endpoint_for_operation(
+        &self,
+        operation_name: &str,
+    ) -> Result<Option<HttpEndpointNode>, GraphError> {
+        self.inner.get_http_endpoint_for_operation(operation_name).await
     }
 
     async fn get_api_operations(
