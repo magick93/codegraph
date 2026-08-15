@@ -3,7 +3,35 @@
 //! Run with: `cargo run -p testkit -- <subcommand>` where subcommand is one
 //! of api | cli | e2e | ui | full | clean | smoke | quality | ext <name>.
 
+// To register project-specific test extensions (Xero, Stripe, IRD, ...):
+//   codegraph_ops::ext::register_extension(Box::new(MyExtension));
+// See the `ext <name>` subcommand and OpsManifest `[[extensions]]` entries.
+//
+// Registration must happen BEFORE the tokio runtime below starts (the
+// extension registry is a plain std::sync::Mutex). Example extension impl:
+//
+// struct MyExtension;
+//
+// impl codegraph_ops::ext::TestExtension for MyExtension {
+//     fn name(&self) -> &str { "my-extension" }
+//
+//     fn requires_api_running(&self) -> bool { true }
+//
+//     fn run(&self, ctx: &codegraph_ops::ext::OpsContext<'_>)
+//         -> codegraph_ops::ext::ExtensionFuture<'_>
+//     {
+//         // The returned future must be `Send`: extract owned data from
+//         // `ctx` BEFORE the async block instead of capturing `ctx` itself.
+//         let root = ctx.config.root_dir.display().to_string();
+//         Box::pin(async move {
+//             println!("root dir: {root}");
+//             Ok(())
+//         })
+//     }
+// }
+
 fn main() {
+    // codegraph_ops::ext::register_extension(Box::new(MyExtension));
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

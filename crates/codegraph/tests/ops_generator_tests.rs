@@ -401,6 +401,48 @@ async fn testkit_crate_compiles() {
     assert!(status.success(), "cargo build of generated testkit failed");
 }
 
+/// The manifest should seed a smoke entity from the generation order so a
+/// fresh manifest exercises the api suite out of the box.
+#[tokio::test]
+async fn ops_generator_seeds_smoke_from_generation_order() {
+    let (engine, config, tera, output_dir) = mock_test_setup();
+
+    let gen = codegraph::generate::ops::OpsManifestGenerator::new(
+        output_dir.path(),
+        true,
+        true,
+        true,
+        true,
+    );
+    let order = vec![codegraph::generate::GenerationEntry {
+        schema_title: "CandidateType".to_string(),
+        domain: "recruiting".to_string(),
+        pg_schema: "recruiting".to_string(),
+        is_cyclic: false,
+    }];
+    let files = gen
+        .generate(
+            &engine,
+            &config,
+            &order,
+            &tera,
+            &codegraph::generate::ProjectConfig::default(),
+        )
+        .await
+        .expect("ops generator failed");
+
+    let manifest = files
+        .iter()
+        .find(|f| f.path.ends_with("codegraph-ops.toml"))
+        .expect("codegraph-ops.toml");
+    let parsed: codegraph_config::ops_manifest::OpsManifest =
+        toml::from_str(&manifest.content).expect("manifest should parse");
+
+    let smoke = parsed.smoke.expect("smoke should be seeded");
+    assert_eq!(smoke.entity, "recruiting/candidate");
+    assert_eq!(smoke.create_body, "{}");
+}
+
 /// Capability flags must mirror the build plan: only the grpc scaffold flag
 /// is off when grpc is not in the plan.
 #[tokio::test]

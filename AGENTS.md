@@ -2,7 +2,7 @@
 
 ## Project structure
 
-Workspace root `Cargo.toml` with 11 crates:
+Workspace root `Cargo.toml` with 13 crates:
 
 | Crate | Purpose |
 |-------|---------|
@@ -16,6 +16,8 @@ Workspace root `Cargo.toml` with 11 crates:
 | `codegraph-config` | Domain config parsing (`domains.toml`, classifier.toml, profiles.toml) + `OpsManifest` |
 | `codegraph-ext-points` | Extension points config types |
 | `codegraph-workflow` | Generic state machine workflow engine (SeaORM) |
+| `codegraph-ifml-dsl` | Pest-based IFML DSL parser + AST (see "IFML Integration" section) |
+| `ast-ifml` | auto-lsp AST definitions for IFML |
 | `codegraph-ops` | Rust test & deploy harness (see "Ops Harness" section) |
 
 ## IFML Integration (feat/ifml-integration branch)
@@ -345,9 +347,13 @@ cargo test -p codegraph --test grpc_compile_tests   # Level 3: protoc compilatio
 cargo test -p codegraph --test profile_smoke_tests
 
 # Ops harness tests (codegraph-ops + ops generator)
-cargo test -p codegraph-ops            # 77 harness tests (suites, proc, db, migrate, ext, metrics)
-cargo test -p codegraph --test ops_generator_tests  # 4 tests: manifest + testkit emission, OpsConfig::load contract
+cargo test -p codegraph-ops            # 93 harness tests (suites, proc, db, migrate, ext, metrics)
+cargo test -p codegraph --test ops_generator_tests  # 7 tests + 1 ignored compile test (manifest + testkit emission, OpsConfig::load contract)
 cargo clippy -p codegraph-ops --all-targets         # must be warning-free
+
+# Ignored integration tests (run in CI's test-ops-integration job with a postgres:15 service)
+cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture   # needs DATABASE_URL (default postgres://postgres:postgres@localhost:5432/postgres)
+cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture  # slow: compiles the emitted testkit crate
 
 # Full pipeline integration (requires protoc)
 cargo test -p codegraph --test grafeo_e2e_tests -- grafeo_all_entity_generators_produce_output_for_candidate
@@ -545,8 +551,22 @@ cargo run -p testkit -- ext --list # list registered extensions
 ```
 
 Global flags: `--config FILE` (manifest path), `--keep`, `--skip-build`,
-`--skip-generate`, `--release`, `--verbose`, `--metrics FILE` (TSV),
+`--skip-generate`, `--release`, `--verbose`, `--metrics FILE` (stage timings;
+TSV or JSON via `--metrics-format tsv|json`, default tsv), `--retry N`
+(retry failed hurl files in the api suite up to N times, default 0),
 `--headed`, `--grep PATTERN` (repeatable).
+
+When `--config` is absent the manifest is auto-discovered: walk UP from the
+cwd looking for `codegraph-ops.toml`, then walk UP from the testkit
+executable's directory (cli.rs `find_manifest()`).
+
+Failures print a `hint:` line when the error type has one (missing tools,
+config mistakes, port conflicts — `error::hint()` in `cli.rs`).
+
+Manifest values support `{env:VAR}` indirection for `database.*.password`
+and `supabase.anon_key`/`service_key`/`jwt_secret` (`config.rs`
+`resolve_env()`): unset variables expand to empty; plain strings pass
+through unchanged.
 
 `smoke` flags: `--api-url`, `--web-url`, `--expected-commit`,
 `--auth-health-url`, `--worker URL` (repeatable for worker pings).
@@ -556,8 +576,8 @@ Global flags: `--config FILE` (manifest path), `--keep`, `--skip-build`,
 ### Extension protocol
 
 - `ext::TestExtension` trait: `name()`, `requires_api_running()`,
-  `run(&OpsContext)` — consumers register via `register_extension()` in their
-  own wrapper binary.
+  `run(&OpsContext)` — consumers register via `register_extension()` in the
+  generated testkit `main.rs` (see `templates/ops/testkit_main.tera`).
 - Manifest `[[extensions]]` entries with `exec` run out-of-process via `sh -c`
   (language-agnostic; how hr-specs' Xero/Stripe/IRD-style integrations plug in).
 - Manifest `[[hooks]]` entries run at pipeline points: `pre_generate`,
@@ -571,6 +591,70 @@ db targets, capabilities). Consumers extend: `database.*.reset_sql`/`seed_sql`,
 `supabase` dir + keys, `hurl.dir`/`skip`/org ids, `smoke.entity` (entity used
 for the api suite's curl CRUD checks), `ui_dir` override (for monorepo sync
 setups), hooks, extensions.
+
+### Consumer integration guide
+
+1. Add `codegraph-ops` to the consumer workspace deps:
+   ```toml
+   codegraph-ops = { git = "https://github.com/magick93/codegraph.git", rev = "<pinned>" }
+   ```
+   Pin the same rev as the other codegraph crates. During development use
+   `branch = "<branch>"` plus a `[patch."https://github.com/magick93/codegraph.git"]`
+   entry pointing `codegraph-ops` at a local path.
+2. Enable the generator: `ops_backend = true` under `[features]` in the
+   consumer's `profiles.toml` plus `"ops"` in the profile's generator list;
+   regenerate. This emits `codegraph-ops.toml` + a `testkit/` crate.
+   `smoke.entity` is auto-seeded from the first entity in generation order
+   (`generate/ops.rs`); the codegraph binary stamps `project.codegraph_rev`
+   from its own git rev (`main.rs`) so the testkit `Cargo.toml` pins the same
+   rev (see `templates/scaffold/cargo_toml.tera`, `templates/ops/testkit_cargo.tera`).
+3. Edit the manifest: `database.api`/`database.e2e`/`database.e2e_app` targets
+   (+ `reset_sql`/`seed_sql`), `supabase` dir + keys, `hurl.dir`/`skip`/org
+   ids, `ui_dir` override (monorepo sync setups), and — for e2e generation —
+   `graph_binary` + `schemas_dir` + `classifier` + `domain_config`.
+4. Run: `cargo run -p testkit -- api` / `e2e` / `full` / `smoke` / `quality` /
+   `ext <name>`.
+5. Add project-specifics as `[[hooks]]` and `[[extensions]]` (exec-based
+   out-of-process entries) or trait-based extensions (register in the
+   `testkit_main.tera` registration hook — `register_extension()` before the
+   tokio runtime starts). hr-specs dogfooding: pgmq patch as `pre_e2e`,
+   crewbase rsync as `pre_playwright`, hr-reports views as `post_migrate`; an
+   extensions crate implements `TestExtension` for ird/stripe/xero and the
+   testkit workspace member registers them; a justfile delegates to the
+   harness; the bash suite is deleted.
+
+   Hook points and when they fire:
+
+   | Hook | Suite | Fires |
+   |------|-------|-------|
+   | `pre_generate` | e2e | Before the graph binary build/generation |
+   | `post_generate` | e2e | After generation |
+   | `pre_e2e` | e2e | After Supabase start, BEFORE migration symlink + `supabase db reset` |
+   | `post_migrate` | api + e2e | After DB reset/migration (api only when migrate=true) |
+   | `pre_playwright` | e2e | After the API is up, BEFORE the SvelteKit production build |
+   | `post_e2e` | e2e | Every e2e path (success and failure), best-effort |
+   | `pre_api` / `post_api` | api | Around the api suite |
+
+   Each hook is `sh -c "{exec} {args...}"` in the repo root; failures abort
+   the suite (except `post_e2e`, which warns).
+6. CI wiring: run `cargo run -p testkit -- api --metrics ci.tsv` in a job with
+   a Postgres service. The codegraph repo's own `test-ops-integration` job
+   (postgres:15 service + the `--ignored` integration tests in `.github/workflows/ci.yml`,
+   CI triggers on push to `develop` and `master`) is the reference pattern.
+
+### Platform support & prerequisites
+
+Unix-first (Linux/macOS): process supervision is SIGTERM → grace → SIGKILL
+(`proc.rs`), `clean` kills ports via `fuser -k`, and consumer hooks commonly
+use rsync. Windows is not supported by the process-supervision/port-kill
+paths.
+
+Tool prerequisites (validated per-suite; missing tools error or skip):
+
+- `psql` (db access + extension checks), `curl` (health probes, api suite)
+- `hurl` (api contract tests — skipped if absent)
+- `npx` + Supabase CLI + Docker (e2e Supabase stack)
+- `pnpm` + Playwright chromium (ui/e2e; installed via `playwright install chromium`)
 
 ### Adding a feature to the harness
 

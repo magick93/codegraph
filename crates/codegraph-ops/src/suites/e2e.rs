@@ -27,7 +27,18 @@ pub struct E2eArgs {
 /// Full E2E: supabase → generate → migrate → build → services → playwright.
 /// Requires manifest.supabase and manifest.database.e2e to be set (else
 /// Err(Config) explaining what's missing).
+///
+/// `post_e2e` hooks fire on EVERY path (success and failure) — best-effort,
+/// with failures warned, so consumer cleanup steps always run.
 pub async fn run_e2e(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
+    let result = run_e2e_inner(config, args).await;
+    if let Err(e) = crate::ext::run_hooks(config, "post_e2e").await {
+        output::warn(format!("post_e2e hook failed: {e}"));
+    }
+    result
+}
+
+async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     output::section("=== E2E Suite ===");
 
     if config.manifest.supabase.is_none() {
@@ -59,6 +70,9 @@ pub async fn run_e2e(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         run_blocking("npx", &["supabase", "start"], supabase_dir)?;
         output::ok("Supabase started");
     }
+    // pre_e2e hooks (e.g. the pgmq patch) need the supabase container running
+    // and must complete BEFORE the migration symlink + `supabase db reset`.
+    crate::ext::run_hooks(config, "pre_e2e").await?;
 
     // 2. Generate.
     output::section("E2E 2. Generate");
@@ -193,6 +207,10 @@ pub async fn run_e2e(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     }
     output::ok("Axum API running");
 
+    // pre_playwright hooks (e.g. UI-sync rsync steps) must land BEFORE the
+    // SvelteKit production build so synced sources get compiled.
+    crate::ext::run_hooks(config, "pre_playwright").await?;
+
     if !config.ui_dir.join("node_modules").is_dir() {
         if let Err(e) = run_blocking("pnpm", &["install"], &config.ui_dir) {
             output::warn(format!("pnpm install failed (continuing): {e}"));
@@ -231,8 +249,6 @@ pub async fn run_e2e(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         return Err(e);
     }
     output::ok(format!("SvelteKit preview running at {ui_url}"));
-
-    crate::ext::run_hooks(config, "pre_playwright").await?;
 
     // 7. Playwright.
     output::section("E2E 6. Playwright Tests");
@@ -273,7 +289,6 @@ pub async fn run_e2e(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     } else {
         output::fail("SOME E2E TESTS FAILED");
     }
-    crate::ext::run_hooks(config, "post_e2e").await?;
     supervisor.shutdown_all().await;
     if passed {
         Ok(())

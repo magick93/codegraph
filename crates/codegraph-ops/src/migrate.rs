@@ -20,6 +20,10 @@ use crate::pg::PgTarget;
 /// concurrent invocations do not interleave phases.
 const MIGRATION_LOCK_KEY: i64 = 73287328;
 
+/// Max SQL lines per FK-phase `psql -c` batch. Keeps the argv well below
+/// the OS limit even with hundreds of migration files.
+const FK_CHUNK_LINES: usize = 200;
+
 /// Which phase a migration file belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FileKind {
@@ -80,6 +84,30 @@ fn phase1_content(content: &str) -> String {
         .filter(|line| !is_fk_line(line))
         .collect::<Vec<&str>>()
         .join("\n")
+}
+
+/// Split SQL lines into chunks of at most `max_lines` lines each, joined by
+/// newlines. Large `psql -c` payloads overflow the OS argv limit
+/// ("Argument list too long"), so long inputs are applied in batches.
+fn chunk_sql(lines: &[String], max_lines: usize) -> Vec<String> {
+    if max_lines == 0 {
+        return vec![lines.join("\n")];
+    }
+    lines
+        .chunks(max_lines)
+        .map(|chunk| chunk.join("\n"))
+        .collect()
+}
+
+/// Last `max` chars of `s` for error messages (UTF-8 safe).
+fn error_tail(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s.to_string();
+    }
+    let skipped = chars.len() - max;
+    let rest: String = chars[skipped..].iter().collect();
+    format!("…[truncated {skipped} chars]\n{rest}")
 }
 
 /// Extract schema names from `CREATE SCHEMA IF NOT EXISTS <name>` lines.
@@ -259,7 +287,8 @@ pub fn remove_supabase_links(supabase_mig_dir: &Path) -> OpsResult<()> {
 ///   constraint lines removed, applied tolerantly (`psql_exec_file_ok`);
 ///   per-file errors are collected and warned, not fatal.
 /// * Phase 2: FK constraints — all `ALTER TABLE ... ADD CONSTRAINT` lines,
-///   joined and applied via `psql_exec`; failure is a warning.
+///   chunked into bounded batches and applied via `psql_exec`; per-chunk
+///   failure is a warning (the run continues).
 /// * Phase 3: aux files (`*_fts.sql`, `*_embedding.sql`,
 ///   `*_process_history_view.sql`) via `psql_exec_file_ok`.
 /// * Phase 4: `*_rls.sql` + `*_trigger.sql` via `psql_exec_file_ok`.
@@ -343,12 +372,33 @@ async fn apply_phases(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<
         }
     }
 
-    // Phase 2: FK constraints, joined across all files.
+    // Phase 2: FK constraints, chunked into bounded batches so the argv
+    // limit is never hit (669 migration files join to >128KB of SQL).
     if !phases.fk_lines.is_empty() {
-        let fk_sql = phases.fk_lines.join("\n");
-        match crate::db::psql_exec(target, &fk_sql).await {
-            Ok(()) => output::ok("FK constraints applied"),
-            Err(e) => output::warn(format!("FK constraints: some failed: {e}")),
+        let chunks = chunk_sql(&phases.fk_lines, FK_CHUNK_LINES);
+        let mut failed = 0usize;
+        for chunk in &chunks {
+            match crate::db::psql_exec(target, chunk).await {
+                Ok(()) => {}
+                Err(e) => {
+                    failed += 1;
+                    output::warn(format!(
+                        "FK constraint batch failed (continuing): {}",
+                        error_tail(&e.to_string(), 400)
+                    ));
+                }
+            }
+        }
+        if failed == 0 {
+            output::ok(format!(
+                "FK constraints applied ({} chunk(s))",
+                chunks.len()
+            ));
+        } else {
+            output::warn(format!(
+                "FK constraints: {failed}/{} chunk(s) failed",
+                chunks.len()
+            ));
         }
     }
 
@@ -482,6 +532,48 @@ mod tests {
         assert!(!is_fk_line("ALTER TABLE a DROP CONSTRAINT a_fk;"));
         assert!(!is_fk_line("ALTER TABLE a ALTER COLUMN b SET NOT NULL;"));
         assert!(!is_fk_line("ALTER TABLE a ADD COLUMN b uuid;"));
+    }
+
+    #[test]
+    fn chunk_sql_splits_into_bounded_batches() {
+        let lines: Vec<String> = (0..5)
+            .map(|i| {
+                format!("ALTER TABLE x{i} ADD CONSTRAINT c{i} FOREIGN KEY (b) REFERENCES y(id);")
+            })
+            .collect();
+        let chunks = chunk_sql(&lines, 2);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(
+            chunks[0],
+            "ALTER TABLE x0 ADD CONSTRAINT c0 FOREIGN KEY (b) REFERENCES y(id);\nALTER TABLE x1 ADD CONSTRAINT c1 FOREIGN KEY (b) REFERENCES y(id);"
+        );
+        assert_eq!(chunks[1].lines().count(), 2);
+        assert_eq!(chunks[2].lines().count(), 1);
+        for chunk in &chunks {
+            assert!(chunk.lines().count() <= 2);
+        }
+    }
+
+    #[test]
+    fn chunk_sql_fits_small_input_in_one_chunk() {
+        let lines: Vec<String> = vec!["ALTER TABLE a ADD CONSTRAINT c1;".to_string()];
+        let chunks = chunk_sql(&lines, 200);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "ALTER TABLE a ADD CONSTRAINT c1;");
+    }
+
+    #[test]
+    fn chunk_sql_empty_input_yields_empty() {
+        assert!(chunk_sql(&[], 200).is_empty());
+    }
+
+    #[test]
+    fn error_tail_truncates_to_max_chars() {
+        let long = "a".repeat(1000);
+        let t = error_tail(&long, 100);
+        assert!(t.contains("[truncated 900 chars]"), "{t}");
+        assert!(t.ends_with(&"a".repeat(100)));
+        assert_eq!(error_tail("short", 100), "short");
     }
 
     #[test]

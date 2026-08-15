@@ -26,6 +26,15 @@ pub struct ApiArgs {
     pub regen: bool,
     pub release: bool,
     pub metrics_file: Option<String>,
+    /// Retry failed hurl files up to this many times (0 = no retries).
+    pub retry: u32,
+}
+
+/// True when a failed hurl file may be retried: the number of attempts used
+/// so far (`attempts_used`, 1 = first attempt) is still below the allowed
+/// total (`max_retries + 1`).
+pub fn should_retry(attempts_used: u32, max_retries: u32) -> bool {
+    attempts_used < max_retries.saturating_add(1)
 }
 
 /// Pass/fail counters with verbose log-tail support.
@@ -110,7 +119,9 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
             "API tests need Postgres at {}:{}. Start it first (docker compose / supabase).",
             config.api_db.host, config.api_db.port
         ));
-        return Err(OpsError::TestFailure("preflight failed".into()));
+        return Err(OpsError::TestFailure(
+            "preflight failed: Postgres not reachable".into(),
+        ));
     }
 
     let has_hurl = Command::new("hurl")
@@ -266,6 +277,9 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
             .arg("start")
             .arg("--bind-addr")
             .arg(format!("127.0.0.1:{probe_port}"))
+            // The app writes its pid file into its cwd; without this the pid
+            // file lands in the harness's cwd while the probe polls root_dir.
+            .current_dir(&config.root_dir)
             .env("DATABASE_URL", config.api_db.url())
             .env("SUPABASE_JWT_SECRET", config.jwt_secret.clone());
         let mut probe = ManagedProcess::spawn(start_cmd, "app-probe", &config.log_file)?;
@@ -334,6 +348,11 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         if let Some(seed) = &config.manifest.database.api.seed_sql {
             let seed_path = config.root_dir.join(seed);
             let _ = psql_exec_file_ok(&config.api_db, &seed_path).await;
+        }
+        // Consumer-provided post-migration steps (e.g. hr-reports views).
+        // Hook failures are warnings — hooks are consumer-owned.
+        if let Err(e) = crate::ext::run_hooks(config, "post_migrate").await {
+            output::warn(format!("post_migrate hook failed: {e}"));
         }
     } else {
         output::info("--no-migrate: skipping reset + migration");
@@ -456,31 +475,55 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
                 if hurl.skip.contains(&name) {
                     continue;
                 }
-                let mut cmd = Command::new("hurl");
-                cmd.arg("--test")
-                    .arg("--variable")
-                    .arg(format!("base_url={}", config.api_url()));
-                if let Some(h) = &auth_header {
-                    let key = h.trim_start_matches("Authorization: Bearer ").to_string();
-                    cmd.arg("--variable").arg(format!("api_key={key}"));
-                }
-                cmd.arg(&f);
-                match cmd.output() {
-                    Ok(out) => {
-                        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-                        if stdout.contains("100.0%") {
-                            let reqs = parse_requests(&stdout);
-                            total_requests += reqs;
-                            counters.pass(format!("{name} ({reqs} request(s))"));
-                        } else {
-                            counters.fail_test(name);
-                            for line in stdout.lines().filter(|l| l.contains("error:")) {
-                                println!("    {line}");
+                let mut attempts_used = 0u32;
+                loop {
+                    attempts_used += 1;
+                    if attempts_used > 1 {
+                        output::info(format!(
+                            "retry {}/{} for {name}",
+                            attempts_used - 1,
+                            args.retry
+                        ));
+                    }
+                    let mut cmd = Command::new("hurl");
+                    cmd.arg("--test")
+                        .arg("--variable")
+                        .arg(format!("base_url={}", config.api_url()));
+                    if let Some(h) = &auth_header {
+                        let key = h.trim_start_matches("Authorization: Bearer ").to_string();
+                        cmd.arg("--variable").arg(format!("api_key={key}"));
+                    }
+                    cmd.arg(&f);
+                    let (passed, reqs, error_lines) = match cmd.output() {
+                        Ok(out) => {
+                            let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+                            if stdout.contains("100.0%") {
+                                (true, parse_requests(&stdout), Vec::new())
+                            } else {
+                                (
+                                    false,
+                                    0,
+                                    stdout
+                                        .lines()
+                                        .filter(|l| l.contains("error:"))
+                                        .map(|l| l.to_string())
+                                        .collect(),
+                                )
                             }
                         }
+                        Err(e) => (false, 0, vec![e.to_string()]),
+                    };
+                    if passed {
+                        total_requests += reqs;
+                        counters.pass(format!("{name} ({reqs} request(s))"));
+                        break;
                     }
-                    Err(e) => {
-                        counters.fail_test(format!("{name}: {e}"));
+                    if !should_retry(attempts_used, args.retry) {
+                        counters.fail_test(name);
+                        for line in &error_lines {
+                            println!("    {line}");
+                        }
+                        break;
                     }
                 }
             }
@@ -1129,5 +1172,18 @@ mod tests {
         let (body, status) = split_status_body(&text);
         assert_eq!(status, "200");
         assert_eq!(body, "body line 1\nbody line 2");
+    }
+
+    #[test]
+    fn retry_decision_respects_budget() {
+        // No retries: even the first failure is final.
+        assert!(!should_retry(1, 0));
+        // max 3: attempts 1..3 may retry, attempt 4 is final.
+        assert!(should_retry(1, 3));
+        assert!(should_retry(2, 3));
+        assert!(should_retry(3, 3));
+        assert!(!should_retry(4, 3));
+        // Overflow-safe: max value still allows the documented total.
+        assert!(should_retry(1, u32::MAX));
     }
 }

@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::time::Instant;
 
-use crate::error::OpsResult;
+use crate::error::{OpsError, OpsResult};
 use crate::output;
 
 #[derive(Debug, Clone)]
@@ -167,6 +167,56 @@ impl Metrics {
         output::info(format!("Metrics appended to {}", path.display()));
         Ok(())
     }
+
+    /// Append one run-level object to a JSON metrics file as an array:
+    ///
+    /// ```json
+    /// {"subcommand": "api", "stage": "TOTAL", "duration_secs": 12, "total": 30}
+    /// ```
+    ///
+    /// where `duration_secs` is the sum of recorded stage durations and
+    /// `total` the wall-clock elapsed. If the file does not exist it is
+    /// created as `[]`; an existing file must parse as a JSON array (or be
+    /// empty), and the new object is pushed onto it.
+    pub fn append_json(&self, path: &Path, subcommand: &str) -> OpsResult<()> {
+        let duration_secs: u64 = self.stages.borrow().iter().map(|s| s.duration_secs).sum();
+        let total = self.total_elapsed_secs();
+        let obj = serde_json::json!({
+            "subcommand": subcommand,
+            "stage": "TOTAL",
+            "duration_secs": duration_secs,
+            "total": total,
+        });
+        let mut array: serde_json::Value = if path.is_file() {
+            let content = std::fs::read_to_string(path)?;
+            if content.trim().is_empty() {
+                serde_json::json!([])
+            } else {
+                serde_json::from_str(&content).map_err(|e| {
+                    OpsError::Config(format!(
+                        "metrics file {} is not valid JSON: {e}",
+                        path.display()
+                    ))
+                })?
+            }
+        } else {
+            serde_json::json!([])
+        };
+        let items = array.as_array_mut().ok_or_else(|| {
+            OpsError::Config(format!(
+                "metrics file {} is not a JSON array",
+                path.display()
+            ))
+        })?;
+        items.push(obj);
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(&array)
+                .map_err(|e| OpsError::Config(format!("cannot serialize metrics: {e}")))?,
+        )?;
+        output::info(format!("Metrics appended to {}", path.display()));
+        Ok(())
+    }
 }
 
 /// Format seconds as "1h 2m 3s" / "2m 3s" / "3s".
@@ -216,5 +266,29 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content.matches("timestamp\tsubcommand").count(), 1);
         assert_eq!(content.matches("\tapi\t").count(), 4); // 2 runs x (1 stage + TOTAL)
+    }
+
+    #[test]
+    fn json_output_appends_one_object_per_run() {
+        let m = Metrics::new();
+        m.begin("first");
+        m.end();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m.json");
+        m.append_json(&path, "api").unwrap();
+        m.append_json(&path, "api").unwrap();
+        let array: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let items = array.as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        for item in items {
+            assert_eq!(item.get("subcommand").unwrap(), "api");
+            assert_eq!(item.get("stage").unwrap(), "TOTAL");
+            assert!(item.get("duration_secs").unwrap().is_u64());
+            assert!(item.get("total").unwrap().is_u64());
+        }
+        // A non-array file is rejected rather than silently rewritten.
+        std::fs::write(&path, "{\"not\": \"an array\"}").unwrap();
+        assert!(m.append_json(&path, "api").is_err());
     }
 }

@@ -3,13 +3,13 @@
 //! Subcommands: `api`, `cli`, `e2e`, `ui`, `full`, `clean`, `smoke`,
 //! `quality`, `ext <name>`. Global flags: `--config`, `--keep`,
 //! `--skip-build`, `--skip-generate`, `--release`, `--verbose`, `--metrics`,
-//! `--headed`, `--grep`.
+//! `--metrics-format`, `--retry`, `--headed`, `--grep`.
 //!
 //! The generated `testkit` binary wraps `codegraph_ops::cli::main()`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::config::OpsConfig;
 use crate::error::OpsError;
@@ -23,6 +23,13 @@ use crate::suites::ui::{run_ui, UiArgs};
 
 const DEFAULT_MANIFEST: &str = "codegraph-ops.toml";
 
+/// Output format for `--metrics`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum MetricsFormat {
+    Tsv,
+    Json,
+}
+
 #[derive(Parser)]
 #[command(
     name = "testkit",
@@ -33,7 +40,8 @@ pub struct Cli {
     #[command(subcommand)]
     command: Cmd,
 
-    /// Manifest file (default: codegraph-ops.toml in the current dir).
+    /// Manifest file (default: codegraph-ops.toml found from the cwd or the
+    /// testkit executable, walking parents).
     #[arg(long, global = true, value_name = "FILE")]
     config: Option<PathBuf>,
 
@@ -57,9 +65,17 @@ pub struct Cli {
     #[arg(long, global = true)]
     verbose: bool,
 
-    /// Append stage timings to FILE (TSV).
+    /// Append stage timings to FILE (TSV or JSON via --metrics-format).
     #[arg(long, global = true, value_name = "FILE")]
     metrics: Option<PathBuf>,
+
+    /// Format for --metrics (default: tsv).
+    #[arg(long, global = true, value_enum, default_value_t = MetricsFormat::Tsv)]
+    metrics_format: MetricsFormat,
+
+    /// Retry failed hurl files in the api suite up to N times (default: 0).
+    #[arg(long, global = true, value_name = "N", default_value_t = 0)]
+    retry: u32,
 
     /// Show the browser (Playwright).
     #[arg(long, global = true)]
@@ -139,10 +155,17 @@ pub async fn main() -> i32 {
     let cli = Cli::parse();
     output::set_verbose(cli.verbose);
 
-    let manifest_path = cli
-        .config
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST));
+    let manifest_path = match cli.config.clone() {
+        Some(path) => path,
+        None => {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(Path::to_path_buf))
+                .unwrap_or_else(|| cwd.clone());
+            find_manifest(&cwd, &exe_dir).unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST))
+        }
+    };
     let config = match OpsConfig::load(&manifest_path) {
         Ok(c) => c,
         Err(e) => {
@@ -169,6 +192,7 @@ pub async fn main() -> i32 {
                 regen: *regen,
                 release: cli.release,
                 metrics_file: cli.metrics.as_ref().map(|p| p.display().to_string()),
+                retry: cli.retry,
             };
             output::bold("Running API integration tests");
             run_api(&config, &args).await
@@ -186,6 +210,7 @@ pub async fn main() -> i32 {
                     regen: false,
                     release: cli.release,
                     metrics_file: None,
+                    retry: cli.retry,
                 };
                 if let Err(e) = run_api(&config, &args).await {
                     return report_error("api", e);
@@ -219,32 +244,9 @@ pub async fn main() -> i32 {
             run_ui(&config, &args).await
         }
         Cmd::Full => {
-            output::bold("Running full test suite (API + E2E)");
-            let api_args = ApiArgs {
-                keep: cli.keep,
-                skip_build: cli.skip_build,
-                skip_generate: cli.skip_generate,
-                migrate: true,
-                rebuild: false,
-                regen: false,
-                release: cli.release,
-                metrics_file: cli.metrics.as_ref().map(|p| p.display().to_string()),
-            };
-            if let Err(e) = run_api(&config, &api_args).await {
-                return report_error("full", e);
-            }
-            println!();
-            output::bold("════════════════════════════════════════════");
-            println!();
-            let e2e_args = E2eArgs {
-                keep: cli.keep,
-                skip_build: cli.skip_build,
-                skip_generate: cli.skip_generate,
-                release: cli.release,
-                headed: cli.headed,
-                playwright_args: build_playwright_args(&cli, &[]),
-            };
-            run_e2e(&config, &e2e_args).await
+            // `full` runs e2e even when api failed (old bash behavior) and
+            // accumulates exit codes.
+            return run_full(&cli, &config).await;
         }
         Cmd::Clean => {
             cmd_clean(&config).await;
@@ -288,18 +290,78 @@ pub async fn main() -> i32 {
     };
 
     match result {
-        Ok(()) => {
-            if let Some(path) = &cli.metrics {
-                let _ = config
-                    .metrics
-                    .append_tsv(path, subcommand_name(&cli.command));
-            } else {
-                config.metrics.print_summary();
-            }
-            0
-        }
+        Ok(()) => finish_ok(&cli, &config, subcommand_name(&cli.command)),
         Err(e) => report_error(subcommand_name(&cli.command), e),
     }
+}
+
+/// Run the API suite, then ALWAYS the E2E suite (matching the old bash:
+/// failures accumulate; non-zero if either suite failed). Returns the
+/// combined exit code.
+async fn run_full(cli: &Cli, config: &OpsConfig) -> i32 {
+    output::bold("Running full test suite (API + E2E)");
+    let api_args = ApiArgs {
+        keep: cli.keep,
+        skip_build: cli.skip_build,
+        skip_generate: cli.skip_generate,
+        migrate: true,
+        rebuild: false,
+        regen: false,
+        release: cli.release,
+        metrics_file: cli.metrics.as_ref().map(|p| p.display().to_string()),
+        retry: cli.retry,
+    };
+    let api_code = match run_api(config, &api_args).await {
+        Ok(()) => None,
+        Err(e) => Some(report_error("api", e)),
+    };
+    println!();
+    output::bold("════════════════════════════════════════════");
+    println!();
+    let e2e_args = E2eArgs {
+        keep: cli.keep,
+        skip_build: cli.skip_build,
+        skip_generate: cli.skip_generate,
+        release: cli.release,
+        headed: cli.headed,
+        playwright_args: build_playwright_args(cli, &[]),
+    };
+    let e2e_code = match run_e2e(config, &e2e_args).await {
+        Ok(()) => None,
+        Err(e) => Some(report_error("e2e", e)),
+    };
+    let code = combine_codes(api_code, e2e_code);
+    if code == 0 {
+        finish_ok(cli, config, "full");
+    }
+    code
+}
+
+/// Combine two suite exit codes for `full`: any failed suite wins; when both
+/// failed, the larger code is returned; 0 only when both passed.
+fn combine_codes(api_code: Option<i32>, e2e_code: Option<i32>) -> i32 {
+    match (api_code, e2e_code) {
+        (Some(a), Some(b)) => a.max(b),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => 0,
+    }
+}
+
+/// Successful-run tail: append metrics (if requested) or print the summary.
+fn finish_ok(cli: &Cli, config: &OpsConfig, subcommand: &str) -> i32 {
+    if let Some(path) = &cli.metrics {
+        let appended = match cli.metrics_format {
+            MetricsFormat::Tsv => config.metrics.append_tsv(path, subcommand).is_ok(),
+            MetricsFormat::Json => config.metrics.append_json(path, subcommand).is_ok(),
+        };
+        if !appended {
+            output::warn(format!("could not append metrics to {}", path.display()));
+        }
+    } else {
+        config.metrics.print_summary();
+    }
+    0
 }
 
 fn subcommand_name(cmd: &Cmd) -> &'static str {
@@ -343,7 +405,7 @@ fn api_health_ok(config: &OpsConfig) -> bool {
 }
 
 fn report_error(subcommand: &str, e: OpsError) -> i32 {
-    match &e {
+    let code = match &e {
         OpsError::TestFailure(_) => {
             output::fail(format!("{subcommand}: {e}"));
             1
@@ -352,7 +414,29 @@ fn report_error(subcommand: &str, e: OpsError) -> i32 {
             output::fail(format!("{subcommand}: {e}"));
             e.exit_code()
         }
+    };
+    if let Some(h) = crate::error::hint(&e) {
+        println!("  {}", output::dim(format!("hint: {h}")));
     }
+    code
+}
+
+/// Locate the manifest when `--config` is absent: walk UP from `cwd`
+/// looking for `codegraph-ops.toml`; if not found, walk UP from `exe_dir`
+/// (the testkit executable's directory). Returns the first match.
+pub fn find_manifest(cwd: &Path, exe_dir: &Path) -> Option<PathBuf> {
+    for dir in walk_up(cwd).chain(walk_up(exe_dir)) {
+        let candidate = dir.join(DEFAULT_MANIFEST);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Iterator over `start` and its ancestors (inclusive).
+fn walk_up(start: &Path) -> impl Iterator<Item = &Path> {
+    std::iter::successors(Some(start), |dir| dir.parent())
 }
 
 /// Stop services and remove generated output (mirrors bash `cmd_clean`).
@@ -437,5 +521,60 @@ mod tests {
                 "--retries=2"
             ]
         );
+    }
+
+    #[test]
+    fn find_manifest_walks_up_from_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let deep = dir.path().join("a/b/c");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(dir.path().join(DEFAULT_MANIFEST), "app_name = \"x\"\n").unwrap();
+        let exe_dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            find_manifest(&deep, exe_dir.path()),
+            Some(dir.path().join(DEFAULT_MANIFEST))
+        );
+        // The cwd itself also matches when the manifest is right there.
+        assert_eq!(
+            find_manifest(dir.path(), exe_dir.path()),
+            Some(dir.path().join(DEFAULT_MANIFEST))
+        );
+    }
+
+    #[test]
+    fn find_manifest_falls_back_to_exe_dir_then_none() {
+        let cwd = tempfile::tempdir().unwrap();
+        let exe = tempfile::tempdir().unwrap();
+        let exe_deep = exe.path().join("bin/nested");
+        std::fs::create_dir_all(&exe_deep).unwrap();
+        std::fs::write(exe.path().join(DEFAULT_MANIFEST), "app_name = \"x\"\n").unwrap();
+        assert_eq!(
+            find_manifest(cwd.path(), &exe_deep),
+            Some(exe.path().join(DEFAULT_MANIFEST))
+        );
+        let other = tempfile::tempdir().unwrap();
+        assert_eq!(find_manifest(cwd.path(), other.path()), None);
+    }
+
+    #[test]
+    fn find_manifest_prefers_cwd_over_exe_dir() {
+        let cwd = tempfile::tempdir().unwrap();
+        let exe = tempfile::tempdir().unwrap();
+        std::fs::write(cwd.path().join(DEFAULT_MANIFEST), "cwd\n").unwrap();
+        std::fs::write(exe.path().join(DEFAULT_MANIFEST), "exe\n").unwrap();
+        assert_eq!(
+            find_manifest(cwd.path(), exe.path()),
+            Some(cwd.path().join(DEFAULT_MANIFEST))
+        );
+    }
+
+    #[test]
+    fn combine_codes_prefers_nonzero_and_max() {
+        assert_eq!(combine_codes(None, None), 0);
+        assert_eq!(combine_codes(Some(1), None), 1);
+        assert_eq!(combine_codes(None, Some(2)), 2);
+        assert_eq!(combine_codes(Some(1), Some(1)), 1);
+        assert_eq!(combine_codes(Some(1), Some(2)), 2);
+        assert_eq!(combine_codes(Some(2), Some(1)), 2);
     }
 }

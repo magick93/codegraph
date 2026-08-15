@@ -19,9 +19,16 @@ use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use crate::generate::ProjectConfig;
 use codegraph_config::ops_manifest::{
-    OpsCapabilities, OpsDatabase, OpsDbTarget, OpsManifest, OpsServers,
+    OpsCapabilities, OpsDatabase, OpsDbTarget, OpsManifest, OpsServers, OpsSmoke,
 };
 use codegraph_config::DomainConfig;
+
+/// Derive the API path segment for an entity schema title
+/// (`CandidateType` → `candidate`).
+fn entity_segment(schema_title: &str) -> String {
+    let stripped = schema_title.strip_suffix("Type").unwrap_or(schema_title);
+    heck::ToSnakeCase::to_snake_case(stripped)
+}
 
 /// Context for the testkit Cargo.toml template.
 #[derive(Debug, Serialize)]
@@ -100,10 +107,14 @@ impl GlobalGenerator for OpsManifestGenerator {
         &self,
         _db: &dyn GraphQuerier,
         _config: &DomainConfig,
-        _generation_order: &[GenerationEntry],
+        generation_order: &[GenerationEntry],
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
+        let smoke = generation_order.first().map(|entry| OpsSmoke {
+            entity: format!("{}/{}", entry.domain, entity_segment(&entry.schema_title)),
+            create_body: "{}".to_string(),
+        });
         let manifest = OpsManifest {
             app_name: project.app_name.clone(),
             graph_binary: None,
@@ -115,7 +126,7 @@ impl GlobalGenerator for OpsManifestGenerator {
             // harness resolve app_dir == the directory containing the manifest.
             output_dir: PathBuf::from("."),
             ui_dir: None,
-            smoke: None,
+            smoke,
             servers: OpsServers::default(),
             database: OpsDatabase {
                 api: default_api_db_target(5432),

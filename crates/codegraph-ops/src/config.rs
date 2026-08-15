@@ -83,13 +83,13 @@ impl OpsConfig {
 
         let supabase = manifest.supabase.as_ref();
         let anon_key = supabase
-            .and_then(|s| s.anon_key.clone())
+            .and_then(|s| s.anon_key.as_deref().map(resolve_env))
             .unwrap_or_else(|| DEMO_ANON_KEY.to_string());
         let service_key = supabase
-            .and_then(|s| s.service_key.clone())
+            .and_then(|s| s.service_key.as_deref().map(resolve_env))
             .unwrap_or_else(|| DEMO_SERVICE_KEY.to_string());
         let jwt_secret = supabase
-            .and_then(|s| s.jwt_secret.clone())
+            .and_then(|s| s.jwt_secret.as_deref().map(resolve_env))
             .unwrap_or_else(|| DEMO_JWT_SECRET.to_string());
 
         let metrics = Metrics::new();
@@ -138,10 +138,40 @@ fn pg_target(t: &OpsDbTarget, role: &str) -> PgTarget {
         host: t.host.clone(),
         port: t.port,
         user: t.user.clone(),
-        password: t.password.clone(),
+        password: resolve_env(&t.password),
         db: t.database.clone(),
         role: role.to_string(),
     }
+}
+
+/// Replace every `{env:NAME}` placeholder in `value` with the current value
+/// of the `NAME` environment variable. An unset variable expands to an empty
+/// string. Plain strings (no placeholders) pass through unchanged, so
+/// generated manifests without indirection keep working as-is.
+///
+/// Example: `"{env:DB_PASSWORD}"` → the value of `DB_PASSWORD` (or "").
+pub fn resolve_env(value: &str) -> String {
+    const PREFIX: &str = "{env:";
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find(PREFIX) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + PREFIX.len()..];
+        match after.find('}') {
+            Some(end) => {
+                let name = &after[..end];
+                out.push_str(&std::env::var(name).unwrap_or_default());
+                rest = &after[end + 1..];
+            }
+            None => {
+                // Unterminated placeholder: keep it verbatim.
+                out.push_str(&rest[start..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Standard local Supabase demo keys (stable across local stacks).
@@ -191,5 +221,81 @@ mod tests {
         assert_eq!(cfg.app_dir, PathBuf::from("/tmp/repo/generated-candidate"));
         assert_eq!(cfg.api_db.port, 5432);
         assert_eq!(cfg.api_url(), "http://localhost:3000");
+    }
+
+    #[test]
+    fn resolve_env_expands_set_and_unset_vars() {
+        std::env::set_var("CG_OPS_TEST_SET_VAR", "hunter2");
+        std::env::remove_var("CG_OPS_TEST_UNSET_VAR");
+        // Set variable expands; unset expands to empty.
+        assert_eq!(
+            resolve_env("user={env:CG_OPS_TEST_SET_VAR}"),
+            "user=hunter2"
+        );
+        assert_eq!(
+            resolve_env("prefix-{env:CG_OPS_TEST_UNSET_VAR}-suffix"),
+            "prefix--suffix"
+        );
+        // Multiple placeholders are all replaced.
+        assert_eq!(
+            resolve_env("{env:CG_OPS_TEST_SET_VAR}:{env:CG_OPS_TEST_UNSET_VAR}"),
+            "hunter2:"
+        );
+    }
+
+    #[test]
+    fn resolve_env_passes_plain_strings_through() {
+        std::env::remove_var("CG_OPS_TEST_UNSET_VAR");
+        assert_eq!(resolve_env("postgres"), "postgres");
+        assert_eq!(resolve_env(""), "");
+        // No placeholder → untouched even if it contains braces.
+        assert_eq!(resolve_env("{not-env:VAR}"), "{not-env:VAR}");
+        // Unterminated placeholder is kept verbatim.
+        assert_eq!(resolve_env("x={env:UNCLOSED"), "x={env:UNCLOSED");
+    }
+
+    #[test]
+    fn from_manifest_resolves_env_in_db_password_and_keys() {
+        std::env::set_var("CG_OPS_TEST_DB_PW", "pw-from-env");
+        std::env::set_var("CG_OPS_TEST_ANON", "anon-from-env");
+        let manifest = OpsManifest {
+            app_name: "demo-app".into(),
+            graph_binary: None,
+            schemas_dir: None,
+            classifier: None,
+            domain_config: None,
+            profile: None,
+            output_dir: "generated-candidate".into(),
+            ui_dir: None,
+            smoke: None,
+            servers: Default::default(),
+            database: OpsDatabase {
+                api: OpsDbTarget {
+                    host: "localhost".into(),
+                    port: 5432,
+                    user: "u".into(),
+                    password: "{env:CG_OPS_TEST_DB_PW}".into(),
+                    database: "postgres".into(),
+                    reset_sql: None,
+                    seed_sql: None,
+                },
+                e2e: None,
+                e2e_app: None,
+            },
+            supabase: Some(codegraph_config::OpsSupabase {
+                dir: "supabase".into(),
+                health_url: None,
+                anon_key: Some("{env:CG_OPS_TEST_ANON}".into()),
+                service_key: None,
+                jwt_secret: None,
+            }),
+            capabilities: Default::default(),
+            hurl: None,
+            hooks: vec![],
+            extensions: vec![],
+        };
+        let cfg = OpsConfig::from_manifest(manifest, PathBuf::from("/tmp/repo")).unwrap();
+        assert_eq!(cfg.api_db.password, "pw-from-env");
+        assert_eq!(cfg.anon_key, "anon-from-env");
     }
 }
