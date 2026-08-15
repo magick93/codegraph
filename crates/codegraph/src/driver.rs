@@ -40,6 +40,22 @@ pub struct RunArgs<'a> {
     pub codegraph_rev: Option<String>,
 }
 
+/// Arguments for the IFML-only UI generation path (`ifml_generate`).
+pub struct IfmlGenerateArgs<'a> {
+    pub config_path: &'a Path,
+    pub output: &'a Path,
+    pub ifml_files: &'a [PathBuf],
+    /// Optional JSON schema directory — enables entity resolution enrichment.
+    pub schemas: Option<&'a Path>,
+    /// Path to classifier.toml (required only with `schemas`).
+    pub classifier: Option<&'a Path>,
+    /// IFML framework targets (e.g. "svelte", "react"). Empty defaults to svelte.
+    pub frameworks: &'a [String],
+    /// Optional path to profiles.toml.
+    pub profiles_config_path: Option<PathBuf>,
+    pub template_dir: &'a [PathBuf],
+}
+
 /// Run the full pipeline: ingest + classify + generate.
 pub async fn run(args: RunArgs<'_>) -> Result<()> {
     let RunArgs {
@@ -321,6 +337,253 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
                 }
             }
         }
+    }
+
+    println!("Done.");
+    Ok(())
+}
+
+/// IFML-only UI generation: ingest IFML DSL files (+ optional schemas) and
+/// emit framework routes/navigation for the requested frameworks. No entity,
+/// DDL, API, or UI-scaffold generators run, and validation is skipped.
+pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
+    let IfmlGenerateArgs {
+        config_path,
+        output,
+        ifml_files,
+        schemas,
+        classifier,
+        frameworks,
+        profiles_config_path,
+        template_dir,
+    } = args;
+
+    if ifml_files.is_empty() {
+        return Err(crate::error::Error::Config(
+            "no IFML files provided: --ifml-files is required".to_string(),
+        ));
+    }
+    if schemas.is_some() && classifier.is_none() {
+        return Err(crate::error::Error::Config(
+            "--classifier is required when --schemas is provided".to_string(),
+        ));
+    }
+
+    let backend_config = BackendConfig::default();
+    let be = create_backend(&backend_config)
+        .await
+        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+
+    let domain_config = codegraph_config::config::parse_domain_config(config_path)
+        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+
+    // Pass 1: ingest + classify schemas when provided (entity resolution
+    // enrichment for IFML data bindings). `classifier` is guaranteed Some
+    // here by the guard above.
+    if let (Some(schemas_dir), Some(classifier_path)) = (schemas, classifier) {
+        let classifier_config =
+            codegraph_classifier::config::parse_classifier_config(classifier_path)
+                .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+
+        let empty_entities = HashSet::new();
+        let ui_overrides = load_ui_overrides(config_path)?;
+        let ingest_result = crate::ingest::async_ingest::ingest_schemas(
+            be.ingestor(),
+            schemas_dir,
+            &classifier_config,
+            &empty_entities,
+            &ui_overrides,
+            &domain_config.defaults.type_suffix,
+        )
+        .await?;
+        println!(
+            "Pass 1 complete: {} schemas ingested",
+            ingest_result.schemas_created
+        );
+
+        // Auto-classify + Pass 2: reclassify with entity flags.
+        let classifier_types: HashSet<String> = classifier_config
+            .primitive_wrappers
+            .keys()
+            .cloned()
+            .chain(classifier_config.array_wrappers.keys().cloned())
+            .chain(classifier_config.range_wrappers.keys().cloned())
+            .chain(
+                classifier_config
+                    .composite_wrappers
+                    .iter()
+                    .map(|cw| cw.schema.clone()),
+            )
+            .collect();
+        let all_data = be
+            .querier()
+            .get_classification_data()
+            .await
+            .map_err(crate::error::Error::Graph)?;
+        let naming_rules = classifier_config.naming_rules.clone();
+        let auto_classifier = crate::classify::AutoClassifier::new(classifier_types, naming_rules);
+        let mut entity_names = HashSet::new();
+        let mut sorted_domain_names: Vec<&String> = domain_config.domains.keys().collect();
+        sorted_domain_names.sort();
+        for domain_name in &sorted_domain_names {
+            let domain_entry = &domain_config.domains[domain_name.as_str()];
+            let domain_schemas: Vec<_> = all_data
+                .iter()
+                .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
+                .cloned()
+                .collect();
+            let result =
+                auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
+            for score in &result.entities {
+                entity_names.insert(score.title.clone());
+            }
+        }
+        for domain_entry in domain_config.domains.values() {
+            for entity in &domain_entry.entities {
+                entity_names.insert(entity.clone());
+            }
+        }
+        println!("Auto-classified {} entities", entity_names.len());
+        crate::ingest::async_ingest::reclassify_with_entities(
+            be.ingestor(),
+            be.querier(),
+            &entity_names,
+        )
+        .await?;
+    }
+
+    // Pass 1b: ingest IFML DSL files (parse failures are hard errors).
+    println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
+    let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
+    for ifml_path in ifml_files {
+        let model = codegraph_ifml_dsl::parse_ifml_file(ifml_path).map_err(|e| {
+            crate::error::Error::Config(format!(
+                "Failed to parse IFML file '{}': {}",
+                ifml_path.display(),
+                e
+            ))
+        })?;
+        let stats = crate::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+        total_stats.view_containers += stats.view_containers;
+        total_stats.containers += stats.containers;
+        total_stats.components += stats.components;
+        total_stats.events += stats.events;
+        total_stats.parameters += stats.parameters;
+        total_stats.actions += stats.actions;
+    }
+    println!("Pass 1b complete: {total_stats}");
+
+    // Pass 1c: ingest API model from domain configuration.
+    {
+        let api_stats =
+            crate::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config).await?;
+        println!("Pass 1c complete: {api_stats}");
+    }
+
+    let frameworks: Vec<String> = if frameworks.is_empty() {
+        vec!["svelte".to_string()]
+    } else {
+        frameworks.to_vec()
+    };
+
+    // Resolve the build plan: either from a provided profiles.toml, or a
+    // synthesized minimal IFML-only plan. When a profile resolves but does
+    // not declare the per-framework generator names (`ifml_route_{fw}`),
+    // `--framework` is authoritative and the plan falls back to ifml_only.
+    let registry = crate::profile::CapabilityRegistry::new();
+    let mut project_config = crate::generate::ProjectConfig {
+        api_version: domain_config.defaults.api_version.clone(),
+        types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
+        ..crate::generate::ProjectConfig::default()
+    };
+    let build_plan = if let Some(ref profiles_path) = profiles_config_path {
+        if !profiles_path.exists() {
+            return Err(crate::error::Error::Config(format!(
+                "profiles config not found at {}",
+                profiles_path.display()
+            )));
+        }
+        let resolved = crate::profile::load_and_resolve_profile(profiles_path, "default", None)?;
+        let plan = crate::profile::BuildPlan::from_profile(&resolved, &registry)?;
+
+        let meta = &resolved.meta;
+        project_config.app_name = meta.app_name.clone().unwrap_or(project_config.app_name);
+        project_config.domain_types_crate = meta
+            .domain_types_crate
+            .clone()
+            .unwrap_or(project_config.domain_types_crate);
+        project_config.hooks_api_crate = meta.hooks_api_crate.clone().unwrap_or_default();
+        project_config.api_title = meta.api_title.clone().unwrap_or(project_config.api_title);
+        project_config.generator_name = meta
+            .generator_name
+            .clone()
+            .unwrap_or(project_config.generator_name);
+        project_config.domain_types_base = meta.domain_types_base.clone().unwrap_or_default();
+        project_config.hooks_api_base = meta.hooks_api_base.clone().unwrap_or_default();
+        project_config.extensions_base = meta.extensions_base.clone().unwrap_or_default();
+        project_config.app_config_base = meta.app_config_base.clone().unwrap_or_default();
+        project_config.decision_engine_base = meta.decision_engine_base.clone().unwrap_or_default();
+        project_config.codegraph_workflow_base = meta
+            .codegraph_workflow_base
+            .clone()
+            .unwrap_or_default();
+        project_config.type_contracts_base = meta.type_contracts_base.clone().unwrap_or_default();
+        project_config.database_target = plan.database_target().to_string();
+        project_config.persistence_provider = plan.persistence_provider().to_string();
+        project_config.deployment_topology = plan.deployment_topology().to_string();
+
+        println!(
+            "Using profile \"{}\" — {} global generators",
+            resolved.meta.name,
+            plan.global_generators.len(),
+        );
+
+        let missing: Vec<&String> = frameworks
+            .iter()
+            .filter(|fw| !plan.has_global_gen(&format!("ifml_route_{fw}")))
+            .collect();
+        if missing.is_empty() {
+            Some(plan)
+        } else {
+            eprintln!(
+                "Warning: profile \"{}\" does not declare per-framework IFML \
+                 generators (ifml_route_{}) — falling back to --framework-driven \
+                 IFML-only plan",
+                resolved.meta.name,
+                missing
+                    .iter()
+                    .map(|fw| fw.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            Some(crate::profile::BuildPlan::ifml_only(&frameworks)?)
+        }
+    } else {
+        Some(crate::profile::BuildPlan::ifml_only(&frameworks)?)
+    };
+
+    let override_dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
+    let tera = if override_dirs.is_empty() {
+        let td = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        crate::generate::template_engine::create_tera(&td)?
+    } else {
+        crate::generate::template_engine::create_tera_with_overrides(&override_dirs)?
+    };
+
+    let report = crate::generate::run_ifml_generators(
+        be.querier(),
+        &domain_config,
+        output,
+        &tera,
+        &frameworks,
+        build_plan.as_ref(),
+        &project_config,
+    )
+    .await?;
+
+    print!("{}", report.summary());
+    if report.has_errors() {
+        eprintln!("Generation completed with errors. Some views were skipped.");
     }
 
     println!("Done.");

@@ -88,6 +88,28 @@ async fn main() -> codegraph::error::Result<()> {
             })
             .await
         }
+        cli::Commands::IfmlGenerate {
+            config,
+            output,
+            ifml_files,
+            schemas,
+            classifier,
+            framework,
+            profiles_config,
+            template_dir,
+        } => {
+            codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+                config_path: &config,
+                output: &output,
+                ifml_files: &ifml_files,
+                schemas: schemas.as_deref(),
+                classifier: classifier.as_deref(),
+                frameworks: &framework,
+                profiles_config_path: profiles_config,
+                template_dir: &template_dir,
+            })
+            .await
+        }
         cli::Commands::Lsp {
             schemas,
             classifier,
