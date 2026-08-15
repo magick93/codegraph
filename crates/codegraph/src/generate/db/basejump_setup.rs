@@ -14,9 +14,11 @@ use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
 const EXTENSIONS_SQL: &str = "\
--- Bootstrap: required PostgreSQL extensions for basejump / pg_tle
+--- Bootstrap: required PostgreSQL extensions for basejump / pg_tle
 CREATE EXTENSION IF NOT EXISTS http WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS pg_tle;
+--- Core crypto helpers (gen_random_bytes for API keys, pgcrypto functions)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 ";
 
 const BASEJUMP_INSTALL_SQL: &str = include_str!("../../../static/basejump_core_2.0.1_install.sql");

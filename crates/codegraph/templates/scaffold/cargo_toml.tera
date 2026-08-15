@@ -6,6 +6,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+thiserror = "2"
 axum = { version = "0.8", features = ["multipart"] }
 {% if project.database_target == "sqlite" %}
 sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }

@@ -35,7 +35,7 @@ fn pid_file_path(bind_addr: Option<&str>, pid_file: Option<&str>) -> String {
     }
     let addr = bind_addr.unwrap_or("0.0.0.0:3000");
     let port = addr.rsplit(':').next().unwrap_or("3000");
-    format!("hr-app-{port}.pid")
+    format!("{{ app_name }}-{port}.pid")
 }
 
 #[derive(Parser)]

@@ -1,0 +1,5 @@
+# Health check smoke test. Run with: hurl --variable base_url=http://localhost:3000 hurl/health.hurl
+GET {% raw %}{{base_url}}{% endraw %}/health
+HTTP 200
+[Asserts]
+jsonpath "$.status" == "ok"

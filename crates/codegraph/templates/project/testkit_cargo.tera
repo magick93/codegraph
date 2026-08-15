@@ -1,0 +1,9 @@
+[package]
+name = "testkit"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+codegraph-ops = { workspace = true }
+tokio = { workspace = true }

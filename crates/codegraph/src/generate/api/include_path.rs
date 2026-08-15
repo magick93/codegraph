@@ -89,6 +89,29 @@ pub async fn resolve_include_paths(
     schema_title: &str,
     allow_include: Option<&Vec<String>>,
 ) -> Result<Vec<ResolvedIncludePath>> {
+    // Monolith behaviour: cross-domain include paths stay (same-DB joins).
+    resolve_include_paths_for_topology(db, config, domain, schema_title, allow_include, false)
+        .await
+}
+
+/// [`resolve_include_paths`] with an explicit workers-topology flag.
+///
+/// In workers topology, include paths that cross a domain boundary are
+/// dropped: the generated fetch code would reference the target domain's
+/// `crate::domain::{domain}/...` and `crate::entity/{module}/...` modules,
+/// which live in a *different* worker crate.
+///
+/// TODO(worker-remote-includes): fetch cross-domain includes over the target
+/// worker's API (service binding) instead of same-DB SQL; until then the
+/// workers compile gate keeps only same-domain includes.
+pub async fn resolve_include_paths_for_topology(
+    db: &dyn GraphQuerier,
+    config: &codegraph_config::DomainConfig,
+    domain: &str,
+    schema_title: &str,
+    allow_include: Option<&Vec<String>>,
+    workers_topology: bool,
+) -> Result<Vec<ResolvedIncludePath>> {
     let source_schema = db
         .get_schema_in_domain(schema_title, domain)
         .await?
@@ -100,7 +123,7 @@ pub async fn resolve_include_paths(
     match allow_include {
         Some(paths) if paths.is_empty() => Ok(Vec::new()),
         Some(paths) => {
-            resolve_explicit_paths(
+            let resolved = resolve_explicit_paths(
                 db,
                 config,
                 domain,
@@ -110,10 +133,11 @@ pub async fn resolve_include_paths(
                 source_module,
                 paths,
             )
-            .await
+            .await?;
+            Ok(filter_cross_domain_paths(domain, resolved, workers_topology))
         }
         None => {
-            resolve_auto_paths(
+            let resolved = resolve_auto_paths(
                 db,
                 config,
                 domain,
@@ -121,9 +145,40 @@ pub async fn resolve_include_paths(
                 source_entity_name,
                 source_module,
             )
-            .await
+            .await?;
+            Ok(filter_cross_domain_paths(domain, resolved, workers_topology))
         }
     }
+}
+
+/// Drop include paths with cross-domain segments when `workers_topology` is
+/// set; monolith keeps them.
+fn filter_cross_domain_paths(
+    source_domain: &str,
+    paths: Vec<ResolvedIncludePath>,
+    workers_topology: bool,
+) -> Vec<ResolvedIncludePath> {
+    if !workers_topology {
+        return paths;
+    }
+    paths
+        .into_iter()
+        .filter(|path| {
+            let cross_domain = path
+                .segments
+                .iter()
+                .any(|seg| seg.domain != source_domain);
+            if cross_domain {
+                tracing::warn!(
+                    include_path = %path.alias,
+                    source_domain = %source_domain,
+                    "dropping cross-domain include path in workers topology \
+                     (TODO(worker-remote-includes))"
+                );
+            }
+            !cross_domain
+        })
+        .collect()
 }
 
 // ── Explicit path resolution ──────────────────────────────────────────
@@ -417,7 +472,7 @@ async fn resolve_auto_paths(
             let props = db.get_properties(schema_title).await.unwrap_or_default();
             props.iter().any(|p| {
                 p.is_array && p.effective_kind() == Some(RefClassificationKind::ValueObject)
-            }) || true
+            })
         };
 
         paths.push(ResolvedIncludePath {
@@ -771,14 +826,22 @@ async fn resolve_fk_via_graph(
     let target_clean: String = target_title.replace(' ', "");
     let target_stripped: String = codegraph_naming::strip_suffix(&target_clean, "Type");
     for prop in &source_props {
-        let matches = prop.ref_target.as_deref().map(|rt| {
-            // Handle both plain title refs ("PersonType") and path refs
-            // ("common/json/person/PersonType.json").
-            let rt_clean = rt.rsplit('/').next().unwrap_or(rt)
-                .strip_suffix(".json#").or_else(|| rt.strip_suffix(".json"))
-                .unwrap_or(rt);
-            rt_clean == target_title || rt_clean == target_clean || rt_clean == target_stripped
-        }).unwrap_or(false);
+        let matches = prop
+            .ref_target
+            .as_deref()
+            .map(|rt| {
+                // Handle both plain title refs ("PersonType") and path refs
+                // ("common/json/person/PersonType.json").
+                let rt_clean = rt
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(rt)
+                    .strip_suffix(".json#")
+                    .or_else(|| rt.strip_suffix(".json"))
+                    .unwrap_or(rt);
+                rt_clean == target_title || rt_clean == target_clean || rt_clean == target_stripped
+            })
+            .unwrap_or(false);
         if matches {
             let fd = resolve_field(prop);
             return Ok((fd.column_name, prop.is_array));
@@ -835,9 +898,10 @@ async fn resolve_fk_via_graph(
     // This handles array relationships where the child has a generated FK
     // column named after the parent entity (e.g., events_app_id) instead of
     // the schema property name (e.g., public_events_id).
-    let parent_ref_stem = codegraph_naming::to_snake_case(
-        &codegraph_naming::strip_suffix(&target_title.replace(' ', ""), "Type"),
-    );
+    let parent_ref_stem = codegraph_naming::to_snake_case(&codegraph_naming::strip_suffix(
+        &target_title.replace(' ', ""),
+        "Type",
+    ));
     if parent_ref_stem != seg_snake {
         let parent_seg_id = format!("{parent_ref_stem}_id");
         for prop in &source_props {
@@ -885,9 +949,10 @@ async fn resolve_child_fk_column(
 
     // Priority 2: graph properties — find the property on the child that
     // references the parent.
-    let child_seg = codegraph_naming::to_snake_case(
-        super::router::strip_suffix(child_title, &config.defaults.type_suffix),
-    );
+    let child_seg = codegraph_naming::to_snake_case(super::router::strip_suffix(
+        child_title,
+        &config.defaults.type_suffix,
+    ));
     let (fk, _) = resolve_fk_via_graph(db, child_title, parent_title, &child_seg).await?;
 
     // If the resolved FK matches the child-based convention (child_seg + "_id"),
@@ -896,9 +961,10 @@ async fn resolve_child_fk_column(
     // (parent_seg + "_id") which matches how the entity generator creates FK
     // columns for array relationships (e.g. events_app_id for PublicEvent → EventsApp).
     let child_based_fk = format!("{}_id", child_seg);
-    let parent_seg = codegraph_naming::to_snake_case(
-        super::router::strip_suffix(parent_title, &config.defaults.type_suffix),
-    );
+    let parent_seg = codegraph_naming::to_snake_case(super::router::strip_suffix(
+        parent_title,
+        &config.defaults.type_suffix,
+    ));
     if fk == child_based_fk && parent_seg != child_seg {
         return Ok(format!("{}_id", parent_seg));
     }
