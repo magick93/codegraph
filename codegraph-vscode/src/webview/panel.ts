@@ -1,10 +1,16 @@
 import * as vscode from 'vscode';
 import { SyncEngine, type CodegenConfig } from './sync';
 import { parseIfmlForDiagram } from './parser';
+import { computePositionEdits } from './positions';
+import type { LspClient } from '../lsp/client';
 
 const panels = new Map<string, { panel: vscode.WebviewPanel; sync: SyncEngine }>();
 
-export function openDiagramPanel(context: vscode.ExtensionContext, uri: vscode.Uri): void {
+export function openDiagramPanel(
+  context: vscode.ExtensionContext,
+  uri: vscode.Uri,
+  getLspClient: () => LspClient | undefined,
+): void {
   const key = uri.toString();
   const existing = panels.get(key);
   if (existing) {
@@ -21,7 +27,7 @@ export function openDiagramPanel(context: vscode.ExtensionContext, uri: vscode.U
       localResourceRoots: [
         vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview'),
       ],
-      retainContextWhenHidden: false,
+      retainContextWhenHidden: true,
     }
   );
 
@@ -57,6 +63,9 @@ export function openDiagramPanel(context: vscode.ExtensionContext, uri: vscode.U
     }
     if (msg.command === 'sync/codegenRun') {
       vscode.commands.executeCommand('ifml.generate');
+    }
+    if (msg.command === 'sync/diagramChanged') {
+      handleDiagramChanged(msg.model as any, uri, getLspClient);
     }
   });
 
@@ -101,6 +110,38 @@ function sendModelFromDocument(uri: vscode.Uri, sync: SyncEngine): void {
     }
   } catch (err) {
     console.error('IFML parse error:', err);
+  }
+}
+
+async function handleDiagramChanged(
+  model: { viewContainers: { name: string; position?: { x: number; y: number } }[] },
+  uri: vscode.Uri,
+  getLspClient: () => LspClient | undefined,
+): Promise<void> {
+  const positions = model.viewContainers
+    .filter(vc => vc.position !== undefined)
+    .map(vc => ({ name: vc.name, x: vc.position!.x, y: vc.position!.y }));
+  if (positions.length === 0) return;
+
+  let edit: vscode.WorkspaceEdit | null = null;
+
+  const lsp = getLspClient();
+  if (lsp) {
+    edit = await lsp.updatePositions(uri, positions);
+  }
+
+  if (!edit) {
+    const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === uri.toString());
+    if (!doc) return;
+    const raw = computePositionEdits(doc.getText(), positions);
+    edit = new vscode.WorkspaceEdit();
+    for (const e of raw) {
+      edit.replace(uri, new vscode.Range(doc.positionAt(e.start), doc.positionAt(e.end)), e.newText);
+    }
+  }
+
+  if (edit && edit.size > 0) {
+    await vscode.workspace.applyEdit(edit);
   }
 }
 

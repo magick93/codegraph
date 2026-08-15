@@ -37,6 +37,7 @@ export interface ViewContainerData {
   components: ViewComponentData[];
   events: EventData[];
   containers: ViewContainerData[];
+  position?: { x: number; y: number };
 }
 
 export interface ViewComponentData {
@@ -49,6 +50,7 @@ export interface ViewComponentData {
   properties: Record<string, string>;
   events: EventData[];
   parts: ComponentPartData[];
+  position?: { x: number; y: number };
 }
 
 export interface ComponentPartData {

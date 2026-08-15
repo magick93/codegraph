@@ -21,7 +21,7 @@ view "Hello" {
             key: (identifier)
             value: (value_expression
               (expression
-                (identifier))))))))
+                (identifier)))))))))
 
 ==================
 Domain declaration
@@ -102,15 +102,16 @@ view "Test" {
             type: (event_type)
             (event_param
               (identifier))
-            action: (navigate_action
-              (string)
-              (parameter_binding
-                (binding_pair
-                  key: (identifier)
-                  value: (expression
-                    (field_expr
-                      (identifier)
-                      (identifier))))))))))))
+            action: (event_action
+              (navigate_action
+                (string)
+                (parameter_binding
+                  (binding_pair
+                    key: (identifier)
+                    value: (expression
+                      (field_expr
+                        (identifier)
+                        (identifier)))))))))))))
 
 ==================
 Event with action invocation and nested handlers
@@ -145,16 +146,21 @@ view "MyView" {
             type: (event_type)
             (event_param
               (identifier))
-            action: (action_invocation
-              (string)
-              (action_body
-                (event_handler
-                  type: (event_type)
-                  action: (navigate_action
-                    (string)))
-                (event_handler
-                  type: (event_type)
-                  action: (stay_statement))))))))))
+            action: (event_action
+              (action_invocation
+                (string)
+                (action_body
+                  (event_handler
+                    type: (event_type
+                      (identifier))
+                    action: (event_action
+                      (navigate_action
+                        (string))))
+                  (event_handler
+                    type: (event_type
+                      (identifier))
+                    action: (event_action
+                      (stay_statement))))))))))))
 
 ==================
 C-like expression with comparison and field access
@@ -254,12 +260,55 @@ view "Grid" {
             key: (identifier)
             value: (value_expression
               (array_literal
+                (value_expression
+                  (expression
+                    (identifier)))
+                (value_expression
+                  (expression
+                    (identifier)))
+                (value_expression
+                  (expression
+                    (identifier)))))))))))
+
+==================
+Position property (object literal)
+==================
+
+view "CustomerList" {
+    position: { x: 100; y: 200 };
+    component "grid" {
+        type: list;
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (property_assignment
+        key: (identifier)
+        value: (value_expression
+          (object_literal
+            (object_member
+              key: (identifier)
+              value: (object_member_value
                 (expression
-                  (identifier))
+                  (number))))
+            (object_member
+              key: (identifier)
+              value: (object_member_value
                 (expression
-                  (identifier))
-                (expression
-                  (identifier))))))))))
+                  (number)))))))
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier)))))))))
 
 ==================
 Container nesting
@@ -367,20 +416,24 @@ action "CreateCustomer" {
     (string)
     (action_body
       (event_handler
-        type: (event_type)
-        action: (navigate_action
-          (string)))
+        type: (event_type
+          (identifier))
+        action: (event_action
+          (navigate_action
+            (string))))
       (event_handler
-        type: (event_type)
-        action: (stay_statement)))))
+        type: (event_type
+          (identifier))
+        action: (event_action
+          (stay_statement))))))
 
 ==================
 Module declaration
 ==================
 
 module "SearchWidget" {
-    input { query: String };
-    output { result: Uuid };
+    input { query: String }
+    output { result: Uuid }
     component "searchBar" {
         type: form;
     }
@@ -449,8 +502,9 @@ view "Dashboard" {
                 (identifier))))))
       (event_handler
         type: (event_type)
-        action: (refresh_action
-          (string))))))
+        action: (event_action
+          (refresh_action
+            (string)))))))
 
 ==================
 Nested action body with properties
@@ -485,18 +539,21 @@ view "EditView" {
             type: (event_type)
             (event_param
               (identifier))
-            action: (action_invocation
-              (string)
-              (action_body
-                (property_assignment
-                  key: (identifier)
-                  value: (value_expression
-                    (expression
-                      (identifier))))
-                (event_handler
-                  type: (event_type)
-                  action: (navigate_action
-                    (string)))))))))))
+            action: (event_action
+              (action_invocation
+                (string)
+                (action_body
+                  (property_assignment
+                    key: (identifier)
+                    value: (value_expression
+                      (expression
+                        (identifier))))
+                  (event_handler
+                    type: (event_type
+                      (identifier))
+                    action: (event_action
+                      (navigate_action
+                        (string)))))))))))))
 
 ==================
 Stay statement
@@ -519,7 +576,8 @@ view "Detail" {
         (component_body
           (event_handler
             type: (event_type)
-            action: (stay_statement)))))))
+            action: (event_action
+              (stay_statement))))))))
 
 ==================
 View-level event handler
@@ -541,8 +599,9 @@ view "Dashboard" {
     (view_body
       (event_handler
         type: (event_type)
-        action: (refresh_action
-          (string)))
+        action: (event_action
+          (refresh_action
+            (string))))
       (component_declaration
         (string)
         (component_body

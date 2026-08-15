@@ -62,7 +62,8 @@ pub fn run_lsp_server(
         .on::<GotoDefinition, _>(handlers::handle_goto_definition)
         .on::<DocumentDiagnosticRequest, _>(handlers::handle_document_diagnostic)
         .on::<CodeActionRequest, _>(handlers::handle_code_action)
-        .on::<SemanticTokensFullRequest, _>(handlers::handle_semantic_tokens_full);
+        .on::<SemanticTokensFullRequest, _>(handlers::handle_semantic_tokens_full)
+        .on::<handlers::UpdatePositionsRequest, _>(handlers::handle_update_positions);
 
     notification_registry
         .on::<Initialized, _>(|_db, _params| Ok(()))

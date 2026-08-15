@@ -14,6 +14,7 @@ async function getLanguageClientModule() {
 
 export class LspClient {
   private proc: ChildProcess | null = null;
+  private client: any = null;
   private outputChannel: vscode.OutputChannel;
 
   constructor(
@@ -108,6 +109,7 @@ export class LspClient {
         }
       });
 
+      this.client = client;
       client.start();
     }).catch((err) => {
       this.outputChannel.appendLine(`LSP module load failed: ${err.message}`);
@@ -116,6 +118,7 @@ export class LspClient {
   }
 
   stop(): void {
+    this.client = null;
     if (this.proc) {
       this.proc.kill('SIGTERM');
       this.proc = null;
@@ -126,5 +129,39 @@ export class LspClient {
     this.stop();
     await new Promise(r => setTimeout(r, 500));
     this.start();
+  }
+
+  async updatePositions(
+    uri: vscode.Uri,
+    positions: { name: string; x: number; y: number }[]
+  ): Promise<vscode.WorkspaceEdit | null> {
+    if (!this.client) return null;
+    const { State } = await getLanguageClientModule();
+    if (this.client.state !== State.Running) return null;
+
+    let result: any;
+    try {
+      result = await this.client.sendRequest('ifml/updatePositions', {
+        textDocument: { uri: uri.toString() },
+        positions,
+      });
+    } catch (err) {
+      this.outputChannel.appendLine(`updatePositions request failed: ${String(err)}`);
+      return null;
+    }
+    if (!result || !result.changes) return null;
+
+    const edit = new vscode.WorkspaceEdit();
+    for (const [uriStr, changes] of Object.entries<{ range: any; newText: string }[]>(result.changes)) {
+      const fileUri = vscode.Uri.parse(uriStr);
+      for (const change of changes) {
+        const range = new vscode.Range(
+          change.range.start.line, change.range.start.character,
+          change.range.end.line, change.range.end.character
+        );
+        edit.replace(fileUri, range, change.newText);
+      }
+    }
+    return edit;
   }
 }

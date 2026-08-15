@@ -4,7 +4,7 @@
     "target": "ES2021",
     "lib": ["ES2021"],
     "outDir": "out/test",
-    "rootDir": "test",
+    "rootDir": ".",
     "sourceMap": true,
     "strict": true,
     "esModuleInterop": true,
@@ -13,6 +13,11 @@
     "resolveJsonModule": true,
     "types": ["node", "mocha"]
   },
-  "include": ["test/**/*"],
+  "include": [
+    "test/**/*",
+    "src/webview/positions.ts",
+    "src/webview/parser.ts",
+    "src/webview/sync.ts"
+  ],
   "exclude": ["node_modules"]
 }
