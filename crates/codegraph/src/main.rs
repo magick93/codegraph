@@ -67,6 +67,7 @@ async fn main() -> codegraph::error::Result<()> {
             no_post_gen,
             template_dir,
             ifml_files,
+            openapi_files,
             ifml_framework,
         } => {
             codegraph::driver::run(codegraph::driver::RunArgs {
@@ -81,6 +82,7 @@ async fn main() -> codegraph::error::Result<()> {
                 no_post_gen,
                 template_dir: &template_dir,
                 ifml_files: &ifml_files,
+                openapi_files: &openapi_files,
                 ifml_framework: &ifml_framework,
                 codegraph_rev: None,
             })

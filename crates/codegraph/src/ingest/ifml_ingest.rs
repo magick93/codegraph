@@ -1,7 +1,7 @@
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    ActionNode, EdgeProperties, EdgeType, EventNode, ParameterDefinitionNode, ViewComponentNode,
-    ViewContainerNode,
+    ActionNode, DataBindingNode, EdgeProperties, EdgeType, EventNode, ParameterDefinitionNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use codegraph_ifml_dsl::*;
 
@@ -14,10 +14,23 @@ pub async fn ingest_ifml_model(
 ) -> Result<IfmlIngestStats> {
     let mut stats = IfmlIngestStats::default();
 
-    // Ingest all view containers
+    // Pass 1: ingest all view containers and nested containers before any
+    // content. Navigation flows (and other edges) target containers that may
+    // be declared later in the file, and edge INSERTs silently no-op when the
+    // target node does not exist yet.
     for view in &model.views {
-        let vc_id = ingest_view_container(db, view).await?;
+        let _vc_id = ingest_view_container(db, view).await?;
         stats.view_containers += 1;
+
+        for container in &view.containers {
+            let _container_id = ingest_container_node(db, container).await?;
+            stats.containers += 1;
+        }
+    }
+
+    // Pass 2: ingest container params, components, and events.
+    for view in &model.views {
+        let vc_id = format!("vc:{}", view.name);
 
         // Ingest container params
         for param in &view.params {
@@ -45,10 +58,10 @@ pub async fn ingest_ifml_model(
             .map_err(|e| Error::Graph(e))?;
         }
 
-        // Ingest nested containers
+        // Ingest nested container contents
         for container in &view.containers {
-            let _container_id = ingest_container(db, container, &vc_id).await?;
-            stats.containers += 1;
+            ingest_container_contents(db, container, &format!("vc:{}", container.name), &vc_id)
+                .await?;
         }
 
         // Ingest view components
@@ -102,10 +115,9 @@ async fn ingest_view_container(db: &dyn GraphIngestor, view: &ViewDeclaration) -
     Ok(id)
 }
 
-async fn ingest_container(
+async fn ingest_container_node(
     db: &dyn GraphIngestor,
     container: &ContainerDeclaration,
-    parent_id: &str,
 ) -> Result<String> {
     let node = ViewContainerNode {
         name: container.name.clone(),
@@ -116,28 +128,34 @@ async fn ingest_container(
         is_modal: false,
         domain: None,
     };
-    let id = db
-        .ingest_view_container(&node)
+    db.ingest_view_container(&node)
         .await
-        .map_err(|e| Error::Graph(e))?;
+        .map_err(|e| Error::Graph(e))
+}
 
+async fn ingest_container_contents(
+    db: &dyn GraphIngestor,
+    container: &ContainerDeclaration,
+    container_id: &str,
+    parent_id: &str,
+) -> Result<()> {
     // Link to parent
-    db.ingest_edge(parent_id, &id, EdgeType::ContainsViewContainer, None)
+    db.ingest_edge(parent_id, container_id, EdgeType::ContainsViewContainer, None)
         .await
         .map_err(|e| Error::Graph(e))?;
 
     // Ingest container's components
     for comp in &container.components {
-        let comp_id = ingest_view_component(db, comp, &id).await?;
+        let comp_id = ingest_view_component(db, comp, container_id).await?;
         let _ = comp_id;
     }
 
     // Ingest container's events
     for event in &container.events {
-        handle_event(db, event, &id).await?;
+        handle_event(db, event, container_id).await?;
     }
 
-    Ok(id)
+    Ok(())
 }
 
 async fn ingest_view_component(
@@ -199,6 +217,15 @@ async fn ingest_view_component(
             _ => None,
         });
 
+    let api_operation = comp
+        .properties
+        .iter()
+        .find(|p| p.key == "api")
+        .and_then(|p| match &p.value {
+            ValueExpression::Identifier(s) => Some(s.clone()),
+            _ => None,
+        });
+
     let node = ViewComponentNode {
         name: comp.name.clone(),
         component_type,
@@ -206,6 +233,7 @@ async fn ingest_view_component(
         entity,
         fields,
         filter,
+        api_operation,
         domain: None,
     };
 
@@ -218,6 +246,58 @@ async fn ingest_view_component(
     db.ingest_edge(parent_id, &id, EdgeType::ContainsViewComponent, None)
         .await
         .map_err(|e| Error::Graph(e))?;
+
+    // Data binding activation: when the component declares `data: <entity>`,
+    // create a DataBinding node plus BindsToEntity / BindsToProperty edges.
+    if let Some(ref entity) = node.entity {
+        let binding_name = format!("{}:{}", node.name, entity);
+        let binding_id = db
+            .ingest_data_binding(&DataBindingNode {
+                name: binding_name.clone(),
+                conditional_expression: None,
+                expression_language: "ifml".to_string(),
+                domain: None,
+            })
+            .await
+            .map_err(|e| Error::Graph(e))?;
+
+        db.ingest_edge(&id, &binding_id, EdgeType::HasDataBinding, None)
+            .await
+            .map_err(|e| Error::Graph(e))?;
+
+        let schema_title = if entity.ends_with("Type") {
+            entity.clone()
+        } else {
+            format!("{}Type", entity)
+        };
+        db.ingest_edge(&binding_id, &schema_title, EdgeType::BindsToEntity, None)
+            .await
+            .map_err(|e| Error::Graph(e))?;
+
+        if let Some(ref fields) = node.fields {
+            for field in fields {
+                db.ingest_edge(
+                    &id,
+                    &format!("{}::{}", field, schema_title),
+                    EdgeType::BindsToProperty,
+                    Some(&EdgeProperties {
+                        role: Some("field".to_string()),
+                        ..Default::default()
+                    }),
+                )
+                .await
+                .map_err(|e| Error::Graph(e))?;
+            }
+        }
+    }
+
+    // API operation binding: when the component declares `api: <operation>`,
+    // link it to the matching ApiOperation node.
+    if let Some(ref op_name) = node.api_operation {
+        db.ingest_edge(&id, op_name, EdgeType::BindsToOperation, None)
+            .await
+            .map_err(|e| Error::Graph(e))?;
+    }
 
     // Ingest events
     for event in &comp.events {
@@ -305,6 +385,12 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
         }
         EventAction::ActionInvocation { name, body } => {
             let action_id = format!("action:{}", name);
+            db.ingest_action_node(&ActionNode {
+                name: name.clone(),
+                domain: None,
+            })
+            .await
+            .map_err(|e| Error::Graph(e))?;
             db.ingest_edge(&event_id, &action_id, EdgeType::TriggersAction, None)
                 .await
                 .map_err(|e| Error::Graph(e))?;

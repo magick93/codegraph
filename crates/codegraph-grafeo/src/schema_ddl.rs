@@ -129,6 +129,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             entity STRING,
             fields STRING,
             filter STRING,
+            api_operation STRING,
             domain STRING
         )",
         // Event — IFML
@@ -152,6 +153,7 @@ fn node_type_ddl() -> Vec<&'static str> {
         )",
         // DataBinding — IFML
         "CREATE NODE TYPE IF NOT EXISTS DataBinding (
+            name STRING NOT NULL,
             conditional_expression STRING,
             expression_language STRING NOT NULL DEFAULT 'ifml',
             domain STRING
@@ -182,11 +184,13 @@ fn node_type_ddl() -> Vec<&'static str> {
         )",
         // Interaction — API metamodel
         "CREATE NODE TYPE IF NOT EXISTS Interaction (
+            name STRING NOT NULL,
             transport STRING NOT NULL,
             domain STRING
         )",
         // HttpEndpoint — API metamodel
         "CREATE NODE TYPE IF NOT EXISTS HttpEndpoint (
+            name STRING NOT NULL,
             method STRING NOT NULL,
             path_template STRING NOT NULL,
             domain STRING
@@ -279,6 +283,7 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS HasDataBinding",
         "CREATE EDGE TYPE IF NOT EXISTS BindsToEntity",
         "CREATE EDGE TYPE IF NOT EXISTS BindsToProperty (role STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS BindsToOperation",
         "CREATE EDGE TYPE IF NOT EXISTS TriggersAction",
         "CREATE EDGE TYPE IF NOT EXISTS ActionEvent (outcome STRING)",
         "CREATE EDGE TYPE IF NOT EXISTS HasModuleDefinition",

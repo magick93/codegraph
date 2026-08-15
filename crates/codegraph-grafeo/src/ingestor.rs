@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphIngestor;
+use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
     DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode,
@@ -17,6 +18,19 @@ use crate::engine::GrafeoEngine;
 /// Escape single quotes in GQL string literals.
 pub(crate) fn escape_gql(s: &str) -> String {
     s.replace('\'', "\\'")
+}
+
+/// Strip a leading API-metamodel node prefix (`ar:` / `ao:` / `pl:` / `pm:` /
+/// `ed:`) from an id, returning the id unchanged when no prefix is present.
+/// Interaction/HttpEndpoint ids (`ia:` / `he:`) are deliberately not stripped —
+/// those nodes store the full prefixed id as their `name`.
+fn strip_api_prefix(id: &str) -> &str {
+    for prefix in ["ar:", "ao:", "pl:", "pm:", "ed:"] {
+        if let Some(rest) = id.strip_prefix(prefix) {
+            return rest;
+        }
+    }
+    id
 }
 
 fn classification_kind_to_str(kind: &RefClassificationKind) -> String {
@@ -367,6 +381,7 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::HasDataBinding => "HasDataBinding",
             EdgeType::BindsToEntity => "BindsToEntity",
             EdgeType::BindsToProperty => "BindsToProperty",
+            EdgeType::BindsToOperation => "BindsToOperation",
             EdgeType::TriggersAction => "TriggersAction",
             EdgeType::ActionEvent => "ActionEvent",
             EdgeType::HasModuleDefinition => "HasModuleDefinition",
@@ -508,126 +523,193 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::ContainsViewContainer => {
                 format!(
                     "MATCH (a:ViewContainer {{name: '{}'}}), (b:ViewContainer {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::ContainsViewComponent => {
                 format!(
                     "MATCH (a:ViewContainer {{name: '{}'}}), (b:ViewComponent {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::HasEvent => {
                 format!(
                     "MATCH (a {{name: '{}'}}), (b:Event {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::NavigationFlow => {
                 format!(
                     "MATCH (a:Event {{name: '{}'}}), (b:ViewContainer {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::DataFlow => {
                 format!(
                     "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::HasParameter => {
                 format!(
                     "MATCH (a {{name: '{}'}}), (b:ParameterDefinition {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::ParameterBindingGroup => {
                 format!(
                     "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::ParameterBinding => {
                 format!(
                     "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::HasDataBinding => {
                 format!(
                     "MATCH (a:ViewComponent {{name: '{}'}}), (b:DataBinding {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::BindsToEntity => {
                 format!(
                     "MATCH (a:DataBinding {{name: '{}'}}), (b:Schema {{title: '{}'}})",
-                    escape_gql(from_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
                     escape_gql(to_id),
                 )
             }
             EdgeType::BindsToProperty => {
+                let (prop_name, schema_title) = split_compound_id(to_id, "BindsToProperty")?;
                 format!(
-                    "MATCH (a:ViewComponent {{name: '{}'}}), (b:Property {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    "MATCH (a:ViewComponent {{name: '{}'}}), \
+                     (b:Property {{name: '{}', _schema_title: '{}'}})",
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(prop_name),
+                    escape_gql(schema_title),
+                )
+            }
+            EdgeType::BindsToOperation => {
+                format!(
+                    "MATCH (a:ViewComponent {{name: '{}'}}), (b:ApiOperation {{name: '{}'}})",
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::TriggersAction => {
                 format!(
                     "MATCH (a:Event {{name: '{}'}}), (b:ActionNode {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::ActionEvent => {
                 format!(
                     "MATCH (a:ActionNode {{name: '{}'}}), (b:Event {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::HasModuleDefinition => {
                 format!(
                     "MATCH (a:ViewContainer {{name: '{}'}}), (b:ModuleDefinition {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::HasViewComponentPart => {
                 format!(
                     "MATCH (a:ViewComponent {{name: '{}'}}), (b:ViewComponent {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
             EdgeType::HasConditionalExpr => {
                 format!(
                     "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
+                    escape_gql(strip_ifml_prefix(from_id)),
+                    escape_gql(strip_ifml_prefix(to_id)),
+                )
+            }
+            // API metamodel edges. Name-bearing nodes (ApiResource,
+            // ApiOperation, Pipeline, Permission, ErrorDefinition) store plain
+            // names; Interaction/HttpEndpoint store the full prefixed id as
+            // `name`; Schema targets match by title.
+            EdgeType::ExposesResource => {
+                format!(
+                    "MATCH (a:ApiResource {{name: '{}'}}), (b:ApiResource {{name: '{}'}})",
+                    escape_gql(strip_api_prefix(from_id)),
+                    escape_gql(strip_api_prefix(to_id)),
+                )
+            }
+            EdgeType::BindsToSchema => {
+                format!(
+                    "MATCH (a:ApiResource {{name: '{}'}}), (b:Schema {{title: '{}'}})",
+                    escape_gql(strip_api_prefix(from_id)),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasOperation => {
+                format!(
+                    "MATCH (a:ApiResource {{name: '{}'}}), (b:ApiOperation {{name: '{}'}})",
+                    escape_gql(strip_api_prefix(from_id)),
+                    escape_gql(strip_api_prefix(to_id)),
+                )
+            }
+            EdgeType::InputBoundTo | EdgeType::OutputBoundTo => {
+                format!(
+                    "MATCH (a:ApiOperation {{name: '{}'}}), (b:Schema {{title: '{}'}})",
+                    escape_gql(strip_api_prefix(from_id)),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::CanReturnError => {
+                format!(
+                    "MATCH (a:ApiOperation {{name: '{}'}}), (b:ErrorDefinition {{code: '{}'}})",
+                    escape_gql(strip_api_prefix(from_id)),
+                    escape_gql(strip_api_prefix(to_id)),
+                )
+            }
+            EdgeType::RequiresPermission => {
+                format!(
+                    "MATCH (a:ApiOperation {{name: '{}'}}), (b:Permission {{name: '{}'}})",
+                    escape_gql(strip_api_prefix(from_id)),
+                    escape_gql(strip_api_prefix(to_id)),
+                )
+            }
+            EdgeType::HasInteraction => {
+                format!(
+                    "MATCH (a:ApiOperation {{name: '{}'}}), (b:Interaction {{name: '{}'}})",
+                    escape_gql(strip_api_prefix(from_id)),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::BindsHttpEndpoint => {
+                format!(
+                    "MATCH (a:Interaction {{name: '{}'}}), (b:HttpEndpoint {{name: '{}'}})",
                     escape_gql(from_id),
                     escape_gql(to_id),
                 )
             }
-            EdgeType::ExposesResource
-            | EdgeType::BindsToSchema
-            | EdgeType::HasOperation
-            | EdgeType::InputBoundTo
-            | EdgeType::OutputBoundTo
-            | EdgeType::CanReturnError
-            | EdgeType::RequiresPermission
-            |             EdgeType::HasInteraction
-            | EdgeType::BindsHttpEndpoint
-            | EdgeType::UsesPipeline
-            | EdgeType::HasPolicy
+            EdgeType::UsesPipeline => {
+                format!(
+                    "MATCH (a:HttpEndpoint {{name: '{}'}}), (b:Pipeline {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(strip_api_prefix(to_id)),
+                )
+            }
+            EdgeType::HasPolicy
             | EdgeType::PolicyAppliesTo
             | EdgeType::HasRelationship
             | EdgeType::RelationshipSource
@@ -639,8 +721,8 @@ impl GraphIngestor for GrafeoEngine {
             | EdgeType::HasRole => {
                 format!(
                     "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
+                    escape_gql(strip_api_prefix(from_id)),
+                    escape_gql(strip_api_prefix(to_id)),
                 )
             }
         };
@@ -685,7 +767,7 @@ impl GraphIngestor for GrafeoEngine {
         let gql = format!(
             "INSERT (:ViewComponent {{ \
                 name: '{}', component_type: '{}', mode: {}, \
-                entity: {}, fields: {}, filter: {}, domain: {} \
+                entity: {}, fields: {}, filter: {}, api_operation: {}, domain: {} \
             }})",
             escape_gql(&node.name),
             escape_gql(&node.component_type),
@@ -693,6 +775,7 @@ impl GraphIngestor for GrafeoEngine {
             opt_str(&node.entity),
             opt_str(&fields_json),
             opt_str(&node.filter),
+            opt_str(&node.api_operation),
             opt_str(&node.domain),
         );
         session
@@ -760,11 +843,12 @@ impl GraphIngestor for GrafeoEngine {
 
     async fn ingest_data_binding(&self, node: &DataBindingNode) -> Result<String, GraphError> {
         let session = self.db().session();
-        let id = format!("db:{}", uuid::Uuid::new_v4());
+        let id = format!("db:{}", node.name);
         let gql = format!(
             "INSERT (:DataBinding {{ \
-                conditional_expression: {}, expression_language: '{}', domain: {} \
+                name: '{}', conditional_expression: {}, expression_language: '{}', domain: {} \
             }})",
+            escape_gql(&node.name),
             opt_str(&node.conditional_expression),
             escape_gql(&node.expression_language),
             opt_str(&node.domain),
@@ -906,7 +990,8 @@ impl GraphIngestor for GrafeoEngine {
         let session = self.db().session();
         let id = format!("ia:{}", uuid::Uuid::new_v4());
         let gql = format!(
-            "INSERT (:Interaction {{ transport: '{}', domain: {} }})",
+            "INSERT (:Interaction {{ name: '{}', transport: '{}', domain: {} }})",
+            escape_gql(&id),
             escape_gql(&node.transport),
             opt_str(&node.domain),
         );
@@ -923,7 +1008,8 @@ impl GraphIngestor for GrafeoEngine {
         let session = self.db().session();
         let id = format!("he:{}", uuid::Uuid::new_v4());
         let gql = format!(
-            "INSERT (:HttpEndpoint {{ method: '{}', path_template: '{}', domain: {} }})",
+            "INSERT (:HttpEndpoint {{ name: '{}', method: '{}', path_template: '{}', domain: {} }})",
+            escape_gql(&id),
             escape_gql(&node.method),
             escape_gql(&node.path_template),
             opt_str(&node.domain),

@@ -1,14 +1,15 @@
 use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, ColumnInfo, CompositeColumn,
-    CompositeRange, CompositionNode, CompositionTree, DetectionSource, EnumValue,
-    ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, HttpEndpointNode,
-    InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData,
-    SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    CompositeRange, CompositionNode, CompositionTree, DataBindingResolution, DetectionSource,
+    EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget,
+    HttpEndpointNode, InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate,
+    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode,
+    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -961,7 +962,7 @@ impl GraphQuerier for GrafeoEngine {
         let gql = format!(
             "MATCH (vc:ViewContainer {{name: '{escaped}'}})-[:ContainsViewComponent]->(comp:ViewComponent) \
              RETURN comp.name, comp.component_type, comp.mode, comp.entity, \
-             comp.fields, comp.filter, comp.domain ORDER BY comp.name"
+             comp.fields, comp.filter, comp.api_operation, comp.domain ORDER BY comp.name"
         );
         let result = query_gql(self, &gql)?;
         let reader = RowReader::from_columns(&result.columns);
@@ -977,6 +978,7 @@ impl GraphQuerier for GrafeoEngine {
                 entity: reader.get_opt_string(row, "comp.entity")?,
                 fields,
                 filter: reader.get_opt_string(row, "comp.filter")?,
+                api_operation: reader.get_opt_string(row, "comp.api_operation")?,
                 domain: reader.get_opt_string(row, "comp.domain")?,
             });
         }
@@ -984,7 +986,7 @@ impl GraphQuerier for GrafeoEngine {
     }
 
     async fn get_ifml_events(&self, parent_id: &str) -> Result<Vec<EventNode>, GraphError> {
-        let escaped = parent_id.replace('\'', "\\'");
+        let escaped = strip_ifml_prefix(parent_id).replace('\'', "\\'");
         let gql = format!(
             "MATCH (parent)-[:HasEvent]->(evt:Event) \
              WHERE parent.name = '{escaped}' \
@@ -1072,6 +1074,39 @@ impl GraphQuerier for GrafeoEngine {
         Ok(nodes)
     }
 
+    async fn get_data_bindings(&self) -> Result<Vec<DataBindingResolution>, GraphError> {
+        let gql = "MATCH (c:ViewComponent)-[:HasDataBinding]->(db:DataBinding) \
+                   -[:BindsToEntity]->(s:Schema) \
+                   RETURN c.name, s.title, c.api_operation ORDER BY c.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut bindings: Vec<DataBindingResolution> = Vec::new();
+        for row in &result.rows {
+            bindings.push(DataBindingResolution {
+                component: reader.get_string(row, "c.name")?,
+                entity_title: reader.get_string(row, "s.title")?,
+                fields: Vec::new(),
+                api_operation: reader.get_opt_string(row, "c.api_operation")?,
+            });
+        }
+
+        let fields_gql =
+            "MATCH (c:ViewComponent)-[bp:BindsToProperty]->(p:Property) RETURN c.name, p.name";
+        let result = query_gql(self, fields_gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut fields_by_component: HashMap<String, Vec<String>> = HashMap::new();
+        for row in &result.rows {
+            fields_by_component
+                .entry(reader.get_string(row, "c.name")?)
+                .or_default()
+                .push(reader.get_string(row, "p.name")?);
+        }
+        for binding in &mut bindings {
+            binding.fields = fields_by_component.remove(&binding.component).unwrap_or_default();
+        }
+        Ok(bindings)
+    }
+
     // ── API metamodel query methods ────────────────────────────────────
 
     async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
@@ -1141,6 +1176,59 @@ impl GraphQuerier for GrafeoEngine {
             });
         }
         Ok(nodes)
+    }
+
+    async fn get_api_operation(
+        &self,
+        name: &str,
+    ) -> Result<Option<ApiOperationNode>, GraphError> {
+        let params = HashMap::from([("name".to_string(), grafeo::Value::String(name.into()))]);
+        let result = query_gql_params(
+            self,
+            "MATCH (op:ApiOperation {name: $name}) RETURN \
+             op.name, op.kind, op.input_schema, op.output_schema, \
+             op.paging, op.sorting, op.filtering, op.domain",
+            params,
+        )?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        let row = &result.rows[0];
+        Ok(Some(ApiOperationNode {
+            name: reader.get_string(row, "op.name")?,
+            kind: reader.get_string(row, "op.kind")?,
+            input_schema: reader.get_opt_string(row, "op.input_schema")?,
+            output_schema: reader.get_string(row, "op.output_schema")?,
+            paging: reader.get_bool(row, "op.paging")?,
+            sorting: reader.get_bool(row, "op.sorting")?,
+            filtering: reader.get_bool(row, "op.filtering")?,
+            domain: reader.get_opt_string(row, "op.domain")?,
+        }))
+    }
+
+    async fn get_http_endpoint_for_operation(
+        &self,
+        operation_name: &str,
+    ) -> Result<Option<HttpEndpointNode>, GraphError> {
+        let params = HashMap::from([("name".to_string(), grafeo::Value::String(operation_name.into()))]);
+        let result = query_gql_params(
+            self,
+            "MATCH (op:ApiOperation {name: $name})-[:HasInteraction]->(ia:Interaction) \
+             -[:BindsHttpEndpoint]->(he:HttpEndpoint) \
+             RETURN he.method, he.path_template, he.domain",
+            params,
+        )?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        let row = &result.rows[0];
+        Ok(Some(HttpEndpointNode {
+            method: reader.get_string(row, "he.method")?,
+            path_template: reader.get_string(row, "he.path_template")?,
+            domain: reader.get_opt_string(row, "he.domain")?,
+        }))
     }
 
     async fn get_interactions(

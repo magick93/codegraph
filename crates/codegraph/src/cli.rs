@@ -92,6 +92,9 @@ pub enum Commands {
         /// Paths to IFML DSL (.ifml) files
         #[arg(long)]
         ifml_files: Vec<PathBuf>,
+        /// Paths to OpenAPI 3.0/3.1 spec files (JSON) to import into the graph
+        #[arg(long)]
+        openapi_files: Vec<PathBuf>,
         /// IFML framework targets for code generation (e.g. svelte, react)
         #[arg(long)]
         ifml_framework: Vec<String>,

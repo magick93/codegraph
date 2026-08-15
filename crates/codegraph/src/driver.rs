@@ -33,6 +33,7 @@ pub struct RunArgs<'a> {
     pub no_post_gen: bool,
     pub template_dir: &'a [PathBuf],
     pub ifml_files: &'a [PathBuf],
+    pub openapi_files: &'a [PathBuf],
     pub ifml_framework: &'a [String],
     /// Git rev to pin in generated Cargo.toml codegraph deps. When None the
     /// driver falls back to `git rev-parse HEAD` of the current directory.
@@ -53,6 +54,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         no_post_gen,
         template_dir,
         ifml_files,
+        openapi_files,
         ifml_framework,
         codegraph_rev,
     } = args;
@@ -180,6 +182,16 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         let api_stats =
             crate::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config).await?;
         println!("Pass 1c complete: {api_stats}");
+    }
+
+    // Pass 1d: Ingest OpenAPI spec files (if provided)
+    if !openapi_files.is_empty() {
+        println!("Pass 1d: {} OpenAPI files to ingest", openapi_files.len());
+        for openapi_path in openapi_files {
+            let stats = crate::ingest::openapi_ingest::ingest_openapi_file(be.ingestor(), openapi_path)
+                .await?;
+            println!("  ingested {}: {stats}", openapi_path.display());
+        }
     }
 
     // Auto-classify
