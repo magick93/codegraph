@@ -861,7 +861,12 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // workspace Cargo.toml, and a root-level monolith Cargo.toml / src/ would
     // collide with them.  In monolith topology it keeps its original position
     // in the generator list so monolith output stays byte-identical.
-    if !workers_topology {
+    if workers_topology {
+        global_gens.push(
+            Box::new(scaffold::worker::WorkerScaffoldGenerator::new(output_dir))
+                as Box<dyn GlobalGenerator>,
+        );
+    } else {
         global_gens.push(Box::new(scaffold::gen::ScaffoldGenerator::new(
             output_dir,
             has_webhooks,
@@ -869,7 +874,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             has_grpc,
             has_admin_cli,
             migration_strategy,
-        )));
+        )) as Box<dyn GlobalGenerator>);
     }
 
     global_gens.push(Box::new(ui::scaffold::UiScaffoldGenerator::new(
