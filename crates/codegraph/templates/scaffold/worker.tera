@@ -15,8 +15,10 @@ pub fn router(state: AppState) -> Router<()> {
     let domain_routes = crate::api::{{ name }}::router::router().layer(
         axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware),
     );
+    // `merge` instead of `nest("/", ...)`: axum 0.8 removed root nesting
+    // ("Nesting at the root is no longer supported").
     Router::new()
-        .nest("/", domain_routes)
+        .merge(domain_routes)
         .route("/version", axum::routing::get(version))
         .route("/health", axum::routing::get(health))
         .route("/health/ready", axum::routing::get(health_ready))
@@ -31,13 +33,47 @@ async fn version() -> Json<serde_json::Value> {
     }))
 }
 
-async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let db_ok = sea_orm::ConnectionTrait::execute(
+{% if project.persistence_provider == "cornucopia" %}
+/// Probe the database through the cornucopia client source.
+async fn db_ok(state: &AppState) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use sea_orm::ConnectionTrait;
+        sea_orm::ConnectionTrait::execute(
+            &state.db,
+            sea_orm::Statement::from_string(sea_orm::DatabaseBackend::Postgres, "SELECT 1"),
+        )
+        .await
+        .is_ok()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        // The worker slice opens a fresh Hyperdrive-backed client per probe —
+        // this also doubles as a runtime connectivity check for the
+        // cornucopia transport.
+        use cornucopia_queries::client::GenericClient;
+        match state.client_source.client().await {
+            Ok(client) => GenericClient::query_one(&client, "SELECT 1", &[]).await.is_ok(),
+            Err(e) => {
+                tracing::warn!(error = %e, "{{ worker_name }} health probe failed");
+                false
+            }
+        }
+    }
+}
+{% else %}
+async fn db_ok(state: &AppState) -> bool {
+    sea_orm::ConnectionTrait::execute(
         &state.db,
         sea_orm::Statement::from_string(sea_orm::DatabaseBackend::Postgres, "SELECT 1"),
     )
     .await
-    .is_ok();
+    .is_ok()
+}
+{% endif %}
+
+async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let db_ok = db_ok(&state).await;
     Json(serde_json::json!({
         "status": if db_ok { "ok" } else { "degraded" },
         "db": if db_ok { "connected" } else { "unreachable" },
@@ -46,12 +82,7 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
 }
 
 async fn health_ready(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let db_ok = sea_orm::ConnectionTrait::execute(
-        &state.db,
-        sea_orm::Statement::from_string(sea_orm::DatabaseBackend::Postgres, "SELECT 1"),
-    )
-    .await
-    .is_ok();
+    let db_ok = db_ok(&state).await;
     Json(serde_json::json!({
         "status": if db_ok { "ok" } else { "degraded" },
         "ready": db_ok,
@@ -63,17 +94,46 @@ async fn health_ready(State(state): State<AppState>) -> Json<serde_json::Value> 
 /// worker-rs stays behind the `cloudflare-worker` feature.
 #[cfg(target_arch = "wasm32")]
 mod worker_impl {
-    use super::*;
+    use std::sync::Arc;
+
     use tower_service::Service;
     use worker::*;
 
+    use super::*;
 {% if project.persistence_provider == "cornucopia" %}
-    // TODO(worker-cornucopia): deadpool/tokio_postgres pool construction on
-    // wasm. Cornucopia + workers is a thin slice everywhere in codegraph.
-    async fn app_state_from_env(_env: &Env) -> Result<AppState, worker::Error> {
-        Err(worker::Error::RustError(
-            "cornucopia provider + wasm transport is not implemented yet".to_string(),
-        ))
+    use crate::db_client::{DbConnectionParams, HyperdriveClientSource};
+
+    /// Resolve the database connection parameters for the worker slice.
+    ///
+    /// The Hyperdrive binding wins; a plain `DATABASE_URL` var is the local
+    /// dev / pre-Hyperdrive fallback. The actual client is built per request
+    /// by `HyperdriveClientSource` (see `db_client.rs`).
+    fn database_params(env: &Env) -> Result<DbConnectionParams, worker::Error> {
+        let connection_string = env
+            .hyperdrive("{{ hyperdrive_binding }}")
+            .map(|h| h.connection_string())
+            .or_else(|_| env.var("DATABASE_URL").map(|v| v.to_string()))
+            .map_err(|e| {
+                worker::Error::RustError(format!(
+                    "{{ hyperdrive_binding }} hyperdrive binding or DATABASE_URL var required: {e}"
+                ))
+            })?;
+        DbConnectionParams::from_connection_string(&connection_string).map_err(|e| {
+            worker::Error::RustError(format!(
+                "failed to parse database connection parameters: {e}"
+            ))
+        })
+    }
+
+    async fn app_state_from_env(env: &Env) -> Result<AppState, worker::Error> {
+        let params = database_params(env)?;
+        let client_source =
+            Arc::new(HyperdriveClientSource::new(params.clone()));
+        let jwt_secret = env
+            .secret("JWT_SECRET")
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        Ok(AppState::new(client_source, params, jwt_secret))
     }
 {% else %}
     async fn app_state_from_env(env: &Env) -> Result<AppState, worker::Error> {

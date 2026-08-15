@@ -17,17 +17,26 @@ path = "src/main.rs"
 
 [features]
 default = ["native"]
-native = ["dep:reqwest", "dep:tokio", "dep:tracing-subscriber"]
-cloudflare-worker = ["worker/axum", "worker/http"]
+native = ["dep:reqwest", "dep:tracing-subscriber"]
+cloudflare-worker = ["dep:worker", "worker/axum", "worker/http"]
 
 [dependencies]
-axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
-tokio = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 reqwest = { version = "0.12", features = ["json"], optional = true }
 worker = { workspace = true, optional = true }
 tower-service = { workspace = true }
 http-body-util = { workspace = true }
+futures-channel = { workspace = true }
+
+# Native builds run an axum::serve listener (axum "tokio" feature); the
+# wasm32 slice serves requests through the worker runtime and must not pull
+# tokio/net (mio).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+axum = { workspace = true, features = ["tokio"] }
+tokio = { workspace = true, features = ["full"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+axum = { workspace = true }

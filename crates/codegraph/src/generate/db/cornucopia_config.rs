@@ -167,7 +167,15 @@ fn cornucopia_toml() -> String {
     );
     toml.push_str("\"pg_catalog.date\" = \"chrono::NaiveDate\"\n");
     toml.push_str("\"pg_catalog.bytea\" = { rust-type = \"Vec<u8>\", is-copy = false }\n");
-    toml.push_str("\"pg_catalog.numeric\" = \"rust_decimal::Decimal\"\n");
+    // Numeric travels as String through the SQL layer: rust_decimal's
+    // postgres FromSql/ToSql impls are gated off on wasm32
+    // (rust_decimal 1.x `mod postgres` is `cfg(not(target_arch = "wasm32"))`),
+    // so mapping to Decimal would break Cloudflare Worker builds. The
+    // repository adapters parse the String back to `rust_decimal::Decimal`
+    // at the DTO boundary (same pattern as every typed column).
+    toml.push_str(
+        "\"pg_catalog.numeric\" = { rust-type = \"String\", is-copy = false }\n",
+    );
     toml.push_str("\"pg_catalog.inet\" = \"std::net::IpAddr\"\n");
     toml.push_str("\"pg_catalog.tstzrange\" = { rust-type = \"String\", is-copy = false }\n");
     toml.push_str("\"pg_catalog.daterange\" = { rust-type = \"String\", is-copy = false }\n");

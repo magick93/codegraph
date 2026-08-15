@@ -81,6 +81,12 @@ pub struct WorkerScaffoldContext {
     pub gateway_name: String,
     pub gateway_lib_name: String,
     pub domains: Vec<WorkerDomain>,
+    /// Path to the codegraph-workflow crate relative to the output root
+    /// (empty → git+rev dependency).
+    pub codegraph_workflow_path: String,
+    /// Path to the codegraph-type-contracts crate relative to the output
+    /// root (empty → git+rev dependency).
+    pub type_contracts_path: String,
 }
 
 /// Build the per-domain worker contexts from the shared scaffold domains.
@@ -202,6 +208,13 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         let gateway_name = format!("{app_name}-gateway");
         let gateway_lib_name = codegraph_naming::to_snake_case(&gateway_name);
 
+        // Shared codegraph crate paths. The workspace manifest lives in the
+        // `workers/` directory, so dependency paths are re-based from there
+        // (empty when the consuming project pins them via git rev).
+        let workers_abs = abs_output.join("workers");
+        let codegraph_workflow_rel = resolve_path(&project.codegraph_workflow_base, &workers_abs);
+        let type_contracts_rel = resolve_path(&project.type_contracts_base, &workers_abs);
+
         let mut domains = build_worker_domains(&app_name, config, scaffold_domains);
         for domain in &mut domains {
             domain.domain_types_path = worker_domain_types_path.clone();
@@ -213,6 +226,8 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
             gateway_name,
             gateway_lib_name,
             domains,
+            codegraph_workflow_path: codegraph_workflow_rel,
+            type_contracts_path: type_contracts_rel,
         };
 
         let workers_dir = self.output_dir.join("workers");
@@ -310,6 +325,21 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
                 path: base.join("src").join("app_state.rs"),
                 content: app_state,
             });
+
+            // Cornucopia client plumbing: deadpool pool (native) / per-request
+            // Hyperdrive client (wasm32) behind a single ClientSource trait.
+            if project.is_cornucopia() {
+                let db_client = render_template_with_project(
+                    tera,
+                    "scaffold/db_client.tera",
+                    domain,
+                    project,
+                )?;
+                files.push(GeneratedFile {
+                    path: base.join("src").join("db_client.rs"),
+                    content: db_client,
+                });
+            }
 
             let error = render_template_with_project(tera, "scaffold/error.tera", domain, project)?;
             files.push(GeneratedFile {
@@ -568,6 +598,8 @@ service_bindings = ["timecard"]
             gateway_name: "hr-gateway".to_string(),
             gateway_lib_name: "hr_gateway".to_string(),
             domains,
+            codegraph_workflow_path: String::new(),
+            type_contracts_path: String::new(),
         };
 
         let rendered =

@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 {% if project.persistence_provider == "cornucopia" %}
 use cornucopia_queries::client;
+use crate::db_client::ClientSource;
+#[cfg(not(target_arch = "wasm32"))]
 use sea_orm::DatabaseConnection;
 {% else %}
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
@@ -70,10 +72,12 @@ async fn set_rls_session_vars(
 pub struct {{ entity_name }}QueryHandler {
 {% if project.persistence_provider == "cornucopia" %}
     repo: Arc<super::cornucopia_repository_impl::{{ entity_name }}RepositoryImpl>,
-    pool: deadpool_postgres::Pool,
+    client_source: Arc<dyn ClientSource>,
 {% else %}
     repo: Arc<dyn {{ entity_name }}Repository<sea_orm::DatabaseTransaction>>,
 {% endif %}
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
     db: DatabaseConnection,
 {% set uses_find_by_id = has_create or (has_read and not parent_ref) %}
 {% if project.hooks_api_crate %}
@@ -87,10 +91,11 @@ impl {{ entity_name }}QueryHandler {
     pub fn new(
 {% if project.persistence_provider == "cornucopia" %}
         repo: Arc<super::cornucopia_repository_impl::{{ entity_name }}RepositoryImpl>,
-        pool: deadpool_postgres::Pool,
+        client_source: Arc<dyn ClientSource>,
 {% else %}
         repo: Arc<dyn {{ entity_name }}Repository<sea_orm::DatabaseTransaction>>,
 {% endif %}
+        #[cfg(not(target_arch = "wasm32"))]
         db: DatabaseConnection,
 {% if project.hooks_api_crate %}
 {% if uses_find_by_id %}
@@ -98,14 +103,26 @@ impl {{ entity_name }}QueryHandler {
 {% endif %}
 {% endif %}
     ) -> Self {
-        Self { repo, {% if project.persistence_provider == "cornucopia" %}pool, {% endif %}db{% if project.hooks_api_crate %}{% if uses_find_by_id %}, hooks{% endif %}{% endif %} }
+        Self {
+            repo,
+{% if project.persistence_provider == "cornucopia" %}
+            client_source,
+{% endif %}
+            #[cfg(not(target_arch = "wasm32"))]
+            db,
+{% if project.hooks_api_crate %}
+{% if uses_find_by_id %}
+            hooks,
+{% endif %}
+{% endif %}
+        }
     }
 {% if has_read %}
 {% if uses_find_by_id %}
 
     pub async fn find_by_id(&self, id: Uuid{% if is_auditable %}, include_deleted: bool{% endif %}, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Option<{{ entity_name }}Response>, {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
-        let mut client = self.pool.get().await
+        let mut client = self.client_source.client().await
             .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
         let tx = client.transaction().await
             .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
@@ -125,6 +142,10 @@ impl {{ entity_name }}QueryHandler {
         {% if project.hooks_api_crate %}
 {% if project.hooks_api_crate %}
         // --- on_query hook ---
+{% if project.persistence_provider == "cornucopia" %}
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+{% endif %}
         if let Some(hooks) = &self.hooks {
             if let Some(ref mut resp) = result {
                 let query_correlation_id = Uuid::new_v4();
@@ -137,6 +158,9 @@ impl {{ entity_name }}QueryHandler {
                 }
             }
         }
+{% if project.persistence_provider == "cornucopia" %}
+        }
+{% endif %}
 {% endif %}
         {% endif %}
 
@@ -148,7 +172,7 @@ impl {{ entity_name }}QueryHandler {
     /// Find by ID scoped to a parent entity — returns None if entity doesn't belong to parent.
     pub async fn find_by_id_scoped(&self, id: Uuid, parent_id: Uuid{% if is_auditable %}, include_deleted: bool{% endif %}, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Option<{{ entity_name }}Response>, {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
-        let mut client = self.pool.get().await
+        let mut client = self.client_source.client().await
             .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
         let tx = client.transaction().await
             .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
@@ -172,7 +196,7 @@ impl {{ entity_name }}QueryHandler {
 
     pub async fn list_filtered(&self, page: u64, page_size: u64, filters: &std::collections::HashMap<String, String>{% if is_auditable %}, include_deleted: bool{% endif %}, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(Vec<{{ entity_name }}Response>, u64), {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
-        let mut client = self.pool.get().await
+        let mut client = self.client_source.client().await
             .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
         let tx = client.transaction().await
             .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
@@ -197,7 +221,7 @@ impl {{ entity_name }}QueryHandler {
     /// (supports quoted phrases, OR, and -exclude). Hydrates full responses via `find_by_id`.
     pub async fn search(&self, query: &str, page: u64, page_size: u64{% if is_auditable %}, include_deleted: bool{% endif %}, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(Vec<{{ entity_name }}Response>, u64), {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
-        let mut client = self.pool.get().await
+        let mut client = self.client_source.client().await
             .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
         let tx = client.transaction().await
             .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
@@ -238,7 +262,7 @@ impl {{ entity_name }}QueryHandler {
     /// the closest matches by cosine distance. Hydrates full responses via `find_by_id`.
     pub async fn semantic_search(&self, embedding: &[f32], limit: u64{% if is_auditable %}, include_deleted: bool{% endif %}, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Vec<{{ entity_name }}Response>, {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
-        let mut client = self.pool.get().await
+        let mut client = self.client_source.client().await
             .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
         let tx = client.transaction().await
             .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;

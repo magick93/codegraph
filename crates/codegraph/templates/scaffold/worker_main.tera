@@ -5,8 +5,9 @@
 mod api;
 mod app_state;
 mod codelist;
-mod domain;
-mod entity;
+{% if project.persistence_provider == "cornucopia" %}mod db_client;
+{% else %}mod entity;
+{% endif %}mod domain;
 mod error;
 mod middleware;
 mod qs_query;
@@ -32,7 +33,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio_postgres::NoTls,
     ))
     .build()?;
-    let state = app_state::AppState::new(db, pool, jwt_secret);
+    let params = db_client::DbConnectionParams::from_connection_string(&database_url)?;
+    let client_source = std::sync::Arc::new(db_client::DeadpoolClientSource::new(pool));
+    let state = app_state::AppState::new(db, client_source, params, jwt_secret);
 {% else %}
     let state = app_state::AppState::new(db, jwt_secret);
 {% endif %}

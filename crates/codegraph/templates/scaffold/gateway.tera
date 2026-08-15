@@ -20,7 +20,6 @@ mod worker_impl {
     use axum::http::StatusCode;
     use axum::response::{IntoResponse, Json, Response};
     use axum::Router;
-    use http_body_util::BodyExt;
     use tower_service::Service;
     use worker::*;
 
@@ -29,6 +28,40 @@ mod worker_impl {
     #[derive(Clone)]
     struct GatewayState {
         env: Env,
+    }
+
+    /// Bridge a non-`Send` workers-rs future (e.g. `Fetcher::fetch`, whose
+    /// result holds JS objects) into the `Send`-future world axum handlers
+    /// require: run it in the worker event loop and ship a `Send`-safe result
+    /// back over a oneshot channel.
+    fn run_in_worker_loop<T>(
+        future: impl std::future::Future<Output = T> + 'static,
+    ) -> impl std::future::Future<Output = Result<T, String>> + Send
+    where
+        T: Send + 'static,
+    {
+        let (tx, rx) = futures_channel::oneshot::channel();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = tx.send(future.await);
+        });
+        async move { rx.await.map_err(|_| "worker loop task dropped".to_string()) }
+    }
+
+    /// Fetch one upstream's `/health` and render a JSON fragment.
+    async fn upstream_health(binding: String, env: Env) -> serde_json::Value {
+        let health = run_in_worker_loop(async move {
+            let svc = match env.service(&binding) {
+                Ok(svc) => svc,
+                Err(_) => return "binding not configured".to_string(),
+            };
+            match svc.fetch("https://gateway.invalid/health", None).await {
+                Ok(resp) => resp.status().as_u16().to_string(),
+                Err(e) => format!("upstream error: {e}"),
+            }
+        })
+        .await
+        .unwrap_or_else(|e| format!("worker loop error: {e}"));
+        serde_json::json!({ "health": health })
     }
 
     async fn version() -> Json<serde_json::Value> {
@@ -56,14 +89,9 @@ mod worker_impl {
     async fn health_all(State(state): State<GatewayState>) -> Json<serde_json::Value> {
         let mut services = serde_json::Map::new();
         for (binding, _worker_name) in UPSTREAMS {
-            let health = match state.env.service(binding) {
-                Ok(svc) => match svc.fetch("https://gateway.invalid/health", None).await {
-                    Ok(resp) => resp.status().as_u16().to_string(),
-                    Err(e) => format!("upstream error: {e}"),
-                },
-                Err(_) => "binding not configured".to_string(),
-            };
-            services.insert(binding.to_string(), serde_json::json!({ "health": health }));
+            let fragment =
+                upstream_health(binding.to_string(), state.env.clone()).await;
+            services.insert(binding.to_string(), fragment);
         }
         Json(serde_json::json!({ "status": "ok", "services": services }))
     }
@@ -77,45 +105,21 @@ mod worker_impl {
         req: axum::extract::Request,
     ) -> Response {
         let binding = domain.replace('-', "_").to_ascii_uppercase();
-        let service = match state.env.service(&binding) {
-            Ok(svc) => svc,
-            Err(_) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({
-                        "error": {
-                            "code": "NOT_FOUND",
-                            "message": format!(
-                                "unknown domain '{domain}' — no service binding '{binding}' on the gateway"
-                            ),
-                        }
-                    })),
-                )
-                    .into_response();
-            }
-        };
+        let method = req.method().as_str().to_ascii_uppercase();
+        let uri = req.uri().to_string();
+        let headers: Vec<(String, String)> = req
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|v| (name.as_str().to_string(), v.to_string()))
+            })
+            .collect();
 
-        let method = req.method().clone();
-        let (parts, body) = req.into_parts();
-        let query = parts
-            .uri
-            .query()
-            .map(|q| format!("?{q}"))
-            .unwrap_or_default();
-        let upstream_url = format!("https://{domain}.internal/{path}{query}");
-
-        let mut init = RequestInit::new();
-        init.with_method(Method::from(method.as_str().to_ascii_uppercase()));
-        let mut headers = Headers::new();
-        for (name, value) in &parts.headers {
-            if let Ok(v) = value.to_str() {
-                let _ = headers.set(name.as_str(), v);
-            }
-        }
-        init.with_headers(headers);
-
-        let body_bytes = match axum::body::to_bytes(body, 64 * 1024 * 1024).await {
-            Ok(bytes) => bytes,
+        let body_bytes = match axum::body::to_bytes(req.into_body(), 64 * 1024 * 1024).await {
+            Ok(bytes) => bytes.to_vec(),
             Err(e) => {
                 return (
                     StatusCode::BAD_REQUEST,
@@ -129,47 +133,100 @@ mod worker_impl {
                     .into_response();
             }
         };
-        if !body_bytes.is_empty() {
-            init.with_body(Some(js_sys::Uint8Array::from(body_bytes.as_ref()).into()));
+
+        let upstream = run_in_worker_loop(async move {
+            let svc = match state.env.service(&binding) {
+                Ok(svc) => svc,
+                Err(_) => {
+                    return Err(format!(
+                        "unknown domain '{domain}' — no service binding '{binding}' on the gateway"
+                    ))
+                }
+            };
+
+            let mut init = RequestInit::new();
+            init.with_method(Method::from(method.clone()));
+            let mut out_headers = Headers::new();
+            for (name, value) in &headers {
+                let _ = out_headers.set(name, value);
+            }
+            init.with_headers(out_headers);
+            if !body_bytes.is_empty() {
+                init.with_body(Some(
+                    js_sys::Uint8Array::from(body_bytes.as_slice()).into(),
+                ));
+            }
+
+            let query = uri.split('?').nth(1).map(|q| format!("?{q}")).unwrap_or_default();
+            let upstream_url = format!("https://{domain}.internal/{path}{query}");
+
+            let upstream = match svc.fetch(upstream_url, Some(init)).await {
+                Ok(resp) => resp,
+                Err(e) => return Err(format!("upstream error: {e}")),
+            };
+            // With the worker `http` feature, Fetcher::fetch returns an
+            // `http::Response<worker::Body>` (axum::http re-exports `http`).
+            let status = upstream.status().as_u16();
+            let upstream_headers: Vec<(String, String)> = upstream
+                .headers()
+                .iter()
+                .filter_map(|(name, value)| {
+                    value
+                        .to_str()
+                        .ok()
+                        .map(|v| (name.as_str().to_string(), v.to_string()))
+                })
+                .collect();
+            let upstream_body = match http_body_util::BodyExt::collect(upstream.into_body()).await
+            {
+                Ok(collected) => collected.to_bytes().to_vec(),
+                Err(e) => return Err(format!("failed to read upstream body: {e}")),
+            };
+            Ok((status, upstream_headers, upstream_body))
+        })
+        .await;
+
+        match upstream {
+            Ok(Ok((status, upstream_headers, upstream_body))) => {
+                let mut response =
+                    axum::http::Response::new(axum::body::Body::from(upstream_body));
+                *response.status_mut() = match StatusCode::from_u16(status) {
+                    Ok(code) => code,
+                    Err(_) => StatusCode::BAD_GATEWAY,
+                };
+                let headers = response.headers_mut();
+                for (name, value) in &upstream_headers {
+                    if let Ok(name) = axum::http::HeaderName::from_bytes(name.as_bytes()) {
+                        if let Ok(value) = value.parse() {
+                            headers.insert(name, value);
+                        }
+                    }
+                }
+                response
+            }
+            Ok(Err(message)) => {
+                let not_found = message.contains("no service binding");
+                let code = if not_found {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::BAD_GATEWAY
+                };
+                (
+                    code,
+                    Json(serde_json::json!({
+                        "error": { "code": if not_found { "NOT_FOUND" } else { "BAD_GATEWAY" }, "message": message }
+                    })),
+                )
+                    .into_response()
+            }
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": { "code": "BAD_GATEWAY", "message": format!("worker loop error: {e}") }
+                })),
+            )
+                .into_response(),
         }
-
-        let upstream = match service.fetch(upstream_url, Some(init)).await {
-            Ok(resp) => resp,
-            Err(e) => {
-                return (
-                    StatusCode::BAD_GATEWAY,
-                    Json(serde_json::json!({
-                        "error": {
-                            "code": "BAD_GATEWAY",
-                            "message": format!("upstream error: {e}"),
-                        }
-                    })),
-                )
-                    .into_response();
-            }
-        };
-
-        let (upstream_parts, upstream_body) = upstream.into_parts();
-        let upstream_bytes = match BodyExt::collect(upstream_body).await {
-            Ok(collected) => collected.to_bytes(),
-            Err(e) => {
-                return (
-                    StatusCode::BAD_GATEWAY,
-                    Json(serde_json::json!({
-                        "error": {
-                            "code": "BAD_GATEWAY",
-                            "message": format!("failed to read upstream body: {e}"),
-                        }
-                    })),
-                )
-                    .into_response();
-            }
-        };
-
-        let mut response = axum::http::Response::new(axum::body::Body::from(upstream_bytes));
-        *response.status_mut() = upstream_parts.status;
-        *response.headers_mut() = upstream_parts.headers;
-        response
     }
 
     #[event(fetch)]
@@ -179,7 +236,7 @@ mod worker_impl {
         _ctx: Context,
     ) -> Result<axum::http::Response<axum::body::Body>> {
         let state = GatewayState { env };
-        let app = Router::new()
+        let mut app = Router::new()
             .route("/version", axum::routing::get(version))
             .route("/health", axum::routing::get(health))
             .route("/health/all", axum::routing::get(health_all))

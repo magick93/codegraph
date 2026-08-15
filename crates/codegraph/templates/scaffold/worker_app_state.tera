@@ -3,6 +3,10 @@
 
 use std::sync::Arc;
 
+{% if project.persistence_provider == "cornucopia" %}
+use crate::db_client::{ClientSource, DbConnectionParams};
+{% endif %}
+#[cfg(not(target_arch = "wasm32"))]
 use sea_orm::DatabaseConnection;
 {% if project.hooks_api_crate %}use crate::hooks::HookRegistry;{% endif %}
 
@@ -12,13 +16,19 @@ pub struct AppState {
     pub {{ name }}_{{ entity.module_name }}_commands: crate::domain::{{ name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler,
     pub {{ name }}_{{ entity.module_name }}_queries: crate::domain::{{ name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler,
 {% endfor %}
+{% if project.persistence_provider == "cornucopia" %}
+    /// Cornucopia client source: deadpool pool in native dev builds, a
+    /// per-request Hyperdrive client in the Cloudflare Worker slice.
+    pub client_source: Arc<dyn ClientSource>,
+    /// Database connection parameters (Hyperdrive binding or DATABASE_URL).
+    pub db_params: DbConnectionParams,
+    /// SeaORM handle — native builds only (sqlx does not compile to wasm32).
+    #[cfg(not(target_arch = "wasm32"))]
     #[allow(dead_code)]
     pub db: DatabaseConnection,
-{% if project.persistence_provider == "cornucopia" %}
-    // TODO(worker-cornucopia): cornucopia provider plumbing — the monolith
-    // scaffold is SeaORM-only today; mirror that and keep the pool field for
-    // future provider parity.
-    pub pool: deadpool_postgres::Pool,
+{% else %}
+    #[allow(dead_code)]
+    pub db: DatabaseConnection,
 {% endif %}
     pub jwt_secret: String,
     pub workflow_service: Arc<dyn codegraph_workflow::WorkflowService>,
@@ -28,23 +38,68 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Construct AppState from a connected database handle and JWT secret.
-    pub fn new(
-        db: DatabaseConnection,
 {% if project.persistence_provider == "cornucopia" %}
-        pool: deadpool_postgres::Pool,
-{% endif %}
+    /// Construct AppState from the cornucopia client source and the resolved
+    /// database connection parameters.
+    pub fn new(
+        #[cfg(not(target_arch = "wasm32"))] db: DatabaseConnection,
+        client_source: Arc<dyn ClientSource>,
+        db_params: DbConnectionParams,
         jwt_secret: String,
     ) -> Self {
         Self {
 {% for entity in entities %}
             {{ name }}_{{ entity.module_name }}_commands: crate::domain::{{ name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler::new(
                 Arc::new(
-                    crate::domain::{{ name }}::{{ entity.module_name }}::{% if project.persistence_provider == "cornucopia" %}cornucopia_repository_impl{% else %}repository_impl{% endif %}::{{ entity.name }}RepositoryImpl,
+                    crate::domain::{{ name }}::{{ entity.module_name }}::cornucopia_repository_impl::{{ entity.name }}RepositoryImpl,
                 ),
-{% if project.persistence_provider == "cornucopia" %}
-                pool.clone(),
+                client_source.clone(),
+                #[cfg(not(target_arch = "wasm32"))] db.clone(),
+{% if project.hooks_api_crate %}
+                None,
 {% endif %}
+            ),
+            {{ name }}_{{ entity.module_name }}_queries: crate::domain::{{ name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler::new(
+                Arc::new(
+                    crate::domain::{{ name }}::{{ entity.module_name }}::cornucopia_repository_impl::{{ entity.name }}RepositoryImpl,
+                ),
+                client_source.clone(),
+                #[cfg(not(target_arch = "wasm32"))] db.clone(),
+{% if project.hooks_api_crate %}
+                None,
+{% endif %}
+            ),
+{% endfor %}
+            client_source,
+            db_params,
+            #[cfg(not(target_arch = "wasm32"))]
+            db: db.clone(),
+            jwt_secret,
+            #[cfg(not(target_arch = "wasm32"))]
+            workflow_service: Arc::new(codegraph_workflow::engine::SeaOrmWorkflowService::new(db)),
+            #[cfg(target_arch = "wasm32")]
+            workflow_service: Arc::new(codegraph_workflow::wasm::UnavailableWorkflowService::new()),
+{% if project.hooks_api_crate %}
+            registry: HookRegistry::default(),
+{% endif %}
+        }
+    }
+{% else %}
+    /// Construct AppState from a connected database handle and JWT secret.
+    ///
+    /// SeaORM provider: placeholder only — workers topology requires the
+    /// cornucopia persistence provider (BuildPlan validation rejects this
+    /// combination at generation time).
+    pub fn new(
+        db: DatabaseConnection,
+        jwt_secret: String,
+    ) -> Self {
+        Self {
+{% for entity in entities %}
+            {{ name }}_{{ entity.module_name }}_commands: crate::domain::{{ name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler::new(
+                Arc::new(
+                    crate::domain::{{ name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl,
+                ),
                 db.clone(),
 {% if project.hooks_api_crate %}
                 None,
@@ -52,11 +107,8 @@ impl AppState {
             ),
             {{ name }}_{{ entity.module_name }}_queries: crate::domain::{{ name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler::new(
                 Arc::new(
-                    crate::domain::{{ name }}::{{ entity.module_name }}::{% if project.persistence_provider == "cornucopia" %}cornucopia_repository_impl{% else %}repository_impl{% endif %}::{{ entity.name }}RepositoryImpl,
+                    crate::domain::{{ name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl,
                 ),
-{% if project.persistence_provider == "cornucopia" %}
-                pool.clone(),
-{% endif %}
                 db.clone(),
 {% if project.hooks_api_crate %}
                 None,
@@ -64,9 +116,6 @@ impl AppState {
             ),
 {% endfor %}
             db: db.clone(),
-{% if project.persistence_provider == "cornucopia" %}
-            pool,
-{% endif %}
             jwt_secret,
             workflow_service: Arc::new(codegraph_workflow::engine::SeaOrmWorkflowService::new(db)),
 {% if project.hooks_api_crate %}
@@ -84,4 +133,5 @@ impl AppState {
     pub fn placeholder_connection() -> DatabaseConnection {
         unimplemented!("SeaORM Hyperdrive transport is not implemented yet")
     }
+{% endif %}
 }
