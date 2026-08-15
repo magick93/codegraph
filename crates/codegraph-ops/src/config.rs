@@ -58,7 +58,9 @@ impl OpsConfig {
         let root_dir = manifest_path
             .parent()
             .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         Self::from_manifest(manifest, root_dir)
     }
 
@@ -196,6 +198,7 @@ mod tests {
             output_dir: "generated-candidate".into(),
             ui_dir: None,
             smoke: None,
+            api_version: "v1".to_string(),
             servers: Default::default(),
             database: OpsDatabase {
                 api: OpsDbTarget {
@@ -268,6 +271,7 @@ mod tests {
             output_dir: "generated-candidate".into(),
             ui_dir: None,
             smoke: None,
+            api_version: "v1".to_string(),
             servers: Default::default(),
             database: OpsDatabase {
                 api: OpsDbTarget {

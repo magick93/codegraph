@@ -55,8 +55,9 @@ fn assert_scaffold_files_exist(project: &Path) {
         "monolith",
         features(),
     );
-    let expected = ctx.file_tree();
-    assert_eq!(expected.len(), 16, "PROJECT_TEMPLATES should list 16 files");
+    let mut expected = ctx.file_tree();
+    assert_eq!(expected.len(), 17, "PROJECT_TEMPLATES should list 17 files");
+    expected.sort();
     for rel in &expected {
         assert!(project.join(rel).is_file(), "missing {}", rel.display());
     }
@@ -68,7 +69,7 @@ fn assert_scaffold_files_exist(project: &Path) {
         .map(|p| p.strip_prefix(project).unwrap().to_path_buf())
         .collect();
     actual.sort();
-    assert_eq!(actual.len(), 16, "unexpected extra files: {actual:?}");
+    assert_eq!(actual, expected, "unexpected extra files: {actual:?}");
 }
 
 #[test]
@@ -95,8 +96,10 @@ fn init_scaffolds_expected_file_tree() {
     codegraph_classifier::config::parse_classifier_config(&project.join("classifier.toml"))
         .unwrap();
 
-    let schema = fs::read_to_string(project.join("schemas/common/example.json")).unwrap();
-    serde_json::from_str::<serde_json::Value>(&schema).unwrap();
+    for schema_file in ["todo_list.json", "todo_item.json"] {
+        let schema = fs::read_to_string(project.join("schemas/common").join(schema_file)).unwrap();
+        serde_json::from_str::<serde_json::Value>(&schema).unwrap();
+    }
 
     let workspace = fs::read_to_string(project.join("Cargo.toml")).unwrap();
     let expected_path = format!("path = \"{}\"", root.join("crates/codegraph").display());
@@ -225,11 +228,12 @@ fn add_domain_appends_and_creates_schema() {
     assert!(parsed.domains.contains_key("billing"));
     assert_eq!(parsed.domains["billing"].label, "Billing");
 
-    let example = schemas.join("billing/example.json");
-    assert!(example.is_file());
+    let todo_list = schemas.join("billing/todo_list.json");
+    assert!(todo_list.is_file());
     let json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&example).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&todo_list).unwrap()).unwrap();
     assert!(json.is_object());
+    assert_eq!(json["title"], "TodoListType");
 }
 
 #[test]
@@ -256,7 +260,7 @@ fn add_domain_normalizes_name() {
 
     let parsed = codegraph_config::config::parse_domain_config(&config).unwrap();
     assert!(parsed.domains.contains_key("billing_accounts"));
-    assert!(schemas.join("billing_accounts/example.json").is_file());
+    assert!(schemas.join("billing_accounts/todo_list.json").is_file());
 }
 
 #[test]

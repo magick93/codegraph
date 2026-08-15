@@ -61,8 +61,12 @@ pub const PROJECT_TEMPLATES: &[(&str, &str)] = &[
     ("project/profiles.tera", "profiles.toml"),
     ("project/extension_points.tera", "extension-points.toml"),
     (
-        "project/example_schema.tera",
-        "schemas/{domain}/example.json",
+        "project/todo_list_schema.tera",
+        "schemas/{domain}/todo_list.json",
+    ),
+    (
+        "project/todo_item_schema.tera",
+        "schemas/{domain}/todo_item.json",
     ),
     ("project/ops_manifest.tera", "codegraph-ops.toml"),
     ("project/testkit_cargo.tera", "ops/testkit/Cargo.toml"),
@@ -210,7 +214,8 @@ mod tests {
         );
         let tree = ctx.file_tree();
         assert!(tree.contains(&PathBuf::from("demo-app-graph/src/main.rs")));
-        assert!(tree.contains(&PathBuf::from("schemas/billing/example.json")));
+        assert!(tree.contains(&PathBuf::from("schemas/billing/todo_list.json")));
+        assert!(tree.contains(&PathBuf::from("schemas/billing/todo_item.json")));
         assert!(tree.contains(&PathBuf::from("codegraph-ops.toml")));
         assert_eq!(tree.len(), PROJECT_TEMPLATES.len());
     }

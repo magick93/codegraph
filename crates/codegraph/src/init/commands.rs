@@ -469,30 +469,51 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
     }
 }
 
-/// Minimal JSON schema used when `project/example_schema.tera` is unavailable
-/// or fails to render. Same shape: id uuid, name, description, created_at;
-/// required [id, name].
-fn fallback_example_schema() -> String {
-    let schema = serde_json::json!({
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "ItemType",
+/// Minimal TODO schemas used when the project starter templates are
+/// unavailable or fail to render. Same shape as `templates/project/`
+/// `todo_list_schema.tera` + `todo_item_schema.tera`.
+fn fallback_starter_schemas() -> Vec<(String, String)> {
+    let todo_list = serde_json::json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "TodoListType",
+        "description": "A named collection of todo items.",
         "type": "object",
         "properties": {
-            "id": { "type": "string", "format": "uuid" },
-            "name": { "type": "string" },
-            "description": { "type": "string" },
-            "created_at": { "type": "string", "format": "date-time" }
+            "id": { "description": "Primary identifier.", "type": "string", "format": "uuid" },
+            "name": { "description": "Display name of the list.", "type": "string" },
+            "description": { "description": "Optional longer description.", "type": "string" }
         },
         "required": ["id", "name"]
     });
-    let mut out = serde_json::to_string_pretty(&schema).unwrap_or_else(|_| "{}".to_string());
-    out.push('\n');
+    let todo_item = serde_json::json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "TodoItemType",
+        "description": "A single todo item belonging to a list.",
+        "type": "object",
+        "properties": {
+            "id": { "description": "Primary identifier.", "type": "string", "format": "uuid" },
+            "list_id": { "description": "Identifier of the list this item belongs to.", "type": "string", "format": "uuid" },
+            "title": { "description": "Short title of the item.", "type": "string" },
+            "notes": { "description": "Optional free-form notes.", "type": "string" },
+            "completed": { "description": "Whether the item is done.", "type": "boolean" },
+            "due_date": { "description": "Optional due date.", "type": "string", "format": "date" }
+        },
+        "required": ["id", "title"]
+    });
+    let mut out = Vec::new();
+    for (name, schema) in [("todo_list.json", todo_list), ("todo_item.json", todo_item)] {
+        let mut content =
+            serde_json::to_string_pretty(&schema).unwrap_or_else(|_| "{}".to_string());
+        content.push('\n');
+        out.push((name.to_string(), content));
+    }
     out
 }
 
-/// Render `project/example_schema.tera` for `domain_name`, falling back to a
-/// minimal inline schema when the template is missing or renders invalid JSON.
-fn example_schema(domain_name: &str) -> String {
+/// Render the project starter schemas (todo_list.json + todo_item.json) for
+/// `domain_name`, falling back to inline minimal schemas when a template is
+/// missing or renders invalid JSON.
+fn starter_schemas(domain_name: &str) -> Vec<(String, String)> {
     let builtin = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     if let Ok(tera) = crate::generate::template_engine::create_tera(&builtin) {
         let ctx = ProjectTemplateContext::new(
@@ -510,14 +531,36 @@ fn example_schema(domain_name: &str) -> String {
             },
         );
         if let Ok(tctx) = tera::Context::from_serialize(&ctx) {
-            if let Ok(rendered) = tera.render("project/example_schema.tera", &tctx) {
-                if serde_json::from_str::<serde_json::Value>(&rendered).is_ok() {
-                    return rendered;
+            let mut out = Vec::new();
+            let mut valid = true;
+            for template in [
+                "project/todo_list_schema.tera",
+                "project/todo_item_schema.tera",
+            ] {
+                match tera.render(template, &tctx) {
+                    Ok(rendered)
+                        if serde_json::from_str::<serde_json::Value>(&rendered).is_ok() =>
+                    {
+                        let name = template
+                            .strip_prefix("project/")
+                            .and_then(|t| t.strip_suffix("_schema.tera"))
+                            .unwrap_or("example")
+                            .to_string()
+                            + ".json";
+                        out.push((name, rendered));
+                    }
+                    _ => {
+                        valid = false;
+                        break;
+                    }
                 }
+            }
+            if valid {
+                return out;
             }
         }
     }
-    fallback_example_schema()
+    fallback_starter_schemas()
 }
 
 /// Append a `[domains.<name>]` entry to `config_path` and create
@@ -589,9 +632,11 @@ pub fn cmd_add_domain(config_path: &Path, schemas_dir: &Path, domain_name: &str)
 
     let domain_schemas = schemas_dir.join(&name);
     fs::create_dir_all(&domain_schemas)?;
-    let example_path = domain_schemas.join("example.json");
-    if !example_path.exists() {
-        fs::write(&example_path, example_schema(&name))?;
+    for (file_name, content) in starter_schemas(&name) {
+        let path = domain_schemas.join(&file_name);
+        if !path.exists() {
+            fs::write(&path, content)?;
+        }
     }
 
     println!("Added domain '{name}' (label {label}, schema_dir {name}, postgres_schema {name})");
@@ -677,12 +722,18 @@ other = "0.1"
         assert_eq!(parsed.domains["billing"].schema_dir, "billing");
         assert_eq!(parsed.domains["billing"].postgres_schema, "billing");
 
-        let example = schemas.join("billing/example.json");
-        assert!(example.is_file());
+        let todo_list = schemas.join("billing/todo_list.json");
+        assert!(todo_list.is_file());
         let json: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&example).unwrap()).unwrap();
-        assert_eq!(json["title"], "ItemType");
+            serde_json::from_str(&fs::read_to_string(&todo_list).unwrap()).unwrap();
+        assert_eq!(json["title"], "TodoListType");
         assert!(json["properties"]["id"]["format"] == "uuid");
+        let todo_item = schemas.join("billing/todo_item.json");
+        assert!(todo_item.is_file());
+        let item: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&todo_item).unwrap()).unwrap();
+        assert_eq!(item["title"], "TodoItemType");
+        assert_eq!(item["properties"]["list_id"]["format"], "uuid");
 
         let err = cmd_add_domain(&config, &schemas, "billing").unwrap_err();
         assert!(format!("{err}").contains("already exists"), "{err}");

@@ -496,7 +496,11 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
                     cmd.arg(&f);
                     let (passed, reqs, error_lines) = match cmd.output() {
                         Ok(out) => {
-                            let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+                            let stdout = format!(
+                                "{}{}",
+                                String::from_utf8_lossy(&out.stdout),
+                                String::from_utf8_lossy(&out.stderr)
+                            );
                             if stdout.contains("100.0%") {
                                 (true, parse_requests(&stdout), Vec::new())
                             } else {
@@ -505,8 +509,9 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
                                     0,
                                     stdout
                                         .lines()
-                                        .filter(|l| l.contains("error:"))
+                                        .filter(|l| l.contains("error:") || l.contains("Error"))
                                         .map(|l| l.to_string())
+                                        .take(8)
                                         .collect(),
                                 )
                             }
@@ -545,19 +550,22 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
 
     if let Some(smoke) = &config.manifest.smoke {
         let entity = &smoke.entity;
+        let api_base = format!(
+            "{}/api/{}/{}",
+            config.api_url(),
+            config.manifest.api_version,
+            entity
+        );
         let headers: Vec<(&str, &str)> = vec![("Content-Type", "application/json")];
         let mut headers_all: Vec<(&str, &str)> = headers.clone();
+        let mut auth_headers: Vec<(&str, &str)> = Vec::new();
         if let Some(h) = &auth_header {
             let (k, v) = h.split_once(':').unwrap_or(("Authorization", ""));
             headers_all.push((k, v.trim_start()));
+            auth_headers.push((k, v.trim_start()));
         }
         // POST create
-        let resp = http_post_body(
-            &format!("{}/api/{entity}", config.api_url()),
-            &smoke.create_body,
-            &headers_all,
-        )
-        .await;
+        let resp = http_post_body(&api_base, &smoke.create_body, &headers_all).await;
         let (status, body) = match resp {
             Ok((s, b)) => (s, b),
             Err(e) => {
@@ -587,12 +595,7 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         }
         // GET by id
         if !smoke_id.is_empty() {
-            match http_status(
-                &format!("{}/api/{entity}/{smoke_id}", config.api_url()),
-                &[],
-            )
-            .await
-            {
+            match http_status(&format!("{api_base}/{smoke_id}"), &auth_headers).await {
                 Ok(200) => counters.pass("GET /{entity}/{{id}} -> 200"),
                 Ok(s) => counters.fail_test(format!("GET /{entity}/{{id}} -> {s}")),
                 Err(e) => counters.fail_test(format!("GET /{entity}/{{id}}: {e}")),
@@ -600,11 +603,8 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         }
         // GET zero-uuid -> 404
         match http_status(
-            &format!(
-                "{}/api/{entity}/00000000-0000-0000-0000-000000000000",
-                config.api_url()
-            ),
-            &[],
+            &format!("{api_base}/00000000-0000-0000-0000-000000000000"),
+            &auth_headers,
         )
         .await
         {
@@ -613,12 +613,7 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
             Err(e) => counters.fail_test(format!("GET /{entity}/zero-uuid: {e}")),
         }
         // GET list
-        match http_get_body(
-            &format!("{}/api/{entity}?page=0&page_size=10", config.api_url()),
-            &[],
-        )
-        .await
-        {
+        match http_get_body(&format!("{api_base}?page=0&page_size=10"), &auth_headers).await {
             Ok((status, body)) if status == "200" => {
                 counters.pass("GET /{entity} (list) -> 200");
                 let is_array = parse_json(&body)
@@ -966,7 +961,13 @@ fn run_capture_env(
     }
     let stdout = cmd
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .map(|o| {
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            )
+        })
         .unwrap_or_default();
     CapturedOutput { stdout }
 }
@@ -1072,8 +1073,14 @@ fn parse_requests(hurl_output: &str) -> usize {
     hurl_output
         .lines()
         .find_map(|l| {
-            l.trim()
-                .strip_suffix(" request")
+            let t = l.trim();
+            if t.starts_with("Executed requests:") {
+                return t
+                    .strip_prefix("Executed requests:")
+                    .and_then(|rest| rest.split_whitespace().next())
+                    .and_then(|n| n.trim().parse::<usize>().ok());
+            }
+            t.strip_suffix(" request")
                 .and_then(|n| n.rsplit(' ').next())
                 .and_then(|n| n.trim().parse::<usize>().ok())
         })

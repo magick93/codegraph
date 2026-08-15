@@ -1,17 +1,20 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "ItemType",
-  "description": "Example entity seeded by codegraph init. Replace with real schemas.",
+  "title": "TodoListType",
+  "description": "A named collection of todo items.",
   "type": "object",
   "properties": {
     "id": {
+      "description": "Primary identifier.",
       "type": "string",
       "format": "uuid"
     },
     "name": {
+      "description": "Display name of the list.",
       "type": "string"
     },
     "description": {
+      "description": "Optional longer description.",
       "type": "string"
     }
   },

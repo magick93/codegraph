@@ -467,8 +467,30 @@ embedded rev (mismatch WARN), missing `psql`/`npx`/`hurl` tools.
 #### `codegraph add domain <name>`
 
 Appends a `[domains.<name>]` entry (label, schema_dir, postgres_schema) to
-`domains.toml` and creates `schemas/<name>/example.json`. Rejects duplicate
-domain names.
+`domains.toml` and creates `schemas/<name>/` with the TODO starter schemas
+(`todo_list.json` + `todo_item.json`). Rejects duplicate domain names.
+
+### Hello-world TODO example
+
+The scaffold ships a working TODO example (two entities: `TodoListType` +
+`TodoItemType`) instead of a placeholder schema. The full lifecycle is
+verified end-to-end against a real Postgres:
+
+```
+codegraph init todo-app
+cd todo-app
+just generate          # 187 files, 0 errors
+cargo build --manifest-path generated/Cargo.toml
+just api               # 39/39 PASS: migrate, CRUD smoke, RLS, graceful shutdown
+```
+
+The fix for fresh-project generation required generator stubs that were
+previously assumed to exist: `errors` generator always emits per-domain
+`errors.rs` (InternalError-only when no definitions), codelist generators
+emit empty `src/codelist/mod.rs` (both app and domain-types crates),
+`domain_types_scaffold` emits generic `context.rs`/`query.rs`/`codelist`,
+scaffold Cargo.toml declares `thiserror`, the pid file name uses the app
+name (not hardcoded `hr-app`), and `0000_extensions.sql` installs pgcrypto.
 
 ### Lifecycle walkthrough
 
@@ -481,11 +503,6 @@ just api                                    # ops testkit api suite (preflight, 
 just e2e                                    # ops testkit e2e (Supabase -> generate -> migrate -> build -> Playwright)
 just full                                   # api then e2e
 ```
-
-Note: a freshly scaffolded minimal project's generated output does not yet
-compile out of the box — pre-existing generator assumptions about
-hooks/codelists/error modules (tracked in issue #71). Consumers with richer
-schemas (hr-specs style) are unaffected.
 
 ### Templates & context
 

@@ -8,6 +8,6 @@ operations = ["create", "read", "update", "delete", "list"]
 label = "{{ d.label }}"
 schema_dir = "{{ d.name }}"
 postgres_schema = "{{ d.postgres_schema }}"
-{% if loop.first %}entities = ["ItemType"]
+{% if loop.first %}entities = ["TodoListType", "TodoItemType"]
 {% endif %}
 {% endfor %}

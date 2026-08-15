@@ -459,6 +459,7 @@ mod tests {
             output_dir: "generated-app".into(),
             ui_dir: None,
             smoke: None,
+            api_version: "v1".to_string(),
             servers: codegraph_config::OpsServers {
                 api_port: 3000,
                 ui_port: 5173,

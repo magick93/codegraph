@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TodoItemType",
+  "description": "A single todo item belonging to a list.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "Primary identifier.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "list_id": {
+      "description": "Identifier of the list this item belongs to.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "title": {
+      "description": "Short title of the item.",
+      "type": "string"
+    },
+    "notes": {
+      "description": "Optional free-form notes.",
+      "type": "string"
+    },
+    "completed": {
+      "description": "Whether the item is done.",
+      "type": "boolean"
+    },
+    "due_date": {
+      "description": "Optional due date.",
+      "type": "string",
+      "format": "date"
+    }
+  },
+  "required": ["id", "title"]
+}

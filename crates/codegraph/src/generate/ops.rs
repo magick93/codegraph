@@ -127,6 +127,7 @@ impl GlobalGenerator for OpsManifestGenerator {
             output_dir: PathBuf::from("."),
             ui_dir: None,
             smoke,
+            api_version: _config.defaults.api_version.clone(),
             servers: OpsServers::default(),
             database: OpsDatabase {
                 api: default_api_db_target(5432),

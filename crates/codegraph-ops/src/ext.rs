@@ -233,6 +233,7 @@ mod tests {
             output_dir: "generated-app".into(),
             ui_dir: None,
             smoke: None,
+            api_version: "v1".to_string(),
             servers: Default::default(),
             database: OpsDatabase {
                 api: OpsDbTarget {

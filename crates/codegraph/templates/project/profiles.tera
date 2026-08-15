@@ -13,7 +13,6 @@ app_name = "{{ app_name }}"
 generator_name = "{{ graph_binary }}"
 api_title = "{{ api_title }}"
 domain_types_crate = "{{ app_name }}_domain_types"
-hooks_api_crate = "{{ app_name }}_hooks_api"
 # Generated support crates live inside the output dir; move these to
 # repo-root workspace members (hr-specs pattern) once you hand-write code.
 domain_types_base = "crates/domain-types"
@@ -25,6 +24,7 @@ deployment_topology = "{{ deployment_topology }}"
 ops_backend = {{ features.ops }}
 grpc_backend = {{ features.grpc }}
 ifml_backend = {{ features.ifml }}
+has_admin_cli = true
 
 [profiles.default.api]
 generators = [
@@ -33,7 +33,7 @@ generators = [
     "query", "event", "handler", "workflow_action", "media_route", "test",
     "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
     # Domain
-    "router", "links",
+    "router", "links", "errors",
     # Global
     "openapi", "scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",

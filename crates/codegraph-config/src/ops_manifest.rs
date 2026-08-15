@@ -45,6 +45,9 @@ pub struct OpsManifest {
     /// Smoke-test entity used by the api suite's curl CRUD checks.
     #[serde(default)]
     pub smoke: Option<OpsSmoke>,
+    /// API version prefix used by the generated routes (`v1` → `/api/v1/...`).
+    #[serde(default = "default_api_version")]
+    pub api_version: String,
     /// Server ports / bind configuration.
     #[serde(default)]
     pub servers: OpsServers,
@@ -69,6 +72,10 @@ pub struct OpsManifest {
 
 fn default_output_dir() -> PathBuf {
     PathBuf::from("generated-app")
+}
+
+fn default_api_version() -> String {
+    "v1".to_string()
 }
 
 /// Ports and bind address for the API and UI servers.
@@ -261,6 +268,7 @@ mod tests {
             output_dir: PathBuf::from("generated-candidate"),
             ui_dir: None,
             smoke: None,
+            api_version: "v1".to_string(),
             servers: OpsServers::default(),
             database: OpsDatabase {
                 api: OpsDbTarget {

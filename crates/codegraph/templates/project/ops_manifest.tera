@@ -37,8 +37,10 @@ database_target = "{{ database_target }}"
 persistence_provider = "{{ persistence_provider }}"
 
 [smoke]
-entity = "{{ domains[0].name }}/item"
-create_body = "{}"
+entity = "{{ domains[0].name }}/todo-item"
+create_body = "{\"title\":\"smoke-test\"}"
+
+api_version = "v1"
 
 [hurl]
 dir = "hurl"
