@@ -204,6 +204,12 @@ impl Default for OpsHurl {
 pub struct OpsSmoke {
     /// Entity route path, e.g. `recruiting/candidate`.
     pub entity: String,
+    /// Resolved plural route path, e.g. `recruiting/candidates` — the exact
+    /// path segment the generated routers nest under
+    /// (`/api/{api_version}/{route}`). When absent the harness pluralizes
+    /// `entity` with the codegen templates' simple pluralization rules.
+    #[serde(default)]
+    pub route: Option<String>,
     /// JSON body for the POST create check (can be `{}` for minimal fields).
     #[serde(default = "default_smoke_body")]
     pub create_body: String,
@@ -317,5 +323,42 @@ database.api = { host = "localhost", port = 5432, user = "u", password = "p", da
         assert_eq!(m.output_dir, PathBuf::from("generated-app"));
         assert_eq!(m.capabilities.database_target, "postgres");
         assert!(m.hurl.is_none());
+    }
+
+    #[test]
+    fn smoke_without_route_parses_backward_compat() {
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+
+[smoke]
+entity = "recruiting/candidate"
+create_body = "{}"
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        let smoke = m.smoke.expect("smoke section should parse");
+        assert_eq!(smoke.entity, "recruiting/candidate");
+        assert!(
+            smoke.route.is_none(),
+            "legacy manifests without `route` must still parse"
+        );
+        assert_eq!(smoke.create_body, "{}");
+    }
+
+    #[test]
+    fn smoke_route_roundtrips() {
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+
+[smoke]
+entity = "recruiting/candidate"
+route = "recruiting/candidates"
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        assert_eq!(
+            m.smoke.unwrap().route.as_deref(),
+            Some("recruiting/candidates")
+        );
     }
 }
