@@ -240,12 +240,10 @@ mod worker_impl {
             .route("/version", axum::routing::get(version))
             .route("/health", axum::routing::get(health))
             .route("/health/all", axum::routing::get(health_all))
-{% for domain in domains %}
             .route(
-                "/api/v1/{{ domain.name }}/{*path}",
+                "/api/v1/{domain}/{*path}",
                 axum::routing::any(forward),
             )
-{% endfor %}
             .with_state(state);
         Ok(app.call(req).await?)
     }

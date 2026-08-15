@@ -92,14 +92,25 @@ use std::path::PathBuf;
 fn main() {
     let manifest_dir =
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let manifest_dir = PathBuf::from(&manifest_dir);
 
-    let config_path = PathBuf::from(&manifest_dir).join("cornucopia.toml");
+    let config_path = manifest_dir.join("cornucopia.toml");
+    // Snapshot the scaffolding before gen_live runs: cornucopia's persist
+    // step wipes its destination directory (remove_dir_all) and the
+    // destination IS this crate root, so build.rs and cornucopia.toml would
+    // otherwise vanish — breaking every subsequent build (and racing hard
+    // when wrangler dev builds several workers in parallel). Restore both
+    // files after generation.
+    let config_bytes = std::fs::read(&config_path).expect("failed to read cornucopia.toml");
+    let self_source = std::fs::read_to_string(manifest_dir.join("build.rs"))
+        .expect("failed to read build.rs");
+
     let mut config = cornucopia::config::Config::from_file(&config_path)
         .expect("failed to read cornucopia.toml");
 
     // Resolve paths relative to the crate root — cargo may run with any CWD.
-    config.queries = PathBuf::from(&manifest_dir).join("..").join("queries");
-    config.destination = PathBuf::from(&manifest_dir);
+    config.queries = manifest_dir.join("..").join("queries");
+    config.destination = manifest_dir.clone();
 
     let db_url = std::env::var("CORNUCOPIA_DATABASE_URL")
         .expect("CORNUCOPIA_DATABASE_URL must be set to build cornucopia queries");
@@ -114,8 +125,23 @@ fn main() {
                 eprintln!("cornucopia codegen connection error: {e}");
             }
         });
-        cornucopia::gen_live(&client, config).expect("cornucopia codegen failed");
+        // Serialize concurrent codegen runs (e.g. wrangler dev building
+        // several workers in parallel) on a well-known advisory lock.
+        client
+            .execute("SELECT pg_advisory_lock(0x436f726e75436174)", &[])
+            .await
+            .expect("failed to acquire cornucopia codegen lock");
+        let result = cornucopia::gen_live(&client, config);
+        let _ = client
+            .execute("SELECT pg_advisory_unlock(0x436f726e75436174)", &[])
+            .await;
+        result.expect("cornucopia codegen failed");
     });
+
+    // Restore the codegen scaffolding wiped by gen_live's persist step.
+    std::fs::write(&config_path, config_bytes).expect("failed to restore cornucopia.toml");
+    std::fs::write(manifest_dir.join("build.rs"), self_source)
+        .expect("failed to restore build.rs");
 
     println!("cargo:rerun-if-changed=cornucopia.toml");
     println!("cargo:rerun-if-changed=../queries");

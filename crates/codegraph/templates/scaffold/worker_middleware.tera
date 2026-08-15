@@ -83,6 +83,7 @@ fn verify_jwt(
     // HS256 only for the worker slice. ES256/JWKS and `sk_` API keys are not
     // implemented yet — see the TODO(worker-auth) note at the top of the file.
     let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.set_audience(&["authenticated"]);
     validation.validate_exp = true;
 
     let token_data = decode::<JwtClaims>(
