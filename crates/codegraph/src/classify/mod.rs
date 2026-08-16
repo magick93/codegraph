@@ -210,6 +210,7 @@ mod tests {
             queue_binding: None,
             queue_max_retries: None,
             queue_max_concurrency: None,
+            observability: None,
         }
     }
 
@@ -334,6 +335,7 @@ mod tests {
             queue_binding: None,
             queue_max_retries: None,
             queue_max_concurrency: None,
+            observability: None,
         }
     }
 

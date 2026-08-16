@@ -52,6 +52,15 @@ service = "{{ binding.service_name }}"
 pattern = "{{ custom_domain }}"
 # zone_name = "your-zone.com"
 {% endif %}
+{% if observability %}
+
+# Workers native observability: persist logs emitted by this worker and surface
+# them in `wrangler tail` / the dashboard / Workers Logs. See
+# https://developers.cloudflare.com/workers/observability/logs/workers-logs/
+[observability]
+enabled = true
+head_sampling_rate = 1
+{% endif %}
 {% if cron_triggers %}
 
 [triggers]

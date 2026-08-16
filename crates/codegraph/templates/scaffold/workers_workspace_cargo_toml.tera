@@ -47,6 +47,10 @@ tower-service = "0.3"
 http-body-util = "0.1"
 futures-channel = "0.3"
 worker = { version = "0.8", default-features = false }
+# Wasm-only panic hook; no-op on native targets. worker-rs 0.8 ships its own
+# `console_log!`/`console_error!` macros unconditionally, so console logging
+# needs no feature gate — only the panic hook is a separate crate.
+console_error_panic_hook = "0.1"
 {% if codegraph_workflow_path %}
 codegraph-workflow = { path = "{{ codegraph_workflow_path }}" }
 {% else %}

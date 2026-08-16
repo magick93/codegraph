@@ -975,12 +975,13 @@ optional (`#[serde(default)]`), so existing domains.toml files parse unchanged:
 | `queue_binding` | `Option<String>` | `"WEBHOOK_QUEUE"` (via `queue_binding_or()`) | Cloudflare Queue binding name used in `env.queue(binding)` + wrangler |
 | `queue_max_retries` | `Option<u32>` | `5` (via `queue_max_retries_or()`) | Max delivery attempts before an endpoint is auto-deactivated |
 | `queue_max_concurrency` | `Option<u32>` | None (omitted from wrangler) | Cloudflare Queues consumer `max_concurrency` |
+| `observability` | `Option<bool>` | `false` (via `observability_or(default)`) | Workers native observability: emits an `[observability]` wrangler block, installs a console panic hook + wasm tracing subscriber, and logs per-request metrics to the console |
 
 Convenience accessors on `DomainEntry`: `worker_name_or(default)`,
 `service_bindings_or_depends()`, `hyperdrive_binding_or(default)`,
 `remote_include_mode_or(default)`, `webhooks_or(default)`,
 `queue_binding_or(default)`, `queue_name_or(default)`,
-`queue_max_retries_or(default)`.
+`queue_max_retries_or(default)`, `observability_or(default)`.
 
 ### Per-domain webhooks (workers topology)
 
@@ -1009,6 +1010,28 @@ templates render with the per-domain `WorkerDomain` context.
 Cloudflare Queues are **not** available in local `wrangler dev` (non-remote)
 mode — use the native loop for offline testing, or `wrangler dev --remote` / a
 real deployment for the queue path.
+
+### Workers native observability (workers topology)
+
+When a domain sets `observability = true`, the worker scaffold emits native
+Cloudflare Workers Observability (decision #111) — no hand-rolled OTLP:
+
+- **wrangler**: `worker_wrangler.tera` (and `gateway_wrangler.tera`, when any
+  domain enables it) emit a minimal `[observability]` block (`enabled = true`,
+  `head_sampling_rate = 1`). Off by default, so unconfigured domains stay
+  byte-identical to pre-observability output.
+- **console logging**: the wasm32 slice installs `console_error_panic_hook`
+  (crates.io `0.1`, `[target.'cfg(target_arch = "wasm32")'.dependencies]`) and a
+  minimal hand-rolled `tracing::Subscriber` (`worker.tera`) that forwards
+  `tracing::info!/warn!/error!` to `worker::console_log!/warn!/error!`. A
+  third-party `tracing-wasm` dep was deliberately avoided — it pins a stale
+  `wasm-bindgen`, while worker-rs 0.8 ships the console macros unconditionally.
+  The native path keeps `tracing_subscriber::fmt::init()`.
+- **metrics**: `worker_middleware.tera`'s `metrics_middleware::track_metrics`
+  emits a structured `http_request method=… path=… status=… duration_ms=…`
+  console line per request (wasm32 only) when observability is enabled. The
+  monolith's Prometheus `metrics` recorder (`metrics_middleware.tera`) is
+  untouched. Analytics-Engine ingestion remains a future TODO.
 
 ## Code conventions
 

@@ -93,6 +93,12 @@ pub struct WorkerDomain {
     pub queue_max_retries: u32,
     /// Optional Cloudflare Queues consumer max_concurrency.
     pub queue_max_concurrency: Option<u32>,
+    /// Whether Workers native observability is enabled for this domain
+    /// (per-domain `observability` config key). When true the worker's
+    /// wrangler.toml emits an `[observability]` block, the wasm entry installs
+    /// a console panic hook + tracing subscriber, and the metrics middleware
+    /// emits a structured per-request console log.
+    pub observability: bool,
     /// Path to the domain-types crate relative to this worker's crate dir.
     pub domain_types_path: String,
     /// Path to the hooks-api crate relative to this worker's crate dir
@@ -113,6 +119,10 @@ pub struct WorkerScaffoldContext {
     /// Path to the codegraph-type-contracts crate relative to the output
     /// root (empty → git+rev dependency).
     pub type_contracts_path: String,
+    /// Whether the gateway worker emits an `[observability]` block. Derived
+    /// from the domains: true when any domain enables observability (the
+    /// gateway is the shared entry point, so its logs are useful then too).
+    pub gateway_observability: bool,
 }
 
 /// Build the per-domain worker contexts from the shared scaffold domains.
@@ -191,6 +201,9 @@ pub fn build_worker_domains(
                     .map(|e| e.queue_max_retries_or(5))
                     .unwrap_or(5),
                 queue_max_concurrency: entry.and_then(|e| e.queue_max_concurrency),
+                observability: entry
+                    .map(|e| e.observability_or(false))
+                    .unwrap_or(false),
                 domain_types_path: String::new(),
                 hooks_api_path: String::new(),
             }
@@ -274,6 +287,7 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
             domain.domain_types_path = worker_domain_types_path.clone();
             domain.hooks_api_path = worker_hooks_api_path.clone();
         }
+        let gateway_observability = domains.iter().any(|d| d.observability);
 
         let ctx = WorkerScaffoldContext {
             app_name,
@@ -282,6 +296,7 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
             domains,
             codegraph_workflow_path: codegraph_workflow_rel,
             type_contracts_path: type_contracts_rel,
+            gateway_observability,
         };
 
         let workers_dir = self.output_dir.join("workers");
@@ -880,6 +895,74 @@ queue_max_concurrency = 10
         assert_eq!(parsed["triggers"]["crons"][0].as_str(), Some("*/1 * * * *"));
     }
 
+    /// The `observability` config key resolves into `WorkerDomain.observability`
+    /// (default off) and emits an `[observability]` block in the wrangler only
+    /// when enabled.
+    #[test]
+    fn worker_wrangler_renders_observability_block_only_when_enabled() {
+        let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let tera = crate::generate::template_engine::create_tera(&template_dir).unwrap();
+        let project = ProjectConfig::default();
+
+        let enabled = parse_domain_config_str(
+            r#"
+[defaults]
+operations = ["create", "read"]
+
+[domains.payroll]
+label = "Payroll"
+schema_dir = "payroll"
+postgres_schema = "payroll"
+entities = ["PayRunType"]
+observability = true
+"#,
+        )
+        .unwrap();
+
+        let domains = build_worker_domains("hr", &enabled, vec![scaffold_domain("payroll")]);
+        assert!(domains[0].observability);
+        let rendered = render_template_with_project(
+            &tera,
+            "scaffold/worker_wrangler.tera",
+            &domains[0],
+            &project,
+        )
+        .unwrap();
+        let parsed: toml::Value = toml::from_str(&rendered).expect("wrangler.toml must parse");
+        assert_eq!(parsed["observability"]["enabled"].as_bool(), Some(true));
+        assert_eq!(
+            parsed["observability"]["head_sampling_rate"].as_integer(),
+            Some(1)
+        );
+
+        // A domain without the key does not get the block (byte-identical to
+        // the pre-observability output).
+        let disabled = parse_domain_config_str(
+            r#"
+[defaults]
+operations = ["create", "read"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = ["CodeType"]
+"#,
+        )
+        .unwrap();
+        let domains = build_worker_domains("hr", &disabled, vec![scaffold_domain("common")]);
+        assert!(!domains[0].observability);
+        let rendered = render_template_with_project(
+            &tera,
+            "scaffold/worker_wrangler.tera",
+            &domains[0],
+            &project,
+        )
+        .unwrap();
+        let parsed: toml::Value = toml::from_str(&rendered).expect("wrangler.toml must parse");
+        assert!(parsed.get("observability").is_none());
+    }
+
     /// Render the gateway wrangler + workspace manifest templates.
     #[test]
     fn gateway_wrangler_and_workspace_manifest_render() {
@@ -903,6 +986,7 @@ queue_max_concurrency = 10
             domains,
             codegraph_workflow_path: String::new(),
             type_contracts_path: String::new(),
+            gateway_observability: false,
         };
 
         let rendered =

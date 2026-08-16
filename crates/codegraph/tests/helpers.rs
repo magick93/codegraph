@@ -185,6 +185,7 @@ pub fn domain_config() -> DomainConfig {
             queue_binding: None,
             queue_max_retries: None,
             queue_max_concurrency: None,
+            observability: None,
         },
     );
 

@@ -197,6 +197,14 @@ pub struct DomainEntry {
     /// `max_concurrency` in the wrangler queue consumer config when set.
     #[serde(default)]
     pub queue_max_concurrency: Option<u32>,
+    /// Enable Cloudflare Workers native observability for this domain's worker.
+    /// When true, the generated wrangler.toml emits an `[observability]` block
+    /// (`enabled` + `head_sampling_rate`), the wasm entry installs a console
+    /// panic hook + tracing subscriber, and the metrics middleware emits a
+    /// structured per-request console log. When None, consumers default to
+    /// false (off — generated output stays byte-identical to pre-observability).
+    #[serde(default)]
+    pub observability: Option<bool>,
 }
 
 fn default_tier() -> String {
@@ -300,6 +308,12 @@ impl DomainEntry {
     /// or `default` (conventionally 5) when unset.
     pub fn queue_max_retries_or(&self, default: u32) -> u32 {
         self.queue_max_retries.unwrap_or(default)
+    }
+
+    /// Resolved observability flag: the explicit `observability`, or `default`
+    /// (conventionally false) when unset.
+    pub fn observability_or(&self, default: bool) -> bool {
+        self.observability.unwrap_or(default)
     }
 }
 
@@ -1302,6 +1316,7 @@ queue_name = "payroll-webhook-jobs"
 queue_binding = "PAYROLL_WEBHOOKS"
 queue_max_retries = 7
 queue_max_concurrency = 10
+observability = true
 "#;
         let config = parse_domain_config_str(toml).unwrap();
         let payroll = &config.domains["payroll"];
@@ -1325,6 +1340,7 @@ queue_max_concurrency = 10
         assert_eq!(payroll.queue_binding.as_deref(), Some("PAYROLL_WEBHOOKS"));
         assert_eq!(payroll.queue_max_retries, Some(7));
         assert_eq!(payroll.queue_max_concurrency, Some(10));
+        assert_eq!(payroll.observability, Some(true));
 
         // Accessors return explicit values when set.
         assert_eq!(
@@ -1347,6 +1363,9 @@ queue_max_concurrency = 10
             "payroll-webhook-jobs"
         );
         assert_eq!(payroll.queue_max_retries_or(5), 7);
+
+        // Accessor returns the explicit value when set.
+        assert!(payroll.observability_or(false));
     }
 
     #[test]
@@ -1371,6 +1390,7 @@ depends_on = ["common"]
         assert!(payroll.queue_binding.is_none());
         assert!(payroll.queue_max_retries.is_none());
         assert!(payroll.queue_max_concurrency.is_none());
+        assert!(payroll.observability.is_none());
 
         // Accessors fall back to defaults.
         assert_eq!(payroll.worker_name_or("hr-app-payroll"), "hr-app-payroll");
@@ -1384,5 +1404,8 @@ depends_on = ["common"]
             "hr-app-payroll-webhooks"
         );
         assert_eq!(payroll.queue_max_retries_or(5), 5);
+
+        // Observability defaults off when unset.
+        assert!(!payroll.observability_or(false));
     }
 }
