@@ -34,6 +34,11 @@ pub struct AppState {
     /// Supabase URL for ES256 JWT verification (JWKS endpoint). `None` when
     /// unset — ES256 tokens are then rejected with 401.
     pub supabase_url: Option<String>,
+    /// Cloudflare Worker environment (wasm only). Held so webhook dispatch can
+    /// resolve the Cloudflare Queue binding from axum handlers (e.g. the
+    /// `/_dispatch` test pump), which have no `Env` otherwise.
+    #[cfg(target_arch = "wasm32")]
+    pub env: worker::Env,
     pub workflow_service: Arc<dyn codegraph_workflow::WorkflowService>,
 {% if project.hooks_api_crate %}
     pub registry: HookRegistry,
@@ -50,6 +55,7 @@ impl AppState {
         db_params: DbConnectionParams,
         jwt_secret: String,
         supabase_url: Option<String>,
+        #[cfg(target_arch = "wasm32")] env: worker::Env,
     ) -> Self {
         Self {
 {% for entity in entities %}
@@ -88,6 +94,8 @@ impl AppState {
             db: db.clone(),
             jwt_secret,
             supabase_url,
+            #[cfg(target_arch = "wasm32")]
+            env,
 {% if project.hooks_api_crate %}
             registry: HookRegistry::default(),
 {% endif %}

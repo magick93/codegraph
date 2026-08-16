@@ -970,10 +970,45 @@ optional (`#[serde(default)]`), so existing domains.toml files parse unchanged:
 | `hyperdrive_binding` | `Option<String>` | `"HYPERDRIVE"` (via `hyperdrive_binding_or()`) | Hyperdrive binding name |
 | `cron_triggers` | `Option<Vec<String>>` | None | Cron expressions for scheduled handlers |
 | `remote_include_mode` | `Option<String>` | `"sql"` (via `remote_include_mode_or()`) | `"sql"` or `"http"` — how cross-domain `include` queries are satisfied |
+| `webhooks` | `Option<bool>` | `false` (via `webhooks_or(default)`) | Enable webhook endpoint/subscription CRUD + dispatch/delivery on this domain's worker |
+| `queue_name` | `Option<String>` | `{app_name}-{domain}-webhooks` (via `queue_name_or()`) | Cloudflare Queue name for webhook delivery jobs (producer + consumer) |
+| `queue_binding` | `Option<String>` | `"WEBHOOK_QUEUE"` (via `queue_binding_or()`) | Cloudflare Queue binding name used in `env.queue(binding)` + wrangler |
+| `queue_max_retries` | `Option<u32>` | `5` (via `queue_max_retries_or()`) | Max delivery attempts before an endpoint is auto-deactivated |
+| `queue_max_concurrency` | `Option<u32>` | None (omitted from wrangler) | Cloudflare Queues consumer `max_concurrency` |
 
 Convenience accessors on `DomainEntry`: `worker_name_or(default)`,
 `service_bindings_or_depends()`, `hyperdrive_binding_or(default)`,
-`remote_include_mode_or(default)`.
+`remote_include_mode_or(default)`, `webhooks_or(default)`,
+`queue_binding_or(default)`, `queue_name_or(default)`,
+`queue_max_retries_or(default)`.
+
+### Per-domain webhooks (workers topology)
+
+When a domain sets `webhooks = true`, the worker scaffold emits
+`webhook_api.rs` + `webhook_router.rs` + `webhook_dispatch.rs` into
+`workers/{domain}/src/` and wires them into the worker's axum router. These
+use the **cornucopia** provider templates
+(`templates/webhook/{api_endpoints_cornucopia,api_router_cornucopia,dispatch_worker}.tera`)
+— separate from the monolith's SeaORM `webhook/{api_endpoints,api_router,dispatch}.tera`
+which stay byte-identical (the monolith templates are untouched). The worker
+templates render with the per-domain `WorkerDomain` context.
+
+- **wasm32**: a `#[event(scheduled)]` cron (`*/1 * * * *`, auto-added) drains
+  `events_{domain}` from pgmq → INSERTs `platform.webhook_delivery` → enqueues a
+  `DeliveryJob` onto the domain's Cloudflare Queue; a `#[event(queue)]` consumer
+  performs the HMAC-signed HTTP POST and records the outcome. Transient failures
+  return an error so the queue retries (plus `next_retry_at` scan).
+- **native**: a tokio interval loop (`WebhookDispatcher`) drains + delivers
+  inline via `reqwest` (no Cloudflare Queue available offline).
+- **test pump**: `POST /_dispatch` (in `webhook_router.rs`) synchronously drains
+  `events_{domain}` and enqueues (wasm, via a `Send`-safe `run_in_worker_loop`
+  bridge) or delivers (native) immediately, so tests don't wait for cron.
+- **wrangler**: `worker_wrangler.tera` emits `[[queues.producers]]` +
+  `[[queues.consumers]]` (`max_retries`/`max_concurrency`) plus the drain cron.
+
+Cloudflare Queues are **not** available in local `wrangler dev` (non-remote)
+mode — use the native loop for offline testing, or `wrangler dev --remote` / a
+real deployment for the queue path.
 
 ## Code conventions
 

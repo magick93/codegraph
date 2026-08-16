@@ -25,6 +25,21 @@ binding = "{{ hyperdrive_binding }}"
 id = "<REPLACE_WITH_HYPERDRIVE_ID>"
 # Local dev: point hyperdrive at your local Postgres.
 # localConnectionString = "postgres://user:pass@localhost:5432/{{ postgres_schema }}"
+{% if has_webhooks %}
+
+# Webhook delivery queue: producer + consumer share one binding. The queue name
+# is the `queue_name` domain config key (default `{app_name}-{domain}-webhooks`);
+# replace with a queue created via `wrangler queues create <name>`.
+[[queues.producers]]
+binding = "{{ queue_binding }}"
+queue = "{{ queue_name }}"
+
+[[queues.consumers]]
+queue = "{{ queue_name }}"
+max_batch_size = 10
+max_retries = {{ queue_max_retries }}
+{% if queue_max_concurrency %}max_concurrency = {{ queue_max_concurrency }}
+{% endif %}{% endif %}
 {% for binding in service_bindings %}
 
 [[services]]

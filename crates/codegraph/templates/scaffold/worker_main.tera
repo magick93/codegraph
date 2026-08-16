@@ -13,7 +13,10 @@ mod error;
 mod middleware;
 mod qs_query;
 mod worker;
-{% if project.hooks_api_crate %}mod hooks;{% endif %}
+{% if has_webhooks %}mod webhook_api;
+mod webhook_dispatch;
+mod webhook_router;
+{% endif %}{% if project.hooks_api_crate %}mod hooks;{% endif %}
 
 #[cfg(feature = "native")]
 #[tokio::main]
@@ -43,6 +46,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = app_state::AppState::new(db, client_source, params, jwt_secret, supabase_url);
 {% else %}
     let state = app_state::AppState::new(db, jwt_secret, supabase_url);
+{% endif %}
+
+{% if has_webhooks %}
+    // Native webhook dispatch loop: drains pgmq events and delivers inline via
+    // reqwest (no Cloudflare Queue in dev/test). See webhook_dispatch.rs.
+    let dispatcher = crate::webhook_dispatch::WebhookDispatcher::new(state.clone());
+    tokio::spawn(async move {
+        dispatcher.run().await;
+    });
 {% endif %}
 
     let app = worker::router(state);

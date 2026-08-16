@@ -17,12 +17,21 @@ pub fn router(state: AppState) -> Router<()> {
     );
     // `merge` instead of `nest("/", ...)`: axum 0.8 removed root nesting
     // ("Nesting at the root is no longer supported").
-    Router::new()
+    let mut app = Router::new()
         .merge(domain_routes)
         .route("/version", axum::routing::get(version))
         .route("/health", axum::routing::get(health))
-        .route("/health/ready", axum::routing::get(health_ready))
-        .with_state(state)
+        .route("/health/ready", axum::routing::get(health_ready));
+    {% if has_webhooks %}
+    // Webhook endpoint/subscription CRUD + the `/_dispatch` test pump. Mounted
+    // behind the same auth middleware so the gateway path
+    // `/api/v1/{{ name }}/webhook-endpoints` (etc.) resolves here.
+    let webhook_routes = crate::webhook_router::webhook_routes().layer(
+        axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware),
+    );
+    app = app.merge(webhook_routes);
+    {% endif %}
+    app.with_state(state)
 }
 
 async fn version() -> Json<serde_json::Value> {
@@ -141,7 +150,7 @@ mod worker_impl {
             .or_else(|_| env.var("PUBLIC_SUPABASE_URL"))
             .map(|v| v.to_string())
             .ok();
-        Ok(AppState::new(client_source, params, jwt_secret, supabase_url))
+        Ok(AppState::new(client_source, params, jwt_secret, supabase_url, (*env).clone()))
     }
 {% else %}
     async fn app_state_from_env(env: &Env) -> Result<AppState, worker::Error> {
@@ -183,40 +192,83 @@ mod worker_impl {
         let state = app_state_from_env(&env).await?;
         Ok(router(state).call(req).await?)
     }
-{% if has_workflow_timers %}
+{% if has_workflow_timers or has_webhooks %}
 
-    /// Cron-triggered timer sweep for the {{ name }} domain.
+    /// Cron-triggered periodic sweep for the {{ name }} domain.
     ///
-    /// Runs [`codegraph_workflow::timer::process_pending_timers`] against a
-    /// per-invocation client from the same `ClientSource` the fetch handler
-    /// uses, filtered to `workflow_definition.domain = "{{ name }}"`.
+    /// Runs the workflow timer sweep (when the domain declares SLA timers) and
+    /// the webhook pgmq drain (when webhooks are enabled). A single scheduled
+    /// handler keeps the exported `scheduled` entrypoint unambiguous.
     #[event(scheduled)]
     async fn scheduled(
         _event: ScheduledEvent,
         env: Env,
         _ctx: ScheduleContext,
     ) -> Result<(), worker::Error> {
-        use codegraph_workflow::WorkflowClient;
-
         let state = app_state_from_env(&env).await?;
-        let client = crate::workflow_client::CornucopiaWorkflowClient::new(
-            state.client_source.clone(),
-        );
-        let workflow_service = codegraph_workflow::GenericWorkflowService::new(client.clone());
-        let mut tx = client
-            .begin()
-            .await
-            .map_err(|e| worker::Error::RustError(e.to_string()))?;
-        let result = codegraph_workflow::timer::process_pending_timers(
-            tx.as_mut(),
-            Some("{{ name }}"),
-            &workflow_service,
-        )
-        .await;
-        if result.is_err() {
-            let _ = tx.rollback().await;
+{% if has_workflow_timers %}
+        {
+            use codegraph_workflow::WorkflowClient;
+
+            let client = crate::workflow_client::CornucopiaWorkflowClient::new(
+                state.client_source.clone(),
+            );
+            let workflow_service = codegraph_workflow::GenericWorkflowService::new(client.clone());
+            let mut tx = client
+                .begin()
+                .await
+                .map_err(|e| worker::Error::RustError(e.to_string()))?;
+            let result = codegraph_workflow::timer::process_pending_timers(
+                tx.as_mut(),
+                Some("{{ name }}"),
+                &workflow_service,
+            )
+            .await;
+            if result.is_err() {
+                let _ = tx.rollback().await;
+            }
+            result.map_err(|e| worker::Error::RustError(e.to_string()))?;
         }
-        result.map_err(|e| worker::Error::RustError(e.to_string()))
+{% endif %}
+{% if has_webhooks %}
+        // Drain events_{{ name }} from pgmq, create delivery rows, and enqueue
+        // delivery jobs onto the domain's Cloudflare Queue.
+        crate::webhook_dispatch::dispatch_cycle(&state, "{{ name }}", &env, "{{ queue_binding }}")
+            .await
+            .map_err(|e| worker::Error::RustError(e))?;
+{% endif %}
+        Ok(())
+    }
+{% endif %}
+{% if has_webhooks %}
+
+    /// Cloudflare Queues consumer for webhook delivery jobs.
+    ///
+    /// Each message is a [`crate::webhook_dispatch::DeliveryJob`]; the delivery
+    /// is performed inline (HMAC-signed HTTP POST) and the message is acked on
+    /// success or retried on a transient failure, so the queue's retry policy
+    /// (plus the delivery row's `next_retry_at` scan) provides the backoff.
+    #[event(queue)]
+    async fn queue(
+        message_batch: MessageBatch<crate::webhook_dispatch::DeliveryJob>,
+        env: Env,
+        _ctx: Context,
+    ) -> Result<()> {
+        let state = app_state_from_env(&env).await?;
+        for message in message_batch.iter() {
+            let Ok(msg) = message else {
+                continue;
+            };
+            let job = msg.body().clone();
+            match crate::webhook_dispatch::deliver_job(&state, &job).await {
+                Ok(()) => msg.ack(),
+                Err(e) => {
+                    tracing::warn!(error = %e, delivery_id = %job.delivery_id, "webhook delivery failed; queued for retry");
+                    msg.retry();
+                }
+            }
+        }
+        Ok(())
     }
 {% endif %}
 }

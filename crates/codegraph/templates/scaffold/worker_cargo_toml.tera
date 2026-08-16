@@ -18,7 +18,7 @@ path = "src/main.rs"
 [features]
 default = ["native"]
 native = ["dep:tracing-subscriber", "dep:reqwest"{% if project.persistence_provider == "cornucopia" %}, "cornucopia-queries/deadpool"{% endif %}]
-cloudflare-worker = ["dep:worker", "worker/axum", "worker/http", "worker/tokio-postgres"{% if project.persistence_provider == "cornucopia" %}, "cornucopia-queries/wasm-async"{% endif %}]
+cloudflare-worker = ["dep:worker", "worker/axum", "worker/http", "worker/tokio-postgres", "worker/queue"{% if project.persistence_provider == "cornucopia" %}, "cornucopia-queries/wasm-async"{% endif %}]
 
 [dependencies]
 serde = { workspace = true }
@@ -31,6 +31,9 @@ utoipa = { workspace = true }
 garde = { workspace = true }
 rust_decimal = { workspace = true }
 jsonwebtoken = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

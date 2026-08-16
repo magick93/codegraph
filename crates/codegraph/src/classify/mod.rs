@@ -205,6 +205,11 @@ mod tests {
             hyperdrive_binding: None,
             cron_triggers: None,
             remote_include_mode: None,
+            webhooks: None,
+            queue_name: None,
+            queue_binding: None,
+            queue_max_retries: None,
+            queue_max_concurrency: None,
         }
     }
 
@@ -324,6 +329,11 @@ mod tests {
             hyperdrive_binding: None,
             cron_triggers: None,
             remote_include_mode: None,
+            webhooks: None,
+            queue_name: None,
+            queue_binding: None,
+            queue_max_retries: None,
+            queue_max_concurrency: None,
         }
     }
 

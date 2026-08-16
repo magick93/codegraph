@@ -79,6 +79,20 @@ pub struct WorkerDomain {
     /// worker then emits a `#[event(scheduled)]` timer sweep and (unless the
     /// domain already lists crons) a default `*/1 * * * *` trigger.
     pub has_workflow_timers: bool,
+    /// Whether webhooks are enabled for this domain (per-domain `webhooks`
+    /// config key). When true the worker compiles and serves the webhook
+    /// endpoint/subscription API, emits a cron drain handler, and declares a
+    /// Cloudflare Queues producer + consumer for delivery jobs.
+    pub has_webhooks: bool,
+    /// Resolved Cloudflare Queue name for webhook delivery jobs.
+    pub queue_name: String,
+    /// Resolved Cloudflare Queue binding name (used in `env.queue(binding)`
+    /// and the wrangler queue config).
+    pub queue_binding: String,
+    /// Max delivery attempts before an endpoint is auto-deactivated.
+    pub queue_max_retries: u32,
+    /// Optional Cloudflare Queues consumer max_concurrency.
+    pub queue_max_concurrency: Option<u32>,
     /// Path to the domain-types crate relative to this worker's crate dir.
     pub domain_types_path: String,
     /// Path to the hooks-api crate relative to this worker's crate dir
@@ -134,6 +148,7 @@ pub fn build_worker_domains(
                 })
                 .collect();
             let has_workflow_timers = entry.map(domain_has_workflow_timers).unwrap_or(false);
+            let has_webhooks = entry.map(|e| e.webhooks_or(false)).unwrap_or(false);
             let mut cron_triggers = entry
                 .and_then(|e| e.cron_triggers.clone())
                 .unwrap_or_default();
@@ -142,6 +157,18 @@ pub fn build_worker_domains(
             if cron_triggers.is_empty() && has_workflow_timers {
                 cron_triggers.push("*/1 * * * *".to_string());
             }
+            // A webhook-bearing domain needs a periodic pgmq drain sweep.
+            if has_webhooks && !cron_triggers.iter().any(|c| c == "*/1 * * * *") {
+                cron_triggers.push("*/1 * * * *".to_string());
+            }
+            let queue_binding = entry
+                .map(|e| e.queue_binding_or("WEBHOOK_QUEUE"))
+                .unwrap_or_else(|| "WEBHOOK_QUEUE".to_string());
+            let queue_name = entry
+                .map(|e| {
+                    e.queue_name_or(&format!("{app_name}-{}-webhooks", d.name))
+                })
+                .unwrap_or_else(|| format!("{app_name}-{}-webhooks", d.name));
             WorkerDomain {
                 name: d.name.clone(),
                 label: d.label.clone(),
@@ -157,6 +184,13 @@ pub fn build_worker_domains(
                     .unwrap_or_else(|| "HYPERDRIVE".to_string()),
                 cron_triggers,
                 has_workflow_timers,
+                has_webhooks,
+                queue_name,
+                queue_binding,
+                queue_max_retries: entry
+                    .map(|e| e.queue_max_retries_or(5))
+                    .unwrap_or(5),
+                queue_max_concurrency: entry.and_then(|e| e.queue_max_concurrency),
                 domain_types_path: String::new(),
                 hooks_api_path: String::new(),
             }
@@ -363,6 +397,46 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
                 path: base.join("src").join("app_state.rs"),
                 content: app_state,
             });
+
+            // Per-domain webhooks: when enabled, the worker compiles and serves
+            // the webhook endpoint/subscription API plus a Queue-backed
+            // dispatch/delivery module. These are provider-conditional
+            // templates (cornucopia `DbClient`), unlike the monolith's SeaORM
+            // `webhook/*.tera` generators which stay byte-identical.
+            if domain.has_webhooks && project.is_cornucopia() {
+                let webhook_api = render_template_with_project(
+                    tera,
+                    "webhook/api_endpoints_cornucopia.tera",
+                    domain,
+                    project,
+                )?;
+                files.push(GeneratedFile {
+                    path: base.join("src").join("webhook_api.rs"),
+                    content: webhook_api,
+                });
+
+                let webhook_router = render_template_with_project(
+                    tera,
+                    "webhook/api_router_cornucopia.tera",
+                    domain,
+                    project,
+                )?;
+                files.push(GeneratedFile {
+                    path: base.join("src").join("webhook_router.rs"),
+                    content: webhook_router,
+                });
+
+                let webhook_dispatch = render_template_with_project(
+                    tera,
+                    "webhook/dispatch_worker.tera",
+                    domain,
+                    project,
+                )?;
+                files.push(GeneratedFile {
+                    path: base.join("src").join("webhook_dispatch.rs"),
+                    content: webhook_dispatch,
+                });
+            }
 
             // Cornucopia client plumbing: deadpool pool (native) / per-request
             // Hyperdrive client (wasm32) behind a single ClientSource trait.
@@ -634,6 +708,82 @@ entities = ["CodeType"]
         assert!(common[0].cron_triggers.is_empty());
     }
 
+    #[test]
+    fn webhooks_resolve_queue_binding_name_and_drain_cron() {
+        let config = parse_domain_config_str(
+            r#"
+[defaults]
+operations = ["create", "read"]
+
+[domains.timecard]
+label = "Timecard"
+schema_dir = "timecard"
+postgres_schema = "timecard"
+entities = ["TimeEntryType"]
+webhooks = true
+queue_binding = "TIMECARD_WEBHOOKS"
+queue_max_retries = 7
+queue_max_concurrency = 10
+"#,
+        )
+        .unwrap();
+
+        let domains = build_worker_domains("hr", &config, vec![scaffold_domain("timecard")]);
+        assert_eq!(domains.len(), 1);
+        let d = &domains[0];
+        assert!(d.has_webhooks);
+        assert_eq!(d.queue_binding, "TIMECARD_WEBHOOKS");
+        assert_eq!(d.queue_name, "hr-timecard-webhooks");
+        assert_eq!(d.queue_max_retries, 7);
+        assert_eq!(d.queue_max_concurrency, Some(10));
+        // Webhook-bearing domains get a periodic drain cron.
+        assert_eq!(d.cron_triggers, vec!["*/1 * * * *"]);
+    }
+
+    #[test]
+    fn webhooks_use_defaults_when_config_keys_absent() {
+        let config = parse_domain_config_str(
+            r#"
+[defaults]
+operations = ["create", "read"]
+
+[domains.payroll]
+label = "Payroll"
+schema_dir = "payroll"
+postgres_schema = "payroll"
+entities = ["PayRunType"]
+webhooks = true
+"#,
+        )
+        .unwrap();
+
+        let domains = build_worker_domains("hr", &config, vec![scaffold_domain("payroll")]);
+        let d = &domains[0];
+        assert!(d.has_webhooks);
+        assert_eq!(d.queue_binding, "WEBHOOK_QUEUE");
+        assert_eq!(d.queue_name, "hr-payroll-webhooks");
+        assert_eq!(d.queue_max_retries, 5);
+        assert_eq!(d.queue_max_concurrency, None);
+        assert_eq!(d.cron_triggers, vec!["*/1 * * * *"]);
+
+        // Webhooks default off for domains that don't opt in.
+        let config = parse_domain_config_str(
+            r#"
+[defaults]
+operations = ["create", "read"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = ["CodeType"]
+"#,
+        )
+        .unwrap();
+        let common = build_worker_domains("hr", &config, vec![scaffold_domain("common")]);
+        assert!(!common[0].has_webhooks);
+    }
+
     /// Render the per-domain wrangler template and assert the TOML output.
     #[test]
     fn worker_wrangler_renders_hyperdrive_services_crons_and_routes() {
@@ -674,6 +824,60 @@ entities = ["CodeType"]
             parsed["routes"][0]["pattern"].as_str(),
             Some("payroll.example.com/*")
         );
+    }
+
+    /// Render the per-domain wrangler template for a webhook-bearing domain and
+    /// assert the Cloudflare Queues producer + consumer + drain cron.
+    #[test]
+    fn worker_wrangler_renders_queues_when_webhooks_enabled() {
+        let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let tera = crate::generate::template_engine::create_tera(&template_dir).unwrap();
+        let project = ProjectConfig::default();
+
+        let config = parse_domain_config_str(
+            r#"
+[defaults]
+operations = ["create", "read"]
+
+[domains.timecard]
+label = "Timecard"
+schema_dir = "timecard"
+postgres_schema = "timecard"
+entities = ["TimeEntryType"]
+webhooks = true
+queue_name = "hr-timecard-webhooks"
+queue_binding = "TIMECARD_WEBHOOKS"
+queue_max_retries = 7
+queue_max_concurrency = 10
+"#,
+        )
+        .unwrap();
+
+        let mut domains = build_worker_domains("hr", &config, vec![scaffold_domain("timecard")]);
+        domains[0].domain_types_path = "../../crates/hr-domain-types".to_string();
+
+        let rendered = render_template_with_project(
+            &tera,
+            "scaffold/worker_wrangler.tera",
+            &domains[0],
+            &project,
+        )
+        .unwrap();
+        let parsed: toml::Value = toml::from_str(&rendered).expect("wrangler.toml must parse");
+
+        let producers = parsed["queues"]["producers"].as_array().expect("producers");
+        assert_eq!(producers.len(), 1);
+        assert_eq!(producers[0]["binding"].as_str(), Some("TIMECARD_WEBHOOKS"));
+        assert_eq!(producers[0]["queue"].as_str(), Some("hr-timecard-webhooks"));
+
+        let consumers = parsed["queues"]["consumers"].as_array().expect("consumers");
+        assert_eq!(consumers.len(), 1);
+        assert_eq!(consumers[0]["queue"].as_str(), Some("hr-timecard-webhooks"));
+        assert_eq!(consumers[0]["max_retries"].as_integer(), Some(7));
+        assert_eq!(consumers[0]["max_concurrency"].as_integer(), Some(10));
+
+        // Webhook-bearing domains get the drain cron even without workflow timers.
+        assert_eq!(parsed["triggers"]["crons"][0].as_str(), Some("*/1 * * * *"));
     }
 
     /// Render the gateway wrangler + workspace manifest templates.
