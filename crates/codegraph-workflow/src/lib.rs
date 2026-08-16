@@ -1,19 +1,15 @@
-#[cfg(not(target_arch = "wasm32"))]
 pub mod approval;
 pub mod definition;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod delegation;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod engine;
 pub mod error;
 pub mod guard;
 pub mod service;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod timer;
+pub mod tx;
 pub mod types;
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
 
 pub use error::WorkflowError;
 pub use service::WorkflowService;
+pub use tx::{GenericWorkflowService, WfParam, WfRow, WfValue, WorkflowClient, WorkflowTx};
 pub use types::*;

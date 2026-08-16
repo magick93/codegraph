@@ -70,15 +70,17 @@ impl AppState {
 {% endif %}
             ),
 {% endfor %}
+            #[cfg(not(target_arch = "wasm32"))]
+            workflow_service: Arc::new(codegraph_workflow::engine::SeaOrmWorkflowService::new(db)),
+            #[cfg(target_arch = "wasm32")]
+            workflow_service: Arc::new(codegraph_workflow::GenericWorkflowService::new(
+                crate::workflow_client::CornucopiaWorkflowClient::new(client_source.clone())
+            )),
             client_source,
             db_params,
             #[cfg(not(target_arch = "wasm32"))]
             db: db.clone(),
             jwt_secret,
-            #[cfg(not(target_arch = "wasm32"))]
-            workflow_service: Arc::new(codegraph_workflow::engine::SeaOrmWorkflowService::new(db)),
-            #[cfg(target_arch = "wasm32")]
-            workflow_service: Arc::new(codegraph_workflow::wasm::UnavailableWorkflowService::new()),
 {% if project.hooks_api_crate %}
             registry: HookRegistry::default(),
 {% endif %}

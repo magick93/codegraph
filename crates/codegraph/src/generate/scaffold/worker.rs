@@ -39,6 +39,14 @@ pub fn worker_binding_name(domain: &str) -> String {
     domain.replace('-', "_").to_ascii_uppercase()
 }
 
+/// Whether any entity in a domain's config declares a workflow with SLA timers.
+fn domain_has_workflow_timers(entry: &codegraph_config::DomainEntry) -> bool {
+    entry
+        .entity_config
+        .values()
+        .any(|ec| ec.workflow.as_ref().is_some_and(|wf| !wf.timers.is_empty()))
+}
+
 /// A Cloudflare service binding declared by a domain worker.
 #[derive(Debug, Serialize)]
 pub struct WorkerServiceBinding {
@@ -67,6 +75,10 @@ pub struct WorkerDomain {
     pub service_bindings: Vec<WorkerServiceBinding>,
     pub hyperdrive_binding: String,
     pub cron_triggers: Vec<String>,
+    /// Whether any workflow entity in this domain declares SLA timers — the
+    /// worker then emits a `#[event(scheduled)]` timer sweep and (unless the
+    /// domain already lists crons) a default `*/1 * * * *` trigger.
+    pub has_workflow_timers: bool,
     /// Path to the domain-types crate relative to this worker's crate dir.
     pub domain_types_path: String,
     /// Path to the hooks-api crate relative to this worker's crate dir
@@ -121,6 +133,15 @@ pub fn build_worker_domains(
                         .unwrap_or_else(|| default_worker_name(app_name, dep)),
                 })
                 .collect();
+            let has_workflow_timers = entry.map(domain_has_workflow_timers).unwrap_or(false);
+            let mut cron_triggers = entry
+                .and_then(|e| e.cron_triggers.clone())
+                .unwrap_or_default();
+            // A workflow-bearing domain needs a periodic timer sweep; fall back
+            // to an every-minute cron unless the config already lists one.
+            if cron_triggers.is_empty() && has_workflow_timers {
+                cron_triggers.push("*/1 * * * *".to_string());
+            }
             WorkerDomain {
                 name: d.name.clone(),
                 label: d.label.clone(),
@@ -134,9 +155,8 @@ pub fn build_worker_domains(
                 hyperdrive_binding: entry
                     .map(|e| e.hyperdrive_binding_or("HYPERDRIVE"))
                     .unwrap_or_else(|| "HYPERDRIVE".to_string()),
-                cron_triggers: entry
-                    .and_then(|e| e.cron_triggers.clone())
-                    .unwrap_or_default(),
+                cron_triggers,
+                has_workflow_timers,
                 domain_types_path: String::new(),
                 hooks_api_path: String::new(),
             }
@@ -197,12 +217,12 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
 
         // Hooks-api crate path, same re-basing (empty when hooks are disabled).
         let hooks_api_rel = resolve_path(&project.hooks_api_base, &abs_output);
-        let worker_hooks_api_path = if hooks_api_rel.is_empty() || project.hooks_api_crate.is_empty()
-        {
-            String::new()
-        } else {
-            format!("../../{hooks_api_rel}")
-        };
+        let worker_hooks_api_path =
+            if hooks_api_rel.is_empty() || project.hooks_api_crate.is_empty() {
+                String::new()
+            } else {
+                format!("../../{hooks_api_rel}")
+            };
 
         let app_name = project.app_name.clone();
         let gateway_name = format!("{app_name}-gateway");
@@ -329,15 +349,25 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
             // Cornucopia client plumbing: deadpool pool (native) / per-request
             // Hyperdrive client (wasm32) behind a single ClientSource trait.
             if project.is_cornucopia() {
-                let db_client = render_template_with_project(
+                let db_client =
+                    render_template_with_project(tera, "scaffold/db_client.tera", domain, project)?;
+                files.push(GeneratedFile {
+                    path: base.join("src").join("db_client.rs"),
+                    content: db_client,
+                });
+
+                // Client-generic workflow engine adapter: bridges
+                // codegraph_workflow's WorkflowTx/WorkflowClient to the
+                // cornucopia client (per-request Hyperdrive client on wasm).
+                let workflow_client = render_template_with_project(
                     tera,
-                    "scaffold/db_client.tera",
+                    "scaffold/worker_workflow_client.tera",
                     domain,
                     project,
                 )?;
                 files.push(GeneratedFile {
-                    path: base.join("src").join("db_client.rs"),
-                    content: db_client,
+                    path: base.join("src").join("workflow_client.rs"),
+                    content: workflow_client,
                 });
             }
 
@@ -533,6 +563,57 @@ service_bindings = ["timecard"]
         assert_eq!(worker_binding_name("common"), "COMMON");
         assert_eq!(worker_binding_name("pay-roll"), "PAY_ROLL");
         assert_eq!(default_worker_name("hr", "payroll"), "hr-payroll");
+    }
+
+    #[test]
+    fn workflow_timers_enable_scheduled_sweep_and_default_cron() {
+        let config = parse_domain_config_str(
+            r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting"
+postgres_schema = "recruiting"
+entities = ["CandidateType"]
+
+[domains.recruiting.entity_config.CandidateType.workflow]
+status_field = "candidate_status_code"
+initial_state = "new"
+terminal_states = ["hired", "rejected"]
+
+[domains.recruiting.entity_config.CandidateType.workflow.timers.sla]
+trigger_on_enter = "screening"
+type = "deadline"
+duration_hours = 48
+target_state = "escalated"
+"#,
+        )
+        .unwrap();
+
+        let domains = build_worker_domains("hr", &config, vec![scaffold_domain("recruiting")]);
+        assert_eq!(domains.len(), 1);
+        assert!(domains[0].has_workflow_timers);
+        assert_eq!(domains[0].cron_triggers, vec!["*/1 * * * *"]);
+
+        // A domain without workflow timers does not get the default cron.
+        let no_timers = parse_domain_config_str(
+            r#"
+[defaults]
+operations = ["create", "read"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = ["CodeType"]
+"#,
+        )
+        .unwrap();
+        let common = build_worker_domains("hr", &no_timers, vec![scaffold_domain("common")]);
+        assert!(!common[0].has_workflow_timers);
+        assert!(common[0].cron_triggers.is_empty());
     }
 
     /// Render the per-domain wrangler template and assert the TOML output.

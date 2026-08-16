@@ -169,4 +169,40 @@ mod worker_impl {
         let state = app_state_from_env(&env).await?;
         Ok(router(state).call(req).await?)
     }
+{% if has_workflow_timers %}
+
+    /// Cron-triggered timer sweep for the {{ name }} domain.
+    ///
+    /// Runs [`codegraph_workflow::timer::process_pending_timers`] against a
+    /// per-invocation client from the same `ClientSource` the fetch handler
+    /// uses, filtered to `workflow_definition.domain = "{{ name }}"`.
+    #[event(scheduled)]
+    async fn scheduled(
+        _event: ScheduledEvent,
+        env: Env,
+        _ctx: ScheduleContext,
+    ) -> Result<(), worker::Error> {
+        use codegraph_workflow::WorkflowClient;
+
+        let state = app_state_from_env(&env).await?;
+        let client = crate::workflow_client::CornucopiaWorkflowClient::new(
+            state.client_source.clone(),
+        );
+        let workflow_service = codegraph_workflow::GenericWorkflowService::new(client.clone());
+        let mut tx = client
+            .begin()
+            .await
+            .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let result = codegraph_workflow::timer::process_pending_timers(
+            tx.as_mut(),
+            Some("{{ name }}"),
+            &workflow_service,
+        )
+        .await;
+        if result.is_err() {
+            let _ = tx.rollback().await;
+        }
+        result.map_err(|e| worker::Error::RustError(e.to_string()))
+    }
+{% endif %}
 }
