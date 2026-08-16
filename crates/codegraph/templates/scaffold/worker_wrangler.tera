@@ -10,7 +10,14 @@ command = "cargo install worker-build && worker-build --release --no-default-fea
 
 [vars]
 # Set in Cloudflare or in a local .dev.vars file.
+# Auth (monolith parity naming): SUPABASE_JWT_SECRET is the primary HS256
+# signing secret; JWT_SECRET remains a supported fallback for older worker
+# deployments. SUPABASE_URL (or PUBLIC_SUPABASE_URL) is required only for
+# ES256 JWT verification (JWKS fetch at
+# {SUPABASE_URL}/auth/v1/.well-known/jwks.json).
+SUPABASE_JWT_SECRET = ""
 JWT_SECRET = ""
+SUPABASE_URL = ""
 DATABASE_URL = ""
 
 [[hyperdrive]]
@@ -18,6 +25,21 @@ binding = "{{ hyperdrive_binding }}"
 id = "<REPLACE_WITH_HYPERDRIVE_ID>"
 # Local dev: point hyperdrive at your local Postgres.
 # localConnectionString = "postgres://user:pass@localhost:5432/{{ postgres_schema }}"
+{% if has_webhooks %}
+
+# Webhook delivery queue: producer + consumer share one binding. The queue name
+# is the `queue_name` domain config key (default `{app_name}-{domain}-webhooks`);
+# replace with a queue created via `wrangler queues create <name>`.
+[[queues.producers]]
+binding = "{{ queue_binding }}"
+queue = "{{ queue_name }}"
+
+[[queues.consumers]]
+queue = "{{ queue_name }}"
+max_batch_size = 10
+max_retries = {{ queue_max_retries }}
+{% if queue_max_concurrency %}max_concurrency = {{ queue_max_concurrency }}
+{% endif %}{% endif %}
 {% for binding in service_bindings %}
 
 [[services]]
@@ -29,6 +51,15 @@ service = "{{ binding.service_name }}"
 [[routes]]
 pattern = "{{ custom_domain }}"
 # zone_name = "your-zone.com"
+{% endif %}
+{% if observability %}
+
+# Workers native observability: persist logs emitted by this worker and surface
+# them in `wrangler tail` / the dashboard / Workers Logs. See
+# https://developers.cloudflare.com/workers/observability/logs/workers-logs/
+[observability]
+enabled = true
+head_sampling_rate = 1
 {% endif %}
 {% if cron_triggers %}
 

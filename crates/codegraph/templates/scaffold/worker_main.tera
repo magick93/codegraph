@@ -5,13 +5,18 @@
 mod api;
 mod app_state;
 mod codelist;
-mod domain;
-mod entity;
+{% if project.persistence_provider == "cornucopia" %}mod db_client;
+mod workflow_client;
+{% else %}mod entity;
+{% endif %}mod domain;
 mod error;
 mod middleware;
 mod qs_query;
 mod worker;
-{% if project.hooks_api_crate %}mod hooks;{% endif %}
+{% if has_webhooks %}mod webhook_api;
+mod webhook_dispatch;
+mod webhook_router;
+{% endif %}{% if project.hooks_api_crate %}mod hooks;{% endif %}
 
 #[cfg(feature = "native")]
 #[tokio::main]
@@ -22,7 +27,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "DATABASE_URL environment variable is required (e.g. postgres://user:pass@localhost:5432/postgres)"
     })?;
     let jwt_secret = std::env::var("SUPABASE_JWT_SECRET")
+        .or_else(|_| std::env::var("JWT_SECRET"))
         .unwrap_or_else(|_| "dev-jwt-secret".to_string());
+    let supabase_url = std::env::var("SUPABASE_URL")
+        .or_else(|_| std::env::var("PUBLIC_SUPABASE_URL"))
+        .ok();
 
     let db = sea_orm::Database::connect(&database_url).await?;
 {% if project.persistence_provider == "cornucopia" %}
@@ -32,9 +41,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio_postgres::NoTls,
     ))
     .build()?;
-    let state = app_state::AppState::new(db, pool, jwt_secret);
+    let params = db_client::DbConnectionParams::from_connection_string(&database_url)?;
+    let client_source = std::sync::Arc::new(db_client::DeadpoolClientSource::new(pool));
+    let state = app_state::AppState::new(db, client_source, params, jwt_secret, supabase_url);
 {% else %}
-    let state = app_state::AppState::new(db, jwt_secret);
+    let state = app_state::AppState::new(db, jwt_secret, supabase_url);
+{% endif %}
+
+{% if has_webhooks %}
+    // Native webhook dispatch loop: drains pgmq events and delivers inline via
+    // reqwest (no Cloudflare Queue in dev/test). See webhook_dispatch.rs.
+    let dispatcher = crate::webhook_dispatch::WebhookDispatcher::new(state.clone());
+    tokio::spawn(async move {
+        dispatcher.run().await;
+    });
 {% endif %}
 
     let app = worker::router(state);

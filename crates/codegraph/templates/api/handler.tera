@@ -291,6 +291,7 @@ pub async fn get_by_id(
         {%- endfor %}
     };
     
+{% if project.persistence_provider == "sea_orm" %}
     use sea_orm::TransactionTrait;
     let tx = state.db.begin().await
         .map_err(|e| AppError::internal(format!("Failed to begin transaction: {e}"))
@@ -334,6 +335,13 @@ pub async fn get_by_id(
     tx.commit().await
         .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}"))
             .with_correlation_id(correlation_id))?;
+{% else %}
+    // Cornucopia provider: include fetch methods are not implemented on the
+    // SQL-first repositories yet; `included` stays all-None (validation of
+    // the requested paths above still applies).
+    // TODO(worker-cornucopia-includes): resolve includes through the
+    // cornucopia query layer (later epic step).
+{% endif %}
     
     Ok(Json({{ entity_name }}WithIncludeResponse {
         data: linked,
@@ -610,6 +618,7 @@ pub async fn list(
         .as_ref()
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
         .unwrap_or_default();
+{% if project.persistence_provider == "sea_orm" %}
     let included = if !include_paths.is_empty() {
         use sea_orm::TransactionTrait;
         let tx = state.db.begin().await
@@ -643,6 +652,20 @@ pub async fn list(
     } else {
         std::collections::HashMap::new()
     };
+{% else %}
+    // Cornucopia provider: batch include fetches are not implemented on the
+    // SQL-first repositories yet; includes stay empty (path validation above
+    // still applies).
+    // TODO(worker-cornucopia-includes): resolve includes through the
+    // cornucopia query layer (later epic step).
+    for path in &include_paths {
+        if !ALLOWED_INCLUDE_KEYS.contains(&path.as_str()) {
+            return Err(AppError::bad_request(format!("Unknown include path: {path}"))
+                .with_correlation_id(correlation_id));
+        }
+    }
+    let included = std::collections::HashMap::<String, serde_json::Value>::new();
+{% endif %}
     Ok(Json(serde_json::json!({
         "data": results,
         "total": total,

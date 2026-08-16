@@ -7,6 +7,24 @@ CREATE EXTENSION IF NOT EXISTS pgmq;
 SELECT pgmq.create('events_{{ domain }}');
 {% endfor %}
 
+-- Queue access for the application role. The app runs domain-table DML as
+-- `app_user` (SET LOCAL ROLE in the query/command layers) and the event
+-- triggers enqueue into these queues as the invoking role. pgmq.send builds
+-- its INSERT dynamically (plpgsql EXECUTE ... RETURNING), which checks both
+-- INSERT and SELECT on the queue table, and the msg_id identity sequence is
+-- only accessed as the table owner. pgmq 1.5+ does not install with PUBLIC
+-- queue grants, and the role does not exist yet when this migration usually
+-- runs — grant on current and future queues via default privileges; the SET
+-- ROLE grant itself comes from the project's api-key management migration.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
+        EXECUTE format('GRANT INSERT, SELECT ON ALL TABLES IN SCHEMA pgmq TO app_user');
+        EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA pgmq GRANT INSERT, SELECT ON TABLES TO app_user');
+    END IF;
+END
+$$;
+
 -- Shared domain event emitter function.
 -- Called by per-table triggers to enqueue events into pgmq.
 -- Trigger args: TG_ARGV[0] = domain name, TG_ARGV[1] = table name.

@@ -4,10 +4,15 @@
 pub mod api;
 pub mod app_state;
 pub mod codelist;
-pub mod domain;
-pub mod entity;
+{% if project.persistence_provider == "cornucopia" %}pub mod db_client;
+pub mod workflow_client;
+{% else %}pub mod entity;
+{% endif %}pub mod domain;
 pub mod error;
 pub mod middleware;
 pub mod qs_query;
 pub mod worker;
-{% if project.hooks_api_crate %}pub mod hooks;{% endif %}
+{% if has_webhooks %}pub mod webhook_api;
+pub mod webhook_dispatch;
+pub mod webhook_router;
+{% endif %}{% if project.hooks_api_crate %}pub mod hooks;{% endif %}

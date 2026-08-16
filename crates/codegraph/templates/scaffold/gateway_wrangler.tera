@@ -16,3 +16,11 @@ command = "cargo install worker-build && worker-build --release --no-default-fea
 binding = "{{ domain.binding }}"
 service = "{{ domain.worker_name }}"
 {% endfor %}
+{% if gateway_observability %}
+
+# Workers native observability: persist logs emitted by the gateway and surface
+# them in `wrangler tail` / the dashboard / Workers Logs.
+[observability]
+enabled = true
+head_sampling_rate = 1
+{% endif %}

@@ -1351,8 +1351,8 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
     assert!(
         gateway_worker
             .content
-            .contains("/api/v1/compensation/{*path}"),
-        "gateway must route compensation with the prefix-stripping wildcard"
+            .contains("/api/v1/{domain}/{*path}"),
+        "gateway must route domains with the prefix-stripping wildcard"
     );
     assert!(
         gateway_worker.content.contains("env.service"),

@@ -345,11 +345,15 @@ pub fn is_api_entity_generator(name: &str) -> bool {
 /// Everything else — DDL migrations, API tests, UI, CLI, gRPC, playwright,
 /// domain-types, hooks — stays anchored at the output root (single shared
 /// database, unchanged frontend).
+///
+/// `cornucopia_queries` is deliberately root-anchored in both topologies:
+/// the annotated `.sql` files feed the single shared `cornucopia-queries`
+/// codegen crate at the output root (`queries/{domain}/{entity}.sql`), which
+/// every worker crate depends on by path.
 pub fn is_worker_routed_entity_generator(name: &str) -> bool {
     matches!(
         name,
         "sea_orm_entity"
-            | "cornucopia_queries"
             | "cornucopia_repo"
             | "repository"
             | "command"
@@ -1864,7 +1868,6 @@ mod tests {
     fn test_worker_routed_generator_classification() {
         let routed_entity = [
             "sea_orm_entity",
-            "cornucopia_queries",
             "cornucopia_repo",
             "repository",
             "command",
