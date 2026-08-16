@@ -31,6 +31,9 @@ pub struct AppState {
     pub db: DatabaseConnection,
 {% endif %}
     pub jwt_secret: String,
+    /// Supabase URL for ES256 JWT verification (JWKS endpoint). `None` when
+    /// unset — ES256 tokens are then rejected with 401.
+    pub supabase_url: Option<String>,
     pub workflow_service: Arc<dyn codegraph_workflow::WorkflowService>,
 {% if project.hooks_api_crate %}
     pub registry: HookRegistry,
@@ -46,6 +49,7 @@ impl AppState {
         client_source: Arc<dyn ClientSource>,
         db_params: DbConnectionParams,
         jwt_secret: String,
+        supabase_url: Option<String>,
     ) -> Self {
         Self {
 {% for entity in entities %}
@@ -71,7 +75,9 @@ impl AppState {
             ),
 {% endfor %}
             #[cfg(not(target_arch = "wasm32"))]
-            workflow_service: Arc::new(codegraph_workflow::engine::SeaOrmWorkflowService::new(db)),
+            workflow_service: Arc::new(codegraph_workflow::engine::SeaOrmWorkflowService::new(
+                db.clone(),
+            )),
             #[cfg(target_arch = "wasm32")]
             workflow_service: Arc::new(codegraph_workflow::GenericWorkflowService::new(
                 crate::workflow_client::CornucopiaWorkflowClient::new(client_source.clone())
@@ -81,6 +87,7 @@ impl AppState {
             #[cfg(not(target_arch = "wasm32"))]
             db: db.clone(),
             jwt_secret,
+            supabase_url,
 {% if project.hooks_api_crate %}
             registry: HookRegistry::default(),
 {% endif %}
@@ -95,6 +102,7 @@ impl AppState {
     pub fn new(
         db: DatabaseConnection,
         jwt_secret: String,
+        supabase_url: Option<String>,
     ) -> Self {
         Self {
 {% for entity in entities %}
@@ -119,6 +127,7 @@ impl AppState {
 {% endfor %}
             db: db.clone(),
             jwt_secret,
+            supabase_url,
             workflow_service: Arc::new(codegraph_workflow::engine::SeaOrmWorkflowService::new(db)),
 {% if project.hooks_api_crate %}
             registry: HookRegistry::default(),

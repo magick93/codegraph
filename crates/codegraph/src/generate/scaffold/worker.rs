@@ -255,6 +255,24 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
 
         let mut files = Vec::new();
 
+        // ── API-key management migration ─────────────────────────────────
+        // The worker auth middleware depends on `public.verify_api_key` /
+        // `public.create_api_key` / `public.log_api_key_usage` and the
+        // `api_keys_private` schema. The monolith scaffold emits this as
+        // `0002_api_key_management.sql`; workers topology gates the monolith
+        // scaffold off, so the worker scaffold owns it here (same numbering,
+        // same template).
+        let empty_ctx = std::collections::HashMap::<String, String>::new();
+        let api_key_migration =
+            render_template_with_project(tera, "db/api_key_migration.tera", &empty_ctx, project)?;
+        files.push(GeneratedFile {
+            path: self
+                .output_dir
+                .join("migrations")
+                .join("0002_api_key_management.sql"),
+            content: api_key_migration,
+        });
+
         // ── Workspace manifest ───────────────────────────────────────────
         let workspace_cargo = render_template_with_project(
             tera,

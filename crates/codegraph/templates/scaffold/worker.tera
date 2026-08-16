@@ -129,11 +129,19 @@ mod worker_impl {
         let params = database_params(env)?;
         let client_source =
             Arc::new(HyperdriveClientSource::new(params.clone()));
+        // SUPABASE_JWT_SECRET is the monolith-parity name; JWT_SECRET remains a
+        // supported fallback for older worker deployments.
         let jwt_secret = env
-            .secret("JWT_SECRET")
+            .secret("SUPABASE_JWT_SECRET")
+            .or_else(|_| env.secret("JWT_SECRET"))
             .map(|s| s.to_string())
             .unwrap_or_default();
-        Ok(AppState::new(client_source, params, jwt_secret))
+        let supabase_url = env
+            .var("SUPABASE_URL")
+            .or_else(|_| env.var("PUBLIC_SUPABASE_URL"))
+            .map(|v| v.to_string())
+            .ok();
+        Ok(AppState::new(client_source, params, jwt_secret, supabase_url))
     }
 {% else %}
     async fn app_state_from_env(env: &Env) -> Result<AppState, worker::Error> {
@@ -153,10 +161,16 @@ mod worker_impl {
         // step of the multi-worker epic).
         let db = AppState::placeholder_connection();
         let jwt_secret = env
-            .secret("JWT_SECRET")
+            .secret("SUPABASE_JWT_SECRET")
+            .or_else(|_| env.secret("JWT_SECRET"))
             .map(|s| s.to_string())
             .unwrap_or_default();
-        Ok(AppState::new(db, jwt_secret))
+        let supabase_url = env
+            .var("SUPABASE_URL")
+            .or_else(|_| env.var("PUBLIC_SUPABASE_URL"))
+            .map(|v| v.to_string())
+            .ok();
+        Ok(AppState::new(db, jwt_secret, supabase_url))
     }
 {% endif %}
 

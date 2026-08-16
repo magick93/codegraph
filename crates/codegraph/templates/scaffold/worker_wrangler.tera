@@ -10,7 +10,14 @@ command = "cargo install worker-build && worker-build --release --no-default-fea
 
 [vars]
 # Set in Cloudflare or in a local .dev.vars file.
+# Auth (monolith parity naming): SUPABASE_JWT_SECRET is the primary HS256
+# signing secret; JWT_SECRET remains a supported fallback for older worker
+# deployments. SUPABASE_URL (or PUBLIC_SUPABASE_URL) is required only for
+# ES256 JWT verification (JWKS fetch at
+# {SUPABASE_URL}/auth/v1/.well-known/jwks.json).
+SUPABASE_JWT_SECRET = ""
 JWT_SECRET = ""
+SUPABASE_URL = ""
 DATABASE_URL = ""
 
 [[hyperdrive]]
