@@ -34,7 +34,7 @@ pub async fn run_quality(config: &OpsConfig, extra: &[String]) -> OpsResult<()> 
     run_step(
         "cargo",
         &["test".to_string(), "--workspace".to_string()],
-        &config.root_dir,
+        &config.workspace_root,
     )?;
 
     output::section("2/5 cargo clippy --workspace -- -D warnings");
@@ -47,7 +47,7 @@ pub async fn run_quality(config: &OpsConfig, extra: &[String]) -> OpsResult<()> 
             "-D".to_string(),
             "warnings".to_string(),
         ],
-        &config.root_dir,
+        &config.workspace_root,
     )?;
 
     output::section("3/5 cargo fmt --all -- --check");
@@ -59,7 +59,7 @@ pub async fn run_quality(config: &OpsConfig, extra: &[String]) -> OpsResult<()> 
             "--".to_string(),
             "--check".to_string(),
         ],
-        &config.root_dir,
+        &config.workspace_root,
     )?;
 
     output::section("4/5 regenerate generated app");
@@ -74,7 +74,7 @@ pub async fn run_quality(config: &OpsConfig, extra: &[String]) -> OpsResult<()> 
                 &config.app_dir,
             );
             output::info(format!("cargo {args:?}"));
-            run_step("cargo", &args, &config.root_dir)?;
+            run_step("cargo", &args, &config.workspace_root)?;
         }
         (None, _) => output::warn("graph_binary not set — skipping app regeneration"),
         (_, None) => output::warn("schemas_dir not set — skipping app regeneration"),
@@ -88,7 +88,7 @@ pub async fn run_quality(config: &OpsConfig, extra: &[String]) -> OpsResult<()> 
         run_step(
             "cargo",
             &[name.clone(), "--workspace".to_string()],
-            &config.root_dir,
+            &config.workspace_root,
         )?;
     }
 
