@@ -142,12 +142,14 @@ impl OpsConfig {
     }
 }
 
-/// Find the nearest ancestor directory (starting at `start`) whose `Cargo.toml`
-/// declares a `[workspace]` section — i.e. the consumer repo root where
-/// `cargo build -p {graph_binary}` and `target/` live. Falls back to `start`
-/// when none is found (e.g. the manifest already lives at the repo root, or the
-/// consumer has no workspace).
+/// Find the outermost ancestor directory (starting at `start`) whose
+/// `Cargo.toml` declares a `[workspace]` section — i.e. the consumer repo root
+/// where `cargo build -p {graph_binary}` and `target/` live. The generated app
+/// is itself often a nested workspace (`[workspace] members = [".", "cli"]`),
+/// so we keep walking up and return the LAST match (closest to the filesystem
+/// root). Falls back to `start` when none is found.
 fn discover_workspace_root(start: &Path) -> PathBuf {
+    let mut found: Option<PathBuf> = None;
     for dir in start.ancestors() {
         let cargo = dir.join("Cargo.toml");
         if cargo.is_file()
@@ -155,10 +157,10 @@ fn discover_workspace_root(start: &Path) -> PathBuf {
                 .map(|s| s.contains("[workspace]"))
                 .unwrap_or(false)
         {
-            return dir.to_path_buf();
+            found = Some(dir.to_path_buf());
         }
     }
-    start.to_path_buf()
+    found.unwrap_or_else(|| start.to_path_buf())
 }
 
 fn pg_target(t: &OpsDbTarget, role: &str) -> PgTarget {
@@ -265,6 +267,21 @@ mod tests {
             root.to_path_buf()
         );
         // A non-workspace Cargo.toml (the generated app) is skipped.
+        assert_eq!(discover_workspace_root(&root.join("out")), root.to_path_buf());
+    }
+
+    #[test]
+    fn discover_workspace_root_skips_nested_app_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+        // The generated app is itself a workspace — the repo root must win.
+        std::fs::write(
+            root.join("out/Cargo.toml"),
+            "[workspace]\nmembers = [\".\", \"cli\"]\n",
+        )
+        .unwrap();
         assert_eq!(discover_workspace_root(&root.join("out")), root.to_path_buf());
     }
 
