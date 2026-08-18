@@ -838,6 +838,7 @@ pub async fn tree(
     let correlation_id = extract_correlation_id(&headers);
     tracing::info!(%correlation_id, %id, "fetching subtree");
 
+{% if project.persistence_provider == "sea_orm" %}
     use sea_orm::{ConnectionTrait, TransactionTrait};
     use crate::domain::{{ domain }}::{{ module_name }}::repository::{{ entity_name }}Repository;
     let db = state.db.begin().await
@@ -871,6 +872,16 @@ pub async fn tree(
     }
 
     Ok(Json(rows))
+{% else %}
+    // Cornucopia provider: the SQL-first repositories expose find_tree, but the
+    // per-request client plumbing is not wired through the handler layer yet.
+    // Reject with 501 rather than emitting uncompilable SeaORM code.
+    // TODO(cornucopia-tree): resolve through the cornucopia query layer.
+    Err(AppError::internal(
+        "tree queries are not supported with the cornucopia provider yet",
+    )
+    .with_correlation_id(correlation_id))
+{% endif %}
 }
 {% endif %}
 {% if has_create or has_read or has_update or has_delete or has_list %}
