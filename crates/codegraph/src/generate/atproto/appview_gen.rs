@@ -191,12 +191,12 @@ mod tests {
         let mut tera = Tera::default();
         tera.add_raw_template(
             "atproto/appview_ingestor.tera",
-            r#"use cosmos_extensions::firehose::{persist, FirehoseClient};{% for l in lexicons %}"{{l.nsid}}"{% endfor %}fn ingest_{{domain}}(mut firehose: FirehoseClient, db: DatabaseConnection){firehose.connect_and_consume("{{domain}}", move |event|{async move{}}).await;}"#,
+            r#"use crate::atproto::firehose::{persist, FirehoseClient};{% for l in lexicons %}"{{l.nsid}}"{% endfor %}fn ingest_{{domain}}(mut firehose: FirehoseClient, db: DatabaseConnection){firehose.connect_and_consume("{{domain}}", move |event|{async move{}}).await;}"#,
         )
         .unwrap();
         tera.add_raw_template(
             "atproto/appview_index.tera",
-            r#"{% for d in domains %}use crate::atproto::appview::ingest_{{d.rust_name}}::ingest_{{d.rust_name}};{% endfor %}use cosmos_extensions::firehose::FirehoseClient;"#,
+            r#"{% for d in domains %}use crate::atproto::appview::ingest_{{d.rust_name}}::ingest_{{d.rust_name}};{% endfor %}use crate::atproto::firehose::FirehoseClient;"#,
         )
         .unwrap();
         tera
