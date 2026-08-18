@@ -1033,4 +1033,72 @@ entities = ["CodeType"]
         assert_eq!(member_names.len(), 3);
         assert!(parsed["workspace"]["dependencies"].get("worker").is_some());
     }
+
+    /// Render worker_app_state.tera: command handlers are only emitted for
+    /// entities with commands, and the query-handler hooks argument is only
+    /// passed when the entity has query hooks (matches the generated
+    /// command.rs/query.rs `new` signatures).
+    #[test]
+    fn worker_app_state_guards_commands_and_query_hooks() {
+        let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let tera = crate::generate::template_engine::create_tera(&template_dir).unwrap();
+        let project = ProjectConfig {
+            deployment_topology: "workers".to_string(),
+            hooks_api_crate: "hr_hooks_api".to_string(),
+            ..Default::default()
+        };
+        let config = test_config();
+
+        let full = scaffold_domain("common");
+        let query_only = ScaffoldDomain {
+            name: "compliance".to_string(),
+            label: "compliance label".to_string(),
+            postgres_schema: "compliance".to_string(),
+            entities: vec![ScaffoldEntity {
+                name: "ComplianceCheckResult".to_string(),
+                module_name: "compliance_check_result".to_string(),
+                domain: "compliance".to_string(),
+                has_commands: false,
+                has_query_hooks: false,
+            }],
+        };
+        let mut domains = build_worker_domains("hr", &config, vec![full, query_only]);
+        for d in &mut domains {
+            d.domain_types_path = "crates/hr-domain-types".to_string();
+            d.hooks_api_path = "crates/hr-hooks-api".to_string();
+        }
+        let full_domain = domains.iter().find(|d| d.name == "common").unwrap();
+        let rendered = render_template_with_project(
+            &tera,
+            "scaffold/worker_app_state.tera",
+            full_domain,
+            &project,
+        )
+        .unwrap();
+        assert!(
+            rendered.contains("common_pay_run_commands"),
+            "entity with commands must get a command handler field:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("common_pay_run_queries"),
+            "entity with query hooks must get a query handler field:\n{rendered}"
+        );
+
+        let query_only_domain = domains.iter().find(|d| d.name == "compliance").unwrap();
+        let rendered = render_template_with_project(
+            &tera,
+            "scaffold/worker_app_state.tera",
+            query_only_domain,
+            &project,
+        )
+        .unwrap();
+        assert!(
+            !rendered.contains("compliance_compliance_check_result_commands"),
+            "query-only entity must NOT get a command handler field:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("compliance_compliance_check_result_queries"),
+            "query-only entity must still get a query handler field:\n{rendered}"
+        );
+    }
 }

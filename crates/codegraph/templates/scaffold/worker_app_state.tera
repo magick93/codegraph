@@ -13,7 +13,9 @@ use sea_orm::DatabaseConnection;
 #[derive(Clone)]
 pub struct AppState {
 {% for entity in entities %}
+{% if entity.has_commands %}
     pub {{ name }}_{{ entity.module_name }}_commands: crate::domain::{{ name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler,
+{% endif %}
     pub {{ name }}_{{ entity.module_name }}_queries: crate::domain::{{ name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler,
 {% endfor %}
 {% if project.persistence_provider == "cornucopia" %}
@@ -59,6 +61,7 @@ impl AppState {
     ) -> Self {
         Self {
 {% for entity in entities %}
+{% if entity.has_commands %}
             {{ name }}_{{ entity.module_name }}_commands: crate::domain::{{ name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler::new(
                 Arc::new(
                     crate::domain::{{ name }}::{{ entity.module_name }}::cornucopia_repository_impl::{{ entity.name }}RepositoryImpl,
@@ -69,13 +72,14 @@ impl AppState {
                 None,
 {% endif %}
             ),
+{% endif %}
             {{ name }}_{{ entity.module_name }}_queries: crate::domain::{{ name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler::new(
                 Arc::new(
                     crate::domain::{{ name }}::{{ entity.module_name }}::cornucopia_repository_impl::{{ entity.name }}RepositoryImpl,
                 ),
                 client_source.clone(),
                 #[cfg(not(target_arch = "wasm32"))] db.clone(),
-{% if project.hooks_api_crate %}
+{% if project.hooks_api_crate and entity.has_query_hooks %}
                 None,
 {% endif %}
             ),
@@ -114,6 +118,7 @@ impl AppState {
     ) -> Self {
         Self {
 {% for entity in entities %}
+{% if entity.has_commands %}
             {{ name }}_{{ entity.module_name }}_commands: crate::domain::{{ name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler::new(
                 Arc::new(
                     crate::domain::{{ name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl,
@@ -123,12 +128,13 @@ impl AppState {
                 None,
 {% endif %}
             ),
+{% endif %}
             {{ name }}_{{ entity.module_name }}_queries: crate::domain::{{ name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler::new(
                 Arc::new(
                     crate::domain::{{ name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl,
                 ),
                 db.clone(),
-{% if project.hooks_api_crate %}
+{% if project.hooks_api_crate and entity.has_query_hooks %}
                 None,
 {% endif %}
             ),
