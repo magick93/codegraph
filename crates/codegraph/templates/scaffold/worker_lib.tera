@@ -4,9 +4,12 @@
 pub mod api;
 pub mod app_state;
 pub mod codelist;
+// SeaORM entity module: still generated in cornucopia workers — the routed
+// media handlers and health checks reference `crate::entity::...` (media
+// subsystems remain SeaORM-backed in both topologies).
+pub mod entity;
 {% if project.persistence_provider == "cornucopia" %}pub mod db_client;
 pub mod workflow_client;
-{% else %}pub mod entity;
 {% endif %}pub mod domain;
 pub mod error;
 pub mod middleware;
