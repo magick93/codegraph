@@ -1101,4 +1101,35 @@ entities = ["CodeType"]
             "query-only entity must still get a query handler field:\n{rendered}"
         );
     }
+
+    /// Render worker_lib.tera: cornucopia workers keep `pub mod entity;` (the
+    /// routed media handlers reference `crate::entity::...` even though CRUD
+    /// persistence runs through cornucopia) in addition to the cornucopia
+    /// client modules.
+    #[test]
+    fn worker_lib_declares_entity_in_cornucopia_workers() {
+        let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let tera = crate::generate::template_engine::create_tera(&template_dir).unwrap();
+        let project = ProjectConfig {
+            deployment_topology: "workers".to_string(),
+            persistence_provider: "cornucopia".to_string(),
+            hooks_api_crate: "hr_hooks_api".to_string(),
+            ..Default::default()
+        };
+        let config = test_config();
+        let domains = build_worker_domains("hr", &config, vec![scaffold_domain("payroll")]);
+        let rendered = render_template_with_project(
+            &tera,
+            "scaffold/worker_lib.tera",
+            &domains[0],
+            &project,
+        )
+        .unwrap();
+        for needle in ["pub mod entity;", "pub mod db_client;", "pub mod workflow_client;"] {
+            assert!(
+                rendered.contains(needle),
+                "worker lib.rs must declare `{needle}`, got:\n{rendered}"
+            );
+        }
+    }
 }
