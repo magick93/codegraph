@@ -15,7 +15,7 @@ import type {
 } from '$lib/api/types';
 
 
-const API_PATH = '/recruiting/application';
+const API_PATH = '/recruiting/applications';
 
 
 export interface ApplicationListState {

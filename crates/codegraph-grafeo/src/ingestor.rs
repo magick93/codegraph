@@ -4,9 +4,10 @@ use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode,
-    EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, NamespaceNode,
-    ParameterDefinitionNode, PermissionNode, PipelineNode, PropertyNode, RepositoryNode,
-    SchemaNode, ViewComponentNode, ViewContainerNode,
+    EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
+    NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
+    RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -33,6 +34,11 @@ fn classification_kind_to_str(kind: &RefClassificationKind) -> String {
         RefClassificationKind::MediaWrapper => "media_wrapper",
     }
     .to_string()
+}
+
+fn serde_enum_str<T: serde::Serialize>(v: &T) -> String {
+    let json = serde_json::to_string(v).unwrap_or_default();
+    json.trim_matches('"').to_string()
 }
 
 /// Format an Option<String> as a GQL value: either 'escaped' or null.
@@ -381,6 +387,16 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::HasInteraction => "HasInteraction",
             EdgeType::BindsHttpEndpoint => "BindsHttpEndpoint",
             EdgeType::UsesPipeline => "UsesPipeline",
+            EdgeType::HasPolicy => "HasPolicy",
+            EdgeType::PolicyAppliesTo => "PolicyAppliesTo",
+            EdgeType::HasRelationship => "HasRelationship",
+            EdgeType::RelationshipSource => "RelationshipSource",
+            EdgeType::RelationshipTarget => "RelationshipTarget",
+            EdgeType::PolicyOnRelationship => "PolicyOnRelationship",
+            EdgeType::TenantOwns => "TenantOwns",
+            EdgeType::HasMembership => "HasMembership",
+            EdgeType::MembershipInTenant => "MembershipInTenant",
+            EdgeType::HasRole => "HasRole",
         };
 
         let match_clause = match &edge_type {
@@ -648,9 +664,19 @@ impl GraphIngestor for GrafeoEngine {
             | EdgeType::OutputBoundTo
             | EdgeType::CanReturnError
             | EdgeType::RequiresPermission
-            | EdgeType::HasInteraction
+            |             EdgeType::HasInteraction
             | EdgeType::BindsHttpEndpoint
-            | EdgeType::UsesPipeline => {
+            | EdgeType::UsesPipeline
+            | EdgeType::HasPolicy
+            | EdgeType::PolicyAppliesTo
+            | EdgeType::HasRelationship
+            | EdgeType::RelationshipSource
+            | EdgeType::RelationshipTarget
+            | EdgeType::PolicyOnRelationship
+            | EdgeType::TenantOwns
+            | EdgeType::HasMembership
+            | EdgeType::MembershipInTenant
+            | EdgeType::HasRole => {
                 format!(
                     "MATCH (a {{name: '{}'}}), (b {{name: '{}'}})",
                     escape_gql(from_id),
@@ -903,6 +929,18 @@ impl GraphIngestor for GrafeoEngine {
                 self,
                 "MATCH (r:ApiResource) RETURN count(r) AS cnt",
             )?,
+            policy_count: count_from_gql(
+                self,
+                "MATCH (p:Policy) RETURN count(p) AS cnt",
+            )?,
+            relationship_count: count_from_gql(
+                self,
+                "MATCH (r:Relationship) RETURN count(r) AS cnt",
+            )?,
+            security_node_count: count_from_gql(
+                self,
+                "MATCH (n) WHERE n:SecurityIdentity OR n:Membership OR n:Tenant RETURN count(n) AS cnt",
+            )?,
             duration: self.start_time().elapsed(),
         })
     }
@@ -1071,5 +1109,122 @@ impl GraphIngestor for GrafeoEngine {
             .execute(&gql)
             .map_err(|e| GraphError::Ingest(format!("ingest_permission failed: {e}")))?;
         Ok(id)
+    }
+
+    // ── Persistence metamodel ────────────────────────────────────────
+
+    async fn ingest_policy(&self, policy: &PolicyNode) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let kind_json = serde_json::to_string(&policy.kind)
+            .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let domain = policy.domain.clone().unwrap_or_default();
+        let gql = format!(
+            "INSERT (:Policy {{ \
+                name: '{}', kind_json: '{}', target_schema: '{}', domain: '{}' \
+            }})",
+            escape_gql(&policy.name),
+            escape_gql(&kind_json),
+            escape_gql(&policy.target_schema),
+            escape_gql(&domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_policy failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn ingest_relationship(
+        &self,
+        relationship: &RelationshipNode,
+    ) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let fk_json = serde_json::to_string(&relationship.foreign_key)
+            .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let propagation_json = serde_json::to_string(&relationship.propagation)
+            .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let domain = relationship.domain.clone().unwrap_or_default();
+        let gql = format!(
+            "INSERT (:Relationship {{ \
+                name: '{}', source_schema: '{}', target_schema: '{}', \
+                cardinality: '{}', ownership: '{}', fk_json: '{}', \
+                propagation_json: '{}', domain: '{}' \
+            }})",
+            escape_gql(&relationship.name),
+            escape_gql(&relationship.source_schema),
+            escape_gql(&relationship.target_schema),
+            escape_gql(&serde_enum_str(&relationship.cardinality)),
+            escape_gql(&serde_enum_str(&relationship.ownership)),
+            escape_gql(&fk_json),
+            escape_gql(&propagation_json),
+            escape_gql(&domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_relationship failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn ingest_security_identity(
+        &self,
+        identity: &SecurityIdentityNode,
+    ) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let domain = identity.domain.clone().unwrap_or_default();
+        let gql = format!(
+            "INSERT (:SecurityIdentity {{ \
+                name: '{}', subject: '{}', domain: '{}' \
+            }})",
+            escape_gql(&identity.name),
+            escape_gql(&identity.subject),
+            escape_gql(&domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_security_identity failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn ingest_membership(&self, membership: &MembershipNode) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let roles_json = serde_json::to_string(&membership.roles)
+            .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let valid_from = membership.valid_from.clone().unwrap_or_default();
+        let valid_until = membership.valid_until.clone().unwrap_or_default();
+        let gql = format!(
+            "INSERT (:Membership {{ \
+                identity: '{}', tenant: '{}', status: '{}', roles_json: '{}', \
+                valid_from: '{}', valid_until: '{}' \
+            }})",
+            escape_gql(&membership.identity),
+            escape_gql(&membership.tenant),
+            escape_gql(&serde_enum_str(&membership.status)),
+            escape_gql(&roles_json),
+            escape_gql(&valid_from),
+            escape_gql(&valid_until),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_membership failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn ingest_tenant(&self, tenant: &TenantNode) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let strategy_json = serde_json::to_string(&tenant.strategy)
+            .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let domain = tenant.domain.clone().unwrap_or_default();
+        let gql = format!(
+            "INSERT (:Tenant {{ \
+                name: '{}', label: '{}', strategy_json: '{}', domain: '{}' \
+            }})",
+            escape_gql(&tenant.name),
+            escape_gql(&tenant.label),
+            escape_gql(&strategy_json),
+            escape_gql(&domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_tenant failed: {e}")))?;
+        Ok(())
     }
 }

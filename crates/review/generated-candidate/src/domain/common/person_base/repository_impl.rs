@@ -3,8 +3,7 @@
 
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
@@ -16,7 +15,7 @@ use super::dto_response::PersonBaseResponse;
 pub struct PersonBaseRepositoryImpl;
 
 #[async_trait]
-impl PersonBaseRepository for PersonBaseRepositoryImpl {
+impl PersonBaseRepository<sea_orm::DatabaseTransaction> for PersonBaseRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "common.person_base"))]
     async fn create(
         &self,
@@ -43,11 +42,16 @@ impl PersonBaseRepository for PersonBaseRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<PersonBaseResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::common_person_base::Entity::find()
-            .filter(crate::entity::common_person_base::Column::Id.eq(id))
-            .filter(crate::entity::common_person_base::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::common_person_base::Entity::find()
+            .filter(crate::entity::common_person_base::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::common_person_base::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -118,10 +122,14 @@ impl PersonBaseRepository for PersonBaseRepositoryImpl {
         page: u64,
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
+        include_deleted: bool,
     ) -> Result<(Vec<PersonBaseResponse>, u64), Box<dyn std::error::Error>> {
-        let query = crate::entity::common_person_base::Entity::find()
-            .filter(crate::entity::common_person_base::Column::DeletedAt.is_null())
-            .order_by_desc(crate::entity::common_person_base::Column::CreatedAt);
+        let mut query = crate::entity::common_person_base::Entity::find()
+;
+        if !include_deleted {
+            query = query.filter(crate::entity::common_person_base::Column::DeletedAt.is_null());
+        }
+        let query = query.order_by_desc(crate::entity::common_person_base::Column::CreatedAt);
         let paginator = query.paginate(db, page_size);
 
         let total = paginator.num_items().await?;

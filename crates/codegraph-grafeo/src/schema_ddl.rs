@@ -19,6 +19,11 @@ pub fn indexed_properties() -> Vec<&'static str> {
         "nsid",
         "authority",
         "did",
+        "target_schema",
+        "source_schema",
+        "subject",
+        "identity",
+        "tenant",
     ]
 }
 
@@ -236,6 +241,46 @@ fn node_type_ddl() -> Vec<&'static str> {
             name STRING NOT NULL,
             domain STRING
         )",
+        // Policy — persistence metamodel
+        "CREATE NODE TYPE IF NOT EXISTS Policy (
+            name STRING NOT NULL,
+            kind_json STRING NOT NULL,
+            target_schema STRING NOT NULL,
+            domain STRING
+        )",
+        // Relationship — persistence metamodel
+        "CREATE NODE TYPE IF NOT EXISTS Relationship (
+            name STRING NOT NULL,
+            source_schema STRING NOT NULL,
+            target_schema STRING NOT NULL,
+            cardinality STRING NOT NULL,
+            ownership STRING NOT NULL,
+            fk_json STRING NOT NULL,
+            propagation_json STRING NOT NULL,
+            domain STRING
+        )",
+        // SecurityIdentity — persistence metamodel
+        "CREATE NODE TYPE IF NOT EXISTS SecurityIdentity (
+            name STRING NOT NULL,
+            subject STRING NOT NULL,
+            domain STRING
+        )",
+        // Membership — persistence metamodel
+        "CREATE NODE TYPE IF NOT EXISTS Membership (
+            identity STRING NOT NULL,
+            tenant STRING NOT NULL,
+            status STRING NOT NULL,
+            roles_json STRING NOT NULL,
+            valid_from STRING NOT NULL,
+            valid_until STRING NOT NULL
+        )",
+        // Tenant — persistence metamodel
+        "CREATE NODE TYPE IF NOT EXISTS Tenant (
+            name STRING NOT NULL,
+            label STRING NOT NULL,
+            strategy_json STRING NOT NULL,
+            domain STRING
+        )",
     ]
 }
 
@@ -288,5 +333,16 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS HasInteraction",
         "CREATE EDGE TYPE IF NOT EXISTS BindsHttpEndpoint",
         "CREATE EDGE TYPE IF NOT EXISTS UsesPipeline",
+        // Persistence metamodel edge types
+        "CREATE EDGE TYPE IF NOT EXISTS HasPolicy",
+        "CREATE EDGE TYPE IF NOT EXISTS PolicyAppliesTo",
+        "CREATE EDGE TYPE IF NOT EXISTS HasRelationship",
+        "CREATE EDGE TYPE IF NOT EXISTS RelationshipSource",
+        "CREATE EDGE TYPE IF NOT EXISTS RelationshipTarget",
+        "CREATE EDGE TYPE IF NOT EXISTS PolicyOnRelationship",
+        "CREATE EDGE TYPE IF NOT EXISTS TenantOwns",
+        "CREATE EDGE TYPE IF NOT EXISTS HasMembership",
+        "CREATE EDGE TYPE IF NOT EXISTS MembershipInTenant",
+        "CREATE EDGE TYPE IF NOT EXISTS HasRole",
     ]
 }

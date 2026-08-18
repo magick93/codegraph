@@ -11,12 +11,12 @@ use crate::error::AppError;
 use crate::middleware::ApiKeyInfo;
 use crate::domain::recruiting::candidate::dto_response::CandidateResponse;
 use crate::domain::recruiting::candidate::dto_response::CandidateLinkedResponse;
-use crate::domain::recruiting::candidate::repository::CandidateRepository;
 use crate::error::BulkItemError;
 use crate::domain::recruiting::candidate::dto_create::CreateCandidateRequest;
 use crate::domain::recruiting::candidate::dto_update::UpdateCandidateRequest;
 use crate::domain::recruiting::candidate::dto_included::CandidateWithIncludeResponse;
 use crate::domain::recruiting::candidate::dto_included::CandidateIncludedData;
+use crate::domain::recruiting::errors::RecruitingError;
 
 
 /// Accepts either a single item or an array of items for creation.
@@ -54,7 +54,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
 #[utoipa::path(
     post,
 
-    path = "/api/recruiting/candidate",
+    path = "/api/v1/recruiting/candidate",
 
     tag = "Candidate",
     request_body(
@@ -95,12 +95,12 @@ pub async fn create(
             }
 
 
-            let id = state.recruiting_candidate_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await
+            let id = state.recruiting_candidate_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
 
-                .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to create Candidate: {e}"))
+                .map_err(|e: RecruitingError| AppError::internal(format!("Failed to create Candidate: {e}"))
                     .with_correlation_id(correlation_id))?;
-            let response = state.recruiting_candidate_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await
-                .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find Candidate: {e}"))
+            let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+                .map_err(|e: RecruitingError| AppError::internal(format!("Failed to find Candidate: {e}"))
                     .with_correlation_id(correlation_id))?
                 .ok_or_else(|| AppError::internal("Created entity not found")
                     .with_correlation_id(correlation_id))?;
@@ -120,7 +120,7 @@ pub async fn create(
             }
 
 
-            let result = state.recruiting_candidate_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await;
+            let result = state.recruiting_candidate_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await;
 
 
             let mut success = Vec::new();
@@ -129,7 +129,7 @@ pub async fn create(
             for item_result in result {
                 match item_result {
                     Ok(id) => {
-                        match state.recruiting_candidate_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await {
+                        match state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await {
                             Ok(Some(resp)) => success.push(resp),
                             Ok(None) => {
                                 tracing::warn!(entity_id = %id, "Bulk-created entity not found during response assembly");
@@ -157,7 +157,7 @@ pub async fn create(
 #[utoipa::path(
     get,
 
-    path = "/api/recruiting/candidate/{candidate_id}",
+    path = "/api/v1/recruiting/candidate/{candidate_id}",
 
     params(
         ("candidate_id" = Uuid, Path, description = "Candidate ID"),
@@ -185,8 +185,8 @@ pub async fn get_by_id(
 ) -> Result<Json<CandidateWithIncludeResponse>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    let response = state.recruiting_candidate_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find Candidate: {e}"))
+    let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: RecruitingError| AppError::internal(format!("Failed to find Candidate: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("Candidate {id} not found"))
             .with_correlation_id(correlation_id))?;
@@ -222,6 +222,7 @@ pub async fn get_by_id(
         application: None,
     };
     
+
     use sea_orm::TransactionTrait;
     let tx = state.db.begin().await
         .map_err(|e| AppError::internal(format!("Failed to begin transaction: {e}"))
@@ -234,7 +235,7 @@ pub async fn get_by_id(
 
 
                 included.application = Some(repo.fetch_application_for_candidate(&tx, id).await
-                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include application: {e}"))
+                    .map_err(|e| AppError::internal(format!("Failed to include application: {e}"))
                         .with_correlation_id(correlation_id))?);
 
 
@@ -246,6 +247,7 @@ pub async fn get_by_id(
     tx.commit().await
         .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}"))
             .with_correlation_id(correlation_id))?;
+
     
     Ok(Json(CandidateWithIncludeResponse {
         data: linked,
@@ -261,7 +263,7 @@ pub async fn get_by_id(
 #[utoipa::path(
     put,
 
-    path = "/api/recruiting/candidate/{candidate_id}",
+    path = "/api/v1/recruiting/candidate/{candidate_id}",
     params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
 
     tag = "Candidate",
@@ -298,11 +300,11 @@ pub async fn update(
             .with_correlation_id(correlation_id));
     }
 
-    state.recruiting_candidate_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to update Candidate: {e}"))
+    state.recruiting_candidate_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: RecruitingError| AppError::internal(format!("Failed to update Candidate: {e}"))
             .with_correlation_id(correlation_id))?;
-    let response = state.recruiting_candidate_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find Candidate: {e}"))
+    let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: RecruitingError| AppError::internal(format!("Failed to find Candidate: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("Candidate {id} not found"))
             .with_correlation_id(correlation_id))?;
@@ -371,7 +373,7 @@ const ALLOWED_INCLUDE_KEYS: &[&str] = &[
 #[utoipa::path(
     get,
 
-    path = "/api/recruiting/candidate",
+    path = "/api/v1/recruiting/candidate",
     params(ListParams),
 
     tag = "Candidate",
@@ -404,15 +406,16 @@ pub async fn list(
     }
 
 
-    let (results, total) = state.recruiting_candidate_queries.list_filtered(params.page, params.page_size, &filters, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to list Candidate: {e}"))
+    let (results, total) = state.recruiting_candidate_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: RecruitingError| AppError::internal(format!("Failed to list Candidate: {e}"))
             .with_correlation_id(correlation_id))?;
 
     let include_paths: Vec<String> = params.include
         .as_ref()
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
         .unwrap_or_default();
-    let mut included = if !include_paths.is_empty() {
+
+    let included = if !include_paths.is_empty() {
         use sea_orm::TransactionTrait;
         let tx = state.db.begin().await
             .map_err(|e| AppError::internal(format!("Failed to begin transaction for includes: {e}"))
@@ -432,7 +435,7 @@ pub async fn list(
             included_map.insert(
                 "application".to_string(),
                 serde_json::to_value(repo.fetch_application_batch_for_candidate(&tx, &ids).await
-                    .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to include application: {e}"))
+                    .map_err(|e| AppError::internal(format!("Failed to include application: {e}"))
                         .with_correlation_id(correlation_id))?).unwrap_or_default(),
             );
         }
@@ -445,6 +448,7 @@ pub async fn list(
     } else {
         std::collections::HashMap::new()
     };
+
     Ok(Json(serde_json::json!({
         "data": results,
         "total": total,
@@ -458,4 +462,29 @@ pub async fn list(
 
 
 
+
+// --- Trait-based extensibility ---
+// Uncomment and implement to override generated handler behavior:
+//
+// #[async_trait]
+// pub trait CustomCandidateHandlers {
+//     async fn custom_create(
+//         &self,
+//         state: axum::extract::State<AppState>,
+//         headers: axum::http::HeaderMap,
+//         Json(body): axum::Json<CreateCandidateRequest>,
+//     ) -> Result<axum::response::Response, AppError>;
+// }
+//
+// impl CustomCandidateHandlers for AppState {
+//     async fn custom_create(
+//         &self,
+//         state: axum::extract::State<AppState>,
+//         headers: axum::http::HeaderMap,
+//         Json(body): axum::Json<CreateCandidateRequest>,
+//     ) -> Result<axum::response::Response, AppError> {
+//         // Your custom logic here
+//         todo!()
+//     }
+// }
 

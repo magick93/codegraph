@@ -22,13 +22,13 @@ impl<'a> PayRunPage<'a> {
     // ── Navigation ───────────────────────────────────────────────────────────
 
     pub async fn goto_list(&self) -> Result<()> {
-        self.page.goto_builder(&format!("{}/compensation/pay-run", Self::base_url())).goto().await?;
+        self.page.goto_builder(&format!("{}/compensation/pay-runs", Self::base_url())).goto().await?;
         Ok(())
     }
 
 
     pub async fn goto_create(&self) -> Result<()> {
-        self.page.goto_builder(&format!("{}/compensation/pay-run/new", Self::base_url())).goto().await?;
+        self.page.goto_builder(&format!("{}/compensation/pay-runs/new", Self::base_url())).goto().await?;
         Ok(())
     }
 
@@ -36,7 +36,7 @@ impl<'a> PayRunPage<'a> {
 
     pub async fn goto_detail(&self, id: &str) -> Result<()> {
         self.page
-            .goto_builder(&format!("{}/compensation/pay-run/{id}", Self::base_url()))
+            .goto_builder(&format!("{}/compensation/pay-runs/{id}", Self::base_url()))
             .goto()
             .await?;
         Ok(())

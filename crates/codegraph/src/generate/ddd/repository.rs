@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::ParentCandidate;
+use codegraph_core::types::{ParentCandidate, PolicyKind, SoftDeleteVisibility};
 use serde::Serialize;
 
 use crate::error::Result;
 use crate::generate::api::api_model::resolve_entity_operations;
-use crate::generate::api::include_path::resolve_include_paths;
+use crate::generate::api::include_path::resolve_include_paths_for_topology;
 use crate::generate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
@@ -37,6 +37,12 @@ pub struct RepositoryContext {
     /// Whether tree_include is configured (changes find_tree return type).
     #[serde(default)]
     pub tree_include: bool,
+    /// Whether this entity has soft-delete / audit tracking enabled.
+    #[serde(default)]
+    pub is_auditable: bool,
+    /// The soft-delete visibility mode: "exclude_by_default", "include_by_default", or "explicit_only".
+    #[serde(default)]
+    pub soft_delete_visibility: String,
 }
 
 pub struct RepositoryTraitGenerator {
@@ -147,17 +153,54 @@ impl EntityGenerator for RepositoryTraitGenerator {
             .map(|r| r == "root")
             .unwrap_or(true);
         let include_paths = if has_explicit_include || is_root {
-            resolve_include_paths(
+            resolve_include_paths_for_topology(
                 db,
                 config,
                 &domain,
                 schema_title,
                 entity_cfg.and_then(|ec| ec.allow_include.as_ref()),
+                project.is_workers_topology(),
             )
             .await?
         } else {
             Vec::new()
         };
+
+        // Query policies to determine audit and soft-delete behavior.
+        let policies = db.get_policies_for_schema(schema_title).await?;
+        let has_audit_policy = policies.iter().any(|p| matches!(p.kind, PolicyKind::Audit(_)));
+        let is_auditable = if has_audit_policy {
+            policies
+                .iter()
+                .find_map(|p| {
+                    if let PolicyKind::Audit(ref a) = p.kind {
+                        Some(a.track_deleted)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false)
+        } else {
+            config
+                .domains
+                .get(&domain)
+                .and_then(|d| d.auditable)
+                .unwrap_or(true)
+        };
+        let soft_delete_visibility = policies
+            .iter()
+            .find_map(|p| {
+                if let PolicyKind::SoftDelete(ref sd) = p.kind {
+                    Some(match sd.visibility {
+                        SoftDeleteVisibility::ExcludeByDefault => "exclude_by_default".to_string(),
+                        SoftDeleteVisibility::IncludeByDefault => "include_by_default".to_string(),
+                        SoftDeleteVisibility::ExplicitOnly => "explicit_only".to_string(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "exclude_by_default".to_string());
 
         let ctx = RepositoryContext {
             has_create: operations.contains(&"create".to_string()),
@@ -171,6 +214,8 @@ impl EntityGenerator for RepositoryTraitGenerator {
             parent_ref: parent_ref.clone(),
             hierarchy_field,
             tree_include,
+            is_auditable,
+            soft_delete_visibility,
             entity_name,
             module_name: module_name.clone(),
             domain: domain.clone(),
@@ -186,7 +231,8 @@ impl EntityGenerator for RepositoryTraitGenerator {
 
         let mut files = Vec::new();
 
-        // Repository trait (Tera template)
+        // Repository trait (Tera template) — provider-agnostic: both the
+        // SeaORM and cornucopia impls target the same generic trait.
         let trait_content =
             render_template_with_project(tera, "ddd/repository.tera", &ctx, project)?;
         files.push(GeneratedFile {
@@ -194,22 +240,27 @@ impl EntityGenerator for RepositoryTraitGenerator {
             content: trait_content,
         });
 
-        // Repository implementation (Rust emitter)
-        let emitter = RepositoryImplEmitter;
-        let impl_content = emitter
-            .emit(
-                db,
-                schema_title,
-                &domain,
-                config,
-                parent_ref.as_deref(),
-                &include_paths,
-            )
-            .await?;
-        files.push(GeneratedFile {
-            path: base_dir.join("repository_impl.rs"),
-            content: impl_content,
-        });
+        // The SeaORM repository implementation (Rust emitter) is only
+        // emitted for the SeaORM provider; cornucopia builds get
+        // `cornucopia_repository_impl.rs` from the cornucopia_repo generator
+        // instead.
+        if !project.is_cornucopia() {
+            let emitter = RepositoryImplEmitter;
+            let impl_content = emitter
+                .emit(
+                    db,
+                    schema_title,
+                    &domain,
+                    config,
+                    parent_ref.as_deref(),
+                    &include_paths,
+                )
+                .await?;
+            files.push(GeneratedFile {
+                path: base_dir.join("repository_impl.rs"),
+                content: impl_content,
+            });
+        }
 
         Ok(files)
     }

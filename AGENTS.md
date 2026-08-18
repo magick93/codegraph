@@ -2,20 +2,23 @@
 
 ## Project structure
 
-Workspace root `Cargo.toml` with 10 crates:
+Workspace root `Cargo.toml` with 13 crates:
 
 | Crate | Purpose |
 |-------|---------|
-| `codegraph` | Main binary: CLI, ingest, classify, validate, 58+ generators |
+| `codegraph` | Main binary: CLI, ingest, classify, validate, 60+ generators + project init/doctor/add-domain lifecycle |
 | `codegraph-core` | Graph data model: `GraphQuerier`, `GraphIngestor`, node/edge types |
 | `codegraph-grafeo` | Grafeo graph database adapter implementing core traits |
 | `codegraph-backend` | Backend factory (currently Grafeo-only) |
 | `codegraph-type-contracts` | Type system: PgType, RustType, DddFieldProjection |
 | `codegraph-naming` | Identifier naming: snake_case, PascalCase, PG identifier handling |
 | `codegraph-classifier` | Config-driven JSON schema type classification |
-| `codegraph-config` | Domain config parsing (`domains.toml`, classifier.toml, profiles.toml) |
+| `codegraph-config` | Domain config parsing (`domains.toml`, classifier.toml, profiles.toml) + `OpsManifest` |
 | `codegraph-ext-points` | Extension points config types |
 | `codegraph-workflow` | Generic state machine workflow engine (SeaORM) |
+| `codegraph-ifml-dsl` | Pest-based IFML DSL parser + AST (see "IFML Integration" section) |
+| `ast-ifml` | auto-lsp AST definitions for IFML |
+| `codegraph-ops` | Rust test & deploy harness (see "Ops Harness" section) |
 
 ## IFML Integration (feat/ifml-integration branch)
 
@@ -331,6 +334,7 @@ cargo test -p codegraph-ifml-dsl          # 20 DSL parser tests
 cargo test -p codegraph -- lsp            # 5 LSP server tests
 cargo test -p codegraph --test ifml_e2e_tests  # 5 E2E tests
 cargo test -p codegraph --lib -- ifml     # 6 dependency graph tests
+cargo test -p codegraph --test init_tests # project lifecycle integration tests
 
 # Dialect tests
 cargo test -p codegraph --lib -- generate::db::dialect  # 12 dialect unit tests
@@ -342,6 +346,15 @@ cargo test -p codegraph --test grpc_compile_tests   # Level 3: protoc compilatio
 
 # Profile smoke tests (includes gRPC profile validation)
 cargo test -p codegraph --test profile_smoke_tests
+
+# Ops harness tests (codegraph-ops + ops generator)
+cargo test -p codegraph-ops            # 93 harness tests (suites, proc, db, migrate, ext, metrics)
+cargo test -p codegraph --test ops_generator_tests  # 7 tests + 1 ignored compile test (manifest + testkit emission, OpsConfig::load contract)
+cargo clippy -p codegraph-ops --all-targets         # must be warning-free
+
+# Ignored integration tests (run in CI's test-ops-integration job with a postgres:15 service)
+cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture   # needs DATABASE_URL (default postgres://postgres:postgres@localhost:5432/postgres)
+cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture  # slow: compiles the emitted testkit crate
 
 # Full pipeline integration (requires protoc)
 cargo test -p codegraph --test grafeo_e2e_tests -- grafeo_all_entity_generators_produce_output_for_candidate
@@ -373,13 +386,156 @@ cargo run -- run --schemas <dir> --classifier classifier.toml \
 # Classify only (show entity/VO decisions)
 cargo run -- classify --schemas <dir> --classifier classifier.toml \
   --config domains.toml
+
+# Scaffold a new consumer project (interactive when NAME omitted)
+cargo run -- init my-app --codegraph-path ~/git/codegraph
+
+# Validate an existing consumer project
+cargo run -- doctor --config domains.toml --schemas schemas \
+  --classifier classifier.toml --profiles-config profiles.toml
+
+# Grow an existing project with a new domain
+cargo run -- add domain billing
 ```
+
+## Project Initialization (init / doctor / add domain)
+
+### Overview
+
+`codegraph init [NAME]` scaffolds a consumer monorepo. `codegraph doctor`
+validates the result, and `codegraph add domain <name>` grows it. The
+scaffold is generated from 17 Tera templates in
+`crates/codegraph/templates/project/` (see "Templates & context" below).
+
+### Scaffolded file tree
+
+| File | Purpose |
+|------|---------|
+| `Cargo.toml` | Workspace: members `{name}-graph` + `ops/testkit`; codegraph crates as `git+rev` deps (or `path` deps with `--codegraph-path`); `exclude = ["generated"]` |
+| `{name}-graph/Cargo.toml`, `{name}-graph/src/main.rs` | Wrapper binary: clap `Run`/`Classify`/`Generate`/`Doctor` calling `codegraph::driver` |
+| `domains.toml` | Example domain entry (`entities = ["TodoListType", "TodoItemType"]` on the first domain) |
+| `classifier.toml` | Classifier config seed |
+| `profiles.toml` | Profile meta (`name`/`version`/`app_name`, `domain_types_base`) + feature flags (`ops_backend`, `grpc_backend`, `ifml_backend`, `has_admin_cli`, `database_target`, `persistence_provider`, `deployment_topology`) |
+| `extension-points.toml` | Extension points config |
+| `schemas/{domain}/todo_list.json`, `schemas/{domain}/todo_item.json` | Hello-world TODO starter schemas |
+| `codegraph-ops.toml` | Seeded ops manifest (see "Ops Harness" section) |
+| `ops/testkit/Cargo.toml`, `ops/testkit/src/main.rs` | Testkit workspace member |
+| `hurl/health.hurl` | Health-check hurl file |
+| `justfile` | Recipes: `generate`, `classify`, `doctor`, `api`, `full`, `clean` |
+| `.gitignore` | Ignores `generated/` |
+| `README.md` | Getting-started readme |
+| `.github/workflows/ci.yml` | CI workflow |
+
+### Layout decisions
+
+- **Rev pinning**: `crates/codegraph/build.rs` embeds the checkout's git rev
+  at build time (`cargo:rustc-env=CODEGRAPH_GIT_REV`, exposed via
+  `codegraph::rev::codegraph_rev()`). `init` uses it as the default `rev` for
+  the workspace's codegraph deps, so the scaffold pins the exact codegraph
+  revision that generated it. `--rev <sha>` overrides.
+- **`--codegraph-path <dir>`**: switches all codegraph deps to local path
+  deps (`{dir}/crates/...`) instead of `git+rev`, for local development.
+- **`generated/`**: all generator output lands there; it is excluded from the
+  workspace and gitignored. The wrapper binary and config stay in the repo.
+- **Safety**: init refuses to overwrite existing files unless `--force`, and
+  a path containment guard keeps writes inside the project dir.
+
+### Subcommand reference
+
+#### `codegraph init [NAME]`
+
+`NAME` prompts interactively when omitted.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--output <dir>` | `./{name}` | Parent dir to create the project in |
+| `--domains a,b` | `common` | Comma-separated domain names |
+| `--database-target` | `postgres` | DB dialect (`postgres`/`sqlite`) |
+| `--persistence-provider` | `sea_orm` | `sea_orm`/`cornucopia` |
+| `--deployment-topology` | `monolith` | `monolith`/`workers` |
+| `--grpc`, `--ifml` | off | Enable gRPC / IFML features in `profiles.toml` |
+| `--no-ops` | off | Disable the ops generator/profile feature (testkit member still scaffolded) |
+| `--rev <sha>` | embedded rev | Codegraph git rev to pin |
+| `--codegraph-path <dir>` | none | Path deps to a local codegraph checkout |
+| `--force` | off | Overwrite existing files |
+| `--template-dir <dir>` | repeatable | Additional template dirs (later take precedence) |
+
+#### `codegraph doctor`
+
+| Flag | Default | Checks |
+|------|---------|--------|
+| `--config` | `domains.toml` | domains.toml parses |
+| `--schemas` | `schemas` | schemas dir contains JSON schema(s) |
+| `--classifier` | `classifier.toml` | classifier.toml parses |
+| `--profiles-config` | optional | profiles.toml parses + BuildPlan capability validation |
+
+Hard failures (non-zero exit): domains.toml, classifier.toml, profiles.toml,
+schemas dir, codegraph-ops.toml (`OpsConfig::load`). Warnings only: missing
+profiles.toml / codegraph-ops.toml, Cargo.toml rev pins vs the binary's
+embedded rev (mismatch WARN), missing `psql`/`npx`/`hurl` tools.
+
+#### `codegraph add domain <name>`
+
+Appends a `[domains.<name>]` entry (label, schema_dir, postgres_schema) to
+`domains.toml` and creates `schemas/<name>/` with the TODO starter schemas
+(`todo_list.json` + `todo_item.json`). Rejects duplicate domain names.
+
+### Hello-world TODO example
+
+The scaffold ships a working TODO example (two entities: `TodoListType` +
+`TodoItemType`) instead of a placeholder schema. The full lifecycle is
+verified end-to-end against a real Postgres:
+
+```
+codegraph init todo-app
+cd todo-app
+just generate          # 187 files, 0 errors
+cargo build --manifest-path generated/Cargo.toml
+just api               # 39/39 PASS: migrate, CRUD smoke, RLS, graceful shutdown
+```
+
+The fix for fresh-project generation required generator stubs that were
+previously assumed to exist: `errors` generator always emits per-domain
+`errors.rs` (InternalError-only when no definitions), codelist generators
+emit empty `src/codelist/mod.rs` (both app and domain-types crates),
+`domain_types_scaffold` emits generic `context.rs`/`query.rs`/`codelist`,
+scaffold Cargo.toml declares `thiserror`, the pid file name uses the app
+name (not hardcoded `hr-app`), and `0000_extensions.sql` installs pgcrypto.
+
+### Lifecycle walkthrough
+
+```bash
+codegraph init my-app                       # scaffold (add --codegraph-path ~/git/codegraph for local dev)
+cd my-app
+just doctor                                 # validates config + toolchain
+just generate                               # wrapper run -> generated/ (excluded from workspace)
+just api                                    # ops testkit api suite (preflight, migrate, hurl, curl, RLS)
+just e2e                                    # ops testkit e2e (Supabase -> generate -> migrate -> build -> Playwright)
+just full                                   # api then e2e
+```
+
+### Templates & context
+
+Project templates live in `crates/codegraph/templates/project/` (17
+templates, shadowable via `--template-dir`). The render context is
+`ProjectTemplateContext` in `crates/codegraph/src/init/context.rs`, and the
+canonical (template, output-path) list is `PROJECT_TEMPLATES` in the same
+file; output paths support `{graph}` and `{domain}` placeholders.
+
+Adding a new template:
+
+1. Add `project/<name>.tera` under `crates/codegraph/templates/project/`.
+2. Append its `(template, output)` pair to `PROJECT_TEMPLATES` in
+   `crates/codegraph/src/init/context.rs`.
+3. Add any new fields to `ProjectTemplateContext` (it serializes into the
+   Tera context).
+4. Update the `init` tests / `file_tree()` expectations if the layout changed.
 
 ## Template Overrides
 
 ### The `--template-dir` flag
 
-Available on both `generate` and `run` commands. May be specified multiple times; later directories take precedence.
+Available on `generate`, `run`, and `init` commands. May be specified multiple times; later directories take precedence.
 
 ```
 Paths to additional template directories. Templates in these directories
@@ -499,20 +655,400 @@ Generators select the template directory based on the dialect. The existing
 4. Register the dialect in `dialect_for_target()`
 5. Unit tests in `dialect.rs` `#[cfg(test)]` block
 
+## Ops Harness (codegraph-ops + `ops` generator)
+
+### Overview
+
+`crates/codegraph-ops` is a Rust test & deploy harness for codegraph-generated
+apps — a re-imagining of the hand-written bash suite (`test.sh`,
+`lib/common.sh`, `lib/migrate.sh`, `deploy/smoke-test.sh`,
+`scripts/quality-check.sh`) that hr-specs used to maintain (hr-specs has been
+ported onto the harness; its bash suite is deleted). It is
+configuration-driven and extension-pluggable so every codegraph consumer
+shares the same harness while keeping their project-specifics (Xero/Stripe/IRD
+integrations, UI-sync rsync steps, integration migrations) as manifest hooks
+and extensions.
+
+### Architecture layers
+
+| Layer | Location | Notes |
+|-------|----------|-------|
+| **Manifest types** | `crates/codegraph-config/src/ops_manifest.rs` | `OpsManifest` (serde TOML): app name, servers/ports, db targets, supabase, capabilities, hurl, hooks, extensions, smoke entity, api version |
+| **Harness crate** | `crates/codegraph-ops/` | Runtime: `cli.rs` (clap), `config.rs` (`OpsConfig` resolution), `proc.rs` (SIGTERM→SIGKILL supervision, `Supervisor`), `db.rs` (psql wrapper, extension validation), `migrate.rs` (phased migrations, supabase symlinks), `suites/*` (api, cli, ui, e2e, smoke, quality), `ext.rs` (extension protocol + hooks), `metrics.rs` (stage TSV export), `wait.rs`, `env.rs`, `pg.rs` (`PgTarget`) |
+| **Generator** | `crates/codegraph/src/generate/ops.rs` | Global generator `ops` — emits `codegraph-ops.toml` + `testkit/` crate into generated output |
+| **Templates** | `crates/codegraph/templates/ops/` | `testkit_cargo.tera`, `testkit_main.tera` (shadowable via `--template-dir`) |
+| **Profile gating** | `profiles.toml` + `profile.rs` | `ops_backend` feature; `cap("ops", Global, Common, &["ops_backend"], &[])` |
+| **Contract test** | `crates/codegraph/tests/ops_generator_tests.rs` | Emitted manifest must parse via `OpsConfig::load` (cross-crate) |
+
+### Subcommands (run via the generated testkit binary)
+
+```
+cargo run -p testkit -- api        # preflight, migrate, hurl, curl smoke, RLS, shutdown
+cargo run -p testkit -- cli        # CLI e2e (starts API first)
+cargo run -p testkit -- e2e        # Supabase → generate → migrate → build → Playwright
+cargo run -p testkit -- ui         # Playwright only (API must be running)
+cargo run -p testkit -- full       # api then e2e
+cargo run -p testkit -- smoke      # remote deployment smoke test
+cargo run -p testkit -- quality    # cargo test/clippy/fmt + generate + check
+cargo run -p testkit -- clean      # stop services, remove generated output
+cargo run -p testkit -- ext <name> # run a test extension
+cargo run -p testkit -- ext --list # list registered extensions
+```
+
+Global flags: `--config FILE` (manifest path), `--keep`, `--skip-build`,
+`--skip-generate`, `--release`, `--verbose`, `--metrics FILE` (stage timings;
+TSV or JSON via `--metrics-format tsv|json`, default tsv), `--retry N`
+(retry failed hurl files in the api suite up to N times, default 0),
+`--headed`, `--grep PATTERN` (repeatable).
+
+When `--config` is absent the manifest is auto-discovered: walk UP from the
+cwd looking for `codegraph-ops.toml`, then walk UP from the testkit
+executable's directory (cli.rs `find_manifest()`).
+
+Failures print a `hint:` line when the error type has one (missing tools,
+config mistakes, port conflicts — `error::hint()` in `cli.rs`).
+
+Manifest values support `{env:VAR}` indirection for `database.*.password`
+and `supabase.anon_key`/`service_key`/`jwt_secret` (`config.rs`
+`resolve_env()`): unset variables expand to empty; plain strings pass
+through unchanged.
+
+`smoke` flags: `--api-url`, `--web-url`, `--expected-commit`,
+`--auth-health-url`, `--worker URL` (repeatable for worker pings).
+
+`quality` accepts extra cargo gate names (e.g. `doc`) as trailing args.
+
+### Extension protocol
+
+- `ext::TestExtension` trait: `name()`, `requires_api_running()`,
+  `run(&OpsContext)` — consumers register via `register_extension()` in the
+  generated testkit `main.rs` (see `templates/ops/testkit_main.tera`).
+- Manifest `[[extensions]]` entries with `exec` run out-of-process via `sh -c`
+  (language-agnostic; how hr-specs' Xero/Stripe/IRD-style integrations plug in).
+- Manifest `[[hooks]]` entries run at pipeline points: `pre_generate`,
+  `post_generate`, `post_migrate`, `pre_e2e`, `post_e2e`, `pre_api`,
+  `post_api`, `pre_playwright`.
+
+### Manifest (`codegraph-ops.toml`)
+
+Seeded by the generator from `ProjectConfig`/`BuildPlan` (app name, ports,
+db targets, capabilities, api version). Consumers extend:
+`database.*.reset_sql`/`seed_sql`, `supabase` dir + keys,
+`hurl.dir`/`skip`/org ids, `smoke.entity` (entity used for the api suite's
+curl CRUD checks) + `api_version` (route prefix, default `v1`), `ui_dir`
+override (for monorepo sync setups), hooks, extensions.
+
+### Consumer integration guide
+
+1. Add `codegraph-ops` to the consumer workspace deps:
+   ```toml
+   codegraph-ops = { git = "https://github.com/magick93/codegraph.git", rev = "<pinned>" }
+   ```
+   Pin the same rev as the other codegraph crates. During development use
+   `branch = "<branch>"` plus a `[patch."https://github.com/magick93/codegraph.git"]`
+   entry pointing `codegraph-ops` at a local path.
+2. Enable the generator: `ops_backend = true` under `[features]` in the
+   consumer's `profiles.toml` plus `"ops"` in the profile's generator list;
+   regenerate. This emits `codegraph-ops.toml` + a `testkit/` crate.
+   `smoke.entity` is auto-seeded from the first entity in generation order
+   (`generate/ops.rs`); the codegraph binary stamps `project.codegraph_rev`
+   from its own git rev (`main.rs`) so the testkit `Cargo.toml` pins the same
+   rev (see `templates/scaffold/cargo_toml.tera`, `templates/ops/testkit_cargo.tera`).
+3. Edit the manifest: `database.api`/`database.e2e`/`database.e2e_app` targets
+   (+ `reset_sql`/`seed_sql`), `supabase` dir + keys, `hurl.dir`/`skip`/org
+   ids, `ui_dir` override (monorepo sync setups), and — for e2e generation —
+   `graph_binary` + `schemas_dir` + `classifier` + `domain_config`.
+4. Run: `cargo run -p testkit -- api` / `e2e` / `full` / `smoke` / `quality` /
+   `ext <name>`.
+5. Add project-specifics as `[[hooks]]` and `[[extensions]]` (exec-based
+   out-of-process entries) or trait-based extensions (register in the
+   `testkit_main.tera` registration hook — `register_extension()` before the
+   tokio runtime starts). hr-specs dogfooding: pgmq patch as `pre_e2e`,
+   crewbase rsync as `pre_playwright`, hr-reports views as `post_migrate`; an
+   extensions crate implements `TestExtension` for ird/stripe/xero and the
+   testkit workspace member registers them; a justfile delegates to the
+   harness; the bash suite is deleted.
+
+   Hook points and when they fire:
+
+   | Hook | Suite | Fires |
+   |------|-------|-------|
+   | `pre_generate` | e2e | Before the graph binary build/generation |
+   | `post_generate` | e2e | After generation |
+   | `pre_e2e` | e2e | After Supabase start, BEFORE migration symlink + `supabase db reset` |
+   | `post_migrate` | api + e2e | After DB reset/migration (api only when migrate=true) |
+   | `pre_playwright` | e2e | After the API is up, BEFORE the SvelteKit production build |
+   | `post_e2e` | e2e | Every e2e path (success and failure), best-effort |
+   | `pre_api` / `post_api` | api | Around the api suite |
+
+   Each hook is `sh -c "{exec} {args...}"` in the repo root; failures abort
+   the suite (except `post_e2e`, which warns).
+6. CI wiring: run `cargo run -p testkit -- api --metrics ci.tsv` in a job with
+   a Postgres service. The codegraph repo's own `test-ops-integration` job
+   (postgres:15 service + the `--ignored` integration tests in `.github/workflows/ci.yml`,
+   CI triggers on push to `develop` and `master`) is the reference pattern.
+
+### Platform support & prerequisites
+
+Unix-first (Linux/macOS): process supervision is SIGTERM → grace → SIGKILL
+(`proc.rs`), `clean` kills ports via `fuser -k`, and consumer hooks commonly
+use rsync. Windows is not supported by the process-supervision/port-kill
+paths.
+
+Tool prerequisites (validated per-suite; missing tools error or skip):
+
+- `psql` (db access + extension checks), `curl` (health probes, api suite)
+- `hurl` (api contract tests — skipped if absent)
+- `npx` + Supabase CLI + Docker (e2e Supabase stack)
+- `pnpm` + Playwright chromium (ui/e2e; installed via `playwright install chromium`)
+
+### Adding a feature to the harness
+
+1. Module in `crates/codegraph-ops/src/` (or a new suite in `suites/`).
+2. Wire the subcommand in `cli.rs` + flag plumbing.
+3. Unit tests alongside; `cargo test -p codegraph-ops`.
+4. If the generated manifest needs new seed values, extend
+   `OpsManifest` in `codegraph-config` + the generator in `generate/ops.rs`.
+
+## Persistence Provider System
+
+### Overview
+
+Codegraph supports swappable persistence backends via the `PersistenceProvider`
+enum. The DDL generator is always provider-agnostic (it generates SQL, not
+ORM code). The entity model and repository implementation are provider-specific
+and selected by the `persistence_provider` feature flag.
+
+### Three-layer architecture
+
+```
+                         JSON Schema + Policies
+                                 │
+                                 ▼
+                     GraphQuerier (Grafeo graph)
+                                 │
+                                 ▼
+                     build_persistence_entity()
+                                 │
+                                 ▼
+                     PersistenceEntity (IR)        ← ORM-agnostic
+                                 │
+                    ┌────────────┼────────────┐
+                    ▼            ▼            ▼
+              SeaOrmBackend  Cornucopia    (future:
+              (entity.tera,  Backend       Diesel,
+               repo emitter) (.sql files,  SQLx, ...)
+                              cornucopia.toml)
+```
+
+### PersistenceProvider enum
+
+Defined at `crates/codegraph/src/profile.rs:15`:
+
+| Variant | Config value | Entity model | Repository | Query layer |
+|---------|-------------|--------------|------------|-------------|
+| `SeaOrm` | `"sea_orm"` (default) | `sea_orm_entity` generator → `#[derive(DeriveEntityModel)]` structs | `repository` + `repository_emitter` → SeaORM ActiveModel/QueryBuilder | `query` generator → SeaORM `EntityTrait::find()` |
+| `Cornucopia` | `"cornucopia"` | `cornucopia_queries` generator → `queries/{domain}/{entity}.sql` annotated SQL files | `cornucopia_repo` generator → wrapper around Cornucopia query functions | Cornucopia-generated typed query structs via `bind()/all()/one()/opt()` |
+
+### Profile configuration
+
+```toml
+[profiles.default.features]
+persistence_provider = "sea_orm"   # "sea_orm" (default) | "cornucopia"
+
+# SeaORM profile — existing generators
+[profiles.default.api]
+generators = ["ddl", "sea_orm_entity", "dto", "repository", "command", "query", ...]
+
+# Cornucopia profile — alternative generators
+[profiles.cornucopia.api]
+generators = ["ddl", "cornucopia_queries", "cornucopia_repo", "cornucopia_config", "dto", ...]
+```
+
+The `persistence_provider` value is parsed from `[features]` into
+`BuildPlan.persistence_provider` and propagated to generators via
+`ProjectConfig.persistence_provider` (available in all Tera templates).
+
+### PersistenceEntity IR
+
+Defined at `crates/codegraph-core/src/types/persistence.rs`:
+
+| Type | Purpose |
+|------|---------|
+| `PersistenceEntity` | Top-level ORM-agnostic model: title, table_name, schema_name, rust_type_name, columns, child_tables, relations, policies |
+| `PersistenceColumn` | Column descriptor: field_name, column_name, rust_type, pg_type, is_primary_key, is_nullable, is_jsonb, is_range, pg_cast, role |
+| `PersistenceColumnRole` | Semantic role: Data, PrimaryKey, TenantScope, SoftDeleteMarker, AuditTimestamp, AuditUser, AuditFlag, ForeignKey, HierarchyParent |
+| `PersistenceChildTable` | Child table from a ValueObject property: table_name, struct_name, parent_fk, columns |
+| `PersistenceEntityRelation` | Relationship: name, relation_type, related_entity, from/to_column, is_self_ref |
+| `PersistencePolicies` | Policy effects translated to ORM-agnostic form: SoftDeleteEffect, TenantIsolationEffect, RowSecurityEffect, AuditEffect, RetentionEffect |
+
+### build_persistence_entity() builder
+
+Defined at `crates/codegraph/src/generate/persistence.rs` — the single source
+of truth for extracting entity structure + policies from the graph. Both
+`SeaOrmEntityGenerator` and `CornucopiaQueryGenerator` call it.
+
+### Key files
+
+| File | Role |
+|------|------|
+| `crates/codegraph-core/src/types/persistence.rs` | IR types: PersistenceEntity, PersistenceColumn, policy effects |
+| `crates/codegraph/src/profile.rs` | `PersistenceProvider` enum + `from_config()` + `BuildPlan` field |
+| `crates/codegraph/src/generate/persistence.rs` | `build_persistence_entity()` — graph → IR builder |
+| `crates/codegraph/src/generate/db/entity.rs` | `SeaOrmEntityGenerator` — SeaORM model emission (existing, unchanged) |
+| `crates/codegraph/src/generate/ddd/repository_emitter.rs` | SeaORM repository impl emitter (existing, unchanged) |
+| `crates/codegraph/src/generate/db/cornucopia_queries.rs` | `CornucopiaQueryGenerator` — annotated SQL file generation |
+| `crates/codegraph/src/generate/db/cornucopia_config.rs` | `CornucopiaConfigGenerator` — `cornucopia.toml` with type mappings |
+| `crates/codegraph/src/generate/ddd/cornucopia_repo.rs` | `CornucopiaRepoGenerator` — repository adapter wrapper |
+| `crates/codegraph/src/generate/mod.rs` | `ProjectConfig.persistence_provider` + generator dispatch |
+| `profiles.toml` | `persistence_provider` feature flag |
+
+### Policy-aware query generation
+
+Both SeaORM and Cornucopia backends consume the same `PersistencePolicies`
+struct built from `PolicyNode` graph data. Policy effects drive:
+
+| Policy | SeaORM effect | Cornucopia SQL effect |
+|--------|--------------|----------------------|
+| `SoftDelete` | `Entity::active()` / `including_deleted()` scopes | `WHERE deleted_at IS NULL` in SELECT, `UPDATE SET deleted_at = NOW()` for delete |
+| `TenantIsolation` | `platform_organization_id` FK column + RLS session vars | `WHERE tenant_column = :tenant_id` on every query |
+| `RowSecurity` | RLS template with `RowSecurityPolicy` | Inline `USING`/`CHECK` expressions (future) |
+| `Audit` | `created_at`, `updated_at`, `updated_by`, `deleted_by` columns | Same columns in RETURNING clauses + trigger queries |
+| `Retention` | Column + archive strategy | Time-partitioned WHERE clauses (future) |
+
+### Adding a new persistence provider
+
+1. Add a variant to `PersistenceProvider` in `profile.rs`
+2. Create generators that consume `build_persistence_entity()` and emit
+   provider-specific output (e.g. `diesel_entity.rs`, `sqlx_repo.rs`)
+3. Register generators in `generate/mod.rs` entity/generator vecs
+4. Add capability entries in `profile.rs` `base_capabilities()`
+5. Add `persistence_provider` entry in `profiles.toml` features
+6. Unit tests + snapshot tests for the new output format
+
+## Deployment Topology System
+
+### Overview
+
+`DeploymentTopology` selects the shape of the generated backend: today's
+single-crate axum server (`Monolith`, default) or one Cloudflare Worker per
+bounded-context domain behind a gateway (`Workers`). Configuration plumbing
+only for now — generator output behavior is unchanged.
+
+### DeploymentTopology enum
+
+Defined at `crates/codegraph/src/profile.rs` (next to `PersistenceProvider`):
+
+| Variant | Config value | Backend shape |
+|---------|-------------|---------------|
+| `Monolith` | `"monolith"` (default) | Single-crate axum server (today's behavior) |
+| `Workers` | `"workers"` | One Cloudflare Worker per domain + gateway |
+
+### Profile configuration
+
+```toml
+[profiles.default.features]
+deployment_topology = "monolith"   # "monolith" (default) | "workers"
+```
+
+Unlike `persistence_provider` (which silently defaults on unknown values),
+unknown `deployment_topology` values are a hard configuration error in
+`BuildPlan::from_profile()`. The value is stored on `BuildPlan` and propagated
+to generators via `ProjectConfig.deployment_topology` (available in Tera
+templates as `project.deployment_topology`).
+
+### Per-domain worker config (domains.toml)
+
+All keys on `DomainEntry` in `crates/codegraph-config/src/config.rs` are
+optional (`#[serde(default)]`), so existing domains.toml files parse unchanged:
+
+| Key | Type | Default | Semantics |
+|-----|------|---------|-----------|
+| `worker_name` | `Option<String>` | `{app_name}-{domain}` (via `worker_name_or()`) | Cloudflare Worker name for this domain |
+| `custom_domain` | `Option<String>` | None (gateway default route `/{domain}/*`) | Custom domain / route pattern |
+| `service_bindings` | `Option<Vec<String>>` | `depends_on` (via `service_bindings_or_depends()`) | Other domain workers this worker can call |
+| `hyperdrive_binding` | `Option<String>` | `"HYPERDRIVE"` (via `hyperdrive_binding_or()`) | Hyperdrive binding name |
+| `cron_triggers` | `Option<Vec<String>>` | None | Cron expressions for scheduled handlers |
+| `remote_include_mode` | `Option<String>` | `"sql"` (via `remote_include_mode_or()`) | `"sql"` or `"http"` — how cross-domain `include` queries are satisfied |
+| `webhooks` | `Option<bool>` | `false` (via `webhooks_or(default)`) | Enable webhook endpoint/subscription CRUD + dispatch/delivery on this domain's worker |
+| `queue_name` | `Option<String>` | `{app_name}-{domain}-webhooks` (via `queue_name_or()`) | Cloudflare Queue name for webhook delivery jobs (producer + consumer) |
+| `queue_binding` | `Option<String>` | `"WEBHOOK_QUEUE"` (via `queue_binding_or()`) | Cloudflare Queue binding name used in `env.queue(binding)` + wrangler |
+| `queue_max_retries` | `Option<u32>` | `5` (via `queue_max_retries_or()`) | Max delivery attempts before an endpoint is auto-deactivated |
+| `queue_max_concurrency` | `Option<u32>` | None (omitted from wrangler) | Cloudflare Queues consumer `max_concurrency` |
+| `observability` | `Option<bool>` | `false` (via `observability_or(default)`) | Workers native observability: emits an `[observability]` wrangler block, installs a console panic hook + wasm tracing subscriber, and logs per-request metrics to the console |
+
+Convenience accessors on `DomainEntry`: `worker_name_or(default)`,
+`service_bindings_or_depends()`, `hyperdrive_binding_or(default)`,
+`remote_include_mode_or(default)`, `webhooks_or(default)`,
+`queue_binding_or(default)`, `queue_name_or(default)`,
+`queue_max_retries_or(default)`, `observability_or(default)`.
+
+### Per-domain webhooks (workers topology)
+
+When a domain sets `webhooks = true`, the worker scaffold emits
+`webhook_api.rs` + `webhook_router.rs` + `webhook_dispatch.rs` into
+`workers/{domain}/src/` and wires them into the worker's axum router. These
+use the **cornucopia** provider templates
+(`templates/webhook/{api_endpoints_cornucopia,api_router_cornucopia,dispatch_worker}.tera`)
+— separate from the monolith's SeaORM `webhook/{api_endpoints,api_router,dispatch}.tera`
+which stay byte-identical (the monolith templates are untouched). The worker
+templates render with the per-domain `WorkerDomain` context.
+
+- **wasm32**: a `#[event(scheduled)]` cron (`*/1 * * * *`, auto-added) drains
+  `events_{domain}` from pgmq → INSERTs `platform.webhook_delivery` → enqueues a
+  `DeliveryJob` onto the domain's Cloudflare Queue; a `#[event(queue)]` consumer
+  performs the HMAC-signed HTTP POST and records the outcome. Transient failures
+  return an error so the queue retries (plus `next_retry_at` scan).
+- **native**: a tokio interval loop (`WebhookDispatcher`) drains + delivers
+  inline via `reqwest` (no Cloudflare Queue available offline).
+- **test pump**: `POST /_dispatch` (in `webhook_router.rs`) synchronously drains
+  `events_{domain}` and enqueues (wasm, via a `Send`-safe `run_in_worker_loop`
+  bridge) or delivers (native) immediately, so tests don't wait for cron.
+- **wrangler**: `worker_wrangler.tera` emits `[[queues.producers]]` +
+  `[[queues.consumers]]` (`max_retries`/`max_concurrency`) plus the drain cron.
+
+Cloudflare Queues are **not** available in local `wrangler dev` (non-remote)
+mode — use the native loop for offline testing, or `wrangler dev --remote` / a
+real deployment for the queue path.
+
+### Workers native observability (workers topology)
+
+When a domain sets `observability = true`, the worker scaffold emits native
+Cloudflare Workers Observability (decision #111) — no hand-rolled OTLP:
+
+- **wrangler**: `worker_wrangler.tera` (and `gateway_wrangler.tera`, when any
+  domain enables it) emit a minimal `[observability]` block (`enabled = true`,
+  `head_sampling_rate = 1`). Off by default, so unconfigured domains stay
+  byte-identical to pre-observability output.
+- **console logging**: the wasm32 slice installs `console_error_panic_hook`
+  (crates.io `0.1`, `[target.'cfg(target_arch = "wasm32")'.dependencies]`) and a
+  minimal hand-rolled `tracing::Subscriber` (`worker.tera`) that forwards
+  `tracing::info!/warn!/error!` to `worker::console_log!/warn!/error!`. A
+  third-party `tracing-wasm` dep was deliberately avoided — it pins a stale
+  `wasm-bindgen`, while worker-rs 0.8 ships the console macros unconditionally.
+  The native path keeps `tracing_subscriber::fmt::init()`.
+- **metrics**: `worker_middleware.tera`'s `metrics_middleware::track_metrics`
+  emits a structured `http_request method=… path=… status=… duration_ms=…`
+  console line per request (wasm32 only) when observability is enabled. The
+  monolith's Prometheus `metrics` recorder (`metrics_middleware.tera`) is
+  untouched. Analytics-Engine ingestion remains a future TODO.
+
 ## Code conventions
 
 - No `unwrap()` in production code. Use `thiserror` + `?` propagation.
 - Imports grouped: std → external → internal → current crate, separated by blank lines.
 - Templates in `crates/codegraph/templates/` use Tera syntax.
-- 58+ generators in `crates/codegraph/src/generate/` organized by target (api, db, ddd, ui, cli, etc.).
+- 60+ generators in `crates/codegraph/src/generate/` organized by target (api, db, ddd, ui, cli, etc.).
 - IFML-specific generators in `crates/codegraph/src/generate/ifml/`.
 - gRPC-specific generators in `crates/codegraph/src/generate/grpc/`.
+- Cornucopia-specific generators in `crates/codegraph/src/generate/db/cornucopia_*.rs` and `crates/codegraph/src/generate/ddd/cornucopia_repo.rs`.
 - New node/edge types go in `crates/codegraph-core/src/types/` + `crates/codegraph-grafeo/src/schema_ddl.rs`.
 - New GraphIngestor/GraphQuerier trait methods need implementations in Grafeo engine AND MockEngine AND CachingQuerier.
 - New gRPC generators need registration in `generate/mod.rs`, a capability entry in `profile.rs`, and an entry in `profiles.toml`.
+- New persistence provider generators need a `PersistenceProvider` variant, generator capability entries, and registration in `generate/mod.rs`.
 - New DB generators (or modifications to existing ones) must use the `SqlDialect` trait (see `crates/codegraph/src/generate/db/dialect.rs`) for type mapping and feature gating instead of hardcoding PostgreSQL types.
 - When adding new template files for a dialect, place them in `templates/db/<dialect>/` and the generator selects the right template path based on `database_target`.
-- The `project.database_target` variable is available in all Tera templates via `ProjectConfig`.
+- The `project.database_target` and `project.persistence_provider` variables are available in all Tera templates via `ProjectConfig`.
 
 ## Cross-Domain Schema Deduplication
 

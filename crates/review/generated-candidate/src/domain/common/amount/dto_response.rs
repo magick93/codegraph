@@ -17,10 +17,14 @@ pub struct AmountLinkedResponse {
     pub links: crate::api::links::Links,
 }
 
+// Builder helpers are part of the generated response API surface; which ones
+// generated handlers actually call varies per entity (root/child/links), so
+// keep them all and suppress dead-code noise.
+#[allow(dead_code)]
 impl AmountLinkedResponse {
     /// Wrap a response with self-link for a root entity.
     pub fn root(data: AmountResponse, domain: &str, path_segment: &str) -> Self {
-        let self_link = format!("/api/{}/{}/{}", domain, path_segment, data.id);
+        let self_link = format!("/api/v1/{}/{}/{}", domain, path_segment, data.id);
         Self {
             data,
             links: crate::api::links::Links::root(self_link),
@@ -46,10 +50,10 @@ impl AmountLinkedResponse {
         path_segment: &str,
     ) -> Self {
         let self_link = format!(
-            "/api/{}/{}/{}/{}/{}",
+            "/api/v1/{}/{}/{}/{}/{}",
             domain, parent_path_segment, parent_id, path_segment, data.id,
         );
-        let parent_link = format!("/api/{}/{}/{}", domain, parent_path_segment, parent_id);
+        let parent_link = format!("/api/v1/{}/{}/{}", domain, parent_path_segment, parent_id);
         Self {
             data,
             links: crate::api::links::Links::child(self_link, parent_link),

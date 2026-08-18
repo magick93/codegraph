@@ -2,10 +2,10 @@ use crate::error::GraphError;
 use crate::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension,
-    HttpEndpointNode, InteractionNode, LexiconNode, NamespaceNode, ParameterDefinitionNode,
-    ParentCandidate, PermissionNode, PipelineNode, PropertyNode, RepositoryNode,
-    SchemaClassificationData, SchemaNode, StructuredSubField, ViewComponentNode,
-    ViewContainerNode,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode, PolicyNode,
+    PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -294,6 +294,67 @@ pub trait GraphQuerier: Send + Sync {
         _endpoint_path: &str,
     ) -> Result<Option<PipelineNode>, GraphError> {
         Ok(None)
+    }
+
+    // --- Persistence Metamodel queries ---
+
+    async fn get_policies_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<PolicyNode>, GraphError> {
+        let _ = schema_title;
+        Ok(Vec::new())
+    }
+
+    async fn get_relationships_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<RelationshipNode>, GraphError> {
+        let _ = schema_title;
+        Ok(Vec::new())
+    }
+
+    async fn get_relationship_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<RelationshipNode>, GraphError> {
+        let _ = name;
+        Ok(None)
+    }
+
+    async fn list_all_policies(&self) -> Result<Vec<PolicyNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn list_all_relationships(&self) -> Result<Vec<RelationshipNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    // --- Security Metamodel queries ---
+
+    async fn get_security_identity(
+        &self,
+        subject: &str,
+    ) -> Result<Option<SecurityIdentityNode>, GraphError> {
+        let _ = subject;
+        Ok(None)
+    }
+
+    async fn get_memberships_for_identity(
+        &self,
+        identity_name: &str,
+    ) -> Result<Vec<MembershipNode>, GraphError> {
+        let _ = identity_name;
+        Ok(Vec::new())
+    }
+
+    async fn get_tenant(&self, name: &str) -> Result<Option<TenantNode>, GraphError> {
+        let _ = name;
+        Ok(None)
+    }
+
+    async fn list_all_tenants(&self) -> Result<Vec<TenantNode>, GraphError> {
+        Ok(Vec::new())
     }
 }
 

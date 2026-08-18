@@ -8,10 +8,10 @@ use crate::traits::GraphQuerier;
 use crate::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension,
-    HttpEndpointNode, InteractionNode, LexiconNode, NamespaceNode, ParameterDefinitionNode,
-    ParentCandidate, PermissionNode, PipelineNode, PropertyNode, RepositoryNode,
-    SchemaClassificationData, SchemaNode, StructuredSubField, ViewComponentNode,
-    ViewContainerNode,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode, PolicyNode,
+    PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -49,6 +49,11 @@ pub struct CachingQuerier<'a> {
     array_item_schema_cache: RwLock<HashMap<(String, String), Option<SchemaNode>>>,
     api_resources_cache: RwLock<Option<Vec<ApiResourceNode>>>,
     api_operations_cache: RwLock<HashMap<String, Vec<ApiOperationNode>>>,
+    policies_cache: RwLock<HashMap<String, Vec<PolicyNode>>>,
+    relationships_cache: RwLock<HashMap<String, Vec<RelationshipNode>>>,
+    all_policies_cache: RwLock<Option<Vec<PolicyNode>>>,
+    all_relationships_cache: RwLock<Option<Vec<RelationshipNode>>>,
+    tenants_cache: RwLock<HashMap<String, TenantNode>>,
 }
 
 impl<'a> CachingQuerier<'a> {
@@ -77,6 +82,11 @@ impl<'a> CachingQuerier<'a> {
             array_item_schema_cache: RwLock::new(HashMap::new()),
             api_resources_cache: RwLock::new(None),
             api_operations_cache: RwLock::new(HashMap::new()),
+            policies_cache: RwLock::new(HashMap::new()),
+            relationships_cache: RwLock::new(HashMap::new()),
+            all_policies_cache: RwLock::new(None),
+            all_relationships_cache: RwLock::new(None),
+            tenants_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -166,6 +176,18 @@ impl<'a> CachingQuerier<'a> {
             for (tgt, sources) in rev_map {
                 cache.insert(tgt, sources);
             }
+        }
+
+        // 6. Bulk-load all policies
+        {
+            let policies = self.inner.list_all_policies().await?;
+            *self.all_policies_cache.write().unwrap() = Some(policies);
+        }
+
+        // 7. Bulk-load all relationships
+        {
+            let rels = self.inner.list_all_relationships().await?;
+            *self.all_relationships_cache.write().unwrap() = Some(rels);
         }
 
         Ok(())
@@ -623,5 +645,83 @@ impl GraphQuerier for CachingQuerier<'_> {
         endpoint_path: &str,
     ) -> Result<Option<PipelineNode>, GraphError> {
         self.inner.get_pipeline_for_endpoint(endpoint_path).await
+    }
+
+    // ── Persistence metamodel queries ──────────────────────────────────
+
+    async fn get_policies_for_schema(&self, schema_title: &str) -> Result<Vec<PolicyNode>, GraphError> {
+        {
+            let cache = self.policies_cache.read().unwrap();
+            if let Some(policies) = cache.get(schema_title) {
+                return Ok(policies.clone());
+            }
+        }
+        let policies = self.inner.get_policies_for_schema(schema_title).await?;
+        self.policies_cache
+            .write()
+            .unwrap()
+            .insert(schema_title.to_string(), policies.clone());
+        Ok(policies)
+    }
+
+    async fn get_relationships_for_schema(&self, schema_title: &str) -> Result<Vec<RelationshipNode>, GraphError> {
+        {
+            let cache = self.relationships_cache.read().unwrap();
+            if let Some(rels) = cache.get(schema_title) {
+                return Ok(rels.clone());
+            }
+        }
+        let rels = self.inner.get_relationships_for_schema(schema_title).await?;
+        self.relationships_cache
+            .write()
+            .unwrap()
+            .insert(schema_title.to_string(), rels.clone());
+        Ok(rels)
+    }
+
+    async fn get_relationship_by_name(&self, name: &str) -> Result<Option<RelationshipNode>, GraphError> {
+        self.inner.get_relationship_by_name(name).await
+    }
+
+    async fn list_all_policies(&self) -> Result<Vec<PolicyNode>, GraphError> {
+        {
+            let cache = self.all_policies_cache.read().unwrap();
+            if let Some(policies) = cache.as_ref() {
+                return Ok(policies.clone());
+            }
+        }
+        let policies = self.inner.list_all_policies().await?;
+        *self.all_policies_cache.write().unwrap() = Some(policies.clone());
+        Ok(policies)
+    }
+
+    async fn list_all_relationships(&self) -> Result<Vec<RelationshipNode>, GraphError> {
+        {
+            let cache = self.all_relationships_cache.read().unwrap();
+            if let Some(rels) = cache.as_ref() {
+                return Ok(rels.clone());
+            }
+        }
+        let rels = self.inner.list_all_relationships().await?;
+        *self.all_relationships_cache.write().unwrap() = Some(rels.clone());
+        Ok(rels)
+    }
+
+    // ── Security metamodel queries ─────────────────────────────────────
+
+    async fn get_security_identity(&self, subject: &str) -> Result<Option<SecurityIdentityNode>, GraphError> {
+        self.inner.get_security_identity(subject).await
+    }
+
+    async fn get_memberships_for_identity(&self, identity_name: &str) -> Result<Vec<MembershipNode>, GraphError> {
+        self.inner.get_memberships_for_identity(identity_name).await
+    }
+
+    async fn get_tenant(&self, name: &str) -> Result<Option<TenantNode>, GraphError> {
+        self.inner.get_tenant(name).await
+    }
+
+    async fn list_all_tenants(&self) -> Result<Vec<TenantNode>, GraphError> {
+        self.inner.list_all_tenants().await
     }
 }

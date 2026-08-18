@@ -288,7 +288,10 @@ impl GlobalGenerator for SeedDataGenerator {
             path: self
                 .output_dir
                 .join("migrations")
-                .join("0900_seed_data.sql"),
+                // Demo data references entity tables across every domain, so it
+                // must apply AFTER all entity/codelist migrations (which can reach
+                // into the 8000s). A dedicated high band keeps it last.
+                .join("9900_seed_data.sql"),
             content,
         }])
     }

@@ -41,6 +41,10 @@ impl {{ domain | pascal_case }}Error {
     }
 }
 
+// SeaORM is unavailable in wasm32 worker builds (sqlx/mio), so the DbErr
+// conversion is host-only; the cornucopia conversions below cover the worker
+// slice.
+#[cfg(not(target_arch = "wasm32"))]
 impl From<sea_orm::DbErr> for {{ domain | pascal_case }}Error {
     fn from(e: sea_orm::DbErr) -> Self {
         Self::InternalError(e.to_string())
@@ -58,3 +62,18 @@ impl From<Box<dyn std::error::Error + Send + Sync>> for {{ domain | pascal_case 
         Self::InternalError(e.to_string())
     }
 }
+
+{% if project.persistence_provider == "cornucopia" %}
+
+impl From<tokio_postgres::Error> for {{ domain | pascal_case }}Error {
+    fn from(e: tokio_postgres::Error) -> Self {
+        Self::InternalError(e.to_string())
+    }
+}
+
+impl From<deadpool_postgres::PoolError> for {{ domain | pascal_case }}Error {
+    fn from(e: deadpool_postgres::PoolError) -> Self {
+        Self::InternalError(e.to_string())
+    }
+}
+{% endif %}

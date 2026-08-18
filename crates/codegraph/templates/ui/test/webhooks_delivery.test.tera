@@ -53,7 +53,7 @@ test.describe('Webhook Delivery', () => {
 
     // 3. Create a timecard entity via the API to trigger an event
     // All timecard fields are optional, so empty {} creates a valid entity.
-    await createEntityAsAcme(orgContext, '/timecard/timecard', {});
+    await createEntityAsAcme(orgContext, '/timecard/timecards', {});
 
     // 4. Wait for dispatch worker to drain queue backlog and deliver
     await ownerPage.waitForTimeout(30000);
@@ -115,7 +115,7 @@ test.describe('Webhook Delivery', () => {
     expect(subResp.ok).toBeTruthy();
 
     // 3. Trigger an event
-    await createEntityAsAcme(orgContext, '/timecard/timecard', {});
+    await createEntityAsAcme(orgContext, '/timecard/timecards', {});
 
     // 4. Wait for dispatch worker to drain queue backlog and attempt delivery
     await ownerPage.waitForTimeout(30000);
@@ -166,7 +166,7 @@ test.describe('Webhook Delivery', () => {
     expect(subResp.ok).toBeTruthy();
 
     // Trigger event
-    await createEntityAsAcme(orgContext, '/timecard/timecard', {}).catch(() => {});
+    await createEntityAsAcme(orgContext, '/timecard/timecards', {}).catch(() => {});
 
     // Wait for delivery
     await ownerPage.waitForTimeout(30000);
@@ -215,7 +215,7 @@ test.describe('Webhook Delivery', () => {
     expect(subResp.ok).toBeTruthy();
 
     // Trigger a 'created' event — should NOT be delivered
-    await createEntityAsAcme(orgContext, '/timecard/timecard', {}).catch(() => {});
+    await createEntityAsAcme(orgContext, '/timecard/timecards', {}).catch(() => {});
 
     await ownerPage.waitForTimeout(30000);
 
@@ -261,7 +261,7 @@ test.describe('Webhook Delivery', () => {
 
     // Trigger a recruiting event by creating a candidate
     // Note: The entity path may vary - this is the path for the candidate entity
-    await createEntityAsAcme(orgContext, '/recruiting/candidate', {
+    await createEntityAsAcme(orgContext, '/recruiting/candidates', {
       name: 'Test Candidate',
     }).catch(() => {});
 

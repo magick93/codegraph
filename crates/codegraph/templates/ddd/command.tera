@@ -3,7 +3,14 @@
 
 use std::sync::Arc;
 
+{% if project.persistence_provider == "cornucopia" %}
+use cornucopia_queries::client;
+use crate::db_client::ClientSource;
+#[cfg(not(target_arch = "wasm32"))]
+use sea_orm::DatabaseConnection;
+{% else %}
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
+{% endif %}
 use uuid::Uuid;
 
 use super::repository::{{ entity_name }}Repository;
@@ -19,6 +26,30 @@ use super::super::errors::{{ domain | pascal_case }}Error;
 /// Set API key + org session variables within a transaction so Postgres RLS policies
 /// can enforce tenant isolation and scope checks. Uses `set_config(..., true)` which
 /// is equivalent to `SET LOCAL` but supports parameterised values (no SQL injection).
+{% if project.persistence_provider == "cornucopia" %}
+async fn set_rls_session_vars(
+    tx: &impl client::GenericClient,
+    api_key_id: Uuid,
+    organization_id: Uuid,
+    correlation_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), {{ domain | pascal_case }}Error> {
+    tx.execute(
+        "SELECT set_config('app.current_api_key', $1, true), \
+                set_config('app.organization_id', $2, true), \
+                set_config('app.correlation_id', $3, true), \
+                set_config('app.user_id', $4, true)",
+        &[
+            &api_key_id.to_string(),
+            &organization_id.to_string(),
+            &correlation_id.to_string(),
+            &user_id.to_string(),
+        ],
+    ).await?;
+    tx.execute("SET LOCAL ROLE app_user", &[]).await?;
+    Ok(())
+}
+{% else %}
 async fn set_rls_session_vars(
     tx: &impl ConnectionTrait,
     api_key_id: Uuid,
@@ -45,10 +76,18 @@ async fn set_rls_session_vars(
     )).await?;
     Ok(())
 }
+{% endif %}
 
 #[derive(Clone)]
 pub struct {{ entity_name }}CommandHandler {
-    repo: Arc<dyn {{ entity_name }}Repository>,
+{% if project.persistence_provider == "cornucopia" %}
+    repo: Arc<super::cornucopia_repository_impl::{{ entity_name }}RepositoryImpl>,
+    client_source: Arc<dyn ClientSource>,
+{% else %}
+    repo: Arc<dyn {{ entity_name }}Repository<sea_orm::DatabaseTransaction>>,
+{% endif %}
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
     db: DatabaseConnection,
 {% if project.hooks_api_crate %}
     hooks: Option<Arc<dyn {{ project.hooks_api_crate }}::generated::{{ domain }}::{{ module_name }}::{{ entity_name }}Lifecycle>>,
@@ -57,13 +96,29 @@ pub struct {{ entity_name }}CommandHandler {
 
 impl {{ entity_name }}CommandHandler {
     pub fn new(
-        repo: Arc<dyn {{ entity_name }}Repository>,
+{% if project.persistence_provider == "cornucopia" %}
+        repo: Arc<super::cornucopia_repository_impl::{{ entity_name }}RepositoryImpl>,
+        client_source: Arc<dyn ClientSource>,
+{% else %}
+        repo: Arc<dyn {{ entity_name }}Repository<sea_orm::DatabaseTransaction>>,
+{% endif %}
+        #[cfg(not(target_arch = "wasm32"))]
         db: DatabaseConnection,
 {% if project.hooks_api_crate %}
         hooks: Option<Arc<dyn {{ project.hooks_api_crate }}::generated::{{ domain }}::{{ module_name }}::{{ entity_name }}Lifecycle>>,
 {% endif %}
     ) -> Self {
-        Self { repo, db{% if project.hooks_api_crate %}, hooks{% endif %} }
+        Self {
+            repo,
+{% if project.persistence_provider == "cornucopia" %}
+            client_source,
+{% endif %}
+            #[cfg(not(target_arch = "wasm32"))]
+            db,
+{% if project.hooks_api_crate %}
+            hooks,
+{% endif %}
+        }
     }
 {% if has_create %}
 
@@ -167,10 +222,17 @@ impl {{ entity_name }}CommandHandler {
         organization_id: Uuid,
         user_id: Uuid,
     ) -> Result<Uuid, {{ domain | pascal_case }}Error> {
+{% if project.persistence_provider == "cornucopia" %}
+        let mut client = self.client_source.client().await
+            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+        let tx = client.transaction().await
+            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+{% else %}
         let tx = self.db.begin().await?;
+{% endif %}
         set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
-        {% if project.hooks_api_crate %}
+        {% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}
         // --- before_create hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = {{ project.hooks_api_crate }}::TxContext::new(&tx, correlation_id, organization_id, api_key_id, source);
@@ -213,7 +275,7 @@ impl {{ entity_name }}CommandHandler {
             })?;
 {% endif %}
 
-        {% if project.hooks_api_crate %}
+        {% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}
         // --- after_create_tx hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = {{ project.hooks_api_crate }}::TxContext::new(&tx, correlation_id, organization_id, api_key_id, source);
@@ -237,6 +299,13 @@ impl {{ entity_name }}CommandHandler {
 
         {% if project.hooks_api_crate %}
         // --- after_create_commit hook ---
+{% if project.persistence_provider == "cornucopia" %}
+        // Post-commit hooks carry a SeaORM handle in their PostCommitContext;
+        // they are native-only in the worker slice (no wasm32 SeaORM).
+        // TODO(worker-hooks): cornucopia hook parity (later epic step).
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+{% endif %}
         if let Some(hooks) = &self.hooks {
             let post_ctx = {{ project.hooks_api_crate }}::PostCommitContext::new(
                 self.db.clone(), correlation_id, organization_id, api_key_id, id, source.clone(),
@@ -245,6 +314,9 @@ impl {{ entity_name }}CommandHandler {
                 tracing::error!(entity_id = %id, correlation_id = %correlation_id, "after_create_commit hook failed: {e}");
             }
         }
+{% if project.persistence_provider == "cornucopia" %}
+        }
+{% endif %}
 
         {% endif %}
 
@@ -254,10 +326,17 @@ impl {{ entity_name }}CommandHandler {
 {% if has_update %}
 
     pub async fn update(&self, id: Uuid, cmd: Update{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), {{ domain | pascal_case }}Error> {
+{% if project.persistence_provider == "cornucopia" %}
+        let mut client = self.client_source.client().await
+            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+        let tx = client.transaction().await
+            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+{% else %}
         let tx = self.db.begin().await?;
+{% endif %}
         set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
-        {% if project.hooks_api_crate %}
+        {% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}
         // --- before_update hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = {{ project.hooks_api_crate }}::TxContext::new(&tx, correlation_id, organization_id, api_key_id, &source);
@@ -285,7 +364,7 @@ impl {{ entity_name }}CommandHandler {
                 }
             })?;
 
-        {% if project.hooks_api_crate %}
+        {% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}
         // --- after_update_tx hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = {{ project.hooks_api_crate }}::TxContext::new(&tx, correlation_id, organization_id, api_key_id, &source);
@@ -309,6 +388,10 @@ impl {{ entity_name }}CommandHandler {
 
         {% if project.hooks_api_crate %}
         // --- after_update_commit hook ---
+{% if project.persistence_provider == "cornucopia" %}
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+{% endif %}
         if let Some(hooks) = &self.hooks {
             let post_ctx = {{ project.hooks_api_crate }}::PostCommitContext::new(
                 self.db.clone(), correlation_id, organization_id, api_key_id, id, source.clone(),
@@ -317,6 +400,9 @@ impl {{ entity_name }}CommandHandler {
                 tracing::error!(entity_id = %id, correlation_id = %correlation_id, "after_update_commit hook failed: {e}");
             }
         }
+{% if project.persistence_provider == "cornucopia" %}
+        }
+{% endif %}
 
         {% endif %}
 
@@ -326,10 +412,17 @@ impl {{ entity_name }}CommandHandler {
 {% if has_delete %}
 
     pub async fn delete(&self, id: Uuid, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), {{ domain | pascal_case }}Error> {
+{% if project.persistence_provider == "cornucopia" %}
+        let mut client = self.client_source.client().await
+            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+        let tx = client.transaction().await
+            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+{% else %}
         let tx = self.db.begin().await?;
+{% endif %}
         set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
-        {% if project.hooks_api_crate %}
+        {% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}
         // --- before_delete hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = {{ project.hooks_api_crate }}::TxContext::new(&tx, correlation_id, organization_id, api_key_id, &source);
@@ -357,7 +450,7 @@ impl {{ entity_name }}CommandHandler {
                 }
             })?;
 
-        {% if project.hooks_api_crate %}
+        {% if project.hooks_api_crate and project.persistence_provider == "sea_orm" %}
         // --- after_delete_tx hook ---
         if let Some(hooks) = &self.hooks {
             let mut ctx = {{ project.hooks_api_crate }}::TxContext::new(&tx, correlation_id, organization_id, api_key_id, &source);
@@ -381,6 +474,10 @@ impl {{ entity_name }}CommandHandler {
 
         {% if project.hooks_api_crate %}
         // --- after_delete_commit hook ---
+{% if project.persistence_provider == "cornucopia" %}
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+{% endif %}
         if let Some(hooks) = &self.hooks {
             let post_ctx = {{ project.hooks_api_crate }}::PostCommitContext::new(
                 self.db.clone(), correlation_id, organization_id, api_key_id, id, source,
@@ -389,7 +486,9 @@ impl {{ entity_name }}CommandHandler {
                 tracing::error!(entity_id = %id, correlation_id = %correlation_id, "after_delete_commit hook failed: {e}");
             }
         }
-
+{% if project.persistence_provider == "cornucopia" %}
+        }
+{% endif %}
         {% endif %}
 
         Ok(())

@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [develop]
+    branches: [develop, master]
     paths-ignore: ['**.md', 'LICENSE', '.gitignore']
   pull_request:
-    branches: [develop]
+    branches: [develop, master]
     paths-ignore: ['**.md', 'LICENSE', '.gitignore']
 
 concurrency:
@@ -35,3 +35,30 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+
+  test-ops-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Run ops DB integration tests
+        run: cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture
+      - name: Run ops generator tests
+        run: cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture

@@ -15,7 +15,7 @@ export const load: PageServerLoad = async ({ params, locals, fetch: skFetch }) =
 	};
 
 
-	const res = await skFetch(`${BASE_URL}/api/recruiting/candidate/${params.candidate_id}`, { headers });
+	const res = await skFetch(`${BASE_URL}/api/v1/recruiting/candidate/${params.candidate_id}`, { headers });
 
 
 	if (!res.ok) {
@@ -32,7 +32,7 @@ export const load: PageServerLoad = async ({ params, locals, fetch: skFetch }) =
 	// Fetch workflow state and merge into response
 	try {
 
-		const wfRes = await skFetch(`${BASE_URL}/api/recruiting/candidate/${params.candidate_id}/workflow`, { headers });
+		const wfRes = await skFetch(`${BASE_URL}/api/v1/recruiting/candidate/${params.candidate_id}/workflow`, { headers });
 
 		if (wfRes.ok) {
 			const wfJson = await wfRes.json();

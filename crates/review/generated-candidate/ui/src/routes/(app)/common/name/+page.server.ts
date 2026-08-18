@@ -21,7 +21,7 @@ export const load: PageServerLoad = async ({ url, locals, fetch: skFetch }) => {
 	};
 
 
-	const apiUrl = new URL(`${BASE_URL}/api/common/name`);
+	const apiUrl = new URL(`${BASE_URL}/api/v1/common/name`);
 
 	apiUrl.searchParams.set('page', String(page));
 	apiUrl.searchParams.set('page_size', String(pageSize));

@@ -36,6 +36,7 @@ path = "tests/unit/mod.rs"
 
 {% endif %}
 [dependencies]
+thiserror = "2"
 axum = { version = "0.8", features = ["multipart"] }
 {% if project.database_target == "sqlite" %}
 sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
@@ -87,7 +88,6 @@ multibase = "0.9"
 p256 = { version = "0.13", features = ["ecdsa"] }
 k256 = "0.13"
 anyhow = "1"
-thiserror = "2"
 tokio-tungstenite = { version = "0.21", features = ["__rustls-tls"] }
 futures = "0.3"
 serde_cbor = "0.11"

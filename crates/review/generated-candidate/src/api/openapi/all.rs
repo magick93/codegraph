@@ -6,7 +6,7 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(
-    info(title = "HR Open API", version = "1.0.0"),
+    info(title = "HR Open API", version = "v1"),
     modifiers(&ApiKeySecurity),
     paths(
 
@@ -162,6 +162,9 @@ use utoipa::OpenApi;
         crate::domain::rsvp::rsvp::dto_response::RsvpResponse,
 
 
+        crate::error::ErrorResponse,
+        crate::error::ErrorBody,
+        crate::error::FieldError,
     )),
     security(("ApiKeyAuth" = [])),
     tags(

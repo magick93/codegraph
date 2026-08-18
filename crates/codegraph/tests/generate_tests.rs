@@ -3,8 +3,10 @@ use codegraph::generate::traits::EntityGenerator;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    CodeList, ColumnInfo, CompositionNode, CompositionTree, DetectionSource, EnumValue,
-    ParentCandidate, PropertyNode, SchemaNode,
+    CodeList, ColumnInfo, CompositionNode, CompositionTree, DeletionPropagation, DetectionSource,
+    EnumValue, ParentCandidate, PolicyKind, PolicyNode, PropertyNode, SchemaNode,
+    SoftDeleteMarker, SoftDeletePolicy, SoftDeleteVisibility, TenantIsolationPolicy,
+    TenantPropagation, TenantStrategy,
 };
 use codegraph_type_contracts::RefClassificationKind;
 use std::path::Path;
@@ -2494,5 +2496,269 @@ async fn ts_fixture_optional_entity_ref_stays_optional() {
     assert!(
         !fixture.contains("\n      candidateId: "),
         "optional FK must NOT be populated in valid(). Got:\n{fixture}"
+    );
+}
+
+// === Policy-Driven Generation Tests ===
+
+#[tokio::test]
+async fn generate_policy_driven_entity_with_soft_delete() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "test/json/TestEntityType.json",
+            "TestEntityType",
+            "test_entity",
+            "test",
+            "entity",
+        ))
+        .with_properties(
+            "TestEntityType",
+            vec![
+                PropertyNode {
+                    name: "name".to_string(),
+                    prop_type: "string".to_string(),
+                    description: Some("The entity name".to_string()),
+                    format: None,
+                    is_required: true,
+                    is_nullable: false,
+                    is_array: false,
+                    pattern: None,
+                    min_length: None,
+                    max_length: None,
+                    minimum: None,
+                    maximum: None,
+                    pg_column_name: "name".to_string(),
+                    pg_column_type: "TEXT".to_string(),
+                    rust_field_name: "name".to_string(),
+                    rust_field_type: "String".to_string(),
+                    sea_orm_type: "Text".to_string(),
+                    render_strategy: "direct_column".to_string(),
+                    ref_target: None,
+                    classification: Some("primitive_wrapper".to_string()),
+                    projection: None,
+                    classification_kind: Some(RefClassificationKind::PrimitiveWrapper),
+                    ui_override_detail: None,
+                    ui_override_list_cell: None,
+                    ui_override_form: None,
+                    ui_override_inline: None,
+                },
+            ],
+        )
+        .build();
+
+    // Ingest soft-delete, tenant, and audit policies into the MockEngine
+    mock.ingest_policy(&PolicyNode {
+        name: "test_soft_delete".into(),
+        kind: PolicyKind::SoftDelete(SoftDeletePolicy {
+            marker: SoftDeleteMarker::Timestamp("deleted_at".into()),
+            visibility: SoftDeleteVisibility::ExcludeByDefault,
+            cascade: DeletionPropagation::Restrict,
+        }),
+        target_schema: "TestEntityType".into(),
+        domain: Some("test".into()),
+    })
+    .await
+    .unwrap();
+
+    mock.ingest_policy(&PolicyNode {
+        name: "test_tenant".into(),
+        kind: PolicyKind::TenantIsolation(TenantIsolationPolicy {
+            strategy: TenantStrategy::Column {
+                property: "org_id".into(),
+            },
+            propagation: TenantPropagation::Explicit,
+        }),
+        target_schema: "TestEntityType".into(),
+        domain: Some("test".into()),
+    })
+    .await
+    .unwrap();
+
+    let config = codegraph_config::config::parse_domain_config_str(
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.test]
+label = "Test"
+schema_dir = "test"
+postgres_schema = "test"
+entities = ["TestEntityType"]
+auditable = true
+"#,
+    )
+    .unwrap();
+
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
+
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-policy-entity");
+    let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &mock,
+            "TestEntityType",
+            "test",
+            &config,
+            &tera,
+            &codegraph::generate::ProjectConfig::default(),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        !files.is_empty(),
+        "Entity generator should produce files"
+    );
+
+    let entity_file = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("test_test_entity.rs"))
+        .expect("Should have an entity file");
+
+    let content = &entity_file.content;
+
+    // Soft-delete policy assertions
+    assert!(
+        content.contains("fn active()"),
+        "should generate active() query scope"
+    );
+    assert!(
+        content.contains("fn including_deleted()"),
+        "should generate including_deleted() scope"
+    );
+    assert!(
+        content.contains("Column::DeletedAt.is_null()"),
+        "should filter active rows on deleted_at IS NULL"
+    );
+    assert!(
+        content.contains("deleted_at"),
+        "should have deleted_at column from soft-delete policy"
+    );
+
+    // Tenant isolation policy assertions
+    assert!(
+        content.contains("org_id"),
+        "should use configured tenant column name from policy"
+    );
+    assert!(
+        !content.contains("platform_organization_id"),
+        "should NOT hardcode platform_organization_id when tenant policy is set"
+    );
+}
+
+#[tokio::test]
+async fn generate_policy_driven_ddl_with_soft_delete() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "test/json/TestEntityType.json",
+            "TestEntityType",
+            "test_entity",
+            "test",
+            "entity",
+        ))
+        .with_properties(
+            "TestEntityType",
+            vec![
+                PropertyNode {
+                    name: "name".to_string(),
+                    prop_type: "string".to_string(),
+                    description: Some("The entity name".to_string()),
+                    format: None,
+                    is_required: true,
+                    is_nullable: false,
+                    is_array: false,
+                    pattern: None,
+                    min_length: None,
+                    max_length: None,
+                    minimum: None,
+                    maximum: None,
+                    pg_column_name: "name".to_string(),
+                    pg_column_type: "TEXT".to_string(),
+                    rust_field_name: "name".to_string(),
+                    rust_field_type: "String".to_string(),
+                    sea_orm_type: "Text".to_string(),
+                    render_strategy: "direct_column".to_string(),
+                    ref_target: None,
+                    classification: Some("primitive_wrapper".to_string()),
+                    projection: None,
+                    classification_kind: Some(RefClassificationKind::PrimitiveWrapper),
+                    ui_override_detail: None,
+                    ui_override_list_cell: None,
+                    ui_override_form: None,
+                    ui_override_inline: None,
+                },
+            ],
+        )
+        .build();
+
+    let config = codegraph_config::config::parse_domain_config_str(
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.test]
+label = "Test"
+schema_dir = "test"
+postgres_schema = "test"
+entities = ["TestEntityType"]
+auditable = true
+"#,
+    )
+    .unwrap();
+
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
+
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-policy-ddl");
+    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &mock,
+            "TestEntityType",
+            "test",
+            &config,
+            &tera,
+            &codegraph::generate::ProjectConfig::default(),
+        )
+        .await
+        .unwrap();
+
+    assert!(!files.is_empty(), "DDL generator should produce files");
+
+    let table_file = files
+        .iter()
+        .find(|f| {
+            f.path
+                .to_string_lossy()
+                .contains("test_test_entity.sql")
+        })
+        .expect("Should have a table SQL file");
+
+    let content = &table_file.content;
+
+    assert!(
+        content.contains("CREATE TABLE IF NOT EXISTS test.test_entity"),
+        "Should contain CREATE TABLE statement"
+    );
+    assert!(
+        content.contains("\"name\" TEXT NOT NULL"),
+        "Should contain quoted name column (PG reserved word)"
+    );
+    assert!(
+        content.contains("deleted_at TIMESTAMPTZ NULL"),
+        "Should contain deleted_at audit column"
+    );
+    assert!(
+        content.contains("created_at TIMESTAMPTZ NOT NULL"),
+        "Should contain created_at column"
+    );
+    assert!(
+        content.contains("id UUID NOT NULL"),
+        "Should contain primary key id column"
+    );
+    assert!(
+        content.contains("PRIMARY KEY"),
+        "Should contain PRIMARY KEY constraint"
     );
 }

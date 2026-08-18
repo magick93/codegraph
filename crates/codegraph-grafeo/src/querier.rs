@@ -5,9 +5,10 @@ use codegraph_core::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, ColumnInfo,
     CompositeColumn, CompositeRange, CompositionNode, CompositionTree, DetectionSource, EnumValue,
     ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, HttpEndpointNode,
-    InteractionNode, LexiconNode, NamespaceNode, ParameterDefinitionNode, ParentCandidate,
-    PermissionNode, PipelineNode, PropertyNode, RepositoryNode, SchemaClassificationData,
-    SchemaNode, StructuredSubField, ViewComponentNode, ViewContainerNode,
+    InteractionNode, LexiconNode, MembershipNode, NamespaceNode, ParameterDefinitionNode,
+    ParentCandidate, PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode,
+    RepositoryNode, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -29,8 +30,9 @@ const PROPERTY_RETURN_COLS: &str = "\
 
 use crate::conversions::{
     row_to_codelist, row_to_composite_column, row_to_composite_range, row_to_enum_value,
-    row_to_extension, row_to_property_node, row_to_schema_node, row_to_structured_sub_field,
-    RowReader,
+    row_to_extension, row_to_membership_node, row_to_policy_node, row_to_property_node,
+    row_to_relationship_node, row_to_schema_node, row_to_security_identity_node,
+    row_to_structured_sub_field, row_to_tenant_node, RowReader,
 };
 use crate::engine::GrafeoEngine;
 
@@ -1389,6 +1391,178 @@ impl GraphQuerier for GrafeoEngine {
             middleware,
             domain: reader.get_opt_string(row, "pl.domain")?,
         }))
+    }
+
+    // ── Persistence Metamodel queries ─────────────────────────────────
+
+    async fn get_policies_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<PolicyNode>, GraphError> {
+        let params = HashMap::from([(
+            "title".to_string(),
+            grafeo::Value::String(schema_title.into()),
+        )]);
+        let result = query_gql_params(
+            self,
+            "MATCH (p:Policy {target_schema: $title}) RETURN p.name AS name, \
+             p.kind_json AS kind_json, p.target_schema AS target_schema, p.domain AS domain",
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_policy_node(&reader, row))
+            .collect()
+    }
+
+    async fn get_relationships_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<RelationshipNode>, GraphError> {
+        let params = HashMap::from([(
+            "title".to_string(),
+            grafeo::Value::String(schema_title.into()),
+        )]);
+        let result = query_gql_params(
+            self,
+            "MATCH (r:Relationship) \
+             WHERE r.source_schema = $title OR r.target_schema = $title \
+             RETURN r.name AS name, r.source_schema AS source_schema, \
+             r.target_schema AS target_schema, r.cardinality AS cardinality, \
+             r.ownership AS ownership, r.fk_json AS fk_json, \
+             r.propagation_json AS propagation_json, r.domain AS domain",
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_relationship_node(&reader, row))
+            .collect()
+    }
+
+    async fn get_relationship_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<RelationshipNode>, GraphError> {
+        let params = HashMap::from([("name".to_string(), grafeo::Value::String(name.into()))]);
+        let result = query_gql_params(
+            self,
+            "MATCH (r:Relationship {name: $name}) \
+             RETURN r.name AS name, r.source_schema AS source_schema, \
+             r.target_schema AS target_schema, r.cardinality AS cardinality, \
+             r.ownership AS ownership, r.fk_json AS fk_json, \
+             r.propagation_json AS propagation_json, r.domain AS domain",
+            params,
+        )?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        Ok(Some(row_to_relationship_node(&reader, &result.rows[0])?))
+    }
+
+    async fn list_all_policies(&self) -> Result<Vec<PolicyNode>, GraphError> {
+        let gql = "MATCH (p:Policy) RETURN p.name AS name, p.kind_json AS kind_json, \
+                   p.target_schema AS target_schema, p.domain AS domain";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_policy_node(&reader, row))
+            .collect()
+    }
+
+    async fn list_all_relationships(&self) -> Result<Vec<RelationshipNode>, GraphError> {
+        let gql = "MATCH (r:Relationship) \
+                   RETURN r.name AS name, r.source_schema AS source_schema, \
+                   r.target_schema AS target_schema, r.cardinality AS cardinality, \
+                   r.ownership AS ownership, r.fk_json AS fk_json, \
+                   r.propagation_json AS propagation_json, r.domain AS domain";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_relationship_node(&reader, row))
+            .collect()
+    }
+
+    async fn get_security_identity(
+        &self,
+        subject: &str,
+    ) -> Result<Option<SecurityIdentityNode>, GraphError> {
+        let params =
+            HashMap::from([("subject".to_string(), grafeo::Value::String(subject.into()))]);
+        let result = query_gql_params(
+            self,
+            "MATCH (s:SecurityIdentity {subject: $subject}) \
+             RETURN s.name AS name, s.subject AS subject, s.domain AS domain",
+            params,
+        )?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        Ok(Some(row_to_security_identity_node(
+            &reader,
+            &result.rows[0],
+        )?))
+    }
+
+    async fn get_memberships_for_identity(
+        &self,
+        identity_name: &str,
+    ) -> Result<Vec<MembershipNode>, GraphError> {
+        let params = HashMap::from([(
+            "identity".to_string(),
+            grafeo::Value::String(identity_name.into()),
+        )]);
+        let result = query_gql_params(
+            self,
+            "MATCH (m:Membership {identity: $identity}) \
+             RETURN m.identity AS identity, m.tenant AS tenant, m.status AS status, \
+             m.roles_json AS roles_json, m.valid_from AS valid_from, \
+             m.valid_until AS valid_until",
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_membership_node(&reader, row))
+            .collect()
+    }
+
+    async fn get_tenant(&self, name: &str) -> Result<Option<TenantNode>, GraphError> {
+        let params = HashMap::from([("name".to_string(), grafeo::Value::String(name.into()))]);
+        let result = query_gql_params(
+            self,
+            "MATCH (t:Tenant {name: $name}) \
+             RETURN t.name AS name, t.label AS label, t.strategy_json AS strategy_json, \
+             t.domain AS domain",
+            params,
+        )?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        Ok(Some(row_to_tenant_node(&reader, &result.rows[0])?))
+    }
+
+    async fn list_all_tenants(&self) -> Result<Vec<TenantNode>, GraphError> {
+        let gql = "MATCH (t:Tenant) RETURN t.name AS name, t.label AS label, \
+                   t.strategy_json AS strategy_json, t.domain AS domain";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_tenant_node(&reader, row))
+            .collect()
     }
 }
 

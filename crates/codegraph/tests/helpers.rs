@@ -174,6 +174,18 @@ pub fn domain_config() -> DomainConfig {
             exclude: vec![],
             auditable: None,
             tier: "extended".into(),
+            worker_name: None,
+            custom_domain: None,
+            service_bindings: None,
+            hyperdrive_binding: None,
+            cron_triggers: None,
+            remote_include_mode: None,
+            webhooks: None,
+            queue_name: None,
+            queue_binding: None,
+            queue_max_retries: None,
+            queue_max_concurrency: None,
+            observability: None,
         },
     );
 

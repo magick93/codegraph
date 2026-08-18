@@ -67,7 +67,7 @@ impl CandidateFactory {
 
 
 
-        // referred_by_application_id_id: entity ref — caller must supply
+        // referred_by_application_id: entity ref — caller must supply
 
 
 

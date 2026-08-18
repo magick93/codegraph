@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
+
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
+
 use uuid::Uuid;
 
 use super::repository::CandidateRepository;
@@ -14,27 +16,30 @@ use super::dto_create::CreateCandidateRequest;
 use super::dto_update::UpdateCandidateRequest;
 
 
-use crate::error::BulkItemError;
-
+use super::super::errors::RecruitingError;
 
 /// Set API key + org session variables within a transaction so Postgres RLS policies
 /// can enforce tenant isolation and scope checks. Uses `set_config(..., true)` which
 /// is equivalent to `SET LOCAL` but supports parameterised values (no SQL injection).
+
 async fn set_rls_session_vars(
     tx: &impl ConnectionTrait,
     api_key_id: Uuid,
     organization_id: Uuid,
     correlation_id: Uuid,
-) -> Result<(), Box<dyn std::error::Error>> {
+    user_id: Uuid,
+) -> Result<(), RecruitingError> {
     tx.execute(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.current_api_key', $1, true), \
                 set_config('app.organization_id', $2, true), \
-                set_config('app.correlation_id', $3, true)",
+                set_config('app.correlation_id', $3, true), \
+                set_config('app.user_id', $4, true)",
         [
             api_key_id.to_string().into(),
             organization_id.to_string().into(),
             correlation_id.to_string().into(),
+            user_id.to_string().into(),
         ],
     )).await?;
     tx.execute(Statement::from_string(
@@ -44,26 +49,40 @@ async fn set_rls_session_vars(
     Ok(())
 }
 
+
 #[derive(Clone)]
 pub struct CandidateCommandHandler {
-    repo: Arc<dyn CandidateRepository>,
+
+    repo: Arc<dyn CandidateRepository<sea_orm::DatabaseTransaction>>,
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
     db: DatabaseConnection,
 
 }
 
 impl CandidateCommandHandler {
     pub fn new(
-        repo: Arc<dyn CandidateRepository>,
+
+        repo: Arc<dyn CandidateRepository<sea_orm::DatabaseTransaction>>,
+
+        #[cfg(not(target_arch = "wasm32"))]
         db: DatabaseConnection,
 
     ) -> Self {
-        Self { repo, db }
+        Self {
+            repo,
+
+            #[cfg(not(target_arch = "wasm32"))]
+            db,
+
+        }
     }
 
 
 
-    pub async fn create(&self, cmd: CreateCandidateRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid) -> Result<Uuid, Box<dyn std::error::Error>> {
-        self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id).await
+    pub async fn create(&self, cmd: CreateCandidateRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Uuid, RecruitingError> {
+        self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id, user_id).await
     }
 
 
@@ -72,11 +91,11 @@ impl CandidateCommandHandler {
     pub async fn bulk_create(
         &self,
         items: Vec<CreateCandidateRequest>,
-
         source: domain_types::SourceContext,
         correlation_id: Uuid,
         api_key_id: Uuid,
         organization_id: Uuid,
+        user_id: Uuid,
     ) -> Vec<Result<Uuid, crate::error::BulkItemError>> {
         
 
@@ -98,7 +117,7 @@ impl CandidateCommandHandler {
             }
 
 
-            match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id).await {
+            match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id, user_id).await {
 
                 Ok(id) => results.push(Ok(id)),
                 Err(e) => results.push(Err(crate::error::BulkItemError {
@@ -123,14 +142,26 @@ impl CandidateCommandHandler {
         correlation_id: Uuid,
         api_key_id: Uuid,
         organization_id: Uuid,
-    ) -> Result<Uuid, Box<dyn std::error::Error>> {
+        user_id: Uuid,
+    ) -> Result<Uuid, RecruitingError> {
+
         let tx = self.db.begin().await?;
-        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id).await?;
+
+        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
         
 
 
-        let id = self.repo.create(&tx, cmd).await?;
+        let id = self.repo.create(&tx, cmd).await
+            .map_err(|e| {
+                if e.to_string().contains("duplicate key") || e.to_string().contains("UNIQUE constraint") {
+                    RecruitingError::Conflict
+                } else if e.to_string().contains("not found") {
+                    RecruitingError::NotFound
+                } else {
+                    RecruitingError::InternalError(e.to_string())
+                }
+            })?;
 
 
         
@@ -145,13 +176,22 @@ impl CandidateCommandHandler {
 
 
 
-    pub async fn update(&self, id: Uuid, cmd: UpdateCandidateRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn update(&self, id: Uuid, cmd: UpdateCandidateRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), RecruitingError> {
+
         let tx = self.db.begin().await?;
-        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id).await?;
+
+        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
 
         
 
-        self.repo.update(&tx, id, cmd).await?;
+        self.repo.update(&tx, id, cmd).await
+            .map_err(|e| {
+                if e.to_string().contains("not found") {
+                    RecruitingError::NotFound
+                } else {
+                    RecruitingError::InternalError(e.to_string())
+                }
+            })?;
 
         
 

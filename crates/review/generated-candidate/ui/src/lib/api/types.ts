@@ -187,7 +187,7 @@ export interface ApplicationResponse {
 
 
 
-	candidate_id_id?: string | null;
+	candidate_id?: string | null;
 
 
 
@@ -212,7 +212,7 @@ export interface CreateApplicationRequest {
 
 
 
-	candidate_id_id?: string | null;
+	candidate_id?: string | null;
 
 
 
@@ -230,7 +230,7 @@ export interface UpdateApplicationRequest {
 
 	applied_date?: string | null;
 
-	candidate_id_id?: string | null;
+	candidate_id?: string | null;
 
 	status?: string | null;
 
@@ -311,7 +311,7 @@ export interface CandidateResponse {
 
 
 	/** Source application (entity reference) */
-	referred_by_application_id_id?: string | null;
+	referred_by_application_id?: string | null;
 
 
 
@@ -392,7 +392,7 @@ export interface CreateCandidateRequest {
 
 
 
-	referred_by_application_id_id?: string | null;
+	referred_by_application_id?: string | null;
 
 
 
@@ -438,7 +438,7 @@ export interface UpdateCandidateRequest {
 
 	qualifications?: CandidateQualificationResponse[] | null;
 
-	referred_by_application_id_id?: string | null;
+	referred_by_application_id?: string | null;
 
 	status?: string | null;
 

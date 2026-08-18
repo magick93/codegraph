@@ -37,7 +37,7 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 export async function apiGet<T>(path: string, params?: Record<string, string | number>): Promise<T> {
-	const url = new URL(`/api${path}`, BASE_URL);
+	const url = new URL(`/api/v1${path}`, BASE_URL);
 	if (params) {
 		for (const [key, value] of Object.entries(params)) {
 			if (value !== undefined && value !== null) {
@@ -65,7 +65,7 @@ export async function apiGet<T>(path: string, params?: Record<string, string | n
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
-	const url = new URL(`/api${path}`, BASE_URL);
+	const url = new URL(`/api/v1${path}`, BASE_URL);
 
 	const auth = await authHeaders();
 	const res = await fetch(url.toString(), {
@@ -90,7 +90,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function apiPut<T>(path: string, body: unknown): Promise<T> {
-	const url = new URL(`/api${path}`, BASE_URL);
+	const url = new URL(`/api/v1${path}`, BASE_URL);
 
 	const auth = await authHeaders();
 	const res = await fetch(url.toString(), {
@@ -115,7 +115,7 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function apiDelete(path: string): Promise<void> {
-	const url = new URL(`/api${path}`, BASE_URL);
+	const url = new URL(`/api/v1${path}`, BASE_URL);
 
 	const auth = await authHeaders();
 	const res = await fetch(url.toString(), {

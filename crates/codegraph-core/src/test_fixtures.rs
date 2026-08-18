@@ -210,6 +210,73 @@ pub fn person_edges() -> Vec<(String, String, EdgeType, Option<EdgeProperties>)>
     ]
 }
 
+/// Audit policy for PersonType — enables tracking of created/updated/deleted.
+pub fn person_audit_policy() -> PolicyNode {
+    PolicyNode {
+        name: "person_audit".into(),
+        kind: PolicyKind::Audit(AuditPolicy {
+            track_created: true,
+            track_updated: true,
+            track_deleted: false,
+        }),
+        target_schema: "PersonType".into(),
+        domain: Some("common".into()),
+    }
+}
+
+/// Soft-delete policy for PersonType — uses deleted_at timestamp, hidden by default.
+pub fn person_soft_delete_policy() -> PolicyNode {
+    PolicyNode {
+        name: "person_soft_delete".into(),
+        kind: PolicyKind::SoftDelete(SoftDeletePolicy {
+            marker: SoftDeleteMarker::Timestamp("deleted_at".into()),
+            visibility: SoftDeleteVisibility::ExcludeByDefault,
+            cascade: DeletionPropagation::Restrict,
+        }),
+        target_schema: "PersonType".into(),
+        domain: Some("common".into()),
+    }
+}
+
+/// Tenant isolation policy — column-based using platform_organization_id.
+pub fn person_tenant_isolation_policy() -> PolicyNode {
+    PolicyNode {
+        name: "person_tenant_isolation".into(),
+        kind: PolicyKind::TenantIsolation(TenantIsolationPolicy {
+            strategy: TenantStrategy::Column {
+                property: "platform_organization_id".into(),
+            },
+            propagation: TenantPropagation::Explicit,
+        }),
+        target_schema: "PersonType".into(),
+        domain: Some("common".into()),
+    }
+}
+
+/// Relationship: CandidateType belongs to PersonType.
+pub fn candidate_person_relationship() -> RelationshipNode {
+    RelationshipNode {
+        name: "candidate_belongs_to_person".into(),
+        source_schema: "CandidateType".into(),
+        target_schema: "PersonType".into(),
+        cardinality: Cardinality::ManyToOne,
+        ownership: Ownership::BelongsTo,
+        foreign_key: Some(ForeignKeySpec {
+            source_column: "person_id".into(),
+            target_schema: "common".into(),
+            target_table: "person".into(),
+            target_column: "id".into(),
+            on_delete: "RESTRICT".into(),
+            on_update: "NO ACTION".into(),
+        }),
+        propagation: vec![PropagationRule {
+            trigger: PropagationTrigger::OnDelete,
+            behavior: DeletionPropagation::Restrict,
+        }],
+        domain: Some("recruiting".into()),
+    }
+}
+
 /// Ingest all fixtures into the given engine.
 pub async fn ingest_fixtures(
     engine: &dyn crate::traits::GraphIngestor,
@@ -237,6 +304,13 @@ pub async fn ingest_fixtures(
             .ingest_edge(&from, &to, edge_type, props.as_ref())
             .await?;
     }
+
+    engine.ingest_policy(&person_audit_policy()).await?;
+    engine.ingest_policy(&person_soft_delete_policy()).await?;
+    engine.ingest_policy(&person_tenant_isolation_policy()).await?;
+    engine
+        .ingest_relationship(&candidate_person_relationship())
+        .await?;
 
     engine.finalize().await
 }
@@ -293,4 +367,34 @@ pub async fn assert_conformance_queries(querier: &dyn crate::traits::GraphQuerie
     // get_referenced_schemas
     let refs = querier.get_referenced_schemas("PersonType").await.unwrap();
     assert!(refs.iter().any(|s| s.title == "GenderCodeList"));
+
+    // ── Persistence Metamodel queries ──
+    let policies = querier.get_policies_for_schema("PersonType").await.unwrap();
+    assert_eq!(policies.len(), 3, "PersonType should have 3 policies");
+
+    let all_policies = querier.list_all_policies().await.unwrap();
+    assert_eq!(all_policies.len(), 3, "should have 3 policies total");
+
+    let relationships = querier
+        .get_relationships_for_schema("CandidateType")
+        .await
+        .unwrap();
+    assert_eq!(
+        relationships.len(),
+        1,
+        "CandidateType should have 1 relationship"
+    );
+
+    let rel = querier
+        .get_relationship_by_name("candidate_belongs_to_person")
+        .await
+        .unwrap();
+    assert!(rel.is_some(), "relationship should exist");
+    let rel = rel.unwrap();
+    assert_eq!(rel.source_schema, "CandidateType");
+    assert_eq!(rel.target_schema, "PersonType");
+    assert_eq!(rel.cardinality, Cardinality::ManyToOne);
+
+    let all_rels = querier.list_all_relationships().await.unwrap();
+    assert_eq!(all_rels.len(), 1, "should have 1 relationship total");
 }

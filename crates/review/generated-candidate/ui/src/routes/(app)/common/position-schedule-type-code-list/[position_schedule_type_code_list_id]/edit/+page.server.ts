@@ -15,7 +15,7 @@ export const load: PageServerLoad = async ({ params, locals, fetch: skFetch }) =
 	};
 
 
-	const res = await skFetch(`${BASE_URL}/api/common/position-schedule-type-code-list/${params.position_schedule_type_code_list_id}`, { headers });
+	const res = await skFetch(`${BASE_URL}/api/v1/common/position-schedule-type-code-list/${params.position_schedule_type_code_list_id}`, { headers });
 
 
 	if (!res.ok) {

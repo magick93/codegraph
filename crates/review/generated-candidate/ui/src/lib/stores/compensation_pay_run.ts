@@ -15,7 +15,7 @@ import type {
 } from '$lib/api/types';
 
 
-const API_PATH = '/compensation/pay-run';
+const API_PATH = '/compensation/pay-runs';
 
 
 export interface PayRunListState {

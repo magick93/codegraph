@@ -2,9 +2,10 @@ use crate::error::GraphError;
 use crate::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode,
-    EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, NamespaceNode,
-    ParameterDefinitionNode, PermissionNode, PipelineNode, PropertyNode, RepositoryNode,
-    SchemaNode, ViewComponentNode, ViewContainerNode,
+    EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
+    NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
+    RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -100,4 +101,56 @@ pub trait GraphIngestor: Send + Sync {
     ) -> Result<String, GraphError>;
 
     async fn ingest_permission(&self, node: &PermissionNode) -> Result<String, GraphError>;
+
+    // --- Persistence Metamodel ---
+
+    async fn ingest_policy(&self, policy: &PolicyNode) -> Result<(), GraphError> {
+        let _ = policy;
+        Ok(())
+    }
+
+    async fn ingest_policies(&self, policies: &[PolicyNode]) -> Result<(), GraphError> {
+        for policy in policies {
+            self.ingest_policy(policy).await?;
+        }
+        Ok(())
+    }
+
+    async fn ingest_relationship(
+        &self,
+        relationship: &RelationshipNode,
+    ) -> Result<(), GraphError> {
+        let _ = relationship;
+        Ok(())
+    }
+
+    async fn ingest_relationships(
+        &self,
+        relationships: &[RelationshipNode],
+    ) -> Result<(), GraphError> {
+        for rel in relationships {
+            self.ingest_relationship(rel).await?;
+        }
+        Ok(())
+    }
+
+    // --- Security Metamodel ---
+
+    async fn ingest_security_identity(
+        &self,
+        identity: &SecurityIdentityNode,
+    ) -> Result<(), GraphError> {
+        let _ = identity;
+        Ok(())
+    }
+
+    async fn ingest_membership(&self, membership: &MembershipNode) -> Result<(), GraphError> {
+        let _ = membership;
+        Ok(())
+    }
+
+    async fn ingest_tenant(&self, tenant: &TenantNode) -> Result<(), GraphError> {
+        let _ = tenant;
+        Ok(())
+    }
 }

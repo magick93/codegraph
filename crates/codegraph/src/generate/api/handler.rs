@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::ParentCandidate;
+use codegraph_core::types::{ParentCandidate, PolicyKind};
 use serde::Serialize;
 
 use crate::error::Result;
@@ -15,7 +15,9 @@ use crate::generate::type_registry;
 use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
-use super::include_path::{resolve_include_paths, ResolvedIncludePath};
+use super::include_path::{
+    resolve_include_paths_for_topology, ResolvedIncludePath,
+};
 use super::router::{ChildInfo, CrossRefInfo};
 
 use super::api_model::{resolve_entity_operations, resolve_path_segment};
@@ -82,6 +84,9 @@ pub struct HandlerContext {
     /// Resolved `use` import statements for types referenced by this handler.
     /// Populated via `type_registry::resolve_imports()` instead of hard-coded template paths.
     pub handler_imports: Vec<String>,
+    /// When true, the entity has a soft-delete audit policy and the query layer
+    /// expects an `include_deleted: bool` argument on all read methods.
+    pub is_auditable: bool,
 }
 
 pub struct HandlerGenerator {
@@ -549,8 +554,15 @@ impl EntityGenerator for HandlerGenerator {
             .unwrap_or(true);
         let include_paths = if has_explicit_include || is_root {
             if let Some(ec) = entity_cfg {
-                resolve_include_paths(db, config, &domain, schema_title, ec.allow_include.as_ref())
-                    .await?
+                resolve_include_paths_for_topology(
+                    db,
+                    config,
+                    &domain,
+                    schema_title,
+                    ec.allow_include.as_ref(),
+                    project.is_workers_topology(),
+                )
+                .await?
             } else {
                 Vec::new()
             }
@@ -630,6 +642,24 @@ impl EntityGenerator for HandlerGenerator {
         ];
         let handler_imports = type_registry::resolve_imports(&handler_refs, &handler_caller);
 
+        // Soft-delete audit policy: when the entity tracks deleted rows, the
+        // query layer exposes an `include_deleted` argument on read methods.
+        // Handlers must thread it through (passing `false` — APIs exclude
+        // soft-deleted rows by default). Mirrors the logic in the query
+        // generator (ddd/query.rs) so handler/query signatures stay in sync.
+        let policies = db.get_policies_for_schema(schema_title).await?;
+        let is_auditable = if policies.is_empty() {
+            config
+                .domains
+                .get(&domain)
+                .and_then(|d| d.auditable)
+                .unwrap_or(true)
+        } else {
+            policies
+                .iter()
+                .any(|p| matches!(&p.kind, PolicyKind::Audit(a) if a.track_deleted))
+        };
+
         let ctx = HandlerContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -672,6 +702,7 @@ impl EntityGenerator for HandlerGenerator {
             has_include,
             include_paths: include_paths.clone(),
             handler_imports,
+            is_auditable,
         };
 
         let content = render_template_with_project(tera, "api/handler.tera", &ctx, project)?;

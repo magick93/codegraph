@@ -15,7 +15,7 @@ export const load: PageServerLoad = async ({ params, locals, fetch: skFetch }) =
 	};
 
 
-	const res = await skFetch(`${BASE_URL}/api/common/person-base/${params.person_base_id}`, { headers });
+	const res = await skFetch(`${BASE_URL}/api/v1/common/person-base/${params.person_base_id}`, { headers });
 
 
 	if (!res.ok) {

@@ -14,6 +14,7 @@ use crate::domain::common::process_history_item::dto_response::ProcessHistoryIte
 use crate::error::BulkItemError;
 use crate::domain::common::process_history_item::dto_create::CreateProcessHistoryItemRequest;
 use crate::domain::common::process_history_item::dto_update::UpdateProcessHistoryItemRequest;
+use crate::domain::common::errors::CommonError;
 
 
 /// Accepts either a single item or an array of items for creation.
@@ -51,7 +52,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
 #[utoipa::path(
     post,
 
-    path = "/api/common/process-history-item",
+    path = "/api/v1/common/process-history-item",
 
     tag = "ProcessHistoryItem",
     request_body(
@@ -92,12 +93,12 @@ pub async fn create(
             }
 
 
-            let id = state.common_process_history_item_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await
+            let id = state.common_process_history_item_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
 
-                .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to create ProcessHistoryItem: {e}"))
+                .map_err(|e: CommonError| AppError::internal(format!("Failed to create ProcessHistoryItem: {e}"))
                     .with_correlation_id(correlation_id))?;
-            let response = state.common_process_history_item_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await
-                .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find ProcessHistoryItem: {e}"))
+            let response = state.common_process_history_item_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+                .map_err(|e: CommonError| AppError::internal(format!("Failed to find ProcessHistoryItem: {e}"))
                     .with_correlation_id(correlation_id))?
                 .ok_or_else(|| AppError::internal("Created entity not found")
                     .with_correlation_id(correlation_id))?;
@@ -117,7 +118,7 @@ pub async fn create(
             }
 
 
-            let result = state.common_process_history_item_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await;
+            let result = state.common_process_history_item_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await;
 
 
             let mut success = Vec::new();
@@ -126,7 +127,7 @@ pub async fn create(
             for item_result in result {
                 match item_result {
                     Ok(id) => {
-                        match state.common_process_history_item_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await {
+                        match state.common_process_history_item_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await {
                             Ok(Some(resp)) => success.push(resp),
                             Ok(None) => {
                                 tracing::warn!(entity_id = %id, "Bulk-created entity not found during response assembly");
@@ -154,7 +155,7 @@ pub async fn create(
 #[utoipa::path(
     get,
 
-    path = "/api/common/process-history-item/{process_history_item_id}",
+    path = "/api/v1/common/process-history-item/{process_history_item_id}",
 
     params(("process_history_item_id" = Uuid, Path, description = "ProcessHistoryItem ID")),
 
@@ -177,8 +178,8 @@ pub async fn get_by_id(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    let response = state.common_process_history_item_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find ProcessHistoryItem: {e}"))
+    let response = state.common_process_history_item_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: CommonError| AppError::internal(format!("Failed to find ProcessHistoryItem: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("ProcessHistoryItem {id} not found"))
             .with_correlation_id(correlation_id))?;
@@ -207,7 +208,7 @@ pub async fn get_by_id(
 #[utoipa::path(
     put,
 
-    path = "/api/common/process-history-item/{process_history_item_id}",
+    path = "/api/v1/common/process-history-item/{process_history_item_id}",
     params(("process_history_item_id" = Uuid, Path, description = "ProcessHistoryItem ID")),
 
     tag = "ProcessHistoryItem",
@@ -244,11 +245,11 @@ pub async fn update(
             .with_correlation_id(correlation_id));
     }
 
-    state.common_process_history_item_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to update ProcessHistoryItem: {e}"))
+    state.common_process_history_item_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: CommonError| AppError::internal(format!("Failed to update ProcessHistoryItem: {e}"))
             .with_correlation_id(correlation_id))?;
-    let response = state.common_process_history_item_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find ProcessHistoryItem: {e}"))
+    let response = state.common_process_history_item_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: CommonError| AppError::internal(format!("Failed to find ProcessHistoryItem: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("ProcessHistoryItem {id} not found"))
             .with_correlation_id(correlation_id))?;
@@ -264,7 +265,7 @@ pub async fn update(
 #[utoipa::path(
     delete,
 
-    path = "/api/common/process-history-item/{process_history_item_id}",
+    path = "/api/v1/common/process-history-item/{process_history_item_id}",
     params(("process_history_item_id" = Uuid, Path, description = "ProcessHistoryItem ID")),
 
     tag = "ProcessHistoryItem",
@@ -284,8 +285,8 @@ pub async fn delete(
 ) -> Result<StatusCode, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    state.common_process_history_item_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| {
+    state.common_process_history_item_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: CommonError| {
             let msg = e.to_string();
             if msg.contains("Entity not found") {
                 AppError::not_found(format!("ProcessHistoryItem {id} not found"))
@@ -328,7 +329,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
 #[utoipa::path(
     get,
 
-    path = "/api/common/process-history-item",
+    path = "/api/v1/common/process-history-item",
     params(ListParams),
 
     tag = "ProcessHistoryItem",
@@ -357,8 +358,8 @@ pub async fn list(
     }
 
 
-    let (results, total) = state.common_process_history_item_queries.list_filtered(params.page, params.page_size, &filters, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to list ProcessHistoryItem: {e}"))
+    let (results, total) = state.common_process_history_item_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: CommonError| AppError::internal(format!("Failed to list ProcessHistoryItem: {e}"))
             .with_correlation_id(correlation_id))?;
 
     Ok(Json(serde_json::json!({
@@ -373,4 +374,29 @@ pub async fn list(
 
 
 
+
+// --- Trait-based extensibility ---
+// Uncomment and implement to override generated handler behavior:
+//
+// #[async_trait]
+// pub trait CustomProcessHistoryItemHandlers {
+//     async fn custom_create(
+//         &self,
+//         state: axum::extract::State<AppState>,
+//         headers: axum::http::HeaderMap,
+//         Json(body): axum::Json<CreateProcessHistoryItemRequest>,
+//     ) -> Result<axum::response::Response, AppError>;
+// }
+//
+// impl CustomProcessHistoryItemHandlers for AppState {
+//     async fn custom_create(
+//         &self,
+//         state: axum::extract::State<AppState>,
+//         headers: axum::http::HeaderMap,
+//         Json(body): axum::Json<CreateProcessHistoryItemRequest>,
+//     ) -> Result<axum::response::Response, AppError> {
+//         // Your custom logic here
+//         todo!()
+//     }
+// }
 

@@ -6,7 +6,9 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::generate::api::api_model::resolve_entity_operations;
-use crate::generate::api::include_path::{resolve_include_paths, ResolvedIncludePath};
+use crate::generate::api::include_path::{
+    resolve_include_paths_for_topology, ResolvedIncludePath,
+};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use crate::generate::type_registry;
@@ -1007,8 +1009,15 @@ impl EntityGenerator for DtoGenerator {
             .unwrap_or(true);
         if has_explicit_include || is_root {
             let include_paths = if let Some(ec) = entity_cfg {
-                resolve_include_paths(db, config, domain, schema_title, ec.allow_include.as_ref())
-                    .await?
+                resolve_include_paths_for_topology(
+                    db,
+                    config,
+                    domain,
+                    schema_title,
+                    ec.allow_include.as_ref(),
+                    project.is_workers_topology(),
+                )
+                .await?
             } else {
                 Vec::new()
             };
