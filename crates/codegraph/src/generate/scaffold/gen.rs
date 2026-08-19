@@ -195,7 +195,7 @@ impl GlobalGenerator for ScaffoldGenerator {
         let app_config_path = resolve_path(&project.app_config_base, &abs_output);
         let decision_engine_path = resolve_path(&project.decision_engine_base, &abs_output);
 
-        let mut grant_schemas = vec!["platform".to_string(), "platform_integrations".to_string()];
+        let mut grant_schemas = vec!["platform".to_string()];
         for d in &domains {
             if !grant_schemas.contains(&d.postgres_schema) {
                 grant_schemas.push(d.postgres_schema.clone());
