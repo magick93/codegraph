@@ -1,12 +1,15 @@
 //! Phased SQL migration application for plain-Postgres targets.
 //!
-//! NOTE: depends on `crate::db::{psql_exec, psql_exec_file_ok, advisory_lock,
-//! advisory_unlock, missing_extensions}` — implemented by a parallel agent
-//! (db.rs). Until that lands, `cargo check -p codegraph-ops` will fail on the
-//! missing `crate::db` items; that is expected mid-flight.
-//!
 //! Port of `hr-platform/lib/migrate.sh`, genericised: no hr-specific schema
 //! list — schemas are derived from the migration files themselves.
+//!
+//! Every `*.sql` file in the migration directory is applied, in sorted order
+//! within each phase, mirroring what `supabase db reset` does when the same
+//! files are symlinked into a Supabase project. Platform migrations
+//! (`0001_basejump_install.sql`, `0003_pgmq_setup.sql`, ...) are NOT special-
+//! cased: they depend only on a Supabase-compatible Postgres (auth schema,
+//! `extensions` schema, standard roles, pg_tle/http/pgmq extensions), which is
+//! exactly what the harness's database targets provide.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -33,7 +36,7 @@ enum FileKind {
     Aux,
     /// RLS + triggers — phase 4.
     RlsTriggers,
-    /// Supabase-only or otherwise skipped entirely.
+    /// Not a SQL migration file (ignored entirely).
     Skip,
 }
 
@@ -41,7 +44,7 @@ enum FileKind {
 #[derive(Debug, Default)]
 struct MigrationPhases {
     /// Phase 0: sorted, deduplicated schema names ("platform", "api_keys_private"
-    /// plus every `CREATE SCHEMA IF NOT EXISTS <x>` found in the files).
+    /// plus every `CREATE SCHEMA [IF NOT EXISTS] <x>` found in the files).
     schemas: Vec<String>,
     /// Phase 1: table/codelist files (FK lines are stripped per-file at apply
     /// time and deferred to phase 2).
@@ -52,13 +55,19 @@ struct MigrationPhases {
     aux: Vec<PathBuf>,
     /// Phase 4: `*_rls.sql`, `*_trigger.sql`.
     rls_triggers: Vec<PathBuf>,
+    /// Non-SQL files in the directory, tracked for reporting only.
+    ignored: Vec<PathBuf>,
 }
 
 /// Classify a migration basename into its application phase.
+///
+/// All `*.sql` files are applied. Only non-SQL files (notes, READMEs, ...) are
+/// skipped. There is no special handling for platform files such as
+/// `0001_basejump_install.sql` or `0003_pgmq_setup.sql` — they apply like any
+/// other migration and must run in numeric-prefix order (they do: phase 1
+/// iterates files sorted by name).
 fn classify_file(name: &str) -> FileKind {
-    if name.contains("basejump") || name.contains("pgmq") {
-        FileKind::Skip
-    } else if name.ends_with("_rls.sql") || name.ends_with("_trigger.sql") {
+    if name.ends_with("_rls.sql") || name.ends_with("_trigger.sql") {
         FileKind::RlsTriggers
     } else if name.ends_with("_fts.sql")
         || name.ends_with("_embedding.sql")
@@ -73,8 +82,14 @@ fn classify_file(name: &str) -> FileKind {
 }
 
 /// True for FK constraint lines (excluded from phase 1, applied in phase 2).
+/// Matches `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY` regardless of
+/// leading indentation. Non-FK constraint additions (CHECK, UNIQUE, PRIMARY
+/// KEY) are left in phase 1.
 fn is_fk_line(line: &str) -> bool {
-    line.starts_with("ALTER TABLE") && line.contains("ADD CONSTRAINT")
+    let trimmed = line.trim_start();
+    trimmed.starts_with("ALTER TABLE")
+        && trimmed.contains("ADD CONSTRAINT")
+        && trimmed.contains("FOREIGN KEY")
 }
 
 /// Phase-1 content for a file: the file with FK constraint lines removed.
@@ -110,25 +125,41 @@ fn error_tail(s: &str, max: usize) -> String {
     format!("…[truncated {skipped} chars]\n{rest}")
 }
 
-/// Extract schema names from `CREATE SCHEMA IF NOT EXISTS <name>` lines.
+/// First whitespace-delimited token of `s`, honouring double-quoted names
+/// (which may contain spaces, e.g. `CREATE SCHEMA "some schema"`).
+fn first_schema_token(s: &str) -> &str {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix('"') {
+        let end = rest.find('"').unwrap_or(rest.len());
+        &rest[..end]
+    } else {
+        s.split_whitespace().next().unwrap_or("")
+    }
+}
+
+/// Extract schema names from `CREATE SCHEMA [IF NOT EXISTS] <name>` lines.
+/// Handles double-quoted names, tolerates a trailing semicolon, and skips
+/// comment lines (which may mention schemas).
 fn extract_create_schemas(content: &str) -> Vec<String> {
-    const PREFIX: &str = "CREATE SCHEMA IF NOT EXISTS";
     content
         .lines()
         .filter_map(|line| {
             let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix(PREFIX) {
-                let name = rest
-                    .trim()
-                    .trim_end_matches(';')
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("");
-                if !name.is_empty() {
-                    return Some(name.to_string());
-                }
+            if trimmed.starts_with("--") {
+                return None;
             }
-            None
+            // Match the longer prefix first so `CREATE SCHEMA IF NOT EXISTS`
+            // isn't consumed as `CREATE SCHEMA` + `IF ...`.
+            let rest = trimmed
+                .strip_prefix("CREATE SCHEMA IF NOT EXISTS")
+                .or_else(|| trimmed.strip_prefix("CREATE SCHEMA"))?;
+            let raw = rest.trim().trim_end_matches(';').trim();
+            let name = first_schema_token(raw).trim().trim_matches('"');
+            if !name.is_empty() {
+                Some(name.to_string())
+            } else {
+                None
+            }
         })
         .collect()
 }
@@ -140,11 +171,12 @@ fn migration_phases(dir: &Path) -> OpsResult<MigrationPhases> {
     let mut fk_lines = Vec::new();
     let mut aux = Vec::new();
     let mut rls_triggers = Vec::new();
+    let mut ignored = Vec::new();
 
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
-        .filter(|p| p.is_file() && p.extension().map(|x| x == "sql").unwrap_or(false))
+        .filter(|p| p.is_file())
         .collect();
     files.sort();
 
@@ -153,12 +185,13 @@ fn migration_phases(dir: &Path) -> OpsResult<MigrationPhases> {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
+        // Schemas and FK lines are gathered from ALL sql files, mirroring the
+        // original `grep -rh ... "$migration_dir"/*.sql`. Every `.sql` file is
+        // applied; only non-SQL files are skipped.
         let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
             Err(e) => return Err(OpsError::Io(e)),
         };
-        // Schemas and FK lines are gathered from ALL files, mirroring the
-        // original `grep -rh ... "$migration_dir"/*.sql`.
         schemas.extend(extract_create_schemas(&content));
         fk_lines.extend(
             content
@@ -167,7 +200,7 @@ fn migration_phases(dir: &Path) -> OpsResult<MigrationPhases> {
                 .map(|line| line.to_string()),
         );
         match classify_file(&name) {
-            FileKind::Skip => {}
+            FileKind::Skip => ignored.push(path.clone()),
             FileKind::Tables => tables.push(path.clone()),
             FileKind::Aux => aux.push(path.clone()),
             FileKind::RlsTriggers => rls_triggers.push(path.clone()),
@@ -183,6 +216,7 @@ fn migration_phases(dir: &Path) -> OpsResult<MigrationPhases> {
         fk_lines,
         aux,
         rls_triggers,
+        ignored,
     })
 }
 
@@ -286,9 +320,9 @@ pub fn remove_supabase_links(supabase_mig_dir: &Path) -> OpsResult<()> {
 /// * Phase 1: `CREATE TABLE` + codelists — every table file with its FK
 ///   constraint lines removed, applied tolerantly (`psql_exec_file_ok`);
 ///   per-file errors are collected and warned, not fatal.
-/// * Phase 2: FK constraints — all `ALTER TABLE ... ADD CONSTRAINT` lines,
-///   chunked into bounded batches and applied via `psql_exec`; per-chunk
-///   failure is a warning (the run continues).
+/// * Phase 2: FK constraints — all `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN
+///   KEY` lines, chunked into bounded batches and applied via `psql_exec`;
+///   per-chunk failure is a warning (the run continues).
 /// * Phase 3: aux files (`*_fts.sql`, `*_embedding.sql`,
 ///   `*_process_history_view.sql`) via `psql_exec_file_ok`.
 /// * Phase 4: `*_rls.sql` + `*_trigger.sql` via `psql_exec_file_ok`.
@@ -364,8 +398,9 @@ async fn apply_phases(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<
         output::ok(format!("Tables created ({} files)", phases.tables.len()));
     } else {
         output::warn(format!(
-            "Table creation: {} file(s) had errors (continuing to FK phase)",
-            errors.len()
+            "Table creation: {}/{} file(s) had errors (continuing to FK phase)",
+            errors.len(),
+            phases.tables.len()
         ));
         for e in &errors {
             output::warn(format!("  {e}"));
@@ -425,7 +460,25 @@ async fn apply_phases(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<
     output::ok(format!("RLS + triggers applied ({rls_count} files)"));
 
     let total = phases.tables.len() + phases.aux.len() + phases.rls_triggers.len();
-    output::info(format!("{total} total migration files applied"));
+    output::info(format!(
+        "applied {total} migration files (tables/codelists: {}, FK lines: {}, FTS/embeddings/views: {}, RLS/triggers: {})",
+        phases.tables.len(),
+        phases.fk_lines.len(),
+        phases.aux.len(),
+        phases.rls_triggers.len(),
+    ));
+    if !phases.ignored.is_empty() {
+        let names: Vec<String> = phases
+            .ignored
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        output::warn(format!(
+            "ignored {} non-SQL file(s): {}",
+            phases.ignored.len(),
+            names.join(", ")
+        ));
+    }
     Ok(())
 }
 
@@ -453,6 +506,10 @@ mod tests {
             classify_file("recruiting_candidate_trigger.sql"),
             FileKind::RlsTriggers
         );
+        assert_eq!(
+            classify_file("recruiting_candidate_event_trigger.sql"),
+            FileKind::RlsTriggers
+        );
         assert_eq!(classify_file("recruiting_candidate_fts.sql"), FileKind::Aux);
         assert_eq!(
             classify_file("recruiting_candidate_embedding.sql"),
@@ -462,8 +519,12 @@ mod tests {
             classify_file("recruiting_offer_process_history_view.sql"),
             FileKind::Aux
         );
-        assert_eq!(classify_file("basejump_config.sql"), FileKind::Skip);
-        assert_eq!(classify_file("pgmq_migration.sql"), FileKind::Skip);
+        // Platform files are NOT special-cased — they apply like any other
+        // migration (they are not Supabase-only; the harness targets are
+        // Supabase-compatible Postgres).
+        assert_eq!(classify_file("0001_basejump_install.sql"), FileKind::Tables);
+        assert_eq!(classify_file("basejump_config.sql"), FileKind::Tables);
+        assert_eq!(classify_file("pgmq_migration.sql"), FileKind::Tables);
         assert_eq!(classify_file("readme.txt"), FileKind::Skip);
     }
 
@@ -483,12 +544,48 @@ mod tests {
             ("notes.txt", "not sql"),
         ]);
         let phases = migration_phases(dir.path()).unwrap();
-        assert_eq!(phases.tables.len(), 1);
+        assert_eq!(phases.tables.len(), 2, "a_core.sql + pgmq_extra.sql");
         assert_eq!(phases.aux.len(), 3);
         assert_eq!(phases.rls_triggers.len(), 2);
         assert_eq!(phases.fk_lines.len(), 1);
         assert!(phases.fk_lines[0].contains("ADD CONSTRAINT"));
         assert!(phases.tables[0].ends_with("a_core.sql"));
+        assert!(phases.tables[1].ends_with("pgmq_extra.sql"));
+        assert_eq!(phases.ignored.len(), 1);
+        assert!(phases.ignored[0].ends_with("notes.txt"));
+    }
+
+    #[test]
+    fn basejump_and_pgmq_platform_files_apply_in_tables_phase() {
+        // The exact generated platform band must land in phase 1 (in numeric
+        // order) and contribute its schemas + FK lines, matching what
+        // `supabase db reset` produces via link_migrations_to_supabase.
+        let dir = fake_dir(&[
+            (
+                "0000_extensions.sql",
+                "CREATE EXTENSION IF NOT EXISTS pgcrypto;\n",
+            ),
+            (
+                "0001_basejump_install.sql",
+                "CREATE SCHEMA IF NOT EXISTS basejump;\nCREATE TABLE basejump.accounts (id uuid primary key);\nALTER TABLE basejump.accounts ADD CONSTRAINT fk_owner FOREIGN KEY (primary_owner_user_id) REFERENCES auth.users(id);\n",
+            ),
+            ("0003_pgmq_setup.sql", "CREATE EXTENSION IF NOT EXISTS pgmq;\nSELECT pgmq.create('events_demo');\n"),
+            ("0004_rbac_roles.sql", "ALTER TYPE basejump.account_role ADD VALUE 'manager';\n"),
+            ("0005_platform_schema.sql", "CREATE SCHEMA IF NOT EXISTS platform;\nGRANT USAGE ON SCHEMA pgmq TO app_user;\n"),
+        ]);
+        let phases = migration_phases(dir.path()).unwrap();
+        assert_eq!(phases.tables.len(), 5);
+        assert!(phases
+            .tables
+            .iter()
+            .all(|p| p.extension().is_some_and(|e| e == "sql")));
+        assert!(phases.schemas.iter().any(|s| s == "basejump"));
+        assert!(phases.schemas.iter().any(|s| s == "platform"));
+        assert!(
+            phases.fk_lines.iter().any(|l| l.contains("fk_owner")),
+            "basejump FK lines must be deferred to phase 2, got {:?}",
+            phases.fk_lines
+        );
     }
 
     #[test]
@@ -525,13 +622,24 @@ mod tests {
     }
 
     #[test]
-    fn is_fk_line_matches_only_constraint_additions() {
+    fn is_fk_line_matches_only_fk_constraint_additions() {
         assert!(is_fk_line(
             "ALTER TABLE a ADD CONSTRAINT a_fk FOREIGN KEY (b) REFERENCES c(id);"
+        ));
+        assert!(is_fk_line(
+            "  ALTER TABLE a ADD CONSTRAINT a_fk FOREIGN KEY (b) REFERENCES c(id);"
         ));
         assert!(!is_fk_line("ALTER TABLE a DROP CONSTRAINT a_fk;"));
         assert!(!is_fk_line("ALTER TABLE a ALTER COLUMN b SET NOT NULL;"));
         assert!(!is_fk_line("ALTER TABLE a ADD COLUMN b uuid;"));
+        // Non-FK constraint additions stay in phase 1.
+        assert!(!is_fk_line(
+            "ALTER TABLE a ADD CONSTRAINT a_ck CHECK (x > 0);"
+        ));
+        assert!(!is_fk_line("ALTER TABLE a ADD CONSTRAINT a_uq UNIQUE (b);"));
+        assert!(!is_fk_line(
+            "ALTER TABLE a ADD CONSTRAINT a_pk PRIMARY KEY (id);"
+        ));
     }
 
     #[test]
@@ -578,10 +686,27 @@ mod tests {
 
     #[test]
     fn extract_create_schemas_handles_variants() {
-        let content = "CREATE SCHEMA IF NOT EXISTS recruiting;\n  CREATE SCHEMA IF NOT EXISTS common;\nCREATE SCHEMA IF NOT EXISTS screening ;\nnot a schema\n";
+        let content = "CREATE SCHEMA IF NOT EXISTS recruiting;\n  CREATE SCHEMA IF NOT EXISTS common;\nCREATE SCHEMA IF NOT EXISTS screening ;\nCREATE SCHEMA plain;\nCREATE SCHEMA IF NOT EXISTS \"quoted schema\";\n-- CREATE SCHEMA IF NOT EXISTS commented;\nnot a schema\n";
         let mut schemas = extract_create_schemas(content);
         schemas.sort();
-        assert_eq!(schemas, vec!["common", "recruiting", "screening"]);
+        assert_eq!(
+            schemas,
+            vec![
+                "common",
+                "plain",
+                "quoted schema",
+                "recruiting",
+                "screening"
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_create_schemas_ignores_basejump_style_tail() {
+        // Statements after the schema name (AUTHORIZATION, etc.) must not
+        // corrupt the extracted name.
+        let schemas = extract_create_schemas("CREATE SCHEMA IF NOT EXISTS basejump;");
+        assert_eq!(schemas, vec!["basejump"]);
     }
 
     #[test]
