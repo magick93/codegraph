@@ -11,7 +11,7 @@ use crate::config::OpsConfig;
 use crate::db::{psql_exec_file_ok, psql_query};
 use crate::error::{OpsError, OpsResult};
 use crate::ext::run_hooks;
-use crate::migrate::run_api_migrations;
+use crate::migrate::run_api_migrations_with_options;
 use crate::output;
 use crate::proc::{ManagedProcess, Supervisor};
 use crate::wait::wait_for_url;
@@ -338,7 +338,8 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
             let _ = psql_exec_file_ok(&config.api_db, &reset_path).await;
         }
         if migration_dir.is_dir() {
-            run_api_migrations(&migration_dir, &config.api_db).await?;
+            run_api_migrations_with_options(&migration_dir, &config.api_db, &config.grant_options)
+                .await?;
         } else {
             output::warn(format!(
                 "no migrations dir at {} — skipping migration",

@@ -320,7 +320,7 @@ fn write_full_generated_set(dir: &Path) {
     fs::write(dir.join("0001_basejump_install.sql"), basejump_sql).unwrap();
     fs::write(
         dir.join("0002_api_key_migration.sql"),
-        "-- API keys + unified org resolution\nCREATE SCHEMA IF NOT EXISTS api_keys_private;\nCREATE TABLE IF NOT EXISTS api_keys_private.api_keys (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  organization_id uuid NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now()\n);\nALTER TABLE api_keys_private.api_keys ENABLE ROW LEVEL SECURITY;\nDO $$ BEGIN\n  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN\n    CREATE ROLE app_user LOGIN PASSWORD 'x' NOBYPASSRLS;\n  END IF;\nEND $$;\nCREATE OR REPLACE FUNCTION public.get_current_org_id() RETURNS uuid AS $$\nBEGIN\n  RETURN nullif(current_setting('app.organization_id', true), '')::uuid;\nEND;\n$$ LANGUAGE plpgsql STABLE;\nGRANT USAGE ON SCHEMA basejump TO app_user;\nGRANT SELECT ON basejump.account_user TO app_user;\nGRANT SELECT ON basejump.accounts TO app_user;\nCREATE OR REPLACE FUNCTION public.resolve_user_org(p_user_id uuid)\nRETURNS uuid AS $$\n  SELECT au.account_id FROM basejump.account_user au WHERE au.user_id = p_user_id LIMIT 1;\n$$ LANGUAGE sql STABLE SECURITY DEFINER;\n",
+        "-- API keys + unified org resolution\nCREATE SCHEMA IF NOT EXISTS api_keys_private;\nCREATE TABLE IF NOT EXISTS api_keys_private.api_keys (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  organization_id uuid NOT NULL,\n  created_at timestamptz NOT NULL DEFAULT now()\n);\nALTER TABLE api_keys_private.api_keys ENABLE ROW LEVEL SECURITY;\nDO $$ BEGIN\n  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN\n    CREATE ROLE app_user LOGIN PASSWORD 'x' NOBYPASSRLS;\n  END IF;\nEND $$;\nCREATE OR REPLACE FUNCTION public.get_current_org_id() RETURNS uuid AS $$\nBEGIN\n  RETURN nullif(current_setting('app.organization_id', true), '')::uuid;\nEND;\n$$ LANGUAGE plpgsql STABLE;\nGRANT USAGE ON SCHEMA basejump TO app_user;\nGRANT SELECT ON basejump.account_user TO app_user;\nGRANT SELECT ON basejump.accounts TO app_user;\nCREATE OR REPLACE FUNCTION public.resolve_user_org(p_user_id uuid)\nRETURNS uuid AS $$\n  SELECT au.account_id FROM basejump.account_user au WHERE au.user_id = p_user_id LIMIT 1;\n$$ LANGUAGE sql STABLE SECURITY DEFINER;\n-- Grant app_user DML on domain/platform schemas up front (CREATE SCHEMA +\n-- ALTER DEFAULT PRIVILEGES) so it applies regardless of application order.\nDO $$ DECLARE s TEXT; BEGIN\n  FOREACH s IN ARRAY ARRAY['demo','platform','platform_integrations'] LOOP\n    EXECUTE format('CREATE SCHEMA IF NOT EXISTS %I', s);\n    EXECUTE format('GRANT USAGE ON SCHEMA %I TO app_user', s);\n    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO app_user', s);\n    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user', s);\n  END LOOP;\nEND $$;\n",
     )
     .unwrap();
     fs::write(
@@ -335,7 +335,12 @@ fn write_full_generated_set(dir: &Path) {
     .unwrap();
     fs::write(
         dir.join("0005_platform_schema.sql"),
-        "CREATE SCHEMA IF NOT EXISTS platform;\nGRANT USAGE ON SCHEMA pgmq TO app_user;\n",
+        "CREATE SCHEMA IF NOT EXISTS platform;\nCREATE TABLE platform.webhook_endpoint (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  platform_organization_id uuid,\n  url text NOT NULL\n);\nGRANT USAGE ON SCHEMA pgmq TO app_user;\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("0007_integration_tables.sql"),
+        "CREATE SCHEMA IF NOT EXISTS platform_integrations;\nCREATE TABLE platform_integrations.extension_points (\n  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  platform_organization_id uuid,\n  name text NOT NULL\n);\n",
     )
     .unwrap();
     fs::write(
@@ -369,7 +374,8 @@ async fn cleanup_full_set(t: &PgTarget) {
         "DROP SCHEMA IF EXISTS basejump CASCADE; \
          DROP SCHEMA IF EXISTS demo CASCADE; \
          DROP SCHEMA IF EXISTS api_keys_private CASCADE; \
-         DROP SCHEMA IF EXISTS platform CASCADE;",
+         DROP SCHEMA IF EXISTS platform CASCADE; \
+         DROP SCHEMA IF EXISTS platform_integrations CASCADE;",
     )
     .await;
 }
@@ -479,7 +485,47 @@ async fn migrations_apply_full_generated_set() {
     .await;
     assert!(org.is_ok(), "resolve_user_org must execute without error");
 
+    // The app role must have DML on domain + platform + integration tables.
+    // This is the regression guard: the grants in 0002 used to run before the
+    // schemas/tables existed, leaving app_user with zero access.
+    assert_app_user_dml(&t, "demo", "widget").await;
+    assert_app_user_dml(&t, "platform", "webhook_endpoint").await;
+    assert_app_user_dml(&t, "platform_integrations", "extension_points").await;
+
+    // Strict verification must also pass (the sweep is idempotent).
+    let strict = codegraph_ops::migrate::GrantOptions {
+        role: "app_user".to_string(),
+        strict: true,
+    };
+    codegraph_ops::migrate::run_api_migrations_with_options(dir.path(), &t, &strict)
+        .await
+        .expect("strict grant verification should pass after migration");
+
     cleanup_full_set(&t).await;
+}
+
+/// Assert the `app_user` role holds SELECT/INSERT/UPDATE/DELETE on
+/// `schema.table` (the RLS-aware app role needs these to query at all).
+async fn assert_app_user_dml(t: &PgTarget, schema: &str, table: &str) {
+    let grants = psql_query(
+        t,
+        &format!(
+            "SELECT string_agg(privilege_type, ',' ORDER BY privilege_type) \
+             FROM information_schema.role_table_grants \
+             WHERE grantee = 'app_user' AND table_schema = '{schema}' AND table_name = '{table}' \
+               AND privilege_type IN ('SELECT','INSERT','UPDATE','DELETE');"
+        ),
+    )
+    .await
+    .unwrap_or_default();
+    let got: Vec<&str> = grants.split(',').filter(|s| !s.is_empty()).collect();
+    assert!(
+        got.contains(&"SELECT")
+            && got.contains(&"INSERT")
+            && got.contains(&"UPDATE")
+            && got.contains(&"DELETE"),
+        "app_user must have DML on {schema}.{table}, got: {grants:?}"
+    );
 }
 
 #[tokio::test]
@@ -536,12 +582,12 @@ fn sorted_sql_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// A deterministic, sorted inventory of the objects the migration set creates
-/// (tables, functions, triggers, constraints, policies, enum values). Two runs
-/// that produce the same inventory are considered schema-equivalent. Query
-/// failures are fatal — a silent empty result would make the parity comparison
-/// vacuous.
+/// (tables + ACLs, functions, triggers, constraints, policies, enum values).
+/// Two runs that produce the same inventory are considered schema-equivalent.
+/// Query failures are fatal — a silent empty result would make the parity
+/// comparison vacuous.
 async fn object_inventory(t: &PgTarget) -> String {
-    let schemas = "('basejump','platform','api_keys_private','demo')";
+    let schemas = "('basejump','platform','platform_integrations','api_keys_private','demo')";
     let mut parts = Vec::new();
     let tables = psql_query(
         t,
@@ -554,6 +600,20 @@ async fn object_inventory(t: &PgTarget) -> String {
     .await
     .expect("inventory query (tables) failed");
     parts.push(tables);
+
+    // ACLs: the app-role DML grants are part of the schema contract — both
+    // application methods must produce the same grant state.
+    let acls = psql_query(
+        t,
+        &format!(
+            "SELECT n.nspname, c.relname, c.relacl::text FROM pg_class c \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname IN {schemas} AND c.relkind IN ('r','p') ORDER BY 1,2,3;"
+        ),
+    )
+    .await
+    .expect("inventory query (acls) failed");
+    parts.push(acls);
 
     let funcs = psql_query(
         t,

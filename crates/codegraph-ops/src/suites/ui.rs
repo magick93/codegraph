@@ -354,6 +354,8 @@ mod tests {
                     database: "postgres".into(),
                     reset_sql: None,
                     seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
                 },
                 e2e: e2e.then(|| OpsDbTarget {
                     host: "localhost".into(),
@@ -363,6 +365,8 @@ mod tests {
                     database: "postgres".into(),
                     reset_sql: None,
                     seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
                 }),
                 e2e_app: None,
             },

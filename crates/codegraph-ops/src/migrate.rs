@@ -311,11 +311,58 @@ pub fn remove_supabase_links(supabase_mig_dir: &Path) -> OpsResult<()> {
     Ok(())
 }
 
+/// Post-migration grant/verification options for the generated API role.
+///
+/// The generated migrations grant the API role (`app_user` by default) DML on
+/// domain tables via `0002_api_key_management.sql` + per-table grants. This
+/// harness step re-applies the same grants after every migration run (so
+/// consumers with pre-fix migration files self-heal) and then verifies every
+/// table in a domain schema is actually granted — warning or hard-failing
+/// (`strict`) when it isn't.
+#[derive(Debug, Clone)]
+pub struct GrantOptions {
+    /// Postgres role the generated API connects as. Defaults to `app_user`.
+    pub role: String,
+    /// Hard-fail the migration run when the role is missing DML on any table
+    /// in a domain schema after migration (default: warn and continue).
+    pub strict: bool,
+}
+
+impl Default for GrantOptions {
+    fn default() -> Self {
+        Self {
+            role: "app_user".to_string(),
+            strict: false,
+        }
+    }
+}
+
+/// Schemas excluded from the app-role grant sweep: system schemas, Supabase
+/// infra and the schemas that are granted explicitly (basejump, api_keys_private).
+const GRANT_SKIP_SCHEMAS: &[&str] = &[
+    "public",
+    "auth",
+    "storage",
+    "graphql",
+    "extensions",
+    "pg_catalog",
+    "information_schema",
+    "pg_toast",
+    "basejump",
+    "api_keys_private",
+    "pgmq",
+    "supabase_migrations",
+    "pgbouncer",
+    "realtime",
+];
+
 /// Apply generated SQL migrations to a plain-Postgres target in dependency
-/// order. Generated migrations have cross-schema deps, hence phases:
+/// order, then grant the API role DML on domain tables and verify the grants
+/// (default [`GrantOptions`]). Generated migrations have cross-schema deps,
+/// hence phases:
 ///
 /// * Phase 0: `CREATE SCHEMA` — "platform" + "api_keys_private" plus every
-///   `CREATE SCHEMA IF NOT EXISTS <x>` found in the migration files (dedup,
+///   `CREATE SCHEMA [IF NOT EXISTS] <x>` found in the migration files (dedup,
 ///   sort), applied via `psql_exec`.
 /// * Phase 1: `CREATE TABLE` + codelists — every table file with its FK
 ///   constraint lines removed, applied tolerantly (`psql_exec_file_ok`);
@@ -330,6 +377,15 @@ pub fn remove_supabase_links(supabase_mig_dir: &Path) -> OpsResult<()> {
 /// An advisory lock (key 73287328) is acquired before phase 0 and released
 /// afterwards, on both success and failure paths.
 pub async fn run_api_migrations(migration_dir: &Path, target: &PgTarget) -> OpsResult<()> {
+    run_api_migrations_with_options(migration_dir, target, &GrantOptions::default()).await
+}
+
+/// [`run_api_migrations`] with explicit [`GrantOptions`].
+pub async fn run_api_migrations_with_options(
+    migration_dir: &Path,
+    target: &PgTarget,
+    grant: &GrantOptions,
+) -> OpsResult<()> {
     let phases = migration_phases(migration_dir)?;
 
     output::section("Applying migrations");
@@ -345,13 +401,159 @@ pub async fn run_api_migrations(migration_dir: &Path, target: &PgTarget) -> OpsR
         Err(e) => output::warn(format!("extension check failed: {e}")),
     }
 
-    let result = apply_phases(&phases, target).await;
+    let result = match apply_phases(&phases, target).await {
+        Ok(()) => {
+            output::section("Granting API role access");
+            grant_app_user_access(&phases, target, grant).await
+        }
+        Err(e) => Err(e),
+    };
 
     match crate::db::advisory_unlock(target, MIGRATION_LOCK_KEY).await {
         Ok(()) => output::ok("Migration advisory lock released"),
         Err(e) => output::warn(format!("advisory unlock failed: {e}")),
     }
     result
+}
+
+/// Domain schemas the app role needs DML on: every schema discovered from the
+/// migration files minus the [`GRANT_SKIP_SCHEMAS`] exclusion list (and any
+/// `pg_*` system schemas). Kept sorted + deduped.
+fn grant_schemas(phases: &MigrationPhases) -> Vec<String> {
+    let mut out = Vec::new();
+    for s in &phases.schemas {
+        if GRANT_SKIP_SCHEMAS.contains(&s.as_str()) || s.starts_with("pg_") {
+            continue;
+        }
+        if !out.contains(s) {
+            out.push(s.clone());
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Post-migration step: grant the API role DML on every table in the domain
+/// schemas (idempotent) and verify nothing is missing. Missing grants become
+/// a hard error when `grant.strict` is set, otherwise a warning listing the
+/// affected tables.
+async fn grant_app_user_access(
+    phases: &MigrationPhases,
+    target: &PgTarget,
+    grant: &GrantOptions,
+) -> OpsResult<()> {
+    let schemas = grant_schemas(phases);
+    if schemas.is_empty() {
+        output::info("no domain schemas to grant — skipping");
+        return Ok(());
+    }
+
+    // The grant role is created by a generated migration (0002). If it isn't
+    // present the profile doesn't use it (sqlite / non-api-key) — skip.
+    let exists = crate::db::psql_query(
+        target,
+        &format!(
+            "SELECT 1 FROM pg_roles WHERE rolname = {};",
+            quote_literal(&grant.role)
+        ),
+    )
+    .await
+    .map(|v| !v.is_empty())
+    .unwrap_or(false);
+    if !exists {
+        output::info(format!(
+            "role {:?} not present — skipping app-role grant sweep",
+            grant.role
+        ));
+        return Ok(());
+    }
+
+    for s in &schemas {
+        let sql = format!(
+            "GRANT USAGE ON SCHEMA {0} TO {1};\n\
+             GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {0} TO {1};\n\
+             ALTER DEFAULT PRIVILEGES IN SCHEMA {0} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {1};",
+            quote_ident(s),
+            quote_ident(&grant.role)
+        );
+        crate::db::psql_exec(target, &sql)
+            .await
+            .map_err(|e| OpsError::Command(format!("grant sweep on {s:?} failed: {e}")))?;
+    }
+    output::ok(format!(
+        "Granted {} DML on {} schema(s)",
+        grant.role,
+        schemas.len()
+    ));
+
+    let missing = verify_grant_access(target, &schemas, &grant.role).await?;
+    report_missing_grants(&missing, &grant.role, grant.strict)
+}
+
+/// Return the `schema.table` list of tables in `schemas` where the role lacks
+/// at least one of SELECT/INSERT/UPDATE/DELETE.
+async fn verify_grant_access(
+    target: &PgTarget,
+    schemas: &[String],
+    role: &str,
+) -> OpsResult<Vec<String>> {
+    let schema_array = schemas
+        .iter()
+        .map(|s| quote_literal(s))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT t.table_schema, t.table_name FROM information_schema.tables t \
+         WHERE t.table_type = 'BASE TABLE' AND t.table_schema IN ({schema_array}) \
+           AND NOT has_table_privilege({0}, quote_ident(t.table_schema) || '.' || quote_ident(t.table_name), 'SELECT,INSERT,UPDATE,DELETE') \
+         ORDER BY 1,2;",
+        quote_literal(role)
+    );
+    let out = crate::db::psql_query(target, &sql).await?;
+    Ok(out
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let mut parts = l.split('\t');
+            let schema = parts.next().unwrap_or("?");
+            let table = parts.next().unwrap_or("?");
+            format!("{schema}.{table}")
+        })
+        .collect())
+}
+
+/// Decide what to do with a list of tables missing the app-role DML grants:
+/// hard error when `strict`, otherwise a warning. Pure so it can be unit-tested.
+fn report_missing_grants(missing: &[String], role: &str, strict: bool) -> OpsResult<()> {
+    if missing.is_empty() {
+        output::ok(format!("{role} has DML on all domain tables"));
+        return Ok(());
+    }
+    let msg = format!(
+        "{role} is missing SELECT/INSERT/UPDATE/DELETE on {} table(s): {}",
+        missing.len(),
+        missing.join(", ")
+    );
+    if strict {
+        Err(OpsError::Command(format!(
+            "{msg} (strict grant verification)"
+        )))
+    } else {
+        output::warn(format!(
+            "{msg} — the API will fail with permission denied when connected as {role}"
+        ));
+        Ok(())
+    }
+}
+
+/// Quote an identifier for interpolation into DDL (`GRANT ... ON SCHEMA ...`).
+fn quote_ident(s: &str) -> String {
+    format!("\"{}\"", s.replace('"', "\"\""))
+}
+
+/// Quote a string literal for interpolation into SQL (`WHERE rolname = ...`).
+fn quote_literal(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
 }
 
 async fn apply_phases(phases: &MigrationPhases, target: &PgTarget) -> OpsResult<()> {
@@ -755,5 +957,60 @@ mod tests {
     fn remove_supabase_links_tolerates_missing_dir() {
         let missing = tempfile::tempdir().unwrap().path().join("nope");
         remove_supabase_links(&missing).unwrap();
+    }
+
+    #[test]
+    fn grant_schemas_filters_system_and_infra_schemas() {
+        let phases = MigrationPhases {
+            schemas: vec![
+                "platform".to_string(),
+                "api_keys_private".to_string(),
+                "basejump".to_string(),
+                "common".to_string(),
+                "recruiting".to_string(),
+                "public".to_string(),
+                "auth".to_string(),
+                "pg_temp_3".to_string(),
+                "pgmq".to_string(),
+                "platform_integrations".to_string(),
+                "platform".to_string(), // duplicate
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            grant_schemas(&phases),
+            vec![
+                "common".to_string(),
+                "platform".to_string(),
+                "platform_integrations".to_string(),
+                "recruiting".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn report_missing_grants_warns_unless_strict() {
+        let missing = vec![
+            "common.widget".to_string(),
+            "platform.webhook_endpoint".to_string(),
+        ];
+        // Non-strict: warns and continues.
+        assert!(report_missing_grants(&missing, "app_user", false).is_ok());
+        // Strict: hard error.
+        let err = report_missing_grants(&missing, "app_user", true).unwrap_err();
+        let text = format!("{err}");
+        assert!(text.contains("common.widget"), "{text}");
+        assert!(text.contains("platform.webhook_endpoint"), "{text}");
+        assert!(text.contains("strict grant verification"), "{text}");
+        // Nothing missing is always Ok.
+        assert!(report_missing_grants(&[], "app_user", true).is_ok());
+    }
+
+    #[test]
+    fn quote_helpers_escape_identifiers_and_literals() {
+        assert_eq!(quote_ident("app_user"), "\"app_user\"");
+        assert_eq!(quote_ident("weird\"name"), "\"weird\"\"name\"");
+        assert_eq!(quote_literal("app_user"), "'app_user'");
+        assert_eq!(quote_literal("o'brien"), "'o''brien'");
     }
 }

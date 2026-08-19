@@ -31,6 +31,8 @@ pub struct OpsConfig {
     pub log_file: PathBuf,
     /// Plain-Postgres API target.
     pub api_db: PgTarget,
+    /// Post-migration app-role grant options for the api suite (role + strict).
+    pub grant_options: crate::migrate::GrantOptions,
     /// Supabase postgres target (e2e).
     pub e2e_db: Option<PgTarget>,
     /// App-role target (e2e).
@@ -76,6 +78,15 @@ impl OpsConfig {
         let hurl_dir = manifest.hurl.as_ref().map(|h| root_dir.join(&h.dir));
 
         let api_db = pg_target(&manifest.database.api, "api");
+        let grant_options = crate::migrate::GrantOptions {
+            role: manifest
+                .database
+                .api
+                .grant_role
+                .clone()
+                .unwrap_or_else(|| "app_user".to_string()),
+            strict: manifest.database.api.grant_strict.unwrap_or(false),
+        };
         let e2e_db = manifest.database.e2e.as_ref().map(|t| pg_target(t, "e2e"));
         let e2e_app_db = manifest
             .database
@@ -106,6 +117,7 @@ impl OpsConfig {
             hurl_dir,
             log_file: PathBuf::from("/tmp/codegraph-ops-app.log"),
             api_db,
+            grant_options,
             e2e_db,
             e2e_app_db,
             metrics,
@@ -209,6 +221,8 @@ mod tests {
                     database: "postgres".into(),
                     reset_sql: None,
                     seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
                 },
                 e2e: None,
                 e2e_app: None,
@@ -282,6 +296,8 @@ mod tests {
                     database: "postgres".into(),
                     reset_sql: None,
                     seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
                 },
                 e2e: None,
                 e2e_app: None,

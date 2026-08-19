@@ -76,6 +76,8 @@ fn default_api_db_target(port: u16) -> OpsDbTarget {
         database: "postgres".into(),
         reset_sql: None,
         seed_sql: None,
+        grant_role: None,
+        grant_strict: None,
     }
 }
 
