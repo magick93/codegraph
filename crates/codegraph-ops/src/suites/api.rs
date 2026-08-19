@@ -738,7 +738,7 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
                 .output();
             match out {
                 Ok(o) => {
-                    let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+                    let stdout = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
                     if hurl_suite_passed(&stdout) {
                         counters.pass("RLS isolation");
                     } else {
