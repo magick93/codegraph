@@ -3,7 +3,7 @@
 
 import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { createSupabaseClient } from '$lib/supabase';
+import { createSupabaseClient } from '#lib/supabase.ts';
 
 export const GET: RequestHandler = async ({ url, fetch, cookies }) => {
 	const code = url.searchParams.get('code');

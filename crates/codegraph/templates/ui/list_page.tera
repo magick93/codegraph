@@ -5,13 +5,13 @@
 {% if parent or has_create %}
 	import { page } from '$app/state';
 {% endif %}
-	import * as Table from '$lib/components/ui/table/index.js';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { Badge } from '$lib/components/ui/badge/index.js';
-	import * as Empty from '$lib/components/ui/empty/index.js';
-	import SearchInput from '$lib/components/ui/SearchInput.svelte';
-	import type { {{ entity_name }}Response } from '$lib/api/types';
-	import * as m from '$lib/paraglide/messages.js';
+	import * as Table from '#lib/components/ui/table/index.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { Badge } from '#lib/components/ui/badge/index.js';
+	import * as Empty from '#lib/components/ui/empty/index.js';
+	import SearchInput from '#lib/components/ui/SearchInput.svelte';
+	import type { {{ entity_name }}Response } from '#lib/api/types.ts';
+	import * as m from '#lib/paraglide/messages.js';
 
 {% if parent and parent.grandparent %}
 	const grandparentId = $derived(page.params.{{ parent.grandparent.param_name }});

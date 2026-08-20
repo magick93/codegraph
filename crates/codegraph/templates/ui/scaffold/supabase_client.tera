@@ -2,7 +2,7 @@
 // Supabase client for {{ app_name }}.
 
 import { createBrowserClient, createServerClient, isBrowser } from '@supabase/ssr';
-import { env } from '$env/dynamic/public';
+import { env } from '$app/env/public';
 
 const SUPABASE_URL = env.PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = env.PUBLIC_SUPABASE_ANON_KEY ?? '';
