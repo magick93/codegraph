@@ -150,6 +150,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
         let templates: &[(&str, PathBuf)] = &[
             ("ui/scaffold/package_json.tera", ui.join("package.json")),
             ("ui/scaffold/vite_config.tera", ui.join("vite.config.ts")),
+            ("ui/scaffold/env_ts.tera", src.join("env.ts")),
             (
                 "ui/scaffold/components_json.tera",
                 ui.join("components.json"),
