@@ -592,6 +592,7 @@ service_bindings = ["timecard"]
                 has_commands: true,
                 has_query_hooks: true,
             }],
+            has_custom_routes: false,
         }
     }
 

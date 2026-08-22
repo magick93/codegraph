@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use serde::Serialize;
 
 use crate::error::Result;
 use crate::generate::db::dialect::{
@@ -14,18 +13,16 @@ use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
-/// Context for the pgmq setup migration (global, once per project).
-#[derive(Debug, Serialize)]
-pub struct PgmqSetupContext {
-    pub domains: Vec<String>,
-}
-
-pub struct PgmqSetupGenerator {
+/// Migration that grants the basejump / api-key roles and functions the
+/// hand-written platform handlers (`src/api/platform/handwritten_routes.rs`)
+/// execute. Only emitted when at least one entity-less `custom_routes` domain
+/// is configured, so projects without one get no new migration.
+pub struct PlatformGrantsGenerator {
     output_dir: PathBuf,
     dialect: Box<dyn SqlDialect>,
 }
 
-impl PgmqSetupGenerator {
+impl PlatformGrantsGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
@@ -40,9 +37,9 @@ impl PgmqSetupGenerator {
 }
 
 #[async_trait]
-impl GlobalGenerator for PgmqSetupGenerator {
+impl GlobalGenerator for PlatformGrantsGenerator {
     fn name(&self) -> &str {
-        "pgmq_setup"
+        "platform_grants"
     }
 
     fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {
@@ -57,35 +54,33 @@ impl GlobalGenerator for PgmqSetupGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        // PGMQ is PostgreSQL-only — skip for dialects without plpgsql support
-        if !self.dialect.has_plpgsql() {
+        if !self.dialect.has_schemas() {
             return Ok(vec![]);
         }
 
-        // One pgmq queue per domain with generated domain-event triggers.
-        // Entity-less custom-routes domains (entities = [] + custom_routes)
-        // have no event triggers, so they get no queue.
-        let mut domains: Vec<String> = config
+        // Only projects that declare an entity-less custom-routes domain need
+        // the platform grants — the grants reference basejump/api-key objects
+        // that only those handlers use.
+        let has_custom_routes_domain = config
             .domains
-            .iter()
-            .filter(|(_, entry)| !(entry.custom_routes && entry.entities.is_empty()))
-            .map(|(name, _)| name.clone())
-            .collect();
-        domains.sort();
+            .values()
+            .any(|d| d.custom_routes);
+        if !has_custom_routes_domain {
+            return Ok(vec![]);
+        }
 
-        let ctx = PgmqSetupContext { domains };
-
+        let empty_ctx: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let content = render_template_with_project(
             tera,
-            &db_template_for(&*self.dialect, "pgmq_setup"),
-            &ctx,
+            &db_template_for(&*self.dialect, "platform_grants"),
+            &empty_ctx,
             project,
         )?;
         Ok(vec![GeneratedFile {
             path: self
                 .output_dir
                 .join("migrations")
-                .join("0003_pgmq_setup.sql"),
+                .join("0007_platform_grants.sql"),
             content,
         }])
     }

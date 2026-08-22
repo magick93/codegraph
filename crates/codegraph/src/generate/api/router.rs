@@ -44,6 +44,11 @@ pub struct RouterContext {
     pub domain: String,
     pub entities: Vec<RouterEntity>,
     pub has_permission_middleware: bool,
+    /// True when this entity-less domain delegates its router to a hand-written
+    /// `handwritten_routes.rs` module (`custom_routes = true` in domains.toml).
+    /// The rendered router then calls `handwritten_routes::router()` (sibling
+    /// module declared by mod.rs) instead of returning a bare `Router::new()`.
+    pub has_custom_routes: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -468,6 +473,11 @@ impl DomainGenerator for RouterGenerator {
             domain: domain.to_string(),
             entities,
             has_permission_middleware,
+            has_custom_routes: config
+                .domains
+                .get(domain)
+                .map(|d| d.custom_routes)
+                .unwrap_or(false),
         };
 
         let content = render_template_with_project(tera, "api/router.tera", &ctx, project)?;

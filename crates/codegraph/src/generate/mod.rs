@@ -951,6 +951,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 .with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(
+            db::platform_grants::PlatformGrantsGenerator::new(output_dir)
+                .with_dialect(make_dialect()),
+        ) as Box<dyn GlobalGenerator>,
+        Box::new(
             db::workflow_seed::WorkflowSeedGenerator::new(output_dir).with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(db::cornucopia_config::CornucopiaConfigGenerator::new(
@@ -1302,7 +1306,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // branch, keeping the root output byte-identical.
     if workers_topology {
         let worker_codelist_gen = codelist::rust_enum::RustCodelistGenerator::new(output_dir);
-        for (domain, _entity_titles) in group_by_domain(&order) {
+        for (domain, _entity_titles) in all_domains_for_generation(config, &order) {
             let worker_base = output_dir.join("workers").join(&domain);
             match worker_codelist_gen
                 .generate_reexport_mod_for(db, &worker_base)
@@ -1331,8 +1335,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // with `workers/{domain}/` as the base for routed generators, so
     // errors.rs / router.rs / links.rs land inside the worker crate.
     // In monolith topology a single generator set is built once with the
-    // root output dir, exactly as before.
-    let domains_with_entities = group_by_domain(&order);
+    // root output dir, exactly as before. Entity-less custom-routes domains
+    // are included with an empty entity list (see
+    // [`all_domains_for_generation`]).
+    let domains_with_entities = all_domains_for_generation(config, &order);
     let domain_results: Vec<_> = if workers_topology {
         let mut results = Vec::new();
         for (domain, entity_titles) in &domains_with_entities {
@@ -1470,6 +1476,27 @@ fn group_by_domain(entries: &[GenerationEntry]) -> Vec<(String, Vec<String>)> {
             (d, entities)
         })
         .collect()
+}
+
+/// Domains that receive domain-level generation (router/errors/links): every
+/// domain with entities in the generation order, plus entity-less domains
+/// flagged `custom_routes` (zero entities — only the domain scaffold).
+///
+/// Entity-less custom-routes domains get the per-domain router scaffold and,
+/// in workers topology, a per-domain worker crate + gateway upstream, even
+/// though they have no entities to route.
+pub fn all_domains_for_generation(
+    config: &DomainConfig,
+    entries: &[GenerationEntry],
+) -> Vec<(String, Vec<String>)> {
+    let mut result = group_by_domain(entries);
+    let present: HashSet<String> = result.iter().map(|(d, _)| d.clone()).collect();
+    for (name, entry) in &config.domains {
+        if entry.custom_routes && !present.contains(name) {
+            result.push((name.clone(), Vec::new()));
+        }
+    }
+    result
 }
 
 /// Compute the generation order using per-domain schema listing + domain order.
@@ -1990,8 +2017,80 @@ mod tests {
     // ── Workers topology output routing ────────────────────────────────
 
     #[test]
-    fn test_worker_routed_generator_classification() {
-        let routed_entity = [
+    fn test_all_domains_for_generation_includes_entityless_custom_routes() {
+        use codegraph_config::config::parse_domain_config_str;
+        let config = parse_domain_config_str(
+            r#"
+[domains.crm]
+label = "CRM"
+schema_dir = "crm"
+postgres_schema = "crm"
+entities = ["PersonRecordType"]
+
+[domains.platform]
+label = "Platform"
+schema_dir = "platform"
+postgres_schema = "platform"
+entities = []
+auto_discover = false
+custom_routes = true
+"#,
+        )
+        .unwrap();
+
+        let entries = vec![GenerationEntry {
+            schema_title: "PersonRecordType".into(),
+            domain: "crm".into(),
+            pg_schema: "crm".into(),
+            is_cyclic: false,
+        }];
+
+        let grouped = all_domains_for_generation(&config, &entries);
+        let names: Vec<&str> = grouped.iter().map(|(d, _)| d.as_str()).collect();
+        assert!(names.contains(&"crm"));
+        // Entity-less custom-routes domain is included with an empty entity list.
+        assert!(names.contains(&"platform"));
+        let platform = grouped
+            .iter()
+            .find(|(d, _)| d == "platform")
+            .expect("platform should be present");
+        assert!(platform.1.is_empty());
+    }
+
+    #[test]
+    fn test_all_domains_for_generation_skips_entityless_without_flag() {
+        use codegraph_config::config::parse_domain_config_str;
+        let config = parse_domain_config_str(
+            r#"
+[domains.crm]
+label = "CRM"
+schema_dir = "crm"
+postgres_schema = "crm"
+entities = ["PersonRecordType"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = []
+"#,
+        )
+        .unwrap();
+
+        let entries = vec![GenerationEntry {
+            schema_title: "PersonRecordType".into(),
+            domain: "crm".into(),
+            pg_schema: "crm".into(),
+            is_cyclic: false,
+        }];
+
+        let grouped = all_domains_for_generation(&config, &entries);
+        let names: Vec<&str> = grouped.iter().map(|(d, _)| d.as_str()).collect();
+        assert_eq!(names, vec!["crm"]);
+    }
+
+    #[test]
+    fn test_worker_routed_generator_classification() {        let routed_entity = [
             "sea_orm_entity",
             "cornucopia_repo",
             "repository",

@@ -55,6 +55,11 @@ pub struct ScaffoldDomain {
     pub label: String,
     pub postgres_schema: String,
     pub entities: Vec<ScaffoldEntity>,
+    /// True for entity-less domains flagged `custom_routes` — the domain gets
+    /// a router scaffold + (workers topology) a worker crate/gateway binding
+    /// even though it has zero entities. The server template nests such
+    /// domains at `/api/{version}/{name}` even with an empty entity list.
+    pub has_custom_routes: bool,
 }
 
 pub struct ScaffoldGenerator {
@@ -165,12 +170,21 @@ pub async fn build_scaffold_domains(
         .domains
         .iter()
         .filter_map(|(name, entry)| {
-            let entities = domain_entity_map.remove(name.as_str())?;
+            // Domains with entities in the generation order get their scaffold
+            // entities; entity-less custom-routes domains are included with an
+            // empty entity list so the monolith nests their router and the
+            // workers scaffold emits a worker crate + gateway binding.
+            let entities = match domain_entity_map.remove(name.as_str()) {
+                Some(entities) => entities,
+                None if entry.custom_routes => Vec::new(),
+                None => return None,
+            };
             Some(ScaffoldDomain {
                 name: name.clone(),
                 label: entry.label.clone(),
                 postgres_schema: entry.postgres_schema.clone(),
                 entities,
+                has_custom_routes: entry.custom_routes,
             })
         })
         .collect();

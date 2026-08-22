@@ -308,6 +308,7 @@ mod tests {
                 queue_max_retries: None,
                 queue_max_concurrency: None,
                 observability: None,
+                custom_routes: false,
             },
         );
         DomainConfig {

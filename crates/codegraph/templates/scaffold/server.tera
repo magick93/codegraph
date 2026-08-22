@@ -426,7 +426,7 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     let api_routes = axum::Router::new()
 {% for domain in domains %}
-{% if domain.entities | length > 0 %}
+{% if domain.entities | length > 0 or domain.has_custom_routes %}
         .nest("/{{ domain.name }}", crate::api::{{ domain.name }}::router::router())
 {% endif %}
 {% endfor %}

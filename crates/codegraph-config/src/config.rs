@@ -205,6 +205,15 @@ pub struct DomainEntry {
     /// false (off — generated output stays byte-identical to pre-observability).
     #[serde(default)]
     pub observability: Option<bool>,
+    /// Entity-less domain whose router delegates to a hand-written
+    /// `handwritten_routes.rs` module. Such a domain generates NO entities,
+    /// DDL migrations, DTOs, handlers or lifecycle traits — only the
+    /// domain-level router scaffold (`src/api/{domain}/router.rs` for the
+    /// monolith) and, in workers topology, a per-domain worker crate plus a
+    /// gateway upstream/service binding. Typically paired with `entities = []`
+    /// and `auto_discover = false`. Defaults to false.
+    #[serde(default)]
+    pub custom_routes: bool,
 }
 
 fn default_tier() -> String {
@@ -1299,8 +1308,36 @@ allow_include = ["person"]
     }
 
     #[test]
-    fn parse_worker_topology_keys_all_present() {
+    fn parse_custom_routes_flag() {
         let toml = r#"
+[domains.platform]
+label = "Platform"
+schema_dir = "platform"
+postgres_schema = "platform"
+depends_on = []
+auditable = false
+entities = []
+auto_discover = false
+custom_routes = true
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        let platform = &config.domains["platform"];
+        assert!(platform.custom_routes);
+
+        // Absent key defaults to false.
+        let toml = r#"
+[domains.crm]
+label = "CRM"
+schema_dir = "crm"
+postgres_schema = "crm"
+entities = ["PersonRecordType"]
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        assert!(!config.domains["crm"].custom_routes);
+    }
+
+    #[test]
+    fn parse_worker_topology_keys_all_present() {        let toml = r#"
 [domains.payroll]
 label = "Payroll"
 schema_dir = "payroll"

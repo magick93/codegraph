@@ -5,12 +5,18 @@ use axum::Router;
 
 use crate::app_state::AppState;
 
+{% if has_custom_routes -%}
+// Hand-written custom routes live in `handwritten_routes.rs` (a sibling module
+// declared by mod.rs). Create that file to add custom routes — it survives
+// regen and the real handlers are implemented there, not here.
+{% else -%}
 // Handwritten extensions — create this file to add custom routes.
 // #[path = "handwritten_routes.rs"]
 // mod handwritten_routes;
+{%- endif %}
 
 pub fn router() -> Router<AppState> {
-    Router::new()
+{% if has_custom_routes %}    super::handwritten_routes::router(){% else %}    Router::new(){% endif %}
 {% for entity in entities %}
 {% if entity.role == "root" %}
         .nest("/{{ entity.path_segment }}", {{ entity.module_name }}_routes())
