@@ -79,6 +79,13 @@ pub struct RouterEntity {
     pub pipeline_middleware: Vec<String>,
     /// True when a non-empty pipeline middleware list exists.
     pub has_pipeline_layer: bool,
+    /// True when the entity has `permissions.scope` set (permission gating on).
+    pub has_permissions: bool,
+    /// Permission scope prefix, e.g. "support:support-plan". Ops are appended
+    /// by the generated permission layer.
+    pub permission_scope: String,
+    /// Whether read-by-id / update / delete are record-scoped.
+    pub permission_record_scoped: bool,
 }
 
 pub struct RouterGenerator {
@@ -242,6 +249,12 @@ impl DomainGenerator for RouterGenerator {
                         .map(|p| p.pg_column_name.clone())
                         .collect();
 
+                    let permissions = entity_cfg
+                        .map(|ec| ec.permissions.clone())
+                        .unwrap_or_default();
+                    let permission_scope = permissions.scope.clone().unwrap_or_default();
+                    let has_permissions = !permission_scope.is_empty();
+
                     let entity_idx = entities.len();
                     module_to_idx.insert(schema.pg_table_name.clone(), entity_idx);
                     title_to_entity_idx.insert(title.clone(), entity_idx);
@@ -261,7 +274,9 @@ impl DomainGenerator for RouterGenerator {
                         role: entity_cfg
                             .and_then(|ec| ec.role.clone())
                             .unwrap_or_else(|| "root".into()),
-                        param_name: param_name_from_path_segment(&resolve_path_segment(entity_cfg, &schema)),
+                        param_name: param_name_from_path_segment(&resolve_path_segment(
+                            entity_cfg, &schema,
+                        )),
                         parent: None,
                         children: vec![],
                         cross_refs: vec![],
@@ -269,6 +284,9 @@ impl DomainGenerator for RouterGenerator {
                         hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
                         pipeline_middleware: Vec::new(),
                         has_pipeline_layer: false,
+                        has_permissions,
+                        permission_scope,
+                        permission_record_scoped: permissions.record_scoped,
                     });
                 }
             }

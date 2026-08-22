@@ -12,7 +12,11 @@ export class {{ entity_name }}Fixture {
     return {
 {% for field in create_fields %}
 {% if field.required %}
+{% if use_persona_token and (field.name == "did" or field.name == "subjectDid" or field.name == "ownerDid") %}
+      {{ field.name }}: '{{ persona_did }}',
+{% else %}
       {{ field.name }}: {{ field.example_value }},
+{% endif %}
 {% endif %}
 {% endfor %}
       ...overrides,

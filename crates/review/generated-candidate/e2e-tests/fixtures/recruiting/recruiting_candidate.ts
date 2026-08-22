@@ -42,7 +42,10 @@ export class CandidateFixture {
     return {
 
 
+
       candidateId: "test",
+
+
 
 
 
@@ -50,7 +53,10 @@ export class CandidateFixture {
 
 
 
+
+
       givenName: "test",
+
 
 
 

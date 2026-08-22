@@ -569,6 +569,7 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
         .nest("/webhooks", crate::webhook_router::webhook_routes())
 
+
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
 
     let app = axum::Router::new()

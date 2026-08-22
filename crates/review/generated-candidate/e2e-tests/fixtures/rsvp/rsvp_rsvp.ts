@@ -18,11 +18,15 @@ export class RsvpFixture {
 
 
 
+
       status: "Confirmed",
 
 
 
+
+
       timestamp: "2025-01-15T00:00:00Z",
+
 
 
       ...overrides,

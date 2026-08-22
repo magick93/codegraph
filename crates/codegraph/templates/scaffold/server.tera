@@ -304,7 +304,18 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {% endfor %}
         db: db.clone(),
 {% if project.hooks_api_crate %}
-        registry: crate::hooks::HookRegistry::default(),
+        registry: {
+{% if has_atproto %}
+            let mut registry = crate::hooks::HookRegistry::default();
+            registry.register_authorization(std::sync::Arc::new(
+                cosmos_extensions::authorization::AuthorizationServiceImpl::new(db.clone()),
+            ));
+            cosmos_extensions::did_validation::register_did_validation_hooks(&mut registry);
+            registry
+{% else %}
+            crate::hooks::HookRegistry::default()
+{% endif %}
+        },
 {% endif %}
 {% if has_atproto %}
         identity: Some(identity_service),
@@ -436,6 +447,12 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {% endif %}
 {% if has_webhooks %}
         .nest("/webhooks", crate::webhook_router::webhook_routes())
+{% endif %}
+{% if has_atproto and project.hooks_api_crate %}
+        // Inject the registered AuthorizationService into request extensions so
+        // the generated permission middleware can reach it without a State
+        // extractor (route-level layers cannot access router state).
+        .layer(axum::Extension(state.registry.authorization.clone()))
 {% endif %}
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
 

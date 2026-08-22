@@ -41,7 +41,9 @@ fn application_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn candidate_routes() -> Router<AppState> {
@@ -70,5 +72,7 @@ fn candidate_routes() -> Router<AppState> {
 
 
 
+
 }
+
 

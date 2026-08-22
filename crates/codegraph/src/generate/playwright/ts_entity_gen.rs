@@ -1,5 +1,6 @@
 use crate::generate::domain_model::{
-    build_entity_model, example_for_field, parse_rust_type, ts_type_for_field, EntityField, RustType,
+    build_entity_model, example_for_field, parse_rust_type, ts_type_for_field, EntityField,
+    RustType,
 };
 use crate::generate::ProjectConfig;
 use std::path::{Path, PathBuf};
@@ -11,10 +12,10 @@ use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 use heck::ToLowerCamelCase;
 
+use super::{TsEntityContext, TsFieldDef, TsFkField};
 use crate::error::Result;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
-use super::{TsEntityContext, TsFkField, TsFieldDef};
 
 /// Scalar (non-array) ValueObject / CompositeWrapper / MediaWrapper properties
 /// are stored as flattened child columns on the main table (the Create DTO
@@ -62,7 +63,8 @@ async fn expand_vo_fields(
             kind,
             Some(RefClassificationKind::CompositeWrapper)
                 | Some(RefClassificationKind::MediaWrapper)
-        ) || (prop.is_array && matches!(kind, Some(RefClassificationKind::ValueObject))) {
+        ) || (prop.is_array && matches!(kind, Some(RefClassificationKind::ValueObject)))
+        {
             if let Ok(cols) = db.get_composite_columns(&prop.name, schema_title).await {
                 for col in cols {
                     let rust_name = format!("{}{}", prop.rust_field_name, col.suffix);
@@ -147,10 +149,7 @@ async fn expand_vo_fields(
         // Scalar ValueObjects referencing a known entity — the DDL emits an
         // FK column, so the DTO exposes `{prop}_id`. Pure VOs stay nested in
         // the DTO (and are optional), so they keep their single-field form.
-        let vo_target_is_entity = match db
-            .get_property_ref_target(&prop.name, schema_title)
-            .await
-        {
+        let vo_target_is_entity = match db.get_property_ref_target(&prop.name, schema_title).await {
             Ok(Some(target)) => {
                 if target.is_entity {
                     true
@@ -242,12 +241,7 @@ async fn resolve_fk_target_meta(
         target.domain.as_deref().unwrap_or("public"),
         target.pg_table_name
     );
-    Some((
-        domain,
-        path,
-        module,
-        target.rust_type_name.clone(),
-    ))
+    Some((domain, path, module, target.rust_type_name.clone()))
 }
 
 impl TsEntityGenerator {
@@ -273,7 +267,9 @@ impl EntityGenerator for TsEntityGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let model = build_entity_model(db, schema_title, domain, config, &project.atproto_authority).await?;
+        let model =
+            build_entity_model(db, schema_title, domain, config, &project.atproto_authority)
+                .await?;
 
         if model.entity_module.is_empty() {
             return Ok(Vec::new());
@@ -326,13 +322,10 @@ impl EntityGenerator for TsEntityGenerator {
 
             // Map a DB column name to its create-DTO field (camelCase, flattened).
             let find_field = |column: &str| -> Option<&EntityField> {
-                fields
-                    .iter()
-                    .find(|f| f.column == column)
-                    .or_else(|| {
-                        let camel = column.to_lower_camel_case();
-                        fields.iter().find(|f| f.name == camel)
-                    })
+                fields.iter().find(|f| f.column == column).or_else(|| {
+                    let camel = column.to_lower_camel_case();
+                    fields.iter().find(|f| f.name == camel)
+                })
             };
 
             // Highest-weight column (A > B > C > D). Deterministic: walk
@@ -363,15 +356,13 @@ impl EntityGenerator for TsEntityGenerator {
                 }
                 best.map(|(_, c)| c)
                     .or_else(|| {
-                        ["A", "B", "C", "D"]
-                            .iter()
-                            .find_map(|w| {
-                                ec.search
-                                    .fts_weights
-                                    .iter()
-                                    .find(|(_, v)| v.as_str() == *w)
-                                    .map(|(k, _)| k.clone())
-                            })
+                        ["A", "B", "C", "D"].iter().find_map(|w| {
+                            ec.search
+                                .fts_weights
+                                .iter()
+                                .find(|(_, v)| v.as_str() == *w)
+                                .map(|(k, _)| k.clone())
+                        })
                     })
                     .unwrap_or_default()
             };
@@ -419,19 +410,32 @@ impl EntityGenerator for TsEntityGenerator {
 
         // Fallback when the searchable column isn't a create-DTO field: seed the
         // term in the first required string field so the fixture payload is valid.
-        let (fts_search_field, fts_search_field_required) = if has_fts && fts_search_field.is_empty() {
-            match create_fields
-                .iter()
-                .find(|f| f.required && f.ts_type.contains("string"))
-            {
-                Some(f) => (f.name.clone(), true),
-                None => (String::new(), false),
-            }
-        } else {
-            (fts_search_field, fts_search_field_required)
-        };
+        let (fts_search_field, fts_search_field_required) =
+            if has_fts && fts_search_field.is_empty() {
+                match create_fields
+                    .iter()
+                    .find(|f| f.required && f.ts_type.contains("string"))
+                {
+                    Some(f) => (f.name.clone(), true),
+                    None => (String::new(), false),
+                }
+            } else {
+                (fts_search_field, fts_search_field_required)
+            };
 
         let has_required_fields = create_fields.iter().any(|f| f.required);
+
+        // Permission-gated entities deny requests whose actor has no DID, so the
+        // generated spec/fixture must use a DID persona token and stamp the
+        // persona DID into did-carrying fields.
+        let permission_scope = config
+            .domains
+            .get(&model.domain)
+            .and_then(|d| d.get_entity_config(&model.name))
+            .and_then(|c| c.permissions.scope.clone());
+        let use_persona_token = permission_scope.is_some();
+        let persona_did = "did:plc:test.generated".to_string();
+
         let fk_fields: Vec<TsFkField> = create_fields
             .iter()
             .filter(|f| f.fk_target_entity_name.is_some())
@@ -464,6 +468,8 @@ impl EntityGenerator for TsEntityGenerator {
             fts_search_field: fts_search_field.clone(),
             fts_search_field_required,
             fts_secondary_field: fts_secondary_field.clone(),
+            use_persona_token,
+            persona_did,
         };
 
         let e2e_dir = self.output_dir.join("e2e-tests");
@@ -502,7 +508,11 @@ impl EntityGenerator for TsEntityGenerator {
         ];
 
         // Full-text search spec — one per FTS-enabled entity with create+delete.
-        if has_fts && model.operations.create && model.operations.delete && !fts_search_field.is_empty() {
+        if has_fts
+            && model.operations.create
+            && model.operations.delete
+            && !fts_search_field.is_empty()
+        {
             files.push(GeneratedFile {
                 path: spec_dir.join(format!("{}.search.spec.ts", model.entity_module)),
                 content: render_template_with_project(

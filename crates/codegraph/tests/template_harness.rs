@@ -428,7 +428,19 @@ async fn scaffold_middleware_supports_dual_auth() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-dual-auth");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -2002,7 +2014,19 @@ async fn scaffold_main() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -2103,7 +2127,19 @@ async fn scaffold_error_module() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-error");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -2265,7 +2301,19 @@ async fn scaffold_generates_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-mw");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -2300,8 +2348,19 @@ async fn test_permission_middleware_generated() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-permission-mw");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, false, "sea-orm");
-    let files = gen
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );    let files = gen
         .generate(
             &mock,
             &config,
@@ -2328,9 +2387,277 @@ async fn test_permission_middleware_generated() {
         permission_file.content
     );
     assert!(
-        permission_file.content.contains("has_permission"),
-        "Permission middleware should contain has_permission function. Got:\n{}",
+        permission_file.content.contains("extract_uuid_from_path"),
+        "Permission middleware should contain extract_uuid_from_path helper. Got:\n{}",
         permission_file.content
+    );
+    assert!(
+        permission_file.content.contains("AuthorizationService"),
+        "Permission middleware should delegate to the registered AuthorizationService. Got:\n{}",
+        permission_file.content
+    );
+    assert!(
+        !permission_file.content.contains("has_permission"),
+        "Permission middleware should not contain the old has_permission stub. Got:\n{}",
+        permission_file.content
+    );
+}
+
+/// The TEST_MODE persona DID validation must use rsky_syntax when the build has
+/// AT Protocol enabled, and a lightweight prefix check otherwise.
+#[tokio::test]
+async fn middleware_test_mode_did_validation_uses_rsky_when_atproto() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-middleware-atproto");
+
+    // has_atproto = true → rsky_syntax branch
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
+    let files = gen
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let middleware_file = files
+        .iter()
+        .find(|f| f.path.ends_with("middleware/mod.rs"))
+        .expect("Should generate middleware/mod.rs");
+    let content = &middleware_file.content;
+
+    assert!(
+        content.contains("pub did: Option<String>,"),
+        "AuthInfo should carry the optional DID. Got:\n{content}"
+    );
+    assert!(
+        content.contains("test-mode:"),
+        "Middleware should accept test-mode:<did> persona tokens. Got:\n{content}"
+    );
+    assert!(
+        content.contains("rsky_syntax::did::ensure_valid_did(did).is_ok()"),
+        "With atproto enabled, DID validation should use rsky_syntax. Got:\n{content}"
+    );
+    assert!(
+        content.contains("did: None"),
+        "Real auth paths should leave did: None. Got:\n{content}"
+    );
+}
+
+/// Entities with `permissions.scope` set must get the permission layers + a
+/// per-module permission helper in the generated router.
+#[tokio::test]
+async fn router_permission_gated_emits_layers_and_helper() {
+    generate::type_registry::register_framework_types();
+    let mock = setup_mock().await;
+    let mut config = test_domain_config();
+    let recruiting = config
+        .domains
+        .get_mut("recruiting")
+        .expect("recruiting domain exists");
+    let candidate_cfg = recruiting
+        .entity_config
+        .get_mut("CandidateType")
+        .expect("CandidateType entity config exists");
+    candidate_cfg.permissions.scope = Some("support:support-plan".to_string());
+    candidate_cfg.permissions.record_scoped = true;
+
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-permission-router");
+
+    let gen = generate::api::router::RouterGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &mock,
+            "recruiting",
+            &["CandidateType".to_string()],
+            &config,
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let content = files
+        .iter()
+        .map(|f| f.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        content.contains(".layer(axum::middleware::from_fn(crate::middleware::permission::require_permission))"),
+        "Router should add require_permission layer. Got:\n{content}"
+    );
+    assert!(
+        content.contains(".layer(axum::middleware::from_fn(candidate_permission))"),
+        "Router should add candidate_permission layer as the outer layer. Got:\n{content}"
+    );
+    assert!(
+        content.contains("async fn candidate_permission("),
+        "Router should emit the per-module permission helper. Got:\n{content}"
+    );
+    assert!(
+        content.contains("support:support-plan"),
+        "Permission helper should embed the configured scope. Got:\n{content}"
+    );
+    assert!(
+        content.contains("RequiredPermission(format!(\"{}:{}\", scope, op))"),
+        "Permission helper should build <scope>:<op> strings. Got:\n{content}"
+    );
+    // Backward compat: an entity WITHOUT permissions must NOT get the layers.
+    let mut plain_config = test_domain_config();
+    let plain = generate::api::router::RouterGenerator::new(&output_dir);
+    let files = plain
+        .generate(
+            &mock,
+            "recruiting",
+            &["CandidateType".to_string()],
+            &plain_config,
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+    let plain_content = files
+        .iter()
+        .map(|f| f.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !plain_content.contains("candidate_permission"),
+        "Non-gated entities must not emit permission layers. Got:\n{plain_content}"
+    );
+}
+
+/// Permission-gated entities generate DID persona tokens in the TS spec and
+/// stamp the persona DID into did-carrying fixture fields.
+#[test]
+fn playwright_ts_use_persona_token_renders_did_persona() {
+    use generate::playwright::{TsEntityContext, TsFieldDef};
+    use generate::ProjectConfig;
+
+    let tera = test_tera();
+    let project = ProjectConfig::default();
+
+    let mk_context = |use_persona_token: bool| TsEntityContext {
+        entity_name: "SupportPlan".to_string(),
+        module_name: "support_plan".to_string(),
+        domain: "support".to_string(),
+        path_segment: "support-plans".to_string(),
+        nsid: "community.os.support.supportPlan".to_string(),
+        has_create: true,
+        has_read: true,
+        has_update: true,
+        has_delete: true,
+        has_list: true,
+        create_fields: vec![
+            TsFieldDef {
+                name: "did".to_string(),
+                label: "DID".to_string(),
+                ts_type: "string".to_string(),
+                required: true,
+                example_value: "'did:example:0001'".to_string(),
+                fk_target_domain: None,
+                fk_target_path: None,
+                fk_target_module: None,
+                fk_target_entity_name: None,
+                js_var: None,
+            },
+            TsFieldDef {
+                name: "subjectDid".to_string(),
+                label: "Subject DID".to_string(),
+                ts_type: "string".to_string(),
+                required: true,
+                example_value: "'did:example:0002'".to_string(),
+                fk_target_domain: None,
+                fk_target_path: None,
+                fk_target_module: None,
+                fk_target_entity_name: None,
+                js_var: None,
+            },
+        ],
+        has_required_fields: true,
+        fk_fields: vec![],
+        schema_name: "support_plan".to_string(),
+        has_fts: false,
+        fts_search_field: String::new(),
+        fts_search_field_required: false,
+        fts_secondary_field: String::new(),
+        use_persona_token,
+        persona_did: "did:plc:test.generated".to_string(),
+    };
+
+    let spec = generate::render_template_with_project(
+        &tera,
+        "playwright/ts_spec.tera",
+        &mk_context(true),
+        &project,
+    )
+    .unwrap();
+    assert!(
+        spec.contains("const authToken = process.env.TEST_AUTH_TOKEN || 'test-mode:did:plc:test.generated';"),
+        "Gated spec should default to a DID persona token. Got:\n{spec}"
+    );
+
+    let fixture = generate::render_template_with_project(
+        &tera,
+        "playwright/ts_fixture.tera",
+        &mk_context(true),
+        &project,
+    )
+    .unwrap();
+    assert!(
+        fixture.contains("did: 'did:plc:test.generated',"),
+        "Gated fixture should stamp the persona DID into the did field. Got:\n{fixture}"
+    );
+    assert!(
+        fixture.contains("subjectDid: 'did:plc:test.generated',"),
+        "Gated fixture should stamp the persona DID into the subjectDid field. Got:\n{fixture}"
+    );
+    assert!(
+        !fixture.contains("'did:example:0001'"),
+        "Gated fixture must override did example values. Got:\n{fixture}"
+    );
+
+    // Backward compat: non-gated entities keep the empty token + example values.
+    let spec_plain = generate::render_template_with_project(
+        &tera,
+        "playwright/ts_spec.tera",
+        &mk_context(false),
+        &project,
+    )
+    .unwrap();
+    assert!(
+        spec_plain.contains("const authToken = process.env.TEST_AUTH_TOKEN || '';"),
+        "Non-gated spec should keep the empty token. Got:\n{spec_plain}"
+    );
+    let fixture_plain = generate::render_template_with_project(
+        &tera,
+        "playwright/ts_fixture.tera",
+        &mk_context(false),
+        &project,
+    )
+    .unwrap();
+    assert!(
+        fixture_plain.contains("did: 'did:example:0001',"),
+        "Non-gated fixture should keep example values. Got:\n{fixture_plain}"
     );
 }
 
@@ -3546,7 +3873,19 @@ async fn scaffold_main_has_security_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-security");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -3629,7 +3968,19 @@ async fn scaffold_main_has_graceful_shutdown() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shutdown");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -3666,7 +4017,19 @@ async fn scaffold_main_has_health_ready() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-health-ready");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -4657,7 +5020,19 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shadow");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -4691,7 +5066,19 @@ async fn scaffold_generates_build_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-build-rs");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -4721,7 +5108,19 @@ async fn scaffold_main_has_version_endpoint() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-version");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -7574,7 +7973,19 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-scaffold");
     let project = sqlite_project_config();
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, false, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &project)
         .await
@@ -7599,5 +8010,3 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
         cargo_file.content
     );
 }
-
-

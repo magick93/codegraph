@@ -20,7 +20,10 @@ export class EventBaseFixture {
     return {
 
 
+
       familyName: "test",
+
+
 
 
 
@@ -28,7 +31,10 @@ export class EventBaseFixture {
 
 
 
+
+
       title: "Test Entry",
+
 
 
 

@@ -22,7 +22,10 @@ export class PublicEventFixture {
     return {
 
 
+
       familyName: "test",
+
+
 
 
 
@@ -30,7 +33,10 @@ export class PublicEventFixture {
 
 
 
+
+
       title: "Test Entry",
+
 
 
 

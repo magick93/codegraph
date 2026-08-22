@@ -36,6 +36,10 @@ pub struct AuthInfo {
     pub role: String,
     /// Email for magic link auth, None otherwise.
     pub email: Option<String>,
+    /// AT Protocol DID of the authenticated principal.
+    /// Injected by TEST_MODE persona tokens (`test-mode:<did>`); None for
+    /// JWT / API-key / magic-link auth (did is not resolvable there yet).
+    pub did: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -82,12 +86,26 @@ pub async fn auth_middleware(
         .map(|s| s.to_string())
         .ok_or_else(|| reject_unauthorized("Missing or malformed Authorization header"))?;
 
-    // TEST_MODE: accept "test-mode" token without real auth
-    if std::env::var("TEST_MODE").unwrap_or_default() == "true" && token == "test-mode" {
+    // TEST_MODE: accept "test-mode" token without real auth.
+    // "test-mode:<did>" injects a persona DID (did:plc:* / did:web:* / did:key:*)
+    // for permission-gated endpoints.
+    if std::env::var("TEST_MODE").unwrap_or_default() == "true"
+        && (token == "test-mode" || token.starts_with("test-mode:"))
+    {
         let org_id = std::env::var("TEST_ORG_ID")
             .ok()
             .and_then(|s| uuid::Uuid::parse_str(&s).ok())
             .unwrap_or_else(uuid::Uuid::nil);
+        let did = match token.strip_prefix("test-mode:") {
+            Some(remainder) if !remainder.is_empty() => {
+                if !is_valid_test_did(remainder) {
+                    return Err(reject_unauthorized("Invalid DID in test-mode token"));
+                }
+                Some(remainder.to_string())
+            }
+            // bare "test-mode" — backward compat (no DID persona)
+            _ => None,
+        };
         let test_auth = AuthInfo {
             organization_id: org_id,
             api_key_id: uuid::Uuid::nil(),
@@ -95,6 +113,7 @@ pub async fn auth_middleware(
             auth_mode: AuthMode::MagicLink { email: "test@e2e.local".to_string() },
             role: "test".to_string(),
             email: Some("test@e2e.local".to_string()),
+            did,
         };
         request.extensions_mut().insert(test_auth);
         return Ok(next.run(request).await);
@@ -187,6 +206,7 @@ async fn verify_api_key(db: &sea_orm::DatabaseConnection, token: &str) -> Result
         },
         role: "api_key".to_string(),
         email: None,
+        did: None,
     })
 }
 
@@ -246,6 +266,7 @@ async fn verify_jwt(db: &sea_orm::DatabaseConnection, token: &str, jwt_secret: &
             auth_mode: AuthMode::MagicLink { email: email.clone() },
             role: "community_member".to_string(),
             email: Some(email),
+            did: None,
         });
     }
 
@@ -287,7 +308,17 @@ async fn verify_jwt(db: &sea_orm::DatabaseConnection, token: &str, jwt_secret: &
         auth_mode: AuthMode::Jwt { user_id },
         role,
         email: None,
+        did: None,
     })
+}
+
+/// Validate a DID string for TEST_MODE persona tokens.
+/// When the build has AT Protocol enabled, uses the full rsky-syntax DID
+/// validator; otherwise falls back to a lightweight method-prefix check.
+fn is_valid_test_did(did: &str) -> bool {
+
+    did.starts_with("did:plc:") || did.starts_with("did:web:") || did.starts_with("did:key:")
+
 }
 
 fn reject_unauthorized(msg: &str) -> (StatusCode, Json<serde_json::Value>) {

@@ -82,6 +82,13 @@ pub struct TsEntityContext {
     /// camelCase create-DTO field of a secondary (D-weight) search column,
     /// usable in a create payload. Empty when no such column exists.
     pub fts_secondary_field: String,
+    /// True when the entity is permission-gated (`permissions.scope` set).
+    /// The generated spec then uses a DID persona token so requests carry an
+    /// actor DID the AuthorizationService can evaluate.
+    pub use_persona_token: bool,
+    /// DID injected as the test persona (both in the auth token and in
+    /// did-carrying fixture fields). Defaults to "did:plc:test.generated".
+    pub persona_did: String,
 }
 
 #[derive(Debug, Serialize, Clone)]

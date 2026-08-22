@@ -7,7 +7,7 @@ import { {{ entity_name }}Fixture } from '../../fixtures/{{ domain }}/{{ module_
 import { {{ fk.entity_name }}Fixture } from '../../fixtures/{{ fk.target_domain }}/{{ fk.target_module }}';
 {% endfor %}
 
-const authToken = process.env.TEST_AUTH_TOKEN || '';
+const authToken = process.env.TEST_AUTH_TOKEN || {% if use_persona_token %}'test-mode:{{ persona_did }}'{% else %}''{% endif %};
 {% if fk_fields %}
 
 // Required entity-ref FKs need real parent rows. Created once per file in

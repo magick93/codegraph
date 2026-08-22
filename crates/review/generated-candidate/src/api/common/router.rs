@@ -97,7 +97,9 @@ fn code_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn currency_code_list_routes() -> Router<AppState> {
@@ -118,7 +120,9 @@ fn currency_code_list_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn date_routes() -> Router<AppState> {
@@ -139,7 +143,9 @@ fn date_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn distribution_base_routes() -> Router<AppState> {
@@ -160,7 +166,9 @@ fn distribution_base_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn effective_date_routes() -> Router<AppState> {
@@ -181,7 +189,9 @@ fn effective_date_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn event_base_routes() -> Router<AppState> {
@@ -202,7 +212,9 @@ fn event_base_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn formatted_date_time_routes() -> Router<AppState> {
@@ -223,7 +235,9 @@ fn formatted_date_time_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn gender_code_list_routes() -> Router<AppState> {
@@ -244,7 +258,9 @@ fn gender_code_list_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn identifier_routes() -> Router<AppState> {
@@ -265,7 +281,9 @@ fn identifier_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn name_routes() -> Router<AppState> {
@@ -286,7 +304,9 @@ fn name_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn person_base_routes() -> Router<AppState> {
@@ -307,7 +327,9 @@ fn person_base_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn position_schedule_type_code_list_routes() -> Router<AppState> {
@@ -328,7 +350,9 @@ fn position_schedule_type_code_list_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn string_type_array_routes() -> Router<AppState> {
@@ -349,7 +373,9 @@ fn string_type_array_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn amount_routes() -> Router<AppState> {
@@ -370,7 +396,9 @@ fn amount_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn process_history_item_routes() -> Router<AppState> {
@@ -391,7 +419,9 @@ fn process_history_item_routes() -> Router<AppState> {
 
 
 
+
 }
+
 
 
 fn process_history_routes() -> Router<AppState> {
@@ -412,5 +442,7 @@ fn process_history_routes() -> Router<AppState> {
 
 
 
+
 }
+
 

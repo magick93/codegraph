@@ -86,5 +86,35 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 {% endif %}
 {% endfor %}
 {% endif %}
+{% if entity.has_permissions %}
+        // Permission gating ({{ entity.permission_scope }}): the outer
+        // {{ entity.module_name }}_permission layer sets the RequiredPermission
+        // extension; the inner require_permission layer consumes it.
+        .layer(axum::middleware::from_fn(crate::middleware::permission::require_permission))
+        .layer(axum::middleware::from_fn({{ entity.module_name }}_permission))
+{% endif %}
 }
+{% if entity.has_permissions %}
+async fn {{ entity.module_name }}_permission(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use crate::middleware::permission::RequiredPermission;
+    let scope = "{{ entity.permission_scope }}";
+    let op = match request.method().as_str() {
+        "POST" => Some("create"),
+        "PUT" => Some("update"),
+        "DELETE" => Some("delete"),
+        "GET" => {
+            let last = request.uri().path().rsplit('/').next().unwrap_or("");
+            if last.len() == 36 && last.matches('-').count() >= 4 { Some("read") } else { Some("list") }
+        }
+        _ => None,
+    };
+    if let Some(op) = op {
+        request.extensions_mut().insert(RequiredPermission(format!("{}:{}", scope, op)));
+    }
+    next.run(request).await
+}
+{% endif %}
 {% endfor %}

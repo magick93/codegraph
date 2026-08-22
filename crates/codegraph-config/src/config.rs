@@ -488,6 +488,22 @@ pub struct EntityConfig {
     /// E.g. ["read", "list"] to allow unauthenticated access to read operations.
     #[serde(default)]
     pub public_operations: Option<Vec<String>>,
+    /// AT Protocol permission gating. When `scope` is set, the entity's API
+    /// routes run through the generated permission middleware.
+    #[serde(default)]
+    pub permissions: PermissionConfig,
+}
+
+/// AT Protocol permission gating configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PermissionConfig {
+    /// Permission scope prefix, e.g. "support:support-plan". Ops are appended:
+    /// ":create", ":read", ":update", ":delete", ":list".
+    pub scope: Option<String>,
+    /// When true, read-by-id / update / delete require record-level authorization
+    /// (the AuthorizationService resolves the target record's owner DID).
+    #[serde(default)]
+    pub record_scoped: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1337,7 +1353,8 @@ entities = ["PersonRecordType"]
     }
 
     #[test]
-    fn parse_worker_topology_keys_all_present() {        let toml = r#"
+    fn parse_worker_topology_keys_all_present() {
+        let toml = r#"
 [domains.payroll]
 label = "Payroll"
 schema_dir = "payroll"
