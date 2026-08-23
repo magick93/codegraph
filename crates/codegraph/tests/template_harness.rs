@@ -2601,6 +2601,7 @@ fn playwright_ts_use_persona_token_renders_did_persona() {
         fts_search_field_required: false,
         fts_secondary_field: String::new(),
         use_persona_token,
+        permission_record_scoped: true,
         persona_did: "did:plc:test.generated".to_string(),
     };
 
@@ -2612,8 +2613,8 @@ fn playwright_ts_use_persona_token_renders_did_persona() {
     )
     .unwrap();
     assert!(
-        spec.contains("const authToken = process.env.TEST_AUTH_TOKEN || 'test-mode:did:plc:test.generated';"),
-        "Gated spec should default to a DID persona token. Got:\n{spec}"
+        spec.contains("const authToken = 'test-mode:did:plc:test.generated';"),
+        "Gated spec should use a DID persona token unconditionally (TEST_AUTH_TOKEN must not override it). Got:\n{spec}"
     );
 
     let fixture = generate::render_template_with_project(

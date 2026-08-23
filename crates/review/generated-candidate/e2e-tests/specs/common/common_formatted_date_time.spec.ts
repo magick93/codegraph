@@ -47,9 +47,8 @@ test.describe('FormattedDateTime — Read', () => {
     const response = await request.get('/api/v1/common/formatted-date-time/00000000-0000-0000-0000-000000000000', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
-    expect(response.status()).toBe(404);
+        expect(response.status()).toBe(404);
   });
-});
 
 
 
@@ -71,7 +70,7 @@ test.describe('FormattedDateTime — Delete', () => {
     const check = await request.get(`/api/v1/common/formatted-date-time/${id}`, {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
-    expect(check.status()).toBe(404);
+        expect(check.status()).toBe(404);
   });
 });
 

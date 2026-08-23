@@ -51,9 +51,8 @@ test.describe('Amount — Read', () => {
     const response = await request.get('/api/v1/common/amount/00000000-0000-0000-0000-000000000000', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
-    expect(response.status()).toBe(404);
+        expect(response.status()).toBe(404);
   });
-});
 
 
 
@@ -75,7 +74,7 @@ test.describe('Amount — Delete', () => {
     const check = await request.get(`/api/v1/common/amount/${id}`, {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
-    expect(check.status()).toBe(404);
+        expect(check.status()).toBe(404);
   });
 });
 

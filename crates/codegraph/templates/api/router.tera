@@ -96,7 +96,7 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 }
 {% if entity.has_permissions %}
 async fn {{ entity.module_name }}_permission(
-    request: axum::extract::Request,
+    mut request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use crate::middleware::permission::RequiredPermission;

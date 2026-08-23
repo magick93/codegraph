@@ -7,7 +7,7 @@ import { {{ entity_name }}Fixture } from '../../fixtures/{{ domain }}/{{ module_
 import { {{ fk.entity_name }}Fixture } from '../../fixtures/{{ fk.target_domain }}/{{ fk.target_module }}';
 {% endfor %}
 
-const authToken = process.env.TEST_AUTH_TOKEN || {% if use_persona_token %}'test-mode:{{ persona_did }}'{% else %}''{% endif %};
+{% if use_persona_token %}const authToken = 'test-mode:{{ persona_did }}';{% else %}const authToken = process.env.TEST_AUTH_TOKEN || '';{% endif %}
 {% if fk_fields %}
 
 // Required entity-ref FKs need real parent rows. Created once per file in
@@ -81,13 +81,14 @@ test.describe('{{ entity_name }} — Read', () => {
     expect(Array.isArray(body.data)).toBe(true);
   });
 
-  test('GET /api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/:id returns 404 for nonexistent', async ({ request }) => {
+  test('GET /api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/:id returns {% if permission_record_scoped %}403{% else %}404{% endif %} for nonexistent', async ({ request }) => {
     const response = await request.get('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/00000000-0000-0000-0000-000000000000', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
-    expect(response.status()).toBe(404);
+    {% if permission_record_scoped %}// Record-scoped authorization runs before the handler, so an unknown id
+    // is denied (403) rather than reaching the 404 lookup.
+{% endif %}    expect(response.status()).toBe({% if permission_record_scoped %}403{% else %}404{% endif %});
   });
-});
 {% endif %}
 
 {% if has_delete %}
@@ -109,7 +110,9 @@ test.describe('{{ entity_name }} — Delete', () => {
     const check = await request.get(`/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/${id}`, {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
-    expect(check.status()).toBe(404);
+    {% if permission_record_scoped %}// Record-scoped authorization runs before the handler, so a deleted record
+    // is denied (403) rather than reaching the 404 lookup.
+{% endif %}    expect(check.status()).toBe({% if permission_record_scoped %}403{% else %}404{% endif %});
   });
 });
 {% endif %}

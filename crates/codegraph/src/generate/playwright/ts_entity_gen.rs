@@ -434,6 +434,12 @@ impl EntityGenerator for TsEntityGenerator {
             .and_then(|d| d.get_entity_config(&model.name))
             .and_then(|c| c.permissions.scope.clone());
         let use_persona_token = permission_scope.is_some();
+        let permission_record_scoped = config
+            .domains
+            .get(&model.domain)
+            .and_then(|d| d.get_entity_config(&model.name))
+            .map(|c| c.permissions.record_scoped)
+            .unwrap_or(false);
         let persona_did = "did:plc:test.generated".to_string();
 
         let fk_fields: Vec<TsFkField> = create_fields
@@ -469,6 +475,7 @@ impl EntityGenerator for TsEntityGenerator {
             fts_search_field_required,
             fts_secondary_field: fts_secondary_field.clone(),
             use_persona_token,
+            permission_record_scoped,
             persona_did,
         };
 

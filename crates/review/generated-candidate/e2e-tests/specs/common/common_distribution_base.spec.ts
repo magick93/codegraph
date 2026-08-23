@@ -66,9 +66,8 @@ test.describe('DistributionBase — Read', () => {
     const response = await request.get('/api/v1/common/distribution-base/00000000-0000-0000-0000-000000000000', {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
-    expect(response.status()).toBe(404);
+        expect(response.status()).toBe(404);
   });
-});
 
 
 
@@ -90,7 +89,7 @@ test.describe('DistributionBase — Delete', () => {
     const check = await request.get(`/api/v1/common/distribution-base/${id}`, {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     });
-    expect(check.status()).toBe(404);
+        expect(check.status()).toBe(404);
   });
 });
 

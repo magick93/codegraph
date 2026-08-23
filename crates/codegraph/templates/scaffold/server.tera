@@ -287,35 +287,44 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     );
 {% endif %}
 
+{% if project.hooks_api_crate %}
+    // Hook registry — lifecycle hooks + authz service. Built before AppState so
+    // command/query handlers receive their per-entity lifecycle hook.
+    let mut hooks_registry = crate::hooks::HookRegistry::default();
+{% if has_atproto %}
+    hooks_registry.register_authorization(std::sync::Arc::new(
+        cosmos_extensions::authorization::AuthorizationServiceImpl::new(db.clone()),
+    ));
+    cosmos_extensions::did_validation::register_did_validation_hooks(&mut hooks_registry);
+{% endif %}
+{% endif %}
+
     let state = crate::app_state::AppState {
 {% for domain in domains %}
 {% for entity in domain.entities %}
         {{ domain.name }}_{{ entity.module_name }}_commands: crate::domain::{{ domain.name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler::new(
             Arc::new(crate::domain::{{ domain.name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl),
             db.clone(),
+{% if project.hooks_api_crate %}
+            hooks_registry.{{ domain.name }}_{{ entity.module_name }}.clone(),
+{% else %}
             None,
+{% endif %}
         ),
         {{ domain.name }}_{{ entity.module_name }}_queries: crate::domain::{{ domain.name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler::new(
             Arc::new(crate::domain::{{ domain.name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl),
             db.clone(),
+{% if project.hooks_api_crate %}
+            hooks_registry.{{ domain.name }}_{{ entity.module_name }}.clone(),
+{% else %}
             None,
+{% endif %}
         ),
 {% endfor %}
 {% endfor %}
         db: db.clone(),
 {% if project.hooks_api_crate %}
-        registry: {
-{% if has_atproto %}
-            let mut registry = crate::hooks::HookRegistry::default();
-            registry.register_authorization(std::sync::Arc::new(
-                cosmos_extensions::authorization::AuthorizationServiceImpl::new(db.clone()),
-            ));
-            cosmos_extensions::did_validation::register_did_validation_hooks(&mut registry);
-            registry
-{% else %}
-            crate::hooks::HookRegistry::default()
-{% endif %}
-        },
+        registry: hooks_registry,
 {% endif %}
 {% if has_atproto %}
         identity: Some(identity_service),

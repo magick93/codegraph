@@ -86,6 +86,10 @@ pub struct TsEntityContext {
     /// The generated spec then uses a DID persona token so requests carry an
     /// actor DID the AuthorizationService can evaluate.
     pub use_persona_token: bool,
+    /// True when the entity has `permissions.record_scoped` set. The generated
+    /// spec then expects 403 (authz-before-handler) for unknown record ids
+    /// instead of 404.
+    pub permission_record_scoped: bool,
     /// DID injected as the test persona (both in the auth token and in
     /// did-carrying fixture fields). Defaults to "did:plc:test.generated".
     pub persona_did: String,

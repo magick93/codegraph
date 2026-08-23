@@ -406,7 +406,9 @@ pub(crate) fn example_for_field(name: &str, rust_type: &str, codelist_target: Op
         "postalCode" | "postal_code" => "\"6011\"".into(),
         "country" => "\"NZ\"".into(),
         "date_of_birth" | "dateOfBirth" | "startDate" | "endDate" | "date" | "start_date"
-        | "end_date" | "openedDate" | "opened_date" | "closingDate" | "closing_date" => {
+        | "end_date" | "openedDate" | "opened_date" | "closingDate" | "closing_date"
+        | "grantedAt" | "granted_at" | "expiresAt" | "expires_at" | "revokedAt"
+        | "revoked_at" | "validFrom" | "valid_from" | "validUntil" | "valid_until" => {
             if rust_type.contains("DateTime") {
                 "\"2025-01-15T00:00:00Z\"".into()
             } else {
@@ -433,7 +435,50 @@ pub(crate) fn example_for_field(name: &str, rust_type: &str, codelist_target: Op
         _ if name.contains("document") || (name.contains("alternate") && name.contains("id")) => {
             "\"test-doc-001\"".into()
         }
+        _ if name == "targetType" || name == "target_type" => "\"Person\"".into(),
+        _ if name == "trustLevel"
+            || name == "trust_level"
+            || rust_type.contains("TrustLevel") =>
+        {
+            "\"Medium\"".into()
+        }
+        _ if rust_type.contains("RelationshipTypeCodeList")
+            || codelist_target.is_some_and(|t| t.contains("RelationshipType")) =>
+        {
+            "\"Invited\"".into()
+        }
         _ if name == "theme" || rust_type.contains("ConsultationTheme") => "\"Accessibility\"".into(),
+        _ if name == "subjectDid"
+            || name == "subject_did"
+            || name == "delegateDid"
+            || name == "delegate_did"
+            || name == "granteeDid"
+            || name == "grantee_did"
+            || name == "workerDid"
+            || name == "worker_did"
+            || name == "coordinatorDid"
+            || name == "coordinator_did"
+            || name == "organizationDid"
+            || name == "organization_did"
+            || name == "ownerDid"
+            || name == "owner_did" =>
+        {
+            "\"did:plc:test.community.os\"".into()
+        }
+        _ if rust_type.contains("ConsentConsentGrantPermission")
+            || codelist_target.is_some_and(|t| t.contains("ConsentConsentGrantPermission")) =>
+        {
+            "\"read\"".into()
+        }
+        _ if rust_type.contains("ConsentConsentGrantStatus")
+            || rust_type.contains("DelegationDelegationStatus")
+            || rust_type.contains("SupportArrangementStatus")
+            || codelist_target.is_some_and(|t| t.contains("ConsentConsentGrantStatus"))
+            || codelist_target.is_some_and(|t| t.contains("DelegationDelegationStatus"))
+            || codelist_target.is_some_and(|t| t.contains("SupportArrangementStatus")) =>
+        {
+            "\"active\"".into()
+        }
         _ if rust_type.contains("RsvpStatus")
             || rust_type.contains("EventAttendanceStatus")
             || codelist_target.is_some_and(|t| t.contains("RsvpStatus"))
