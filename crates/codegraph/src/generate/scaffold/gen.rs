@@ -367,6 +367,16 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: meta_content,
         });
 
+        // Shared API-key scope guard backing the generated per-route scope
+        // middleware (api/router.tera). Emitted per topology by the monolith
+        // scaffold here and by the workers scaffold for each worker crate.
+        let scope_content =
+            render_template_with_project(tera, "api/scope.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self.output_dir.join("src").join("api").join("scope.rs"),
+            content: scope_content,
+        });
+
         let integrations_rs = render_template_with_project(
             tera,
             "scaffold/integrations_handler.tera",

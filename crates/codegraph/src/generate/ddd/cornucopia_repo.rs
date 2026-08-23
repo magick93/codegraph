@@ -752,14 +752,14 @@ fn emit_adapter_search(tree: &EntityTree, code: &mut String) {
         writeln!(code, "        let total = if include_deleted {{").unwrap();
         writeln!(
             code,
-            "            {qmod}::search_count_{snake}_including_deleted().bind(db, &query.to_string()).one().await.map_err(|e| e.to_string())?",
+            "            {qmod}::search_count_{snake}_including_deleted().bind(db, &query.to_string()).one().await.map_err(|e| e.to_string())? as u64",
             snake = tree.table_name
         )
         .unwrap();
         writeln!(code, "        }} else {{").unwrap();
         writeln!(
             code,
-            "            {qmod}::search_count_{snake}().bind(db, &query.to_string()).one().await.map_err(|e| e.to_string())?",
+            "            {qmod}::search_count_{snake}().bind(db, &query.to_string()).one().await.map_err(|e| e.to_string())? as u64",
             snake = tree.table_name
         )
         .unwrap();
@@ -773,7 +773,7 @@ fn emit_adapter_search(tree: &EntityTree, code: &mut String) {
         .unwrap();
         writeln!(
             code,
-            "        let total = {qmod}::search_count_{snake}().bind(db, &query.to_string()).one().await.map_err(|e| e.to_string())?;",
+            "        let total = {qmod}::search_count_{snake}().bind(db, &query.to_string()).one().await.map_err(|e| e.to_string())? as u64;",
             snake = tree.table_name
         )
         .unwrap();

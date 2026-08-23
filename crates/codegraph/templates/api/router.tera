@@ -93,6 +93,13 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
         .layer(axum::middleware::from_fn(crate::middleware::permission::require_permission))
         .layer(axum::middleware::from_fn({{ entity.module_name }}_permission))
 {% endif %}
+        // API-key scope enforcement ({{ domain }}.{{ entity.api_key_scope }}):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn({{ entity.module_name }}_scope_guard))
 }
 {% if entity.has_permissions %}
 async fn {{ entity.module_name }}_permission(
@@ -117,4 +124,16 @@ async fn {{ entity.module_name }}_permission(
     next.run(request).await
 }
 {% endif %}
+async fn {{ entity.module_name }}_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "{{ domain }}",
+        "{{ entity.api_key_scope }}",
+    )
+    .await
+}
 {% endfor %}

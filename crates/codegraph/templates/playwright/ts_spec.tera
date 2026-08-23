@@ -89,6 +89,7 @@ test.describe('{{ entity_name }} — Read', () => {
     // is denied (403) rather than reaching the 404 lookup.
 {% endif %}    expect(response.status()).toBe({% if permission_record_scoped %}403{% else %}404{% endif %});
   });
+});
 {% endif %}
 
 {% if has_delete %}

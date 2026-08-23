@@ -912,6 +912,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 api::router::RouterGenerator::new(base("router"))
                     .with_parent_candidates(parent_candidates.clone()),
             ) as Box<dyn DomainGenerator>,
+            Box::new(
+                api::contract::ApiContractGenerator::new(base("api_contract"))
+                    .with_parent_candidates(parent_candidates.clone()),
+            ) as Box<dyn DomainGenerator>,
             Box::new(api::links::LinksGenerator::new(base("links"))) as Box<dyn DomainGenerator>,
             Box::new(ui::domain_layout::UiDomainLayoutGenerator::new(base(
                 "ui-domain-layout",
@@ -961,6 +965,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             output_dir,
         )) as Box<dyn GlobalGenerator>,
         Box::new(api::openapi::OpenApiGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
+        Box::new(api::contract::ApiContractIndexGenerator::new(output_dir))
+            as Box<dyn GlobalGenerator>,
     ];
 
     // The monolith scaffold (src/main.rs, src/server.rs, root Cargo.toml,

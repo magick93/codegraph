@@ -529,6 +529,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         // ── Domain generators ──────────────────────────────────────────
         cap("errors",               Domain, Api,  &[], &[]),
         cap("router",               Domain, Api,  &[], &[]),
+        cap("api_contract",         Domain, Api,  &[], &[]),
         cap("links",                Domain, Api,  &[], &[]),
         cap("ui-domain-layout",     Domain, Ui,   &[], &[]),
         cap("cli_domain",           Domain, Cli,  &[], &[]),
@@ -540,6 +541,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("platform_grants",      Global, Common, &[], &[]),
         cap("workflow_seed",        Global, Common, &[], &[]),
         cap("openapi",              Global, Common, &[], &[]),
+        cap("api_contract_index",   Global, Common, &[], &[]),
         cap("scaffold",             Global, Common, &[], &[]),
         cap("worker_scaffold",      Global, Common, &[], &[]),
         cap("ui_scaffold",          Global, Ui,    &[], &[]),

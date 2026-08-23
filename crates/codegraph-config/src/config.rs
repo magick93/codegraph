@@ -492,6 +492,13 @@ pub struct EntityConfig {
     /// routes run through the generated permission middleware.
     #[serde(default)]
     pub permissions: PermissionConfig,
+    /// Entity part of the API-key scope string (`{domain}.{entity}.read|write`)
+    /// enforced by the generated route-level scope guard. Defaults to the
+    /// entity's module name (snake_case table name) at codegen time; override
+    /// when the scope vocabulary differs from the module name (the hand-written
+    /// platform routes, for example, scope on `tenants` / `api_keys`).
+    #[serde(default)]
+    pub api_key_scope: Option<String>,
 }
 
 /// AT Protocol permission gating configuration.
@@ -742,6 +749,29 @@ list_exclude = ["detailed_notes"]
         assert_eq!(candidate.role.as_deref(), Some("root"));
         assert_eq!(candidate.dto.immutable_fields, vec!["ssn"]);
         assert_eq!(candidate.dto.list_exclude, vec!["detailed_notes"]);
+        // api_key_scope defaults to None (module name fallback at codegen time).
+        assert!(candidate.api_key_scope.is_none());
+    }
+
+    #[test]
+    fn test_parse_api_key_scope_override() {
+        let toml = r#"
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting"
+postgres_schema = "recruiting"
+entities = ["CandidateType"]
+
+[domains.recruiting.entity_config.CandidateType]
+api_key_scope = "candidates"
+
+[domains.recruiting.entity_config.CandidateType.permissions]
+scope = "recruiting:candidate"
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        let candidate = &config.domains["recruiting"].entity_config["CandidateType"];
+        assert_eq!(candidate.api_key_scope.as_deref(), Some("candidates"));
+        assert_eq!(candidate.permissions.scope.as_deref(), Some("recruiting:candidate"));
     }
 
     #[test]
