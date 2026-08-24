@@ -573,6 +573,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         )
 {% if has_atproto %}
          .merge(crate::atproto::xrpc::xrpc_routes())
+         // XRPC resource-server auth (issue #36 Wave C sub-task 12): accepts
+         // OAuth DPoP-bound access tokens alongside the AT Protocol service JWT
+         // and TEST_MODE persona paths, injecting AtprotoDid into extensions.
+         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::api::auth::oauth_middleware::oauth_xrpc_auth))
 {% endif %}
          .with_state(state);
 

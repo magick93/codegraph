@@ -48,6 +48,12 @@ pub enum AuthMode {
     Jwt { user_id: Uuid },
     ApiKey { api_key_id: Uuid, raw_key: String },
     MagicLink { email: String },
+{% if has_atproto %}
+    /// OAuth 2.0 DPoP-bound access token (issue #36, Wave C). Set by the OAuth
+    /// branch in `auth_middleware` (delegated to
+    /// `crate::api::auth::oauth_middleware::verify_oauth_bearer`).
+    OAuth { scopes: Vec<String>, token_id: String },
+{% endif %}
 }
 
 /// Legacy alias for backward compatibility with handlers expecting ApiKeyInfo.
@@ -118,6 +124,27 @@ pub async fn auth_middleware(
         request.extensions_mut().insert(test_auth);
         return Ok(next.run(request).await);
     }
+
+{% if has_atproto %}
+    // OAuth 2.0 DPoP-bound access tokens (issue #36 Wave C): accept and
+    // scope-gate the request before the legacy API-key / JWT paths. Tokens
+    // that are not OAuth access tokens fall through to those paths; a token
+    // that IS an OAuth token but fails verification (or whose scopes do not
+    // cover the requested resource) is rejected here.
+    if let Some(oauth_auth) =
+        crate::api::auth::oauth_middleware::verify_oauth_bearer(
+            state.oauth_provider.clone(),
+            crate::api::auth::oauth_middleware::oauth_request_data(
+                state.oauth_provider.as_deref(),
+                &request,
+            ),
+        )
+        .await?
+    {
+        request.extensions_mut().insert(oauth_auth);
+        return Ok(next.run(request).await);
+    }
+{% endif %}
 
     let auth_info = if token.starts_with("sk_") {
         verify_api_key(&state.db, &token).await?
