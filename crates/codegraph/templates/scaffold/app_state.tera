@@ -6,7 +6,7 @@ use std::sync::Arc;
 use sea_orm::DatabaseConnection;
 {% if project.hooks_api_crate %}use crate::hooks::HookRegistry;{% endif %}
 {% if has_atproto %}
-use crate::api::auth::atproto::AtprotoAuth;
+use cosmos_extensions::http::auth::AtprotoAuth;
 use cosmos_extensions::atproto_client::AtprotoClient;
 {% endif %}
 
@@ -26,7 +26,7 @@ pub struct AppState {
     pub registry: HookRegistry,
 {% endif %}
 {% if has_atproto %}
-    pub identity: Option<crate::api::identity::IdentityService>,
+    pub identity: Option<cosmos_extensions::http::identity::IdentityService>,
 
     pub atproto_auth: AtprotoAuth,
 

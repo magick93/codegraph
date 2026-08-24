@@ -210,160 +210,6 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         return Err(e.into());
     }
 
-{% if has_atproto %}
-    let atproto_authority = std::env::var("ATPROTO_AUTHORITY")
-        .unwrap_or_else(|_| "{{ project.atproto_authority }}".to_string());
-    let server_did = format!("did:web:{atproto_authority}");
-    let plc_directory_url = std::env::var("PLC_DIRECTORY_URL").ok();
-    let did_document_cache_ttl_secs: u64 = std::env::var("DID_DOCUMENT_CACHE_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(300);
-    let identity_service = crate::api::identity::IdentityService::new(
-        server_did.clone(),
-        plc_directory_url,
-        Some(5000),
-        Some(std::time::Duration::from_secs(did_document_cache_ttl_secs)),
-    );
-
-    let pds_endpoint = std::env::var("PDS_ENDPOINT")
-        .unwrap_or_else(|_| "https://pds.{{ project.atproto_authority }}".to_string());
-
-    let atproto_auth = {
-        let signing_key_hex = std::env::var("ATPROTO_SIGNING_KEY_HEX")
-            .unwrap_or_default();
-        let app_env = std::env::var("APP_ENV")
-            .or_else(|_| std::env::var("ENVIRONMENT"))
-            .or_else(|_| std::env::var("ENV"))
-            .unwrap_or_default();
-        let (did, signing_key) = if signing_key_hex.is_empty() {
-            if app_env == "production" {
-                tracing::error!(
-                    "FATAL: ATPROTO_SIGNING_KEY_HEX must be set in production. \
-                     Generate one with: {{ app_name }}-cli keygen"
-                );
-                std::process::exit(1);
-            }
-            let (did, key) = crate::api::auth::atproto::generate_service_key()
-                .expect("Failed to generate AT Protocol service key");
-            tracing::warn!(
-                "Generated new AT Protocol service key. DID: {}. Add ATPROTO_SIGNING_KEY_HEX={} to persist.",
-                did,
-                hex::encode(&key)
-            );
-            (did, key)
-        } else {
-            let key = hex::decode(&signing_key_hex)
-                .expect("ATPROTO_SIGNING_KEY_HEX must be valid hex");
-            let did = server_did.clone();
-            (did, key)
-        };
-        crate::api::auth::atproto::AtprotoAuth {
-            server_did: did,
-            signing_key,
-            pds_endpoint,
-        }
-    };
-
-    let key_prefix: String = atproto_auth.signing_key.iter().take(4).map(|b| format!("{:02x}", b)).collect();
-    tracing::info!(
-        "AT Protocol PDS: {} | Server DID: {} | Key prefix: {}...",
-        atproto_auth.pds_endpoint,
-        atproto_auth.server_did,
-        key_prefix,
-    );
-
-    let auth_token = atproto_auth
-        .sign_service_jwt(&atproto_auth.pds_endpoint, std::time::Duration::from_secs(3600))
-        .unwrap_or_else(|e| {
-            tracing::warn!("Failed to sign initial service JWT: {}", e);
-            String::new()
-        });
-
-    let atproto_client = cosmos_extensions::atproto_client::AtprotoClient::new(
-        &atproto_auth.pds_endpoint,
-        &atproto_auth.server_did,
-        Some(auth_token),
-    );
-
-    // OAuth 2.0 with DPoP provider (issue #36, Wave A). Built when the OAUTH_*
-    // env vars are present:
-    //   OAUTH_ISSUER           public origin of this AS, e.g. https://api.example.com
-    //   OAUTH_AUDIENCE         aud claim of issued access tokens (server service DID)
-    //   OAUTH_SIGNING_KEY_HEX  32-byte EC (secp256k1 / ES256K) private key hex
-    //   DPOP_NONCE_SECRET      32-byte hex shared secret for stateless DPoP nonces
-    //                          (multi-instance safe); defaults to a random nonce
-    //   OAUTH_TRUSTED_CLIENTS  comma-separated client_ids treated as first-party
-    //                          for consent-UI display (never an auth decision)
-    // DPoP jti replay store (issue #36, Wave E): configured_replay_store() reads
-    //   OAUTH_REPLAY_STORE=redis|memory (default memory) + REDIS_URL, falling
-    //   back to the in-memory store when Redis is unavailable at boot.
-    let oauth_provider = match (
-        std::env::var("OAUTH_ISSUER").ok(),
-        std::env::var("OAUTH_AUDIENCE").ok(),
-        std::env::var("OAUTH_SIGNING_KEY_HEX").ok(),
-    ) {
-        (Some(oauth_issuer), Some(oauth_audience), Some(oauth_signing_key_hex)) => {
-            let key_bytes = hex::decode(&oauth_signing_key_hex)
-                .expect("OAUTH_SIGNING_KEY_HEX must be valid hex");
-            let signing_key = rsky_oauth::jwk::Jwk::from_private_key_bytes(
-                rsky_oauth::jwk::EcCurve::K256,
-                &key_bytes,
-            )
-            .expect("OAUTH_SIGNING_KEY_HEX must be a valid EC (secp256k1) private key");
-            let nonce = match std::env::var("DPOP_NONCE_SECRET") {
-                Ok(secret_hex) => {
-                    let secret: [u8; 32] = hex::decode(secret_hex)
-                        .expect("DPOP_NONCE_SECRET must be hex")
-                        .try_into()
-                        .expect("DPOP_NONCE_SECRET must be 32 bytes");
-                    rsky_oauth::dpop::DpopNonce::new(
-                        secret,
-                        rsky_oauth::dpop::DEFAULT_ROTATION_INTERVAL,
-                    )
-                    .expect("valid DPoP nonce rotation interval")
-                }
-                Err(_) => rsky_oauth::dpop::DpopNonce::new_random(
-                    rsky_oauth::dpop::DEFAULT_ROTATION_INTERVAL,
-                )
-                .expect("valid DPoP nonce rotation interval"),
-            };
-            let trusted_clients = std::env::var("OAUTH_TRUSTED_CLIENTS")
-                .unwrap_or_default()
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<String>>();
-            Some(std::sync::Arc::new(rsky_oauth::OAuthProvider::new(
-                rsky_oauth::OAuthProviderConfig {
-                    issuer: oauth_issuer,
-                    audience: oauth_audience,
-                    signing_key,
-                    fetcher: std::sync::Arc::new(
-                        cosmos_extensions::oauth_fetcher::HttpClientMetadataFetcher::default(),
-                    ),
-                    store: std::sync::Arc::new(
-                        cosmos_extensions::oauth_store::PostgresOAuthStore::new(db.clone()),
-                    ),
-                    dpop: rsky_oauth::dpop::DpopManager::new(
-                        Some(nonce),
-                        cosmos_extensions::replay_store::configured_replay_store(),
-                    ),
-                    trusted_clients,
-                },
-            )))
-        }
-        _ => {
-            tracing::warn!(
-                "OAUTH_ISSUER / OAUTH_AUDIENCE / OAUTH_SIGNING_KEY_HEX not set — \
-                 OAuth provider disabled; /oauth and /.well-known/oauth-* routes \
-                 will return 503"
-            );
-            None
-        }
-    };
-{% endif %}
-
 {% if project.hooks_api_crate %}
     // Hook registry — lifecycle hooks + authz service. Built before AppState so
     // command/query handlers receive their per-entity lifecycle hook.
@@ -374,6 +220,19 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     ));
     cosmos_extensions::did_validation::register_did_validation_hooks(&mut hooks_registry);
 {% endif %}
+{% endif %}
+
+{% if has_atproto %}
+    // Application context for the hand-written HTTP layer (cosmos-extensions).
+    // Builds the identity service, AT Protocol service auth and the OAuth
+    // provider from the environment (AppContext::from_env — ATPROTO_* /
+    // OAUTH_* / SUPABASE_JWT_SECRET) and shares the HookRegistry so the
+    // hand-written auth / oauth / migration / identity routers can reach the
+    // email adapter and the AuthorizationService.
+    let app_ctx = cosmos_extensions::http::AppContext::from_env(
+        db.clone(),
+        {% if project.hooks_api_crate %}Some(std::sync::Arc::new(hooks_registry.clone())){% else %}None{% endif %},
+    )?;
 {% endif %}
 
     let state = crate::app_state::AppState {
@@ -404,13 +263,13 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         registry: hooks_registry,
 {% endif %}
 {% if has_atproto %}
-        identity: Some(identity_service),
+        identity: app_ctx.identity.clone(),
 
-        atproto_auth,
+        atproto_auth: app_ctx.atproto_auth.clone(),
 
-        atproto_client: Some(atproto_client),
+        atproto_client: app_ctx.atproto_client.clone(),
 
-        oauth_provider,
+        oauth_provider: app_ctx.oauth_provider.clone(),
 
 {% endif %}
         jwt_secret: std::env::var("SUPABASE_JWT_SECRET").map_err(|_| {
@@ -546,22 +405,30 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         // (crate::api::scope::require_scope_for_request) can reach it without a
         // State extractor (route-level layers cannot access router state).
         .layer(axum::Extension(state.db.clone()))
-        .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
+{% if has_atproto %}
+        .layer(axum::middleware::from_fn({
+            let app_ctx = app_ctx.clone();
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                cosmos_extensions::http::middleware::auth_middleware(
+                    app_ctx.clone(),
+                    request,
+                    next,
+                )
+            }
+        }));
+{% endif %}
 
+    // The whole router is assembled as `Router<()>`: the generated AppState
+    // pieces (health, /api/v1 stack, per-domain XRPC routers) are closed with
+    // `.with_state(state.clone())`, and the hand-written extension routers
+    // (already `Router<()>` via `AppContext`) merge in directly.
     let app = axum::Router::new()
 
-        // ── Hand-written route registrations ──
-        // These are preserved across regens via the // --- END GENERATED --- marker.
-        .merge(crate::api::ad_hoc::routes())
-{% if has_atproto %}
-        .route("/.well-known/atproto-did", axum::routing::get(crate::api::well_known::atproto_did))
-        .route("/.well-known/did.json", axum::routing::get(crate::api::well_known::did_json))
-{% endif %}
         .route("/version", axum::routing::get(version))
-        .route("/health", axum::routing::get(health))
-        .route("/health/ready", axum::routing::get(health_ready))
+        .route("/health", axum::routing::get(health).with_state(state.clone()))
+        .route("/health/ready", axum::routing::get(health_ready).with_state(state.clone()))
         .route("/metrics", axum::routing::get(move || std::future::ready(metrics_handle.render())))
-        .nest("/api/{{ project.api_version }}", api_routes)
+        .nest("/api/{{ project.api_version }}", api_routes.with_state(state.clone()))
         .route("/api-catalog.json", axum::routing::get(crate::api::openapi::catalog::api_catalog))
         .merge(
             SwaggerUi::new("/swagger-ui")
@@ -574,14 +441,49 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {% endfor %}
                 ])
         )
+
+        // ── Hand-written extension routes (cosmos-extensions) ──
+        // The auth / oauth / identity / migration / oauth-admin / well-known /
+        // XRPC-identity routers are hand-written extension code
+        // (cosmos_extensions::http::*) built against a single `Arc<AppContext>`
+        // and closed to `Router<()>` inside the crate.
 {% if has_atproto %}
-         .merge(crate::atproto::xrpc::xrpc_routes())
+        .merge(cosmos_extensions::http::well_known_routes(app_ctx.clone()))
+        .nest("/auth", cosmos_extensions::http::auth_routes(app_ctx.clone()))
+        .merge(cosmos_extensions::http::oauth_routes(app_ctx.clone()))
+        .route(
+            "/api-docs/oauth/openapi.json",
+            axum::routing::get(cosmos_extensions::http::auth::oauth_openapi::oauth_openapi_json),
+        )
+        .nest(
+            "/api/identity",
+            cosmos_extensions::http::identity_admin_routes(app_ctx.clone()),
+        )
+        .nest(
+            "/api/migration",
+            cosmos_extensions::http::migration_routes(app_ctx.clone()),
+        )
+        .nest(
+            "/api/oauth-admin",
+            cosmos_extensions::http::oauth_admin_routes(app_ctx.clone()),
+        )
+         .merge(crate::atproto::xrpc::xrpc_routes().with_state(state.clone()))
+         .merge(cosmos_extensions::http::xrpc_identity_routes(app_ctx.clone()))
          // XRPC resource-server auth (issue #36 Wave C sub-task 12): accepts
          // OAuth DPoP-bound access tokens alongside the AT Protocol service JWT
          // and TEST_MODE persona paths, injecting AtprotoDid into extensions.
-         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::api::auth::oauth_middleware::oauth_xrpc_auth))
+         .layer(axum::middleware::from_fn({
+             let app_ctx = app_ctx.clone();
+             move |request: axum::extract::Request, next: axum::middleware::Next| {
+                 cosmos_extensions::http::auth::oauth_middleware::oauth_xrpc_auth(
+                     app_ctx.clone(),
+                     request,
+                     next,
+                 )
+             }
+         }))
 {% endif %}
-         .with_state(state);
+         ;
 
     // --- END GENERATED ---
 
