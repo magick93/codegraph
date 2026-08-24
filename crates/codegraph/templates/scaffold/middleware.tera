@@ -7,7 +7,7 @@ use axum::{
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
     Json,
 };
 use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
@@ -84,7 +84,7 @@ pub async fn auth_middleware(
     State(state): State<AppState>,
     mut request: Request,
     next: Next,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Response, Response> {
     let token = request.headers()
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -196,7 +196,7 @@ pub async fn auth_middleware(
     Ok(response)
 }
 
-async fn verify_api_key(db: &sea_orm::DatabaseConnection, token: &str) -> Result<AuthInfo, (StatusCode, Json<serde_json::Value>)> {
+async fn verify_api_key(db: &sea_orm::DatabaseConnection, token: &str) -> Result<AuthInfo, Response> {
     let result = db
         .query_one(Statement::from_sql_and_values(
             sea_orm::DatabaseBackend::Postgres,
@@ -237,7 +237,7 @@ async fn verify_api_key(db: &sea_orm::DatabaseConnection, token: &str) -> Result
     })
 }
 
-async fn verify_jwt(db: &sea_orm::DatabaseConnection, token: &str, jwt_secret: &str) -> Result<AuthInfo, (StatusCode, Json<serde_json::Value>)> {
+async fn verify_jwt(db: &sea_orm::DatabaseConnection, token: &str, jwt_secret: &str) -> Result<AuthInfo, Response> {
     // Detect algorithm from JWT header
     let header = jsonwebtoken::decode_header(token)
         .map_err(|e| reject_unauthorized(&format!("Invalid JWT header: {e}")))?;
@@ -350,11 +350,14 @@ fn is_valid_test_did(did: &str) -> bool {
 {% endif %}
 }
 
-fn reject_unauthorized(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+/// The full error response (status + JSON body), built as a header-capable
+/// `Response` so OAuth/DPoP rejections can carry `DPoP-Nonce` (RFC 9449).
+fn reject_unauthorized(msg: &str) -> Response {
     (
         StatusCode::UNAUTHORIZED,
         Json(serde_json::json!({
             "error": { "code": "UNAUTHORIZED", "message": msg }
         })),
     )
+        .into_response()
 }

@@ -295,6 +295,9 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     //                          (multi-instance safe); defaults to a random nonce
     //   OAUTH_TRUSTED_CLIENTS  comma-separated client_ids treated as first-party
     //                          for consent-UI display (never an auth decision)
+    // DPoP jti replay store (issue #36, Wave E): configured_replay_store() reads
+    //   OAUTH_REPLAY_STORE=redis|memory (default memory) + REDIS_URL, falling
+    //   back to the in-memory store when Redis is unavailable at boot.
     let oauth_provider = match (
         std::env::var("OAUTH_ISSUER").ok(),
         std::env::var("OAUTH_AUDIENCE").ok(),
@@ -344,7 +347,7 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
                     ),
                     dpop: rsky_oauth::dpop::DpopManager::new(
                         Some(nonce),
-                        Box::new(rsky_oauth::dpop::InMemoryReplayStore::default()),
+                        cosmos_extensions::replay_store::configured_replay_store(),
                     ),
                     trusted_clients,
                 },
