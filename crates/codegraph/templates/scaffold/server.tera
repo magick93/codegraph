@@ -285,6 +285,80 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         &atproto_auth.server_did,
         Some(auth_token),
     );
+
+    // OAuth 2.0 with DPoP provider (issue #36, Wave A). Built when the OAUTH_*
+    // env vars are present:
+    //   OAUTH_ISSUER           public origin of this AS, e.g. https://api.example.com
+    //   OAUTH_AUDIENCE         aud claim of issued access tokens (server service DID)
+    //   OAUTH_SIGNING_KEY_HEX  32-byte EC (secp256k1 / ES256K) private key hex
+    //   DPOP_NONCE_SECRET      32-byte hex shared secret for stateless DPoP nonces
+    //                          (multi-instance safe); defaults to a random nonce
+    //   OAUTH_TRUSTED_CLIENTS  comma-separated client_ids treated as first-party
+    //                          for consent-UI display (never an auth decision)
+    let oauth_provider = match (
+        std::env::var("OAUTH_ISSUER").ok(),
+        std::env::var("OAUTH_AUDIENCE").ok(),
+        std::env::var("OAUTH_SIGNING_KEY_HEX").ok(),
+    ) {
+        (Some(oauth_issuer), Some(oauth_audience), Some(oauth_signing_key_hex)) => {
+            let key_bytes = hex::decode(&oauth_signing_key_hex)
+                .expect("OAUTH_SIGNING_KEY_HEX must be valid hex");
+            let signing_key = rsky_oauth::jwk::Jwk::from_private_key_bytes(
+                rsky_oauth::jwk::EcCurve::K256,
+                &key_bytes,
+            )
+            .expect("OAUTH_SIGNING_KEY_HEX must be a valid EC (secp256k1) private key");
+            let nonce = match std::env::var("DPOP_NONCE_SECRET") {
+                Ok(secret_hex) => {
+                    let secret: [u8; 32] = hex::decode(secret_hex)
+                        .expect("DPOP_NONCE_SECRET must be hex")
+                        .try_into()
+                        .expect("DPOP_NONCE_SECRET must be 32 bytes");
+                    rsky_oauth::dpop::DpopNonce::new(
+                        secret,
+                        rsky_oauth::dpop::DEFAULT_ROTATION_INTERVAL,
+                    )
+                    .expect("valid DPoP nonce rotation interval")
+                }
+                Err(_) => rsky_oauth::dpop::DpopNonce::new_random(
+                    rsky_oauth::dpop::DEFAULT_ROTATION_INTERVAL,
+                )
+                .expect("valid DPoP nonce rotation interval"),
+            };
+            let trusted_clients = std::env::var("OAUTH_TRUSTED_CLIENTS")
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<String>>();
+            Some(std::sync::Arc::new(rsky_oauth::OAuthProvider::new(
+                rsky_oauth::OAuthProviderConfig {
+                    issuer: oauth_issuer,
+                    audience: oauth_audience,
+                    signing_key,
+                    fetcher: std::sync::Arc::new(
+                        cosmos_extensions::oauth_fetcher::HttpClientMetadataFetcher::default(),
+                    ),
+                    store: std::sync::Arc::new(
+                        cosmos_extensions::oauth_store::PostgresOAuthStore::new(db.clone()),
+                    ),
+                    dpop: rsky_oauth::dpop::DpopManager::new(
+                        Some(nonce),
+                        Box::new(rsky_oauth::dpop::InMemoryReplayStore::default()),
+                    ),
+                    trusted_clients,
+                },
+            )))
+        }
+        _ => {
+            tracing::warn!(
+                "OAUTH_ISSUER / OAUTH_AUDIENCE / OAUTH_SIGNING_KEY_HEX not set — \
+                 OAuth provider disabled; /oauth and /.well-known/oauth-* routes \
+                 will return 503"
+            );
+            None
+        }
+    };
 {% endif %}
 
 {% if project.hooks_api_crate %}
@@ -332,6 +406,8 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         atproto_auth,
 
         atproto_client: Some(atproto_client),
+
+        oauth_provider,
 
 {% endif %}
         jwt_secret: std::env::var("SUPABASE_JWT_SECRET").map_err(|_| {

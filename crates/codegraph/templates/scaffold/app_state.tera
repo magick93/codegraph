@@ -32,5 +32,10 @@ pub struct AppState {
 
     pub atproto_client: Option<AtprotoClient>,
 
+    /// OAuth 2.0 with DPoP provider (issue #36). `None` when the OAUTH_* env
+    /// vars are not configured — the /oauth and /.well-known/oauth-* routes
+    /// then return a "not configured" error.
+    pub oauth_provider: Option<std::sync::Arc<rsky_oauth::OAuthProvider>>,
+
 {% endif %}
 }

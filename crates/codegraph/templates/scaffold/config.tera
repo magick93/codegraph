@@ -40,6 +40,23 @@ pub struct ServerConfig {
 
     #[serde(default = "default_cors_origins")]
     pub cors_allowed_origins: Option<String>,
+
+{% if has_atproto %}
+    // OAuth 2.0 with DPoP (issue #36). When oauth_issuer + oauth_audience +
+    // oauth_signing_key_hex are set, the server constructs an OAuthProvider
+    // (see server.tera) and serves /oauth/par, /oauth/token, /oauth/revoke,
+    // /oauth/jwks, /.well-known/oauth-authorization-server and
+    // /.well-known/oauth-protected-resource.
+    pub oauth_issuer: Option<String>,
+    pub oauth_audience: Option<String>,
+    pub oauth_signing_key_hex: Option<String>,
+    /// 32-byte hex shared secret for stateless DPoP nonces (multi-instance
+    /// safe). Omitted → a random per-boot nonce is used (single instance).
+    pub dpop_nonce_secret: Option<String>,
+    /// Comma-separated client_ids treated as first-party for the consent UI
+    /// (display only — never an authorization decision).
+    pub oauth_trusted_clients: Option<String>,
+{% endif %}
 }
 
 fn default_bind_addr() -> String {
@@ -88,6 +105,13 @@ impl Default for ServerConfig {
             firehose_url: default_firehose_url(),
 {% endif %}
             cors_allowed_origins: default_cors_origins(),
+{% if has_atproto %}
+            oauth_issuer: None,
+            oauth_audience: None,
+            oauth_signing_key_hex: None,
+            dpop_nonce_secret: None,
+            oauth_trusted_clients: None,
+{% endif %}
         }
     }
 }
@@ -142,6 +166,23 @@ impl ServerConfig {
             if file_cfg.cors_allowed_origins.is_some() {
                 config.cors_allowed_origins = file_cfg.cors_allowed_origins;
             }
+{% if has_atproto %}
+            if file_cfg.oauth_issuer.is_some() {
+                config.oauth_issuer = file_cfg.oauth_issuer;
+            }
+            if file_cfg.oauth_audience.is_some() {
+                config.oauth_audience = file_cfg.oauth_audience;
+            }
+            if file_cfg.oauth_signing_key_hex.is_some() {
+                config.oauth_signing_key_hex = file_cfg.oauth_signing_key_hex;
+            }
+            if file_cfg.dpop_nonce_secret.is_some() {
+                config.dpop_nonce_secret = file_cfg.dpop_nonce_secret;
+            }
+            if file_cfg.oauth_trusted_clients.is_some() {
+                config.oauth_trusted_clients = file_cfg.oauth_trusted_clients;
+            }
+{% endif %}
         } else {
             tracing::warn!("No config file found at {default_path}, using defaults");
         }
@@ -184,6 +225,23 @@ impl ServerConfig {
         if let Ok(val) = std::env::var("CORS_ALLOWED_ORIGINS") {
             config.cors_allowed_origins = Some(val);
         }
+{% if has_atproto %}
+        if let Ok(val) = std::env::var("OAUTH_ISSUER") {
+            config.oauth_issuer = Some(val);
+        }
+        if let Ok(val) = std::env::var("OAUTH_AUDIENCE") {
+            config.oauth_audience = Some(val);
+        }
+        if let Ok(val) = std::env::var("OAUTH_SIGNING_KEY_HEX") {
+            config.oauth_signing_key_hex = Some(val);
+        }
+        if let Ok(val) = std::env::var("DPOP_NONCE_SECRET") {
+            config.dpop_nonce_secret = Some(val);
+        }
+        if let Ok(val) = std::env::var("OAUTH_TRUSTED_CLIENTS") {
+            config.oauth_trusted_clients = Some(val);
+        }
+{% endif %}
 
         Ok(config)
     }
