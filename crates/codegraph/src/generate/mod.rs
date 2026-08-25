@@ -2,6 +2,7 @@ pub mod codelist;
 pub mod domain_model;
 pub mod filter_fields;
 pub mod ifml;
+pub mod manifest;
 pub mod persistence;
 pub mod report;
 pub mod template_engine;
@@ -549,6 +550,15 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         ifml_frameworks,
         project_config,
     } = opts;
+
+    // Output roots for `.codegraph-manifest.json` emission: the main output
+    // dir plus any domain-types/hooks-api bases. `Option<&Path>` is `Copy`,
+    // so the values remain usable after this Vec is built.
+    let manifest_roots: Vec<&Path> = std::iter::once(output_dir)
+        .chain(domain_types_base.iter().copied())
+        .chain(hooks_base.iter().copied())
+        .collect();
+
     // Initialize global project config so generator helpers can access it.
     let default_project = ProjectConfig::default();
     let project = project_config.unwrap_or(&default_project);
@@ -1451,6 +1461,11 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             report.files.push(file);
         }
     }
+
+    // Emit a `.codegraph-manifest.json` at each output root listing every
+    // file written this run (report.files mirrors every `write_output` call),
+    // merged with any manifest already on disk.
+    manifest::emit_manifests(&manifest_roots, &report.files)?;
 
     Ok(report)
 }

@@ -465,6 +465,101 @@ async fn full_generation_without_profile_runs_all_generators() {
 }
 
 #[tokio::test]
+async fn generation_emits_ownership_manifests_at_each_root() {
+    let (mock, config, tera, output_dir) = mock_test_setup();
+    let domain_types_tmp = tempfile::TempDir::new().unwrap();
+    let hooks_tmp = tempfile::TempDir::new().unwrap();
+
+    let report = codegraph::generate::run_generators_with_domain_types_base(
+        &mock,
+        &config,
+        output_dir.path(),
+        &tera,
+        &Default::default(),
+        &Default::default(),
+        Path::new(""),
+        domain_types_tmp.path(),
+        hooks_tmp.path(),
+    )
+    .await
+    .unwrap();
+
+    assert!(!report.has_errors(), "no-profile run should have no errors");
+    assert!(
+        !report.files.is_empty(),
+        "no-profile run should produce files"
+    );
+
+    // A manifest must exist at every output root...
+    for root in [
+        output_dir.path(),
+        domain_types_tmp.path(),
+        hooks_tmp.path(),
+    ] {
+        let manifest_path = root.join(codegraph::generate::manifest::MANIFEST_FILENAME);
+        assert!(
+            manifest_path.exists(),
+            "expected manifest at {}",
+            manifest_path.display()
+        );
+        let m: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&manifest_path).unwrap(),
+        )
+        .expect("manifest must be valid JSON");
+        assert!(
+            m["generated"].as_array().map(|a| !a.is_empty()).unwrap_or(false),
+            "manifest at {} must list generated files",
+            manifest_path.display()
+        );
+        assert!(
+            m["generatedBy"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("codegraph v")),
+            "manifest must record the generating tool version"
+        );
+    }
+
+    // ...with paths relative to that root. The monolith scaffold writes
+    // src/main.rs to the output dir; the domain-types crate gets a lib.rs.
+    let main_manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.path().join(".codegraph-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let main_generated: Vec<&str> = main_manifest["generated"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(
+        main_generated.contains(&"src/main.rs"),
+        "output-dir manifest must list src/main.rs relative to the root"
+    );
+    assert!(
+        main_generated.iter().all(|p| !p.starts_with('/')),
+        "manifest paths must be relative (not absolute)"
+    );
+
+    let dt_manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            domain_types_tmp.path().join(".codegraph-manifest.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let dt_generated: Vec<&str> = dt_manifest["generated"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(
+        dt_generated.contains(&"src/lib.rs"),
+        "domain-types manifest must list src/lib.rs relative to that root"
+    );
+}
+
+#[tokio::test]
 async fn generation_with_api_profile_produces_fewer_files_than_full() {
     let (mock, config, tera, output_dir) = mock_test_setup();
     let domain_types_tmp = tempfile::TempDir::new().unwrap();
