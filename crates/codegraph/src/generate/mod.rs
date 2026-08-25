@@ -1478,8 +1478,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
 
     // Emit a `.codegraph-manifest.json` at each output root listing every
     // file written this run (report.files mirrors every `write_output` call),
-    // merged with any manifest already on disk.
-    manifest::emit_manifests(&manifest_roots, &report.files)?;
+    // merged with any manifest already on disk. The pinned generator-source
+    // rev (`project.codegraph_rev`) is recorded so drift/CI can reproduce the
+    // exact checkout the committed tree was produced at.
+    manifest::emit_manifests(&manifest_roots, &report.files, &project.codegraph_rev)?;
 
     Ok(report)
 }

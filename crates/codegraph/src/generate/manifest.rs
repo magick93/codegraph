@@ -34,14 +34,20 @@ pub struct Manifest {
     pub generated: Vec<String>,
     #[serde(rename = "generatedBy")]
     pub generated_by: String,
+    /// Git commit of the codegraph-atproto checkout that produced this tree.
+    /// Consumers use it to pin the generator source before verifying drift
+    /// (CI checks out this rev so a fresh regen is byte-comparable).
+    #[serde(rename = "codegraphCommit")]
+    pub codegraph_commit: String,
 }
 
 impl Manifest {
-    fn new(root: &Path, generated: Vec<String>) -> Self {
+    fn new(root: &Path, generated: Vec<String>, codegraph_rev: &str) -> Self {
         Self {
             root: root.to_string_lossy().into_owned(),
             generated,
             generated_by: format!("codegraph v{}", env!("CARGO_PKG_VERSION")),
+            codegraph_commit: codegraph_rev.to_string(),
         }
     }
 }
@@ -69,19 +75,26 @@ pub fn absolutize(path: &Path) -> PathBuf {
 /// plus any domain-types/hooks-api bases). `written` is the file list of this
 /// run's generation report — every `write_output` call mirrors the file into
 /// `report.files`, so that Vec is the complete record of what was written.
-pub fn emit_manifests(roots: &[&Path], written: &[GeneratedFile]) -> Result<()> {
+/// `codegraph_rev` is the generator-source git commit pinned into each
+/// manifest (e.g. `ProjectConfig::codegraph_rev`); it lets drift/CI reproduce
+/// the exact generator state the committed tree was produced at.
+pub fn emit_manifests(
+    roots: &[&Path],
+    written: &[GeneratedFile],
+    codegraph_rev: &str,
+) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
     for root in roots {
         let root = absolutize(root);
         if !seen.insert(root.clone()) {
             continue;
         }
-        emit_manifest(&root, written)?;
+        emit_manifest(&root, written, codegraph_rev)?;
     }
     Ok(())
 }
 
-fn emit_manifest(root: &Path, written: &[GeneratedFile]) -> Result<()> {
+fn emit_manifest(root: &Path, written: &[GeneratedFile], codegraph_rev: &str) -> Result<()> {
     std::fs::create_dir_all(root)?;
     let manifest_path = root.join(MANIFEST_FILENAME);
 
@@ -106,7 +119,7 @@ fn emit_manifest(root: &Path, written: &[GeneratedFile]) -> Result<()> {
         }
     }
 
-    let manifest = Manifest::new(root, entries.into_iter().collect());
+    let manifest = Manifest::new(root, entries.into_iter().collect(), codegraph_rev);
     let json = serde_json::to_string_pretty(&manifest)?;
     std::fs::write(&manifest_path, format!("{json}\n"))?;
     Ok(())
@@ -153,7 +166,7 @@ mod tests {
             write(root, "src/entity/mod.rs"), // duplicate
             write(root, "migrations/0001_x.sql"),
         ];
-        emit_manifests(&[root], &files).unwrap();
+        emit_manifests(&[root], &files, "abcdef0123456789").unwrap();
 
         let json = std::fs::read_to_string(root.join(MANIFEST_FILENAME)).unwrap();
         let m: Manifest = serde_json::from_str(&json).unwrap();
@@ -162,6 +175,7 @@ mod tests {
             vec!["migrations/0001_x.sql", "src/entity/mod.rs", "src/lib.rs"]
         );
         assert!(m.generated_by.starts_with("codegraph v"));
+        assert_eq!(m.codegraph_commit, "abcdef0123456789");
         assert_eq!(m.root, absolutize(root).to_string_lossy());
     }
 
@@ -171,16 +185,19 @@ mod tests {
         let root = dir.path();
 
         // First run writes src/lib.rs.
-        emit_manifests(&[root], &[write(root, "src/lib.rs")]).unwrap();
+        emit_manifests(&[root], &[write(root, "src/lib.rs")], "rev-1").unwrap();
         // Second run (e.g. a different profile into the same root) writes
         // only src/extra.rs; the manifest must keep both.
-        emit_manifests(&[root], &[write(root, "src/extra.rs")]).unwrap();
+        emit_manifests(&[root], &[write(root, "src/extra.rs")], "rev-1").unwrap();
 
         let m: Manifest = serde_json::from_str(
             &std::fs::read_to_string(root.join(MANIFEST_FILENAME)).unwrap(),
         )
         .unwrap();
         assert_eq!(m.generated, vec!["src/extra.rs", "src/lib.rs"]);
+        // The merge keeps the current run's rev (sequential profile runs use
+        // the same generator checkout).
+        assert_eq!(m.codegraph_commit, "rev-1");
     }
 
     #[test]
@@ -198,7 +215,7 @@ mod tests {
             },
             write(root, "src/main.rs"),
         ];
-        emit_manifests(&[root], &files).unwrap();
+        emit_manifests(&[root], &files, "rev-2").unwrap();
 
         let m: Manifest = serde_json::from_str(
             &std::fs::read_to_string(root.join(MANIFEST_FILENAME)).unwrap(),
@@ -221,12 +238,13 @@ mod tests {
         // Passing both root and nested: nested is filtered out because root
         // already covers it, but files under nested are still listed relative
         // to root.
-        emit_manifests(&[root, &nested], &files).unwrap();
+        emit_manifests(&[root, &nested], &files, "rev-3").unwrap();
 
         let m: Manifest = serde_json::from_str(
             &std::fs::read_to_string(root.join(MANIFEST_FILENAME)).unwrap(),
         )
         .unwrap();
         assert_eq!(m.generated, vec!["nested/inner.rs", "top.rs"]);
+        assert_eq!(m.codegraph_commit, "rev-3");
     }
 }
