@@ -391,9 +391,7 @@ impl GlobalGenerator for ScaffoldGenerator {
         let api_key_migration =
             render_template_with_project(tera, "db/api_key_migration.tera", &ctx, project)?;
         files.push(GeneratedFile {
-            path: self
-                .output_dir
-                .join("migrations")
+            path: crate::generate::db::migrations_root(&self.output_dir)
                 .join("0002_api_key_management.sql"),
             content: api_key_migration,
         });

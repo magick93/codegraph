@@ -93,9 +93,7 @@ impl GlobalGenerator for ReportViewGenerator {
             .render(&db_template_for(&*self.dialect, "report_view"), &ctx)
             .map_err(|e| crate::error::Error::Template(e.to_string()))?;
         files.push(GeneratedFile {
-            path: self
-                .output_dir
-                .join("migrations")
+            path: crate::generate::db::migrations_root(&self.output_dir)
                 .join("0850_report_views.sql"),
             content: view_sql,
         });

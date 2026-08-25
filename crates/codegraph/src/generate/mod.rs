@@ -554,14 +554,17 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // Output roots for `.codegraph-manifest.json` emission: the main output
     // dir plus any domain-types/hooks-api bases. `Option<&Path>` is `Copy`,
     // so the values remain usable after this Vec is built. The repo-level
-    // `e2e-tests` root (home of the TypeScript Playwright harness) gets its
-    // own manifest so the guard can prove generated specs are regenerated
-    // while `specs/manual/` and friends stay hand-written (excepted).
+    // `e2e-tests` root (home of the TypeScript Playwright harness) and the
+    // repo-level `migrations` root (hand-extended 0000–0009 + generated 0010+)
+    // get their own manifests so the guard can prove generated files are
+    // regenerated while the hand-written files stay excepted.
     let e2e_manifest_root = playwright::e2e_tests_root(output_dir);
+    let migrations_manifest_root = db::migrations_root(output_dir);
     let manifest_roots: Vec<&Path> = std::iter::once(output_dir)
         .chain(domain_types_base.iter().copied())
         .chain(hooks_base.iter().copied())
         .chain(std::iter::once(e2e_manifest_root.as_path()))
+        .chain(std::iter::once(migrations_manifest_root.as_path()))
         .collect();
 
     // Initialize global project config so generator helpers can access it.
@@ -726,7 +729,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let plan_emits_migrations = build_plan
         .map(|bp| bp.has_entity_gen("ddl"))
         .unwrap_or(true);
-    let migrations_dir = output_dir.join("migrations");
+    let migrations_dir = db::migrations_root(output_dir);
     if plan_emits_migrations && migrations_dir.is_dir() {
         let mut removed = 0usize;
         for entry in fs::read_dir(&migrations_dir)
@@ -753,7 +756,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             }
         }
         if removed > 0 {
-            tracing::debug!("Removed {removed} stale generated migration files from migrations/");
+            tracing::debug!(
+                "Removed {removed} stale generated migration files from {}",
+                migrations_dir.display()
+            );
         }
     }
 

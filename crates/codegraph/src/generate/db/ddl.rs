@@ -1655,9 +1655,7 @@ impl EntityGenerator for DdlGenerator {
             project,
         )?;
         files.push(GeneratedFile {
-            path: self
-                .output_dir
-                .join("migrations")
+            path: crate::generate::db::migrations_root(&self.output_dir)
                 .join(format!("{}_{}.sql", ctx.schema_name, ctx.table_name)),
             content: table_sql,
         });
@@ -1671,9 +1669,7 @@ impl EntityGenerator for DdlGenerator {
                 project,
             )?;
             files.push(GeneratedFile {
-                path: self
-                    .output_dir
-                    .join("migrations")
+                path: crate::generate::db::migrations_root(&self.output_dir)
                     .join(format!("{}_{}_rls.sql", ctx.schema_name, ctx.table_name)),
                 content: rls_sql,
             });
@@ -1688,7 +1684,7 @@ impl EntityGenerator for DdlGenerator {
                 project,
             )?;
             files.push(GeneratedFile {
-                path: self.output_dir.join("migrations").join(format!(
+                path: crate::generate::db::migrations_root(&self.output_dir).join(format!(
                     "{}_{}_trigger.sql",
                     ctx.schema_name, ctx.table_name
                 )),
@@ -1704,7 +1700,7 @@ impl EntityGenerator for DdlGenerator {
             project,
         )?;
         files.push(GeneratedFile {
-            path: self.output_dir.join("migrations").join(format!(
+            path: crate::generate::db::migrations_root(&self.output_dir).join(format!(
                 "{}_{}_event_trigger.sql",
                 ctx.schema_name, ctx.table_name
             )),
@@ -1720,7 +1716,7 @@ impl EntityGenerator for DdlGenerator {
                 project,
             )?;
             files.push(GeneratedFile {
-                path: self.output_dir.join("migrations").join(format!(
+                path: crate::generate::db::migrations_root(&self.output_dir).join(format!(
                     "{}_{}_process_history_view.sql",
                     ctx.schema_name, ctx.table_name
                 )),
@@ -1737,9 +1733,7 @@ impl EntityGenerator for DdlGenerator {
                 project,
             )?;
             files.push(GeneratedFile {
-                path: self
-                    .output_dir
-                    .join("migrations")
+                path: crate::generate::db::migrations_root(&self.output_dir)
                     .join(format!("{}_{}_fts.sql", ctx.schema_name, ctx.table_name)),
                 content: fts_sql,
             });
@@ -1754,7 +1748,7 @@ impl EntityGenerator for DdlGenerator {
                 project,
             )?;
             files.push(GeneratedFile {
-                path: self.output_dir.join("migrations").join(format!(
+                path: crate::generate::db::migrations_root(&self.output_dir).join(format!(
                     "{}_{}_embedding.sql",
                     ctx.schema_name, ctx.table_name
                 )),

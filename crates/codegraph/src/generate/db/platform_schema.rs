@@ -73,9 +73,7 @@ impl GlobalGenerator for PlatformSchemaGenerator {
             project,
         )?;
         Ok(vec![GeneratedFile {
-            path: self
-                .output_dir
-                .join("migrations")
+            path: crate::generate::db::migrations_root(&self.output_dir)
                 .join("0005_platform_schema.sql"),
             content,
         }])

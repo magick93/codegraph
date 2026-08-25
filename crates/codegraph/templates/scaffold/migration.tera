@@ -47,14 +47,19 @@ async fn run_sea_orm_migrations() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    // Find all migration files
-    let migrations_dir = Path::new("migrations");
+    // Locate the migrations directory: MIGRATIONS_DIR env → repo-root
+    // `../../migrations` (derived from this crate's manifest dir) →
+    // CWD-relative `migrations`.
+    let migrations_dir = migration_dir();
     if !migrations_dir.is_dir() {
-        println!("No migrations/ directory found.");
+        println!(
+            "No migrations/ directory found (tried {}).",
+            migrations_dir.display()
+        );
         return Ok(());
     }
 
-    let mut files: Vec<_> = std::fs::read_dir(migrations_dir)?
+    let mut files: Vec<_> = std::fs::read_dir(&migrations_dir)?
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "sql"))
         .collect();
@@ -109,5 +114,30 @@ async fn run_sea_orm_migrations() -> Result<(), Box<dyn std::error::Error>> {
         println!("Applied {applied} migration(s).");
     }
     Ok(())
+}
+
+/// Locate the raw SQL migrations directory.
+///
+/// Resolution order:
+/// 1. `MIGRATIONS_DIR` environment variable
+/// 2. `<repo>/migrations` (derived from this crate's manifest dir — the app
+///    crate lives at `<repo>/generated/cosmos-app`, so `../../migrations`
+///    resolves to the repo root)
+/// 3. `./migrations` relative to the current working directory
+fn migration_dir() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("MIGRATIONS_DIR") {
+        let p = Path::new(&dir);
+        if p.exists() {
+            return p.to_path_buf();
+        }
+    }
+    let manifest_relative = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("migrations");
+    if manifest_relative.exists() {
+        return manifest_relative;
+    }
+    Path::new("migrations").to_path_buf()
 }
 {% endif %}

@@ -77,23 +77,17 @@ impl GlobalGenerator for BasejumpSetupGenerator {
 
         Ok(vec![
             GeneratedFile {
-                path: self
-                    .output_dir
-                    .join("migrations")
+                path: crate::generate::db::migrations_root(&self.output_dir)
                     .join("0000_extensions.sql"),
                 content: EXTENSIONS_SQL.to_string(),
             },
             GeneratedFile {
-                path: self
-                    .output_dir
-                    .join("migrations")
+                path: crate::generate::db::migrations_root(&self.output_dir)
                     .join("0001_basejump_install.sql"),
                 content: BASEJUMP_INSTALL_SQL.to_string(),
             },
             GeneratedFile {
-                path: self
-                    .output_dir
-                    .join("migrations")
+                path: crate::generate::db::migrations_root(&self.output_dir)
                     .join("0004_rbac_roles.sql"),
                 content: rbac_roles,
             },
