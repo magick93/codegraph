@@ -1089,6 +1089,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     global_gens.push(Box::new(atproto::types_gen::GeneratedTypesEmitter::new(
         output_dir,
     )) as Box<dyn GlobalGenerator>);
+    global_gens.push(Box::new(
+        atproto::xrpc_merge_gen::AtprotoXrpcMergeEmitter::new(output_dir),
+    ) as Box<dyn GlobalGenerator>);
     // Fern SDK config generator
     global_gens.push(Box::new(fern::config::FernConfigGenerator::new(
         output_dir,

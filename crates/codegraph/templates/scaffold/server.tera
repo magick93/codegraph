@@ -384,7 +384,7 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     let api_routes = axum::Router::new()
 {% for domain in domains %}
-{% if domain.entities | length > 0 or domain.has_custom_routes %}
+{% if domain.entities | length > 0 %}
         .nest("/{{ domain.name }}", crate::api::{{ domain.name }}::router::router())
 {% endif %}
 {% endfor %}
@@ -443,8 +443,8 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         )
 
         // ── Hand-written extension routes (cosmos-extensions) ──
-        // The auth / oauth / identity / migration / oauth-admin / well-known /
-        // XRPC-identity routers are hand-written extension code
+        // The auth / oauth / identity / migration / oauth-admin / platform /
+        // well-known / XRPC-identity routers are hand-written extension code
         // (cosmos_extensions::http::*) built against a single `Arc<AppContext>`
         // and closed to `Router<()>` inside the crate.
 {% if has_atproto %}
@@ -466,6 +466,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         .nest(
             "/api/oauth-admin",
             cosmos_extensions::http::oauth_admin_routes(app_ctx.clone()),
+        )
+        .nest(
+            "/api/v1/platform",
+            cosmos_extensions::http::platform_routes(app_ctx.clone()),
         )
          .merge(crate::atproto::xrpc::xrpc_routes().with_state(state.clone()))
          .merge(cosmos_extensions::http::xrpc_identity_routes(app_ctx.clone()))

@@ -582,6 +582,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("atproto_appview",      Domain, Common, &["atproto_backend"], &[]),
         cap("atproto_xrpc",         Entity, Common, &["atproto_backend"], &[]),
         cap("atproto_xrpc_router",  Domain, Common, &["atproto_backend"], &[]),
+        cap("atproto_xrpc_merge",   Global, Common, &["atproto_backend"], &[]),
         cap("atproto_identity",     Global, Common, &["atproto_backend"], &[]),
     ];
 

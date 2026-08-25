@@ -7,6 +7,7 @@ pub mod scaffold_gen;
 pub mod types_context;
 pub mod types_gen;
 pub mod xrpc_gen;
+pub mod xrpc_merge_gen;
 
 #[cfg(test)]
 mod tests;

@@ -186,6 +186,24 @@ impl DomainGenerator for RouterGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
+        // Entity-less `custom_routes` domains (e.g. `platform`) are served by
+        // the hand-written extension crate (`cosmos_extensions::http::platform`)
+        // in the monolith topology — the server nests `platform_routes` from
+        // `scaffold/server.tera` instead of a generated `api/{domain}/router.rs`.
+        // Emit no router file so `api/{domain}/` disappears from the tree; the
+        // workers topology keeps the cornucopia `handwritten_routes.rs` pattern.
+        let is_custom_routes_domain = config
+            .domains
+            .get(domain)
+            .map(|d| d.custom_routes)
+            .unwrap_or(false);
+        if is_custom_routes_domain
+            && project.deployment_topology_enum()
+                == crate::profile::DeploymentTopology::Monolith
+        {
+            return Ok(Vec::new());
+        }
+
         let ctx = build_router_context(db, domain, entity_titles, config, &self.parent_candidates)
             .await?;
 
