@@ -374,6 +374,7 @@ fn mock_test_setup() -> (
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     };
 
     let props = vec![PropertyNode {
@@ -1145,6 +1146,7 @@ fn workers_scaffold_test_setup() -> (
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     };
     let code = SchemaNode {
         schema_id: "common/json/CodeType.json".to_string(),
@@ -1168,6 +1170,7 @@ fn workers_scaffold_test_setup() -> (
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     };
 
     let props = vec![PropertyNode {
@@ -1510,6 +1513,7 @@ async fn workers_codelist_test_setup() -> (
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     };
     let pay_line = SchemaNode {
         schema_id: "compensation/json/PayLineType.json".to_string(),
@@ -1533,6 +1537,7 @@ async fn workers_codelist_test_setup() -> (
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     };
     let code = SchemaNode {
         schema_id: "common/json/CodeType.json".to_string(),
@@ -1556,6 +1561,7 @@ async fn workers_codelist_test_setup() -> (
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     };
     let work_item = SchemaNode {
         schema_id: "compensation/json/WorkItemType.json".to_string(),
@@ -1579,6 +1585,7 @@ async fn workers_codelist_test_setup() -> (
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     };
 
     let name_prop = PropertyNode {

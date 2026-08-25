@@ -18,6 +18,7 @@ pub struct TypesContext {
     pub needs_blob_ref: bool,
     pub needs_generated_types_import: bool,
     pub needs_atproto_syntax_imports: bool,
+    pub needs_self_labels_import: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -116,6 +117,30 @@ impl TypesContext {
             });
         }
 
+        // Opt-in `x-selfLabels` annotation: emit the
+        // `com.atproto.label.defs#selfLabels` field on the AT-record type so
+        // author-signed self-labels travel inside the portable record (issue
+        // #33). Deliberately NOT a JSON-Schema mixin — the REST DTOs and their
+        // garde validation must stay untouched (AGENTS.md quirk #16).
+        let has_self_labels = schema.custom_annotations.contains_key("selfLabels");
+        if has_self_labels {
+            fields.push(RustFieldContext {
+                field_name: "self_labels".to_string(),
+                rust_type: "rsky_lexicon::com::atproto::label::SelfLabels".to_string(),
+                serde_attr: Some(
+                    "#[serde(rename = \"com.atproto.label.defs#selfLabels\")]".to_string(),
+                ),
+                doc: Some(
+                    "Self-labels (com.atproto.label.defs#selfLabels) — author-signed \
+                     consent / accessibility / membership tags. See docs/atproto-labels.md."
+                        .to_string(),
+                ),
+                is_option: true,
+                has_serde_with: false,
+                serde_with: None,
+            });
+        }
+
         let needs_generated_types_import = fields
             .iter()
             .any(|f| f.rust_type == "serde_json::Value");
@@ -130,6 +155,7 @@ impl TypesContext {
             needs_blob_ref,
             needs_generated_types_import,
             needs_atproto_syntax_imports,
+            needs_self_labels_import: has_self_labels,
         })
     }
 }

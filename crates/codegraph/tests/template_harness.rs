@@ -68,6 +68,7 @@ fn gender_codelist_schema() -> SchemaNode {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     }
 }
 
@@ -94,6 +95,7 @@ fn candidate_schema() -> SchemaNode {
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     }
 }
 
@@ -1234,6 +1236,7 @@ async fn router_nests_child_under_parent() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
     let child_schema = SchemaNode {
         schema_id: "compensation/json/RewardType.json".to_string(),
@@ -1257,6 +1260,7 @@ async fn router_nests_child_under_parent() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let mock = MockEngine::builder()
@@ -1366,6 +1370,7 @@ fn parent_child_mock() -> (MockEngine, Vec<codegraph_core::types::ParentCandidat
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
     let child_schema = SchemaNode {
         schema_id: "compensation/json/RewardType.json".to_string(),
@@ -1389,6 +1394,7 @@ fn parent_child_mock() -> (MockEngine, Vec<codegraph_core::types::ParentCandidat
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let candidates = vec![codegraph_core::types::ParentCandidate {
@@ -1591,6 +1597,7 @@ async fn array_items_fk_uses_parent_type_name() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
     let child_schema = SchemaNode {
         schema_id: "compensation/json/RewardType.json".to_string(),
@@ -1614,6 +1621,7 @@ async fn array_items_fk_uses_parent_type_name() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     // ArrayItems: field_name is the array property on the parent (e.g., "rewards")
@@ -1681,6 +1689,7 @@ async fn array_items_handler_fk_uses_parent_type_name() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
     let child_schema = SchemaNode {
         schema_id: "compensation/json/RewardType.json".to_string(),
@@ -1704,6 +1713,7 @@ async fn array_items_handler_fk_uses_parent_type_name() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let candidates = vec![codegraph_core::types::ParentCandidate {
@@ -3625,6 +3635,7 @@ async fn workflow_action_child_entity_renders() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
     let child_schema = SchemaNode {
         schema_id: "compensation/json/RewardType.json".to_string(),
@@ -3648,6 +3659,7 @@ async fn workflow_action_child_entity_renders() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let mock = MockEngine::builder()
@@ -4275,6 +4287,7 @@ async fn composite_range_collapses_start_end_into_daterange() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let mock = MockEngine::builder()
@@ -4370,6 +4383,7 @@ async fn recursive_child_tables_with_full_classification() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let communication_schema = SchemaNode {
@@ -4394,6 +4408,7 @@ async fn recursive_child_tables_with_full_classification() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let address_schema = SchemaNode {
@@ -4418,6 +4433,7 @@ async fn recursive_child_tables_with_full_classification() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let country_codelist_schema = SchemaNode {
@@ -4442,6 +4458,7 @@ async fn recursive_child_tables_with_full_classification() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     // Person has a "name" (PrimitiveWrapper) and "communication" (ValueObject)
@@ -5295,6 +5312,7 @@ mod include_path_resolution_tests {
             has_one_of: false,
             has_any_of: false,
             has_definitions: false,
+            custom_annotations: Default::default(),
         }
     }
 
@@ -6599,6 +6617,7 @@ fn worker_schema() -> SchemaNode {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     }
 }
 
@@ -6625,6 +6644,7 @@ fn person_schema() -> SchemaNode {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     }
 }
 
@@ -7071,6 +7091,7 @@ async fn dto_include_dot_notation() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let deployment_schema = SchemaNode {
@@ -7095,6 +7116,7 @@ async fn dto_include_dot_notation() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let worker_schema = worker_schema();
@@ -7321,6 +7343,7 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let deployment_schema = SchemaNode {
@@ -7345,6 +7368,7 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     use codegraph_type_contracts::RefClassificationKind;
@@ -7820,6 +7844,7 @@ async fn handler_filter_keys_use_stripped_codelist_names() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     };
 
     // Codelist reference — rust_field_name stripped (no _code),

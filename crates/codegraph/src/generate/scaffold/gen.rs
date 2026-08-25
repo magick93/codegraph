@@ -32,6 +32,9 @@ pub struct ScaffoldContext {
     pub has_test_gen: bool,
     pub has_auth_rate_limit: bool,
     pub has_admin_cli: bool,
+    /// Whether the labels substrate (atproto.label table + SubscribeLabels
+    /// consumer + selfLabels bridge) is enabled (issue #33).
+    pub has_labels: bool,
     pub migration_strategy: String,
 }
 
@@ -77,6 +80,7 @@ pub struct ScaffoldGenerator {
     has_test_gen: bool,
     has_auth_rate_limit: bool,
     has_admin_cli: bool,
+    has_labels: bool,
     migration_strategy: String,
 }
 
@@ -92,6 +96,7 @@ impl ScaffoldGenerator {
         has_fern: bool,
         has_auth_rate_limit: bool,
         has_admin_cli: bool,
+        has_labels: bool,
         migration_strategy: &str,
     ) -> Self {
         Self {
@@ -105,6 +110,7 @@ impl ScaffoldGenerator {
             has_test_gen,
             has_auth_rate_limit,
             has_admin_cli,
+            has_labels,
             migration_strategy: migration_strategy.to_string(),
         }
     }
@@ -257,6 +263,7 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_test_gen: self.has_test_gen,
             has_auth_rate_limit: self.has_auth_rate_limit,
             has_admin_cli: self.has_admin_cli,
+            has_labels: self.has_labels,
             migration_strategy: self.migration_strategy.clone(),
         };
 

@@ -596,6 +596,7 @@ mod integration_tests {
             has_one_of: false,
             has_any_of: false,
             has_definitions: false,
+            custom_annotations: Default::default(),
         }
     }
 
@@ -931,6 +932,7 @@ mod atproto_client_tests {
             has_one_of: false,
             has_any_of: false,
             has_definitions: false,
+            custom_annotations: Default::default(),
         }
     }
 
@@ -1397,6 +1399,7 @@ mod atproto_types_tests {
             has_one_of: false,
             has_any_of: false,
             has_definitions: false,
+            custom_annotations: Default::default(),
         }
     }
 

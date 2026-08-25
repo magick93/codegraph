@@ -12,6 +12,7 @@ pub struct LexiconContext {
     pub namespace: NamespaceMeta,
     pub record: ObjectContext,
     pub defs: Vec<ObjectContext>,
+    pub has_self_labels: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -137,6 +138,7 @@ impl LexiconContext {
             namespace,
             record,
             defs: Vec::new(),
+            has_self_labels: schema.custom_annotations.contains_key("selfLabels"),
         })
     }
 }

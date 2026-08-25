@@ -44,6 +44,13 @@ pub async fn create_{{ module_name }}(
 
     let record_json = serde_json::to_value(&input.body.record)
         .map_err(|e| AtprotoError::Repo(format!("Failed to serialize record: {}", e)))?;
+{%- if has_self_labels %}
+    // Self-labels bridge (issue #33): map the record's consent flags onto
+    // com.atproto.label.defs#selfLabels so author-signed self-labels travel
+    // inside the portable record. No-op when no consent fields are present.
+    let mut record_json = record_json;
+    cosmos_extensions::labels::inject_self_labels(&mut record_json);
+{% endif %}
     let (uri, cid) = if let Some(ref client) = state.atproto_client {
         let response = client
             .create_record("{{ lexicon.nsid }}", &record_json)

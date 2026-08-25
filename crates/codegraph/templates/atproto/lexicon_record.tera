@@ -18,6 +18,14 @@
 {%- for prop in record.properties %}
           "{{ prop.name }}": { {{ macros::render_lexicon_type(type=prop.type) }} }{% if not loop.last %},{% endif %}
 {%- endfor %}
+{%- if has_self_labels %}
+{%- if record.properties | length > 0 %},{% endif %}
+          "selfLabels": {
+            "type": "array",
+            "items": { "type": "ref", "ref": "com.atproto.label.defs#selfLabel" },
+            "maxLength": 10
+          }
+{%- endif %}
         }
       }
     }{% for def in defs %},

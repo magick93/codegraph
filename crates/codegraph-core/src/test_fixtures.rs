@@ -27,6 +27,7 @@ pub fn person_schema() -> SchemaNode {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     }
 }
 
@@ -54,6 +55,7 @@ pub fn gender_codelist_schema() -> SchemaNode {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     }
 }
 

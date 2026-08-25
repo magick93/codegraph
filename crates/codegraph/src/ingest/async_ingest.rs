@@ -203,6 +203,17 @@ async fn ingest_schema_node(
         .unwrap_or(&entry.stem);
     let stripped = strip_suffix(title, suffix);
 
+    // Preserve custom top-level annotations (`x-*` keys) so generators can opt
+    // into protocol-layer behavior per schema (e.g. `x-selfLabels`).
+    let mut custom_annotations = std::collections::HashMap::new();
+    if let Some(obj) = entry.schema.as_object() {
+        for (key, value) in obj {
+            if let Some(stripped) = key.strip_prefix("x-") {
+                custom_annotations.insert(stripped.to_string(), value.clone());
+            }
+        }
+    }
+
     let node = SchemaNode {
         schema_id: uri.to_string(),
         title: title.to_string(),
@@ -235,6 +246,7 @@ async fn ingest_schema_node(
         has_any_of: entry.schema.get("anyOf").is_some(),
         has_definitions: entry.schema.get("definitions").is_some()
             || entry.schema.get("$defs").is_some(),
+        custom_annotations,
     };
 
     db.ingest_schema(&node).await.map_err(Error::Graph)?;

@@ -1,6 +1,9 @@
 {%- if needs_generated_types_import %}
 use crate::atproto::generated_types::*;
 {%- endif %}
+{%- if needs_self_labels_import %}
+use rsky_lexicon::com::atproto::label::SelfLabels;
+{%- endif %}
 {%- if needs_atproto_syntax_imports %}
 use rsky_syntax::aturi::AtUri;
 use cosmos_domain_types::identifiers::Did;

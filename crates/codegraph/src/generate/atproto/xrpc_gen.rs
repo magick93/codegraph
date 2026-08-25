@@ -26,6 +26,10 @@ struct XrpcProcedureContext {
     module_name: String,
     entity_name: String,
     imports: Vec<String>,
+    /// Whether the entity's schema declares `x-selfLabels` — the generated
+    /// create handler then runs the selfLabels bridge (consent flags →
+    /// com.atproto.label.defs#selfLabels) before forwarding to the PDS.
+    has_self_labels: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -178,6 +182,11 @@ impl EntityGenerator for AtprotoXrpcEmitter {
             module_name: model.entity_module.clone(),
             entity_name: model.name.clone(),
             imports,
+            has_self_labels: db
+                .get_schema_in_domain(schema_title, domain)
+                .await?
+                .map(|s| s.custom_annotations.contains_key("selfLabels"))
+                .unwrap_or(false),
         };
 
         let proc_content = render_template_with_project(
@@ -356,6 +365,7 @@ mod tests {
             has_one_of: false,
             has_any_of: false,
             has_definitions: false,
+            custom_annotations: Default::default(),
         }
     }
 

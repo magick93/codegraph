@@ -80,7 +80,8 @@ fn node_type_ddl() -> Vec<&'static str> {
             has_all_of BOOLEAN NOT NULL,
             has_one_of BOOLEAN NOT NULL,
             has_any_of BOOLEAN NOT NULL,
-            has_definitions BOOLEAN NOT NULL
+            has_definitions BOOLEAN NOT NULL,
+            custom_annotations STRING NOT NULL
         )",
         // PropertyNode — 16 fields + _schema_title denormalized
         "CREATE NODE TYPE IF NOT EXISTS Property (

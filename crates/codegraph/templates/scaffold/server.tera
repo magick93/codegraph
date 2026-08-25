@@ -343,20 +343,44 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     _ = ingest_{{ domain.name }}::ingest_{{ domain.name }}(client, db) => {}
                 }
-            } else {
-                let mut firehose = crate::atproto::firehose::FirehoseClient::new(&firehose_url).unwrap();
-                tracing::info!("Starting firehose consumer for domain: {{ domain.name }}");
-                tokio::select! {
-                    _ = fh_token.cancelled() => {
-                        tracing::info!("firehose consumer shutting down: {{ domain.name }}");
+                } else {
+                    let mut firehose = crate::atproto::firehose::FirehoseClient::new(&firehose_url).unwrap();
+                    tracing::info!("Starting firehose consumer for domain: {{ domain.name }}");
+                    tokio::select! {
+                        _ = fh_token.cancelled() => {
+                            tracing::info!("firehose consumer shutting down: {{ domain.name }}");
+                        }
+                        _ = ingest_{{ domain.name }}::ingest_{{ domain.name }}(firehose, db) => {}
                     }
-                    _ = ingest_{{ domain.name }}::ingest_{{ domain.name }}(firehose, db) => {}
                 }
+            });
+        }
+{% endif %}
+{% endfor %}
+{% if has_labels %}
+    {
+        // AT Protocol labels subscriber (issue #33): consumes
+        // com.atproto.label.subscribeLabels (#labels frames) and persists
+        // applied labels into `atproto.label`. This is an independent consumer
+        // (labels are free-standing data objects, not per-domain records), so
+        // it spawns beside the record consumers with the same child_token +
+        // tokio::select! graceful-shutdown pattern.
+        let db = db.clone();
+        let firehose_url = firehose_url.clone();
+        let label_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            let mut firehose = crate::atproto::firehose::FirehoseClient::new_labels(&firehose_url)
+                .expect("invalid FIREHOSE_URL for label subscriber");
+            tracing::info!("Starting label firehose consumer (com.atproto.label.subscribeLabels)");
+            tokio::select! {
+                _ = label_token.cancelled() => {
+                    tracing::info!("label firehose consumer shutting down");
+                }
+                _ = cosmos_extensions::label_ingest::ingest_labels(firehose, db) => {}
             }
         });
     }
 {% endif %}
-{% endfor %}
 {% endif %}
 
     let shutdown_signal = async move {

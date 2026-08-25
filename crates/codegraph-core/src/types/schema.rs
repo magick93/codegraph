@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SchemaNode {
@@ -29,6 +30,12 @@ pub struct SchemaNode {
     pub has_one_of: bool,
     pub has_any_of: bool,
     pub has_definitions: bool,
+    /// Custom top-level JSON Schema annotations (`x-*` keys) preserved from the
+    /// raw schema file. Used by generators to opt into protocol-layer behavior
+    /// (e.g. `"x-selfLabels": true` adds the `com.atproto.label.defs#selfLabels`
+    /// field to an entity's AT Protocol record type).
+    #[serde(default)]
+    pub custom_annotations: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -76,6 +83,7 @@ mod tests {
             has_one_of: false,
             has_any_of: false,
             has_definitions: false,
+            custom_annotations: Default::default(),
         }
     }
 
@@ -103,6 +111,7 @@ mod tests {
             has_one_of: false,
             has_any_of: false,
             has_definitions: false,
+            custom_annotations: Default::default(),
         };
         assert!(!s.is_entity);
         assert!(!s.is_codelist);

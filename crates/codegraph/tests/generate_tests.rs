@@ -41,6 +41,7 @@ fn mock_schema(
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     }
 }
 
@@ -320,6 +321,7 @@ async fn test_generation_ordering_excludes_inline_def_schemas() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     // Also add a top-level schema for the same domain to ensure the domain
@@ -815,6 +817,7 @@ async fn snapshot_repository_emitter_child_tables() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let mock = MockEngine::builder()

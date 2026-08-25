@@ -676,6 +676,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         .and_then(|bp| bp.features.get("has_auth_rate_limit"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let has_labels = build_plan
+        .and_then(|bp| bp.features.get("has_labels"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let migration_strategy = build_plan
         .and_then(|bp| bp.features.get("migration_strategy"))
         .and_then(|v| v.as_str())
@@ -972,6 +976,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             db::event_trigger::PgmqSetupGenerator::new(output_dir).with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(
+            db::label_setup::LabelSetupGenerator::new(output_dir).with_dialect(make_dialect()),
+        ) as Box<dyn GlobalGenerator>,
+        Box::new(
             db::platform_schema::PlatformSchemaGenerator::new(output_dir)
                 .with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
@@ -1002,7 +1009,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 as Box<dyn GlobalGenerator>,
         );
     } else {
-        global_gens.push(Box::new(scaffold::gen::ScaffoldGenerator::new(
+        global_gens.push(        Box::new(scaffold::gen::ScaffoldGenerator::new(
             output_dir,
             has_webhooks,
             has_reports,
@@ -1013,6 +1020,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             has_fern,
             has_auth_rate_limit,
             has_admin_cli,
+            has_labels,
             &migration_strategy,
         )) as Box<dyn GlobalGenerator>);
     }

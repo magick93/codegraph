@@ -48,6 +48,7 @@ fn candidate_schema() -> SchemaNode {
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     }
 }
 
@@ -813,6 +814,7 @@ async fn cli_scaffold_handles_multiple_domains() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let mock = MockEngine::builder()

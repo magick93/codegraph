@@ -537,6 +537,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         // ── Global generators ──────────────────────────────────────────
         cap("basejump_setup",       Global, Common, &[], &[]),
         cap("pgmq_setup",           Global, Common, &[], &[]),
+        cap("label_setup",          Global, Common, &["has_labels"], &[]),
         cap("platform_schema",      Global, Common, &[], &[]),
         cap("platform_grants",      Global, Common, &[], &[]),
         cap("workflow_seed",        Global, Common, &[], &[]),

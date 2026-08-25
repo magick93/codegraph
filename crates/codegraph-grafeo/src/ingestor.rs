@@ -144,7 +144,8 @@ impl GraphIngestor for GrafeoEngine {
                 is_entity: {is_entity}, is_codelist: {is_codelist}, \
                 is_primitive_wrapper: {is_primitive_wrapper}, \
                 has_all_of: {has_all_of}, has_one_of: {has_one_of}, \
-                has_any_of: {has_any_of}, has_definitions: {has_definitions}\
+                has_any_of: {has_any_of}, has_definitions: {has_definitions}, \
+                custom_annotations: '{custom_annotations}'\
             }})",
             schema_id = escape_gql(&node.schema_id),
             title = escape_gql(&node.title),
@@ -167,6 +168,10 @@ impl GraphIngestor for GrafeoEngine {
             has_one_of = node.has_one_of,
             has_any_of = node.has_any_of,
             has_definitions = node.has_definitions,
+            custom_annotations = escape_gql(
+                &serde_json::to_string(&node.custom_annotations)
+                    .unwrap_or_else(|_| "{}".to_string()),
+            ),
         );
         session
             .execute(&gql)

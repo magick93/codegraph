@@ -12,13 +12,13 @@ use codegraph_core::types::{
 };
 use std::collections::{HashMap, VecDeque};
 
-/// The RETURN clause for all SchemaNode queries — keeps the 21 columns in one place.
+/// The RETURN clause for all SchemaNode queries — keeps the 22 columns in one place.
 const SCHEMA_RETURN_COLS: &str = "\
     s.schema_id, s.title, s.description, \
     s.schema_type, s.classification, s.domain, s.rel_path, s.pg_type, s.rust_type, \
     s.sea_orm_type, s.rust_type_name, s.pg_table_name, s.api_path_segment, \
     s.parent_schema, s.is_entity, s.is_codelist, s.is_primitive_wrapper, \
-    s.has_all_of, s.has_one_of, s.has_any_of, s.has_definitions";
+    s.has_all_of, s.has_one_of, s.has_any_of, s.has_definitions, s.custom_annotations";
 
 /// The RETURN clause for all PropertyNode queries — keeps the 17 columns in one place.
 const PROPERTY_RETURN_COLS: &str = "\
