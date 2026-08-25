@@ -310,24 +310,48 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {% endif %}
 
 {% if has_atproto %}
-    // AT Protocol Firehose Consumers
+    // AT Protocol live-stream consumers. The rsky firehose is the durable
+    // default; setting JETSTREAM_ENABLED=true swaps every per-domain consumer
+    // to a Jetstream WebSocket (pre-decoded JSON, collection-filtered) that
+    // emits the identical CommitEvent through the same persist sink.
     let firehose_url = std::env::var("FIREHOSE_URL")
         .unwrap_or_else(|_| "wss://bsky.network/xrpc".to_string());
+    let use_jetstream = std::env::var("JETSTREAM_ENABLED")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false);
+    let jetstream_url = std::env::var("JETSTREAM_URL")
+        .unwrap_or_else(|_| cosmos_extensions::atproto::jetstream::DEFAULT_JETSTREAM_URL.to_string());
 {% for domain in domains %}
 {% if domain.entities | length > 0 %}
     {
         let db = db.clone();
         let firehose_url = firehose_url.clone();
+        let jetstream_url = jetstream_url.clone();
         let fh_token = shutdown_token.child_token();
         tokio::spawn(async move {
             use crate::atproto::appview::ingest_{{ domain.name }};
-            let mut firehose = crate::atproto::firehose::FirehoseClient::new(&firehose_url).unwrap();
-            tracing::info!("Starting firehose consumer for domain: {{ domain.name }}");
-            tokio::select! {
-                _ = fh_token.cancelled() => {
-                    tracing::info!("firehose consumer shutting down: {{ domain.name }}");
+            if use_jetstream {
+                let mut client = cosmos_extensions::atproto::jetstream::JetstreamClient::new(
+                    &jetstream_url,
+                    &[{% for nsid in domain.atproto_nsids %}"{{ nsid }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+                )
+                .expect("invalid JETSTREAM_URL");
+                tracing::info!("Starting jetstream consumer for domain: {{ domain.name }}");
+                tokio::select! {
+                    _ = fh_token.cancelled() => {
+                        tracing::info!("jetstream consumer shutting down: {{ domain.name }}");
+                    }
+                    _ = ingest_{{ domain.name }}::ingest_{{ domain.name }}(client, db) => {}
                 }
-                _ = ingest_{{ domain.name }}::ingest_{{ domain.name }}(firehose, db) => {}
+            } else {
+                let mut firehose = crate::atproto::firehose::FirehoseClient::new(&firehose_url).unwrap();
+                tracing::info!("Starting firehose consumer for domain: {{ domain.name }}");
+                tokio::select! {
+                    _ = fh_token.cancelled() => {
+                        tracing::info!("firehose consumer shutting down: {{ domain.name }}");
+                    }
+                    _ = ingest_{{ domain.name }}::ingest_{{ domain.name }}(firehose, db) => {}
+                }
             }
         });
     }

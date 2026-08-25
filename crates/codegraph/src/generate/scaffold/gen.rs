@@ -60,6 +60,10 @@ pub struct ScaffoldDomain {
     /// even though it has zero entities. The server template nests such
     /// domains at `/api/{version}/{name}` even with an empty entity list.
     pub has_custom_routes: bool,
+    /// The `community.os.*` (or authority-scoped) NSIDs of the domain's
+    /// portable-record entities, in generation order. Used by server.tera to
+    /// build Jetstream `?wantedCollections=` filters per domain consumer.
+    pub atproto_nsids: Vec<String>,
 }
 
 pub struct ScaffoldGenerator {
@@ -132,6 +136,8 @@ pub async fn build_scaffold_domains(
 ) -> Vec<ScaffoldDomain> {
     let mut domain_entity_map: std::collections::HashMap<String, Vec<ScaffoldEntity>> =
         std::collections::HashMap::new();
+    let mut domain_nsids: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     let mut seen_scaffold_entities = std::collections::HashSet::new();
     for entry in generation_order {
         let stripped = config.defaults.strip_suffix(&entry.schema_title);
@@ -140,6 +146,12 @@ pub async fn build_scaffold_domains(
         // Dedup by (domain, module_name) to prevent cross-domain name collisions
         if !seen_scaffold_entities.insert((entry.domain.clone(), module_name.clone())) {
             continue;
+        }
+        if let Ok(Some(lexicon)) = db.get_lexicon_by_schema(&entry.schema_title).await {
+            domain_nsids
+                .entry(entry.domain.clone())
+                .or_default()
+                .push(lexicon.nsid.clone());
         }
         let operations = resolve_entity_operations(db, config, &entry.domain, &stripped).await;
         let has_commands = operations
@@ -185,6 +197,7 @@ pub async fn build_scaffold_domains(
                 postgres_schema: entry.postgres_schema.clone(),
                 entities,
                 has_custom_routes: entry.custom_routes,
+                atproto_nsids: domain_nsids.remove(name.as_str()).unwrap_or_default(),
             })
         })
         .collect();

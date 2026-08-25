@@ -36,6 +36,16 @@ pub struct ServerConfig {
 
     #[serde(default = "default_firehose_url")]
     pub firehose_url: String,
+
+    /// Opt-in Jetstream ingestion (issue #41): when true, per-domain
+    /// live-stream consumers use a Jetstream WebSocket (pre-decoded JSON)
+    /// instead of the rsky CBOR/CAR firehose. Firehose stays the default.
+    #[serde(default)]
+    pub jetstream_enabled: bool,
+
+    /// Jetstream WebSocket endpoint (`{host}/subscribe`, v1 legacy protocol).
+    #[serde(default = "default_jetstream_url")]
+    pub jetstream_url: String,
 {% endif %}
 
     #[serde(default = "default_cors_origins")]
@@ -83,6 +93,10 @@ fn default_did_cache_ttl() -> u64 {
 fn default_firehose_url() -> String {
     "wss://bsky.network/xrpc".into()
 }
+
+fn default_jetstream_url() -> String {
+    "wss://jetstream1.us-west.bsky.network".into()
+}
 {% endif %}
 
 fn default_cors_origins() -> Option<String> {
@@ -103,6 +117,8 @@ impl Default for ServerConfig {
             plc_directory_url: None,
             did_document_cache_ttl_secs: default_did_cache_ttl(),
             firehose_url: default_firehose_url(),
+            jetstream_enabled: false,
+            jetstream_url: default_jetstream_url(),
 {% endif %}
             cors_allowed_origins: default_cors_origins(),
 {% if has_atproto %}
@@ -162,6 +178,12 @@ impl ServerConfig {
             if !file_cfg.firehose_url.is_empty() && file_cfg.firehose_url != default_firehose_url() {
                 config.firehose_url = file_cfg.firehose_url;
             }
+            if file_cfg.jetstream_enabled {
+                config.jetstream_enabled = true;
+            }
+            if !file_cfg.jetstream_url.is_empty() && file_cfg.jetstream_url != default_jetstream_url() {
+                config.jetstream_url = file_cfg.jetstream_url;
+            }
 {% endif %}
             if file_cfg.cors_allowed_origins.is_some() {
                 config.cors_allowed_origins = file_cfg.cors_allowed_origins;
@@ -220,6 +242,12 @@ impl ServerConfig {
         }
         if let Ok(val) = std::env::var("FIREHOSE_URL") {
             config.firehose_url = val;
+        }
+        if let Ok(val) = std::env::var("JETSTREAM_ENABLED") {
+            config.jetstream_enabled = val == "1" || val.to_lowercase() == "true";
+        }
+        if let Ok(val) = std::env::var("JETSTREAM_URL") {
+            config.jetstream_url = val;
         }
 {% endif %}
         if let Ok(val) = std::env::var("CORS_ALLOWED_ORIGINS") {

@@ -601,6 +601,7 @@ service_bindings = ["timecard"]
                 has_query_hooks: true,
             }],
             has_custom_routes: false,
+            atproto_nsids: vec![],
         }
     }
 
