@@ -10,7 +10,7 @@ use crate::error::Result;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
-use super::{TsDomainSummary, TsEntitySummary, TsGlobalContext};
+use super::{e2e_tests_root, TsDomainSummary, TsEntitySummary, TsGlobalContext};
 
 pub struct TsGlobalGenerator {
     output_dir: PathBuf,
@@ -86,7 +86,9 @@ impl GlobalGenerator for TsGlobalGenerator {
             api_base_url: "http://localhost:3000".to_string(),
         };
 
-        let e2e_dir = self.output_dir.join("e2e-tests");
+        // The harness lives at the repo root (hand-extended under
+        // specs/manual/), not inside the generated tree.
+        let e2e_dir = e2e_tests_root(&self.output_dir);
 
         Ok(vec![
             GeneratedFile {

@@ -4,9 +4,72 @@ pub mod global_gen;
 pub mod ts_entity_gen;
 pub mod ts_global_gen;
 
+use std::path::{Path, PathBuf};
+
 use serde::Serialize;
 
 use super::ui::page::UiField;
+
+/// Resolve the repo-level `e2e-tests` root for the TypeScript Playwright
+/// harness.
+///
+/// The harness is hand-extended under `e2e-tests/specs/manual/` (and the a11y
+/// specs / a11y config), so it must live OUTSIDE the generated tree, at the
+/// repository root. The codegen output dir is `<repo>/generated/cosmos-app`,
+/// so the e2e root is two parents up, joined with `e2e-tests`.
+///
+/// Falls back to `output_dir.join("e2e-tests")` when the output dir isn't
+/// shaped like `<root>/generated/cosmos-app` (e.g. codegraph unit tests or a
+/// project with a different layout), preserving the pre-relocation behavior
+/// for those callers.
+pub fn e2e_tests_root(output_dir: &Path) -> PathBuf {
+    let in_repo_layout = output_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n == "cosmos-app")
+        .unwrap_or(false)
+        && output_dir
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .map(|n| n == "generated")
+            .unwrap_or(false);
+    if in_repo_layout {
+        if let Some(repo_root) = output_dir.parent().and_then(Path::parent) {
+            return repo_root.join("e2e-tests");
+        }
+    }
+    output_dir.join("e2e-tests")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn e2e_root_derives_repo_level_path_for_repo_layout() {
+        let out = Path::new("/repo/community-os/generated/cosmos-app");
+        assert_eq!(
+            e2e_tests_root(out),
+            PathBuf::from("/repo/community-os/e2e-tests")
+        );
+    }
+
+    #[test]
+    fn e2e_root_resolves_relative_repo_layout_against_cwd() {
+        let out = Path::new("generated/cosmos-app");
+        assert_eq!(e2e_tests_root(out), PathBuf::from("e2e-tests"));
+    }
+
+    #[test]
+    fn e2e_root_falls_back_to_output_dir_subdir() {
+        let out = Path::new("/tmp/ts-fixture-required-ref");
+        assert_eq!(
+            e2e_tests_root(out),
+            PathBuf::from("/tmp/ts-fixture-required-ref/e2e-tests")
+        );
+    }
+}
 
 /// Per-entity context passed to playwright/entity_page.tera and
 /// playwright/test_data_factory.tera.

@@ -12,7 +12,7 @@ use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 use heck::ToLowerCamelCase;
 
-use super::{TsEntityContext, TsFieldDef, TsFkField};
+use super::{e2e_tests_root, TsEntityContext, TsFieldDef, TsFkField};
 use crate::error::Result;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
@@ -479,7 +479,11 @@ impl EntityGenerator for TsEntityGenerator {
             persona_did,
         };
 
-        let e2e_dir = self.output_dir.join("e2e-tests");
+        // The harness lives at the repo root (hand-extended under
+        // specs/manual/), not inside the generated tree. Spec/fixture/api
+        // subpaths mirror the old layout so relative imports and
+        // `testDir: './specs'` keep working.
+        let e2e_dir = e2e_tests_root(&self.output_dir);
         let spec_dir = e2e_dir.join("specs").join(domain);
         let fixture_dir = e2e_dir.join("fixtures").join(domain);
         let api_dir = e2e_dir.join("api").join(domain);

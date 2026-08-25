@@ -553,10 +553,15 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
 
     // Output roots for `.codegraph-manifest.json` emission: the main output
     // dir plus any domain-types/hooks-api bases. `Option<&Path>` is `Copy`,
-    // so the values remain usable after this Vec is built.
+    // so the values remain usable after this Vec is built. The repo-level
+    // `e2e-tests` root (home of the TypeScript Playwright harness) gets its
+    // own manifest so the guard can prove generated specs are regenerated
+    // while `specs/manual/` and friends stay hand-written (excepted).
+    let e2e_manifest_root = playwright::e2e_tests_root(output_dir);
     let manifest_roots: Vec<&Path> = std::iter::once(output_dir)
         .chain(domain_types_base.iter().copied())
         .chain(hooks_base.iter().copied())
+        .chain(std::iter::once(e2e_manifest_root.as_path()))
         .collect();
 
     // Initialize global project config so generator helpers can access it.
