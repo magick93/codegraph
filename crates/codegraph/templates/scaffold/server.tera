@@ -233,6 +233,41 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         db.clone(),
         {% if project.hooks_api_crate %}Some(std::sync::Arc::new(hooks_registry.clone())){% else %}None{% endif %},
     )?;
+
+    {
+        // Trust attestation verification (issue #43): cryptographically verify
+        // the attestation signature before the row is created. Rejects
+        // tampered signatures and unresolvable issuers with 422.
+        hooks_registry.community_graph_trust_attestation = Some(std::sync::Arc::new(
+            cosmos_extensions::trust_lifecycle::TrustAttestationLifecycleHook::from_app_context(
+                app_ctx.as_ref(),
+            ),
+        ));
+    }
+
+    {
+        // Issue #34: declare the accessibility labeler service (idempotent).
+        // Best-effort: a did:web authority may not have a hosted repo, so a
+        // failure to persist is logged, not fatal.
+        if let (Some(labeler), Some(client)) =
+            (app_ctx.labeler.clone(), app_ctx.atproto_client.clone())
+        {
+            let did = labeler.labeler_did().to_string();
+            let declaration = serde_json::json!({
+                "policies": { "labelValues": cosmos_extensions::labels::ALL_LABEL_VALUES },
+                "createdAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            });
+            tokio::spawn(async move {
+                match client
+                    .create_record_with_rkey("app.bsky.labeler.service", "self", &declaration)
+                    .await
+                {
+                    Ok(_) => tracing::info!("declared labeler service for {}", did),
+                    Err(e) => tracing::warn!("failed to declare labeler service: {}", e),
+                }
+            });
+        }
+    }
 {% endif %}
 
     let state = crate::app_state::AppState {
@@ -368,6 +403,9 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         let db = db.clone();
         let firehose_url = firehose_url.clone();
         let label_token = shutdown_token.child_token();
+        let labeler = app_ctx.labeler.clone();
+        let label_resolver: Option<std::sync::Arc<cosmos_extensions::http::identity::IdentityService>> =
+            app_ctx.identity.as_ref().map(|id| std::sync::Arc::new(id.clone()));
         tokio::spawn(async move {
             let mut firehose = crate::atproto::firehose::FirehoseClient::new_labels(&firehose_url)
                 .expect("invalid FIREHOSE_URL for label subscriber");
@@ -376,7 +414,12 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
                 _ = label_token.cancelled() => {
                     tracing::info!("label firehose consumer shutting down");
                 }
-                _ = cosmos_extensions::label_ingest::ingest_labels(firehose, db) => {}
+                _ = cosmos_extensions::label_ingest::ingest_labels(
+                    firehose,
+                    db,
+                    labeler,
+                    label_resolver,
+                ) => {}
             }
         });
     }
@@ -521,6 +564,25 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         )
          .merge(crate::atproto::xrpc::xrpc_routes().with_state(state.clone()))
          .merge(cosmos_extensions::http::xrpc_identity_routes(app_ctx.clone()))
+         // XRPC labels (issue #34) + push (issue #40): hand-written extension
+         // routers with full /xrpc paths, merged at the app root.
+         .merge(cosmos_extensions::http::xrpc_labels_routes(app_ctx.clone()))
+         .merge(cosmos_extensions::http::xrpc_push_routes(app_ctx.clone()))
+         // Labeler admin issuance (issue #34): POST /api/admin/labels.
+         .merge(cosmos_extensions::http::label_admin_routes(app_ctx.clone()))
+         // Trust transitivity (issue #43): /api/community_graph/trust-path.
+         // NOTE: deliberately NOT under /api/v1/community_graph — that prefix
+         // is owned by the generated domain router (nested inside /api/v1) and
+         // double-nesting the same prefix drops extension routes (axum).
+         .nest(
+             "/api/community_graph",
+             cosmos_extensions::http::trust_routes(app_ctx.clone()),
+         )
+         // Starter packs (issue #44): /api/v1/onboarding/starter-pack/*.
+         .nest(
+             "/api/v1/onboarding/starter-pack",
+             cosmos_extensions::http::onboarding_routes(app_ctx.clone()),
+         )
          // XRPC resource-server auth (issue #36 Wave C sub-task 12): accepts
          // OAuth DPoP-bound access tokens alongside the AT Protocol service JWT
          // and TEST_MODE persona paths, injecting AtprotoDid into extensions.

@@ -7,6 +7,7 @@ pub mod dialect;
 pub mod entity;
 pub mod event_trigger;
 pub mod label_setup;
+pub mod service_tables;
 pub mod platform_grants;
 pub mod platform_schema;
 pub mod report_view;

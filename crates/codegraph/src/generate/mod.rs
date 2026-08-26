@@ -979,6 +979,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             db::label_setup::LabelSetupGenerator::new(output_dir).with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(
+            db::service_tables::ServiceTablesGenerator::new(output_dir)
+                .with_dialect(make_dialect()),
+        ) as Box<dyn GlobalGenerator>,
+        Box::new(
             db::platform_schema::PlatformSchemaGenerator::new(output_dir)
                 .with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
