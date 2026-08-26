@@ -145,3 +145,38 @@ GRANT USAGE ON SCHEMA onboarding TO app_user, api_key;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA onboarding TO app_user, api_key;
 ALTER DEFAULT PRIVILEGES IN SCHEMA onboarding
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user, api_key;
+
+-- ============================================================================
+-- Permissioned data spaces — embedded space authority (issue #39, teaser)
+-- ============================================================================
+-- Minimal `space` + `space_member` tables backing the embedded space authority
+-- in cosmos-extensions::space. `space.config` is the simplespace config jsonb
+-- (policy / appAccess / ownerDid / spaceType / skey); `space_member` is the
+-- member registry surfaced by `getSpace` (member *decisions* are derived from
+-- the consent/delegation/support tables, not from this list). Repo-host tables
+-- (writer/registration/jti) are deferred with Wave E.
+
+CREATE SCHEMA IF NOT EXISTS space;
+
+CREATE TABLE IF NOT EXISTS space.space (
+    space_uri TEXT NOT NULL PRIMARY KEY,
+    config JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS space.space_member (
+    space_uri TEXT NOT NULL,
+    did TEXT NOT NULL,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    removed_at TIMESTAMPTZ,
+    PRIMARY KEY (space_uri, did)
+);
+
+CREATE INDEX IF NOT EXISTS idx_space_member_did ON space.space_member (did);
+CREATE INDEX IF NOT EXISTS idx_space_deleted_at ON space.space (deleted_at);
+
+GRANT USAGE ON SCHEMA space TO app_user, api_key;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA space TO app_user, api_key;
+ALTER DEFAULT PRIVILEGES IN SCHEMA space
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user, api_key;

@@ -583,6 +583,12 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
              "/api/v1/onboarding/starter-pack",
              cosmos_extensions::http::onboarding_routes(app_ctx.clone()),
          )
+         // Embedded space authority (issue #39, teaser — bearer flow):
+         // /xrpc/com.atproto.space.{getSpaceCredential,getDelegationToken,getSpace,listRepos}.
+         // Armed from SPACE_AUTHORITY_DID / SPACE_SIGNING_KEY_HEX /
+         // SPACE_CREDENTIAL_TTL_SECS; the consent-backed care-circle policy
+         // consults the delegation/consent/support tables.
+         .merge(cosmos_extensions::space::http::space_routes(app_ctx.clone()))
          // XRPC resource-server auth (issue #36 Wave C sub-task 12): accepts
          // OAuth DPoP-bound access tokens alongside the AT Protocol service JWT
          // and TEST_MODE persona paths, injecting AtprotoDid into extensions.

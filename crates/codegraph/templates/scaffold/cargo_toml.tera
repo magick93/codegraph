@@ -82,6 +82,13 @@ rsky-lexicon = { git = "https://github.com/blacksky-algorithms/rsky", rev = "6d5
 rsky-syntax = { git = "https://github.com/blacksky-algorithms/rsky", rev = "6d5412b6924a4bd407ec22f7f68738922cd4c48f" }
 rsky-identity = { git = "https://github.com/blacksky-algorithms/rsky", rev = "6d5412b6924a4bd407ec22f7f68738922cd4c48f" }
 rsky-crypto = { git = "https://github.com/blacksky-algorithms/rsky", rev = "6d5412b6924a4bd407ec22f7f68738922cd4c48f" }
+# AT Protocol permissioned data spaces (issue #39): rsky-space holds the pure
+# crypto/repo primitives; rsky-space-host is consumed for its non-HTTP modules
+# only (authority, policy, membership, appaccess, attestation, keys, signing,
+# store traits, error). Its `http`/`config`/`main` modules are NOT imported —
+# they pull axum 0.7 into the tree (dual-version with the app's axum 0.8).
+rsky-space = { git = "https://github.com/blacksky-algorithms/rsky", rev = "6d5412b6924a4bd407ec22f7f68738922cd4c48f" }
+rsky-space-host = { git = "https://github.com/blacksky-algorithms/rsky", rev = "6d5412b6924a4bd407ec22f7f68738922cd4c48f" }
 cosmos-extensions = { path = "{{ extensions_path }}" }
 base64 = "0.22"
 multibase = "0.9"
@@ -136,4 +143,13 @@ tonic-build = "0.14"
 {% if project.cargo_patch %}
 [patch.'https://github.com/magick93/codegraph.git']
 {{ project.cargo_patch }}
+{% endif %}
+{% if has_atproto %}
+# rsky-space-host (issue #39): the manifest pins the upstream rev for
+# provenance, but the build resolves a trimmed vendored copy at
+# crates/cosmos-space-host (upstream's rusqlite SqliteStore conflicts at the
+# libsqlite3-sys `links` level with the tree's sqlx-sqlite, and its axum 0.7
+# http module is reimplemented for axum 0.8 in cosmos-extensions::space::http).
+[patch.'https://github.com/blacksky-algorithms/rsky']
+rsky-space-host = { path = "../../crates/cosmos-space-host" }
 {% endif %}
