@@ -550,6 +550,11 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             "/api/identity",
             cosmos_extensions::http::identity_admin_routes(app_ctx.clone()),
         )
+        // Email-claim ownership for unconfirmed person records (issue #74).
+        .nest(
+            "/api/claims",
+            cosmos_extensions::http::claims_routes(app_ctx.clone()),
+        )
         .nest(
             "/api/migration",
             cosmos_extensions::http::migration_routes(app_ctx.clone()),
