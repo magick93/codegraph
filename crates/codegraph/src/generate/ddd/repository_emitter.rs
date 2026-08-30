@@ -307,9 +307,11 @@ pub struct ChildTableInfo {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct JunctionTableInfo {
-    /// Rust field name on parent DTO (e.g. "party_ids" → Vec<uuid::Uuid>)
+    /// Rust field name on parent DTO — raw junction property name, no `_id`
+    /// suffix (e.g. "settlor_ids" → Vec<uuid::Uuid>).
     pub field_name: String,
-    /// SQL table name (e.g. "case_party_ids")
+    /// SQL table name — `<parent_table>_<raw_field>` (e.g. "trust_settlor_ids"),
+    /// matching the DDL junction-table formula exactly.
     pub sql_table_name: String,
     /// SQL schema name (e.g. "core")
     pub sql_schema_name: String,
