@@ -831,6 +831,17 @@ fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts
     Some((columns, foreign_keys, check_constraints, comments))
 }
 
+/// FK column a child table/entity uses to reference its parent. Suffix-aware
+/// so parents whose table name already ends in `_id` don't double it
+/// (`evidence_extracted_field_id` → `evidence_extracted_field_id`, not
+/// `evidence_extracted_field_id_id`). Single source of truth for DDL and
+/// SeaORM entity generation.
+pub(crate) fn child_parent_fk_column(parent_table_name: &str) -> String {
+    codegraph_naming::truncate_pg_identifier(&codegraph_core::types::ensure_id_suffix(
+        parent_table_name,
+    ))
+}
+
 /// Convert a child `CompositionNode` into a `ChildTableDef`, recursively processing
 /// nested children.
 fn composition_node_to_child_table(
@@ -888,9 +899,16 @@ fn composition_node_to_child_table(
     }
 
     // Remove any column that collides with the parent FK column
-    let parent_fk_col =
-        codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name));
+    let parent_fk_col = child_parent_fk_column(parent_table_name);
     columns.retain(|col| col.name != parent_fk_col);
+
+    // The child-table template appends standard created_at/updated_at audit
+    // columns; schema-derived timestamps (e.g. provenance.createdAt) would
+    // declare them twice, so schema-derived standards are dropped here.
+    columns.retain(|col| {
+        let normalized = codegraph_naming::to_snake_case(&col.name).to_lowercase();
+        normalized != "created_at" && normalized != "updated_at"
+    });
 
     // Recursively convert nested children
     let nested_children: Vec<ChildTableDef> = node
@@ -1894,5 +1912,74 @@ mod tests {
         let cols = vec![col("GEOMETRY(Point, 4326)"), col("VECTOR(1536)")];
         let exts = detect_extensions_from_columns(&cols, &[]);
         assert_eq!(exts, vec!["postgis", "vector"]);
+    }
+
+    fn info_col(name: &str, pg_type: &str) -> ColumnInfo {
+        ColumnInfo {
+            name: name.to_string(),
+            description: None,
+            rust_type: "String".to_string(),
+            postgres_type: pg_type.to_string(),
+            is_optional: false,
+            is_codelist_fk: false,
+            composite_columns: vec![],
+            is_array: false,
+            classification: None,
+            fk_target: None,
+            check_values: vec![],
+        }
+    }
+
+    fn node_with_columns(columns: Vec<ColumnInfo>) -> CompositionNode {
+        CompositionNode {
+            field_name: "provenance".to_string(),
+            schema_title: "Provenance".to_string(),
+            table_schema: "core".to_string(),
+            table_name: "trust_provenance".to_string(),
+            fk: None,
+            is_collection: false,
+            columns,
+            jsonb_columns: vec![],
+            children: vec![],
+            composite_range: None,
+            consumed_fields: vec![],
+        }
+    }
+
+    #[test]
+    fn child_parent_fk_column_avoids_double_id_suffix() {
+        assert_eq!(child_parent_fk_column("trust"), "trust_id");
+        assert_eq!(
+            child_parent_fk_column("evidence_extracted_field_id"),
+            "evidence_extracted_field_id"
+        );
+    }
+
+    #[test]
+    fn child_table_dedupes_schema_derived_timestamps() {
+        let node = node_with_columns(vec![
+            info_col("createdAt", "TIMESTAMPTZ"),
+            info_col("note", "TEXT"),
+        ]);
+        let def = composition_node_to_child_table(&node, "trust", "core", "Trust");
+        let names: Vec<&str> = def.columns.iter().map(|c| c.name.as_str()).collect();
+        assert!(!names.contains(&"created_at"), "got {:?}", names);
+        assert!(!names.contains(&"updated_at"), "got {:?}", names);
+        assert!(names.contains(&"note"));
+    }
+
+    #[test]
+    fn child_table_timestamp_dedupe_is_case_insensitive() {
+        let node = node_with_columns(vec![info_col("CreatedAt", "TIMESTAMPTZ")]);
+        let def = composition_node_to_child_table(&node, "trust", "core", "Trust");
+        assert!(def.columns.iter().all(|c| c.name != "CreatedAt"));
+    }
+
+    #[test]
+    fn child_table_parent_fk_single_suffix_for_id_named_parent() {
+        let node = node_with_columns(vec![info_col("value", "TEXT")]);
+        let def = composition_node_to_child_table(&node, "evidence_extracted_field_id", "compliance", "Evidence Extracted Field Id");
+        assert_eq!(def.parent_fk_column, "evidence_extracted_field_id");
+        assert!(def.columns.iter().all(|c| c.name != "evidence_extracted_field_id_id"));
     }
 }
