@@ -517,7 +517,7 @@ pub struct EmbeddingContext {
     pub index_name: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ColumnDef {
     pub name: String,
     pub pg_type: String,
@@ -527,7 +527,7 @@ pub struct ColumnDef {
     pub is_array: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ForeignKeyDef {
     pub column: String,
     /// Column name without PG quotes — safe for use in constraint/index names.
@@ -545,21 +545,21 @@ fn strip_rsharp(name: &str) -> String {
     name.strip_prefix("r#").unwrap_or(name).to_string()
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CheckConstraint {
     pub name: String,
     pub column: String,
     pub expression: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct IndexDef {
     pub name: String,
     pub columns: Vec<String>,
     pub unique: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChildTableDef {
     pub schema_name: String,
     pub table_name: String,
@@ -576,7 +576,7 @@ pub struct ChildTableDef {
     pub child_tables: Vec<ChildTableDef>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ColumnComment {
     pub column: String,
     pub comment: String,
@@ -840,6 +840,37 @@ pub(crate) fn child_parent_fk_column(parent_table_name: &str) -> String {
     codegraph_naming::truncate_pg_identifier(&codegraph_core::types::ensure_id_suffix(
         parent_table_name,
     ))
+}
+
+/// Build a minimal [`DdlContext`] targeting a child table so the RLS template
+/// emits the parent's org-isolation policies for it. Only org-isolation is
+/// emitted (`is_auditable = false`): child tables are not api-key-scoped
+/// resources.
+pub(crate) fn child_table_rls_context(parent: &DdlContext, child: &ChildTableDef) -> DdlContext {
+    DdlContext {
+        schema_name: child.schema_name.clone(),
+        table_name: child.table_name.clone(),
+        display_name: child.display_name.clone(),
+        domain: parent.domain.clone(),
+        columns: child.columns.clone(),
+        primary_key: "id".to_string(),
+        foreign_keys: child.foreign_keys.clone(),
+        check_constraints: child.check_constraints.clone(),
+        indexes: Vec::new(),
+        has_updated_at: false,
+        is_tenant_scoped: true,
+        tenant_table: parent.tenant_table.clone(),
+        extensions: Vec::new(),
+        child_tables: Vec::new(),
+        comments: child.comments.clone(),
+        has_workflow: false,
+        resource_name: child.table_name.replace('_', "-"),
+        fts: None,
+        embeddings: Vec::new(),
+        is_auditable: false,
+        is_codelist: false,
+        has_demo_flag: false,
+    }
 }
 
 /// Convert a child `CompositionNode` into a `ChildTableDef`, recursively processing
@@ -1248,7 +1279,7 @@ impl DdlGenerator {
         }
 
         // Convert child CompositionNodes → ChildTableDefs
-        let child_tables: Vec<ChildTableDef> = root
+        let mut child_tables: Vec<ChildTableDef> = root
             .children
             .iter()
             .map(|child| {
@@ -1291,6 +1322,23 @@ impl DdlGenerator {
                     is_array: false,
                 },
             );
+
+            // Child tables (junction + VO) inherit the parent's tenancy: they
+            // carry the same tenant column so org-isolation RLS policies can
+            // be applied to them too.
+            let tenant_col = ColumnDef {
+                name: "platform_organization_id".to_string(),
+                pg_type: "UUID".to_string(),
+                nullable: false,
+                default: Some("'00000000-0000-0000-0000-000000000000'::UUID".to_string()),
+                is_primary_key: false,
+                is_array: false,
+            };
+            for child in &mut child_tables {
+                if !child.columns.iter().any(|c| c.name == "platform_organization_id") {
+                    child.columns.insert(0, tenant_col.clone());
+                }
+            }
         }
 
         // Deduplicate columns by name — CompositeWrapper expansion from
@@ -1737,6 +1785,28 @@ impl EntityGenerator for DdlGenerator {
                     .join(format!("{}_{}_rls.sql", ctx.schema_name, ctx.table_name)),
                 content: rls_sql,
             });
+
+            // Child tables (junction + VO) get the same org-isolation
+            // policies — without them, junction rows are readable
+            // cross-tenant via direct DB access. Children are not
+            // api-key-scoped resources, so only the org-isolation block
+            // is emitted (is_auditable = false).
+            for child in &ctx.child_tables {
+                let child_ctx = child_table_rls_context(&ctx, child);
+                let child_rls_sql = render_template_with_project(
+                    tera,
+                    &db_template_for(&*self.dialect, "rls"),
+                    &child_ctx,
+                    project,
+                )?;
+                files.push(GeneratedFile {
+                    path: self.output_dir.join("migrations").join(format!(
+                        "{}_{}_rls.sql",
+                        child_ctx.schema_name, child_ctx.table_name
+                    )),
+                    content: child_rls_sql,
+                });
+            }
         }
 
         // Updated_at trigger — dialect-aware style
@@ -1981,5 +2051,83 @@ mod tests {
         let def = composition_node_to_child_table(&node, "evidence_extracted_field_id", "compliance", "Evidence Extracted Field Id");
         assert_eq!(def.parent_fk_column, "evidence_extracted_field_id");
         assert!(def.columns.iter().all(|c| c.name != "evidence_extracted_field_id_id"));
+    }
+
+    #[test]
+    fn rls_template_renders_org_isolation_for_child_table() {
+        let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let tera = crate::generate::template_engine::create_tera(&template_dir).unwrap();
+        let project = crate::generate::ProjectConfig::default();
+
+        let parent = DdlContext {
+            schema_name: "core".to_string(),
+            table_name: "trust".to_string(),
+            display_name: "Trust".to_string(),
+            domain: "core".to_string(),
+            columns: vec![],
+            primary_key: "id".to_string(),
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            indexes: vec![],
+            has_updated_at: true,
+            is_tenant_scoped: true,
+            tenant_table: "platform.organization".to_string(),
+            extensions: vec![],
+            child_tables: vec![],
+            comments: vec![],
+            has_workflow: false,
+            resource_name: "trust".to_string(),
+            fts: None,
+            embeddings: vec![],
+            is_auditable: true,
+            is_codelist: false,
+            has_demo_flag: false,
+        };
+
+        let junction = ChildTableDef {
+            schema_name: "core".to_string(),
+            table_name: "trust_settlor_ids".to_string(),
+            parent_fk_column: "trust_id".to_string(),
+            parent_schema: "core".to_string(),
+            parent_table: "trust".to_string(),
+            columns: vec![
+                ColumnDef {
+                    name: "platform_organization_id".to_string(),
+                    pg_type: "UUID".to_string(),
+                    nullable: false,
+                    default: Some("'00000000-0000-0000-0000-000000000000'::UUID".to_string()),
+                    is_primary_key: false,
+                    is_array: false,
+                },
+                ColumnDef {
+                    name: "party_id".to_string(),
+                    pg_type: "UUID".to_string(),
+                    nullable: false,
+                    default: None,
+                    is_primary_key: false,
+                    is_array: false,
+                },
+            ],
+            display_name: "Trust Settlor Ids".to_string(),
+            comments: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            child_tables: vec![],
+        };
+
+        let child_ctx = child_table_rls_context(&parent, &junction);
+        let sql = render_template_with_project(
+            &tera,
+            "db/rls.tera",
+            &child_ctx,
+            &project,
+        )
+        .unwrap();
+
+        assert!(sql.contains("ALTER TABLE core.trust_settlor_ids ENABLE ROW LEVEL SECURITY"));
+        assert!(sql.contains("CREATE POLICY \"org_isolation_select\""));
+        assert!(sql.contains("CREATE POLICY \"org_isolation_delete\""));
+        // Children are not api-key-scoped resources.
+        assert!(!sql.contains("api_key_scoped_"));
     }
 }
