@@ -1056,6 +1056,14 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     }
     report.files.extend(mod_files);
 
+    // Emit integration-test glue (tests/<domain>/mod.rs + tests/tests.rs) so
+    // cargo actually compiles the generated entity tests under tests/.
+    let test_mod_files = generate_test_mod_files(output_dir)?;
+    for file in &test_mod_files {
+        write_output(file)?;
+    }
+    report.files.extend(test_mod_files);
+
     // Prune entity/mod.rs to only declare modules that are actually
     // referenced by repository code, eliminating thousands of dead-code
     // warnings from unused SeaORM entities.
@@ -1610,6 +1618,52 @@ mod tests {
             "non-migration file should not be prefixed"
         );
     }
+
+    #[test]
+    fn test_rust_module_name_passthrough() {
+        // Names already valid as identifiers must be returned unchanged.
+        assert_eq!(rust_module_name("case_test"), "case_test");
+        assert_eq!(rust_module_name("individual_profile"), "individual_profile");
+    }
+
+    #[test]
+    fn test_rust_module_name_sanitizes() {
+        // Dashes/spaces become underscores, keywords get _mod, digits get n_.
+        assert_eq!(rust_module_name("my-domain"), "my_domain");
+        assert_eq!(rust_module_name("my domain"), "my_domain");
+        assert_eq!(rust_module_name("type"), "type_mod");
+        assert_eq!(rust_module_name("3d"), "n_3d");
+    }
+
+    #[test]
+    fn test_module_declaration_plain_and_path() {
+        // Valid identifier: plain mod declaration.
+        assert_eq!(test_module_declaration("core", true), "mod core;");
+        // Invalid identifier: #[path] keeps the on-disk name (dir vs file form).
+        assert_eq!(
+            test_module_declaration("my-domain", true),
+            "#[path = \"my-domain\"]\nmod my_domain;"
+        );
+        assert_eq!(
+            test_module_declaration("type", false),
+            "#[path = \"type.rs\"]\nmod type_mod;"
+        );
+    }
+
+    #[test]
+    fn test_test_mod_content_joins_declarations() {
+        let modules: BTreeSet<String> = [
+            "mod case_test;".to_string(),
+            "mod case_dto_test;".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        let content = test_mod_content(&modules);
+        let mut lines: Vec<&str> = content.lines().collect();
+        lines.sort_unstable();
+        assert_eq!(lines, vec!["mod case_dto_test;", "mod case_test;"]);
+        assert!(content.ends_with('\n'), "mod content must end with newline");
+    }
 }
 
 /// Clean stale generated files from the output directory.
@@ -1785,6 +1839,67 @@ fn clean_generated_output(output_dir: &Path, generation_order: &[GenerationEntry
             }
         }
     }
+
+    // Clean stale entity test files: tests/{domain}/{module}_test.rs and
+    // {module}_dto_test.rs. The integration-test glue (tests/<domain>/mod.rs,
+    // tests/tests.rs) is regenerated from the filesystem after generation, so
+    // removed files simply disappear from the declared modules.
+    let tests_dir = output_dir.join("tests");
+    if tests_dir.is_dir() {
+        if let Ok(test_domain_entries) = fs::read_dir(&tests_dir) {
+            for child in test_domain_entries.flatten() {
+                let path = child.path();
+                if !path.is_dir() {
+                    continue; // top-level test crates are not per-domain
+                }
+                let domain = match path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n.to_string(),
+                    None => continue,
+                };
+                if !domains.contains(domain.as_str()) {
+                    tracing::debug!(
+                        domain = %domain,
+                        path = %path.display(),
+                        "removing stale test domain directory"
+                    );
+                    let _ = fs::remove_dir_all(&path);
+                    continue;
+                }
+                if let Ok(file_entries) = fs::read_dir(&path) {
+                    for child in file_entries.flatten() {
+                        let file_path = child.path();
+                        if file_path.is_dir() {
+                            continue;
+                        }
+                        let name = match child.file_name().to_str() {
+                            Some(n) => n.to_string(),
+                            None => continue,
+                        };
+                        // Only clean the generated per-entity test file
+                        // patterns ({module}_test.rs, {module}_dto_test.rs);
+                        // mod.rs and anything else is left alone.
+                        let module = if let Some(m) = name.strip_suffix("_dto_test.rs") {
+                            m
+                        } else if let Some(m) = name.strip_suffix("_test.rs") {
+                            m
+                        } else {
+                            continue;
+                        };
+                        let key = (domain.clone(), module.to_string());
+                        if !expected.contains(&key) {
+                            tracing::debug!(
+                                domain = %domain,
+                                file = %name,
+                                path = %file_path.display(),
+                                "removing stale entity test file"
+                            );
+                            let _ = fs::remove_file(&file_path);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn write_output(file: &GeneratedFile) -> Result<()> {
@@ -1928,6 +2043,131 @@ fn generate_mod_files_recursive(dir: &Path, out: &mut Vec<GeneratedFile>) -> Res
     }
 
     Ok(has_content)
+}
+
+/// Emit cargo integration-test glue for the generated entity tests.
+///
+/// Entity test generators write into `tests/<domain>/<entity>_test.rs`
+/// subdirectories, but cargo only auto-discovers top-level `tests/*.rs` files
+/// as integration test crates. This pass gives the tree the missing module
+/// structure: a `mod.rs` in every test subdirectory declaring its `*_test.rs`
+/// files, plus a top-level `tests/tests.rs` declaring every domain module, so
+/// `cargo test` compiles and runs every generated test.
+///
+/// Like [`generate_mod_files`], this scans the filesystem after generation, so
+/// files removed by the stale-cleanup pass in [`clean_generated_output`]
+/// simply disappear from the declared modules on the next run.
+fn generate_test_mod_files(output_dir: &Path) -> Result<Vec<GeneratedFile>> {
+    let mut out = Vec::new();
+    let tests_dir = output_dir.join("tests");
+    if !tests_dir.is_dir() {
+        return Ok(out);
+    }
+
+    // Only subdirectories are glued into the crate: bare `tests/*.rs` files
+    // are standalone integration test crates that cargo discovers itself.
+    let mut domains = BTreeSet::new();
+    for entry in fs::read_dir(&tests_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let disk_name = entry.file_name().to_string_lossy().to_string();
+        let mut modules = BTreeSet::new();
+        collect_test_mods(&path, &mut modules, &mut out)?;
+        if modules.is_empty() {
+            // Nothing to declare (e.g. every test file was stale) — drop any
+            // leftover mod.rs from a previous run so it cannot dangle.
+            let _ = fs::remove_file(path.join("mod.rs"));
+            continue;
+        }
+        out.push(GeneratedFile {
+            path: path.join("mod.rs"),
+            content: test_mod_content(&modules),
+        });
+        domains.insert(test_module_declaration(&disk_name, true));
+    }
+
+    if !domains.is_empty() {
+        out.push(GeneratedFile {
+            path: tests_dir.join("tests.rs"),
+            content: test_mod_content(&domains),
+        });
+    }
+    Ok(out)
+}
+
+/// Collect `mod` declarations for every `.rs` file under `dir`, recursing into
+/// subdirectories (each of which gets its own `mod.rs`, appended to `out`).
+fn collect_test_mods(
+    dir: &Path,
+    modules: &mut BTreeSet<String>,
+    out: &mut Vec<GeneratedFile>,
+) -> Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let disk_name = entry.file_name().to_string_lossy().to_string();
+        if path.is_dir() {
+            let mut submodules = BTreeSet::new();
+            collect_test_mods(&path, &mut submodules, out)?;
+            if submodules.is_empty() {
+                let _ = fs::remove_file(path.join("mod.rs"));
+                continue;
+            }
+            out.push(GeneratedFile {
+                path: path.join("mod.rs"),
+                content: test_mod_content(&submodules),
+            });
+            modules.insert(test_module_declaration(&disk_name, true));
+        } else if path.extension().is_some_and(|e| e == "rs") && disk_name != "mod.rs" {
+            let stem = disk_name
+                .strip_suffix(".rs")
+                .unwrap_or(&disk_name)
+                .to_string();
+            modules.insert(test_module_declaration(&stem, false));
+        }
+    }
+    Ok(())
+}
+
+/// Render `mod` declarations as a mod file body.
+fn test_mod_content(modules: &BTreeSet<String>) -> String {
+    modules
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+/// Build a `mod` declaration for a test-tree entry. Returns a plain
+/// `mod <name>;` when the name is already a valid Rust identifier, otherwise
+/// a `#[path]`-attributed declaration using the sanitized module name so
+/// names with spaces, dashes, keyword or digit collisions still compile.
+fn test_module_declaration(disk_name: &str, is_dir: bool) -> String {
+    let module = rust_module_name(disk_name);
+    if module == disk_name {
+        return format!("mod {};", module);
+    }
+    let target = if is_dir {
+        disk_name.to_string()
+    } else {
+        format!("{}.rs", disk_name)
+    };
+    format!("#[path = {:?}]\nmod {};", target, module)
+}
+
+/// Sanitize an on-disk name into a valid Rust module identifier: characters
+/// outside `[A-Za-z0-9_]` become underscores, digit-leading names get an
+/// `n_` prefix, and reserved keywords get a `_mod` suffix.
+fn rust_module_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    codegraph_naming::escape_module_keyword(&sanitized)
 }
 
 /// Scan `src/domain/` for `crate::entity::<module>::` references and rewrite
