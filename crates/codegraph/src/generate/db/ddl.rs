@@ -842,12 +842,22 @@ pub(crate) fn child_parent_fk_column(parent_table_name: &str) -> String {
     ))
 }
 
+/// Recursively ensure every child table (and nested child) carries the
+/// tenant column, so org-isolation RLS policies can filter on it.
+fn inject_child_tenant_columns(children: &mut [ChildTableDef], tenant_col: &ColumnDef) {
+    for child in children {
+        if !child.columns.iter().any(|c| c.name == tenant_col.name) {
+            child.columns.insert(0, tenant_col.clone());
+        }
+        inject_child_tenant_columns(&mut child.child_tables, tenant_col);
+    }
+}
+
 /// Build a minimal [`DdlContext`] targeting a child table so the RLS template
 /// emits the parent's org-isolation policies for it. Only org-isolation is
 /// emitted (`is_auditable = false`): child tables are not api-key-scoped
 /// resources.
-pub(crate) fn child_table_rls_context(parent: &DdlContext, child: &ChildTableDef) -> DdlContext {
-    DdlContext {
+pub(crate) fn child_table_rls_context(parent: &DdlContext, child: &ChildTableDef) -> DdlContext {    DdlContext {
         schema_name: child.schema_name.clone(),
         table_name: child.table_name.clone(),
         display_name: child.display_name.clone(),
@@ -1325,7 +1335,7 @@ impl DdlGenerator {
 
             // Child tables (junction + VO) inherit the parent's tenancy: they
             // carry the same tenant column so org-isolation RLS policies can
-            // be applied to them too.
+            // be applied to them too. Nested children recurse.
             let tenant_col = ColumnDef {
                 name: "platform_organization_id".to_string(),
                 pg_type: "UUID".to_string(),
@@ -1334,11 +1344,7 @@ impl DdlGenerator {
                 is_primary_key: false,
                 is_array: false,
             };
-            for child in &mut child_tables {
-                if !child.columns.iter().any(|c| c.name == "platform_organization_id") {
-                    child.columns.insert(0, tenant_col.clone());
-                }
-            }
+            inject_child_tenant_columns(&mut child_tables, &tenant_col);
         }
 
         // Deduplicate columns by name — CompositeWrapper expansion from
@@ -1790,7 +1796,8 @@ impl EntityGenerator for DdlGenerator {
             // policies — without them, junction rows are readable
             // cross-tenant via direct DB access. Children are not
             // api-key-scoped resources, so only the org-isolation block
-            // is emitted (is_auditable = false).
+            // is emitted (is_auditable = false). ctx.child_tables is the
+            // depth-flattened tree, so nested children are covered.
             for child in &ctx.child_tables {
                 let child_ctx = child_table_rls_context(&ctx, child);
                 let child_rls_sql = render_template_with_project(
