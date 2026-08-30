@@ -44,7 +44,7 @@
 			? (initialData['{{ field.name }}'] as Record<string, unknown>)
 			: {}
 	);
-{% elif field.input_type == "array" %}
+{% elif field.input_type == "array" or (field.is_array and not field.is_codelist) %}
 	let {{ field.name }} = $state<string[]>(
 		Array.isArray(initialData['{{ field.name }}'])
 			? initialData['{{ field.name }}'] as string[]
@@ -83,7 +83,7 @@
 {% elif field.is_array and field.is_codelist %}
 			if ({{ field.name }}) data['{{ field.name }}'] = [{ code: {{ field.name }} }];
 {% elif field.is_array and not field.is_codelist %}
-			if ({{ field.name }}) data['{{ field.name }}'] = [{{ field.name }}];
+			if ({{ field.name }}.length > 0 && {{ field.name }}.some((v: string) => String(v).trim() !== '')) data['{{ field.name }}'] = {{ field.name }};
 {% elif field.input_type == "datetime-local" %}
 			if ({{ field.name }}) data['{{ field.name }}'] = {{ field.name }}.includes('Z') ? {{ field.name }} : {{ field.name }} + ':00Z';
 {% elif field.is_required %}
@@ -120,7 +120,11 @@
 {% elif field.is_array and field.is_codelist %}
 			if ({{ field.name }} !== String(initialData['{{ field.name }}'] ?? '')) data['{{ field.name }}'] = [{ code: {{ field.name }} }];
 {% elif field.is_array and not field.is_codelist %}
-			if ({{ field.name }} !== String(initialData['{{ field.name }}'] ?? '')) data['{{ field.name }}'] = [{{ field.name }}];
+			{
+				const filtered = {{ field.name }}.filter((v: string) => v.trim() !== '');
+				const original = Array.isArray(initialData['{{ field.name }}']) ? initialData['{{ field.name }}'] : [];
+				if (JSON.stringify(filtered) !== JSON.stringify(original)) data['{{ field.name }}'] = filtered;
+			}
 {% elif field.input_type == "datetime-local" %}
 			if ({{ field.name }} !== String(initialData['{{ field.name }}'] ?? '')) data['{{ field.name }}'] = {{ field.name }}.includes('Z') ? {{ field.name }} : {{ field.name }} + ':00Z';
 {% else %}
@@ -207,7 +211,7 @@
 			<Field.Description>{{ field.description }}</Field.Description>
 {% endif %}
 		</Field.Field>
-{% elif field.input_type == "array" %}
+{% elif field.input_type == "array" or (field.is_array and not field.is_codelist) %}
 		<Field.Field>
 			<Field.Label for="{{ field.name }}">{% raw %}{{% endraw %}m.{{ domain }}_{{ module_name }}_field_{{ field.name }}(){% raw %}}{% endraw %}{% if field.is_required %} <span class="text-destructive">*</span>{% endif %}</Field.Label>
 			<ArrayField
