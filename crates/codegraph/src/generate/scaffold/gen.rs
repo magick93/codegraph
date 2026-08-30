@@ -16,6 +16,8 @@ use codegraph_config::DomainConfig;
 pub struct ScaffoldContext {
     pub app_name: String,
     pub domains: Vec<ScaffoldDomain>,
+    /// Physical Postgres schemas for app_user grants (domain schemas + "common").
+    pub grant_schemas: Vec<String>,
     pub codegraph_workflow_path: String,
     pub type_contracts_path: String,
     pub domain_types_path: String,
@@ -35,10 +37,15 @@ pub struct ScaffoldEntity {
     pub name: String,
     pub module_name: String,
     pub domain: String,
+    /// Physical table name in Postgres (from the graph, e.g. "case").
+    pub table_name: String,
     /// Whether any command operations (create/update/delete) are enabled for
     /// this entity — hook-only entities get no command handler usage, so the
     /// AppState field would otherwise be dead code.
     pub has_commands: bool,
+    /// True when the entity's operations exclude update AND delete (append-only
+    /// event streams): app_user must not be granted UPDATE/DELETE on the table.
+    pub append_only: bool,
     /// Whether the generated query handler takes a hooks argument (mirrors the
     /// `uses_find_by_id` condition in ddd/query.tera).
     pub has_query_hooks: bool,
@@ -122,6 +129,15 @@ impl GlobalGenerator for ScaffoldGenerator {
                 .any(|op| op == "create" || op == "update" || op == "delete");
             let has_create = operations.iter().any(|op| op == "create");
             let has_read = operations.iter().any(|op| op == "read");
+            let has_update = operations.iter().any(|op| op == "update");
+            let has_delete = operations.iter().any(|op| op == "delete");
+            let table_name = db
+                .get_schema_in_domain(&stripped, &entry.domain)
+                .await
+                .ok()
+                .flatten()
+                .map(|s| s.pg_table_name)
+                .unwrap_or_else(|| module_name.clone());
             let has_config_parent = config
                 .domains
                 .get(&entry.domain)
@@ -136,7 +152,9 @@ impl GlobalGenerator for ScaffoldGenerator {
                     module_name: module_name.clone(),
                     name: entity_name,
                     domain: entry.domain.clone(),
+                    table_name,
                     has_commands,
+                    append_only: !has_update && !has_delete,
                     has_query_hooks,
                 });
         }
@@ -155,6 +173,16 @@ impl GlobalGenerator for ScaffoldGenerator {
             })
             .collect();
         domains.sort_by(|a, b| a.name.cmp(&b.name));
+
+        // Physical Postgres schemas that need app_user grants: every domain
+        // schema plus "common" (codelists). Sorted + deduped for stable SQL.
+        let mut grant_schemas: Vec<String> = domains
+            .iter()
+            .map(|d| d.postgres_schema.clone())
+            .chain(std::iter::once("common".to_string()))
+            .collect();
+        grant_schemas.sort();
+        grant_schemas.dedup();
 
         // Compute absolute output dir (shared by all path calculations)
         let abs_output = if self.output_dir.is_absolute() {
@@ -176,6 +204,7 @@ impl GlobalGenerator for ScaffoldGenerator {
         let ctx = ScaffoldContext {
             app_name: crate::generate::get_project_config().app_name.clone(),
             domains,
+            grant_schemas,
             codegraph_workflow_path,
             type_contracts_path,
             domain_types_path,
@@ -324,6 +353,120 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: api_key_migration,
         });
 
+        // Late-binding app_user grants: 0002 runs before entity DDL, so its
+        // IF EXISTS-guarded grants never fire on a fresh database. This
+        // migration sorts after every codelist/entity band and derives its
+        // schema list + append-only revokes from the project config.
+        let app_user_grants =
+            render_template_with_project(tera, "db/app_user_grants.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self
+                .output_dir
+                .join("migrations")
+                .join("9000_app_user_grants.sql"),
+            content: app_user_grants,
+        });
+
         Ok(files)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_ctx() -> ScaffoldContext {
+        ScaffoldContext {
+            app_name: "onboarding-app".to_string(),
+            grant_schemas: vec![
+                "common".to_string(),
+                "compliance".to_string(),
+                "core".to_string(),
+            ],
+            domains: vec![ScaffoldDomain {
+                name: "core".to_string(),
+                label: "Core".to_string(),
+                postgres_schema: "core".to_string(),
+                entities: vec![ScaffoldEntity {
+                    name: "CaseStatusChanged".to_string(),
+                    module_name: "case_status_changed".to_string(),
+                    domain: "core".to_string(),
+                    table_name: "case_status_changed".to_string(),
+                    has_commands: true,
+                    append_only: true,
+                    has_query_hooks: true,
+                }],
+            }],
+            codegraph_workflow_path: String::new(),
+            type_contracts_path: String::new(),
+            domain_types_path: String::new(),
+            hooks_api_path: String::new(),
+            extensions_path: String::new(),
+            app_config_path: String::new(),
+            decision_engine_path: String::new(),
+            has_webhooks: false,
+            has_reports: false,
+            has_grpc: false,
+            has_admin_cli: false,
+            migration_strategy: "sea-orm".to_string(),
+        }
+    }
+
+    fn tera() -> tera::Tera {
+        crate::generate::template_engine::create_tera(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates"),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn api_key_migration_schema_list_is_dynamic() {
+        let sql = render_template_with_project(
+            &tera(),
+            "db/api_key_migration.tera",
+            &test_ctx(),
+            &crate::generate::ProjectConfig::default(),
+        )
+        .unwrap();
+        assert!(sql.contains("'compliance'"), "dynamic schema list");
+        assert!(sql.contains("'core'"));
+        assert!(
+            !sql.contains("'recruiting'"),
+            "hardcoded HR schema list must be gone"
+        );
+    }
+
+    #[test]
+    fn app_user_grants_cover_schemas_and_pgmq() {
+        let sql = render_template_with_project(
+            &tera(),
+            "db/app_user_grants.tera",
+            &test_ctx(),
+            &crate::generate::ProjectConfig::default(),
+        )
+        .unwrap();
+        for schema in ["common", "compliance", "core"] {
+            assert!(
+                sql.contains(&format!("'{}'", schema)),
+                "missing schema {schema} in grant_schemas array"
+            );
+        }
+        assert!(sql.contains("GRANT USAGE ON SCHEMA %I TO app_user"));
+        assert!(sql.contains("GRANT USAGE ON SCHEMA pgmq TO app_user"));
+        assert!(sql.contains("pgmq.q_events_core"));
+    }
+
+    #[test]
+    fn app_user_grants_revoke_mutation_for_append_only() {
+        let sql = render_template_with_project(
+            &tera(),
+            "db/app_user_grants.tera",
+            &test_ctx(),
+            &crate::generate::ProjectConfig::default(),
+        )
+        .unwrap();
+        assert!(sql.contains(
+            "REVOKE UPDATE, DELETE ON core.case_status_changed FROM app_user"
+        ));
     }
 }
