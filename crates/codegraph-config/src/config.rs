@@ -151,6 +151,13 @@ fn default_tier() -> String {
     "extended".to_string()
 }
 
+/// Normalize a name/key for fuzzy entity-config lookup: drop hyphens and
+/// spaces so "LER-RSType", "Screening Result" etc. can match their
+/// concatenated rust_type_name forms ("LERRSType", "ScreeningResult").
+fn normalize_config_key(name: &str) -> String {
+    name.replace(['-', ' '], "")
+}
+
 impl DomainEntry {
     /// Look up entity config by name, trying both `name` and `nameType` variants.
     ///
@@ -173,11 +180,13 @@ impl DomainEntry {
                 }
             })
             .or_else(|| {
-                // Fallback: match config keys whose normalized form (hyphens removed)
-                // equals the input name. Handles LER-RSType → LERRS.
-                let normalized = name.replace('-', "");
+                // Fallback: match config keys whose normalized form (hyphens
+                // and spaces removed) equals the input name. Handles
+                // LER-RSType → LERRS and "Screening Result" → ScreeningResult
+                // (titles with spaces produce concatenated rust_type_names).
+                let normalized = normalize_config_key(name);
                 self.entity_config.iter().find_map(|(key, cfg)| {
-                    let key_normalized = key.replace('-', "");
+                    let key_normalized = normalize_config_key(key);
                     if key_normalized == normalized
                         || key_normalized == format!("{}Type", normalized)
                     {
@@ -536,6 +545,41 @@ pub fn parse_ui_domains_config_str(content: &str) -> Result<UiDomainConfig, Doma
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Entity config keys may contain spaces (raw schema titles). The lookup
+    /// by concatenated rust_type_name ("ScreeningResult") must still find them.
+    #[test]
+    fn test_get_entity_config_matches_space_titled_keys() {
+        let toml = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.compliance]
+label = "Compliance"
+schema_dir = "compliance"
+postgres_schema = "compliance"
+entities = ["Screening Result"]
+
+[domains.compliance.entity_config."Screening Result"]
+operations = ["create", "read", "list"]
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        let entry = &config.domains["compliance"];
+
+        // Direct (raw title) lookup
+        let cfg = entry.get_entity_config("Screening Result").unwrap();
+        assert_eq!(
+            cfg.operations.as_deref(),
+            Some(&["create".to_string(), "read".to_string(), "list".to_string()][..])
+        );
+
+        // Concatenated rust_type_name lookup (generate-time call pattern)
+        let cfg = entry.get_entity_config("ScreeningResult").unwrap();
+        assert_eq!(
+            cfg.operations.as_deref(),
+            Some(&["create".to_string(), "read".to_string(), "list".to_string()][..])
+        );
+    }
 
     #[test]
     fn test_parse_minimal_config() {

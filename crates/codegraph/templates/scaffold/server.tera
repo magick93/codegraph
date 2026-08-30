@@ -326,6 +326,9 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {% if has_webhooks %}
         .nest("/webhooks", crate::webhook_router::webhook_routes())
 {% endif %}
+        // The pooled DB connection as an extension: the permission middleware
+        // runs from per-route layers where State is not available.
+        .layer(axum::extract::Extension(state.db.clone()))
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
 
     let app = axum::Router::new()

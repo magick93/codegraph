@@ -144,9 +144,14 @@ fn resolve_from_entity_config(
 }
 
 /// Resolve the operations list for a single entity.
-/// Tries the graph-based API model first, falls back to EntityConfig.
-/// When no ApiResource nodes exist in the graph, this produces the same
-/// result as the previous `entity_cfg.operations.unwrap_or(defaults)` pattern.
+///
+/// Priority (highest to lowest):
+/// 1. `EntityConfig.operations` explicitly set in domains.toml — always wins,
+///    even when the graph contains a different (e.g. stale or auto-seeded)
+///    set of ApiOperation nodes.
+/// 2. Graph-derived operations from the ApiResource → HasOperation → ApiOperation.
+/// 3. `config.defaults.operations`.
+///
 /// Normalize an entity/resource name for API-model lookups: strip the "Type"
 /// suffix and PascalCase whatever remains (titles may contain spaces, e.g.
 /// "Review Decision" → "ReviewDecision").
@@ -160,8 +165,17 @@ pub async fn resolve_entity_operations(
     domain_name: &str,
     entity_name: &str,
 ) -> Vec<String> {
-    let resource_name = normalized_resource_name(entity_name);
+    let domain_entry = config.domains.get(domain_name);
+    // An explicitly configured operations list takes precedence over the graph.
+    if let Some(explicit) = domain_entry
+        .and_then(|de| de.get_entity_config(entity_name))
+        .and_then(|c| c.operations.clone())
+    {
+        return explicit;
+    }
+
     if let Ok(resources) = querier.get_api_resources().await {
+        let resource_name = normalized_resource_name(entity_name);
         if let Some(resource) = resources
             .iter()
             .find(|r| r.domain == domain_name && r.name == resource_name)
@@ -174,11 +188,8 @@ pub async fn resolve_entity_operations(
         }
     }
 
-    let domain_entry = config.domains.get(domain_name);
-    domain_entry
-        .and_then(|de| de.get_entity_config(entity_name))
-        .and_then(|c| c.operations.clone())
-        .unwrap_or_else(|| config.defaults.operations.clone())
+    // No explicit config and no usable graph ops — fall back to defaults.
+    config.defaults.operations.clone()
 }
 
 fn op_kind_to_http(kind: &str) -> (&'static str, &'static str) {
@@ -222,4 +233,81 @@ pub fn resolve_path_segment_with_config(
         config.domains.get(domain)?.get_entity_config(&schema_node.title)
     });
     resolve_path_segment(effective_ec, schema_node)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codegraph_core::mock::MockEngine;
+
+    fn test_config() -> DomainConfig {
+        toml::from_str(
+            r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.compliance]
+label = "Compliance"
+schema_dir = "compliance"
+postgres_schema = "compliance"
+entities = ["Screening Result", "Document"]
+
+[domains.compliance.entity_config."Screening Result"]
+operations = ["create", "read", "list"]
+
+[domains.compliance.entity_config.Document]
+"#,
+        )
+        .unwrap()
+    }
+
+    /// Explicit EntityConfig.operations must win over whatever the graph
+    /// contains (here: empty). Regression test for the router emitting
+    /// PUT/DELETE on append-only entities (issue #79). The graph-backed
+    /// counterpart lives in tests/api_model_graph_tests.rs.
+    #[tokio::test]
+    async fn explicit_config_operations_beat_graph() {
+        let querier = MockEngine::new();
+        let config = test_config();
+        let ops =
+            resolve_entity_operations(&querier, &config, "compliance", "ScreeningResult").await;
+        assert_eq!(ops, vec!["create", "read", "list"]);
+    }
+
+    /// The explicit-config lookup must also work when passed the raw schema
+    /// title containing spaces.
+    #[tokio::test]
+    async fn explicit_config_operations_matched_by_raw_title() {
+        let querier = MockEngine::new();
+        let config = test_config();
+        let ops =
+            resolve_entity_operations(&querier, &config, "compliance", "Screening Result").await;
+        assert_eq!(ops, vec!["create", "read", "list"]);
+    }
+
+    /// No explicit config and no graph nodes — fall back to defaults.
+    #[tokio::test]
+    async fn defaults_used_when_no_config_and_no_graph() {
+        let querier = MockEngine::new();
+        let config = test_config();
+        let ops = resolve_entity_operations(&querier, &config, "compliance", "Unknown").await;
+        assert_eq!(ops, vec!["create", "read", "update", "delete", "list"]);
+    }
+
+    /// Defaults apply to entities with a config block but no explicit
+    /// operations when the graph has nothing either.
+    #[tokio::test]
+    async fn defaults_used_for_unconfigured_entity_with_empty_graph() {
+        let querier = MockEngine::new();
+        let config = test_config();
+        let ops = resolve_entity_operations(&querier, &config, "compliance", "Document").await;
+        assert_eq!(ops, vec!["create", "read", "update", "delete", "list"]);
+    }
+
+    #[test]
+    fn normalized_resource_name_strips_and_pascals() {
+        assert_eq!(normalized_resource_name("ScreeningResult"), "ScreeningResult");
+        assert_eq!(normalized_resource_name("Screening Result"), "ScreeningResult");
+        assert_eq!(normalized_resource_name("review decisionType"), "ReviewDecision");
+    }
 }
