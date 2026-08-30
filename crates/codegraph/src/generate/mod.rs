@@ -1494,6 +1494,37 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    #[test]
+    fn clean_generated_output_removes_stale_dto_included() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let entity_dir = dir.path().join("src").join("domain").join("hr").join("worker");
+        std::fs::create_dir_all(&entity_dir).unwrap();
+        // Stale dto_included.rs from a run where the entity had include
+        // paths; dto_response.rs is a regular per-run file.
+        std::fs::write(entity_dir.join("dto_included.rs"), "pub struct Stale;").unwrap();
+        std::fs::write(entity_dir.join("dto_response.rs"), "pub struct Keep;").unwrap();
+        // A stale entity directory (not in the generation order) that also
+        // carries a dto_included.rs must be removed whole.
+        let stale_dir = dir.path().join("src").join("domain").join("hr").join("ghost");
+        std::fs::create_dir_all(&stale_dir).unwrap();
+        std::fs::write(stale_dir.join("dto_included.rs"), "pub struct Ghost;").unwrap();
+
+        let order = vec![GenerationEntry {
+            schema_title: "WorkerType".to_string(),
+            domain: "hr".to_string(),
+            pg_schema: "hr".to_string(),
+            is_cyclic: false,
+        }];
+        clean_generated_output(dir.path(), &order, "Type");
+
+        assert!(
+            !entity_dir.join("dto_included.rs").exists(),
+            "stale dto_included.rs must be removed so generate_mod_files cannot re-declare it"
+        );
+        assert!(entity_dir.join("dto_response.rs").exists());
+        assert!(!stale_dir.exists(), "stale entity directory must still be removed whole");
+    }
+
     fn make_migration(name: &str) -> GeneratedFile {
         GeneratedFile {
             path: PathBuf::from("output/migrations").join(name),
@@ -1735,6 +1766,15 @@ fn clean_generated_output(output_dir: &Path, generation_order: &[GenerationEntry
             // if a generator fails partway through, the previous working state is preserved.
             let key = (domain.to_string(), module_name.clone());
             if expected.contains(&key) {
+                // dto_included.rs is emitted only when the entity currently
+                // has include paths. Delete any stale copy up front so the
+                // per-run filesystem scan in generate_mod_files cannot
+                // re-declare `pub mod dto_included;` for a file this run
+                // will not regenerate (e.g. after allow_include changes).
+                let dto_included = path.join("dto_included.rs");
+                if dto_included.is_file() {
+                    let _ = fs::remove_file(&dto_included);
+                }
                 continue;
             }
             tracing::debug!(

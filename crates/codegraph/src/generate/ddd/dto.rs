@@ -1338,7 +1338,47 @@ impl DtoGenerator {
             } else {
                 path.response_rust_type.clone()
             };
-            type_registry::register_type(&type_name, module_path.clone());
+            // Register the include response type under the module that
+            // DEFINES it, or import resolution poisons the registry with a
+            // self-referencing path (first registration wins):
+            // - multi-segment combined DTOs are defined in this entity's
+            //   dto_included module;
+            // - VO→entity child-table overrides resolve to this entity's
+            //   dto_response module, where its child DTOs are registered;
+            // - plain single-segment paths resolve to the target entity's
+            //   dto_response module ({Target}Response is defined there).
+            let defining_module = match path.segments.len() {
+                1 => {
+                    if path.segments[0].child_table_override.is_some() {
+                        // This entity's dto_response module, where its
+                        // child DTOs are registered.
+                        vec![
+                            "crate".into(),
+                            "domain".into(),
+                            domain.into(),
+                            module_name.clone(),
+                            "dto_response".into(),
+                        ]
+                    } else {
+                        let seg = &path.segments[0];
+                        vec![
+                            "crate".into(),
+                            "domain".into(),
+                            seg.domain.clone(),
+                            seg.module_name.clone(),
+                            "dto_response".into(),
+                        ]
+                    }
+                }
+                _ => vec![
+                    "crate".into(),
+                    "domain".into(),
+                    domain.into(),
+                    module_name.clone(),
+                    "dto_included".into(),
+                ],
+            };
+            type_registry::register_type(&type_name, defining_module);
         }
 
         // Collect all type names referenced by include fields for cross-entity import resolution.

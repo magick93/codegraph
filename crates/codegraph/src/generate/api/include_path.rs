@@ -282,6 +282,28 @@ async fn resolve_explicit_paths(
                 }
             }
 
+            // Gate: the column the fetch will use must actually exist.
+            // Junction arrays (array-of-entity-ref) materialize as junction
+            // tables — neither the source-side FK nor the target-side
+            // back-ref column exists, so paths through them are unfetchable.
+            // VO→entity overrides are exempt: the fetch queries the VO child
+            // table by its own parent FK (child_table_override), not these
+            // columns.
+            if child_table_override.is_none() {
+                let (fetch_column, fetch_on_title): (&String, String) = if is_array {
+                    (&reverse_fk_column, target_title.clone())
+                } else {
+                    (&fk_column, current_source_title.to_string())
+                };
+                if !schema_has_fk_column(db, &fetch_on_title, fetch_column).await? {
+                    tracing::warn!(
+                        "include path '{path}' segment '{seg}' is unfetchable — column \
+                         '{fetch_column}' not found on '{fetch_on_title}' (junction array?) — skipping"
+                    );
+                    break;
+                }
+            }
+
             // Nullability: JSON schema `required` is the source of truth for
             // genuine EntityReference FKs. VO→entity (child_table_override)
             // FKs are always nullable.
@@ -310,6 +332,13 @@ async fn resolve_explicit_paths(
             // Advance the schema_id to the target's identity for the next
             // segment's identity-native property lookup.
             current_source_schema_id = target_schema.schema_id.clone();
+        }
+
+        // Every segment was skipped (junction array, force VO, codelist,
+        // non-entity) — the path is not resolvable, don't emit a fetch
+        // method for a zero-segment path.
+        if segments.is_empty() {
+            continue;
         }
 
         let alias_snake = path.replace('.', "_");
@@ -400,6 +429,21 @@ async fn resolve_auto_paths(
             resolve_child_fk_column(config, domain, target_title, schema_title, db).await?;
         let reverse_fk_column = fk_column.clone();
 
+        // Junction guard: array-of-entity-ref properties (e.g.
+        // trust.settlorIds → party) materialize as junction tables — the
+        // child entity carries no parent FK, so child-style fetch helpers
+        // would reference a nonexistent SeaORM `Column`. ScalarRef children
+        // and VO children DO get the FK injected into their entity model by
+        // the entity generator, so they remain include-able.
+        if parent_holds_child_as_junction(db, schema_title, target_title).await? {
+            tracing::debug!(
+                parent = %schema_title,
+                child = %target_title,
+                "auto-discovery skipping junction relationship"
+            );
+            continue;
+        }
+
         let alias_seg = codegraph_naming::to_snake_case(super::router::strip_suffix(
             target_title,
             &config.defaults.type_suffix,
@@ -411,14 +455,10 @@ async fn resolve_auto_paths(
         let reverse_fk_is_required =
             fk_column_is_required(db, target_title, &reverse_fk_column).await?;
 
-        // Resolve is_array from the graph: does the parent have an array property
-        // pointing to this child via ItemsOf?
-        let is_array = {
-            let props = db.get_properties(schema_title).await.unwrap_or_default();
-            props.iter().any(|p| {
-                p.is_array && p.effective_kind() == Some(RefClassificationKind::ValueObject)
-            }) || true
-        };
+        // Child relationships discovered via parent_candidates are
+        // one-to-many (the parent holds a collection of children), so
+        // the fetch helper returns Vec<ChildResponse>.
+        let is_array = true;
 
         paths.push(ResolvedIncludePath {
             alias: alias_seg.clone(),
@@ -514,6 +554,17 @@ async fn resolve_auto_paths(
             super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
         let (reverse_fk_column, _) =
             resolve_fk_via_graph(db, ref_title, schema_title, &source_entity_name).await?;
+
+        // Junction guard: array-of-entity-ref cross-refs live in junction
+        // tables and cannot be fetched by either FK column.
+        if parent_holds_child_as_junction(db, schema_title, ref_title).await? {
+            tracing::debug!(
+                source = %schema_title,
+                target = %ref_title,
+                "auto-discovery skipping junction cross-reference"
+            );
+            continue;
+        }
 
         let alias_seg = codegraph_naming::to_snake_case(ref_entity_name);
 
@@ -749,12 +800,53 @@ async fn fk_column_is_required(
     }))
 }
 
+/// Whether `parent_title` holds `child_title` through an array-of-entity-ref
+/// property — i.e. the relationship is materialized as a junction table.
+async fn parent_holds_child_as_junction(
+    db: &dyn GraphQuerier,
+    parent_title: &str,
+    child_title: &str,
+) -> Result<bool> {
+    let props = db.get_properties(parent_title).await?;
+    for p in props.iter().filter(|p| {
+        p.is_array && p.effective_kind() == Some(RefClassificationKind::EntityReference)
+    }) {
+        if let Ok(Some(target)) = db.get_property_ref_target(&p.name, parent_title).await {
+            if target.title == child_title {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the schema genuinely carries a column named `column` (a property
+/// whose resolved or raw pg column matches). Guards include resolution
+/// against emitting fetch helpers that reference nonexistent columns —
+/// the dominant case being junction targets (array-of-entity-ref), which
+/// carry no parent FK column at all.
+async fn schema_has_fk_column(
+    db: &dyn GraphQuerier,
+    child_title: &str,
+    fk_column: &str,
+) -> Result<bool> {
+    let props = db.get_properties(child_title).await?;
+    Ok(props.iter().any(|p| {
+        resolve_field(p).column_name == fk_column
+            || p.pg_column_name == fk_column
+            // VO→entity chains keep the schema-side column unsuffixed
+            // (`person`) while the entity model carries `person_id`.
+            || codegraph_core::types::ensure_id_suffix(&p.pg_column_name) == fk_column
+    }))
+}
+
 /// Resolve the FK column and array flag for a source→target relationship
 /// by querying the source entity's properties from the graph.
 ///
 /// Uses `db.get_properties()` which runs GQL internally (`HasProperty` edges),
 /// then matches properties by `ref_target` or field name.  This is the same
 /// pattern used by `build_composition_node()` in the Grafeo querier.
+///
 async fn resolve_fk_via_graph(
     db: &dyn GraphQuerier,
     source_title: &str,
