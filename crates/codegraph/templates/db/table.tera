@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS {{ schema_name }}.{{ table_name | quote_pg }} (
     is_demo_data BOOLEAN NOT NULL DEFAULT false
 {% endif %}
 );
+
+-- App role DML (RLS policies gate rows; this grants base table access)
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {{ schema_name }}.{{ table_name | quote_pg }} TO app_user;
 {% for fk in foreign_keys %}
 {% set fk_constraint_name = "fk_" ~ table_name ~ "_" ~ fk.column_name | truncate_pg %}
 DO $$ BEGIN
@@ -53,6 +56,8 @@ CREATE TABLE IF NOT EXISTS {{ child.schema_name }}.{{ child.table_name | quote_p
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {{ child.schema_name }}.{{ child.table_name | quote_pg }} TO app_user;
 
 ALTER TABLE {{ child.schema_name }}.{{ child.table_name | quote_pg }} ADD CONSTRAINT {{ "fk_" ~ child.table_name ~ "_parent" | truncate_pg }} FOREIGN KEY ({{ child.parent_fk_column }}) REFERENCES {{ child.parent_schema }}.{{ child.parent_table | quote_pg }}(id) ON DELETE CASCADE;
 

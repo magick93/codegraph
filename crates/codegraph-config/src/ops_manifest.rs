@@ -111,6 +111,15 @@ pub struct OpsDbTarget {
     /// SQL file that seeds workflow definitions / API keys after migrate.
     #[serde(default)]
     pub seed_sql: Option<PathBuf>,
+    /// Postgres role the generated API connects as (default `app_user`). The
+    /// harness grants it DML on domain tables after migration and verifies the
+    /// grants exist.
+    #[serde(default)]
+    pub grant_role: Option<String>,
+    /// Fail the `api` suite when the grant role is missing DML on any domain
+    /// table after migration (default `false` → warn instead).
+    #[serde(default)]
+    pub grant_strict: Option<bool>,
 }
 
 /// Database targets.
@@ -285,6 +294,8 @@ mod tests {
                     database: "postgres".into(),
                     reset_sql: None,
                     seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
                 },
                 e2e: None,
                 e2e_app: None,

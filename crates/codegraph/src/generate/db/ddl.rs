@@ -827,6 +827,7 @@ fn composition_node_to_child_table(
     parent_table_name: &str,
     parent_schema_name: &str,
     parent_display_name: &str,
+    generated_tables: &HashSet<(String, String)>,
 ) -> ChildTableDef {
     let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
         "{}_{}",
@@ -881,6 +882,12 @@ fn composition_node_to_child_table(
         codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name));
     columns.retain(|col| col.name != parent_fk_col);
 
+    // Filter FK constraints: only keep FKs whose target table belongs to a
+    // generated entity (same logic as the parent table FK filter).
+    foreign_keys.retain(|fk| {
+        generated_tables.contains(&(fk.references_schema.clone(), fk.references_table.clone()))
+    });
+
     // Recursively convert nested children
     let nested_children: Vec<ChildTableDef> = node
         .children
@@ -891,6 +898,7 @@ fn composition_node_to_child_table(
                 &child_table_name,
                 parent_schema_name,
                 &child_display_name,
+                generated_tables,
             )
         })
         .collect();
@@ -1137,18 +1145,49 @@ impl DdlGenerator {
             check_constraints.retain(|chk| seen.insert(chk.name.clone()));
         }
 
+        // Filter FK constraints: only keep FKs whose target table belongs to an
+        // entity that is actually configured in some domain (will have a migration).
+        // This prevents phantom FK constraints to:
+        // - VO types classified as entities by the auto-classifier but not in any domain's entities list
+        // - Excluded types that exist in a different domain
+        // - Cross-domain refs pointing to non-existent schemas (e.g. "jdx")
+        // Build (schema, table) pairs — a FK is valid only if its target
+        // (references_schema, references_table) matches a generated entity.
+        let generated_tables: HashSet<(String, String)> = config
+            .domains
+            .values()
+            .flat_map(|d| {
+                let schema = &d.postgres_schema;
+                d.entities.iter().map(move |title| {
+                    let table = codegraph_naming::to_snake_case(
+                        &codegraph_naming::strip_type_suffix(title),
+                    );
+                    (schema.clone(), table)
+                })
+            })
+            .collect();
+        foreign_keys.retain(|fk| {
+            generated_tables.contains(&(fk.references_schema.clone(), fk.references_table.clone()))
+        });
+
         // Query graph properties for entity-reference columns that the composition
         // tree may have missed (e.g. cross-domain references where the target schema
         // can't be resolved). The entity model generator includes these columns,
         // so the DDL must match to avoid "column does not exist" at runtime.
+        //
+        // ValueObject properties are handled by the composition tree as child
+        // tables (not FK columns on the parent), so we only emit FK columns for
+        // EntityReference properties whose target schema actually has a table
+        // (i.e. is an entity configured in some domain). This prevents phantom
+        // FK constraints to VO types that were force-classified but never
+        // generated as entities, or to entities excluded in their domain.
         if let Ok(props) = db.get_properties(schema_title).await {
             let existing_names: std::collections::HashSet<String> =
                 columns.iter().map(|c| c.name.clone()).collect();
+
             for prop in &props {
                 let kind = prop.effective_kind();
-                let is_fk_candidate = kind == Some(RefClassificationKind::EntityReference)
-                    || (kind == Some(RefClassificationKind::ValueObject) && !prop.is_array);
-                if !is_fk_candidate {
+                if kind != Some(RefClassificationKind::EntityReference) {
                     continue;
                 }
                 let base = prop
@@ -1161,19 +1200,24 @@ impl DdlGenerator {
                     format!("{}_id", base)
                 };
                 if !existing_names.contains(col_name.as_str()) {
-                    columns.push(ColumnDef {
-                        name: col_name.clone(),
-                        pg_type: "UUID".to_string(),
-                        nullable: true,
-                        default: None,
-                        is_primary_key: false,
-                        is_array: false,
-                    });
-                    // Try to resolve the FK target for the constraint
+                    // Try to resolve the FK target for the constraint.
+                    // Only emit the FK if the target schema is an entity
+                    // configured in some domain (has its own table/migration).
+                    // VOs, excluded types, and entity types not in any domain's
+                    // entities list don't have tables, so FK constraints to them
+                    // would fail with "undefined_table".
                     if let Ok(Some(target)) =
                         db.get_property_ref_target(&prop.name, schema_title).await
                     {
-                        if !target.pg_table_name.is_empty() {
+                        if !target.pg_table_name.is_empty() && target.is_entity {
+                            columns.push(ColumnDef {
+                                name: col_name.clone(),
+                                pg_type: "UUID".to_string(),
+                                nullable: true,
+                                default: None,
+                                is_primary_key: false,
+                                is_array: false,
+                            });
                             let fk_schema = target.domain.as_deref().unwrap_or(&schema_name);
                             foreign_keys.push(ForeignKeyDef {
                                 column_name: strip_rsharp(&prop.rust_field_name),
@@ -1187,6 +1231,12 @@ impl DdlGenerator {
                     }
                 }
             }
+
+            // Re-filter after adding cross-domain FKs (same logic as above)
+            foreign_keys.retain(|fk| {
+                generated_tables
+                    .contains(&(fk.references_schema.clone(), fk.references_table.clone()))
+            });
         }
 
         // Convert child CompositionNodes → ChildTableDefs
@@ -1194,7 +1244,13 @@ impl DdlGenerator {
             .children
             .iter()
             .map(|child| {
-                composition_node_to_child_table(child, &table_name, &schema_name, &display_name)
+                composition_node_to_child_table(
+                    child,
+                    &table_name,
+                    &schema_name,
+                    &display_name,
+                    &generated_tables,
+                )
             })
             .collect();
 

@@ -95,3 +95,7 @@ CREATE TABLE platform_integrations.audit_log (
 CREATE INDEX idx_audit_log_org ON platform_integrations.audit_log (platform_organization_id);
 CREATE INDEX idx_audit_log_installation ON platform_integrations.audit_log (installation_id);
 CREATE INDEX idx_audit_log_created ON platform_integrations.audit_log (created_at);
+
+-- App role DML on integration tables (RLS policies gate rows).
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA platform_integrations TO app_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA platform_integrations GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;

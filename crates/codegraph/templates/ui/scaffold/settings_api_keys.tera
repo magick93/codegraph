@@ -2,7 +2,7 @@
 <!-- API key settings route — delegates to @crewbase/ui ApiKeySettings component. -->
 <script lang="ts">
 	import { ApiKeySettings } from '@crewbase/ui';
-	import { createSupabaseClient } from '$lib/supabase';
+	import { createSupabaseClient } from '#lib/supabase.ts';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

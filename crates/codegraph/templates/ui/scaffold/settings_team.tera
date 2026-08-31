@@ -2,7 +2,7 @@
 <!-- Team settings route — delegates to @crewbase/ui TeamSettings component. -->
 <script lang="ts">
 	import { TeamSettings } from '@crewbase/ui';
-	import { createSupabaseClient } from '$lib/supabase';
+	import { createSupabaseClient } from '#lib/supabase.ts';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

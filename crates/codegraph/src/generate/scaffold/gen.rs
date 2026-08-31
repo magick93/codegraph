@@ -16,6 +16,11 @@ use codegraph_config::DomainConfig;
 pub struct ScaffoldContext {
     pub app_name: String,
     pub domains: Vec<ScaffoldDomain>,
+    /// Schemas the generated API role (`app_user`) needs DML access to:
+    /// every configured domain's postgres schema plus the infra schemas
+    /// (`platform`, `platform_integrations`). Rendered into the
+    /// `0002_api_key_management.sql` grant block.
+    pub grant_schemas: Vec<String>,
     pub codegraph_workflow_path: String,
     pub type_contracts_path: String,
     pub domain_types_path: String,
@@ -190,9 +195,18 @@ impl GlobalGenerator for ScaffoldGenerator {
         let app_config_path = resolve_path(&project.app_config_base, &abs_output);
         let decision_engine_path = resolve_path(&project.decision_engine_base, &abs_output);
 
+        let mut grant_schemas = vec!["platform".to_string()];
+        for d in &domains {
+            if !grant_schemas.contains(&d.postgres_schema) {
+                grant_schemas.push(d.postgres_schema.clone());
+            }
+        }
+        grant_schemas.sort();
+
         let ctx = ScaffoldContext {
             app_name: crate::generate::get_project_config().app_name.clone(),
             domains,
+            grant_schemas,
             codegraph_workflow_path,
             type_contracts_path,
             domain_types_path,
