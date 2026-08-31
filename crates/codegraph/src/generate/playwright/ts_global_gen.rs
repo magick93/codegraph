@@ -147,6 +147,7 @@ impl GlobalGenerator for TsGlobalGenerator {
     "test:headed": "npx playwright test --headed"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.48.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0"
