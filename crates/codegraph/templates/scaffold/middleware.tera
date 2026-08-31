@@ -34,11 +34,27 @@ pub struct AuthInfo {
     pub role: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 #[allow(dead_code)]
 pub enum AuthMode {
     Jwt { user_id: Uuid },
     ApiKey { api_key_id: Uuid, raw_key: String },
+}
+
+impl std::fmt::Debug for AuthMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthMode::Jwt { user_id } => f
+                .debug_struct("Jwt")
+                .field("user_id", user_id)
+                .finish(),
+            AuthMode::ApiKey { api_key_id, .. } => f
+                .debug_struct("ApiKey")
+                .field("api_key_id", api_key_id)
+                .field("raw_key", &"redacted")
+                .finish(),
+        }
+    }
 }
 
 /// Legacy alias for backward compatibility with handlers expecting ApiKeyInfo.
@@ -98,6 +114,8 @@ pub async fn auth_middleware(
         correlation_id = %correlation_id,
         org_id = %auth_info.organization_id,
         role = %auth_info.role,
+        api_key_id = %auth_info.api_key_id,
+        key_prefix = "redacted",
     );
     let response = {
         let _guard = span.enter();

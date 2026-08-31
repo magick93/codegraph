@@ -371,6 +371,11 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     // the source of truth. A required entity ref produces a NOT NULL
                     // FK column (Uuid, is_nullable: false) in both the DDL and the
                     // model; an optional ref produces Option<Uuid>.
+                    // Array entity refs are junction child tables (persisted via
+                    // raw SQL in the repository), never columns on this model.
+                    if prop.is_array {
+                        continue;
+                    }
                     let is_nullable = !prop.is_required;
                     columns.push(EntityColumn {
                         field_name: field_def.rust_field_name,
@@ -879,18 +884,12 @@ async fn build_child_entity(
             sea_orm_attr: None,
         },
         EntityColumn {
-            field_name: codegraph_naming::truncate_pg_identifier(&format!(
-                "{}_id",
-                parent_table_name
-            )),
+            field_name: super::ddl::child_parent_fk_column(parent_table_name),
             rust_type: "Uuid".to_string(),
             sea_orm_type: dialect
                 .map_sea_orm_type("Uuid")
                 .unwrap_or("Uuid".to_string()),
-            column_name: codegraph_naming::truncate_pg_identifier(&format!(
-                "{}_id",
-                parent_table_name
-            )),
+            column_name: super::ddl::child_parent_fk_column(parent_table_name),
             is_primary_key: false,
             is_nullable: false,
             pg_cast: None,
@@ -1209,18 +1208,12 @@ fn build_codelist_child_entity(
             sea_orm_attr: None,
         },
         EntityColumn {
-            field_name: codegraph_naming::truncate_pg_identifier(&format!(
-                "{}_id",
-                parent_table_name
-            )),
+            field_name: super::ddl::child_parent_fk_column(parent_table_name),
             rust_type: "Uuid".to_string(),
             sea_orm_type: dialect
                 .map_sea_orm_type("Uuid")
                 .unwrap_or("Uuid".to_string()),
-            column_name: codegraph_naming::truncate_pg_identifier(&format!(
-                "{}_id",
-                parent_table_name
-            )),
+            column_name: super::ddl::child_parent_fk_column(parent_table_name),
             is_primary_key: false,
             is_nullable: false,
             pg_cast: None,

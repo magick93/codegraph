@@ -43,13 +43,14 @@ pub fn ui_field_from_property(
         .to_string();
     // rust_field_name is sanitized at ingestion (no _code suffix),
     // so it matches the DTO field name directly.
-    let ts_field_name = if is_entity_ref && !ts_field_name.ends_with("_id") {
-        // resolve_field already appends _id for EntityReference columns.
-        // Only append if the resolved name doesn't already end in _id.
-        format!("{}_id", ts_field_name)
-    } else {
-        ts_field_name
-    };
+    let ts_field_name =
+        if is_entity_ref && !prop.is_array && !ts_field_name.ends_with("_id") {
+            // resolve_field already appends _id for scalar EntityReference
+            // columns; junction arrays keep raw names.
+            format!("{}_id", ts_field_name)
+        } else {
+            ts_field_name
+        };
     let label = field_name_to_label(&ts_field_name);
 
     UiField {

@@ -5025,7 +5025,7 @@ entities = ["WorkerType"]
                     "deployment_id",
                     "deployment_id",
                     "DeploymentType",
-                    true,
+                    false,
                 )],
             )
             .with_properties(
@@ -5067,8 +5067,8 @@ entities = ["WorkerType"]
             "first segment entity should be DeploymentType"
         );
         assert!(
-            paths[0].segments[0].is_array,
-            "deployments property is an array"
+            !paths[0].segments[0].is_array,
+            "deployment_id is a scalar FK (entity-ref arrays are junction tables, not include-able)"
         );
 
         // Second segment: PositionType (scalar FK)
@@ -6701,7 +6701,7 @@ async fn dto_include_dot_notation() {
         format: None,
         is_required: false,
         is_nullable: true,
-        is_array: true,
+        is_array: false,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -6949,12 +6949,12 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
         "deployment",
         "deployment",
         "deployment_id",
-        "Vec<Uuid>",
+        "Uuid",
         "UUID",
         false,
         Some(RefClassificationKind::EntityReference),
         Some("DeploymentType"),
-        true,
+        false,
     );
 
     // Deployment → Position FK (the leaf segment, emitted as a nested field).
