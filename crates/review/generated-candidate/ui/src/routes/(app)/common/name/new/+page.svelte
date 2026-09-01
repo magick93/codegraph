@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import NameForm from '$lib/components/forms/NameForm.svelte';
-	import { createName } from '$lib/stores/common_name';
+	import NameForm from '#lib/components/forms/NameForm.svelte';
+	import { createName } from '#lib/stores/common_name.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { CreateNameRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { CreateNameRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/name';

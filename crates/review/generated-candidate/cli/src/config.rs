@@ -14,7 +14,7 @@ pub struct CliConfig {
 }
 
 impl CliConfig {
-    /// Load config from `~/.config/hr/config.toml`, or return defaults.
+    /// Load config from `~/.config/app/config.toml`, or return defaults.
     pub fn load() -> anyhow::Result<Self> {
         let path = Self::config_path()?;
         if path.exists() {
@@ -25,7 +25,7 @@ impl CliConfig {
         }
     }
 
-    /// Save config to `~/.config/hr/config.toml` with restricted permissions (0600).
+    /// Save config to `~/.config/app/config.toml` with restricted permissions (0600).
     pub fn save(&self) -> anyhow::Result<()> {
         let path = Self::config_path()?;
         if let Some(parent) = path.parent() {
@@ -55,6 +55,6 @@ impl CliConfig {
     fn config_path() -> anyhow::Result<PathBuf> {
         let config_dir = dirs::config_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?;
-        Ok(config_dir.join("hr").join("config.toml"))
+        Ok(config_dir.join("app").join("config.toml"))
     }
 }

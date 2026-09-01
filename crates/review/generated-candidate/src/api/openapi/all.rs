@@ -6,7 +6,7 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(
-    info(title = "HR Open API", version = "1.0.0"),
+    info(title = "HR Open API", version = "v1"),
     modifiers(&ApiKeySecurity),
     paths(
 
@@ -25,6 +25,24 @@ use utoipa::OpenApi;
 
 
         crate::api::compensation::pay_run_handler::list,
+
+
+
+
+
+        crate::api::events::public_event_handler::create,
+
+
+        crate::api::events::public_event_handler::get_by_id,
+
+
+        crate::api::events::public_event_handler::update,
+
+
+        crate::api::events::public_event_handler::delete,
+
+
+        crate::api::events::public_event_handler::list,
 
 
 
@@ -60,6 +78,24 @@ use utoipa::OpenApi;
 
 
 
+
+
+        crate::api::rsvp::rsvp_handler::create,
+
+
+        crate::api::rsvp::rsvp_handler::get_by_id,
+
+
+        crate::api::rsvp::rsvp_handler::update,
+
+
+        crate::api::rsvp::rsvp_handler::delete,
+
+
+        crate::api::rsvp::rsvp_handler::list,
+
+
+
     ),
     components(schemas(
 
@@ -74,6 +110,19 @@ use utoipa::OpenApi;
         crate::domain::compensation::pay_run::dto_update::UpdatePayRunRequest,
 
         crate::domain::compensation::pay_run::dto_response::PayRunResponse,
+
+
+
+
+        crate::domain::events::public_event::dto_create::CreatePublicEventRequest,
+        crate::api::events::public_event_handler::CreatePublicEventBody,
+        crate::api::events::public_event_handler::BulkCreateResponse,
+        crate::error::BulkItemError,
+
+
+        crate::domain::events::public_event::dto_update::UpdatePublicEventRequest,
+
+        crate::domain::events::public_event::dto_response::PublicEventResponse,
 
 
 
@@ -100,6 +149,22 @@ use utoipa::OpenApi;
         crate::domain::recruiting::application::dto_response::ApplicationResponse,
 
 
+
+
+        crate::domain::rsvp::rsvp::dto_create::CreateRsvpRequest,
+        crate::api::rsvp::rsvp_handler::CreateRsvpBody,
+        crate::api::rsvp::rsvp_handler::BulkCreateResponse,
+        crate::error::BulkItemError,
+
+
+        crate::domain::rsvp::rsvp::dto_update::UpdateRsvpRequest,
+
+        crate::domain::rsvp::rsvp::dto_response::RsvpResponse,
+
+
+        crate::error::ErrorResponse,
+        crate::error::ErrorBody,
+        crate::error::FieldError,
     )),
     security(("ApiKeyAuth" = [])),
     tags(
@@ -109,9 +174,17 @@ use utoipa::OpenApi;
 
 
 
+        (name = "PublicEvent", description = "Events / PublicEvent operations"),
+
+
+
         (name = "Candidate", description = "Recruiting / Candidate operations"),
 
         (name = "Application", description = "Recruiting / Application operations"),
+
+
+
+        (name = "Rsvp", description = "RSVP / Rsvp operations"),
 
 
     )

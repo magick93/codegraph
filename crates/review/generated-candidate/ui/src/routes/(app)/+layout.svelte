@@ -3,22 +3,22 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto, afterNavigate } from '$app/navigation';
-	import { installDirtyGuard } from '$lib/stores/entity-navigation';
+	import { installDirtyGuard } from '#lib/stores/entity-navigation.ts';
 
 	// Signal hydration completion for Playwright tests.
 	// onMount fires after Svelte has hydrated all child components.
 	// afterNavigate fires after every client-side navigation completes.
 	onMount(() => document.body.classList.add('hydrated'));
 	afterNavigate(() => document.body.classList.add('hydrated'));
-	import { createSupabaseClient } from '$lib/supabase';
-	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as Avatar from '$lib/components/ui/avatar/index.js';
-	import * as Breadcrumb from '$lib/components/ui/breadcrumb/index.js';
-	import * as Collapsible from '$lib/components/ui/collapsible/index.js';
-	import { Separator } from '$lib/components/ui/separator/index.js';
-	import { Toaster } from '$lib/components/ui/sonner/index.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import { createSupabaseClient } from '#lib/supabase.ts';
+	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import * as Avatar from '#lib/components/ui/avatar/index.js';
+	import * as Breadcrumb from '#lib/components/ui/breadcrumb/index.js';
+	import * as Collapsible from '#lib/components/ui/collapsible/index.js';
+	import { Separator } from '#lib/components/ui/separator/index.js';
+	import { Toaster } from '#lib/components/ui/sonner/index.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	let userEmail = $state('');
 	let userInitials = $state('CB');
@@ -61,6 +61,8 @@
 
 				{ path: '/common/effective-date', label: 'Effective Date' },
 
+				{ path: '/common/event-base', label: 'Event Base' },
+
 				{ path: '/common/formatted-date-time', label: 'Formatted Date Time' },
 
 				{ path: '/common/gender-code-list', label: 'Gender Code List' },
@@ -96,6 +98,17 @@
 		},
 
 		{
+			name: 'events',
+			label: 'Events',
+			tier: 'extended',
+			entities: [
+
+				{ path: '/events/public-event', label: 'Public Event' },
+
+			],
+		},
+
+		{
 			name: 'recruiting',
 			label: 'Recruiting',
 			tier: 'extended',
@@ -104,6 +117,17 @@
 				{ path: '/recruiting/application', label: 'Application' },
 
 				{ path: '/recruiting/candidate', label: 'Candidate' },
+
+			],
+		},
+
+		{
+			name: 'rsvp',
+			label: 'RSVP',
+			tier: 'extended',
+			entities: [
+
+				{ path: '/rsvp/rsvp', label: 'Rsvp' },
 
 			],
 		},

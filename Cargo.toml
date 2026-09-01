@@ -13,6 +13,7 @@ members = [
     "crates/codegraph-workflow",
     "crates/codegraph-ifml-dsl",
     "crates/ast-ifml",
+    "crates/codegraph-ops",
 ]
 
 [workspace.package]
@@ -36,6 +37,7 @@ tracing-subscriber = "0.3"
 futures = "0.3"
 tera = "1"
 clap = { version = "4", features = ["derive"] }
+codegraph-config = { path = "crates/codegraph-config" }
 heck = "0.5"
 base64 = "0.22"
 garde = "0.20"

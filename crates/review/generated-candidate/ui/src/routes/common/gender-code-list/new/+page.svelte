@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { EntityForm, createEntityApi } from '@crewbase/entities';
 	import { GenderCodeListDescriptor } from '../descriptor';
-	import { apiClient } from '$lib/api/client';
+	import { apiClient } from '#lib/api/client.ts';
 	import { goto } from '$app/navigation';
 
 	const api = createEntityApi(GenderCodeListDescriptor, { fetch, baseUrl: apiClient.baseUrl });

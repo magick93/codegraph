@@ -1,564 +1,742 @@
-//! SeaORM-based implementation of WorkflowService.
+//! Client-generic workflow engine.
+//!
+//! The state machine (transition / approval / state / history) is expressed as
+//! free functions over [`WorkflowTx`]; the [`GenericWorkflowService`] in
+//! [`crate::tx`] opens a transaction and dispatches. The native SeaORM
+//! backend (and its [`SeaOrmWorkflowService`] alias) lives here too, so the
+//! monolith keeps its existing constructor while the worker slice supplies its
+//! own [`WorkflowClient`] from generated code.
 
-use async_trait::async_trait;
-use sea_orm::*;
 use uuid::Uuid;
 
 use crate::definition::StateMachineDefinition;
 use crate::error::WorkflowError;
 use crate::guard::GuardEvaluator;
-use crate::service::WorkflowService;
+use crate::tx::{WfParam, WorkflowTx};
 use crate::types::*;
 
-pub struct SeaOrmWorkflowService {
-    db: DatabaseConnection,
+/// Set `app.organization_id`, `app.user_id`, and `app.current_api_key` session
+/// variables for RLS enforcement. Must run inside the current transaction
+/// (each backend opens one) because `is_local = true` scopes the config to it.
+pub async fn set_rls_org(
+    tx: &dyn WorkflowTx,
+    tenant_id: Uuid,
+    user_id: Option<Uuid>,
+    api_key_id: Option<Uuid>,
+) -> Result<(), WorkflowError> {
+    let uid = user_id.unwrap_or(Uuid::nil()).to_string();
+    let aid = api_key_id.unwrap_or(Uuid::nil()).to_string();
+    tx.query_one(
+        "SELECT set_config('app.organization_id', $1, true), \
+                set_config('app.user_id', $2, true), \
+                set_config('app.current_api_key', $3, true)",
+        &[
+            WfParam::Str(tenant_id.to_string()),
+            WfParam::Str(uid),
+            WfParam::Str(aid),
+        ],
+    )
+    .await?;
+    Ok(())
 }
 
-impl SeaOrmWorkflowService {
-    pub fn new(db: DatabaseConnection) -> Self {
-        Self { db }
-    }
-
-    /// Set `app.organization_id`, `app.user_id`, and `app.current_api_key` session
-    /// variables for RLS enforcement. Must be called at the start of every transaction.
-    async fn set_rls_org(
-        conn: &impl ConnectionTrait,
-        tenant_id: Uuid,
-        user_id: Option<Uuid>,
-        api_key_id: Option<Uuid>,
-    ) -> Result<(), WorkflowError> {
-        let uid = user_id.unwrap_or(Uuid::nil()).to_string();
-        let aid = api_key_id.unwrap_or(Uuid::nil()).to_string();
-        conn.query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT set_config('app.organization_id', $1, true), \
-                    set_config('app.user_id', $2, true), \
-                    set_config('app.current_api_key', $3, true)",
-            [tenant_id.to_string().into(), uid.into(), aid.into()],
-        ))
-        .await
-        .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-        Ok(())
-    }
-
-    /// Load workflow definition by (tenant, domain, entity_table).
-    async fn load_definition(
-        &self,
-        conn: &impl ConnectionTrait,
-        tenant_id: Uuid,
-        domain: &str,
-        entity_table: &str,
-    ) -> Result<(Uuid, String, Vec<String>, StateMachineDefinition), WorkflowError> {
-        let row = conn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r#"SELECT id, initial_state, terminal_states, state_machine
-                   FROM platform.workflow_definition
-                   WHERE tenant_id IN ($1, '00000000-0000-0000-0000-000000000000'::uuid)
-                     AND domain = $2 AND entity_table = $3 AND is_active = true
-                   ORDER BY CASE WHEN tenant_id = $1 THEN 0 ELSE 1 END, version DESC
-                   LIMIT 1"#,
-                [tenant_id.into(), domain.into(), entity_table.into()],
-            ))
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?
-            .ok_or(WorkflowError::NotFound)?;
-
-        let def_id: Uuid = row
-            .try_get("", "id")
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-        let initial_state: String = row
-            .try_get("", "initial_state")
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-        let terminal_states: Vec<String> = row
-            .try_get("", "terminal_states")
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-        let sm_json: serde_json::Value = row
-            .try_get("", "state_machine")
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-        let sm = StateMachineDefinition::from_json(&sm_json)
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        Ok((def_id, initial_state, terminal_states, sm))
-    }
-
-    /// Load or lazily create workflow instance.
-    async fn load_or_create_instance(
-        &self,
-        tx: &DatabaseTransaction,
-        tenant_id: Uuid,
-        def_id: Uuid,
-        entity_id: Uuid,
-        initial_state: &str,
-    ) -> Result<(Uuid, String, bool), WorkflowError> {
-        let existing = tx
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r#"SELECT id, current_state, is_terminal
-                   FROM platform.workflow_instance
-                   WHERE tenant_id = $1 AND definition_id = $2 AND entity_id = $3"#,
-                [tenant_id.into(), def_id.into(), entity_id.into()],
-            ))
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        if let Some(row) = existing {
-            let id: Uuid = row
-                .try_get("", "id")
-                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-            let state: String = row
-                .try_get("", "current_state")
-                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-            let terminal: bool = row
-                .try_get("", "is_terminal")
-                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-            return Ok((id, state, terminal));
-        }
-
-        // Lazy create
-        let instance_id = Uuid::new_v4();
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r#"INSERT INTO platform.workflow_instance
-               (id, tenant_id, definition_id, entity_id, current_state, is_terminal)
-               VALUES ($1, $2, $3, $4, $5, false)"#,
-            [
-                instance_id.into(),
-                tenant_id.into(),
-                def_id.into(),
-                entity_id.into(),
-                initial_state.into(),
+/// Load workflow definition by (tenant, domain, entity_table).
+async fn load_definition(
+    tx: &dyn WorkflowTx,
+    tenant_id: Uuid,
+    domain: &str,
+    entity_table: &str,
+) -> Result<(Uuid, String, Vec<String>, StateMachineDefinition), WorkflowError> {
+    let row = tx
+        .query_one(
+            r#"SELECT id, initial_state, terminal_states, state_machine
+               FROM platform.workflow_definition
+               WHERE tenant_id IN ($1, '00000000-0000-0000-0000-000000000000'::uuid)
+                 AND domain = $2 AND entity_table = $3 AND is_active = true
+               ORDER BY CASE WHEN tenant_id = $1 THEN 0 ELSE 1 END, version DESC
+               LIMIT 1"#,
+            &[
+                WfParam::Uuid(tenant_id),
+                WfParam::Str(domain.to_string()),
+                WfParam::Str(entity_table.to_string()),
             ],
-        ))
-        .await
+        )
+        .await?
+        .ok_or(WorkflowError::NotFound)?;
+
+    let def_id = row.get_uuid("id")?;
+    let initial_state = row.get_string("initial_state")?;
+    let terminal_states = row.get_string_vec("terminal_states")?;
+    let sm_json = row.get_json("state_machine")?;
+    let sm = StateMachineDefinition::from_json(&sm_json)
         .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
 
-        Ok((instance_id, initial_state.to_string(), false))
-    }
+    Ok((def_id, initial_state, terminal_states, sm))
 }
 
-#[async_trait]
-impl WorkflowService for SeaOrmWorkflowService {
-    async fn transition(&self, ctx: TransitionContext) -> Result<WorkflowState, WorkflowError> {
-        let tx = self
-            .db
-            .begin()
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        // Set RLS session variable so tenant isolation policies allow access.
-        Self::set_rls_org(
-            &tx,
-            ctx.tenant_id,
-            ctx.session_user_id,
-            ctx.session_api_key_id,
+/// Load or lazily create the workflow instance.
+async fn load_or_create_instance(
+    tx: &dyn WorkflowTx,
+    tenant_id: Uuid,
+    def_id: Uuid,
+    entity_id: Uuid,
+    initial_state: &str,
+) -> Result<(Uuid, String, bool), WorkflowError> {
+    let existing = tx
+        .query_one(
+            r#"SELECT id, current_state, is_terminal
+               FROM platform.workflow_instance
+               WHERE tenant_id = $1 AND definition_id = $2 AND entity_id = $3"#,
+            &[
+                WfParam::Uuid(tenant_id),
+                WfParam::Uuid(def_id),
+                WfParam::Uuid(entity_id),
+            ],
         )
         .await?;
 
-        // 1. Load definition
-        let (def_id, initial_state, terminal_states, sm) = self
-            .load_definition(&tx, ctx.tenant_id, &ctx.domain, &ctx.entity_table)
-            .await?;
+    if let Some(row) = existing {
+        let id = row.get_uuid("id")?;
+        let state = row.get_string("current_state")?;
+        let terminal = row.get_bool("is_terminal")?;
+        return Ok((id, state, terminal));
+    }
 
-        // Load or create instance
-        let (instance_id, current_state, is_terminal) = self
-            .load_or_create_instance(&tx, ctx.tenant_id, def_id, ctx.entity_id, &initial_state)
-            .await?;
+    let instance_id = Uuid::new_v4();
+    tx.execute(
+        r#"INSERT INTO platform.workflow_instance
+           (id, tenant_id, definition_id, entity_id, current_state, is_terminal)
+           VALUES ($1, $2, $3, $4, $5, false)"#,
+        &[
+            WfParam::Uuid(instance_id),
+            WfParam::Uuid(tenant_id),
+            WfParam::Uuid(def_id),
+            WfParam::Uuid(entity_id),
+            WfParam::Str(initial_state.to_string()),
+        ],
+    )
+    .await?;
 
-        // 2. Check terminal
-        if is_terminal {
-            return Err(WorkflowError::AlreadyTerminal);
-        }
+    Ok((instance_id, initial_state.to_string(), false))
+}
 
-        // 3. Validate transition
-        if !sm.is_valid_transition(&current_state, &ctx.target_state) {
-            return Err(WorkflowError::InvalidTransition {
-                current: current_state,
-                target: ctx.target_state,
-            });
-        }
+/// Execute a state transition. The caller (a `WorkflowService` impl) owns the
+/// transaction; this function commits only where the transition is durable
+/// (including the approval-required branch, which persists the pending state).
+pub async fn transition(
+    tx: &mut dyn WorkflowTx,
+    ctx: &TransitionContext,
+) -> Result<WorkflowState, WorkflowError> {
+    set_rls_org(
+        tx,
+        ctx.tenant_id,
+        ctx.session_user_id,
+        ctx.session_api_key_id,
+    )
+    .await?;
 
-        // 4. Evaluate data guards (skipped for timer-triggered transitions)
-        if ctx.trigger_source != TriggerSource::Timer {
-            for guard in sm.data_guards_for(&ctx.target_state) {
-                if !GuardEvaluator::evaluate(&guard.rule, &ctx.entity_data)
-                    .map_err(|e| WorkflowError::Internal(Box::new(e)))?
-                {
-                    return Err(WorkflowError::GuardFailed {
-                        rule: guard.rule.clone(),
-                        message: guard.message.clone(),
-                    });
-                }
-            }
-        }
+    let (def_id, initial_state, terminal_states, sm) =
+        load_definition(tx, ctx.tenant_id, &ctx.domain, &ctx.entity_table).await?;
 
-        // 5. Dual-status guards
-        if let Some(required_approval) = sm.required_approval_for(&ctx.target_state) {
-            let approval_state: Option<String> = tx
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "SELECT approval_state FROM platform.workflow_instance WHERE id = $1",
-                    [instance_id.into()],
-                ))
-                .await
+    let (instance_id, current_state, is_terminal) =
+        load_or_create_instance(tx, ctx.tenant_id, def_id, ctx.entity_id, &initial_state).await?;
+
+    if is_terminal {
+        return Err(WorkflowError::AlreadyTerminal);
+    }
+
+    if !sm.is_valid_transition(&current_state, &ctx.target_state) {
+        return Err(WorkflowError::InvalidTransition {
+            current: current_state,
+            target: ctx.target_state.clone(),
+        });
+    }
+
+    if ctx.trigger_source != TriggerSource::Timer {
+        for guard in sm.data_guards_for(&ctx.target_state) {
+            if !GuardEvaluator::evaluate(&guard.rule, &ctx.entity_data)
                 .map_err(|e| WorkflowError::Internal(Box::new(e)))?
-                .and_then(|r| {
-                    r.try_get::<Option<String>>("", "approval_state")
-                        .ok()
-                        .flatten()
-                });
-
-            if approval_state.as_deref() != Some(required_approval) {
-                return Err(WorkflowError::DualStatusGuardFailed {
-                    status: ctx.target_state.clone(),
-                    required_approval: required_approval.to_string(),
+            {
+                return Err(WorkflowError::GuardFailed {
+                    rule: guard.rule.clone(),
+                    message: guard.message.clone(),
                 });
             }
         }
+    }
 
-        // 6. Idempotency check
-        if let Some(key) = ctx.idempotency_key {
-            let exists = tx
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "SELECT id FROM platform.workflow_transition WHERE idempotency_key = $1",
-                    [key.into()],
-                ))
-                .await
-                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-            if exists.is_some() {
-                return Err(WorkflowError::IdempotencyConflict { key });
-            }
-        }
-
-        // 7. Check approval chains
-        if sm.has_approval_chain(&current_state, &ctx.target_state) {
-            let pending_state = format!("pending_approval:{}->{}", current_state, ctx.target_state);
-            tx.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r#"UPDATE platform.workflow_instance
-                   SET current_state = $1, updated_at = now()
-                   WHERE id = $2 AND current_state = $3"#,
-                [
-                    pending_state.into(),
-                    instance_id.into(),
-                    current_state.clone().into(),
-                ],
-            ))
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-            let pending = crate::approval::get_pending_step(
-                &tx,
-                def_id,
-                instance_id,
-                &current_state,
-                &ctx.target_state,
+    if let Some(required_approval) = sm.required_approval_for(&ctx.target_state) {
+        let approval_state = tx
+            .query_one(
+                "SELECT approval_state FROM platform.workflow_instance WHERE id = $1",
+                &[WfParam::Uuid(instance_id)],
             )
             .await?
-            .ok_or_else(|| WorkflowError::Internal("no approval steps found".into()))?;
+            .and_then(|r| r.get_opt_string("approval_state").ok().flatten());
 
-            tx.commit()
-                .await
-                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-            return Err(WorkflowError::ApprovalRequired {
-                pending_step: pending,
+        if approval_state.as_deref() != Some(required_approval) {
+            return Err(WorkflowError::DualStatusGuardFailed {
+                status: ctx.target_state.clone(),
+                required_approval: required_approval.to_string(),
             });
         }
+    }
 
-        // 8. Set correlation_id via set_config (supports parameterized values)
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT set_config('app.correlation_id', $1, true)",
-            [ctx.correlation_id.to_string().into()],
-        ))
-        .await
-        .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        // 9. Update instance (optimistic lock)
-        let new_is_terminal = terminal_states.contains(&ctx.target_state);
-        let updated = tx
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r#"UPDATE platform.workflow_instance
-                   SET current_state = $1, is_terminal = $2, updated_at = now()
-                   WHERE id = $3 AND current_state = $4"#,
-                [
-                    ctx.target_state.clone().into(),
-                    new_is_terminal.into(),
-                    instance_id.into(),
-                    current_state.clone().into(),
-                ],
-            ))
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        if updated.rows_affected() == 0 {
-            return Err(WorkflowError::ConcurrentModification);
+    if let Some(key) = ctx.idempotency_key {
+        let exists = tx
+            .query_one(
+                "SELECT id FROM platform.workflow_transition WHERE idempotency_key = $1",
+                &[WfParam::Uuid(key)],
+            )
+            .await?;
+        if exists.is_some() {
+            return Err(WorkflowError::IdempotencyConflict { key });
         }
+    }
 
-        // 10. Record transition
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
+    if sm.has_approval_chain(&current_state, &ctx.target_state) {
+        let pending_state = format!("pending_approval:{}->{}", current_state, ctx.target_state);
+        tx.execute(
+            r#"UPDATE platform.workflow_instance
+               SET current_state = $1, updated_at = now()
+               WHERE id = $2 AND current_state = $3"#,
+            &[
+                WfParam::Str(pending_state),
+                WfParam::Uuid(instance_id),
+                WfParam::Str(current_state.clone()),
+            ],
+        )
+        .await?;
+
+        let pending = crate::approval::get_pending_step(
+            tx,
+            def_id,
+            instance_id,
+            &current_state,
+            &ctx.target_state,
+        )
+        .await?
+        .ok_or_else(|| WorkflowError::Internal("no approval steps found".into()))?;
+
+        tx.commit().await?;
+        return Err(WorkflowError::ApprovalRequired {
+            pending_step: pending,
+        });
+    }
+
+    tx.execute(
+        "SELECT set_config('app.correlation_id', $1, true)",
+        &[WfParam::Str(ctx.correlation_id.to_string())],
+    )
+    .await?;
+
+    let new_is_terminal = terminal_states.contains(&ctx.target_state);
+    let updated = tx
+        .execute(
+            r#"UPDATE platform.workflow_instance
+               SET current_state = $1, is_terminal = $2, updated_at = now()
+               WHERE id = $3 AND current_state = $4"#,
+            &[
+                WfParam::Str(ctx.target_state.clone()),
+                WfParam::Bool(new_is_terminal),
+                WfParam::Uuid(instance_id),
+                WfParam::Str(current_state.clone()),
+            ],
+        )
+        .await?;
+
+    if updated == 0 {
+        return Err(WorkflowError::ConcurrentModification);
+    }
+
+    tx.execute(
+        r#"INSERT INTO platform.workflow_transition
+           (tenant_id, instance_id, from_state, to_state, correlation_id, actor_id, comment, idempotency_key)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+        &[
+            WfParam::Uuid(ctx.tenant_id),
+            WfParam::Uuid(instance_id),
+            WfParam::Str(current_state.clone()),
+            WfParam::Str(ctx.target_state.clone()),
+            WfParam::Uuid(ctx.correlation_id),
+            ctx.actor_id
+                .map(WfParam::Uuid)
+                .unwrap_or(WfParam::Null("uuid")),
+            ctx.comment
+                .clone()
+                .map(WfParam::Str)
+                .unwrap_or(WfParam::Null("text")),
+            ctx.idempotency_key
+                .map(WfParam::Uuid)
+                .unwrap_or(WfParam::Null("uuid")),
+        ],
+    )
+    .await?;
+
+    tx.execute(
+        "UPDATE platform.workflow_timer SET is_fired = true \
+         WHERE instance_id = $1 AND NOT is_fired",
+        &[WfParam::Uuid(instance_id)],
+    )
+    .await?;
+
+    for timer in sm.timers_for_state(&ctx.target_state) {
+        let fires_at = chrono::Utc::now() + chrono::Duration::hours(timer.duration_hours);
+        tx.execute(
+            r#"INSERT INTO platform.workflow_timer
+               (tenant_id, instance_id, timer_type, fires_at, target_state)
+               VALUES ($1, $2, $3, $4, $5)"#,
+            &[
+                WfParam::Uuid(ctx.tenant_id),
+                WfParam::Uuid(instance_id),
+                WfParam::Str(timer.timer_type.clone()),
+                WfParam::DateTime(fires_at),
+                timer
+                    .target_state
+                    .clone()
+                    .map(WfParam::Str)
+                    .unwrap_or(WfParam::Null("text")),
+            ],
+        )
+        .await?;
+    }
+
+    tx.commit().await?;
+
+    let available = sm.transitions_from(&ctx.target_state);
+    Ok(WorkflowState {
+        entity_id: ctx.entity_id,
+        current_state: ctx.target_state.clone(),
+        approval_state: None,
+        is_terminal: new_is_terminal,
+        available_transitions: if new_is_terminal { vec![] } else { available },
+        pending_approvals: vec![],
+    })
+}
+
+/// Act on a pending approval step (approve / reject).
+pub async fn approval_action(
+    tx: &mut dyn WorkflowTx,
+    ctx: &ApprovalContext,
+) -> Result<WorkflowState, WorkflowError> {
+    set_rls_org(
+        tx,
+        ctx.tenant_id,
+        ctx.session_user_id,
+        ctx.session_api_key_id,
+    )
+    .await?;
+
+    let (def_id, _initial, terminal_states, sm) =
+        load_definition(tx, ctx.tenant_id, &ctx.domain, &ctx.entity_table).await?;
+
+    let row = tx
+        .query_one(
+            r#"SELECT id, current_state
+               FROM platform.workflow_instance
+               WHERE tenant_id = $1 AND definition_id = $2 AND entity_id = $3"#,
+            &[
+                WfParam::Uuid(ctx.tenant_id),
+                WfParam::Uuid(def_id),
+                WfParam::Uuid(ctx.entity_id),
+            ],
+        )
+        .await?
+        .ok_or(WorkflowError::NotFound)?;
+
+    let instance_id = row.get_uuid("id")?;
+    let current_state = row.get_string("current_state")?;
+
+    let (from, to) = current_state
+        .strip_prefix("pending_approval:")
+        .and_then(|s| s.split_once("->"))
+        .map(|(f, t)| (f.to_string(), t.to_string()))
+        .ok_or(WorkflowError::NoPendingApproval)?;
+
+    let pending = crate::approval::get_pending_step(tx, def_id, instance_id, &from, &to)
+        .await?
+        .ok_or(WorkflowError::NoPendingApproval)?;
+
+    let decision_str = match ctx.decision {
+        ApprovalDecision::Approved => "approved",
+        ApprovalDecision::Rejected => "rejected",
+    };
+
+    tx.execute(
+        r#"INSERT INTO platform.approval_decision
+           (tenant_id, step_id, instance_id, actor_id, decision, correlation_id, comment)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+        &[
+            WfParam::Uuid(ctx.tenant_id),
+            WfParam::Uuid(pending.step_id),
+            WfParam::Uuid(instance_id),
+            WfParam::Uuid(ctx.actor_id),
+            WfParam::Str(decision_str.to_string()),
+            WfParam::Uuid(ctx.correlation_id),
+            ctx.comment
+                .clone()
+                .map(WfParam::Str)
+                .unwrap_or(WfParam::Null("text")),
+        ],
+    )
+    .await?;
+
+    if ctx.decision == ApprovalDecision::Rejected {
+        tx.execute(
+            r#"UPDATE platform.workflow_instance
+               SET current_state = $1, updated_at = now()
+               WHERE id = $2"#,
+            &[WfParam::Str(from.clone()), WfParam::Uuid(instance_id)],
+        )
+        .await?;
+
+        tx.commit().await?;
+
+        let available = sm.transitions_from(&from);
+        return Ok(WorkflowState {
+            entity_id: ctx.entity_id,
+            current_state: from,
+            approval_state: None,
+            is_terminal: false,
+            available_transitions: available,
+            pending_approvals: vec![],
+        });
+    }
+
+    if crate::approval::is_chain_complete(tx, def_id, instance_id, &from, &to).await? {
+        let new_is_terminal = terminal_states.contains(&to);
+        tx.execute(
+            r#"UPDATE platform.workflow_instance
+               SET current_state = $1, is_terminal = $2, updated_at = now()
+               WHERE id = $3"#,
+            &[
+                WfParam::Str(to.clone()),
+                WfParam::Bool(new_is_terminal),
+                WfParam::Uuid(instance_id),
+            ],
+        )
+        .await?;
+
+        tx.execute(
             r#"INSERT INTO platform.workflow_transition
                (tenant_id, instance_id, from_state, to_state, correlation_id, actor_id, comment, idempotency_key)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
-            [
-                ctx.tenant_id.into(),
-                instance_id.into(),
-                current_state.clone().into(),
-                ctx.target_state.clone().into(),
-                ctx.correlation_id.into(),
-                ctx.actor_id
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::from(None::<Uuid>)),
+            &[
+                WfParam::Uuid(ctx.tenant_id),
+                WfParam::Uuid(instance_id),
+                WfParam::Str(from.clone()),
+                WfParam::Str(to.clone()),
+                WfParam::Uuid(ctx.correlation_id),
+                WfParam::Uuid(ctx.actor_id),
                 ctx.comment
                     .clone()
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::from(None::<String>)),
+                    .map(WfParam::Str)
+                    .unwrap_or(WfParam::Null("text")),
                 ctx.idempotency_key
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::from(None::<Uuid>)),
+                    .map(WfParam::Uuid)
+                    .unwrap_or(WfParam::Null("uuid")),
             ],
-        ))
-        .await
-        .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        // 11. Cancel old timers
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r#"UPDATE platform.workflow_timer SET is_fired = true
-               WHERE instance_id = $1 AND NOT is_fired"#,
-            [instance_id.into()],
-        ))
-        .await
-        .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        // 12. Schedule new timers
-        for timer in sm.timers_for_state(&ctx.target_state) {
-            let fires_at = chrono::Utc::now() + chrono::Duration::hours(timer.duration_hours);
-            tx.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r#"INSERT INTO platform.workflow_timer
-                   (tenant_id, instance_id, timer_type, fires_at, target_state)
-                   VALUES ($1, $2, $3, $4, $5)"#,
-                [
-                    ctx.tenant_id.into(),
-                    instance_id.into(),
-                    timer.timer_type.clone().into(),
-                    fires_at.into(),
-                    timer
-                        .target_state
-                        .clone()
-                        .map(sea_orm::Value::from)
-                        .unwrap_or(sea_orm::Value::from(None::<String>)),
-                ],
-            ))
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-        }
-
-        tx.commit()
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        // 13. Return state
-        let available = sm.transitions_from(&ctx.target_state);
-        Ok(WorkflowState {
-            entity_id: ctx.entity_id,
-            current_state: ctx.target_state,
-            approval_state: None,
-            is_terminal: new_is_terminal,
-            available_transitions: if new_is_terminal { vec![] } else { available },
-            pending_approvals: vec![],
-        })
-    }
-
-    async fn approval_action(&self, ctx: ApprovalContext) -> Result<WorkflowState, WorkflowError> {
-        let tx = self
-            .db
-            .begin()
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        // Set RLS session variable so tenant isolation policies allow access.
-        Self::set_rls_org(
-            &tx,
-            ctx.tenant_id,
-            ctx.session_user_id,
-            ctx.session_api_key_id,
         )
         .await?;
 
-        let (def_id, _initial, terminal_states, sm) = self
-            .load_definition(&tx, ctx.tenant_id, &ctx.domain, &ctx.entity_table)
-            .await?;
+        tx.commit().await?;
 
-        // Load instance
-        let row = tx
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r#"SELECT id, current_state
-                   FROM platform.workflow_instance
-                   WHERE tenant_id = $1 AND definition_id = $2 AND entity_id = $3"#,
-                [ctx.tenant_id.into(), def_id.into(), ctx.entity_id.into()],
-            ))
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?
-            .ok_or(WorkflowError::NotFound)?;
-
-        let instance_id: Uuid = row
-            .try_get("", "id")
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-        let current_state: String = row
-            .try_get("", "current_state")
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        // Parse pending_approval:{from}->{to} state
-        let (from, to) = current_state
-            .strip_prefix("pending_approval:")
-            .and_then(|s| s.split_once("->"))
-            .map(|(f, t)| (f.to_string(), t.to_string()))
-            .ok_or(WorkflowError::NoPendingApproval)?;
-
-        // Find the pending step
-        let pending = crate::approval::get_pending_step(&tx, def_id, instance_id, &from, &to)
-            .await?
-            .ok_or(WorkflowError::NoPendingApproval)?;
-
-        // Record the decision
-        let decision_str = match ctx.decision {
-            ApprovalDecision::Approved => "approved",
-            ApprovalDecision::Rejected => "rejected",
-        };
-
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r#"INSERT INTO platform.approval_decision
-               (tenant_id, step_id, instance_id, actor_id, decision, correlation_id, comment)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
-            [
-                ctx.tenant_id.into(),
-                pending.step_id.into(),
-                instance_id.into(),
-                ctx.actor_id.into(),
-                decision_str.into(),
-                ctx.correlation_id.into(),
-                ctx.comment
-                    .clone()
-                    .map(sea_orm::Value::from)
-                    .unwrap_or(sea_orm::Value::from(None::<String>)),
-            ],
-        ))
-        .await
-        .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        if ctx.decision == ApprovalDecision::Rejected {
-            // Roll back to the original {from} state
-            tx.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r#"UPDATE platform.workflow_instance
-                   SET current_state = $1, updated_at = now()
-                   WHERE id = $2"#,
-                [from.clone().into(), instance_id.into()],
-            ))
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-            tx.commit()
-                .await
-                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-            let available = sm.transitions_from(&from);
-            return Ok(WorkflowState {
-                entity_id: ctx.entity_id,
-                current_state: from,
-                approval_state: None,
-                is_terminal: false,
-                available_transitions: available,
-                pending_approvals: vec![],
-            });
-        }
-
-        // Approved — check if chain is complete
-        if crate::approval::is_chain_complete(&tx, def_id, instance_id, &from, &to).await? {
-            // Chain complete — execute the original transition
-            let new_is_terminal = terminal_states.contains(&to);
-            tx.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r#"UPDATE platform.workflow_instance
-                   SET current_state = $1, is_terminal = $2, updated_at = now()
-                   WHERE id = $3"#,
-                [
-                    to.clone().into(),
-                    new_is_terminal.into(),
-                    instance_id.into(),
-                ],
-            ))
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-            // Record transition
-            tx.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r#"INSERT INTO platform.workflow_transition
-                   (tenant_id, instance_id, from_state, to_state, correlation_id, actor_id, comment, idempotency_key)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
-                [
-                    ctx.tenant_id.into(),
-                    instance_id.into(),
-                    from.clone().into(),
-                    to.clone().into(),
-                    ctx.correlation_id.into(),
-                    ctx.actor_id.into(),
-                    ctx.comment
-                        .map(sea_orm::Value::from)
-                        .unwrap_or(sea_orm::Value::from(None::<String>)),
-                    ctx.idempotency_key
-                        .map(sea_orm::Value::from)
-                        .unwrap_or(sea_orm::Value::from(None::<Uuid>)),
-                ],
-            ))
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-            tx.commit()
-                .await
-                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-            let available = if new_is_terminal {
-                vec![]
-            } else {
-                sm.transitions_from(&to)
-            };
-            Ok(WorkflowState {
-                entity_id: ctx.entity_id,
-                current_state: to,
-                approval_state: None,
-                is_terminal: new_is_terminal,
-                available_transitions: available,
-                pending_approvals: vec![],
-            })
+        let available = if new_is_terminal {
+            vec![]
         } else {
-            // More steps needed — stay in pending_approval state
-            let next_pending =
-                crate::approval::get_pending_step(&tx, def_id, instance_id, &from, &to).await?;
-            tx.commit()
+            sm.transitions_from(&to)
+        };
+        Ok(WorkflowState {
+            entity_id: ctx.entity_id,
+            current_state: to,
+            approval_state: None,
+            is_terminal: new_is_terminal,
+            available_transitions: available,
+            pending_approvals: vec![],
+        })
+    } else {
+        let next_pending =
+            crate::approval::get_pending_step(tx, def_id, instance_id, &from, &to).await?;
+        tx.commit().await?;
+
+        Ok(WorkflowState {
+            entity_id: ctx.entity_id,
+            current_state: current_state.clone(),
+            approval_state: Some(format!(
+                "awaiting_step_{}",
+                next_pending.as_ref().map_or(0, |s| s.step_order)
+            )),
+            is_terminal: false,
+            available_transitions: vec![],
+            pending_approvals: next_pending.into_iter().collect(),
+        })
+    }
+}
+
+/// Read the current workflow state for an entity.
+pub async fn get_state(
+    tx: &mut dyn WorkflowTx,
+    tenant_id: Uuid,
+    domain: &str,
+    entity_table: &str,
+    entity_id: Uuid,
+) -> Result<WorkflowState, WorkflowError> {
+    set_rls_org(tx, tenant_id, None, None).await?;
+
+    let (def_id, initial_state, _terminal_states, sm) =
+        load_definition(tx, tenant_id, domain, entity_table).await?;
+
+    let row = tx
+        .query_one(
+            r#"SELECT current_state, approval_state, is_terminal
+               FROM platform.workflow_instance
+               WHERE tenant_id = $1 AND definition_id = $2 AND entity_id = $3"#,
+            &[
+                WfParam::Uuid(tenant_id),
+                WfParam::Uuid(def_id),
+                WfParam::Uuid(entity_id),
+            ],
+        )
+        .await?;
+
+    let (current_state, approval_state, is_terminal) = match row {
+        Some(r) => {
+            let cs = r.get_string("current_state")?;
+            let aps = r.get_opt_string("approval_state")?;
+            let it = r.get_bool("is_terminal")?;
+            (cs, aps, it)
+        }
+        None => (initial_state, None, false),
+    };
+
+    let available = if is_terminal {
+        vec![]
+    } else {
+        sm.transitions_from(&current_state)
+    };
+
+    tx.commit().await?;
+
+    Ok(WorkflowState {
+        entity_id,
+        current_state,
+        approval_state,
+        is_terminal,
+        available_transitions: available,
+        pending_approvals: vec![],
+    })
+}
+
+/// Read the process history for an entity.
+pub async fn get_history(
+    tx: &mut dyn WorkflowTx,
+    tenant_id: Uuid,
+    domain: &str,
+    entity_table: &str,
+    entity_id: Uuid,
+) -> Result<Vec<ProcessHistoryEntry>, WorkflowError> {
+    set_rls_org(tx, tenant_id, None, None).await?;
+
+    let rows = tx
+        .query_all(
+            r#"SELECT wt.id AS id, wt.occurred_at AS occurred_at, wt.to_state AS to_state,
+                      wt.from_state AS from_state, wt.correlation_id AS correlation_id,
+                      wt.actor_id AS actor_id, wt.comment AS comment
+               FROM platform.workflow_transition wt
+               JOIN platform.workflow_instance wi ON wt.instance_id = wi.id
+               JOIN platform.workflow_definition wd ON wi.definition_id = wd.id
+               WHERE wi.entity_id = $1 AND wi.tenant_id = $2
+                 AND wd.domain = $3 AND wd.entity_table = $4
+               ORDER BY wt.occurred_at ASC"#,
+            &[
+                WfParam::Uuid(entity_id),
+                WfParam::Uuid(tenant_id),
+                WfParam::Str(domain.to_string()),
+                WfParam::Str(entity_table.to_string()),
+            ],
+        )
+        .await?;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        entries.push(ProcessHistoryEntry {
+            id: row.get_uuid("id")?,
+            action_date: row.get_datetime("occurred_at")?,
+            status: row.get_string("to_state")?,
+            previous_status: row.get_opt_string("from_state")?,
+            correlation_id: row.get_opt_uuid("correlation_id")?,
+            actor_id: row.get_opt_uuid("actor_id")?,
+            comment: row.get_opt_string("comment")?,
+        });
+    }
+
+    tx.commit().await?;
+
+    Ok(entries)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod sea_orm_impl {
+    use super::*;
+
+    use sea_orm::ConnectionTrait;
+    use sea_orm::TransactionTrait;
+
+    use crate::tx::{WfRow, WorkflowClient};
+
+    /// Convert a [`WfParam`] into a SeaORM `Value`.
+    fn sea_value(p: &WfParam) -> sea_orm::Value {
+        match p {
+            WfParam::Uuid(v) => sea_orm::Value::from(*v),
+            WfParam::Str(s) => sea_orm::Value::from(s.clone()),
+            WfParam::Bool(b) => sea_orm::Value::from(*b),
+            WfParam::I32(i) => sea_orm::Value::from(*i),
+            WfParam::I64(i) => sea_orm::Value::from(*i),
+            WfParam::DateTime(d) => sea_orm::Value::from(*d),
+            WfParam::Null("uuid") => sea_orm::Value::from(None::<Uuid>),
+            WfParam::Null("text") => sea_orm::Value::from(None::<String>),
+            WfParam::Null("int4") => sea_orm::Value::from(None::<i32>),
+            WfParam::Null(_) => sea_orm::Value::from(None::<String>),
+        }
+    }
+
+    /// A [`WorkflowTx`] over a SeaORM `DatabaseTransaction`.
+    pub struct SeaOrmWorkflowTx {
+        tx: Option<sea_orm::DatabaseTransaction>,
+    }
+
+    impl SeaOrmWorkflowTx {
+        fn inner(&self) -> Result<&sea_orm::DatabaseTransaction, WorkflowError> {
+            self.tx
+                .as_ref()
+                .ok_or_else(|| WorkflowError::Internal("transaction already finished".into()))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkflowTx for SeaOrmWorkflowTx {
+        async fn execute(&self, sql: &str, params: &[WfParam]) -> Result<u64, WorkflowError> {
+            let tx = self.inner()?;
+            let values: Vec<sea_orm::Value> = params.iter().map(sea_value).collect();
+            let res = tx
+                .execute(sea_orm::Statement::from_sql_and_values(
+                    sea_orm::DatabaseBackend::Postgres,
+                    sql,
+                    values,
+                ))
                 .await
                 .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-            Ok(WorkflowState {
-                entity_id: ctx.entity_id,
-                current_state: current_state.clone(),
-                approval_state: Some(format!(
-                    "awaiting_step_{}",
-                    next_pending.as_ref().map_or(0, |s| s.step_order)
-                )),
-                is_terminal: false,
-                available_transitions: vec![],
-                pending_approvals: next_pending.into_iter().collect(),
-            })
+            Ok(res.rows_affected())
         }
+
+        async fn query_one(
+            &self,
+            sql: &str,
+            params: &[WfParam],
+        ) -> Result<Option<WfRow>, WorkflowError> {
+            let tx = self.inner()?;
+            let values: Vec<sea_orm::Value> = params.iter().map(sea_value).collect();
+            let res = tx
+                .query_one(sea_orm::Statement::from_sql_and_values(
+                    sea_orm::DatabaseBackend::Postgres,
+                    sql,
+                    values,
+                ))
+                .await
+                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
+            Ok(res.map(WfRow::SeaOrm))
+        }
+
+        async fn query_all(
+            &self,
+            sql: &str,
+            params: &[WfParam],
+        ) -> Result<Vec<WfRow>, WorkflowError> {
+            let tx = self.inner()?;
+            let values: Vec<sea_orm::Value> = params.iter().map(sea_value).collect();
+            let res = tx
+                .query_all(sea_orm::Statement::from_sql_and_values(
+                    sea_orm::DatabaseBackend::Postgres,
+                    sql,
+                    values,
+                ))
+                .await
+                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
+            Ok(res.into_iter().map(WfRow::SeaOrm).collect())
+        }
+
+        async fn commit(&mut self) -> Result<(), WorkflowError> {
+            if let Some(tx) = self.tx.take() {
+                tx.commit()
+                    .await
+                    .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
+            }
+            Ok(())
+        }
+
+        async fn rollback(&mut self) -> Result<(), WorkflowError> {
+            if let Some(tx) = self.tx.take() {
+                tx.rollback()
+                    .await
+                    .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
+            }
+            Ok(())
+        }
+    }
+
+    /// A [`WorkflowClient`] backed by a SeaORM `DatabaseConnection`.
+    pub struct SeaOrmWorkflowClient {
+        db: sea_orm::DatabaseConnection,
+    }
+
+    impl SeaOrmWorkflowClient {
+        pub fn new(db: sea_orm::DatabaseConnection) -> Self {
+            Self { db }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkflowClient for SeaOrmWorkflowClient {
+        async fn begin(&self) -> Result<Box<dyn WorkflowTx>, WorkflowError> {
+            let tx = self
+                .db
+                .begin()
+                .await
+                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
+            Ok(Box::new(SeaOrmWorkflowTx { tx: Some(tx) }))
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use sea_orm_impl::{SeaOrmWorkflowClient, SeaOrmWorkflowTx};
+
+/// Native SeaORM-backed workflow service. A thin wrapper over the
+/// client-generic [`GenericWorkflowService`] so the monolith keeps its
+/// existing `SeaOrmWorkflowService::new(db)` constructor.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct SeaOrmWorkflowService(
+    crate::tx::GenericWorkflowService<sea_orm_impl::SeaOrmWorkflowClient>,
+);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl SeaOrmWorkflowService {
+    pub fn new(db: sea_orm::DatabaseConnection) -> Self {
+        Self(crate::tx::GenericWorkflowService::new(
+            sea_orm_impl::SeaOrmWorkflowClient::new(db),
+        ))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait::async_trait]
+impl crate::service::WorkflowService for SeaOrmWorkflowService {
+    async fn transition(&self, ctx: TransitionContext) -> Result<WorkflowState, WorkflowError> {
+        self.0.transition(ctx).await
+    }
+
+    async fn approval_action(&self, ctx: ApprovalContext) -> Result<WorkflowState, WorkflowError> {
+        self.0.approval_action(ctx).await
     }
 
     async fn get_state(
@@ -568,70 +746,13 @@ impl WorkflowService for SeaOrmWorkflowService {
         entity_table: &str,
         entity_id: Uuid,
     ) -> Result<WorkflowState, WorkflowError> {
-        // A transaction is required even for read-only operations because
-        // `set_config('app.organization_id', $1, true)` uses `true` (is_local=true),
-        // which scopes the config to the current transaction.  Without an explicit
-        // transaction the session variable would not be visible to subsequent queries
-        // on the same connection, breaking RLS enforcement.
-        let tx = self
-            .db
-            .begin()
+        self.0
+            .get_state(tenant_id, domain, entity_table, entity_id)
             .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        Self::set_rls_org(&tx, tenant_id, None, None).await?;
-
-        let (def_id, initial_state, _terminal_states, sm) = self
-            .load_definition(&tx, tenant_id, domain, entity_table)
-            .await?;
-
-        let row = tx
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                r#"SELECT current_state, approval_state, is_terminal
-                   FROM platform.workflow_instance
-                   WHERE tenant_id = $1 AND definition_id = $2 AND entity_id = $3"#,
-                [tenant_id.into(), def_id.into(), entity_id.into()],
-            ))
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        let (current_state, approval_state, is_terminal) = match row {
-            Some(r) => {
-                let cs: String = r
-                    .try_get("", "current_state")
-                    .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-                let aps: Option<String> = r.try_get("", "approval_state").ok().flatten();
-                let it: bool = r
-                    .try_get("", "is_terminal")
-                    .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-                (cs, aps, it)
-            }
-            None => (initial_state, None, false),
-        };
-
-        let available = if is_terminal {
-            vec![]
-        } else {
-            sm.transitions_from(&current_state)
-        };
-
-        tx.commit()
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        Ok(WorkflowState {
-            entity_id,
-            current_state,
-            approval_state,
-            is_terminal,
-            available_transitions: available,
-            pending_approvals: vec![], // TODO: load from approval_decision
-        })
     }
 
     async fn delegate(&self, ctx: DelegationContext) -> Result<(), WorkflowError> {
-        crate::delegation::execute_delegation(&self.db, &ctx).await
+        self.0.delegate(ctx).await
     }
 
     async fn get_history(
@@ -641,64 +762,8 @@ impl WorkflowService for SeaOrmWorkflowService {
         entity_table: &str,
         entity_id: Uuid,
     ) -> Result<Vec<ProcessHistoryEntry>, WorkflowError> {
-        // Transaction required: `set_config(..., true)` (is_local=true) only
-        // takes effect within an explicit transaction — see get_state for details.
-        let tx = self
-            .db
-            .begin()
+        self.0
+            .get_history(tenant_id, domain, entity_table, entity_id)
             .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        Self::set_rls_org(&tx, tenant_id, None, None).await?;
-
-        let rows = tx
-            .query_all(Statement::from_sql_and_values(
-                sea_orm::DatabaseBackend::Postgres,
-                r#"SELECT wt.id, wt.occurred_at, wt.to_state, wt.from_state,
-                          wt.correlation_id, wt.actor_id, wt.comment
-                   FROM platform.workflow_transition wt
-                   JOIN platform.workflow_instance wi ON wt.instance_id = wi.id
-                   JOIN platform.workflow_definition wd ON wi.definition_id = wd.id
-                   WHERE wi.entity_id = $1 AND wi.tenant_id = $2
-                     AND wd.domain = $3 AND wd.entity_table = $4
-                   ORDER BY wt.occurred_at ASC"#,
-                [
-                    entity_id.into(),
-                    tenant_id.into(),
-                    domain.into(),
-                    entity_table.into(),
-                ],
-            ))
-            .await
-            .map_err(|e| WorkflowError::Internal(e.to_string().into()))?;
-
-        let mut entries = Vec::new();
-        for row in rows {
-            entries.push(ProcessHistoryEntry {
-                id: row
-                    .try_get_by_index(0)
-                    .map_err(|e| WorkflowError::Internal(e.to_string().into()))?,
-                action_date: row
-                    .try_get_by_index(1)
-                    .map_err(|e| WorkflowError::Internal(e.to_string().into()))?,
-                status: row
-                    .try_get_by_index(2)
-                    .map_err(|e| WorkflowError::Internal(e.to_string().into()))?,
-                previous_status: row
-                    .try_get_by_index::<Option<String>>(3)
-                    .map_err(|e| WorkflowError::Internal(e.to_string().into()))?,
-                correlation_id: row.try_get_by_index::<Option<Uuid>>(4).ok().flatten(),
-                actor_id: row.try_get_by_index::<Option<Uuid>>(5).ok().flatten(),
-                comment: row
-                    .try_get_by_index::<Option<String>>(6)
-                    .map_err(|e| WorkflowError::Internal(e.to_string().into()))?,
-            });
-        }
-
-        tx.commit()
-            .await
-            .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-
-        Ok(entries)
     }
 }

@@ -233,6 +233,137 @@ async fn candidate_ddl_table() {
         table_file.content.contains("updated_at TIMESTAMPTZ"),
         "Should contain updated_at"
     );
+    // App role DML grant must be emitted on the table so the RLS-aware
+    // app_user role can access it regardless of application order.
+    assert!(
+        table_file.content.contains(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE recruiting.candidate TO app_user;"
+        ),
+        "Entity table must grant DML to app_user. Got:\n{}",
+        table_file.content
+    );
+}
+
+#[tokio::test]
+async fn table_tera_grants_child_table_dml() {
+    // Child tables rendered by db/table.tera must also carry the app-role DML
+    // grant (the RLS-aware role queries child rows too).
+    let tera = test_tera();
+    let ctx = serde_json::json!({
+        "schema_name": "recruiting",
+        "table_name": "candidate",
+        "columns": [{"name": "id", "pg_type": "UUID", "is_primary_key": true, "nullable": false}],
+        "check_constraints": [],
+        "is_auditable": false,
+        "foreign_keys": [],
+        "indexes": [],
+        "child_tables": [{
+            "schema_name": "recruiting",
+            "table_name": "candidate_person_name",
+            "parent_fk_column": "candidate_id",
+            "parent_schema": "recruiting",
+            "parent_table": "candidate",
+            "columns": [{"name": "id", "pg_type": "UUID"}],
+            "check_constraints": [],
+            "foreign_keys": [],
+            "comments": []
+        }],
+        "comments": [],
+        "extensions": []
+    });
+    let rendered = generate::render_template_with_project(
+        &tera,
+        "db/table.tera",
+        &ctx,
+        &test_project_config(),
+    )
+    .unwrap();
+    assert!(
+        rendered.contains(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE recruiting.candidate TO app_user;"
+        ),
+        "Entity table must grant DML to app_user. Got:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE recruiting.candidate_person_name TO app_user;"
+        ),
+        "Child table must grant DML to app_user. Got:\n{rendered}"
+    );
+}
+
+#[tokio::test]
+async fn scaffold_api_key_migration_grants_app_user_dml() {
+    // 0002_api_key_management.sql must grant the app role DML up front (before
+    // any domain table exists) via CREATE SCHEMA + ALTER DEFAULT PRIVILEGES,
+    // covering every configured domain schema + the infra schemas. This is what
+    // makes the grant independent of migration application order.
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-grants");
+
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
+    let files = gen
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let api_key_file = files
+        .iter()
+        .find(|f| f.path.ends_with("0002_api_key_management.sql"))
+        .expect("Should generate 0002_api_key_management.sql");
+    let content = &api_key_file.content;
+
+    assert!(
+        content.contains("CREATE SCHEMA IF NOT EXISTS"),
+        "0002 must create schemas upfront. Got:\n{content}"
+    );
+    assert!(
+        content.contains("ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user"),
+        "0002 must set default privileges for future tables. Got:\n{content}"
+    );
+    assert!(
+        content.contains(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO app_user"
+        ),
+        "0002 must grant current tables too. Got:\n{content}"
+    );
+    // The configured domain schema + the infra schema appear in the list.
+    for schema in ["recruiting", "platform"] {
+        assert!(
+            content.contains(&format!("'{schema}'")),
+            "0002 grant list must include {schema}. Got:\n{content}"
+        );
+    }
+    // `common` carries the generated codelist tables (app_user needs DML on
+    // them); the list is derived from the configured domains, not the old
+    // hardcoded domain list: with only the fixture domains in scope,
+    // `screening`/`compliance` must NOT appear.
+    for schema in ["'screening'", "'compliance'", "'payroll'"] {
+        assert!(
+            !content.contains(schema),
+            "0002 grant list must not include hardcoded {schema}. Got:\n{content}"
+        );
+    }
+    // The old order-dependent guard must be gone.
+    assert!(
+        !content.contains("information_schema.schemata WHERE schema_name"),
+        "0002 must not be gated on pre-existing schemas. Got:\n{content}"
+    );
 }
 
 #[tokio::test]
@@ -428,7 +559,14 @@ async fn scaffold_middleware_supports_dual_auth() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-dual-auth");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -2002,7 +2140,14 @@ async fn scaffold_main() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -2103,7 +2248,14 @@ async fn scaffold_error_module() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-error");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -2260,7 +2412,14 @@ async fn scaffold_generates_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-mw");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -2295,7 +2454,14 @@ async fn test_permission_middleware_generated() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-permission-mw");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -3541,7 +3707,14 @@ async fn scaffold_main_has_security_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-security");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -3624,7 +3797,14 @@ async fn scaffold_main_has_graceful_shutdown() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shutdown");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -3661,7 +3841,14 @@ async fn scaffold_main_has_health_ready() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-health-ready");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -4652,7 +4839,14 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shadow");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -4686,7 +4880,14 @@ async fn scaffold_generates_build_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-build-rs");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -4716,7 +4917,14 @@ async fn scaffold_main_has_version_endpoint() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-version");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(
             &mock,
@@ -7569,7 +7777,14 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-scaffold");
     let project = sqlite_project_config();
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(&output_dir, false, false, false, false, "sea-orm");
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
     let files = gen
         .generate(&mock, &config, &test_generation_order(), &tera, &project)
         .await

@@ -2,7 +2,7 @@
 <!-- Signup route — delegates to @crewbase/ui SignupPage component. -->
 <script lang="ts">
 	import { SignupPage } from '@crewbase/ui';
-	import { createSupabaseClient } from '$lib/supabase';
+	import { createSupabaseClient } from '#lib/supabase.ts';
 
 	const supabase = createSupabaseClient();
 </script>

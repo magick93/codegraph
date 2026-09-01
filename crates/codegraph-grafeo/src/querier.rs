@@ -6,9 +6,8 @@ use codegraph_core::types::{
     CompositeRange, CompositionNode, CompositionTree, DetectionSource, EnumValue,
     ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, HttpEndpointNode,
     InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData,
-    SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -1922,8 +1921,13 @@ impl GrafeoEngine {
         };
 
         if let Some(ts) = target_schema {
+            // Only create FK targets for entities (types with their own tables).
+            // VOs are embedded as child tables, not referenced via FK.
+            // Codelists always live in the "common" schema regardless of source domain.
             let schema_name = if ts.is_codelist {
                 "common".to_string()
+            } else if !ts.is_entity {
+                return None;
             } else {
                 ts.domain.unwrap_or_else(|| default_schema.to_string())
             };
@@ -1937,7 +1941,8 @@ impl GrafeoEngine {
             }
         }
 
-        // Fallback: parse the ref_target string path
+        // Fallback: parse the ref_target string path.
+        // This is a last-resort heuristic when graph edges are missing.
         let ref_str = ref_target.unwrap_or("");
         if ref_str.is_empty() {
             return None;
@@ -1957,6 +1962,33 @@ impl GrafeoEngine {
             }
         };
         let table = extract_ref_table(ref_str)?;
+
+        // Verify the target exists as an entity in the graph before emitting FK.
+        // Try to find the target by table name in the resolved schema domain.
+        if let Ok(Some(target_check)) =
+            self.get_schema_in_domain(&table, &schema_name).await
+        {
+            if !target_check.is_entity {
+                return None;
+            }
+        }
+        // If the schema doesn't exist in the resolved domain, try the default domain
+        // as a fallback (cross-domain allOf references).
+        if schema_name != default_schema {
+            if let Ok(Some(target_check)) =
+                self.get_schema_in_domain(&table, default_schema).await
+            {
+                if target_check.is_entity {
+                    return Some(FkTarget {
+                        schema: default_schema.to_string(),
+                        table,
+                        column: target_column.to_string(),
+                        on_delete: on_delete.to_string(),
+                    });
+                }
+            }
+        }
+
         Some(FkTarget {
             schema: schema_name,
             table,

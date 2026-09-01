@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import FormattedDateTimeForm from '$lib/components/forms/FormattedDateTimeForm.svelte';
-	import { updateFormattedDateTime } from '$lib/stores/common_formatted_date_time';
+	import FormattedDateTimeForm from '#lib/components/forms/FormattedDateTimeForm.svelte';
+	import { updateFormattedDateTime } from '#lib/stores/common_formatted_date_time.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { FormattedDateTimeResponse, UpdateFormattedDateTimeRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { FormattedDateTimeResponse, UpdateFormattedDateTimeRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/formatted-date-time';

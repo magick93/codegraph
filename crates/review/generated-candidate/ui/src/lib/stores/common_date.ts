@@ -2,7 +2,7 @@
 // Svelte store for Date CRUD operations.
 
 import { writable } from 'svelte/store';
-import { apiGet, apiPost, apiPut, apiDelete } from '$lib/api/client';
+import { apiGet, apiPost, apiPut, apiDelete } from '#lib/api/client.ts';
 import type {
 	DateResponse,
 
@@ -12,7 +12,7 @@ import type {
 	UpdateDateRequest,
 
 
-} from '$lib/api/types';
+} from '#lib/api/types.ts';
 
 
 const API_PATH = '/common/date';

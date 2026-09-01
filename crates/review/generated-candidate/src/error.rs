@@ -16,10 +16,25 @@ pub struct AppError {
     pub correlation_id: Option<Uuid>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct FieldError {
     pub field: String,
     pub message: String,
+}
+
+/// Error body returned by API handlers (mirrors AppError's JSON payload).
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct ErrorBody {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Vec<FieldError>>,
+}
+
+/// Top-level error response envelope.
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct ErrorResponse {
+    pub error: ErrorBody,
 }
 
 #[allow(dead_code)]

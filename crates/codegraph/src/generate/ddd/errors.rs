@@ -60,8 +60,7 @@ impl DomainGenerator for ErrorGenerator {
         let domain_errors: Vec<ErrorDef> = all_errors
             .iter()
             .filter(|e| {
-                e.domain.as_deref() == Some(domain)
-                    || e.domain.as_deref() == Some("common")
+                e.domain.as_deref() == Some(domain) || e.domain.as_deref() == Some("common")
             })
             .filter_map(|e| {
                 let normalized = e.code.replace('-', "_").replace(' ', "_");
@@ -79,10 +78,9 @@ impl DomainGenerator for ErrorGenerator {
             })
             .collect();
 
-        if domain_errors.is_empty() {
-            return Ok(Vec::new());
-        }
-
+        // Always emit errors.rs — command/handler templates import the domain
+        // error enum unconditionally. With no definitions the enum only
+        // carries InternalError, which still compiles.
         let ctx = ErrorContext {
             domain: domain.to_string(),
             errors: domain_errors,

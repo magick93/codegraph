@@ -1,7 +1,10 @@
 pub mod classify;
+pub mod driver;
 pub mod error;
 pub mod generate;
 pub mod ingest;
+pub mod init;
 pub mod lsp;
 pub mod profile;
+pub mod rev;
 pub mod validate;

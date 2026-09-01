@@ -6,7 +6,7 @@ use utoipa::OpenApi;
 
 #[derive(OpenApi)]
 #[openapi(
-    info(title = "HR Open API — Compensation", version = "1.0.0"),
+    info(title = "HR Open API — Compensation", version = "v1"),
     modifiers(&ApiKeySecurity),
     paths(
 

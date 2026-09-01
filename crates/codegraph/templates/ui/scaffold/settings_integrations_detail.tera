@@ -4,17 +4,17 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import * as Card from '$lib/components/ui/card';
-  import * as AlertDialog from '$lib/components/ui/alert-dialog';
-  import { Badge } from '$lib/components/ui/badge';
-  import { Button } from '$lib/components/ui/button';
-  import { Separator } from '$lib/components/ui/separator';
+  import * as Card from '#lib/components/ui/card/index.js';
+  import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import { Separator } from '#lib/components/ui/separator/index.js';
   import { toast } from 'svelte-sonner';
   import {
     fetchInstallation,
     uninstallIntegration,
     type Installation,
-  } from '$lib/stores/integrations';
+  } from '#lib/stores/integrations.ts';
 
   const installationId = $derived(page.params.installationId);
 

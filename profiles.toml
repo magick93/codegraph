@@ -26,7 +26,9 @@ validation_level = "strict"
 offline_mode = false
 ifml_backend = true
 grpc_backend = true
+ops_backend = true
 persistence_provider = "sea_orm"   # "sea_orm" (default) | "cornucopia"
+deployment_topology = "monolith"   # "monolith" (default) | "workers"
 
 [profiles.default.api]
 generators = [
@@ -43,6 +45,8 @@ generators = [
     "webhook_dispatch", "webhook_endpoint_api",
     # gRPC
     "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",
+    # Ops harness
+    "ops",
 ]
 output = "review/generated-candidate/"
 scripts.post_gen = ["echo post-gen check skipped"]
@@ -224,6 +228,43 @@ generators = ["ui_page", "ui_form", "ui_scaffold"]
 [profiles.fullstack.variants.lite.features]
 auth = false
 validation_level = "balanced"
+
+
+# ─── workers-cornucopia (per-domain Cloudflare Workers, cornucopia persistence) ──
+# Runtime gate profile for the multi-worker epic (issue #67): generates one
+# Cloudflare Worker crate per bounded-context domain (workers/{domain}/) plus a
+# gateway, with the cornucopia persistence provider (SQL-first queries,
+# per-request Hyperdrive client in the wasm32 slice).
+[profiles.workers-cornucopia.meta]
+name = "workers-cornucopia"
+version = "1.0.0"
+description = "Workers topology + cornucopia persistence — per-domain Cloudflare Worker crates"
+tags = ["workers", "cornucopia", "wasm"]
+since = "2026-08-15"
+domain_types_base = "crates/hr-domain-types"
+
+[profiles.workers-cornucopia.features]
+auth = true
+pagination = true
+validation_level = "strict"
+persistence_provider = "cornucopia"   # required by workers topology
+deployment_topology = "workers"
+
+[profiles.workers-cornucopia.api]
+generators = [
+    # Entity
+    "ddl", "cornucopia_queries", "cornucopia_repo", "dto", "repository",
+    "command", "query", "event", "handler", "workflow_action",
+    "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
+    # Domain
+    "errors", "router", "links",
+    # Global
+    "cornucopia_config", "worker_scaffold", "basejump_setup", "pgmq_setup",
+    "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "report_views", "openapi",
+]
+output = "review/generated-candidate/"
+scripts.post_gen = ["echo post-gen check skipped"]
 
 
 # ─── ci (compile-gate only, fastest path) ────────────────────────────────────

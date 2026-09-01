@@ -8,8 +8,30 @@ SELECT pgmq.create('events_common');
 
 SELECT pgmq.create('events_compensation');
 
+SELECT pgmq.create('events_events');
+
 SELECT pgmq.create('events_recruiting');
 
+SELECT pgmq.create('events_rsvp');
+
+
+-- Queue access for the application role. The app runs domain-table DML as
+-- `app_user` (SET LOCAL ROLE in the query/command layers) and the event
+-- triggers enqueue into these queues as the invoking role. pgmq.send builds
+-- its INSERT dynamically (plpgsql EXECUTE ... RETURNING), which checks both
+-- INSERT and SELECT on the queue table, and the msg_id identity sequence is
+-- only accessed as the table owner. pgmq 1.5+ does not install with PUBLIC
+-- queue grants, and the role does not exist yet when this migration usually
+-- runs — grant on current and future queues via default privileges; the SET
+-- ROLE grant itself comes from the project's api-key management migration.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
+        EXECUTE format('GRANT INSERT, SELECT ON ALL TABLES IN SCHEMA pgmq TO app_user');
+        EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA pgmq GRANT INSERT, SELECT ON TABLES TO app_user');
+    END IF;
+END
+$$;
 
 -- Shared domain event emitter function.
 -- Called by per-table triggers to enqueue events into pgmq.
@@ -53,6 +75,14 @@ BEGIN
         ELSIF to_jsonb(NEW) ? 'tenant_id' THEN
             v_tenant_id := NEW.tenant_id;
         END IF;
+    END IF;
+
+    -- Fallback: try session variable if column has zero-UUID default
+    IF v_tenant_id = '00000000-0000-0000-0000-000000000000' THEN
+        v_tenant_id := COALESCE(
+            NULLIF(current_setting('app.organization_id', true), '')::UUID,
+            v_tenant_id
+        );
     END IF;
 
     -- Compute changed fields on UPDATE

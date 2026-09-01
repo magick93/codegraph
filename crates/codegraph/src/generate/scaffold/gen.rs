@@ -16,7 +16,9 @@ use codegraph_config::DomainConfig;
 pub struct ScaffoldContext {
     pub app_name: String,
     pub domains: Vec<ScaffoldDomain>,
-    /// Physical Postgres schemas for app_user grants (domain schemas + "common").
+    /// Schemas the generated API role (`app_user`) needs DML access to:
+    /// every configured domain's postgres schema plus `common` (codelists)
+    /// and the `platform` infra schema. Rendered into the grant migrations.
     pub grant_schemas: Vec<String>,
     pub codegraph_workflow_path: String,
     pub type_contracts_path: String,
@@ -69,7 +71,14 @@ pub struct ScaffoldGenerator {
 }
 
 impl ScaffoldGenerator {
-    pub fn new(output_dir: &Path, has_webhooks: bool, has_reports: bool, has_grpc: bool, has_admin_cli: bool, migration_strategy: &str) -> Self {
+    pub fn new(
+        output_dir: &Path,
+        has_webhooks: bool,
+        has_reports: bool,
+        has_grpc: bool,
+        has_admin_cli: bool,
+        migration_strategy: &str,
+    ) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
             has_webhooks,
@@ -83,7 +92,7 @@ impl ScaffoldGenerator {
 
 /// Resolve a base path (relative to CWD or absolute) to a path relative
 /// to the output directory. Returns empty string if `base` is empty.
-fn resolve_path(base: &str, abs_output: &Path) -> String {
+pub(crate) fn resolve_path(base: &str, abs_output: &Path) -> String {
     if base.is_empty() {
         return String::new();
     }
@@ -92,6 +101,83 @@ fn resolve_path(base: &str, abs_output: &Path) -> String {
         .unwrap_or_else(|| PathBuf::from(base))
         .to_string_lossy()
         .into_owned()
+}
+
+/// Group the generation order into per-domain scaffold domains (entities with
+/// resolved operation flags), exactly as the monolith `ScaffoldGenerator` does.
+///
+/// Shared with the workers-topology `WorkerScaffoldGenerator` so both
+/// topologies produce the same domain groupings. Only domains that actually
+/// have entities in the generation order are returned.
+pub async fn build_scaffold_domains(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    generation_order: &[GenerationEntry],
+) -> Vec<ScaffoldDomain> {
+    let mut domain_entity_map: std::collections::HashMap<String, Vec<ScaffoldEntity>> =
+        std::collections::HashMap::new();
+    let mut seen_scaffold_entities = std::collections::HashSet::new();
+    for entry in generation_order {
+        let stripped = config.defaults.strip_suffix(&entry.schema_title);
+        // Titles may contain spaces (e.g. "Review Decision") — sanitize to
+        // PascalCase so generated Rust identifiers compile.
+        let entity_name = codegraph_naming::to_pascal_case(&stripped);
+        let module_name = codegraph_naming::to_snake_case(&stripped);
+        // Dedup by (domain, module_name) to prevent cross-domain name collisions
+        if !seen_scaffold_entities.insert((entry.domain.clone(), module_name.clone())) {
+            continue;
+        }
+        let operations = resolve_entity_operations(db, config, &entry.domain, &entity_name).await;
+        let has_commands = operations
+            .iter()
+            .any(|op| op == "create" || op == "update" || op == "delete");
+        let has_create = operations.iter().any(|op| op == "create");
+        let has_read = operations.iter().any(|op| op == "read");
+        let has_update = operations.iter().any(|op| op == "update");
+        let has_delete = operations.iter().any(|op| op == "delete");
+        let table_name = db
+            .get_schema_in_domain(&stripped, &entry.domain)
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s.pg_table_name)
+            .unwrap_or_else(|| module_name.clone());
+        let has_config_parent = config
+            .domains
+            .get(&entry.domain)
+            .and_then(|d| d.get_entity_config(&entity_name))
+            .and_then(|ec| ec.parent_ref.as_ref())
+            .is_some();
+        let has_query_hooks = has_create || (has_read && !has_config_parent);
+        domain_entity_map
+            .entry(entry.domain.clone())
+            .or_default()
+            .push(ScaffoldEntity {
+                module_name: module_name.clone(),
+                name: entity_name,
+                domain: entry.domain.clone(),
+                table_name,
+                has_commands,
+                append_only: !has_update && !has_delete,
+                has_query_hooks,
+            });
+    }
+
+    let mut domains: Vec<ScaffoldDomain> = config
+        .domains
+        .iter()
+        .filter_map(|(name, entry)| {
+            let entities = domain_entity_map.remove(name.as_str())?;
+            Some(ScaffoldDomain {
+                name: name.clone(),
+                label: entry.label.clone(),
+                postgres_schema: entry.postgres_schema.clone(),
+                entities,
+            })
+        })
+        .collect();
+    domains.sort_by(|a, b| a.name.cmp(&b.name));
+    domains
 }
 
 #[async_trait]
@@ -108,81 +194,8 @@ impl GlobalGenerator for ScaffoldGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        // Group generation_order entries by domain
-        let mut domain_entity_map: std::collections::HashMap<String, Vec<ScaffoldEntity>> =
-            std::collections::HashMap::new();
-        let mut seen_scaffold_entities = std::collections::HashSet::new();
-        for entry in generation_order {
-            let stripped = config.defaults.strip_suffix(&entry.schema_title);
-            // Titles may contain spaces (e.g. "Review Decision") — sanitize to
-            // PascalCase so generated Rust identifiers compile.
-            let entity_name = codegraph_naming::to_pascal_case(&stripped);
-            let module_name = codegraph_naming::to_snake_case(&stripped);
-            // Dedup by (domain, module_name) to prevent cross-domain name collisions
-            if !seen_scaffold_entities.insert((entry.domain.clone(), module_name.clone())) {
-                continue;
-            }
-            let operations =
-                resolve_entity_operations(db, config, &entry.domain, &entity_name).await;
-            let has_commands = operations
-                .iter()
-                .any(|op| op == "create" || op == "update" || op == "delete");
-            let has_create = operations.iter().any(|op| op == "create");
-            let has_read = operations.iter().any(|op| op == "read");
-            let has_update = operations.iter().any(|op| op == "update");
-            let has_delete = operations.iter().any(|op| op == "delete");
-            let table_name = db
-                .get_schema_in_domain(&stripped, &entry.domain)
-                .await
-                .ok()
-                .flatten()
-                .map(|s| s.pg_table_name)
-                .unwrap_or_else(|| module_name.clone());
-            let has_config_parent = config
-                .domains
-                .get(&entry.domain)
-                .and_then(|d| d.get_entity_config(&entity_name))
-                .and_then(|ec| ec.parent_ref.as_ref())
-                .is_some();
-            let has_query_hooks = has_create || (has_read && !has_config_parent);
-            domain_entity_map
-                .entry(entry.domain.clone())
-                .or_default()
-                .push(ScaffoldEntity {
-                    module_name: module_name.clone(),
-                    name: entity_name,
-                    domain: entry.domain.clone(),
-                    table_name,
-                    has_commands,
-                    append_only: !has_update && !has_delete,
-                    has_query_hooks,
-                });
-        }
+        let domains = build_scaffold_domains(db, config, generation_order).await;
 
-        let mut domains: Vec<ScaffoldDomain> = config
-            .domains
-            .iter()
-            .filter_map(|(name, entry)| {
-                let entities = domain_entity_map.remove(name.as_str())?;
-                Some(ScaffoldDomain {
-                    name: name.clone(),
-                    label: entry.label.clone(),
-                    postgres_schema: entry.postgres_schema.clone(),
-                    entities,
-                })
-            })
-            .collect();
-        domains.sort_by(|a, b| a.name.cmp(&b.name));
-
-        // Physical Postgres schemas that need app_user grants: every domain
-        // schema plus "common" (codelists). Sorted + deduped for stable SQL.
-        let mut grant_schemas: Vec<String> = domains
-            .iter()
-            .map(|d| d.postgres_schema.clone())
-            .chain(std::iter::once("common".to_string()))
-            .collect();
-        grant_schemas.sort();
-        grant_schemas.dedup();
 
         // Compute absolute output dir (shared by all path calculations)
         let abs_output = if self.output_dir.is_absolute() {
@@ -200,6 +213,20 @@ impl GlobalGenerator for ScaffoldGenerator {
         let extensions_path = resolve_path(&project.extensions_base, &abs_output);
         let app_config_path = resolve_path(&project.app_config_base, &abs_output);
         let decision_engine_path = resolve_path(&project.decision_engine_base, &abs_output);
+
+        // Physical Postgres schemas that need app_user grants: every domain
+        // schema plus "common" (codelists) and the platform infra schema.
+        // Sorted + deduped for stable SQL.
+        let mut grant_schemas: Vec<String> = domains
+            .iter()
+            .map(|d| d.postgres_schema.clone())
+            .chain(
+                ["common".to_string(), "platform".to_string()]
+                    .into_iter(),
+            )
+            .collect();
+        grant_schemas.sort();
+        grant_schemas.dedup();
 
         let ctx = ScaffoldContext {
             app_name: crate::generate::get_project_config().app_name.clone(),
@@ -227,8 +254,7 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: main_rs,
         });
 
-        let server_rs =
-            render_template_with_project(tera, "scaffold/server.tera", &ctx, project)?;
+        let server_rs = render_template_with_project(tera, "scaffold/server.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("server.rs"),
             content: server_rs,
@@ -292,7 +318,11 @@ impl GlobalGenerator for ScaffoldGenerator {
         let middleware_rs =
             render_template_with_project(tera, "scaffold/middleware.tera", &ctx, project)?;
         files.push(GeneratedFile {
-            path: self.output_dir.join("src").join("middleware").join("mod.rs"),
+            path: self
+                .output_dir
+                .join("src")
+                .join("middleware")
+                .join("mod.rs"),
             content: middleware_rs,
         });
 
@@ -303,7 +333,11 @@ impl GlobalGenerator for ScaffoldGenerator {
             project,
         )?;
         files.push(GeneratedFile {
-            path: self.output_dir.join("src").join("middleware").join("permission.rs"),
+            path: self
+                .output_dir
+                .join("src")
+                .join("middleware")
+                .join("permission.rs"),
             content: permission_rs,
         });
 

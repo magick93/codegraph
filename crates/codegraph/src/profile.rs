@@ -45,6 +45,51 @@ impl fmt::Display for PersistenceProvider {
     }
 }
 
+/// The deployment topology for the generated application.
+///
+/// Determines whether the generated backend is a single monolithic axum
+/// server (today's default) or a set of Cloudflare Workers — one per
+/// bounded-context domain — behind a gateway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DeploymentTopology {
+    /// Today's single-crate axum server.
+    #[default]
+    Monolith,
+    /// One Cloudflare Worker per domain + gateway.
+    Workers,
+}
+
+impl DeploymentTopology {
+    /// Parse from the profiles.toml `deployment_topology` feature value.
+    ///
+    /// Unknown values are a configuration error (unlike `PersistenceProvider`,
+    /// which silently defaults) because a typo here would silently generate
+    /// the wrong deployment shape.
+    pub fn from_config(s: &str) -> Result<Self> {
+        match s {
+            "monolith" => Ok(Self::Monolith),
+            "workers" => Ok(Self::Workers),
+            other => Err(Error::Config(format!(
+                "unknown deployment_topology \"{other}\" in profile features; \
+                 expected \"monolith\" (default) or \"workers\""
+            ))),
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Monolith => "monolith",
+            Self::Workers => "workers",
+        }
+    }
+}
+
+impl fmt::Display for DeploymentTopology {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Generator kind — determines how the build planner invokes the generator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneratorKind {
@@ -185,6 +230,8 @@ pub struct BuildPlan {
     pub database_target: DatabaseTarget,
     /// Persistence provider for entity/repository code generation (default: SeaOrm).
     pub persistence_provider: PersistenceProvider,
+    /// Deployment topology for the generated application (default: Monolith).
+    pub deployment_topology: DeploymentTopology,
     pub features: toml::Table,
 }
 
@@ -256,6 +303,33 @@ impl BuildPlan {
             .map(PersistenceProvider::from_config)
             .unwrap_or_default();
 
+        // Parse deployment_topology from features (default: Monolith).
+        // Unlike persistence_provider, unknown values are a hard error.
+        let deployment_topology = match profile.features.get("deployment_topology") {
+            Some(v) => {
+                let s = v.as_str().ok_or_else(|| {
+                    Error::Config("feature \"deployment_topology\" must be a string".to_string())
+                })?;
+                DeploymentTopology::from_config(s)?
+            }
+            None => DeploymentTopology::default(),
+        };
+
+        // Topology × provider rule: the workers scaffold emits per-domain
+        // Cloudflare Worker crates whose wasm32 slice cannot link SeaORM
+        // (sqlx/mio do not compile to wasm32-unknown-unknown). Cornucopia is
+        // the only supported persistence provider for workers topology.
+        if deployment_topology == DeploymentTopology::Workers
+            && persistence_provider != PersistenceProvider::Cornucopia
+        {
+            return Err(Error::Config(format!(
+                "workers topology requires the cornucopia persistence provider \
+                 (deployment_topology = \"workers\" with persistence_provider = \
+                 \"{}\" is not supported)",
+                persistence_provider.as_str()
+            )));
+        }
+
         Ok(BuildPlan {
             entity_generators: entity_gens,
             domain_generators: domain_gens,
@@ -265,6 +339,7 @@ impl BuildPlan {
             template_pack_path: profile.template_pack_path.clone(),
             database_target,
             persistence_provider,
+            deployment_topology,
             features: profile.features.clone(),
         })
     }
@@ -332,6 +407,11 @@ impl BuildPlan {
     /// Returns the persistence provider for this build plan.
     pub fn persistence_provider(&self) -> PersistenceProvider {
         self.persistence_provider
+    }
+
+    /// Returns the deployment topology for this build plan.
+    pub fn deployment_topology(&self) -> DeploymentTopology {
+        self.deployment_topology
     }
 
     /// Returns the IFML framework targets configured for this build plan.
@@ -415,6 +495,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("workflow_seed",        Global, Common, &[], &[]),
         cap("openapi",              Global, Common, &[], &[]),
         cap("scaffold",             Global, Common, &[], &[]),
+        cap("worker_scaffold",      Global, Common, &[], &[]),
         cap("ui_scaffold",          Global, Ui,    &[], &[]),
         cap("ui_types",             Global, Ui,    &[], &[]),
         cap("ui_codelist",          Global, Ui,    &[], &[]),
@@ -430,6 +511,9 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("integration_catalog",  Global, Common, &[], &[]),
         cap("webhook_dispatch",     Global, Common, &[], &[]),
         cap("webhook_endpoint_api", Global, Common, &[], &[]),
+
+        // ── ops harness generators ──────────────────────────────────────
+        cap("ops",                  Global, Common, &["ops_backend"], &[]),
 
         // ── gRPC generators ────────────────────────────────────────────
         cap("grpc_proto",           Entity,  Api, &["grpc_backend"], &[]),
@@ -1349,5 +1433,167 @@ generators = ["ddl"]
         assert!(plan.has_entity_gen("ddl"));
         assert!(!plan.has_global_gen("ui_scaffold"));
         assert_eq!(plan.post_gen_scripts.len(), 0);
+    }
+
+    // ── Deployment Topology Tests ─────────────────────────────────────
+
+    #[test]
+    fn deployment_topology_from_config_parses_known_values() {
+        assert_eq!(
+            DeploymentTopology::from_config("monolith").unwrap(),
+            DeploymentTopology::Monolith
+        );
+        assert_eq!(
+            DeploymentTopology::from_config("workers").unwrap(),
+            DeploymentTopology::Workers
+        );
+        assert_eq!(DeploymentTopology::default(), DeploymentTopology::Monolith);
+    }
+
+    #[test]
+    fn deployment_topology_from_config_unknown_value_errors() {
+        let result = DeploymentTopology::from_config("distributed");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("unknown deployment_topology \"distributed\""),
+            "expected clear error message, got: {err}"
+        );
+    }
+
+    #[test]
+    fn build_plan_deployment_topology_defaults_to_monolith() {
+        let registry = CapabilityRegistry::new();
+
+        let toml = r#"
+[profiles.default.meta]
+name = "default"
+version = "1.0.0"
+description = ""
+
+[profiles.default.features]
+auth = true
+
+[profiles.default.api]
+generators = ["ddl"]
+"#;
+        let config: ProfilesConfig = toml::from_str(toml).unwrap();
+        let def = &config.profiles["default"];
+        let resolved = resolve_profile(def, None).unwrap();
+
+        let plan = BuildPlan::from_profile(&resolved, &registry).unwrap();
+        assert_eq!(plan.deployment_topology(), DeploymentTopology::Monolith);
+    }
+
+    #[test]
+    fn build_plan_deployment_topology_workers() {
+        let registry = CapabilityRegistry::new();
+
+        let toml = r#"
+[profiles.workers.meta]
+name = "workers"
+version = "1.0.0"
+description = ""
+
+[profiles.workers.features]
+deployment_topology = "workers"
+persistence_provider = "cornucopia"
+
+[profiles.workers.api]
+generators = ["ddl"]
+"#;
+        let config: ProfilesConfig = toml::from_str(toml).unwrap();
+        let def = &config.profiles["workers"];
+        let resolved = resolve_profile(def, None).unwrap();
+
+        let plan = BuildPlan::from_profile(&resolved, &registry).unwrap();
+        assert_eq!(plan.deployment_topology(), DeploymentTopology::Workers);
+    }
+
+    #[test]
+    fn build_plan_workers_topology_requires_cornucopia() {
+        let registry = CapabilityRegistry::new();
+
+        let toml = r#"
+[profiles.workers-sea-orm.meta]
+name = "workers-sea-orm"
+version = "1.0.0"
+description = ""
+
+[profiles.workers-sea-orm.features]
+deployment_topology = "workers"
+persistence_provider = "sea_orm"
+
+[profiles.workers-sea-orm.api]
+generators = ["ddl"]
+"#;
+        let config: ProfilesConfig = toml::from_str(toml).unwrap();
+        let def = &config.profiles["workers-sea-orm"];
+        let resolved = resolve_profile(def, None).unwrap();
+
+        let err = BuildPlan::from_profile(&resolved, &registry).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("workers topology requires the cornucopia persistence provider"),
+            "expected topology×provider error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn build_plan_deployment_topology_invalid_value_errors() {
+        let registry = CapabilityRegistry::new();
+
+        let toml = r#"
+[profiles.bad.meta]
+name = "bad"
+version = "1.0.0"
+description = ""
+
+[profiles.bad.features]
+deployment_topology = "distributed"
+
+[profiles.bad.api]
+generators = ["ddl"]
+"#;
+        let config: ProfilesConfig = toml::from_str(toml).unwrap();
+        let def = &config.profiles["bad"];
+        let resolved = resolve_profile(def, None).unwrap();
+
+        let result = BuildPlan::from_profile(&resolved, &registry);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("unknown deployment_topology"),
+            "expected clear error message, got: {err}"
+        );
+    }
+
+    #[test]
+    fn build_plan_deployment_topology_non_string_errors() {
+        let registry = CapabilityRegistry::new();
+
+        let toml = r#"
+[profiles.bad.meta]
+name = "bad"
+version = "1.0.0"
+description = ""
+
+[profiles.bad.features]
+deployment_topology = true
+
+[profiles.bad.api]
+generators = ["ddl"]
+"#;
+        let config: ProfilesConfig = toml::from_str(toml).unwrap();
+        let def = &config.profiles["bad"];
+        let resolved = resolve_profile(def, None).unwrap();
+
+        let result = BuildPlan::from_profile(&resolved, &registry);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("must be a string"),
+            "expected clear error message, got: {err}"
+        );
     }
 }

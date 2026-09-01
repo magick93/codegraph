@@ -1,0 +1,130 @@
+syntax = "proto3";
+package rsvp;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "rsvp/;rsvp";
+
+
+
+
+/// Rsvp entity
+message Rsvp {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+    // The event this RSVP is for (required value object that resolves to an entity)
+  RsvpEvent event = 2;
+  
+  
+  string status = 3;
+  
+  
+  google.protobuf.Timestamp timestamp = 4;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for Rsvp
+message CreateRsvpRequest {
+  
+    // The event this RSVP is for (required value object that resolves to an entity)
+  RsvpEvent event = 2;
+  
+  
+  string status = 3;
+  
+  
+  google.protobuf.Timestamp timestamp = 4;
+  
+}
+
+/// Update request for Rsvp
+message UpdateRsvpRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+    // The event this RSVP is for (required value object that resolves to an entity)
+  optional RsvpEvent event = 2;
+  
+  
+  optional string status = 3;
+  
+  
+  optional google.protobuf.Timestamp timestamp = 4;
+  
+}
+
+/// Get request for Rsvp
+message GetRsvpRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for Rsvp
+message DeleteRsvpRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for Rsvp
+message ListRsvpRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for Rsvp
+message ListRsvpResponse {
+  
+  
+  repeated Rsvp data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── Rsvp Service ──────────────────────────────────────────
+service RsvpService {
+  
+  // Create a new entity
+  rpc Create(CreateRsvpRequest) returns (Rsvp);
+  
+  // Get an entity by ID
+  rpc Get(GetRsvpRequest) returns (Rsvp);
+  
+  // Update an existing entity
+  rpc Update(UpdateRsvpRequest) returns (Rsvp);
+  
+  // Delete an entity by ID
+  rpc Delete(DeleteRsvpRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListRsvpRequest) returns (ListRsvpResponse);
+  
+}

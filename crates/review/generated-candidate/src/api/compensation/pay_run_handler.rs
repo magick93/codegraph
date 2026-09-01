@@ -11,10 +11,10 @@ use crate::error::AppError;
 use crate::middleware::ApiKeyInfo;
 use crate::domain::compensation::pay_run::dto_response::PayRunResponse;
 use crate::domain::compensation::pay_run::dto_response::PayRunLinkedResponse;
-use crate::domain::compensation::pay_run::repository::PayRunRepository;
 use crate::error::BulkItemError;
 use crate::domain::compensation::pay_run::dto_create::CreatePayRunRequest;
 use crate::domain::compensation::pay_run::dto_update::UpdatePayRunRequest;
+use crate::domain::compensation::errors::CompensationError;
 
 
 /// Accepts either a single item or an array of items for creation.
@@ -52,7 +52,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
 #[utoipa::path(
     post,
 
-    path = "/api/compensation/pay-run",
+    path = "/api/v1/compensation/pay-runs",
 
     tag = "Pay Runs",
     request_body(
@@ -93,12 +93,12 @@ pub async fn create(
             }
 
 
-            let id = state.compensation_pay_run_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await
+            let id = state.compensation_pay_run_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
 
-                .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to create PayRun: {e}"))
+                .map_err(|e: CompensationError| AppError::internal(format!("Failed to create PayRun: {e}"))
                     .with_correlation_id(correlation_id))?;
-            let response = state.compensation_pay_run_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await
-                .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find PayRun: {e}"))
+            let response = state.compensation_pay_run_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+                .map_err(|e: CompensationError| AppError::internal(format!("Failed to find PayRun: {e}"))
                     .with_correlation_id(correlation_id))?
                 .ok_or_else(|| AppError::internal("Created entity not found")
                     .with_correlation_id(correlation_id))?;
@@ -118,7 +118,7 @@ pub async fn create(
             }
 
 
-            let result = state.compensation_pay_run_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await;
+            let result = state.compensation_pay_run_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await;
 
 
             let mut success = Vec::new();
@@ -127,7 +127,7 @@ pub async fn create(
             for item_result in result {
                 match item_result {
                     Ok(id) => {
-                        match state.compensation_pay_run_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await {
+                        match state.compensation_pay_run_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await {
                             Ok(Some(resp)) => success.push(resp),
                             Ok(None) => {
                                 tracing::warn!(entity_id = %id, "Bulk-created entity not found during response assembly");
@@ -155,7 +155,7 @@ pub async fn create(
 #[utoipa::path(
     get,
 
-    path = "/api/compensation/pay-run/{pay_run_id}",
+    path = "/api/v1/compensation/pay-runs/{pay_run_id}",
 
     params(("pay_run_id" = Uuid, Path, description = "PayRun ID")),
 
@@ -178,12 +178,12 @@ pub async fn get_by_id(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    let response = state.compensation_pay_run_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find PayRun: {e}"))
+    let response = state.compensation_pay_run_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: CompensationError| AppError::internal(format!("Failed to find PayRun: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("PayRun {id} not found"))
             .with_correlation_id(correlation_id))?;
-    let linked = PayRunLinkedResponse::root(response, "compensation", "pay-run");
+    let linked = PayRunLinkedResponse::root(response, "compensation", "pay-runs");
 
 
 
@@ -202,7 +202,7 @@ pub async fn get_by_id(
 #[utoipa::path(
     put,
 
-    path = "/api/compensation/pay-run/{pay_run_id}",
+    path = "/api/v1/compensation/pay-runs/{pay_run_id}",
     params(("pay_run_id" = Uuid, Path, description = "PayRun ID")),
 
     tag = "Pay Runs",
@@ -239,11 +239,11 @@ pub async fn update(
             .with_correlation_id(correlation_id));
     }
 
-    state.compensation_pay_run_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to update PayRun: {e}"))
+    state.compensation_pay_run_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: CompensationError| AppError::internal(format!("Failed to update PayRun: {e}"))
             .with_correlation_id(correlation_id))?;
-    let response = state.compensation_pay_run_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to find PayRun: {e}"))
+    let response = state.compensation_pay_run_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: CompensationError| AppError::internal(format!("Failed to find PayRun: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("PayRun {id} not found"))
             .with_correlation_id(correlation_id))?;
@@ -259,7 +259,7 @@ pub async fn update(
 #[utoipa::path(
     delete,
 
-    path = "/api/compensation/pay-run/{pay_run_id}",
+    path = "/api/v1/compensation/pay-runs/{pay_run_id}",
     params(("pay_run_id" = Uuid, Path, description = "PayRun ID")),
 
     tag = "Pay Runs",
@@ -279,8 +279,8 @@ pub async fn delete(
 ) -> Result<StatusCode, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    state.compensation_pay_run_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| {
+    state.compensation_pay_run_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: CompensationError| {
             let msg = e.to_string();
             if msg.contains("Entity not found") {
                 AppError::not_found(format!("PayRun {id} not found"))
@@ -327,7 +327,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
 #[utoipa::path(
     get,
 
-    path = "/api/compensation/pay-run",
+    path = "/api/v1/compensation/pay-runs",
     params(ListParams),
 
     tag = "Pay Runs",
@@ -356,8 +356,8 @@ pub async fn list(
     }
 
 
-    let (results, total) = state.compensation_pay_run_queries.list_filtered(params.page, params.page_size, &filters, api_key_info.api_key_id, api_key_info.organization_id).await
-        .map_err(|e: Box<dyn std::error::Error>| AppError::internal(format!("Failed to list PayRun: {e}"))
+    let (results, total) = state.compensation_pay_run_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+        .map_err(|e: CompensationError| AppError::internal(format!("Failed to list PayRun: {e}"))
             .with_correlation_id(correlation_id))?;
 
     Ok(Json(serde_json::json!({
@@ -371,4 +371,30 @@ pub async fn list(
 }
 
 
+
+
+// --- Trait-based extensibility ---
+// Uncomment and implement to override generated handler behavior:
+//
+// #[async_trait]
+// pub trait CustomPayRunHandlers {
+//     async fn custom_create(
+//         &self,
+//         state: axum::extract::State<AppState>,
+//         headers: axum::http::HeaderMap,
+//         Json(body): axum::Json<CreatePayRunRequest>,
+//     ) -> Result<axum::response::Response, AppError>;
+// }
+//
+// impl CustomPayRunHandlers for AppState {
+//     async fn custom_create(
+//         &self,
+//         state: axum::extract::State<AppState>,
+//         headers: axum::http::HeaderMap,
+//         Json(body): axum::Json<CreatePayRunRequest>,
+//     ) -> Result<axum::response::Response, AppError> {
+//         // Your custom logic here
+//         todo!()
+//     }
+// }
 

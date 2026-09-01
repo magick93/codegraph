@@ -2,7 +2,7 @@
 // Svelte store for {{ entity_name }} CRUD operations.
 
 import { writable } from 'svelte/store';
-import { apiGet, apiPost, apiPut, apiDelete } from '$lib/api/client';
+import { apiGet, apiPost, apiPut, apiDelete } from '#lib/api/client.ts';
 import type {
 	{{ entity_name }}Response,
 {% if has_create %}
@@ -14,7 +14,7 @@ import type {
 {% if has_workflow %}
 	WorkflowState,
 {% endif %}
-} from '$lib/api/types';
+} from '#lib/api/types.ts';
 
 {% if parent and parent.grandparent %}
 function apiPath(grandparentId: string, parentId: string): string {

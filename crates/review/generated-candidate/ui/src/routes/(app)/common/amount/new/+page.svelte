@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import AmountForm from '$lib/components/forms/AmountForm.svelte';
-	import { createAmount } from '$lib/stores/common_amount';
+	import AmountForm from '#lib/components/forms/AmountForm.svelte';
+	import { createAmount } from '#lib/stores/common_amount.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { CreateAmountRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { CreateAmountRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/amount';

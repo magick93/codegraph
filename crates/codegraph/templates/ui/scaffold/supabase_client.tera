@@ -2,10 +2,10 @@
 // Supabase client for {{ app_name }}.
 
 import { createBrowserClient, createServerClient, isBrowser } from '@supabase/ssr';
-import { env } from '$env/dynamic/public';
+import { PUBLIC_SUPABASE_ANON_KEY, PUBLIC_SUPABASE_URL } from '$app/env/public';
 
-const SUPABASE_URL = env.PUBLIC_SUPABASE_URL ?? '';
-const SUPABASE_ANON_KEY = env.PUBLIC_SUPABASE_ANON_KEY ?? '';
+const SUPABASE_URL = PUBLIC_SUPABASE_URL ?? '';
+const SUPABASE_ANON_KEY = PUBLIC_SUPABASE_ANON_KEY ?? '';
 
 export function createSupabaseClient(opts?: {
 	fetch?: typeof globalThis.fetch;

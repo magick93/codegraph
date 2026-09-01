@@ -9,7 +9,7 @@ mod tests {
     #[test]
     fn test_process_history_item_entity_columns() {
         // Verify the entity model compiles and has expected columns
-        let _model = app::entity::process_history_item::Model {
+        let _model = app::entity::common_process_history_item::Model {
             id: Uuid::new_v4(),
             ..Default::default()
         };

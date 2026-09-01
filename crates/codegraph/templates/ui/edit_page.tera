@@ -7,12 +7,12 @@
 {% elif parent %}
 	import { page } from '$app/state';
 {% endif %}
-	import {{ entity_name }}Form from '$lib/components/forms/{{ entity_name }}Form.svelte';
-	import { update{{ entity_name }} } from '$lib/stores/{{ domain }}_{{ module_name }}';
+	import {{ entity_name }}Form from '#lib/components/forms/{{ entity_name }}Form.svelte';
+	import { update{{ entity_name }} } from '#lib/stores/{{ domain }}_{{ module_name }}.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { {{ entity_name }}Response, Update{{ entity_name }}Request } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { {{ entity_name }}Response, Update{{ entity_name }}Request } from '#lib/api/types.ts';
 
 {% if parent and parent.grandparent %}
 	const grandparentId = $derived(page.params.{{ parent.grandparent.param_name }});

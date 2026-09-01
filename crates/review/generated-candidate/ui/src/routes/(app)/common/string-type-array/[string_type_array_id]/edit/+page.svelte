@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import StringTypeArrayForm from '$lib/components/forms/StringTypeArrayForm.svelte';
-	import { updateStringTypeArray } from '$lib/stores/common_string_type_array';
+	import StringTypeArrayForm from '#lib/components/forms/StringTypeArrayForm.svelte';
+	import { updateStringTypeArray } from '#lib/stores/common_string_type_array.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { StringTypeArrayResponse, UpdateStringTypeArrayRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { StringTypeArrayResponse, UpdateStringTypeArrayRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/string-type-array';

@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::generate::api::api_model::resolve_entity_operations;
-use crate::generate::api::include_path::resolve_include_paths;
+use crate::generate::api::include_path::resolve_include_paths_for_topology;
 use crate::generate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
@@ -153,12 +153,13 @@ impl EntityGenerator for RepositoryTraitGenerator {
             .map(|r| r == "root")
             .unwrap_or(true);
         let include_paths = if has_explicit_include || is_root {
-            resolve_include_paths(
+            resolve_include_paths_for_topology(
                 db,
                 config,
                 &domain,
                 schema_title,
                 entity_cfg.and_then(|ec| ec.allow_include.as_ref()),
+                project.is_workers_topology(),
             )
             .await?
         } else {
@@ -230,7 +231,8 @@ impl EntityGenerator for RepositoryTraitGenerator {
 
         let mut files = Vec::new();
 
-        // Repository trait (Tera template)
+        // Repository trait (Tera template) — provider-agnostic: both the
+        // SeaORM and cornucopia impls target the same generic trait.
         let trait_content =
             render_template_with_project(tera, "ddd/repository.tera", &ctx, project)?;
         files.push(GeneratedFile {
@@ -238,22 +240,27 @@ impl EntityGenerator for RepositoryTraitGenerator {
             content: trait_content,
         });
 
-        // Repository implementation (Rust emitter)
-        let emitter = RepositoryImplEmitter;
-        let impl_content = emitter
-            .emit(
-                db,
-                schema_title,
-                &domain,
-                config,
-                parent_ref.as_deref(),
-                &include_paths,
-            )
-            .await?;
-        files.push(GeneratedFile {
-            path: base_dir.join("repository_impl.rs"),
-            content: impl_content,
-        });
+        // The SeaORM repository implementation (Rust emitter) is only
+        // emitted for the SeaORM provider; cornucopia builds get
+        // `cornucopia_repository_impl.rs` from the cornucopia_repo generator
+        // instead.
+        if !project.is_cornucopia() {
+            let emitter = RepositoryImplEmitter;
+            let impl_content = emitter
+                .emit(
+                    db,
+                    schema_title,
+                    &domain,
+                    config,
+                    parent_ref.as_deref(),
+                    &include_paths,
+                )
+                .await?;
+            files.push(GeneratedFile {
+                path: base_dir.join("repository_impl.rs"),
+                content: impl_content,
+            });
+        }
 
         Ok(files)
     }

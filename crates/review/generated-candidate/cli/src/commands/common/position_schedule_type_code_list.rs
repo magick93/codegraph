@@ -112,7 +112,7 @@ pub async fn execute(
     client: &ApiClient,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
-    let base = format!("/api/common/position-schedule-type-code-list");
+    let base = format!("/api/v1/common/position-schedule-type-code-list");
 
     match cmd {
 

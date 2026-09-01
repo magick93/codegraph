@@ -2,7 +2,7 @@
 // Svelte store for PayRun CRUD operations.
 
 import { writable } from 'svelte/store';
-import { apiGet, apiPost, apiPut, apiDelete } from '$lib/api/client';
+import { apiGet, apiPost, apiPut, apiDelete } from '#lib/api/client.ts';
 import type {
 	PayRunResponse,
 
@@ -12,10 +12,10 @@ import type {
 	UpdatePayRunRequest,
 
 
-} from '$lib/api/types';
+} from '#lib/api/types.ts';
 
 
-const API_PATH = '/compensation/pay-run';
+const API_PATH = '/compensation/pay-runs';
 
 
 export interface PayRunListState {

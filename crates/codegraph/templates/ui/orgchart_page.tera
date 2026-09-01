@@ -12,7 +12,7 @@
 	function handleViewChange(newView: OrgChartViewMode) {
 		const url = new URL(page.url);
 		url.searchParams.set('view', newView);
-		goto(url.toString(), { replaceState: true });
+		goto(url.toString(), { replace: true });
 	}
 </script>
 
