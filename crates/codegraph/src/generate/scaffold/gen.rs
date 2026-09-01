@@ -120,7 +120,16 @@ pub async fn build_scaffold_domains(
     for entry in generation_order {
         let stripped = config.defaults.strip_suffix(&entry.schema_title);
         // Titles may contain spaces (e.g. "Review Decision") — sanitize to
-        // PascalCase so generated Rust identifiers compile.
+        // PascalCase so generated Rust identifiers compile. Prefer the graph's
+        // canonical rust_type_name so emitted identifiers match hr-domain-types
+        // exactly (acronym titles like "...LER-RSType" -> "...LERRS...").
+        let type_name = db
+            .get_schema_in_domain(&entry.schema_title, &entry.domain)
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s.rust_type_name)
+            .unwrap_or_else(|| codegraph_naming::to_pascal_case(&stripped));
         let entity_name = codegraph_naming::to_pascal_case(&stripped);
         let module_name = codegraph_naming::to_snake_case(&stripped);
         // Dedup by (domain, module_name) to prevent cross-domain name collisions
@@ -154,7 +163,7 @@ pub async fn build_scaffold_domains(
             .or_default()
             .push(ScaffoldEntity {
                 module_name: module_name.clone(),
-                name: entity_name,
+                name: type_name,
                 domain: entry.domain.clone(),
                 table_name,
                 has_commands,
