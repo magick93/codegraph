@@ -10,7 +10,9 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
-use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment, resolve_path_segment_with_config};
+use crate::generate::api::api_model::{
+    resolve_entity_operations, resolve_path_segment, resolve_path_segment_with_config,
+};
 
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::store::UiParentInfo;
@@ -155,8 +157,7 @@ impl EntityGenerator for UiPageGenerator {
 
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
-            let operations =
-                resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let dto_config = entity_cfg.map(|ec| &ec.dto);
         let immutable_fields: Vec<String> = dto_config
@@ -196,7 +197,8 @@ impl EntityGenerator for UiPageGenerator {
             })
             .unwrap_or(false);
 
-        let fields = collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
+        let fields =
+            collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
 
         // Build list fields: if list_include is set, use those; otherwise all fields minus list_exclude
         let list_fields = if !list_include.is_empty() {
@@ -261,10 +263,18 @@ impl EntityGenerator for UiPageGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &resolve_path_segment_with_config(None, &parent_schema, config),
+                                        &resolve_path_segment_with_config(
+                                            None,
+                                            &parent_schema,
+                                            config,
+                                        ),
                                     ),
                                 domain: parent_domain,
-                                path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
+                                path_segment: resolve_path_segment_with_config(
+                                    None,
+                                    &parent_schema,
+                                    config,
+                                ),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent: gp,
@@ -319,10 +329,18 @@ impl EntityGenerator for UiPageGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &resolve_path_segment_with_config(None, &parent_schema, config),
+                                        &resolve_path_segment_with_config(
+                                            None,
+                                            &parent_schema,
+                                            config,
+                                        ),
                                     ),
                                 domain: domain.clone(),
-                                path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
+                                path_segment: resolve_path_segment_with_config(
+                                    None,
+                                    &parent_schema,
+                                    config,
+                                ),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent: gp,

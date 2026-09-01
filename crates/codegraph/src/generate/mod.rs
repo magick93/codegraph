@@ -540,7 +540,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             // suffix, then PascalCase what remains (titles may contain spaces,
             // e.g. "Validation Issue" -> "ValidationIssue").
             let entity_name = codegraph_naming::to_pascal_case(&codegraph_naming::strip_suffix(
-                entity_title, suffix,
+                entity_title,
+                suffix,
             ));
             let module_name = codegraph_naming::to_snake_case(&entity_name);
             let base = || -> Vec<String> {
@@ -1759,7 +1760,12 @@ mod tests {
     #[test]
     fn clean_generated_output_removes_stale_dto_included() {
         let dir = tempfile::TempDir::new().unwrap();
-        let entity_dir = dir.path().join("src").join("domain").join("hr").join("worker");
+        let entity_dir = dir
+            .path()
+            .join("src")
+            .join("domain")
+            .join("hr")
+            .join("worker");
         std::fs::create_dir_all(&entity_dir).unwrap();
         // Stale dto_included.rs from a run where the entity had include
         // paths; dto_response.rs is a regular per-run file.
@@ -1767,7 +1773,12 @@ mod tests {
         std::fs::write(entity_dir.join("dto_response.rs"), "pub struct Keep;").unwrap();
         // A stale entity directory (not in the generation order) that also
         // carries a dto_included.rs must be removed whole.
-        let stale_dir = dir.path().join("src").join("domain").join("hr").join("ghost");
+        let stale_dir = dir
+            .path()
+            .join("src")
+            .join("domain")
+            .join("hr")
+            .join("ghost");
         std::fs::create_dir_all(&stale_dir).unwrap();
         std::fs::write(stale_dir.join("dto_included.rs"), "pub struct Ghost;").unwrap();
 
@@ -1784,7 +1795,10 @@ mod tests {
             "stale dto_included.rs must be removed so generate_mod_files cannot re-declare it"
         );
         assert!(entity_dir.join("dto_response.rs").exists());
-        assert!(!stale_dir.exists(), "stale entity directory must still be removed whole");
+        assert!(
+            !stale_dir.exists(),
+            "stale entity directory must still be removed whole"
+        );
     }
 
     fn make_migration(name: &str) -> GeneratedFile {
@@ -2558,12 +2572,7 @@ fn collect_test_mods(
 
 /// Render `mod` declarations as a mod file body.
 fn test_mod_content(modules: &BTreeSet<String>) -> String {
-    modules
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
+    modules.iter().cloned().collect::<Vec<_>>().join("\n") + "\n"
 }
 
 /// Build a `mod` declaration for a test-tree entry. Returns a plain
@@ -2589,7 +2598,13 @@ fn test_module_declaration(disk_name: &str, is_dir: bool) -> String {
 fn rust_module_name(name: &str) -> String {
     let sanitized: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     codegraph_naming::escape_module_keyword(&sanitized)
 }

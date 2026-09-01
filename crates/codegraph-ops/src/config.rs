@@ -281,7 +281,10 @@ mod tests {
             root.to_path_buf()
         );
         // A non-workspace Cargo.toml (the generated app) is skipped.
-        assert_eq!(discover_workspace_root(&root.join("out")), root.to_path_buf());
+        assert_eq!(
+            discover_workspace_root(&root.join("out")),
+            root.to_path_buf()
+        );
     }
 
     #[test]
@@ -296,7 +299,10 @@ mod tests {
             "[workspace]\nmembers = [\".\", \"cli\"]\n",
         )
         .unwrap();
-        assert_eq!(discover_workspace_root(&root.join("out")), root.to_path_buf());
+        assert_eq!(
+            discover_workspace_root(&root.join("out")),
+            root.to_path_buf()
+        );
     }
 
     #[test]

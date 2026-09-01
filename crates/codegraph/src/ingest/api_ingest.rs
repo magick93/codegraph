@@ -88,9 +88,8 @@ pub async fn ingest_api_model(
                 .unwrap_or(&config.defaults.operations);
 
             let schema_title = entity_name.clone();
-            let resource_name = crate::generate::api::api_model::normalized_resource_name(
-                entity_name,
-            );
+            let resource_name =
+                crate::generate::api::api_model::normalized_resource_name(entity_name);
 
             let resource_id = db
                 .ingest_api_resource(&ApiResourceNode {
@@ -106,14 +105,9 @@ pub async fn ingest_api_model(
                 .map_err(|e| Error::Graph(e))?;
             stats.resources += 1;
 
-            db.ingest_edge(
-                &resource_id,
-                &schema_title,
-                EdgeType::BindsToSchema,
-                None,
-            )
-            .await
-            .map_err(|e| Error::Graph(e))?;
+            db.ingest_edge(&resource_id, &schema_title, EdgeType::BindsToSchema, None)
+                .await
+                .map_err(|e| Error::Graph(e))?;
 
             let op_mappings: Vec<(&str, &str, &str)> = operations
                 .iter()

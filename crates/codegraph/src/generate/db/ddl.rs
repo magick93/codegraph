@@ -863,7 +863,8 @@ fn inject_child_tenant_columns(children: &mut [ChildTableDef], tenant_col: &Colu
 /// emits the parent's org-isolation policies for it. Only org-isolation is
 /// emitted (`is_auditable = false`): child tables are not api-key-scoped
 /// resources.
-pub(crate) fn child_table_rls_context(parent: &DdlContext, child: &ChildTableDef) -> DdlContext {    DdlContext {
+pub(crate) fn child_table_rls_context(parent: &DdlContext, child: &ChildTableDef) -> DdlContext {
+    DdlContext {
         schema_name: child.schema_name.clone(),
         table_name: child.table_name.clone(),
         display_name: child.display_name.clone(),
@@ -962,7 +963,8 @@ fn composition_node_to_child_table(
     // generated entity (same logic as the parent table FK filter).
     foreign_keys.retain(|fk| {
         fk.is_codelist
-            || generated_tables.contains(&(fk.references_schema.clone(), fk.references_table.clone()))
+            || generated_tables
+                .contains(&(fk.references_schema.clone(), fk.references_table.clone()))
     });
 
     // Recursively convert nested children
@@ -1248,7 +1250,8 @@ impl DdlGenerator {
             .collect();
         foreign_keys.retain(|fk| {
             fk.is_codelist
-                || generated_tables.contains(&(fk.references_schema.clone(), fk.references_table.clone()))
+                || generated_tables
+                    .contains(&(fk.references_schema.clone(), fk.references_table.clone()))
         });
 
         // Query graph properties for entity-reference columns that the composition
@@ -2124,9 +2127,18 @@ mod tests {
     #[test]
     fn child_table_parent_fk_single_suffix_for_id_named_parent() {
         let node = node_with_columns(vec![info_col("value", "TEXT")]);
-        let def = composition_node_to_child_table(&node, "evidence_extracted_field_id", "compliance", "Evidence Extracted Field Id", &HashSet::new());
+        let def = composition_node_to_child_table(
+            &node,
+            "evidence_extracted_field_id",
+            "compliance",
+            "Evidence Extracted Field Id",
+            &HashSet::new(),
+        );
         assert_eq!(def.parent_fk_column, "evidence_extracted_field_id");
-        assert!(def.columns.iter().all(|c| c.name != "evidence_extracted_field_id_id"));
+        assert!(def
+            .columns
+            .iter()
+            .all(|c| c.name != "evidence_extracted_field_id_id"));
     }
 
     #[test]
@@ -2192,13 +2204,7 @@ mod tests {
         };
 
         let child_ctx = child_table_rls_context(&parent, &junction);
-        let sql = render_template_with_project(
-            &tera,
-            "db/rls.tera",
-            &child_ctx,
-            &project,
-        )
-        .unwrap();
+        let sql = render_template_with_project(&tera, "db/rls.tera", &child_ctx, &project).unwrap();
 
         assert!(sql.contains("ALTER TABLE core.trust_settlor_ids ENABLE ROW LEVEL SECURITY"));
         assert!(sql.contains("CREATE POLICY \"org_isolation_select\""));

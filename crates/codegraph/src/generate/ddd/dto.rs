@@ -6,9 +6,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::generate::api::api_model::resolve_entity_operations;
-use crate::generate::api::include_path::{
-    resolve_include_paths_for_topology, ResolvedIncludePath,
-};
+use crate::generate::api::include_path::{resolve_include_paths_for_topology, ResolvedIncludePath};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use crate::generate::type_registry;
@@ -409,8 +407,7 @@ pub async fn build_dto_context(
         .get(&domain)
         .and_then(|d| d.get_entity_config(&entity_name));
 
-    let operations =
-        resolve_entity_operations(db, config, &domain, &entity_name).await;
+    let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
     let dto_config = entity_cfg.map(|ec| &ec.dto);
     let mut immutable_fields = dto_config
@@ -599,9 +596,7 @@ pub async fn build_dto_context(
         //  - FK-on-child (target has a `<parent>_id` column, e.g. party.case_id
         //    for case.party_ids): no field on the parent DTO — children are
         //    managed through their own endpoints.
-        if prop.is_array
-            && prop.effective_kind() == Some(RefClassificationKind::EntityReference)
-        {
+        if prop.is_array && prop.effective_kind() == Some(RefClassificationKind::EntityReference) {
             let target = db
                 .get_array_item_schema(&prop.name, schema_title)
                 .await

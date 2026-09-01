@@ -15,9 +15,7 @@ use crate::generate::type_registry;
 use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
-use super::include_path::{
-    resolve_include_paths_for_topology, ResolvedIncludePath,
-};
+use super::include_path::{resolve_include_paths_for_topology, ResolvedIncludePath};
 use super::router::{ChildInfo, CrossRefInfo};
 
 use super::api_model::{resolve_entity_operations, resolve_path_segment};
@@ -143,8 +141,7 @@ impl EntityGenerator for HandlerGenerator {
 
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let tag = entity_cfg
             .and_then(|ec| ec.tag.clone())
@@ -210,7 +207,8 @@ impl EntityGenerator for HandlerGenerator {
                     if let Ok(Some(parent_schema)) =
                         db.get_schema_in_domain(parent_title, &domain).await
                     {
-                        resolved_parent_path_segment = Some(resolve_path_segment(None, &parent_schema));
+                        resolved_parent_path_segment =
+                            Some(resolve_path_segment(None, &parent_schema));
                         resolved_parent_module_name = Some(parent_schema.pg_table_name.clone());
                         resolved_parent_domain = if config
                             .domains
@@ -279,7 +277,8 @@ impl EntityGenerator for HandlerGenerator {
                     if let Ok(Some(parent_schema)) =
                         db.get_schema_in_domain(&pc.parent_title, &domain).await
                     {
-                        resolved_parent_path_segment = Some(resolve_path_segment(None, &parent_schema));
+                        resolved_parent_path_segment =
+                            Some(resolve_path_segment(None, &parent_schema));
                         resolved_parent_module_name = Some(parent_schema.pg_table_name.clone());
                         resolved_parent_domain = Some(domain.clone());
                     } else {

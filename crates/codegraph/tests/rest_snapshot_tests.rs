@@ -37,7 +37,10 @@ fn snapshot_rest_handler_candidate() {
     assert!(!files.is_empty(), "Expected at least one generated file");
     for f in &files {
         insta::assert_snapshot!(
-            format!("rest_handler_{}", f.path.to_string_lossy().replace('/', "_")),
+            format!(
+                "rest_handler_{}",
+                f.path.to_string_lossy().replace('/', "_")
+            ),
             &f.content
         );
     }
@@ -50,9 +53,8 @@ fn snapshot_rest_router_recruiting() {
     let tera = helpers::create_test_tera();
     let project = ProjectConfig::default();
 
-    let gen = codegraph::generate::api::router::RouterGenerator::new(Path::new(
-        "/tmp/rest-test-router",
-    ));
+    let gen =
+        codegraph::generate::api::router::RouterGenerator::new(Path::new("/tmp/rest-test-router"));
     let entity_titles = vec!["CandidateType".to_string()];
     let files = tokio::runtime::Runtime::new()
         .unwrap()
@@ -69,10 +71,7 @@ fn snapshot_rest_router_recruiting() {
     assert!(!files.is_empty(), "Expected at least one generated file");
     for f in &files {
         insta::assert_snapshot!(
-            format!(
-                "rest_router_{}",
-                f.path.to_string_lossy().replace('/', "_")
-            ),
+            format!("rest_router_{}", f.path.to_string_lossy().replace('/', "_")),
             &f.content
         );
     }
@@ -97,13 +96,7 @@ fn snapshot_rest_openapi_domain_recruiting() {
     ));
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(
-            &engine,
-            &config,
-            &generation_order,
-            &tera,
-            &project,
-        ))
+        .block_on(gen.generate(&engine, &config, &generation_order, &tera, &project))
         .expect("OpenApiGenerator failed");
 
     let recruiting_file = files
@@ -114,10 +107,7 @@ fn snapshot_rest_openapi_domain_recruiting() {
     insta::assert_snapshot!(
         format!(
             "rest_openapi_domain_{}",
-            recruiting_file
-                .path
-                .to_string_lossy()
-                .replace('/', "_")
+            recruiting_file.path.to_string_lossy().replace('/', "_")
         ),
         &recruiting_file.content
     );
@@ -142,13 +132,7 @@ fn snapshot_rest_openapi_all() {
     ));
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(
-            &engine,
-            &config,
-            &generation_order,
-            &tera,
-            &project,
-        ))
+        .block_on(gen.generate(&engine, &config, &generation_order, &tera, &project))
         .expect("OpenApiGenerator failed");
 
     let all_file = files
@@ -172,9 +156,8 @@ fn snapshot_rest_links_recruiting() {
     let tera = helpers::create_test_tera();
     let project = ProjectConfig::default();
 
-    let gen = codegraph::generate::api::links::LinksGenerator::new(Path::new(
-        "/tmp/rest-test-links",
-    ));
+    let gen =
+        codegraph::generate::api::links::LinksGenerator::new(Path::new("/tmp/rest-test-links"));
     let entity_titles = vec!["CandidateType".to_string()];
     let files = tokio::runtime::Runtime::new()
         .unwrap()

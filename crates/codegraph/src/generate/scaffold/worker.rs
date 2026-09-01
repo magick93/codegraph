@@ -196,9 +196,7 @@ pub fn build_worker_domains(
                 .map(|e| e.queue_binding_or("WEBHOOK_QUEUE"))
                 .unwrap_or_else(|| "WEBHOOK_QUEUE".to_string());
             let queue_name = entry
-                .map(|e| {
-                    e.queue_name_or(&format!("{app_name}-{}-webhooks", d.name))
-                })
+                .map(|e| e.queue_name_or(&format!("{app_name}-{}-webhooks", d.name)))
                 .unwrap_or_else(|| format!("{app_name}-{}-webhooks", d.name));
             WorkerDomain {
                 name: d.name.clone(),
@@ -218,13 +216,9 @@ pub fn build_worker_domains(
                 has_webhooks,
                 queue_name,
                 queue_binding,
-                queue_max_retries: entry
-                    .map(|e| e.queue_max_retries_or(5))
-                    .unwrap_or(5),
+                queue_max_retries: entry.map(|e| e.queue_max_retries_or(5)).unwrap_or(5),
                 queue_max_concurrency: entry.and_then(|e| e.queue_max_concurrency),
-                observability: entry
-                    .map(|e| e.observability_or(false))
-                    .unwrap_or(false),
+                observability: entry.map(|e| e.observability_or(false)).unwrap_or(false),
                 domain_types_path: String::new(),
                 hooks_api_path: String::new(),
             }
@@ -1133,14 +1127,14 @@ entities = ["CodeType"]
         };
         let config = test_config();
         let domains = build_worker_domains("hr", &config, vec![scaffold_domain("payroll")]);
-        let rendered = render_template_with_project(
-            &tera,
-            "scaffold/worker_lib.tera",
-            &domains[0],
-            &project,
-        )
-        .unwrap();
-        for needle in ["pub mod entity;", "pub mod db_client;", "pub mod workflow_client;"] {
+        let rendered =
+            render_template_with_project(&tera, "scaffold/worker_lib.tera", &domains[0], &project)
+                .unwrap();
+        for needle in [
+            "pub mod entity;",
+            "pub mod db_client;",
+            "pub mod workflow_client;",
+        ] {
             assert!(
                 rendered.contains(needle),
                 "worker lib.rs must declare `{needle}`, got:\n{rendered}"

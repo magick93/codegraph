@@ -698,7 +698,10 @@ async fn required_vo_entity_ref_emits_nullable_fk() {
         .into_iter()
         .find(|p| p.name == "event")
         .expect("RsvpType should have an 'event' property");
-    assert!(event_prop.is_required, "event must be required in the fixture");
+    assert!(
+        event_prop.is_required,
+        "event must be required in the fixture"
+    );
     assert_eq!(
         event_prop.effective_kind(),
         Some(RefClassificationKind::ValueObject),
@@ -722,7 +725,10 @@ async fn required_vo_entity_ref_emits_nullable_fk() {
         .fk_target
         .as_ref()
         .expect("event_id should have an FK target");
-    assert_eq!(fk.schema, "events", "event_id should reference the events schema");
+    assert_eq!(
+        fk.schema, "events",
+        "event_id should reference the events schema"
+    );
     assert_eq!(
         fk.table, "public_event",
         "event_id should reference events.public_event, not an unrelated entity"
@@ -731,7 +737,14 @@ async fn required_vo_entity_ref_emits_nullable_fk() {
     // 2. DDL: the FK column is nullable (no NOT NULL).
     let ddl_gen = codegraph::generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"));
     let ddl_files = ddl_gen
-        .generate(&engine, "RsvpType", "rsvp", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "RsvpType",
+            "rsvp",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let ddl = ddl_files
@@ -755,7 +768,14 @@ async fn required_vo_entity_ref_emits_nullable_fk() {
     std::fs::create_dir_all(&tmp).unwrap();
     let dto_gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let dto_files = dto_gen
-        .generate(&engine, "RsvpType", "rsvp", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "RsvpType",
+            "rsvp",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let create = dto_files
@@ -773,7 +793,14 @@ async fn required_vo_entity_ref_emits_nullable_fk() {
     let entity_gen =
         codegraph::generate::db::entity::SeaOrmEntityGenerator::new(Path::new("/tmp/out"));
     let entity_files = entity_gen
-        .generate(&engine, "RsvpType", "rsvp", &config, &tera, &ProjectConfig::default())
+        .generate(
+            &engine,
+            "RsvpType",
+            "rsvp",
+            &config,
+            &tera,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let entity = entity_files
@@ -1158,7 +1185,9 @@ async fn grafeo_candidate_repository_impl_content() {
 
     // Implements trait
     assert!(
-        code.contains("impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryImpl"),
+        code.contains(
+            "impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryImpl"
+        ),
         "missing trait impl"
     );
 

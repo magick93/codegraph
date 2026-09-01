@@ -67,7 +67,9 @@ pub async fn resolve_domain_api_resources(
                     path_template: format!(
                         "{}/{}/{}{}",
                         api_prefix("v1"),
-                        domain_name, resource.path_segment, suffix
+                        domain_name,
+                        resource.path_segment,
+                        suffix
                     ),
                     operation_kind: op.kind.clone(),
                 });
@@ -206,18 +208,14 @@ fn op_kind_to_http(kind: &str) -> (&'static str, &'static str) {
 
 /// Resolve the URL path segment for an entity.
 /// Priority: EntityConfig.path_segment > SchemaNode.api_path_segment > entity_name (lowercase)
-pub fn resolve_path_segment(
-    ec: Option<&EntityConfig>,
-    schema_node: &SchemaNode,
-) -> String {
-    ec.and_then(|c| c.path_segment.clone())
-        .unwrap_or_else(|| {
-            if schema_node.api_path_segment.is_empty() {
-                schema_node.title.to_lowercase()
-            } else {
-                schema_node.api_path_segment.clone()
-            }
-        })
+pub fn resolve_path_segment(ec: Option<&EntityConfig>, schema_node: &SchemaNode) -> String {
+    ec.and_then(|c| c.path_segment.clone()).unwrap_or_else(|| {
+        if schema_node.api_path_segment.is_empty() {
+            schema_node.title.to_lowercase()
+        } else {
+            schema_node.api_path_segment.clone()
+        }
+    })
 }
 
 /// Like resolve_path_segment but falls back to a domain-config lookup when
@@ -230,7 +228,10 @@ pub fn resolve_path_segment_with_config(
 ) -> String {
     let effective_ec = ec.or_else(|| {
         let domain = schema_node.domain.as_deref()?;
-        config.domains.get(domain)?.get_entity_config(&schema_node.title)
+        config
+            .domains
+            .get(domain)?
+            .get_entity_config(&schema_node.title)
     });
     resolve_path_segment(effective_ec, schema_node)
 }
@@ -306,8 +307,17 @@ operations = ["create", "read", "list"]
 
     #[test]
     fn normalized_resource_name_strips_and_pascals() {
-        assert_eq!(normalized_resource_name("ScreeningResult"), "ScreeningResult");
-        assert_eq!(normalized_resource_name("Screening Result"), "ScreeningResult");
-        assert_eq!(normalized_resource_name("review decisionType"), "ReviewDecision");
+        assert_eq!(
+            normalized_resource_name("ScreeningResult"),
+            "ScreeningResult"
+        );
+        assert_eq!(
+            normalized_resource_name("Screening Result"),
+            "ScreeningResult"
+        );
+        assert_eq!(
+            normalized_resource_name("review decisionType"),
+            "ReviewDecision"
+        );
     }
 }

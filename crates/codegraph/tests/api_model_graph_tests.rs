@@ -104,8 +104,7 @@ async fn resolve_entity_operations_prefers_explicit_config() {
     let config = compliance_config();
     ingest_api_model(&engine, &config).await.unwrap();
 
-    let ops =
-        resolve_entity_operations(&engine, &config, "compliance", "ScreeningResult").await;
+    let ops = resolve_entity_operations(&engine, &config, "compliance", "ScreeningResult").await;
     assert_eq!(ops, vec!["create", "read", "list"]);
 }
 

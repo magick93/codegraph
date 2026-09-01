@@ -43,14 +43,13 @@ pub fn ui_field_from_property(
         .to_string();
     // rust_field_name is sanitized at ingestion (no _code suffix),
     // so it matches the DTO field name directly.
-    let ts_field_name =
-        if is_entity_ref && !prop.is_array && !ts_field_name.ends_with("_id") {
-            // resolve_field already appends _id for scalar EntityReference
-            // columns; junction arrays keep raw names.
-            format!("{}_id", ts_field_name)
-        } else {
-            ts_field_name
-        };
+    let ts_field_name = if is_entity_ref && !prop.is_array && !ts_field_name.ends_with("_id") {
+        // resolve_field already appends _id for scalar EntityReference
+        // columns; junction arrays keep raw names.
+        format!("{}_id", ts_field_name)
+    } else {
+        ts_field_name
+    };
     let label = field_name_to_label(&ts_field_name);
 
     UiField {
@@ -201,8 +200,7 @@ impl EntityGenerator for UiFormGenerator {
 
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let has_create = operations.contains(&"create".to_string());
         let has_update = operations.contains(&"update".to_string());
@@ -226,7 +224,8 @@ impl EntityGenerator for UiFormGenerator {
             }
         }
 
-        let fields = collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
+        let fields =
+            collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
 
         let create_fields: Vec<UiField> = fields
             .iter()

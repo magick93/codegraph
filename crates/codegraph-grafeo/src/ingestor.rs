@@ -4,10 +4,9 @@ use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
     DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode,
-    HttpEndpointNode, IngestStats, InteractionNode, MembershipNode,
-    ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
-    RelationshipNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    HttpEndpointNode, IngestStats, InteractionNode, MembershipNode, ParameterDefinitionNode,
+    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaNode,
+    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -923,10 +922,7 @@ impl GraphIngestor for GrafeoEngine {
         Ok(id)
     }
 
-    async fn ingest_api_operation(
-        &self,
-        node: &ApiOperationNode,
-    ) -> Result<String, GraphError> {
+    async fn ingest_api_operation(&self, node: &ApiOperationNode) -> Result<String, GraphError> {
         let session = self.db().session();
         let id = format!("ao:{}", node.name);
         let gql = format!(
@@ -965,10 +961,7 @@ impl GraphIngestor for GrafeoEngine {
         Ok(id)
     }
 
-    async fn ingest_http_endpoint(
-        &self,
-        node: &HttpEndpointNode,
-    ) -> Result<String, GraphError> {
+    async fn ingest_http_endpoint(&self, node: &HttpEndpointNode) -> Result<String, GraphError> {
         let session = self.db().session();
         let id = format!("he:{}", uuid::Uuid::new_v4());
         let gql = format!(
@@ -1044,8 +1037,8 @@ impl GraphIngestor for GrafeoEngine {
 
     async fn ingest_policy(&self, policy: &PolicyNode) -> Result<(), GraphError> {
         let session = self.db().session();
-        let kind_json = serde_json::to_string(&policy.kind)
-            .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let kind_json =
+            serde_json::to_string(&policy.kind).map_err(|e| GraphError::Ingest(e.to_string()))?;
         let domain = policy.domain.clone().unwrap_or_default();
         let gql = format!(
             "INSERT (:Policy {{ \
@@ -1062,10 +1055,7 @@ impl GraphIngestor for GrafeoEngine {
         Ok(())
     }
 
-    async fn ingest_relationship(
-        &self,
-        relationship: &RelationshipNode,
-    ) -> Result<(), GraphError> {
+    async fn ingest_relationship(&self, relationship: &RelationshipNode) -> Result<(), GraphError> {
         let session = self.db().session();
         let fk_json = serde_json::to_string(&relationship.foreign_key)
             .map_err(|e| GraphError::Ingest(e.to_string()))?;

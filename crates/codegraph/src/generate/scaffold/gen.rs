@@ -196,7 +196,6 @@ impl GlobalGenerator for ScaffoldGenerator {
     ) -> Result<Vec<GeneratedFile>> {
         let domains = build_scaffold_domains(db, config, generation_order).await;
 
-
         // Compute absolute output dir (shared by all path calculations)
         let abs_output = if self.output_dir.is_absolute() {
             self.output_dir.clone()
@@ -220,10 +219,7 @@ impl GlobalGenerator for ScaffoldGenerator {
         let mut grant_schemas: Vec<String> = domains
             .iter()
             .map(|d| d.postgres_schema.clone())
-            .chain(
-                ["common".to_string(), "platform".to_string()]
-                    .into_iter(),
-            )
+            .chain(["common".to_string(), "platform".to_string()].into_iter())
             .collect();
         grant_schemas.sort();
         grant_schemas.dedup();
@@ -499,8 +495,6 @@ mod tests {
             &crate::generate::ProjectConfig::default(),
         )
         .unwrap();
-        assert!(sql.contains(
-            "REVOKE UPDATE, DELETE ON core.case_status_changed FROM app_user"
-        ));
+        assert!(sql.contains("REVOKE UPDATE, DELETE ON core.case_status_changed FROM app_user"));
     }
 }

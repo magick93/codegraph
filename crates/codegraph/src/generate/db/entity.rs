@@ -470,18 +470,18 @@ impl EntityGenerator for SeaOrmEntityGenerator {
 
         // Add tenant column — policy-driven when TenantIsolationPolicy exists,
         // otherwise fall back to legacy config-based behavior.
-        let (is_tenant_scoped, tenant_column_name): (bool, String) =
-            if let Some(ti) = tenant_policy {
-                match &ti.strategy {
-                    TenantStrategy::Column { property } => (true, property.clone()),
-                    _ => (true, String::new()),
-                }
-            } else {
-                (
-                    !is_global_entity(table_name, config),
-                    "platform_organization_id".to_string(),
-                )
-            };
+        let (is_tenant_scoped, tenant_column_name): (bool, String) = if let Some(ti) = tenant_policy
+        {
+            match &ti.strategy {
+                TenantStrategy::Column { property } => (true, property.clone()),
+                _ => (true, String::new()),
+            }
+        } else {
+            (
+                !is_global_entity(table_name, config),
+                "platform_organization_id".to_string(),
+            )
+        };
         if is_tenant_scoped && !tenant_column_name.is_empty() {
             columns.insert(
                 1, // After id, before other columns

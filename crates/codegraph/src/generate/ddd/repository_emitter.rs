@@ -179,7 +179,12 @@ impl TreeColumn {
 /// Handles codelist enum parsing, JSONB deserialization, and plain copy.
 /// `pad` is the indentation prefix (e.g. `"            "`).
 /// `row_var` is the variable name holding the entity row (e.g. `"row"`).
-pub(crate) fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_var: &str, pad: &str) {
+pub(crate) fn emit_entity_to_dto_field(
+    code: &mut String,
+    col: &TreeColumn,
+    row_var: &str,
+    pad: &str,
+) {
     let dto_field = col.dto_name();
     let entity_field = &col.field_name;
     // StructuredWrapper must take priority over dto_rust_type — it uses
@@ -232,7 +237,11 @@ pub(crate) fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_
 ///
 /// For array children: `field: field_rows,`
 /// For single children: `field: field_rows.into_iter().next(),`
-pub(crate) fn emit_child_field_population(code: &mut String, children: &[ChildTableInfo], pad: &str) {
+pub(crate) fn emit_child_field_population(
+    code: &mut String,
+    children: &[ChildTableInfo],
+    pad: &str,
+) {
     for child in children {
         if child.is_array {
             writeln!(
@@ -1117,7 +1126,11 @@ fn emit_junction_inserts(
             writeln!(code, "{pad}    let stmt = Statement::from_sql_and_values(").unwrap();
             writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
             writeln!(code, "{pad}        \"{sql}\",").unwrap();
-            writeln!(code, "{pad}        vec![{parent_id_var}.into(), (*item).into()],").unwrap();
+            writeln!(
+                code,
+                "{pad}        vec![{parent_id_var}.into(), (*item).into()],"
+            )
+            .unwrap();
             writeln!(code, "{pad}    );").unwrap();
             writeln!(code, "{pad}    tx.execute(stmt).await?;").unwrap();
             writeln!(code, "{pad}}}").unwrap();
@@ -1129,10 +1142,18 @@ fn emit_junction_inserts(
             )
             .unwrap();
             writeln!(code, "{pad}    for item in ids {{").unwrap();
-            writeln!(code, "{pad}        let stmt = Statement::from_sql_and_values(").unwrap();
+            writeln!(
+                code,
+                "{pad}        let stmt = Statement::from_sql_and_values("
+            )
+            .unwrap();
             writeln!(code, "{pad}            DatabaseBackend::Postgres,").unwrap();
             writeln!(code, "{pad}            \"{sql}\",").unwrap();
-            writeln!(code, "{pad}            vec![{parent_id_var}.into(), (*item).into()],").unwrap();
+            writeln!(
+                code,
+                "{pad}            vec![{parent_id_var}.into(), (*item).into()],"
+            )
+            .unwrap();
             writeln!(code, "{pad}        );").unwrap();
             writeln!(code, "{pad}        tx.execute(stmt).await?;").unwrap();
             writeln!(code, "{pad}    }}").unwrap();
@@ -1143,11 +1164,7 @@ fn emit_junction_inserts(
 
 /// Emit junction replace logic for UPDATE: when the update request carries the
 /// field, delete existing junction rows and re-insert the supplied ids.
-fn emit_junction_replace(
-    code: &mut String,
-    junctions: &[JunctionTableInfo],
-    indent: usize,
-) {
+fn emit_junction_replace(code: &mut String, junctions: &[JunctionTableInfo], indent: usize) {
     let pad = "    ".repeat(indent);
     for j in junctions {
         writeln!(code).unwrap();
@@ -1183,7 +1200,11 @@ fn emit_junction_replace(
             q(&j.child_fk_column),
         );
         writeln!(code, "{pad}    for item in ids {{").unwrap();
-        writeln!(code, "{pad}        let stmt = Statement::from_sql_and_values(").unwrap();
+        writeln!(
+            code,
+            "{pad}        let stmt = Statement::from_sql_and_values("
+        )
+        .unwrap();
         writeln!(code, "{pad}            DatabaseBackend::Postgres,").unwrap();
         writeln!(code, "{pad}            \"{ins_sql}\",").unwrap();
         writeln!(code, "{pad}            vec![id.into(), (*item).into()],").unwrap();
@@ -1220,7 +1241,11 @@ fn emit_junction_reads(
         writeln!(code, "{pad}        vec![{parent_id_expr}.into()],").unwrap();
         writeln!(code, "{pad}    );").unwrap();
         writeln!(code, "{pad}    let rows = db.query_all(stmt).await?;").unwrap();
-        writeln!(code, "{pad}    let mut items = Vec::with_capacity(rows.len());").unwrap();
+        writeln!(
+            code,
+            "{pad}    let mut items = Vec::with_capacity(rows.len());"
+        )
+        .unwrap();
         writeln!(code, "{pad}    for row in &rows {{").unwrap();
         writeln!(code, "{pad}        use sea_orm::TryGetable;").unwrap();
         writeln!(
@@ -1237,16 +1262,17 @@ fn emit_junction_reads(
 }
 
 /// Populate junction fields into the response struct construction.
-fn emit_junction_field_population(
-    code: &mut String,
-    junctions: &[JunctionTableInfo],
-    pad: &str,
-) {
+fn emit_junction_field_population(code: &mut String, junctions: &[JunctionTableInfo], pad: &str) {
     for j in junctions {
         if j.is_required {
             writeln!(code, "{pad}{field}: {field}_rows,", field = j.field_name).unwrap();
         } else {
-            writeln!(code, "{pad}{field}: Some({field}_rows),", field = j.field_name).unwrap();
+            writeln!(
+                code,
+                "{pad}{field}: Some({field}_rows),",
+                field = j.field_name
+            )
+            .unwrap();
         }
     }
 }
@@ -1666,16 +1692,19 @@ async fn build_columns_and_children(
                     if let Some(t) = target {
                         junction_tables.push(JunctionTableInfo {
                             field_name: field_def.rust_field_name.clone(),
-                            sql_table_name: codegraph_naming::truncate_pg_identifier(
-                                &format!("{}_{}", module_name, field_def.column_name),
-                            ),
+                            sql_table_name: codegraph_naming::truncate_pg_identifier(&format!(
+                                "{}_{}",
+                                module_name, field_def.column_name
+                            )),
                             sql_schema_name: schema_name.to_string(),
-                            parent_fk_column: codegraph_naming::truncate_pg_identifier(
-                                &format!("{}_id", module_name),
-                            ),
-                            child_fk_column: codegraph_naming::truncate_pg_identifier(
-                                &format!("{}_id", t.pg_table_name),
-                            ),
+                            parent_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
+                                "{}_id",
+                                module_name
+                            )),
+                            child_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
+                                "{}_id",
+                                t.pg_table_name
+                            )),
                             is_required: prop.is_required,
                         });
                     }
@@ -2155,8 +2184,7 @@ impl RepositoryImplEmitter {
         let schema_name = domain.to_string();
 
         // Determine enabled operations
-        let operations =
-            resolve_entity_operations(db, config, domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, domain, &entity_name).await;
         let has_create = operations.contains(&"create".to_string());
         let has_read = operations.contains(&"read".to_string());
         let has_update = operations.contains(&"update".to_string());
@@ -2171,7 +2199,9 @@ impl RepositoryImplEmitter {
             .unwrap_or(false);
 
         let policies = db.get_policies_for_schema(schema_title).await?;
-        let has_audit_policy = policies.iter().any(|p| matches!(p.kind, PolicyKind::Audit(_)));
+        let has_audit_policy = policies
+            .iter()
+            .any(|p| matches!(p.kind, PolicyKind::Audit(_)));
         let soft_delete_policy = policies.iter().find_map(|p| {
             if let PolicyKind::SoftDelete(ref sd) = p.kind {
                 Some(sd.clone())
@@ -2225,8 +2255,14 @@ impl RepositoryImplEmitter {
             })
             .unwrap_or_else(|| "restrict".to_string());
 
-        let track_updated_user = audit_policy.as_ref().map(|a| a.track_updated).unwrap_or(false);
-        let track_deleted_user = audit_policy.as_ref().map(|a| a.track_deleted).unwrap_or(false);
+        let track_updated_user = audit_policy
+            .as_ref()
+            .map(|a| a.track_updated)
+            .unwrap_or(false);
+        let track_deleted_user = audit_policy
+            .as_ref()
+            .map(|a| a.track_deleted)
+            .unwrap_or(false);
 
         // Workflow-managed fields are excluded from create/update DTOs but
         // included in response DTOs. Mark them so the repository can include
@@ -2898,11 +2934,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code).unwrap();
-            writeln!(
-                code,
-                "        if !include_deleted {{"
-            )
-            .unwrap();
+            writeln!(code, "        if !include_deleted {{").unwrap();
             writeln!(
                 code,
                 "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
@@ -2985,11 +3017,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code).unwrap();
-            writeln!(
-                code,
-                "        if !include_deleted {{"
-            )
-            .unwrap();
+            writeln!(code, "        if !include_deleted {{").unwrap();
             writeln!(
                 code,
                 "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
@@ -3593,11 +3621,7 @@ impl RepositoryImplEmitter {
         .unwrap();
         if has_any_filters {
             if tree.is_auditable {
-                writeln!(
-                    code,
-                    "            .filter(condition);"
-                )
-                .unwrap();
+                writeln!(code, "            .filter(condition);").unwrap();
             } else {
                 writeln!(code, "            .filter(condition)").unwrap();
             }
@@ -4397,12 +4421,7 @@ impl RepositoryImplEmitter {
             writeln!(code, "        }};").unwrap();
             if seg.fk_is_required {
                 // Required genuine EntityReference: the FK field is a plain Uuid.
-                writeln!(
-                    code,
-                    "        let fk_value = source.{};",
-                    seg.fk_column
-                )
-                .unwrap();
+                writeln!(code, "        let fk_value = source.{};", seg.fk_column).unwrap();
             } else {
                 writeln!(
                     code,
@@ -4568,12 +4587,7 @@ impl RepositoryImplEmitter {
             writeln!(code, "        for row in rows {{").unwrap();
             if seg.reverse_fk_is_required {
                 // Required reverse FK (genuine EntityReference): plain Uuid.
-                writeln!(
-                    code,
-                    "            let key = row.{};",
-                    seg.reverse_fk_column
-                )
-                .unwrap();
+                writeln!(code, "            let key = row.{};", seg.reverse_fk_column).unwrap();
             } else {
                 writeln!(
                     code,

@@ -92,8 +92,7 @@ impl ProtoContext {
             .get(domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations =
-            resolve_entity_operations(db, config, domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, domain, &entity_name).await;
 
         let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
         let has_workflow = workflow

@@ -12,11 +12,11 @@ use std::path::Path;
 use codegraph::generate;
 use codegraph::generate::api::resolve_include_paths;
 use codegraph::generate::ddd::dto::DtoGenerator;
-use codegraph::generate::ProjectConfig;
 use codegraph::generate::traits::EntityGenerator;
+use codegraph::generate::ProjectConfig;
 use codegraph_core::mock::MockEngine;
-use codegraph_core::types::{ParentCandidate, PropertyNode, SchemaNode};
 use codegraph_core::types::DetectionSource;
+use codegraph_core::types::{ParentCandidate, PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
 
 fn schema_for(title: &str, table: &str, rust_type_name: &str) -> SchemaNode {
@@ -54,7 +54,11 @@ fn prop(
 ) -> PropertyNode {
     PropertyNode {
         name: name.into(),
-        prop_type: if is_array { "array".into() } else { "object".into() },
+        prop_type: if is_array {
+            "array".into()
+        } else {
+            "object".into()
+        },
         description: None,
         format: None,
         is_required: false,
@@ -147,14 +151,15 @@ fn explicit_include_through_junction_array_is_skipped() {
         )
         .build();
 
-    let paths = rt().block_on(resolve_include_paths(
-        &engine,
-        &config_with_allow_include(Some(vec!["parties".into()])),
-        "hr",
-        "WorkerType",
-        Some(&vec!["parties".into()]),
-    ))
-    .expect("resolution should not fail");
+    let paths = rt()
+        .block_on(resolve_include_paths(
+            &engine,
+            &config_with_allow_include(Some(vec!["parties".into()])),
+            "hr",
+            "WorkerType",
+            Some(&vec!["parties".into()]),
+        ))
+        .expect("resolution should not fail");
 
     assert!(
         paths.is_empty(),
@@ -185,17 +190,20 @@ fn auto_discovery_skips_junction_array_relationship() {
         )
         .build();
 
-    let paths = rt().block_on(resolve_include_paths(
-        &engine,
-        &config_with_allow_include(None),
-        "hr",
-        "WorkerType",
-        None,
-    ))
-    .expect("resolution should not fail");
+    let paths = rt()
+        .block_on(resolve_include_paths(
+            &engine,
+            &config_with_allow_include(None),
+            "hr",
+            "WorkerType",
+            None,
+        ))
+        .expect("resolution should not fail");
 
     assert!(
-        !paths.iter().any(|p| p.segments.iter().any(|s| s.schema_title == "PartyType")),
+        !paths
+            .iter()
+            .any(|p| p.segments.iter().any(|s| s.schema_title == "PartyType")),
         "auto-discovery must not traverse junction arrays, got {:?}",
         paths.iter().map(|p| p.alias.clone()).collect::<Vec<_>>()
     );
@@ -232,17 +240,20 @@ fn auto_discovery_skips_children_without_parent_fk() {
         })
         .build();
 
-    let paths = rt().block_on(resolve_include_paths(
-        &engine,
-        &config_with_allow_include(None),
-        "hr",
-        "TrustType",
-        None,
-    ))
-    .expect("resolution should not fail");
+    let paths = rt()
+        .block_on(resolve_include_paths(
+            &engine,
+            &config_with_allow_include(None),
+            "hr",
+            "TrustType",
+            None,
+        ))
+        .expect("resolution should not fail");
 
     assert!(
-        !paths.iter().any(|p| p.segments.iter().any(|s| s.schema_title == "PartyType")),
+        !paths
+            .iter()
+            .any(|p| p.segments.iter().any(|s| s.schema_title == "PartyType")),
         "child-style discovery must skip junction targets without a parent FK"
     );
 }
@@ -289,15 +300,16 @@ allow_include = ["review_decision"]
 
     let output_dir = tempfile::TempDir::new().unwrap();
     let gen = DtoGenerator::new(output_dir.path());
-    let files = rt().block_on(gen.generate(
-        &engine,
-        "WorkerType",
-        "hr",
-        &config,
-        &test_tera(),
-        &ProjectConfig::default(),
-    ))
-    .expect("DtoGenerator failed");
+    let files = rt()
+        .block_on(gen.generate(
+            &engine,
+            "WorkerType",
+            "hr",
+            &config,
+            &test_tera(),
+            &ProjectConfig::default(),
+        ))
+        .expect("DtoGenerator failed");
 
     let included = files
         .iter()
@@ -305,9 +317,9 @@ allow_include = ["review_decision"]
         .expect("should emit dto_included.rs");
 
     assert!(
-        included
-            .content
-            .contains("use crate::domain::hr::review_decision::dto_response::ReviewDecisionResponse;"),
+        included.content.contains(
+            "use crate::domain::hr::review_decision::dto_response::ReviewDecisionResponse;"
+        ),
         "import must resolve to the target entity's dto_response module:\n{}",
         included.content
     );

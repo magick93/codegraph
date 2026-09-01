@@ -1728,7 +1728,8 @@ impl GrafeoEngine {
             //      `<parent>_<field>` junction child table holding parent_id +
             //      child_id FKs (many-to-many).
             if prop.is_array
-                && classification == Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
+                && classification
+                    == Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
             {
                 let target_title = self
                     .get_array_item_schema(&prop.name, schema_title)
@@ -1965,9 +1966,7 @@ impl GrafeoEngine {
 
         // Verify the target exists as an entity in the graph before emitting FK.
         // Try to find the target by table name in the resolved schema domain.
-        if let Ok(Some(target_check)) =
-            self.get_schema_in_domain(&table, &schema_name).await
-        {
+        if let Ok(Some(target_check)) = self.get_schema_in_domain(&table, &schema_name).await {
             if !target_check.is_entity {
                 return None;
             }
@@ -1975,8 +1974,7 @@ impl GrafeoEngine {
         // If the schema doesn't exist in the resolved domain, try the default domain
         // as a fallback (cross-domain allOf references).
         if schema_name != default_schema {
-            if let Ok(Some(target_check)) =
-                self.get_schema_in_domain(&table, default_schema).await
+            if let Ok(Some(target_check)) = self.get_schema_in_domain(&table, default_schema).await
             {
                 if target_check.is_entity {
                     return Some(FkTarget {
