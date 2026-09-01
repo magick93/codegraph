@@ -288,6 +288,9 @@ fn emit_response_construction(code: &mut String, tree: &EntityTree) {
     }
     writeln!(code, "            created_at: row.created_at,").unwrap();
     writeln!(code, "            updated_at: row.updated_at,").unwrap();
+    // DTO fields the tree does not load (e.g. base-inherited junction arrays
+    // under nested composition nodes) default to None instead of failing E0063.
+    writeln!(code, "            ..Default::default()").unwrap();
     writeln!(code, "        }}))").unwrap();
     writeln!(code, "    }}").unwrap();
 }
@@ -3693,6 +3696,7 @@ impl RepositoryImplEmitter {
         }
         writeln!(code, "                created_at: row.created_at,").unwrap();
         writeln!(code, "                updated_at: row.updated_at,").unwrap();
+        writeln!(code, "                ..Default::default()").unwrap();
         writeln!(code, "            }});").unwrap();
         writeln!(code, "        }}").unwrap();
         writeln!(code).unwrap();
@@ -3986,6 +3990,7 @@ impl RepositoryImplEmitter {
         }
         writeln!(code, "                created_at: row.created_at,").unwrap();
         writeln!(code, "                updated_at: row.updated_at,").unwrap();
+        writeln!(code, "                ..Default::default()").unwrap();
         if has_tree_include {
             writeln!(code, "            }}).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Serialization error: {{e}}\").into() }})?;").unwrap();
             // Emit worker merge block
