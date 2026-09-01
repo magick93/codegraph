@@ -84,7 +84,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
             // Prefer the graph's canonical name and fall back to the sanitized
             // title when the schema is absent (tests).
             let entity_name = db
-                .get_schema_in_domain(&stripped, &entry.domain)
+                .get_schema_in_domain(&entry.schema_title, &entry.domain)
                 .await
                 .ok()
                 .flatten()
