@@ -1734,6 +1734,12 @@ pub fn render_template_with_project_and_dialect<C: serde::Serialize>(
 
 /// Add a numeric prefix to migration file paths so alphabetical order matches
 /// dependency order. Non-migration files are returned unchanged.
+///
+/// The prefix is zero-padded to SIX digits: consumers (supabase db reset,
+/// glob-based migration loops) order files lexicographically, so an
+/// unpadded width would break once the sequence crosses 9999 — e.g. the
+/// entity DDL `9996_benefits_dependent.sql` sorting *after* its own child
+/// RLS at `10000_..._rls.sql` (SQLSTATE 42P01 during db reset).
 fn prefix_migration_path(mut file: GeneratedFile, seq: usize) -> GeneratedFile {
     let is_migration = file
         .path
@@ -1742,9 +1748,9 @@ fn prefix_migration_path(mut file: GeneratedFile, seq: usize) -> GeneratedFile {
         .is_some_and(|d| d == "migrations");
     if is_migration {
         if let Some(name) = file.path.file_name().and_then(|n| n.to_str()) {
-            // Skip files that already have a numeric prefix (e.g. 0005_pgmq_setup.sql)
+            // Skip files that already have a numeric prefix (e.g. 000005_pgmq_setup.sql)
             if !name.starts_with(|c: char| c.is_ascii_digit()) {
-                let prefixed = format!("{:04}_{}", seq, name);
+                let prefixed = format!("{:06}_{}", seq, name);
                 file.path = file.path.with_file_name(prefixed);
             }
         }
@@ -1815,18 +1821,18 @@ mod tests {
             let file = make_migration("common_some_codelist.sql");
             let result = prefix_migration_path(file, (idx + 10) as usize);
             let name = result.path.file_name().unwrap().to_str().unwrap();
-            // Must start with 4-digit zero-padded prefix
-            let prefix: String = name.chars().take(4).collect();
+            // Must start with 6-digit zero-padded prefix
+            let prefix: String = name.chars().take(6).collect();
             assert!(
                 prefix.chars().all(|c| c.is_ascii_digit()),
-                "codelist prefix must be 4 digits, got: {name}"
+                "codelist prefix must be 6 digits, got: {name}"
             );
             let num: u16 = prefix.parse().unwrap();
             assert!(
                 (10..100).contains(&num),
                 "codelist seq {num} out of range 10..99 for idx {idx}"
             );
-            assert_eq!(&name[4..5], "_", "5th char must be underscore: {name}");
+            assert_eq!(&name[6..7], "_", "7th char must be underscore: {name}");
         }
     }
 
@@ -1837,18 +1843,40 @@ mod tests {
             let file = make_migration("recruiting_candidate.sql");
             let result = prefix_migration_path(file, (idx + 500) as usize);
             let name = result.path.file_name().unwrap().to_str().unwrap();
-            let prefix: String = name.chars().take(4).collect();
+            let prefix: String = name.chars().take(6).collect();
             assert!(
                 prefix.chars().all(|c| c.is_ascii_digit()),
-                "entity prefix must be 4 digits, got: {name}"
+                "entity prefix must be 6 digits, got: {name}"
             );
             let num: u16 = prefix.parse().unwrap();
             assert!(
                 num >= 500,
                 "entity seq {num} should be >= 500 for idx {idx}"
             );
-            assert_eq!(&name[4..5], "_", "5th char must be underscore: {name}");
+            assert_eq!(&name[6..7], "_", "7th char must be underscore: {name}");
         }
+    }
+
+    #[test]
+    fn test_prefix_migration_path_sorts_across_five_digit_boundary() {
+        // Regression: with 4-digit padding, an entity DDL at seq 9996 and its
+        // child RLS at seq 10000 produced `9996_...` vs `10000_...`, which sort
+        // in the WRONG order lexicographically — supabase db reset then applies
+        // the RLS migration before the table exists (SQLSTATE 42P01).
+        // 6-digit padding keeps lexicographic == numeric across the boundary.
+        let ddl = prefix_migration_path(make_migration("benefits_dependent.sql"), 9996);
+        let rls = prefix_migration_path(
+            make_migration("benefits_dependent_child_address_rls.sql"),
+            10000,
+        );
+        let ddl_name = ddl.path.file_name().unwrap().to_str().unwrap();
+        let rls_name = rls.path.file_name().unwrap().to_str().unwrap();
+        assert_eq!(ddl_name, "009996_benefits_dependent.sql");
+        assert_eq!(rls_name, "010000_benefits_dependent_child_address_rls.sql");
+        assert!(
+            ddl_name < rls_name,
+            "DDL must sort before its child RLS across the 9999/10000 boundary"
+        );
     }
 
     #[test]
