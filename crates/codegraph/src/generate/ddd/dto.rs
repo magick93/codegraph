@@ -485,7 +485,7 @@ pub async fn build_dto_context(
 
     // Collect all raw field names to detect collisions when stripping _code suffix.
     // E.g. if both "language_code" and "language" exist, don't strip "language_code".
-    let all_field_names: std::collections::HashSet<String> =
+    let _all_field_names: std::collections::HashSet<String> =
         props.iter().map(|p| p.rust_field_name.clone()).collect();
 
     // Build entity titles set so we can detect VO properties that target
@@ -1095,6 +1095,7 @@ impl EntityGenerator for DtoGenerator {
 }
 
 impl DtoGenerator {
+    #[allow(clippy::too_many_arguments)]
     /// Generate include DTO files for eager-loading via `?include=` query parameter.
     async fn build_include_dtos(
         &self,
@@ -1198,7 +1199,7 @@ impl DtoGenerator {
             }
 
             let mut enriched = Vec::new();
-            for (first_seg, group_paths) in &by_first_seg {
+            for group_paths in by_first_seg.values() {
                 let first_path = group_paths[0];
                 let intermediate = &first_path.segments[0];
 
@@ -1451,10 +1452,11 @@ impl DtoGenerator {
                             .and_then(|s| s.strip_suffix('>'))
                             .unwrap_or(rust_type);
                         // Codelist enum types end with "CodeList" or "StatusCode" etc.
-                        if (ty.ends_with("CodeList") || ty.ends_with("Code")) && !ty.contains('<') {
-                            if !codelist_imports.contains(&ty.to_string()) {
-                                codelist_imports.push(ty.to_string());
-                            }
+                        if (ty.ends_with("CodeList") || ty.ends_with("Code"))
+                            && !ty.contains('<')
+                            && !codelist_imports.contains(&ty.to_string())
+                        {
+                            codelist_imports.push(ty.to_string());
                         }
                     }
                 }
@@ -1464,7 +1466,7 @@ impl DtoGenerator {
         // Only emit `use uuid::Uuid;` when an enriched base field actually
         // references the bare `Uuid` type (otherwise the import is dead code).
         let needs_uuid = enriched_types.iter().any(|et| {
-            et["base_fields"].as_array().map_or(false, |bfs| {
+            et["base_fields"].as_array().is_some_and(|bfs| {
                 bfs.iter().any(|bf| {
                     bf["rust_type"]
                         .as_str()
@@ -1543,11 +1545,4 @@ pub(crate) fn strip_code_suffix_safe(name: &str) -> String {
 /// Returns `None` when `ref_target` is `None` or empty.
 pub(crate) fn codelist_enum_name_from_ref(ref_target: &Option<String>) -> Option<String> {
     codegraph_core::types::codelist_enum_name_from_ref(ref_target)
-}
-
-/// Return the Rust type for a codelist property — the enum name if available,
-/// otherwise `"String"`.
-pub(crate) fn resolve_codelist_rust_type(prop: &codegraph_core::types::PropertyNode) -> String {
-    codegraph_core::types::codelist_enum_name_from_ref(&prop.ref_target)
-        .unwrap_or_else(|| "String".to_string())
 }

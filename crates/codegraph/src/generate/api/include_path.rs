@@ -187,6 +187,7 @@ fn filter_cross_domain_paths(
 
 // ── Explicit path resolution ──────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn resolve_explicit_paths(
     db: &dyn GraphQuerier,
     config: &codegraph_config::DomainConfig,
@@ -624,7 +625,7 @@ async fn resolve_auto_paths(
         let source_entity_name =
             super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
         let (reverse_fk_column, _) =
-            resolve_fk_via_graph(db, ref_title, schema_title, &source_entity_name).await?;
+            resolve_fk_via_graph(db, ref_title, schema_title, source_entity_name).await?;
 
         // Junction guard: array-of-entity-ref cross-refs live in junction
         // tables and cannot be fetched by either FK column.

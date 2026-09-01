@@ -63,7 +63,7 @@ impl DomainGenerator for ErrorGenerator {
                 e.domain.as_deref() == Some(domain) || e.domain.as_deref() == Some("common")
             })
             .filter_map(|e| {
-                let normalized = e.code.replace('-', "_").replace(' ', "_");
+                let normalized = e.code.replace(['-', ' '], "_");
                 let variant_name = codegraph_naming::to_pascal_case(&normalized);
                 if seen_codes.insert(variant_name.clone()) {
                     Some(ErrorDef {

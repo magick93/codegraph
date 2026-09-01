@@ -52,6 +52,8 @@ pub struct CachingQuerier<'a> {
     relationships_cache: RwLock<HashMap<String, Vec<RelationshipNode>>>,
     all_policies_cache: RwLock<Option<Vec<PolicyNode>>>,
     all_relationships_cache: RwLock<Option<Vec<RelationshipNode>>>,
+    /// Populated for future tenant-scoped queries; not read yet.
+    #[allow(dead_code)]
     tenants_cache: RwLock<HashMap<String, TenantNode>>,
 }
 

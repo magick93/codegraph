@@ -180,6 +180,7 @@ pub struct IngestResult {
     pub edges_created: usize,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn ingest_schema_node(
     db: &dyn GraphIngestor,
     loader: &SchemaLoader,
@@ -210,7 +211,7 @@ async fn ingest_schema_node(
             .schema
             .get("description")
             .and_then(|v| v.as_str())
-            .map(|s| sanitize_description(s)),
+            .map(sanitize_description),
         schema_type: entry
             .schema
             .get("type")
@@ -511,7 +512,7 @@ async fn ingest_properties_from_schema(
                 description: prop_schema
                     .get("description")
                     .and_then(|v| v.as_str())
-                    .map(|s| sanitize_description(s)),
+                    .map(sanitize_description),
                 format: prop_schema
                     .get("format")
                     .and_then(|v| v.as_str())
@@ -800,7 +801,7 @@ async fn ingest_codelist_values(
     let description = schema
         .get("description")
         .and_then(|v| v.as_str())
-        .map(|s| sanitize_description(s));
+        .map(sanitize_description);
 
     let pg_table_name = to_snake_case(&strip_suffix(title, suffix));
 
@@ -852,6 +853,7 @@ struct PropertyClassification {
     projection: Option<DddFieldProjection>,
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Classify a single property and return its type mapping and classification.
 fn classify_single_property(
     prop_schema: &serde_json::Value,

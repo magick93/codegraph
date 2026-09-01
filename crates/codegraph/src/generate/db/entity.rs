@@ -420,12 +420,12 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                         }
                     }
                 }
-                Some(RefClassificationKind::ValueObject) => {
+                Some(RefClassificationKind::ValueObject)
                     // When a non-array VO property targets a known entity (directly
                     // or through an allOf composition chain), emit an FK column on
                     // this entity model. Uses the shared resolve_fk_column_name utility
                     // — single source of truth for FK column naming across layers.
-                    if !prop.is_array {
+                    if !prop.is_array => {
                         let (fk_field, fk_col) = codegraph_core::types::resolve_fk_column_name(
                             db,
                             prop,
@@ -456,7 +456,6 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                         }
                     }
                     // Child tables for non-entity VO targets are generated below
-                }
                 _ => {}
             }
         }
@@ -1168,6 +1167,7 @@ async fn build_child_entity(
     Ok(files)
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Build a synthetic SeaORM entity for a codelist array property.
 ///
 /// Codelist schemas are plain enums with no object properties, so we create

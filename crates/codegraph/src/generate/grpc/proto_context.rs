@@ -114,7 +114,7 @@ impl ProtoContext {
         let mut all_field_defs = Vec::new();
         let mut imports = Vec::new();
         let mut enums: Vec<ProtoEnumDef> = Vec::new();
-        let mut next_field_number = 2u32;
+        // Field numbers start at 2: field 1 is the synthetic `id` above.
 
         // id = 1
         all_field_defs.push(ProtoFieldDef {
@@ -126,7 +126,8 @@ impl ProtoContext {
             description: Some("Unique identifier (UUID)".to_string()),
         });
 
-        for prop in &properties {
+        for (prop_offset, prop) in properties.iter().enumerate() {
+            let field_number = prop_offset as u32 + 2;
             let field_type = proto_type_from_field(prop, db, &entity_name);
 
             if field_type.is_import {
@@ -153,15 +154,13 @@ impl ProtoContext {
             };
 
             all_field_defs.push(ProtoFieldDef {
-                field_number: next_field_number,
+                field_number,
                 name: prop.name.clone(),
                 proto_type: base_proto_type,
                 is_optional: !prop.is_required || prop.is_nullable,
                 is_repeated,
                 description: prop.description.clone(),
             });
-
-            next_field_number += 1;
         }
 
         // created_at = 998, updated_at = 999

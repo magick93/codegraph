@@ -47,7 +47,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
         let model = querier
             .get_ifml_model()
             .await
-            .map_err(|e| crate::error::Error::Graph(e))?;
+            .map_err(crate::error::Error::Graph)?;
 
         if model.view_containers.is_empty() {
             return Ok(vec![]);
@@ -59,7 +59,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
         let load_template = format!("ifml/{}/page_load.tera", self.framework);
 
         for vc in &model.view_containers {
-            if let Ok(content) = render_page_svelte(&vc, tera, &page_template, &project.api_version)
+            if let Ok(content) = render_page_svelte(vc, tera, &page_template, &project.api_version)
             {
                 files.push(GeneratedFile {
                     path: self
@@ -71,7 +71,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
 
             if let Some(ref route_load_fn) = self.output_paths.route_load {
                 if let Ok(content) =
-                    render_page_load(&vc, tera, &load_template, &project.api_version)
+                    render_page_load(vc, tera, &load_template, &project.api_version)
                 {
                     files.push(GeneratedFile {
                         path: self.output_dir.join(route_load_fn(&vc.name)),

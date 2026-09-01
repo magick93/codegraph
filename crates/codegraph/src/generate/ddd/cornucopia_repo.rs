@@ -74,7 +74,7 @@ impl EntityGenerator for CornucopiaRepoGenerator {
                 .domains
                 .get(domain)
                 .and_then(|d| d.get_entity_config(schema_title)),
-            &domain.to_string(),
+            domain,
             config,
             db,
         )
@@ -414,7 +414,7 @@ fn emit_adapter_find_by_id(tree: &EntityTree, code: &mut String) {
 fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut String) {
     let entity_name = &tree.entity_name;
     let qmod = qmod(tree);
-    let parent_fk = tree.parent_ref.as_deref().unwrap_or("parent_id");
+    let _parent_fk = tree.parent_ref.as_deref().unwrap_or("parent_id");
     writeln!(code).unwrap();
     writeln!(
         code,
@@ -1318,8 +1318,6 @@ fn update_bind_args(tree: &EntityTree) -> Vec<String> {
             } else {
                 args.push(format!("&cmd.{field}"));
             }
-        } else if col.dto_rust_type.is_some() || col.pg_cast.is_some() {
-            args.push(format!("&cmd.{field}.as_ref().map(|v| v.to_string())"));
         } else {
             args.push(format!("&cmd.{field}.as_ref().map(|v| v.to_string())"));
         }

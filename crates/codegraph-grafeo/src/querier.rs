@@ -2023,6 +2023,6 @@ fn extract_ref_table(ref_target: &str) -> Option<String> {
         .or_else(|| filename.strip_suffix(".json"))
         .unwrap_or(filename);
     Some(codegraph_naming::to_snake_case(
-        &codegraph_naming::strip_type_suffix(stem),
+        &codegraph_naming::strip_suffix(stem, "Type"),
     ))
 }

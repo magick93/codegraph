@@ -303,7 +303,7 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         let mut grant_schemas: Vec<String> = domains
             .iter()
             .map(|d| d.postgres_schema.clone())
-            .chain(["common".to_string(), "platform".to_string()].into_iter())
+            .chain(["common".to_string(), "platform".to_string()])
             .collect();
         grant_schemas.sort();
         grant_schemas.dedup();

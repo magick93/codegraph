@@ -75,7 +75,7 @@ impl EntityGenerator for CornucopiaQueryGenerator {
                 .domains
                 .get(domain)
                 .and_then(|d| d.get_entity_config(schema_title)),
-            &domain.to_string(),
+            domain,
             config,
             db,
         )
@@ -837,9 +837,7 @@ fn nested_filter_cast(rust_type: &str) -> &'static str {
     match base {
         "Uuid" | "uuid::Uuid" => "uuid",
         // Entity reference types (e.g. "OrganizationType") are always UUID FK columns.
-        ty if ty.ends_with("Type") && ty.chars().next().map_or(false, |c| c.is_uppercase()) => {
-            "uuid"
-        }
+        ty if ty.ends_with("Type") && ty.chars().next().is_some_and(|c| c.is_uppercase()) => "uuid",
         "i32" => "int4",
         "i64" => "int8",
         "f32" => "float4",

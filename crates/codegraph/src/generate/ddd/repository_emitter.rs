@@ -51,9 +51,11 @@ async fn resolve_worker_detail_joins(
     let person_fk = format!("{}_id", parent_table);
     let name_table = format!("{}.{}_{}_{}", schema, parent_table, "person", "name");
     let name_fk = format!("{}_{}_{}", parent_table, "person", "id");
-    let mut joins = Vec::new();
-    joins.push((name_table, name_fk, "wp".to_string()));
-    joins.push((person_table, person_fk, "w".to_string()));
+    let joins = vec![
+        (name_table, name_fk, "wp".to_string()),
+        (person_table, person_fk, "w".to_string()),
+    ];
+    let mut joins = joins;
     joins.reverse();
     joins
 }
@@ -511,7 +513,7 @@ fn emit_nested_filter_parse(code: &mut String, nf: &NestedFilterFieldInfo) -> &'
             "parsed"
         }
         // Entity reference types (e.g. "OrganizationType") — always UUID FK columns.
-        ty if ty.ends_with("Type") && ty.chars().next().map_or(false, |c| c.is_uppercase()) => {
+        ty if ty.ends_with("Type") && ty.chars().next().is_some_and(|c| c.is_uppercase()) => {
             writeln!(
                 code,
                 "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{key}': {{e}}\")))?;",
@@ -1277,13 +1279,6 @@ fn emit_junction_field_population(code: &mut String, junctions: &[JunctionTableI
     }
 }
 
-/// Emit entity INSERT code for VO→entity properties.
-///
-/// For each entry, generates an `if let Some(ref item) = cmd.{field}` block that:
-/// 1. Creates a new UUID for the entity table
-/// 2. INSERTS into the entity table with the VO's columns
-/// 3. Recursively handles the entity's own child tables (e.g. person_name)
-/// 4. UPDATEs the parent entity's FK column with the new entity ID
 /// Recursively emit SELECT + Response-building code for child tables.
 ///
 /// For each child table, emits code that:
@@ -1486,7 +1481,7 @@ async fn build_columns_and_children(
     let schema_name = ctx.schema_name;
     let entity_name = ctx.entity_name;
     let consumed_fields = ctx.consumed_fields;
-    let all_field_names = ctx.all_field_names;
+    let _all_field_names = ctx.all_field_names;
     let entity_titles = ctx.entity_titles;
     let workflow_managed = ctx.workflow_managed;
 
@@ -1669,7 +1664,7 @@ async fn build_columns_and_children(
                     .flatten();
                 let back_ref = format!(
                     "{}_id",
-                    codegraph_naming::truncate_pg_identifier(&module_name)
+                    codegraph_naming::truncate_pg_identifier(module_name)
                 );
                 let has_back_ref = match &target {
                     Some(t) => db
@@ -1681,7 +1676,7 @@ async fn build_columns_and_children(
                                     || p.pg_column_name
                                         == format!(
                                             "{}_id",
-                                            codegraph_naming::to_snake_case(&entity_name)
+                                            codegraph_naming::to_snake_case(entity_name)
                                         )
                             })
                         })
@@ -2131,7 +2126,7 @@ impl RepositoryImplEmitter {
                 if path.segments.len() > 1 && seen_enriched.insert(path.response_rust_type.clone())
                 {
                     let already_imported = !type_registry::resolve_imports(
-                        &[path.response_rust_type.clone()],
+                        std::slice::from_ref(&path.response_rust_type),
                         &caller_base,
                     )
                     .is_empty();
@@ -4090,6 +4085,7 @@ impl RepositoryImplEmitter {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_include_fetch_methods(
         &self,
         tree: &EntityTree,
@@ -4223,26 +4219,7 @@ impl RepositoryImplEmitter {
         }
     }
 
-    /// Emit field assignments for a SeaORM entity row into a response struct.
-    /// Uses `dto_fields` for the left side (response struct field names) and
-    /// `col_fields` for the right side (entity Model field names from pg_column_name).
-    /// These differ for codelist fields: DTO uses "worker_type", entity uses "worker_type_code".
-    fn emit_field_assignments(
-        code: &mut String,
-        row_var: &str,
-        dto_fields: &[String],
-        col_fields: &[String],
-    ) {
-        for (dto_name, col_name) in dto_fields.iter().zip(col_fields.iter()) {
-            writeln!(
-                code,
-                "                {}: {}.{},",
-                dto_name, row_var, col_name
-            )
-            .unwrap();
-        }
-    }
-
+    #[allow(clippy::too_many_arguments)]
     /// Like emit_field_assignments but applies the same type conversions as
     /// emit_entity_to_dto_field — serde_json::from_value() for structured
     /// wrappers, .parse() for codelists, direct assignment otherwise.
@@ -4288,6 +4265,7 @@ impl RepositoryImplEmitter {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_single_fetch_method(
         &self,
         tree: &EntityTree,
@@ -4472,6 +4450,7 @@ impl RepositoryImplEmitter {
         writeln!(code, "    }}").unwrap();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_batch_fetch_method(
         &self,
         tree: &EntityTree,
@@ -4724,6 +4703,7 @@ impl RepositoryImplEmitter {
         writeln!(code, "    }}").unwrap();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_dot_fetch_method(
         &self,
         _tree: &EntityTree,

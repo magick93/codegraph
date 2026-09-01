@@ -1241,9 +1241,9 @@ impl DdlGenerator {
             .flat_map(|d| {
                 let schema = &d.postgres_schema;
                 d.entities.iter().map(move |title| {
-                    let table = codegraph_naming::to_snake_case(
-                        &codegraph_naming::strip_type_suffix(title),
-                    );
+                    let table = codegraph_naming::to_snake_case(&codegraph_naming::strip_suffix(
+                        title, "Type",
+                    ));
                     (schema.clone(), table)
                 })
             })
@@ -1512,7 +1512,7 @@ impl DdlGenerator {
         // The codelist generator only creates these for codelist entities in the
         // 'common' domain. Entities outside 'common' are always created by the entity
         // DDL generator with id UUID PRIMARY KEY, even if classified as codelists.
-        let has_codelist_seed = schema.is_codelist
+        let _has_codelist_seed = schema.is_codelist
             && domain == "common"
             && !db
                 .get_enum_values(schema_title)

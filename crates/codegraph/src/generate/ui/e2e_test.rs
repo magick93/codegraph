@@ -406,7 +406,7 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // Resolve include test config
         let e2e_include = if let Some(ec) = entity_cfg {
-            if ec.allow_include.as_ref().map_or(false, |v| !v.is_empty()) {
+            if ec.allow_include.as_ref().is_some_and(|v| !v.is_empty()) {
                 let resolved = crate::generate::api::include_path::resolve_include_paths(
                     db,
                     config,
@@ -872,7 +872,7 @@ async fn build_test_data_json(
             // no UI fields in the graph), generate a minimal payload with a
             // code placeholder to satisfy NOT NULL constraints.
             // Only common-domain codelists have code columns.
-            if !schema_title.is_empty() && domain.map_or(false, |d| d == "common") {
+            if !schema_title.is_empty() && (domain == Some("common")) {
                 return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`"
                     .to_string();
             }
@@ -882,7 +882,7 @@ async fn build_test_data_json(
     // Also handle empty-success: collect_ui_fields may return Ok(vec![]) when
     // the schema has no properties (e.g. enum-only code-list schemas).
     // Only common-domain codelists have code columns.
-    if fields.is_empty() && !schema_title.is_empty() && domain.map_or(false, |d| d == "common") {
+    if fields.is_empty() && !schema_title.is_empty() && (domain == Some("common")) {
         return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`"
             .to_string();
     }
@@ -970,7 +970,7 @@ async fn resolve_e2e_include_config(
     schema_title: &str,
     include_paths: &[crate::generate::api::include_path::ResolvedIncludePath],
     has_list: bool,
-    project: &ProjectConfig,
+    _project: &ProjectConfig,
 ) -> Result<Option<E2eIncludeConfig>> {
     let mut all_steps: Vec<IncludeSetupStep> = Vec::new();
     let mut test_paths: Vec<IncludeTestPath> = Vec::new();
@@ -1047,7 +1047,7 @@ async fn resolve_e2e_include_config(
         }
 
         // Add main entity FK to the first segment of this path (deduplicated)
-        if let Some(ref first_seg) = path.segments.first() {
+        if let Some(first_seg) = path.segments.first() {
             let first_dep_id = format!("{}_{}", first_seg.module_name, 0);
             if seen_main_fk_cols.insert(first_seg.fk_column.clone()) {
                 main_fk_map.push([first_seg.fk_column.clone(), first_dep_id]);

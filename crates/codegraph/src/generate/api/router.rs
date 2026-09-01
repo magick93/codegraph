@@ -446,7 +446,7 @@ impl DomainGenerator for RouterGenerator {
         let perms = db.get_permissions().await.unwrap_or_default();
         let has_permission_middleware = !perms.is_empty();
 
-        let pipelines = db.get_pipelines().await.unwrap_or_default();
+        let _pipelines = db.get_pipelines().await.unwrap_or_default();
         let endpoints = db.get_http_endpoints().await.unwrap_or_default();
 
         for entity in &mut entities {

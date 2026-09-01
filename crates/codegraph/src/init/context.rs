@@ -79,6 +79,7 @@ pub const PROJECT_TEMPLATES: &[(&str, &str)] = &[
 ];
 
 impl ProjectTemplateContext {
+    #[allow(clippy::too_many_arguments)]
     /// Build a context from the raw init options.
     pub fn new(
         project_name: &str,
