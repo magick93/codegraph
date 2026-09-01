@@ -846,6 +846,16 @@ async fn build_child_table_info(
                 });
             }
             Some(RefClassificationKind::EntityReference) => {
+                // Array entity refs are junction tables, never columns — the
+                // same rule the DDL generator applies (ddl.rs: array
+                // EntityReference => return None, junction CompositionNode).
+                // Emitting them as scalar UUID columns made INSERT/SELECT
+                // reference columns the DDL never created (e.g.
+                // assessment_report."results", worker_person.employment_permits
+                // → "column ... does not exist" at runtime).
+                if c.is_array {
+                    continue;
+                }
                 child_columns.push(ChildColumn {
                     field_name: field_def.rust_field_name,
                     pg_column_name: field_def.column_name,
@@ -1405,6 +1415,10 @@ fn emit_child_reads(
         }
         // Wire nested children into the response struct.
         emit_child_field_population(code, &child.child_tables, &format!("{pad}            "));
+        // DTO fields the child columns do not cover (e.g. scalar `*_id` mirrors
+        // of array entity-ref properties that the DDL stores as junction
+        // tables) default to None instead of failing E0063.
+        writeln!(code, "{pad}        ..Default::default()").unwrap();
         writeln!(code, "{pad}        }});").unwrap();
         writeln!(code, "{pad}    }}").unwrap();
         writeln!(code, "{pad}    items").unwrap();
