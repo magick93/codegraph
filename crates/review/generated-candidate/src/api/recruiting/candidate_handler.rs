@@ -222,6 +222,7 @@ pub async fn get_by_id(
         application: None,
     };
     
+
     use sea_orm::TransactionTrait;
     let tx = state.db.begin().await
         .map_err(|e| AppError::internal(format!("Failed to begin transaction: {e}"))
@@ -246,6 +247,7 @@ pub async fn get_by_id(
     tx.commit().await
         .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}"))
             .with_correlation_id(correlation_id))?;
+
     
     Ok(Json(CandidateWithIncludeResponse {
         data: linked,
@@ -412,6 +414,7 @@ pub async fn list(
         .as_ref()
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
         .unwrap_or_default();
+
     let included = if !include_paths.is_empty() {
         use sea_orm::TransactionTrait;
         let tx = state.db.begin().await
@@ -445,6 +448,7 @@ pub async fn list(
     } else {
         std::collections::HashMap::new()
     };
+
     Ok(Json(serde_json::json!({
         "data": results,
         "total": total,

@@ -10,10 +10,6 @@ use crate::middleware::permission::PermissionGuard as _;
 // #[path = "handwritten_routes.rs"]
 // mod handwritten_routes;
 
-// Handwritten extensions — create this file to add custom routes.
-// #[path = "handwritten_routes.rs"]
-// mod handwritten_routes;
-
 pub fn router() -> Router<AppState> {
     Router::new()
 
@@ -54,7 +50,6 @@ fn application_routes() -> Router<AppState> {
 
 
 
-
 }
 
 
@@ -88,7 +83,6 @@ fn candidate_routes() -> Router<AppState> {
         .route("/{candidate_id}/actions/delegate", axum::routing::post(candidate_workflow::delegate).guard("candidate", "update"))
         .route("/{candidate_id}/workflow", axum::routing::get(candidate_workflow::get_workflow_state).guard("candidate", "read"))
         .route("/{candidate_id}/workflow/history", axum::routing::get(candidate_workflow::get_process_history).guard("candidate", "read"))
-
 
 
 

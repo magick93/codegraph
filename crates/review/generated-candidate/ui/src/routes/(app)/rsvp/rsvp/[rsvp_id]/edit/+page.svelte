@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import RsvpForm from '$lib/components/forms/RsvpForm.svelte';
-	import { updateRsvp } from '$lib/stores/rsvp_rsvp';
+	import RsvpForm from '#lib/components/forms/RsvpForm.svelte';
+	import { updateRsvp } from '#lib/stores/rsvp_rsvp.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { RsvpResponse, UpdateRsvpRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { RsvpResponse, UpdateRsvpRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/rsvp/rsvp';

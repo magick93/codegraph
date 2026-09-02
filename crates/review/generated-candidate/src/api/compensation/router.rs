@@ -10,10 +10,6 @@ use crate::middleware::permission::PermissionGuard as _;
 // #[path = "handwritten_routes.rs"]
 // mod handwritten_routes;
 
-// Handwritten extensions — create this file to add custom routes.
-// #[path = "handwritten_routes.rs"]
-// mod handwritten_routes;
-
 pub fn router() -> Router<AppState> {
     Router::new()
 
@@ -44,7 +40,6 @@ fn pay_run_routes() -> Router<AppState> {
                 .merge(axum::routing::put(pay_run_handler::update).guard("pay-runs", "update"))
                 .merge(axum::routing::delete(pay_run_handler::delete).guard("pay-runs", "delete")),
         )
-
 
 
 

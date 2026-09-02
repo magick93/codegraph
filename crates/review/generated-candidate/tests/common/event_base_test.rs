@@ -9,7 +9,7 @@ mod tests {
     #[test]
     fn test_event_base_entity_columns() {
         // Verify the entity model compiles and has expected columns
-        let _model = app::entity::event_base::Model {
+        let _model = app::entity::common_event_base::Model {
             id: Uuid::new_v4(),
             ..Default::default()
         };

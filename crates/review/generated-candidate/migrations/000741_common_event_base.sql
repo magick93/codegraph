@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS common.event_base_personbasetype (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_base_id UUID NOT NULL,
 
+    platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
+
     birth_date DATE,
 
     family_name TEXT NOT NULL,

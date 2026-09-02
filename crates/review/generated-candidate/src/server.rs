@@ -182,6 +182,7 @@ async fn health_ready(
 /// Handles tracing, DB connection, state construction, router
 /// building, and signal handling.
 pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
+
     let otel_provider = init_tracing();
     START_TIME.get_or_init(std::time::Instant::now);
 
@@ -191,11 +192,13 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| "app".to_string());
 
+
     let db_url = std::env::var("DATABASE_URL").map_err(|_| {
         
         "DATABASE_URL environment variable is required. Set it to your Postgres connection string, e.g. postgres://user:pass@host:5432/dbname"
         
     })?;
+
 
     let db = sea_orm::Database::connect(&db_url).await?;
 
@@ -401,9 +404,11 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
 
         db: db.clone(),
+
         jwt_secret: std::env::var("SUPABASE_JWT_SECRET").map_err(|_| {
             "SUPABASE_JWT_SECRET environment variable is required. Set it to your Supabase project JWT secret"
         })?,
+
         workflow_service: {
             let svc = std::sync::Arc::new(
                 codegraph_workflow::engine::SeaOrmWorkflowService::new(db.clone())
@@ -512,6 +517,9 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
         .nest("/webhooks", crate::webhook_router::webhook_routes())
 
+        // The pooled DB connection as an extension: the permission middleware
+        // runs from per-route layers where State is not available.
+        .layer(axum::extract::Extension(state.db.clone()))
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
 
     let app = axum::Router::new()
@@ -576,10 +584,12 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         app
     };
 
+
     let addr: SocketAddr = std::env::var("BIND_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:3000".to_string())
         .parse()
         .expect("BIND_ADDR must be a valid socket address (e.g. 0.0.0.0:3000 or 127.0.0.1:8080)");
+
     tracing::info!(app_name = %app_name, "Swagger UI: http://{addr}/swagger-ui/  |  API Catalog: http://{addr}/api-catalog.json");
     tracing::info!("Listening on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;

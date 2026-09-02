@@ -5,13 +5,13 @@
 
 	import { page } from '$app/state';
 
-	import * as Table from '$lib/components/ui/table/index.js';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { Badge } from '$lib/components/ui/badge/index.js';
-	import * as Empty from '$lib/components/ui/empty/index.js';
-	import SearchInput from '$lib/components/ui/SearchInput.svelte';
-	import type { PublicEventResponse } from '$lib/api/types';
-	import * as m from '$lib/paraglide/messages.js';
+	import * as Table from '#lib/components/ui/table/index.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { Badge } from '#lib/components/ui/badge/index.js';
+	import * as Empty from '#lib/components/ui/empty/index.js';
+	import SearchInput from '#lib/components/ui/SearchInput.svelte';
+	import type { PublicEventResponse } from '#lib/api/types.ts';
+	import * as m from '#lib/paraglide/messages.js';
 
 
 	const basePath = '/events/public-event';

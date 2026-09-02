@@ -10,10 +10,6 @@ use crate::middleware::permission::PermissionGuard as _;
 // #[path = "handwritten_routes.rs"]
 // mod handwritten_routes;
 
-// Handwritten extensions — create this file to add custom routes.
-// #[path = "handwritten_routes.rs"]
-// mod handwritten_routes;
-
 pub fn router() -> Router<AppState> {
     Router::new()
 
@@ -110,7 +106,6 @@ fn code_routes() -> Router<AppState> {
 
 
 
-
 }
 
 
@@ -134,7 +129,6 @@ fn currency_code_list_routes() -> Router<AppState> {
                 .merge(axum::routing::put(currency_code_list_handler::update).guard("currency-code-list", "update"))
                 .merge(axum::routing::delete(currency_code_list_handler::delete).guard("currency-code-list", "delete")),
         )
-
 
 
 
@@ -170,7 +164,6 @@ fn date_routes() -> Router<AppState> {
 
 
 
-
 }
 
 
@@ -194,7 +187,6 @@ fn distribution_base_routes() -> Router<AppState> {
                 .merge(axum::routing::put(distribution_base_handler::update).guard("distribution-base", "update"))
                 .merge(axum::routing::delete(distribution_base_handler::delete).guard("distribution-base", "delete")),
         )
-
 
 
 
@@ -259,28 +251,6 @@ fn event_base_routes() -> Router<AppState> {
 
 
 
-
-}
-
-
-fn event_base_routes() -> Router<AppState> {
-    use super::event_base_handler;
-
-
-
-    Router::new()
-
-        .route("/", axum::routing::get(event_base_handler::list).post(event_base_handler::create))
-
-
-        .route("/{event_base_id}", axum::routing::get(event_base_handler::get_by_id).put(event_base_handler::update).delete(event_base_handler::delete))
-
-
-
-
-
-
-
 }
 
 
@@ -304,7 +274,6 @@ fn formatted_date_time_routes() -> Router<AppState> {
                 .merge(axum::routing::put(formatted_date_time_handler::update).guard("formatted-date-time", "update"))
                 .merge(axum::routing::delete(formatted_date_time_handler::delete).guard("formatted-date-time", "delete")),
         )
-
 
 
 
@@ -340,7 +309,6 @@ fn gender_code_list_routes() -> Router<AppState> {
 
 
 
-
 }
 
 
@@ -364,7 +332,6 @@ fn identifier_routes() -> Router<AppState> {
                 .merge(axum::routing::put(identifier_handler::update).guard("identifier", "update"))
                 .merge(axum::routing::delete(identifier_handler::delete).guard("identifier", "delete")),
         )
-
 
 
 
@@ -400,7 +367,6 @@ fn name_routes() -> Router<AppState> {
 
 
 
-
 }
 
 
@@ -424,7 +390,6 @@ fn person_base_routes() -> Router<AppState> {
                 .merge(axum::routing::put(person_base_handler::update).guard("person-base", "update"))
                 .merge(axum::routing::delete(person_base_handler::delete).guard("person-base", "delete")),
         )
-
 
 
 
@@ -460,7 +425,6 @@ fn position_schedule_type_code_list_routes() -> Router<AppState> {
 
 
 
-
 }
 
 
@@ -484,7 +448,6 @@ fn string_type_array_routes() -> Router<AppState> {
                 .merge(axum::routing::put(string_type_array_handler::update).guard("string-type-array", "update"))
                 .merge(axum::routing::delete(string_type_array_handler::delete).guard("string-type-array", "delete")),
         )
-
 
 
 
@@ -520,7 +483,6 @@ fn amount_routes() -> Router<AppState> {
 
 
 
-
 }
 
 
@@ -550,7 +512,6 @@ fn process_history_item_routes() -> Router<AppState> {
 
 
 
-
 }
 
 
@@ -574,7 +535,6 @@ fn process_history_routes() -> Router<AppState> {
                 .merge(axum::routing::put(process_history_handler::update).guard("process-history", "update"))
                 .merge(axum::routing::delete(process_history_handler::delete).guard("process-history", "delete")),
         )
-
 
 
 

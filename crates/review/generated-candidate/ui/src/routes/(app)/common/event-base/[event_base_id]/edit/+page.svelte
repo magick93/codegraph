@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import EventBaseForm from '$lib/components/forms/EventBaseForm.svelte';
-	import { updateEventBase } from '$lib/stores/common_event_base';
+	import EventBaseForm from '#lib/components/forms/EventBaseForm.svelte';
+	import { updateEventBase } from '#lib/stores/common_event_base.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { EventBaseResponse, UpdateEventBaseRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { EventBaseResponse, UpdateEventBaseRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/event-base';

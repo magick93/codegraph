@@ -34,11 +34,27 @@ pub struct AuthInfo {
     pub role: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 #[allow(dead_code)]
 pub enum AuthMode {
     Jwt { user_id: Uuid },
     ApiKey { api_key_id: Uuid, raw_key: String },
+}
+
+impl std::fmt::Debug for AuthMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthMode::Jwt { user_id } => f
+                .debug_struct("Jwt")
+                .field("user_id", user_id)
+                .finish(),
+            AuthMode::ApiKey { api_key_id, .. } => f
+                .debug_struct("ApiKey")
+                .field("api_key_id", api_key_id)
+                .field("raw_key", &"redacted")
+                .finish(),
+        }
+    }
 }
 
 /// Legacy alias for backward compatibility with handlers expecting ApiKeyInfo.
@@ -98,6 +114,8 @@ pub async fn auth_middleware(
         correlation_id = %correlation_id,
         org_id = %auth_info.organization_id,
         role = %auth_info.role,
+        api_key_id = %auth_info.api_key_id,
+        key_prefix = "redacted",
     );
     let response = {
         let _guard = span.enter();
@@ -228,7 +246,10 @@ async fn verify_jwt(db: &sea_orm::DatabaseConnection, token: &str, jwt_secret: &
     let role = db
         .query_one(Statement::from_sql_and_values(
             sea_orm::DatabaseBackend::Postgres,
-            "SELECT account_role::text FROM basejump.account_user WHERE account_id = $1 AND user_id = $2",
+            // SECURITY DEFINER lookup: app_user has no direct SELECT on
+            // basejump.account_user, so a plain query fails silently here and
+            // every JWT user would degrade to "member".
+            "SELECT public.get_current_user_role($1, $2)",
             [organization_id.into(), user_id.into()],
         ))
         .await

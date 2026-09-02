@@ -220,6 +220,7 @@ pub async fn get_by_id(
         candidate: None,
     };
     
+
     use sea_orm::TransactionTrait;
     let tx = state.db.begin().await
         .map_err(|e| AppError::internal(format!("Failed to begin transaction: {e}"))
@@ -244,6 +245,7 @@ pub async fn get_by_id(
     tx.commit().await
         .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}"))
             .with_correlation_id(correlation_id))?;
+
     
     Ok(Json(ApplicationWithIncludeResponse {
         data: linked,
@@ -339,7 +341,11 @@ pub async fn delete(
     state.recruiting_application_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
         .map_err(|e: RecruitingError| {
             let msg = e.to_string();
-            if msg.contains("Entity not found") {
+            // Repository errors render as "NOT_FOUND: ..." while some paths
+            // say "Entity not found" — treat any not-found phrasing as 404
+            // (an RLS-blocked delete affects 0 rows and must not surface as
+            // a 500).
+            if msg.to_lowercase().contains("not found") {
                 AppError::not_found(format!("Application {id} not found"))
             } else {
                 AppError::internal(format!("Failed to delete Application: {e}"))
@@ -436,6 +442,7 @@ pub async fn list(
         .as_ref()
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
         .unwrap_or_default();
+
     let included = if !include_paths.is_empty() {
         use sea_orm::TransactionTrait;
         let tx = state.db.begin().await
@@ -469,6 +476,7 @@ pub async fn list(
     } else {
         std::collections::HashMap::new()
     };
+
     Ok(Json(serde_json::json!({
         "data": results,
         "total": total,

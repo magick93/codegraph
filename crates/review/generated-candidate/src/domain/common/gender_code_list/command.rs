@@ -55,6 +55,8 @@ pub struct GenderCodeListCommandHandler {
 
     repo: Arc<dyn GenderCodeListRepository<sea_orm::DatabaseTransaction>>,
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
     db: DatabaseConnection,
 
 }
@@ -64,10 +66,17 @@ impl GenderCodeListCommandHandler {
 
         repo: Arc<dyn GenderCodeListRepository<sea_orm::DatabaseTransaction>>,
 
+        #[cfg(not(target_arch = "wasm32"))]
         db: DatabaseConnection,
 
     ) -> Self {
-        Self { repo, db }
+        Self {
+            repo,
+
+            #[cfg(not(target_arch = "wasm32"))]
+            db,
+
+        }
     }
 
 

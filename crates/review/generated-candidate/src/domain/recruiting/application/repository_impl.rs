@@ -68,6 +68,7 @@ impl ApplicationRepository<sea_orm::DatabaseTransaction> for ApplicationReposito
             status: row.status.and_then(|v| v.parse().ok()),
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -158,6 +159,7 @@ impl ApplicationRepository<sea_orm::DatabaseTransaction> for ApplicationReposito
                 status: row.status.and_then(|v| v.parse().ok()),
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

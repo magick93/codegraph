@@ -91,36 +91,6 @@ EXCEPTION
 END $$;
 
 
-<<<<<<<< HEAD:crates/review/generated-candidate/migrations/1423_recruiting_candidate.sql
-DO $$ BEGIN
-  ALTER TABLE recruiting.candidate ADD CONSTRAINT fk_candidate_application_process_history FOREIGN KEY (application_process_history_id) REFERENCES common.process_history(id) ON DELETE SET NULL;
-EXCEPTION
-  WHEN duplicate_object THEN NULL;  -- constraint already exists
-  WHEN undefined_table OR invalid_schema_name THEN
-    RAISE NOTICE 'FK target not yet created: common.process_history — will be added by deferred_fks migration';
-END $$;
-
-
-DO $$ BEGIN
-  ALTER TABLE recruiting.candidate ADD CONSTRAINT fk_candidate_distribution_guidelines FOREIGN KEY (distribution_guidelines_id) REFERENCES recruiting.distribution_guidelines(id) ON DELETE SET NULL;
-EXCEPTION
-  WHEN duplicate_object THEN NULL;  -- constraint already exists
-  WHEN undefined_table OR invalid_schema_name THEN
-    RAISE NOTICE 'FK target not yet created: recruiting.distribution_guidelines — will be added by deferred_fks migration';
-END $$;
-
-
-DO $$ BEGIN
-  ALTER TABLE recruiting.candidate ADD CONSTRAINT fk_candidate_person_name FOREIGN KEY (person_name_id) REFERENCES common.name(id) ON DELETE SET NULL;
-EXCEPTION
-  WHEN duplicate_object THEN NULL;  -- constraint already exists
-  WHEN undefined_table OR invalid_schema_name THEN
-    RAISE NOTICE 'FK target not yet created: common.name — will be added by deferred_fks migration';
-END $$;
-
-
-========
->>>>>>>> origin/refactor/persistence-metamodel:crates/review/generated-candidate/migrations/1428_recruiting_candidate.sql
 
 
 -- Child table: recruiting.candidate_application_process_history

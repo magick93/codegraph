@@ -26,6 +26,10 @@ impl RsvpError {
     }
 }
 
+// SeaORM is unavailable in wasm32 worker builds (sqlx/mio), so the DbErr
+// conversion is host-only; the cornucopia conversions below cover the worker
+// slice.
+#[cfg(not(target_arch = "wasm32"))]
 impl From<sea_orm::DbErr> for RsvpError {
     fn from(e: sea_orm::DbErr) -> Self {
         Self::InternalError(e.to_string())
