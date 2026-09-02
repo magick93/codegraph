@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import IdentifierForm from '$lib/components/forms/IdentifierForm.svelte';
-	import { createIdentifier } from '$lib/stores/common_identifier';
+	import IdentifierForm from '#lib/components/forms/IdentifierForm.svelte';
+	import { createIdentifier } from '#lib/stores/common_identifier.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { CreateIdentifierRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { CreateIdentifierRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/identifier';

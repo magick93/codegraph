@@ -7,6 +7,7 @@ expression: "&included_file.content"
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use crate::domain::hr::person::dto_response::PersonResponse;
 use crate::domain::hr::worker::dto_response::WorkerLinkedResponse;
 
 

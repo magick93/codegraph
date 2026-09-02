@@ -10,8 +10,8 @@ use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
 use super::repository_emitter::{
-    emit_child_field_population, emit_entity_to_dto_field, ChildColumn, ChildTableInfo,
-    EntityTree, RepositoryImplEmitter,
+    emit_child_field_population, emit_entity_to_dto_field, ChildColumn, ChildTableInfo, EntityTree,
+    RepositoryImplEmitter,
 };
 
 /// Generates the Cornucopia repository adapter implementing the entity's
@@ -74,7 +74,7 @@ impl EntityGenerator for CornucopiaRepoGenerator {
                 .domains
                 .get(domain)
                 .and_then(|d| d.get_entity_config(schema_title)),
-            &domain.to_string(),
+            domain,
             config,
             db,
         )
@@ -296,7 +296,6 @@ fn emit_adapter_create(tree: &EntityTree, code: &mut String) {
     writeln!(code, "    }}").unwrap();
 }
 
-
 /// Bind expression for a single column on the create path.
 ///
 /// Scalar columns bind as text (`Option<String>` for nullable DTO fields —
@@ -306,9 +305,7 @@ fn create_bind_expr(col: &crate::generate::ddd::repository_emitter::TreeColumn) 
     let field = &col.field_name;
     if col.is_structured_wrapper {
         if col.is_nullable {
-            format!(
-                "&cmd.{field}.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default())"
-            )
+            format!("&cmd.{field}.as_ref().map(|v| serde_json::to_value(v).unwrap_or_default())")
         } else {
             format!("&serde_json::to_value(&cmd.{field}).unwrap_or_default()")
         }
@@ -366,7 +363,13 @@ fn emit_adapter_find_by_id(tree: &EntityTree, code: &mut String) {
             snake = tree.table_name
         )
         .unwrap();
-        emit_response_expr(tree, code, "row", "                ", "                Some(");
+        emit_response_expr(
+            tree,
+            code,
+            "row",
+            "                ",
+            "                Some(",
+        );
         writeln!(code, "                )").unwrap();
         writeln!(code, "            }} else {{").unwrap();
         writeln!(code, "                None").unwrap();
@@ -378,7 +381,13 @@ fn emit_adapter_find_by_id(tree: &EntityTree, code: &mut String) {
             snake = tree.table_name
         )
         .unwrap();
-        emit_response_expr(tree, code, "row", "                ", "                Some(");
+        emit_response_expr(
+            tree,
+            code,
+            "row",
+            "                ",
+            "                Some(",
+        );
         writeln!(code, "                )").unwrap();
         writeln!(code, "            }} else {{").unwrap();
         writeln!(code, "                None").unwrap();
@@ -405,7 +414,7 @@ fn emit_adapter_find_by_id(tree: &EntityTree, code: &mut String) {
 fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut String) {
     let entity_name = &tree.entity_name;
     let qmod = qmod(tree);
-    let parent_fk = tree.parent_ref.as_deref().unwrap_or("parent_id");
+    let _parent_fk = tree.parent_ref.as_deref().unwrap_or("parent_id");
     writeln!(code).unwrap();
     writeln!(
         code,
@@ -432,7 +441,13 @@ fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut String) {
             snake = tree.table_name
         )
         .unwrap();
-        emit_response_expr(tree, code, "row", "                ", "                Some(");
+        emit_response_expr(
+            tree,
+            code,
+            "row",
+            "                ",
+            "                Some(",
+        );
         writeln!(code, "                )").unwrap();
         writeln!(code, "            }} else {{").unwrap();
         writeln!(code, "                None").unwrap();
@@ -444,7 +459,13 @@ fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut String) {
             snake = tree.table_name
         )
         .unwrap();
-        emit_response_expr(tree, code, "row", "                ", "                Some(");
+        emit_response_expr(
+            tree,
+            code,
+            "row",
+            "                ",
+            "                Some(",
+        );
         writeln!(code, "                )").unwrap();
         writeln!(code, "            }} else {{").unwrap();
         writeln!(code, "                None").unwrap();
@@ -577,7 +598,13 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
         )
         .unwrap();
         emit_filter_checks(code, tree, "                ");
-        emit_response_expr(tree, code, "row", "                    ", "                    let resp = ");
+        emit_response_expr(
+            tree,
+            code,
+            "row",
+            "                    ",
+            "                    let resp = ",
+        );
         writeln!(code, "                    ;").unwrap();
         emit_nested_filter_checks(code, tree);
         writeln!(code, "                    items.push(resp);").unwrap();
@@ -590,7 +617,13 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
         )
         .unwrap();
         emit_filter_checks(code, tree, "                ");
-        emit_response_expr(tree, code, "row", "                    ", "                    let resp = ");
+        emit_response_expr(
+            tree,
+            code,
+            "row",
+            "                    ",
+            "                    let resp = ",
+        );
         writeln!(code, "                    ;").unwrap();
         emit_nested_filter_checks(code, tree);
         writeln!(code, "                    items.push(resp);").unwrap();
@@ -604,7 +637,13 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut String) {
         )
         .unwrap();
         emit_filter_checks(code, tree, "            ");
-        emit_response_expr(tree, code, "row", "                ", "                let resp = ");
+        emit_response_expr(
+            tree,
+            code,
+            "row",
+            "                ",
+            "                let resp = ",
+        );
         writeln!(code, "                ;").unwrap();
         emit_nested_filter_checks(code, tree);
         writeln!(code, "                items.push(resp);").unwrap();
@@ -798,7 +837,11 @@ fn emit_adapter_semantic_search(tree: &EntityTree, code: &mut String) {
     if tree.is_auditable {
         writeln!(code, "        include_deleted: bool,").unwrap();
     }
-    writeln!(code, "    ) -> Result<Vec<Uuid>, Box<dyn std::error::Error>> {{").unwrap();
+    writeln!(
+        code,
+        "    ) -> Result<Vec<Uuid>, Box<dyn std::error::Error>> {{"
+    )
+    .unwrap();
     writeln!(code, "        let limit_i = limit as i64;").unwrap();
     writeln!(
         code,
@@ -860,7 +903,11 @@ fn emit_adapter_tree(tree: &EntityTree, code: &mut String) {
         snake = tree.table_name
     )
     .unwrap();
-    writeln!(code, "        let mut items = Vec::with_capacity(rows.len());").unwrap();
+    writeln!(
+        code,
+        "        let mut items = Vec::with_capacity(rows.len());"
+    )
+    .unwrap();
     writeln!(code, "        for row in rows {{").unwrap();
     emit_response_expr(tree, code, "row", "            ", "            let resp = ");
     writeln!(code, "            ;").unwrap();
@@ -910,8 +957,7 @@ fn emit_filter_checks(code: &mut String, tree: &EntityTree, pad: &str) {
     collect_child_table_names(&tree.child_tables, &mut real_vo_tables);
     for nf in &tree.nested_filter_fields {
         let is_vo_style = nf.parent_fk_column == vo_pattern;
-        let is_child_entity =
-            nf.intermediate_join.is_none() && !is_vo_style;
+        let is_child_entity = nf.intermediate_join.is_none() && !is_vo_style;
         if real_vo_tables.contains(&nf.sql_table_name) || !is_child_entity {
             continue;
         }
@@ -945,7 +991,13 @@ fn collect_child_table_names(
 /// Emit a response construction expression: child-table reads + the
 /// `{Entity}Response { ... }` struct literal. The caller supplies the prefix
 /// (`Ok(Some(`, `items.push(`, `let resp = `) and closing punctuation.
-fn emit_response_expr(tree: &EntityTree, code: &mut String, row_var: &str, pad: &str, prefix: &str) {
+fn emit_response_expr(
+    tree: &EntityTree,
+    code: &mut String,
+    row_var: &str,
+    pad: &str,
+    prefix: &str,
+) {
     emit_child_reads_cornucopia(
         tree,
         code,
@@ -1026,7 +1078,11 @@ fn emit_child_reads_cornucopia(
             child_table = child.sql_table_name,
         )
         .unwrap();
-        writeln!(code, "{pad}    let mut items = Vec::with_capacity(rows.len());").unwrap();
+        writeln!(
+            code,
+            "{pad}    let mut items = Vec::with_capacity(rows.len());"
+        )
+        .unwrap();
         writeln!(code, "{pad}    for child_row in rows {{").unwrap();
         // Nested grandchildren.
         if !child.child_tables.is_empty() {
@@ -1044,7 +1100,12 @@ fn emit_child_reads_cornucopia(
                 &format!("{pad}    "),
             );
         }
-        writeln!(code, "{pad}        items.push({}Response {{", child.struct_name).unwrap();
+        writeln!(
+            code,
+            "{pad}        items.push({}Response {{",
+            child.struct_name
+        )
+        .unwrap();
         for col in &child.columns {
             emit_child_col_read_value_cornucopia(code, col, &format!("{pad}            "));
         }
@@ -1217,7 +1278,9 @@ fn child_bind_expr(col: &ChildColumn, item_var: &str) -> String {
             if col.is_nullable {
                 format!("&{item_var}.{field}.as_ref().map(|v| v.iter().map(|x| x.to_string()).collect::<Vec<String>>())")
             } else {
-                format!("&{item_var}.{field}.iter().map(|x| x.to_string()).collect::<Vec<String>>()")
+                format!(
+                    "&{item_var}.{field}.iter().map(|x| x.to_string()).collect::<Vec<String>>()"
+                )
             }
         } else {
             format!("&{item_var}.{field}")
@@ -1255,8 +1318,6 @@ fn update_bind_args(tree: &EntityTree) -> Vec<String> {
             } else {
                 args.push(format!("&cmd.{field}"));
             }
-        } else if col.dto_rust_type.is_some() || col.pg_cast.is_some() {
-            args.push(format!("&cmd.{field}.as_ref().map(|v| v.to_string())"));
         } else {
             args.push(format!("&cmd.{field}.as_ref().map(|v| v.to_string())"));
         }

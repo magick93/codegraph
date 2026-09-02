@@ -99,19 +99,19 @@ pub enum EventType {
 }
 
 impl EventType {
-    pub fn to_string(&self) -> String {
+    pub fn as_str(&self) -> &str {
         match self {
-            EventType::Select => "select".to_string(),
-            EventType::Submit => "submit".to_string(),
-            EventType::Click => "click".to_string(),
-            EventType::Change => "change".to_string(),
-            EventType::Load => "load".to_string(),
-            EventType::Save => "save".to_string(),
-            EventType::Cancel => "cancel".to_string(),
-            EventType::Delete => "delete".to_string(),
-            EventType::Confirm => "confirm".to_string(),
-            EventType::Back => "back".to_string(),
-            EventType::Custom(s) => s.clone(),
+            EventType::Select => "select",
+            EventType::Submit => "submit",
+            EventType::Click => "click",
+            EventType::Change => "change",
+            EventType::Load => "load",
+            EventType::Save => "save",
+            EventType::Cancel => "cancel",
+            EventType::Delete => "delete",
+            EventType::Confirm => "confirm",
+            EventType::Back => "back",
+            EventType::Custom(s) => s.as_str(),
         }
     }
 }

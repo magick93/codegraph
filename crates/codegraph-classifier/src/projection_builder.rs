@@ -74,6 +74,7 @@ impl ProjectionBuilder {
     ) -> DddFieldProjection {
         let pg = match scalar_kind {
             codegraph_type_contracts::ScalarKind::String => PgType::Text,
+            codegraph_type_contracts::ScalarKind::Uuid => PgType::Uuid,
             codegraph_type_contracts::ScalarKind::Integer => PgType::BigInt,
             codegraph_type_contracts::ScalarKind::Number => PgType::DoublePrecision,
             codegraph_type_contracts::ScalarKind::Boolean => PgType::Boolean,

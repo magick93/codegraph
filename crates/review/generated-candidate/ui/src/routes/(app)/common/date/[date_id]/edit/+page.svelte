@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import DateForm from '$lib/components/forms/DateForm.svelte';
-	import { updateDate } from '$lib/stores/common_date';
+	import DateForm from '#lib/components/forms/DateForm.svelte';
+	import { updateDate } from '#lib/stores/common_date.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { DateResponse, UpdateDateRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { DateResponse, UpdateDateRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/date';

@@ -9,6 +9,7 @@ expression: "&f.content"
 use axum::Router;
 
 use crate::app_state::AppState;
+use crate::middleware::permission::PermissionGuard as _;
 
 // Handwritten extensions — create this file to add custom routes.
 // #[path = "handwritten_routes.rs"]
@@ -31,11 +32,19 @@ fn candidate_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(candidate_handler::list).post(candidate_handler::create))
+        .route(
+            "/",
+            axum::routing::get(candidate_handler::list).guard("candidates", "list")
+                .merge(axum::routing::post(candidate_handler::create).guard("candidates", "create")),
+        )
 
 
-        .route("/{candidate_id}", axum::routing::get(candidate_handler::get_by_id).put(candidate_handler::update).delete(candidate_handler::delete))
-
+        .route(
+            "/{candidate_id}",
+            axum::routing::get(candidate_handler::get_by_id).guard("candidates", "read")
+                .merge(axum::routing::put(candidate_handler::update).guard("candidates", "update"))
+                .merge(axum::routing::delete(candidate_handler::delete).guard("candidates", "delete")),
+        )
 
 
 

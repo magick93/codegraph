@@ -2,10 +2,9 @@ use crate::error::GraphError;
 use crate::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
     DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode,
-    HttpEndpointNode, IngestStats, InteractionNode, MembershipNode,
-    ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
-    RelationshipNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    HttpEndpointNode, IngestStats, InteractionNode, MembershipNode, ParameterDefinitionNode,
+    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaNode,
+    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -111,10 +110,7 @@ pub trait GraphIngestor: Send + Sync {
         Ok(())
     }
 
-    async fn ingest_relationship(
-        &self,
-        relationship: &RelationshipNode,
-    ) -> Result<(), GraphError> {
+    async fn ingest_relationship(&self, relationship: &RelationshipNode) -> Result<(), GraphError> {
         let _ = relationship;
         Ok(())
     }

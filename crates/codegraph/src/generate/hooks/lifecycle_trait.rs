@@ -68,8 +68,7 @@ impl EntityGenerator for LifecycleTraitGenerator {
             return Ok(Vec::new());
         }
 
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let has_workflow = config
             .domains

@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import PersonBaseForm from '$lib/components/forms/PersonBaseForm.svelte';
-	import { createPersonBase } from '$lib/stores/common_person_base';
+	import PersonBaseForm from '#lib/components/forms/PersonBaseForm.svelte';
+	import { createPersonBase } from '#lib/stores/common_person_base.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { CreatePersonBaseRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { CreatePersonBaseRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/person-base';

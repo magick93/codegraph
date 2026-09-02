@@ -2,7 +2,7 @@
 // Svelte store for Code CRUD operations.
 
 import { writable } from 'svelte/store';
-import { apiGet, apiPost, apiPut, apiDelete } from '$lib/api/client';
+import { apiGet, apiPost, apiPut, apiDelete } from '#lib/api/client.ts';
 import type {
 	CodeResponse,
 
@@ -12,7 +12,7 @@ import type {
 	UpdateCodeRequest,
 
 
-} from '$lib/api/types';
+} from '#lib/api/types.ts';
 
 
 const API_PATH = '/common/code';

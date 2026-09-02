@@ -342,16 +342,18 @@ async fn scaffold_api_key_migration_grants_app_user_dml() {
         ),
         "0002 must grant current tables too. Got:\n{content}"
     );
-    // The configured domain schema + the infra schemas appear in the list.
-    for schema in ["recruiting", "platform", "platform_integrations"] {
+    // The configured domain schema + the infra schema appear in the list.
+    for schema in ["recruiting", "platform"] {
         assert!(
             content.contains(&format!("'{schema}'")),
             "0002 grant list must include {schema}. Got:\n{content}"
         );
     }
-    // The list is derived from the configured domains, not the old hardcoded
-    // domain list: with only `recruiting` in scope, `common` must NOT appear.
-    for schema in ["'common'", "'screening'", "'compliance'"] {
+    // `common` carries the generated codelist tables (app_user needs DML on
+    // them); the list is derived from the configured domains, not the old
+    // hardcoded domain list: with only the fixture domains in scope,
+    // `screening`/`compliance` must NOT appear.
+    for schema in ["'screening'", "'compliance'", "'payroll'"] {
         assert!(
             !content.contains(schema),
             "0002 grant list must not include hardcoded {schema}. Got:\n{content}"
@@ -5231,7 +5233,7 @@ entities = ["WorkerType"]
                     "deployment_id",
                     "deployment_id",
                     "DeploymentType",
-                    true,
+                    false,
                 )],
             )
             .with_properties(
@@ -5273,8 +5275,8 @@ entities = ["WorkerType"]
             "first segment entity should be DeploymentType"
         );
         assert!(
-            paths[0].segments[0].is_array,
-            "deployments property is an array"
+            !paths[0].segments[0].is_array,
+            "deployment_id is a scalar FK (entity-ref arrays are junction tables, not include-able)"
         );
 
         // Second segment: PositionType (scalar FK)
@@ -6907,7 +6909,7 @@ async fn dto_include_dot_notation() {
         format: None,
         is_required: false,
         is_nullable: true,
-        is_array: true,
+        is_array: false,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -7155,12 +7157,12 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
         "deployment",
         "deployment",
         "deployment_id",
-        "Vec<Uuid>",
+        "Uuid",
         "UUID",
         false,
         Some(RefClassificationKind::EntityReference),
         Some("DeploymentType"),
-        true,
+        false,
     );
 
     // Deployment → Position FK (the leaf segment, emitted as a nested field).

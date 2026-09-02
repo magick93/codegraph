@@ -86,7 +86,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
+    ...(depIds['referred_by_application_id'] ? { 'referred_by_application_id': depIds['referred_by_application_id'] } : {}),
 
 
 
@@ -162,7 +162,7 @@ function updatedData(): Record<string, unknown> {
 
 
 
-    ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
+    ...(depIds['referred_by_application_id'] ? { 'referred_by_application_id': depIds['referred_by_application_id'] } : {}),
 
 
 
@@ -183,8 +183,8 @@ test.describe('Candidate CRUD', () => {
 
 
     try {
-      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/application', {  });
-      depIds['referred_by_application_id_id'] = dep_1['id'] as string;
+      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/applications', { 'applied_date': '2025-01-15' });
+      depIds['referred_by_application_id'] = dep_1['id'] as string;
     } catch (_e) {
       // Dependency entity may already exist or have its own required fields
     }
@@ -194,9 +194,9 @@ test.describe('Candidate CRUD', () => {
   test.afterAll(async ({ orgContext }) => {
     const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
 
-    if (depIds['referred_by_application_id_id']) {
+    if (depIds['referred_by_application_id']) {
       try {
-        await fetch(`${baseUrl}/api/recruiting/application/${depIds['referred_by_application_id_id']}`, {
+        await fetch(`${baseUrl}/api/v1/recruiting/applications/${depIds['referred_by_application_id']}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
         });
@@ -245,7 +245,9 @@ test.describe('Candidate CRUD', () => {
 
 
 
-    // 'application_process_history': ValueObject — form uses structured sub-fields, skip fill
+    if (await page.locator('[data-testid="application_process_history-actionDate"]').isVisible()) {
+      await page.locator('[data-testid="application_process_history-actionDate"]').fill(String((data['application_process_history'] as Record<string, unknown>)?.['actionDate'] ?? ''));
+    }
 
 
 
@@ -267,7 +269,9 @@ test.describe('Candidate CRUD', () => {
 
 
 
-    // 'distribution_guidelines': ValueObject — form uses structured sub-fields, skip fill
+    if (await page.locator('[data-testid="distribution_guidelines-startDate"]').isVisible()) {
+      await page.locator('[data-testid="distribution_guidelines-startDate"]').fill(String((data['distribution_guidelines'] as Record<string, unknown>)?.['startDate'] ?? ''));
+    }
 
 
 
@@ -283,7 +287,9 @@ test.describe('Candidate CRUD', () => {
 
 
 
-    // 'person_name': ValueObject — form uses structured sub-fields, skip fill
+    if (await page.locator('[data-testid="person_name-familyName"]').isVisible()) {
+      await page.locator('[data-testid="person_name-familyName"]').fill(String((data['person_name'] as Record<string, unknown>)?.['familyName'] ?? ''));
+    }
 
 
 
@@ -303,12 +309,18 @@ test.describe('Candidate CRUD', () => {
 
 
 
-    // 'qualifications': ValueObject — form uses structured sub-fields, skip fill
+    if (await page.locator('[data-testid="qualifications-0-qualificationName"]').isVisible()) {
+      const vals = data['qualifications'] as Record<string, unknown>[];
+      for (let i = 0; i < vals.length; i++) {
+        if (i > 0) await page.locator('[data-testid="qualifications-add-btn"]').click();
+        await page.locator(`[data-testid="qualifications-${i}-qualificationName"]`).fill(String(vals[i]['qualificationName'] ?? ''));
+      }
+    }
 
 
 
-    if (data['referred_by_application_id_id'] && await page.locator('#referred_by_application_id_id').isVisible()) {
-      await page.locator('#referred_by_application_id_id').fill(String(data['referred_by_application_id_id']));
+    if (data['referred_by_application_id'] && await page.locator('#referred_by_application_id').isVisible()) {
+      await page.locator('#referred_by_application_id').fill(String(data['referred_by_application_id']));
     }
 
 
@@ -424,8 +436,8 @@ test.describe('Candidate CRUD', () => {
 
 
 
-    if (await page.locator('[data-testid="candidate-field-referred_by_application_id_id"]').count() > 0) {
-      await expect(page.locator('[data-testid="candidate-field-referred_by_application_id_id"]')).toBeVisible();
+    if (await page.locator('[data-testid="candidate-field-referred_by_application_id"]').count() > 0) {
+      await expect(page.locator('[data-testid="candidate-field-referred_by_application_id"]')).toBeVisible();
     }
 
 
@@ -522,7 +534,7 @@ test.describe('Candidate CRUD', () => {
 
     await expect(page.locator('[data-testid="candidate-field-qualifications"]')).toBeVisible();
 
-    await expect(page.locator('[data-testid="candidate-field-referred_by_application_id_id"]')).toBeVisible();
+    await expect(page.locator('[data-testid="candidate-field-referred_by_application_id"]')).toBeVisible();
 
     await expect(page.locator('[data-testid="candidate-field-status"]')).toBeVisible();
 
@@ -570,7 +582,10 @@ test.describe('Candidate CRUD', () => {
 
 
 
-    // 'application_process_history': ValueObject — form uses structured sub-fields, skip fill
+    if (await page.locator('[data-testid="application_process_history-actionDate"]').isVisible()) {
+      await page.locator('[data-testid="application_process_history-actionDate"]').clear();
+      await page.locator('[data-testid="application_process_history-actionDate"]').fill(String((data['application_process_history'] as Record<string, unknown>)?.['actionDate'] ?? ''));
+    }
 
 
 
@@ -594,7 +609,10 @@ test.describe('Candidate CRUD', () => {
 
 
 
-    // 'distribution_guidelines': ValueObject — form uses structured sub-fields, skip fill
+    if (await page.locator('[data-testid="distribution_guidelines-startDate"]').isVisible()) {
+      await page.locator('[data-testid="distribution_guidelines-startDate"]').clear();
+      await page.locator('[data-testid="distribution_guidelines-startDate"]').fill(String((data['distribution_guidelines'] as Record<string, unknown>)?.['startDate'] ?? ''));
+    }
 
 
 
@@ -611,7 +629,10 @@ test.describe('Candidate CRUD', () => {
 
 
 
-    // 'person_name': ValueObject — form uses structured sub-fields, skip fill
+    if (await page.locator('[data-testid="person_name-familyName"]').isVisible()) {
+      await page.locator('[data-testid="person_name-familyName"]').clear();
+      await page.locator('[data-testid="person_name-familyName"]').fill(String((data['person_name'] as Record<string, unknown>)?.['familyName'] ?? ''));
+    }
 
 
 
@@ -638,13 +659,17 @@ test.describe('Candidate CRUD', () => {
 
 
 
-    // 'qualifications': ValueObject — form uses structured sub-fields, skip fill
+    if (await page.locator('[data-testid="qualifications-0-qualificationName"]').isVisible()) {
+      const vals = data['qualifications'] as Record<string, unknown>[];
+      await page.locator('[data-testid="qualifications-0-qualificationName"]').clear();
+      await page.locator('[data-testid="qualifications-0-qualificationName"]').fill(String(vals[0]['qualificationName'] ?? ''));
+    }
 
 
 
-    if (data['referred_by_application_id_id'] && await page.locator('#referred_by_application_id_id').isVisible()) {
-      await page.locator('#referred_by_application_id_id').clear();
-      await page.locator('#referred_by_application_id_id').fill(String(data['referred_by_application_id_id']));
+    if (data['referred_by_application_id'] && await page.locator('#referred_by_application_id').isVisible()) {
+      await page.locator('#referred_by_application_id').clear();
+      await page.locator('#referred_by_application_id').fill(String(data['referred_by_application_id']));
     }
 
 
@@ -757,8 +782,8 @@ test.describe('Candidate CRUD', () => {
 
 
 
-    if (await page.locator('[data-testid="candidate-field-referred_by_application_id_id"]').count() > 0) {
-      await expect(page.locator('[data-testid="candidate-field-referred_by_application_id_id"]')).toBeVisible();
+    if (await page.locator('[data-testid="candidate-field-referred_by_application_id"]').count() > 0) {
+      await expect(page.locator('[data-testid="candidate-field-referred_by_application_id"]')).toBeVisible();
     }
 
 

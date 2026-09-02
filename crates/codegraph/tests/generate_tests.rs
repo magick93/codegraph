@@ -4,9 +4,9 @@ use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
     CodeList, ColumnInfo, CompositionNode, CompositionTree, DeletionPropagation, DetectionSource,
-    EnumValue, ParentCandidate, PolicyKind, PolicyNode, PropertyNode, SchemaNode,
-    SoftDeleteMarker, SoftDeletePolicy, SoftDeleteVisibility, TenantIsolationPolicy,
-    TenantPropagation, TenantStrategy,
+    EnumValue, ParentCandidate, PolicyKind, PolicyNode, PropertyNode, SchemaNode, SoftDeleteMarker,
+    SoftDeletePolicy, SoftDeleteVisibility, TenantIsolationPolicy, TenantPropagation,
+    TenantStrategy,
 };
 use codegraph_type_contracts::RefClassificationKind;
 use std::path::Path;
@@ -243,7 +243,11 @@ entities = ["PositionType"]
         .unwrap();
 
     // The entity must appear exactly once, assigned to its configured domain.
-    assert_eq!(order.len(), 1, "PositionType should appear exactly once. Got: {order:?}");
+    assert_eq!(
+        order.len(),
+        1,
+        "PositionType should appear exactly once. Got: {order:?}"
+    );
     assert_eq!(
         order[0].domain, "screening",
         "configured domain must win over graph discovery. Got: {order:?}"
@@ -288,7 +292,11 @@ entities = []
         .await
         .unwrap();
 
-    assert_eq!(order.len(), 1, "PositionType should appear exactly once. Got: {order:?}");
+    assert_eq!(
+        order.len(),
+        1,
+        "PositionType should appear exactly once. Got: {order:?}"
+    );
     assert_eq!(
         order[0].domain, "common",
         "first-discovering domain keeps the title when nothing configures it. Got: {order:?}"
@@ -988,7 +996,14 @@ async fn required_genuine_entity_ref_is_not_null_across_all_layers() {
     // 1. Entity model: required ref → Uuid (non-Option).
     let entity_gen = generate::db::entity::SeaOrmEntityGenerator::new(Path::new("/tmp/out"));
     let entity_files = entity_gen
-        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .generate(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        )
         .await
         .unwrap();
     let entity = entity_files
@@ -1009,14 +1024,7 @@ async fn required_genuine_entity_ref_is_not_null_across_all_layers() {
     // 2. Repository emitter: required ref → Set(v).
     let emitter = generate::ddd::repository_emitter::RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(
-            &mock,
-            "ApplicationType",
-            "recruiting",
-            &config,
-            None,
-            &[],
-        )
+        .emit(&mock, "ApplicationType", "recruiting", &config, None, &[])
         .await
         .unwrap();
     assert!(
@@ -1034,7 +1042,14 @@ async fn required_genuine_entity_ref_is_not_null_across_all_layers() {
     std::fs::create_dir_all(&tmp).unwrap();
     let dto_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let dto_files = dto_gen
-        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .generate(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        )
         .await
         .unwrap();
 
@@ -1129,7 +1144,14 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
     let entity_gen = generate::db::entity::SeaOrmEntityGenerator::new(Path::new("/tmp/out"))
         .with_parent_candidates(parent_candidates.clone());
     let entity_files = entity_gen
-        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .generate(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        )
         .await
         .unwrap();
     let entity = entity_files
@@ -1150,14 +1172,7 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
     // 2. Repository emitter: required ref → Set(v) (unaffected by injection).
     let emitter = generate::ddd::repository_emitter::RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(
-            &mock,
-            "ApplicationType",
-            "recruiting",
-            &config,
-            None,
-            &[],
-        )
+        .emit(&mock, "ApplicationType", "recruiting", &config, None, &[])
         .await
         .unwrap();
     assert!(
@@ -1175,7 +1190,14 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
     std::fs::create_dir_all(&tmp).unwrap();
     let dto_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
     let dto_files = dto_gen
-        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .generate(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        )
         .await
         .unwrap();
     let create_dto = dto_files
@@ -1197,7 +1219,14 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
     let ddl_gen = generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"))
         .with_parent_candidates(parent_candidates);
     let ddl_files = ddl_gen
-        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .generate(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        )
         .await
         .unwrap();
     let ddl = ddl_files
@@ -2321,36 +2350,34 @@ async fn generate_policy_driven_entity_with_soft_delete() {
         ))
         .with_properties(
             "TestEntityType",
-            vec![
-                PropertyNode {
-                    name: "name".to_string(),
-                    prop_type: "string".to_string(),
-                    description: Some("The entity name".to_string()),
-                    format: None,
-                    is_required: true,
-                    is_nullable: false,
-                    is_array: false,
-                    pattern: None,
-                    min_length: None,
-                    max_length: None,
-                    minimum: None,
-                    maximum: None,
-                    pg_column_name: "name".to_string(),
-                    pg_column_type: "TEXT".to_string(),
-                    rust_field_name: "name".to_string(),
-                    rust_field_type: "String".to_string(),
-                    sea_orm_type: "Text".to_string(),
-                    render_strategy: "direct_column".to_string(),
-                    ref_target: None,
-                    classification: Some("primitive_wrapper".to_string()),
-                    projection: None,
-                    classification_kind: Some(RefClassificationKind::PrimitiveWrapper),
-                    ui_override_detail: None,
-                    ui_override_list_cell: None,
-                    ui_override_form: None,
-                    ui_override_inline: None,
-                },
-            ],
+            vec![PropertyNode {
+                name: "name".to_string(),
+                prop_type: "string".to_string(),
+                description: Some("The entity name".to_string()),
+                format: None,
+                is_required: true,
+                is_nullable: false,
+                is_array: false,
+                pattern: None,
+                min_length: None,
+                max_length: None,
+                minimum: None,
+                maximum: None,
+                pg_column_name: "name".to_string(),
+                pg_column_type: "TEXT".to_string(),
+                rust_field_name: "name".to_string(),
+                rust_field_type: "String".to_string(),
+                sea_orm_type: "Text".to_string(),
+                render_strategy: "direct_column".to_string(),
+                ref_target: None,
+                classification: Some("primitive_wrapper".to_string()),
+                projection: None,
+                classification_kind: Some(RefClassificationKind::PrimitiveWrapper),
+                ui_override_detail: None,
+                ui_override_list_cell: None,
+                ui_override_form: None,
+                ui_override_inline: None,
+            }],
         )
         .build();
 
@@ -2414,10 +2441,7 @@ auditable = true
         .await
         .unwrap();
 
-    assert!(
-        !files.is_empty(),
-        "Entity generator should produce files"
-    );
+    assert!(!files.is_empty(), "Entity generator should produce files");
 
     let entity_file = files
         .iter()
@@ -2467,36 +2491,34 @@ async fn generate_policy_driven_ddl_with_soft_delete() {
         ))
         .with_properties(
             "TestEntityType",
-            vec![
-                PropertyNode {
-                    name: "name".to_string(),
-                    prop_type: "string".to_string(),
-                    description: Some("The entity name".to_string()),
-                    format: None,
-                    is_required: true,
-                    is_nullable: false,
-                    is_array: false,
-                    pattern: None,
-                    min_length: None,
-                    max_length: None,
-                    minimum: None,
-                    maximum: None,
-                    pg_column_name: "name".to_string(),
-                    pg_column_type: "TEXT".to_string(),
-                    rust_field_name: "name".to_string(),
-                    rust_field_type: "String".to_string(),
-                    sea_orm_type: "Text".to_string(),
-                    render_strategy: "direct_column".to_string(),
-                    ref_target: None,
-                    classification: Some("primitive_wrapper".to_string()),
-                    projection: None,
-                    classification_kind: Some(RefClassificationKind::PrimitiveWrapper),
-                    ui_override_detail: None,
-                    ui_override_list_cell: None,
-                    ui_override_form: None,
-                    ui_override_inline: None,
-                },
-            ],
+            vec![PropertyNode {
+                name: "name".to_string(),
+                prop_type: "string".to_string(),
+                description: Some("The entity name".to_string()),
+                format: None,
+                is_required: true,
+                is_nullable: false,
+                is_array: false,
+                pattern: None,
+                min_length: None,
+                max_length: None,
+                minimum: None,
+                maximum: None,
+                pg_column_name: "name".to_string(),
+                pg_column_type: "TEXT".to_string(),
+                rust_field_name: "name".to_string(),
+                rust_field_type: "String".to_string(),
+                sea_orm_type: "Text".to_string(),
+                render_strategy: "direct_column".to_string(),
+                ref_target: None,
+                classification: Some("primitive_wrapper".to_string()),
+                projection: None,
+                classification_kind: Some(RefClassificationKind::PrimitiveWrapper),
+                ui_override_detail: None,
+                ui_override_list_cell: None,
+                ui_override_form: None,
+                ui_override_inline: None,
+            }],
         )
         .build();
 
@@ -2536,11 +2558,7 @@ auditable = true
 
     let table_file = files
         .iter()
-        .find(|f| {
-            f.path
-                .to_string_lossy()
-                .contains("test_test_entity.sql")
-        })
+        .find(|f| f.path.to_string_lossy().contains("test_test_entity.sql"))
         .expect("Should have a table SQL file");
 
     let content = &table_file.content;

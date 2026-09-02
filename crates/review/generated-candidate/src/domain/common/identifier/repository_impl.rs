@@ -3,8 +3,7 @@
 
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
@@ -16,7 +15,7 @@ use super::dto_response::IdentifierResponse;
 pub struct IdentifierRepositoryImpl;
 
 #[async_trait]
-impl IdentifierRepository for IdentifierRepositoryImpl {
+impl IdentifierRepository<sea_orm::DatabaseTransaction> for IdentifierRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "common.identifier"))]
     async fn create(
         &self,
@@ -44,11 +43,16 @@ impl IdentifierRepository for IdentifierRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<IdentifierResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::common_identifier::Entity::find()
-            .filter(crate::entity::common_identifier::Column::Id.eq(id))
-            .filter(crate::entity::common_identifier::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::common_identifier::Entity::find()
+            .filter(crate::entity::common_identifier::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::common_identifier::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -121,6 +125,7 @@ impl IdentifierRepository for IdentifierRepositoryImpl {
         page: u64,
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
+        include_deleted: bool,
     ) -> Result<(Vec<IdentifierResponse>, u64), Box<dyn std::error::Error>> {
         let mut condition = sea_orm::Condition::all();
         if let Some(val) = filters.get("scheme_agency_id") {
@@ -132,10 +137,12 @@ impl IdentifierRepository for IdentifierRepositoryImpl {
         if let Some(val) = filters.get("scheme_version_id") {
             condition = condition.add(crate::entity::common_identifier::Column::SchemeVersionId.eq(val.clone()));
         }
-        let query = crate::entity::common_identifier::Entity::find()
-            .filter(condition)
-            .filter(crate::entity::common_identifier::Column::DeletedAt.is_null())
-            .order_by_desc(crate::entity::common_identifier::Column::CreatedAt);
+        let mut query = crate::entity::common_identifier::Entity::find()
+            .filter(condition);
+        if !include_deleted {
+            query = query.filter(crate::entity::common_identifier::Column::DeletedAt.is_null());
+        }
+        let query = query.order_by_desc(crate::entity::common_identifier::Column::CreatedAt);
         let paginator = query.paginate(db, page_size);
 
         let total = paginator.num_items().await?;

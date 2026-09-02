@@ -22,7 +22,7 @@ pub struct Model {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 
 
-    pub deleted_at: Option<DateTimeWithTimeZone>,
+    pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
 
 
     pub deleted_by: Option<Uuid>,
@@ -41,3 +41,5 @@ pub enum Relation {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
+
+

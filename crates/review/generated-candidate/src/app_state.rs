@@ -25,6 +25,9 @@ pub struct AppState {
     pub common_effective_date_commands: crate::domain::common::effective_date::command::EffectiveDateCommandHandler,
     pub common_effective_date_queries: crate::domain::common::effective_date::query::EffectiveDateQueryHandler,
 
+    pub common_event_base_commands: crate::domain::common::event_base::command::EventBaseCommandHandler,
+    pub common_event_base_queries: crate::domain::common::event_base::query::EventBaseQueryHandler,
+
     pub common_formatted_date_time_commands: crate::domain::common::formatted_date_time::command::FormattedDateTimeCommandHandler,
     pub common_formatted_date_time_queries: crate::domain::common::formatted_date_time::query::FormattedDateTimeQueryHandler,
 
@@ -62,11 +65,21 @@ pub struct AppState {
 
 
 
+    pub events_public_event_commands: crate::domain::events::public_event::command::PublicEventCommandHandler,
+    pub events_public_event_queries: crate::domain::events::public_event::query::PublicEventQueryHandler,
+
+
+
     pub recruiting_application_commands: crate::domain::recruiting::application::command::ApplicationCommandHandler,
     pub recruiting_application_queries: crate::domain::recruiting::application::query::ApplicationQueryHandler,
 
     pub recruiting_candidate_commands: crate::domain::recruiting::candidate::command::CandidateCommandHandler,
     pub recruiting_candidate_queries: crate::domain::recruiting::candidate::query::CandidateQueryHandler,
+
+
+
+    pub rsvp_rsvp_commands: crate::domain::rsvp::rsvp::command::RsvpCommandHandler,
+    pub rsvp_rsvp_queries: crate::domain::rsvp::rsvp::query::RsvpQueryHandler,
 
 
     #[allow(dead_code)]

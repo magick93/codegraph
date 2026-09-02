@@ -9,8 +9,8 @@ use codegraph_type_contracts::RefClassificationKind;
 use super::form::{field_name_to_label, ui_field_from_property};
 use super::page::{ChildSection, UiField};
 use crate::error::Result;
-use crate::generate::api::router;
 use crate::generate::api::api_model::{resolve_path_segment, resolve_path_segment_with_config};
+use crate::generate::api::router;
 
 /// Collects UI fields from graph properties, applying standard classification
 /// and codelist value resolution. Shared across page, form, and type generators.
@@ -299,8 +299,11 @@ pub async fn collect_ui_fields(
                 }
                 if let Some(ref_schema) = resolved {
                     if let Some(ref domain) = ref_schema.domain {
-                        field.ref_api_path =
-                            Some(format!("/{}/{}", domain, resolve_path_segment_with_config(None, &ref_schema, config)));
+                        field.ref_api_path = Some(format!(
+                            "/{}/{}",
+                            domain,
+                            resolve_path_segment_with_config(None, &ref_schema, config)
+                        ));
                     }
                 }
             }
@@ -410,8 +413,14 @@ pub async fn collect_child_sections(
 
             // Collect scalar fields for the child
             let immutable_fields: Vec<String> = Vec::new();
-            let fields =
-                collect_ui_fields(db, config_key, &immutable_fields, Some(domain_name), domain_config).await?;
+            let fields = collect_ui_fields(
+                db,
+                config_key,
+                &immutable_fields,
+                Some(domain_name),
+                domain_config,
+            )
+            .await?;
 
             // Check if this child has its own children (for nested accordions)
             let grandchildren = db.get_child_schemas(config_key).await.unwrap_or_default();
@@ -444,9 +453,14 @@ pub async fn collect_child_sections(
             let label = field_name_to_label(&entity_name);
             let path_segment = resolve_path_segment(None, &child);
             let immutable_fields: Vec<String> = Vec::new();
-            let fields =
-                collect_ui_fields(db, &child.title, &immutable_fields, Some(current_domain), domain_config)
-                    .await?;
+            let fields = collect_ui_fields(
+                db,
+                &child.title,
+                &immutable_fields,
+                Some(current_domain),
+                domain_config,
+            )
+            .await?;
 
             let grandchildren = db.get_child_schemas(&child.title).await.unwrap_or_default();
 

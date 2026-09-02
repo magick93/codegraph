@@ -3,8 +3,7 @@
 
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
@@ -16,12 +15,12 @@ use super::dto_response::StringTypeArrayResponse;
 pub struct StringTypeArrayRepositoryImpl;
 
 #[async_trait]
-impl StringTypeArrayRepository for StringTypeArrayRepositoryImpl {
+impl StringTypeArrayRepository<sea_orm::DatabaseTransaction> for StringTypeArrayRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "common.string_type_array"))]
     async fn create(
         &self,
         tx: &DatabaseTransaction,
-        cmd: CreateStringTypeArrayRequest,
+        _cmd: CreateStringTypeArrayRequest,
     ) -> Result<Uuid, Box<dyn std::error::Error>> {
         let id = Uuid::new_v4();
 
@@ -40,11 +39,16 @@ impl StringTypeArrayRepository for StringTypeArrayRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<StringTypeArrayResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::common_string_type_array::Entity::find()
-            .filter(crate::entity::common_string_type_array::Column::Id.eq(id))
-            .filter(crate::entity::common_string_type_array::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::common_string_type_array::Entity::find()
+            .filter(crate::entity::common_string_type_array::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::common_string_type_array::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -64,7 +68,7 @@ impl StringTypeArrayRepository for StringTypeArrayRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         id: Uuid,
-        cmd: UpdateStringTypeArrayRequest,
+        _cmd: UpdateStringTypeArrayRequest,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Update common.string_type_array — only set fields present in the update request
         let model = crate::entity::common_string_type_array::ActiveModel {
@@ -109,10 +113,14 @@ impl StringTypeArrayRepository for StringTypeArrayRepositoryImpl {
         page: u64,
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
+        include_deleted: bool,
     ) -> Result<(Vec<StringTypeArrayResponse>, u64), Box<dyn std::error::Error>> {
-        let query = crate::entity::common_string_type_array::Entity::find()
-            .filter(crate::entity::common_string_type_array::Column::DeletedAt.is_null())
-            .order_by_desc(crate::entity::common_string_type_array::Column::CreatedAt);
+        let mut query = crate::entity::common_string_type_array::Entity::find()
+;
+        if !include_deleted {
+            query = query.filter(crate::entity::common_string_type_array::Column::DeletedAt.is_null());
+        }
+        let query = query.order_by_desc(crate::entity::common_string_type_array::Column::CreatedAt);
         let paginator = query.paginate(db, page_size);
 
         let total = paginator.num_items().await?;

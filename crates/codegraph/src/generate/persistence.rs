@@ -1,10 +1,10 @@
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
     resolve_field, AuditEffect, AuditTimestampKind, AuditUserKind, PersistenceColumn,
-    PersistenceColumnRole, PersistenceEntity, PersistenceEntityRelation,
-    PersistencePolicies, PolicyKind, RetentionEffect, RowSecurityEffect, SoftDeleteEffect,
-    SoftDeleteMarker, SoftDeletePolicy, SoftDeleteVisibility, TenantIsolationEffect,
-    TenantIsolationPolicy, TenantPropagation, TenantStrategy,
+    PersistenceColumnRole, PersistenceEntity, PersistenceEntityRelation, PersistencePolicies,
+    PolicyKind, RetentionEffect, RowSecurityEffect, SoftDeleteEffect, SoftDeleteMarker,
+    SoftDeletePolicy, SoftDeleteVisibility, TenantIsolationEffect, TenantIsolationPolicy,
+    TenantPropagation, TenantStrategy,
 };
 use codegraph_type_contracts::RefClassificationKind;
 
@@ -120,9 +120,7 @@ pub async fn build_persistence_entity(
     ) {
         let prop_is_required = props
             .iter()
-            .find(|p| {
-                resolve_field(p).column_name == fk_field || p.pg_column_name == fk_field
-            })
+            .find(|p| resolve_field(p).column_name == fk_field || p.pg_column_name == fk_field)
             .map(|p| p.is_required)
             .unwrap_or(false);
         let is_nullable = !prop_is_required;
@@ -204,8 +202,7 @@ pub async fn build_persistence_entity(
                 } else {
                     None
                 };
-                let is_range =
-                    prop.effective_kind() == Some(RefClassificationKind::RangeWrapper);
+                let is_range = prop.effective_kind() == Some(RefClassificationKind::RangeWrapper);
 
                 columns.push(PersistenceColumn {
                     field_name: field_def.rust_field_name,
@@ -269,10 +266,8 @@ pub async fn build_persistence_entity(
             | Some(RefClassificationKind::MediaWrapper) => {
                 if let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await {
                     for col in &comp_cols {
-                        let field_name =
-                            format!("{}{}", field_def.rust_field_name, col.suffix);
-                        let column_name =
-                            format!("{}{}", field_def.column_name, col.suffix);
+                        let field_name = format!("{}{}", field_def.rust_field_name, col.suffix);
+                        let column_name = format!("{}{}", field_def.column_name, col.suffix);
                         let is_nullable = !prop.is_required;
                         let rust_type = if is_nullable {
                             format!("Option<{}>", col.rust_type)
@@ -294,32 +289,29 @@ pub async fn build_persistence_entity(
                     }
                 }
             }
-            Some(RefClassificationKind::ValueObject) => {
-                if !prop.is_array {
-                    let (fk_field, fk_col) =
-                        codegraph_core::types::resolve_fk_column_name(
-                            db,
-                            prop,
-                            schema_title,
-                            &entity_titles,
-                        )
-                        .await?;
-                    if fk_field.ends_with("_id") {
-                        columns.push(PersistenceColumn {
-                            field_name: fk_field,
-                            column_name: fk_col,
-                            rust_type: "Option<Uuid>".into(),
-                            pg_type: "UUID".into(),
-                            is_primary_key: false,
-                            is_nullable: true,
-                            is_jsonb: false,
-                            is_range: false,
-                            pg_cast: None,
-                            role: PersistenceColumnRole::ForeignKey {
-                                ref_entity: String::new(),
-                            },
-                        });
-                    }
+            Some(RefClassificationKind::ValueObject) if !prop.is_array => {
+                let (fk_field, fk_col) = codegraph_core::types::resolve_fk_column_name(
+                    db,
+                    prop,
+                    schema_title,
+                    &entity_titles,
+                )
+                .await?;
+                if fk_field.ends_with("_id") {
+                    columns.push(PersistenceColumn {
+                        field_name: fk_field,
+                        column_name: fk_col,
+                        rust_type: "Option<Uuid>".into(),
+                        pg_type: "UUID".into(),
+                        is_primary_key: false,
+                        is_nullable: true,
+                        is_jsonb: false,
+                        is_range: false,
+                        pg_cast: None,
+                        role: PersistenceColumnRole::ForeignKey {
+                            ref_entity: String::new(),
+                        },
+                    });
                 }
             }
             _ => {}
@@ -333,18 +325,17 @@ pub async fn build_persistence_entity(
     }
 
     // ── Tenant column ────────────────────────────────────────────────────
-    let (is_tenant_scoped, tenant_column_name): (bool, String) =
-        if let Some(ti) = tenant_policy {
-            match &ti.strategy {
-                TenantStrategy::Column { property } => (true, property.clone()),
-                _ => (true, String::new()),
-            }
-        } else {
-            (
-                !is_global_entity(table_name, config),
-                "platform_organization_id".into(),
-            )
-        };
+    let (is_tenant_scoped, tenant_column_name): (bool, String) = if let Some(ti) = tenant_policy {
+        match &ti.strategy {
+            TenantStrategy::Column { property } => (true, property.clone()),
+            _ => (true, String::new()),
+        }
+    } else {
+        (
+            !is_global_entity(table_name, config),
+            "platform_organization_id".into(),
+        )
+    };
     if is_tenant_scoped && !tenant_column_name.is_empty() {
         columns.insert(
             1,
@@ -493,7 +484,9 @@ pub async fn build_persistence_entity(
         soft_delete: soft_delete_policy.map(|sd| SoftDeleteEffect {
             policy_name: "soft_delete".into(),
             marker_column: match &sd.marker {
-                SoftDeleteMarker::Timestamp(n) | SoftDeleteMarker::Boolean(n) | SoftDeleteMarker::Status(n) => n.clone(),
+                SoftDeleteMarker::Timestamp(n)
+                | SoftDeleteMarker::Boolean(n)
+                | SoftDeleteMarker::Status(n) => n.clone(),
             },
             marker_type: match &sd.marker {
                 SoftDeleteMarker::Timestamp(_) => "timestamp".into(),

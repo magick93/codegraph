@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import DistributionBaseForm from '$lib/components/forms/DistributionBaseForm.svelte';
-	import { createDistributionBase } from '$lib/stores/common_distribution_base';
+	import DistributionBaseForm from '#lib/components/forms/DistributionBaseForm.svelte';
+	import { createDistributionBase } from '#lib/stores/common_distribution_base.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { CreateDistributionBaseRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { CreateDistributionBaseRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/distribution-base';

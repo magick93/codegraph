@@ -9,15 +9,14 @@ use crate::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
     CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension, HttpEndpointNode,
     InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData,
-    SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
 type CodelistPropertyVal = Option<(CodeList, String)>;
 
-    /// A caching wrapper around a `&dyn GraphQuerier`.
+/// A caching wrapper around a `&dyn GraphQuerier`.
 ///
 /// Caches the results of frequently-called query methods (get_schema,
 /// get_properties, etc.) so that multiple generators querying the same
@@ -53,6 +52,8 @@ pub struct CachingQuerier<'a> {
     relationships_cache: RwLock<HashMap<String, Vec<RelationshipNode>>>,
     all_policies_cache: RwLock<Option<Vec<PolicyNode>>>,
     all_relationships_cache: RwLock<Option<Vec<RelationshipNode>>>,
+    /// Populated for future tenant-scoped queries; not read yet.
+    #[allow(dead_code)]
     tenants_cache: RwLock<HashMap<String, TenantNode>>,
 }
 
@@ -572,12 +573,7 @@ impl GraphQuerier for CachingQuerier<'_> {
         &self,
         resource_name: &str,
     ) -> Result<Vec<ApiOperationNode>, GraphError> {
-        if let Some(cached) = self
-            .api_operations_cache
-            .read()
-            .unwrap()
-            .get(resource_name)
-        {
+        if let Some(cached) = self.api_operations_cache.read().unwrap().get(resource_name) {
             return Ok(cached.clone());
         }
         let result = self.inner.get_api_operations(resource_name).await?;
@@ -620,7 +616,10 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     // ── Persistence metamodel queries ──────────────────────────────────
 
-    async fn get_policies_for_schema(&self, schema_title: &str) -> Result<Vec<PolicyNode>, GraphError> {
+    async fn get_policies_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<PolicyNode>, GraphError> {
         {
             let cache = self.policies_cache.read().unwrap();
             if let Some(policies) = cache.get(schema_title) {
@@ -635,14 +634,20 @@ impl GraphQuerier for CachingQuerier<'_> {
         Ok(policies)
     }
 
-    async fn get_relationships_for_schema(&self, schema_title: &str) -> Result<Vec<RelationshipNode>, GraphError> {
+    async fn get_relationships_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<RelationshipNode>, GraphError> {
         {
             let cache = self.relationships_cache.read().unwrap();
             if let Some(rels) = cache.get(schema_title) {
                 return Ok(rels.clone());
             }
         }
-        let rels = self.inner.get_relationships_for_schema(schema_title).await?;
+        let rels = self
+            .inner
+            .get_relationships_for_schema(schema_title)
+            .await?;
         self.relationships_cache
             .write()
             .unwrap()
@@ -650,7 +655,10 @@ impl GraphQuerier for CachingQuerier<'_> {
         Ok(rels)
     }
 
-    async fn get_relationship_by_name(&self, name: &str) -> Result<Option<RelationshipNode>, GraphError> {
+    async fn get_relationship_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<RelationshipNode>, GraphError> {
         self.inner.get_relationship_by_name(name).await
     }
 
@@ -680,11 +688,17 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     // ── Security metamodel queries ─────────────────────────────────────
 
-    async fn get_security_identity(&self, subject: &str) -> Result<Option<SecurityIdentityNode>, GraphError> {
+    async fn get_security_identity(
+        &self,
+        subject: &str,
+    ) -> Result<Option<SecurityIdentityNode>, GraphError> {
         self.inner.get_security_identity(subject).await
     }
 
-    async fn get_memberships_for_identity(&self, identity_name: &str) -> Result<Vec<MembershipNode>, GraphError> {
+    async fn get_memberships_for_identity(
+        &self,
+        identity_name: &str,
+    ) -> Result<Vec<MembershipNode>, GraphError> {
         self.inner.get_memberships_for_identity(identity_name).await
     }
 

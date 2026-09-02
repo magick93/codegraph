@@ -11,7 +11,9 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
-use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment, resolve_path_segment_with_config};
+use crate::generate::api::api_model::{
+    resolve_entity_operations, resolve_path_segment, resolve_path_segment_with_config,
+};
 
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::page::{ChildSection, UiField};
@@ -172,7 +174,9 @@ impl UiE2eTestGenerator {
                                 &resolve_path_segment_with_config(None, &gp_schema, config),
                             ),
                             domain: gp_domain,
-                            path_segment: resolve_path_segment_with_config(None, &gp_schema, config),
+                            path_segment: resolve_path_segment_with_config(
+                                None, &gp_schema, config,
+                            ),
                             entity_name: gp_schema.rust_type_name.clone(),
                         }));
                     }
@@ -260,8 +264,7 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let dto_config = entity_cfg.map(|ec| &ec.dto);
         let immutable_fields: Vec<String> = dto_config
@@ -289,7 +292,8 @@ impl EntityGenerator for UiE2eTestGenerator {
             }
         }
 
-        let fields = collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
+        let fields =
+            collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
 
         let mut create_fields: Vec<UiField> = fields
             .iter()
@@ -387,7 +391,8 @@ impl EntityGenerator for UiE2eTestGenerator {
                 if let Some(ref api_path) = field.ref_api_path {
                     if seen_deps.insert(field.name.clone()) {
                         let test_data_json =
-                            build_dep_test_data(db, &all_props, &field.name, Some(&domain), config).await;
+                            build_dep_test_data(db, &all_props, &field.name, Some(&domain), config)
+                                .await;
                         entity_ref_deps.push(EntityRefDep {
                             field_name: field.name.clone(),
                             api_path: api_path.clone(),
@@ -401,7 +406,7 @@ impl EntityGenerator for UiE2eTestGenerator {
 
         // Resolve include test config
         let e2e_include = if let Some(ec) = entity_cfg {
-            if ec.allow_include.as_ref().map_or(false, |v| !v.is_empty()) {
+            if ec.allow_include.as_ref().is_some_and(|v| !v.is_empty()) {
                 let resolved = crate::generate::api::include_path::resolve_include_paths(
                     db,
                     config,
@@ -410,8 +415,16 @@ impl EntityGenerator for UiE2eTestGenerator {
                     ec.allow_include.as_ref(),
                 )
                 .await?;
-                resolve_e2e_include_config(db, config, &domain, schema_title, &resolved, has_list, project)
-                    .await?
+                resolve_e2e_include_config(
+                    db,
+                    config,
+                    &domain,
+                    schema_title,
+                    &resolved,
+                    has_list,
+                    project,
+                )
+                .await?
             } else {
                 None
             }
@@ -466,10 +479,18 @@ impl EntityGenerator for UiE2eTestGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &resolve_path_segment_with_config(None, &parent_schema, config),
+                                        &resolve_path_segment_with_config(
+                                            None,
+                                            &parent_schema,
+                                            config,
+                                        ),
                                     ),
                                 domain: parent_domain,
-                                path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
+                                path_segment: resolve_path_segment_with_config(
+                                    None,
+                                    &parent_schema,
+                                    config,
+                                ),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent,
@@ -520,10 +541,18 @@ impl EntityGenerator for UiE2eTestGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &resolve_path_segment_with_config(None, &parent_schema, config),
+                                        &resolve_path_segment_with_config(
+                                            None,
+                                            &parent_schema,
+                                            config,
+                                        ),
                                     ),
                                 domain: parent_domain,
-                                path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
+                                path_segment: resolve_path_segment_with_config(
+                                    None,
+                                    &parent_schema,
+                                    config,
+                                ),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent,
@@ -843,7 +872,7 @@ async fn build_test_data_json(
             // no UI fields in the graph), generate a minimal payload with a
             // code placeholder to satisfy NOT NULL constraints.
             // Only common-domain codelists have code columns.
-            if !schema_title.is_empty() && domain.map_or(false, |d| d == "common") {
+            if !schema_title.is_empty() && (domain == Some("common")) {
                 return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`"
                     .to_string();
             }
@@ -853,7 +882,7 @@ async fn build_test_data_json(
     // Also handle empty-success: collect_ui_fields may return Ok(vec![]) when
     // the schema has no properties (e.g. enum-only code-list schemas).
     // Only common-domain codelists have code columns.
-    if fields.is_empty() && !schema_title.is_empty() && domain.map_or(false, |d| d == "common") {
+    if fields.is_empty() && !schema_title.is_empty() && (domain == Some("common")) {
         return "code: `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`"
             .to_string();
     }
@@ -941,7 +970,7 @@ async fn resolve_e2e_include_config(
     schema_title: &str,
     include_paths: &[crate::generate::api::include_path::ResolvedIncludePath],
     has_list: bool,
-    project: &ProjectConfig,
+    _project: &ProjectConfig,
 ) -> Result<Option<E2eIncludeConfig>> {
     let mut all_steps: Vec<IncludeSetupStep> = Vec::new();
     let mut test_paths: Vec<IncludeTestPath> = Vec::new();
@@ -973,9 +1002,14 @@ async fn resolve_e2e_include_config(
                 .get_schema_in_domain(&seg.schema_title, domain)
                 .await?
                 .ok_or_else(|| crate::error::Error::SchemaNotFound(seg.schema_title.clone()))?;
-            let api_path = format!("/{}/{}", seg.domain, resolve_path_segment_with_config(None, &target_schema, _config));
+            let api_path = format!(
+                "/{}/{}",
+                seg.domain,
+                resolve_path_segment_with_config(None, &target_schema, _config)
+            );
 
-            let fields_json = build_test_data_json(db, &seg.schema_title, Some(&seg.domain), _config).await;
+            let fields_json =
+                build_test_data_json(db, &seg.schema_title, Some(&seg.domain), _config).await;
 
             // FK map: this entity has a FK to the previously created (deeper) entity.
             // The FK column is the fk_column of the deeper segment — it describes
@@ -1013,7 +1047,7 @@ async fn resolve_e2e_include_config(
         }
 
         // Add main entity FK to the first segment of this path (deduplicated)
-        if let Some(ref first_seg) = path.segments.first() {
+        if let Some(first_seg) = path.segments.first() {
             let first_dep_id = format!("{}_{}", first_seg.module_name, 0);
             if seen_main_fk_cols.insert(first_seg.fk_column.clone()) {
                 main_fk_map.push([first_seg.fk_column.clone(), first_dep_id]);
@@ -1033,7 +1067,11 @@ async fn resolve_e2e_include_config(
     let main_dep_id = source_schema.pg_table_name.clone();
 
     if !seen_deps.contains(&main_dep_id) {
-        let main_api_path = format!("/{}/{}", domain, resolve_path_segment_with_config(None, &source_schema, _config));
+        let main_api_path = format!(
+            "/{}/{}",
+            domain,
+            resolve_path_segment_with_config(None, &source_schema, _config)
+        );
         let main_fields = build_test_data_json(db, schema_title, Some(domain), _config).await;
 
         all_steps.push(IncludeSetupStep {

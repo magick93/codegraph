@@ -19,7 +19,7 @@ impl ApplicationFactory {
 
 
 
-        // candidate_id_id: entity ref — caller must supply
+        // candidate_id: entity ref — caller must supply
 
 
 

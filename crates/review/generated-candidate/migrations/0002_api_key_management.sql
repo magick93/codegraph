@@ -227,6 +227,40 @@ BEGIN
 END;
 $function$;
 
+-- Function: Check API Key Scope by key id
+-- Request-path counterpart to check_api_key_scope(): takes the key's UUID
+-- directly (as resolved by verify_api_key in the auth middleware) instead of
+-- reading the app.current_api_key session variable, so pooled Axum
+-- connections can call it safely. Same wildcard semantics as
+-- check_api_key_scope.
+CREATE OR REPLACE FUNCTION public.check_api_key_scope_by_id(p_api_key_id uuid, p_entity_type text, p_action text)
+ RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER
+AS $function$
+DECLARE
+    v_scopes JSONB;
+BEGIN
+    IF p_api_key_id IS NULL THEN RETURN FALSE; END IF;
+
+    SELECT scopes INTO v_scopes
+    FROM api_keys_private.api_keys
+    WHERE id = p_api_key_id AND is_active = TRUE AND (expires_at IS NULL OR expires_at > now());
+
+    IF v_scopes IS NULL THEN RETURN FALSE; END IF;
+
+    -- Request-path check: no row id is known here, so entity_id is matched
+    -- at '*' only. Row-level scoping stays with the api_key_scoped_* RLS
+    -- policies (check_api_key_scope).
+    -- Global wildcard
+    IF v_scopes @> '[{"entity_type": "*", "entity_id": "*", "action": "*"}]' THEN RETURN TRUE; END IF;
+    -- Entity type wildcard (any action)
+    IF v_scopes @> jsonb_build_array(jsonb_build_object('entity_type', p_entity_type, 'entity_id', '*', 'action', '*')) THEN RETURN TRUE; END IF;
+    -- Entity type + exact action
+    IF v_scopes @> jsonb_build_array(jsonb_build_object('entity_type', p_entity_type, 'entity_id', '*', 'action', p_action)) THEN RETURN TRUE; END IF;
+
+    RETURN FALSE;
+END;
+$function$;
+
 -- Step 6: Grant execute permissions
 GRANT EXECUTE ON FUNCTION public.create_api_key TO authenticated;
 GRANT EXECUTE ON FUNCTION public.verify_api_key TO service_role, api_key;
@@ -235,6 +269,7 @@ GRANT EXECUTE ON FUNCTION public.get_verified_api_key_info TO api_key;
 GRANT EXECUTE ON FUNCTION public.get_api_key_org_id TO api_key;
 GRANT EXECUTE ON FUNCTION public.get_current_api_key_id TO api_key;
 GRANT EXECUTE ON FUNCTION public.check_api_key_scope TO api_key;
+GRANT EXECUTE ON FUNCTION public.check_api_key_scope_by_id TO api_key;
 
 -- Comments
 COMMENT ON SCHEMA api_keys_private IS 'Private schema for secure API key storage and management';
@@ -302,6 +337,7 @@ GRANT EXECUTE ON FUNCTION public.get_verified_api_key_info TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_api_key_org_id TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_current_api_key_id TO app_user;
 GRANT EXECUTE ON FUNCTION public.check_api_key_scope TO app_user;
+GRANT EXECUTE ON FUNCTION public.check_api_key_scope_by_id TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_current_org_id TO app_user;
 GRANT EXECUTE ON FUNCTION public.create_api_key TO app_user;
 GRANT EXECUTE ON FUNCTION public.log_api_key_usage TO app_user;
@@ -316,14 +352,18 @@ GRANT USAGE ON SCHEMA api_keys_private TO app_user;
 GRANT SELECT, INSERT, UPDATE ON api_keys_private.api_keys TO app_user;
 GRANT SELECT, INSERT ON api_keys_private.api_key_logs TO app_user;
 
--- Grant app_user access to domain schemas (needed for SET LOCAL ROLE in RLS)
--- Schemas may not exist yet (created by later migrations), so check first.
+-- Grant app_user DML access to domain/platform schemas (needed for
+-- SET LOCAL ROLE / app-role RLS). Each schema is created here first so
+-- ALTER DEFAULT PRIVILEGES covers every table created by later migrations,
+-- regardless of application order (supabase db reset or the ops harness);
+-- GRANT ... ON ALL TABLES additionally covers any tables that already exist
+-- when this migration is (re)run. Append-only narrowing (REVOKE UPDATE,
+-- DELETE) and pgmq grants live in the late-binding 9000_app_user_grants.sql.
 DO $$ DECLARE s TEXT; BEGIN
-  FOREACH s IN ARRAY ARRAY['common','recruiting','compensation','payroll','benefits','timecard','screening','interviewing','assessments','wellness','platform'] LOOP
-    IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = s) THEN
-      EXECUTE format('GRANT USAGE ON SCHEMA %I TO app_user', s);
-      EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO app_user', s);
-      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user', s);
-    END IF;
+  FOREACH s IN ARRAY ARRAY['common','compensation','events','platform','recruiting','rsvp'] LOOP
+    EXECUTE format('CREATE SCHEMA IF NOT EXISTS %I', s);
+    EXECUTE format('GRANT USAGE ON SCHEMA %I TO app_user', s);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO app_user', s);
+    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user', s);
   END LOOP;
 END $$;

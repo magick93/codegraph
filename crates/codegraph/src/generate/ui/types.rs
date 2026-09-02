@@ -102,8 +102,7 @@ impl GlobalGenerator for UiTypeGenerator {
                 .get(&domain)
                 .and_then(|d| d.get_entity_config(&entity_name));
 
-            let operations =
-                resolve_entity_operations(db, config, &domain, &entity_name).await;
+            let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
             let dto_config = entity_cfg.map(|ec| &ec.dto);
             let immutable_fields: Vec<String> = dto_config
@@ -123,9 +122,14 @@ impl GlobalGenerator for UiTypeGenerator {
                 }
             }
 
-            let ui_fields =
-                collect_ui_fields(db, &entry.schema_title, &immutable_fields, Some(&domain), config)
-                    .await?;
+            let ui_fields = collect_ui_fields(
+                db,
+                &entry.schema_title,
+                &immutable_fields,
+                Some(&domain),
+                config,
+            )
+            .await?;
             let mut response_fields = Vec::new();
             let mut create_fields = Vec::new();
             let mut update_fields = Vec::new();
@@ -177,9 +181,13 @@ impl GlobalGenerator for UiTypeGenerator {
                     }
                     // Resolve the nested type's TS interface name and fields.
                     let nested_ts_name = field.ts_type.clone();
-                    if let Some(nt_fields) =
-                        collect_nested_type_fields(db, schema_title_for_ref, Some(&entity.domain), config)
-                            .await
+                    if let Some(nt_fields) = collect_nested_type_fields(
+                        db,
+                        schema_title_for_ref,
+                        Some(&entity.domain),
+                        config,
+                    )
+                    .await
                     {
                         nested_types.push(UiNestedType {
                             name: nested_ts_name,

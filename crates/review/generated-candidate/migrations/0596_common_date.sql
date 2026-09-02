@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS common.date (
 
 );
 
+-- App role DML (RLS policies gate rows; this grants base table access)
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE common.date TO app_user;
+
 
 
 

@@ -196,9 +196,7 @@ pub fn build_worker_domains(
                 .map(|e| e.queue_binding_or("WEBHOOK_QUEUE"))
                 .unwrap_or_else(|| "WEBHOOK_QUEUE".to_string());
             let queue_name = entry
-                .map(|e| {
-                    e.queue_name_or(&format!("{app_name}-{}-webhooks", d.name))
-                })
+                .map(|e| e.queue_name_or(&format!("{app_name}-{}-webhooks", d.name)))
                 .unwrap_or_else(|| format!("{app_name}-{}-webhooks", d.name));
             WorkerDomain {
                 name: d.name.clone(),
@@ -218,13 +216,9 @@ pub fn build_worker_domains(
                 has_webhooks,
                 queue_name,
                 queue_binding,
-                queue_max_retries: entry
-                    .map(|e| e.queue_max_retries_or(5))
-                    .unwrap_or(5),
+                queue_max_retries: entry.map(|e| e.queue_max_retries_or(5)).unwrap_or(5),
                 queue_max_concurrency: entry.and_then(|e| e.queue_max_concurrency),
-                observability: entry
-                    .map(|e| e.observability_or(false))
-                    .unwrap_or(false),
+                observability: entry.map(|e| e.observability_or(false)).unwrap_or(false),
                 domain_types_path: String::new(),
                 hooks_api_path: String::new(),
             }
@@ -303,6 +297,17 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         }
         let gateway_observability = domains.iter().any(|d| d.observability);
 
+        // Schemas the API-key migration grants app_user DML on: every
+        // domain schema plus common (codelists) and the platform infra
+        // schema — the same list the monolith scaffold uses.
+        let mut grant_schemas: Vec<String> = domains
+            .iter()
+            .map(|d| d.postgres_schema.clone())
+            .chain(["common".to_string(), "platform".to_string()])
+            .collect();
+        grant_schemas.sort();
+        grant_schemas.dedup();
+
         let ctx = WorkerScaffoldContext {
             app_name,
             gateway_name,
@@ -325,9 +330,9 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         // `0002_api_key_management.sql`; workers topology gates the monolith
         // scaffold off, so the worker scaffold owns it here (same numbering,
         // same template).
-        let empty_ctx = std::collections::HashMap::<String, String>::new();
+        let grant_ctx = serde_json::json!({ "grant_schemas": grant_schemas });
         let api_key_migration =
-            render_template_with_project(tera, "db/api_key_migration.tera", &empty_ctx, project)?;
+            render_template_with_project(tera, "db/api_key_migration.tera", &grant_ctx, project)?;
         files.push(GeneratedFile {
             path: self
                 .output_dir
@@ -603,7 +608,9 @@ service_bindings = ["timecard"]
                 name: "PayRun".to_string(),
                 module_name: "pay_run".to_string(),
                 domain: name.to_string(),
+                table_name: "pay_run".to_string(),
                 has_commands: true,
+                append_only: false,
                 has_query_hooks: true,
             }],
         }
@@ -1058,7 +1065,9 @@ entities = ["CodeType"]
                 name: "ComplianceCheckResult".to_string(),
                 module_name: "compliance_check_result".to_string(),
                 domain: "compliance".to_string(),
+                table_name: "compliance_check_result".to_string(),
                 has_commands: false,
+                append_only: false,
                 has_query_hooks: false,
             }],
         };
@@ -1118,14 +1127,14 @@ entities = ["CodeType"]
         };
         let config = test_config();
         let domains = build_worker_domains("hr", &config, vec![scaffold_domain("payroll")]);
-        let rendered = render_template_with_project(
-            &tera,
-            "scaffold/worker_lib.tera",
-            &domains[0],
-            &project,
-        )
-        .unwrap();
-        for needle in ["pub mod entity;", "pub mod db_client;", "pub mod workflow_client;"] {
+        let rendered =
+            render_template_with_project(&tera, "scaffold/worker_lib.tera", &domains[0], &project)
+                .unwrap();
+        for needle in [
+            "pub mod entity;",
+            "pub mod db_client;",
+            "pub mod workflow_client;",
+        ] {
             assert!(
                 rendered.contains(needle),
                 "worker lib.rs must declare `{needle}`, got:\n{rendered}"

@@ -112,7 +112,7 @@ pub async fn execute(
     client: &ApiClient,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
-    let base = format!("/api/common/string-type-array");
+    let base = format!("/api/v1/common/string-type-array");
 
     match cmd {
 

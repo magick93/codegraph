@@ -112,7 +112,7 @@ pub async fn execute(
     client: &ApiClient,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
-    let base = format!("/api/recruiting/application");
+    let base = format!("/api/v1/recruiting/applications");
 
     match cmd {
 

@@ -6,9 +6,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::generate::api::api_model::resolve_entity_operations;
-use crate::generate::api::include_path::{
-    resolve_include_paths_for_topology, ResolvedIncludePath,
-};
+use crate::generate::api::include_path::{resolve_include_paths_for_topology, ResolvedIncludePath};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use crate::generate::type_registry;
@@ -409,8 +407,7 @@ pub async fn build_dto_context(
         .get(&domain)
         .and_then(|d| d.get_entity_config(&entity_name));
 
-    let operations =
-        resolve_entity_operations(db, config, &domain, &entity_name).await;
+    let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
     let dto_config = entity_cfg.map(|ec| &ec.dto);
     let mut immutable_fields = dto_config
@@ -488,7 +485,7 @@ pub async fn build_dto_context(
 
     // Collect all raw field names to detect collisions when stripping _code suffix.
     // E.g. if both "language_code" and "language" exist, don't strip "language_code".
-    let all_field_names: std::collections::HashSet<String> =
+    let _all_field_names: std::collections::HashSet<String> =
         props.iter().map(|p| p.rust_field_name.clone()).collect();
 
     // Build entity titles set so we can detect VO properties that target
@@ -589,6 +586,61 @@ pub async fn build_dto_context(
                         child_dtos.push(child_dto);
                     }
                 }
+            }
+            continue;
+        }
+
+        // Array of entity refs:
+        //  - Junction (no back-reference on the target schema): the DTO carries
+        //    a Vec<uuid::Uuid> of related ids, persisted into the junction table.
+        //  - FK-on-child (target has a `<parent>_id` column, e.g. party.case_id
+        //    for case.party_ids): no field on the parent DTO — children are
+        //    managed through their own endpoints.
+        if prop.is_array && prop.effective_kind() == Some(RefClassificationKind::EntityReference) {
+            let target = db
+                .get_array_item_schema(&prop.name, schema_title)
+                .await
+                .ok()
+                .flatten();
+            let back_ref = format!(
+                "{}_id",
+                codegraph_naming::truncate_pg_identifier(&module_name)
+            );
+            let has_back_ref = match &target {
+                Some(t) => db
+                    .get_properties(&t.title)
+                    .await
+                    .map(|ps| {
+                        ps.iter().any(|p| {
+                            p.pg_column_name == back_ref
+                                || p.pg_column_name
+                                    == format!(
+                                        "{}_id",
+                                        codegraph_naming::to_snake_case(schema_title)
+                                    )
+                        })
+                    })
+                    .unwrap_or(false),
+                None => false,
+            };
+            if !has_back_ref {
+                let field_def = codegraph_core::types::resolve_field(prop);
+                fields.push(DtoField {
+                    name: field_def.rust_field_name.clone(),
+                    rust_type: "uuid::Uuid".to_string(),
+                    is_required: prop.is_required,
+                    is_array: true,
+                    description: prop.description.clone().unwrap_or_default(),
+                    render_strategy: "entity_ref".to_string(),
+                    is_entity_ref: true,
+                    is_hierarchy_field: false,
+                    min_length: None,
+                    max_length: None,
+                    minimum: None,
+                    maximum: None,
+                    pattern: None,
+                    format: None,
+                });
             }
             continue;
         }
@@ -1043,6 +1095,7 @@ impl EntityGenerator for DtoGenerator {
 }
 
 impl DtoGenerator {
+    #[allow(clippy::too_many_arguments)]
     /// Generate include DTO files for eager-loading via `?include=` query parameter.
     async fn build_include_dtos(
         &self,
@@ -1146,7 +1199,7 @@ impl DtoGenerator {
             }
 
             let mut enriched = Vec::new();
-            for (first_seg, group_paths) in &by_first_seg {
+            for group_paths in by_first_seg.values() {
                 let first_path = group_paths[0];
                 let intermediate = &first_path.segments[0];
 
@@ -1290,7 +1343,47 @@ impl DtoGenerator {
             } else {
                 path.response_rust_type.clone()
             };
-            type_registry::register_type(&type_name, module_path.clone());
+            // Register the include response type under the module that
+            // DEFINES it, or import resolution poisons the registry with a
+            // self-referencing path (first registration wins):
+            // - multi-segment combined DTOs are defined in this entity's
+            //   dto_included module;
+            // - VO→entity child-table overrides resolve to this entity's
+            //   dto_response module, where its child DTOs are registered;
+            // - plain single-segment paths resolve to the target entity's
+            //   dto_response module ({Target}Response is defined there).
+            let defining_module = match path.segments.len() {
+                1 => {
+                    if path.segments[0].child_table_override.is_some() {
+                        // This entity's dto_response module, where its
+                        // child DTOs are registered.
+                        vec![
+                            "crate".into(),
+                            "domain".into(),
+                            domain.into(),
+                            module_name.clone(),
+                            "dto_response".into(),
+                        ]
+                    } else {
+                        let seg = &path.segments[0];
+                        vec![
+                            "crate".into(),
+                            "domain".into(),
+                            seg.domain.clone(),
+                            seg.module_name.clone(),
+                            "dto_response".into(),
+                        ]
+                    }
+                }
+                _ => vec![
+                    "crate".into(),
+                    "domain".into(),
+                    domain.into(),
+                    module_name.clone(),
+                    "dto_included".into(),
+                ],
+            };
+            type_registry::register_type(&type_name, defining_module);
         }
 
         // Collect all type names referenced by include fields for cross-entity import resolution.
@@ -1359,10 +1452,11 @@ impl DtoGenerator {
                             .and_then(|s| s.strip_suffix('>'))
                             .unwrap_or(rust_type);
                         // Codelist enum types end with "CodeList" or "StatusCode" etc.
-                        if (ty.ends_with("CodeList") || ty.ends_with("Code")) && !ty.contains('<') {
-                            if !codelist_imports.contains(&ty.to_string()) {
-                                codelist_imports.push(ty.to_string());
-                            }
+                        if (ty.ends_with("CodeList") || ty.ends_with("Code"))
+                            && !ty.contains('<')
+                            && !codelist_imports.contains(&ty.to_string())
+                        {
+                            codelist_imports.push(ty.to_string());
                         }
                     }
                 }
@@ -1372,7 +1466,7 @@ impl DtoGenerator {
         // Only emit `use uuid::Uuid;` when an enriched base field actually
         // references the bare `Uuid` type (otherwise the import is dead code).
         let needs_uuid = enriched_types.iter().any(|et| {
-            et["base_fields"].as_array().map_or(false, |bfs| {
+            et["base_fields"].as_array().is_some_and(|bfs| {
                 bfs.iter().any(|bf| {
                     bf["rust_type"]
                         .as_str()
@@ -1451,11 +1545,4 @@ pub(crate) fn strip_code_suffix_safe(name: &str) -> String {
 /// Returns `None` when `ref_target` is `None` or empty.
 pub(crate) fn codelist_enum_name_from_ref(ref_target: &Option<String>) -> Option<String> {
     codegraph_core::types::codelist_enum_name_from_ref(ref_target)
-}
-
-/// Return the Rust type for a codelist property — the enum name if available,
-/// otherwise `"String"`.
-pub(crate) fn resolve_codelist_rust_type(prop: &codegraph_core::types::PropertyNode) -> String {
-    codegraph_core::types::codelist_enum_name_from_ref(&prop.ref_target)
-        .unwrap_or_else(|| "String".to_string())
 }

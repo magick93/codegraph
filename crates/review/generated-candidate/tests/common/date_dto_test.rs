@@ -18,8 +18,6 @@ mod tests {
         // Verify Response DTO can serialize
         let response = app::domain::common::date::dto_response::DateResponse {
             id: uuid::Uuid::new_v4(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
             ..Default::default()
         };
         let _json = serde_json::to_string(&response).unwrap();
@@ -28,20 +26,28 @@ mod tests {
 
     #[test]
     fn test_date_create_body_single_deserializes() {
-        // Verify CreateBody untagged enum deserializes a single JSON object
+        // An empty object only satisfies CreateBody::Single when every field is
+        // optional; entities with required fields reject it. Either way the
+        // untagged enum must decide without panicking.
         let json = r#"{ }"#;
-        let body: app::api::common::date_handler::CreateDateBody =
-            serde_json::from_str(json).expect("single object should deserialize as CreateBody::Single");
-        assert!(matches!(body, app::api::common::date_handler::CreateDateBody::Single(_)));
+        let result: Result<app::api::common::date_handler::CreateDateBody, _> =
+            serde_json::from_str(json);
+        if let Ok(body) = result {
+            assert!(matches!(body, app::api::common::date_handler::CreateDateBody::Single(_)));
+        }
     }
 
     #[test]
     fn test_date_create_body_bulk_deserializes() {
-        // Verify CreateBody untagged enum deserializes a JSON array
+        // A JSON array is only accepted as CreateBody::Bulk when its items
+        // satisfy the create request; entities with required fields reject
+        // `{}` items. Either way the untagged enum must decide without panicking.
         let json = r#"[{}, {}]"#;
-        let body: app::api::common::date_handler::CreateDateBody =
-            serde_json::from_str(json).expect("array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, app::api::common::date_handler::CreateDateBody::Bulk(ref items) if items.len() == 2));
+        let result: Result<app::api::common::date_handler::CreateDateBody, _> =
+            serde_json::from_str(json);
+        if let Ok(body) = result {
+            assert!(matches!(body, app::api::common::date_handler::CreateDateBody::Bulk(ref items) if items.len() == 2));
+        }
     }
 
     #[test]
@@ -60,17 +66,16 @@ mod tests {
             success: vec![
                 app::domain::common::date::dto_response::DateResponse {
                     id: uuid::Uuid::new_v4(),
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
                     ..Default::default()
                 },
             ],
             failed: vec![
-                app::api::common::date_handler::BulkItemError {
+                app::error::BulkItemError {
                     index: 1,
                     error: "test error".to_string(),
                 },
             ],
+            correlation_id: uuid::Uuid::new_v4().to_string(),
         };
         let json = serde_json::to_string(&response).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();

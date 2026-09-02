@@ -65,8 +65,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&node).expect("serialize");
-        let deserialized: SecurityIdentityNode =
-            serde_json::from_str(&json).expect("deserialize");
+        let deserialized: SecurityIdentityNode = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(node, deserialized);
     }
 
@@ -83,8 +82,7 @@ mod tests {
             let json = serde_json::to_string(&variant).expect("serialize");
             assert_eq!(json, format!("\"{}\"", expected_str));
 
-            let deserialized: MembershipStatus =
-                serde_json::from_str(&json).expect("deserialize");
+            let deserialized: MembershipStatus = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(variant, deserialized);
         }
     }

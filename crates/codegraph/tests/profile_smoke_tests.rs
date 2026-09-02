@@ -1349,9 +1349,7 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
         .find(|f| f.path.ends_with("workers/gateway/src/worker.rs"))
         .unwrap();
     assert!(
-        gateway_worker
-            .content
-            .contains("/api/v1/{domain}/{*path}"),
+        gateway_worker.content.contains("/api/v1/{domain}/{*path}"),
         "gateway must route domains with the prefix-stripping wildcard"
     );
     assert!(
@@ -1904,9 +1902,7 @@ async fn workers_topology_emits_per_worker_codelist_reexports() {
         .files
         .iter()
         .filter(|f| {
-            f.path
-                .to_string_lossy()
-                .contains("/workers/compensation/")
+            f.path.to_string_lossy().contains("/workers/compensation/")
                 && (f.content.contains("crate::domain::common")
                     || f.content.contains("crate::entity::common_code"))
         })
@@ -2073,9 +2069,14 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
     let dep_path = Path::new(&rest[..q1]);
     let worker_dir = output_dir.path().join("workers/compensation");
     let resolved = normalize_abs(&worker_dir.join(dep_path));
-    let expected = normalize_abs(&std::env::current_dir().expect("cwd").join("crates/hr-hooks-api"));
+    let expected = normalize_abs(
+        &std::env::current_dir()
+            .expect("cwd")
+            .join("crates/hr-hooks-api"),
+    );
     assert_eq!(
-        resolved, expected,
+        resolved,
+        expected,
         "worker hooks-api dep must resolve to the hooks crate from the worker \
          crate dir, got path `{}` (did not account for workers/{{domain}} nesting)",
         dep_path.display()
@@ -2167,10 +2168,7 @@ mod tests {
     fn normalize_abs_collapses_dotdot() {
         assert_eq!(
             normalize_abs(Path::new("/a/b/c/../../d")),
-            vec![
-                std::ffi::OsString::from("a"),
-                std::ffi::OsString::from("d")
-            ]
+            vec![std::ffi::OsString::from("a"), std::ffi::OsString::from("d")]
         );
     }
 }

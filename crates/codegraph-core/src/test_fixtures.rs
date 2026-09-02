@@ -307,7 +307,9 @@ pub async fn ingest_fixtures(
 
     engine.ingest_policy(&person_audit_policy()).await?;
     engine.ingest_policy(&person_soft_delete_policy()).await?;
-    engine.ingest_policy(&person_tenant_isolation_policy()).await?;
+    engine
+        .ingest_policy(&person_tenant_isolation_policy())
+        .await?;
     engine
         .ingest_relationship(&candidate_person_relationship())
         .await?;
