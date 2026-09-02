@@ -54,10 +54,7 @@ impl GlobalGenerator for LexiconScaffoldEmitter {
             return Ok(Vec::new());
         }
 
-        let lexicons = db
-            .get_lexicons("")
-            .await
-            .unwrap_or_default();
+        let lexicons = db.get_lexicons("").await.unwrap_or_default();
 
         let context = ScaffoldContext {
             authority: authority.clone(),
@@ -71,7 +68,8 @@ impl GlobalGenerator for LexiconScaffoldEmitter {
                 .collect(),
         };
 
-        let content = render_template_with_project(tera, "atproto/scaffold.tera", &context, project)?;
+        let content =
+            render_template_with_project(tera, "atproto/scaffold.tera", &context, project)?;
 
         let path = self
             .output_dir

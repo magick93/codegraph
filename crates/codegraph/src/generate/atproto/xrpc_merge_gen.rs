@@ -169,16 +169,26 @@ mod tests {
             .expect("routes.rs emitted");
 
         assert!(
-            mod_rs.content.contains("pub use self::routes::xrpc_routes;"),
+            mod_rs
+                .content
+                .contains("pub use self::routes::xrpc_routes;"),
             "mod.rs must keep the pub-use marker for generate_mod_files"
         );
         assert!(mod_rs.content.contains("pub mod advocacy_router;"));
         assert!(mod_rs.content.contains("pub mod support_router;"));
-        assert!(mod_rs.content.contains("pub mod get_advocacy_advocacy_case;"));
-        assert!(mod_rs.content.contains("pub mod create_support_support_plan;"));
+        assert!(mod_rs
+            .content
+            .contains("pub mod get_advocacy_advocacy_case;"));
+        assert!(mod_rs
+            .content
+            .contains("pub mod create_support_support_plan;"));
 
-        assert!(routes_rs.content.contains("super::advocacy_router::xrpc_routes()"));
-        assert!(routes_rs.content.contains("super::support_router::xrpc_routes()"));
+        assert!(routes_rs
+            .content
+            .contains("super::advocacy_router::xrpc_routes()"));
+        assert!(routes_rs
+            .content
+            .contains("super::support_router::xrpc_routes()"));
 
         std::fs::remove_dir_all(&out).unwrap();
     }

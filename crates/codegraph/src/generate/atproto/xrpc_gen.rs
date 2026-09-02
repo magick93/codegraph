@@ -125,7 +125,9 @@ impl EntityGenerator for AtprotoXrpcEmitter {
             None => return Ok(Vec::new()),
         };
 
-        let model = build_entity_model(db, schema_title, domain, config, &project.atproto_authority).await?;
+        let model =
+            build_entity_model(db, schema_title, domain, config, &project.atproto_authority)
+                .await?;
 
         let fields: Vec<XrpcField> = model
             .fields
@@ -142,9 +144,7 @@ impl EntityGenerator for AtprotoXrpcEmitter {
             })
             .collect();
 
-        let imports = vec![
-            format!("crate::entity::{}", model.entity_module),
-        ];
+        let imports = vec![format!("crate::entity::{}", model.entity_module)];
 
         let query_ctx = XrpcQueryContext {
             lexicon: LexiconMeta {
@@ -157,12 +157,8 @@ impl EntityGenerator for AtprotoXrpcEmitter {
             imports: imports.clone(),
         };
 
-        let query_content = render_template_with_project(
-            tera,
-            "atproto/xrpc_query.tera",
-            &query_ctx,
-            project,
-        )?;
+        let query_content =
+            render_template_with_project(tera, "atproto/xrpc_query.tera", &query_ctx, project)?;
 
         let mut files = vec![GeneratedFile {
             path: self
@@ -189,12 +185,8 @@ impl EntityGenerator for AtprotoXrpcEmitter {
                 .unwrap_or(false),
         };
 
-        let proc_content = render_template_with_project(
-            tera,
-            "atproto/xrpc_procedure.tera",
-            &proc_ctx,
-            project,
-        )?;
+        let proc_content =
+            render_template_with_project(tera, "atproto/xrpc_procedure.tera", &proc_ctx, project)?;
 
         files.push(GeneratedFile {
             path: self
@@ -276,12 +268,8 @@ impl DomainGenerator for AtprotoXrpcEmitter {
             procedures,
         };
 
-        let router_content = render_template_with_project(
-            tera,
-            "atproto/xrpc_router.tera",
-            &router_ctx,
-            project,
-        )?;
+        let router_content =
+            render_template_with_project(tera, "atproto/xrpc_router.tera", &router_ctx, project)?;
 
         Ok(vec![GeneratedFile {
             path: self
@@ -398,16 +386,16 @@ mod tests {
         let emitter = AtprotoXrpcEmitter::new(&PathBuf::from("/tmp/test-out"));
 
         let result = EntityGenerator::generate(
-                &emitter,
-                &engine,
-                "Grant",
-                "grants",
-                &make_domain_config(),
-                &tera,
-                &project,
-            )
-            .await
-            .expect("generation should succeed");
+            &emitter,
+            &engine,
+            "Grant",
+            "grants",
+            &make_domain_config(),
+            &tera,
+            &project,
+        )
+        .await
+        .expect("generation should succeed");
 
         assert!(!result.is_empty(), "should produce files");
 
@@ -451,16 +439,16 @@ mod tests {
         let emitter = AtprotoXrpcEmitter::new(&PathBuf::from("/tmp/test-out"));
 
         let result = DomainGenerator::generate(
-                &emitter,
-                &engine,
-                "grants",
-                &["Grant".to_string()],
-                &make_domain_config(),
-                &tera,
-                &project,
-            )
-            .await
-            .expect("domain generation should succeed");
+            &emitter,
+            &engine,
+            "grants",
+            &["Grant".to_string()],
+            &make_domain_config(),
+            &tera,
+            &project,
+        )
+        .await
+        .expect("domain generation should succeed");
 
         assert_eq!(result.len(), 1);
         let router_file = &result[0];
@@ -508,8 +496,8 @@ mod tests {
             &tera,
             &project,
         )
-            .await
-            .expect("generation should succeed");
+        .await
+        .expect("generation should succeed");
 
         let proc_file = result
             .iter()

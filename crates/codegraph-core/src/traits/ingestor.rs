@@ -1,19 +1,11 @@
 use crate::error::GraphError;
 use crate::types::{
-<<<<<<< HEAD
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode,
     EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
     NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
     RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode,
     ViewComponentNode, ViewContainerNode,
-=======
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
-    DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode,
-    HttpEndpointNode, IngestStats, InteractionNode, MembershipNode, ParameterDefinitionNode,
-    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaNode,
-    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
->>>>>>> origin/master
 };
 use async_trait::async_trait;
 

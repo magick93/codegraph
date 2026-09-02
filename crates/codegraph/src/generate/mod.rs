@@ -662,11 +662,13 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             .join("reports.toml")
             .exists();
     let has_atproto = build_plan
-        .map(|bp| bp.has_global_gen("atproto_identity")
-            || bp.has_entity_gen("lexicon")
-            || bp.has_global_gen("lexicon_scaffold")
-            || bp.has_entity_gen("atproto_client")
-            || bp.has_global_gen("atproto_client_scaffold"))
+        .map(|bp| {
+            bp.has_global_gen("atproto_identity")
+                || bp.has_entity_gen("lexicon")
+                || bp.has_global_gen("lexicon_scaffold")
+                || bp.has_entity_gen("atproto_client")
+                || bp.has_global_gen("atproto_client_scaffold")
+        })
         .unwrap_or(false);
     let has_fern = build_plan
         .map(|bp| bp.has_global_gen("fern_config"))
@@ -855,9 +857,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                     .with_parent_candidates(parent_candidates.clone()),
             ) as Box<dyn EntityGenerator>,
             Box::new(ui::form::UiFormGenerator::new(base("ui-form"))) as Box<dyn EntityGenerator>,
-            Box::new(
-                ui::cosmos_entity_form::CosmosEntityFormGenerator::new(base("ui-form")),
-            ) as Box<dyn EntityGenerator>,
+            Box::new(ui::cosmos_entity_form::CosmosEntityFormGenerator::new(
+                base("ui-form"),
+            )) as Box<dyn EntityGenerator>,
             Box::new(
                 ui::store::UiStoreGenerator::new(base("ui-store"))
                     .with_parent_candidates(parent_candidates.clone()),
@@ -869,9 +871,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             Box::new(playwright::entity_gen::PlaywrightEntityGenerator::new(
                 base("playwright-entity"),
             )) as Box<dyn EntityGenerator>,
-            Box::new(playwright::ts_entity_gen::TsEntityGenerator::new(
-                base("playwright-ts"),
-            )) as Box<dyn EntityGenerator>,
+            Box::new(playwright::ts_entity_gen::TsEntityGenerator::new(base(
+                "playwright-ts",
+            ))) as Box<dyn EntityGenerator>,
             Box::new(ui::descriptor::UiDescriptorGenerator::new(
                 base("ui-descriptor"),
                 ui_overrides.clone(),
@@ -910,12 +912,15 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             // atproto entity generators
             Box::new(atproto::lexicon_gen::LexiconEmitter::new(base("lexicon")))
                 as Box<dyn EntityGenerator>,
-            Box::new(atproto::types_gen::AtprotoTypesEmitter::new(base("atproto_types")))
-                as Box<dyn EntityGenerator>,
-            Box::new(atproto::client_gen::AtprotoClientEmitter::new(base("atproto_client")))
-                as Box<dyn EntityGenerator>,
-            Box::new(atproto::xrpc_gen::AtprotoXrpcEmitter::new(base("atproto_xrpc")))
-                as Box<dyn EntityGenerator>,
+            Box::new(atproto::types_gen::AtprotoTypesEmitter::new(base(
+                "atproto_types",
+            ))) as Box<dyn EntityGenerator>,
+            Box::new(atproto::client_gen::AtprotoClientEmitter::new(base(
+                "atproto_client",
+            ))) as Box<dyn EntityGenerator>,
+            Box::new(atproto::xrpc_gen::AtprotoXrpcEmitter::new(base(
+                "atproto_xrpc",
+            ))) as Box<dyn EntityGenerator>,
         ]
         .into_iter()
         .filter(|gen| plan_has_entity(gen.name()))
@@ -963,10 +968,12 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             Box::new(grpc::router::GrpcRouterGenerator::new(base("grpc_router")))
                 as Box<dyn DomainGenerator>,
             // atproto domain generators
-            Box::new(atproto::appview_gen::AtprotoAppviewEmitter::new(base("atproto_appview")))
-                as Box<dyn DomainGenerator>,
-            Box::new(atproto::xrpc_gen::AtprotoXrpcEmitter::new(base("atproto_xrpc_router")))
-                as Box<dyn DomainGenerator>,
+            Box::new(atproto::appview_gen::AtprotoAppviewEmitter::new(base(
+                "atproto_appview",
+            ))) as Box<dyn DomainGenerator>,
+            Box::new(atproto::xrpc_gen::AtprotoXrpcEmitter::new(base(
+                "atproto_xrpc_router",
+            ))) as Box<dyn DomainGenerator>,
         ]
         .into_iter()
         .filter(|gen| plan_has_domain(gen.name()))
@@ -987,9 +994,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(
             db::event_trigger::PgmqSetupGenerator::new(output_dir).with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
-        Box::new(
-            db::label_setup::LabelSetupGenerator::new(output_dir).with_dialect(make_dialect()),
-        ) as Box<dyn GlobalGenerator>,
+        Box::new(db::label_setup::LabelSetupGenerator::new(output_dir).with_dialect(make_dialect()))
+            as Box<dyn GlobalGenerator>,
         Box::new(
             db::service_tables::ServiceTablesGenerator::new(output_dir)
                 .with_dialect(make_dialect()),
@@ -1025,7 +1031,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 as Box<dyn GlobalGenerator>,
         );
     } else {
-        global_gens.push(        Box::new(scaffold::gen::ScaffoldGenerator::new(
+        global_gens.push(Box::new(scaffold::gen::ScaffoldGenerator::new(
             output_dir,
             has_webhooks,
             has_reports,
@@ -1081,11 +1087,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             output_dir,
         )) as Box<dyn GlobalGenerator>,
     );
-    global_gens.push(
-        Box::new(playwright::ts_global_gen::TsGlobalGenerator::new(
-            output_dir,
-        )) as Box<dyn GlobalGenerator>,
-    );
+    global_gens.push(Box::new(playwright::ts_global_gen::TsGlobalGenerator::new(
+        output_dir,
+    )) as Box<dyn GlobalGenerator>);
     global_gens.push(
         Box::new(webhook::dispatch::WebhookDispatchGenerator::new(output_dir))
             as Box<dyn GlobalGenerator>,
@@ -1104,22 +1108,27 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     global_gens.push(Box::new(atproto::scaffold_gen::LexiconScaffoldEmitter::new(
         output_dir,
     )) as Box<dyn GlobalGenerator>);
-    global_gens.push(Box::new(
-        atproto::client_gen::AtprotoClientScaffoldEmitter::new(output_dir),
-    ) as Box<dyn GlobalGenerator>);
+    global_gens.push(
+        Box::new(atproto::client_gen::AtprotoClientScaffoldEmitter::new(
+            output_dir,
+        )) as Box<dyn GlobalGenerator>,
+    );
     global_gens.push(Box::new(atproto::identity_gen::AtprotoIdentityEmitter::new(
         output_dir,
     )) as Box<dyn GlobalGenerator>);
-    global_gens.push(Box::new(atproto::types_gen::GeneratedTypesEmitter::new(
-        output_dir,
-    )) as Box<dyn GlobalGenerator>);
-    global_gens.push(Box::new(
-        atproto::xrpc_merge_gen::AtprotoXrpcMergeEmitter::new(output_dir),
-    ) as Box<dyn GlobalGenerator>);
+    global_gens.push(
+        Box::new(atproto::types_gen::GeneratedTypesEmitter::new(output_dir))
+            as Box<dyn GlobalGenerator>,
+    );
+    global_gens.push(
+        Box::new(atproto::xrpc_merge_gen::AtprotoXrpcMergeEmitter::new(
+            output_dir,
+        )) as Box<dyn GlobalGenerator>,
+    );
     // Fern SDK config generator
-    global_gens.push(Box::new(fern::config::FernConfigGenerator::new(
-        output_dir,
-    )) as Box<dyn GlobalGenerator>);
+    global_gens
+        .push(Box::new(fern::config::FernConfigGenerator::new(output_dir))
+            as Box<dyn GlobalGenerator>);
     // ops harness manifest + testkit crate
     global_gens.push(Box::new(ops::OpsManifestGenerator::new(
         output_dir,
@@ -1500,15 +1509,12 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
-<<<<<<< HEAD
     // Emit a `.codegraph-manifest.json` at each output root listing every
     // file written this run (report.files mirrors every `write_output` call),
     // merged with any manifest already on disk. The pinned generator-source
     // rev (`project.codegraph_rev`) is recorded so drift/CI can reproduce the
     // exact checkout the committed tree was produced at.
     manifest::emit_manifests(&manifest_roots, &report.files, &project.codegraph_rev)?;
-=======
->>>>>>> origin/master
     // Emit integration-test glue (tests/<domain>/mod.rs + tests/tests.rs) so
     // cargo actually compiles the generated entity tests under tests/.
     let test_mod_files = generate_test_mod_files(output_dir)?;
@@ -2279,7 +2285,8 @@ entities = []
     }
 
     #[test]
-    fn test_worker_routed_generator_classification() {        let routed_entity = [
+    fn test_worker_routed_generator_classification() {
+        let routed_entity = [
             "sea_orm_entity",
             "cornucopia_repo",
             "repository",

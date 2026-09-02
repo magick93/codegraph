@@ -7,8 +7,8 @@ use serde::Serialize;
 use crate::error::Result;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
-use crate::generate::ProjectConfig;
 use crate::generate::GenerationEntry;
+use crate::generate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]
@@ -54,8 +54,7 @@ impl GlobalGenerator for FernConfigGenerator {
             languages,
         };
 
-        let fern_json =
-            render_template_with_project(tera, "fern/fern_config.tera", &ctx, project)?;
+        let fern_json = render_template_with_project(tera, "fern/fern_config.tera", &ctx, project)?;
         let generators_yml =
             render_template_with_project(tera, "fern/generators.tera", &ctx, project)?;
 

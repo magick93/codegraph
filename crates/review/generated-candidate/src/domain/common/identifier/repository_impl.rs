@@ -68,6 +68,7 @@ impl IdentifierRepository<sea_orm::DatabaseTransaction> for IdentifierRepository
             value: row.value,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -158,6 +159,7 @@ impl IdentifierRepository<sea_orm::DatabaseTransaction> for IdentifierRepository
                 value: row.value,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

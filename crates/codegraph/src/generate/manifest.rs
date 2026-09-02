@@ -190,10 +190,9 @@ mod tests {
         // only src/extra.rs; the manifest must keep both.
         emit_manifests(&[root], &[write(root, "src/extra.rs")], "rev-1").unwrap();
 
-        let m: Manifest = serde_json::from_str(
-            &std::fs::read_to_string(root.join(MANIFEST_FILENAME)).unwrap(),
-        )
-        .unwrap();
+        let m: Manifest =
+            serde_json::from_str(&std::fs::read_to_string(root.join(MANIFEST_FILENAME)).unwrap())
+                .unwrap();
         assert_eq!(m.generated, vec!["src/extra.rs", "src/lib.rs"]);
         // The merge keeps the current run's rev (sequential profile runs use
         // the same generator checkout).
@@ -217,10 +216,9 @@ mod tests {
         ];
         emit_manifests(&[root], &files, "rev-2").unwrap();
 
-        let m: Manifest = serde_json::from_str(
-            &std::fs::read_to_string(root.join(MANIFEST_FILENAME)).unwrap(),
-        )
-        .unwrap();
+        let m: Manifest =
+            serde_json::from_str(&std::fs::read_to_string(root.join(MANIFEST_FILENAME)).unwrap())
+                .unwrap();
         assert_eq!(m.generated, vec!["src/main.rs"]);
     }
 
@@ -231,19 +229,15 @@ mod tests {
         let nested = root.join("nested");
         std::fs::create_dir_all(&nested).unwrap();
 
-        let files = vec![
-            write(root, "top.rs"),
-            write(&nested, "inner.rs"),
-        ];
+        let files = vec![write(root, "top.rs"), write(&nested, "inner.rs")];
         // Passing both root and nested: nested is filtered out because root
         // already covers it, but files under nested are still listed relative
         // to root.
         emit_manifests(&[root, &nested], &files, "rev-3").unwrap();
 
-        let m: Manifest = serde_json::from_str(
-            &std::fs::read_to_string(root.join(MANIFEST_FILENAME)).unwrap(),
-        )
-        .unwrap();
+        let m: Manifest =
+            serde_json::from_str(&std::fs::read_to_string(root.join(MANIFEST_FILENAME)).unwrap())
+                .unwrap();
         assert_eq!(m.generated, vec!["nested/inner.rs", "top.rs"]);
         assert_eq!(m.codegraph_commit, "rev-3");
     }

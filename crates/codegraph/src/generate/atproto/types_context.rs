@@ -72,10 +72,10 @@ impl TypesContext {
         // rsky_syntax types lack Serialize/Deserialize, which breaks generated structs.
         // The semantic type is preserved via docs and the `needs_atproto_syntax_imports` flag.
         let atproto_field_types: std::collections::HashMap<&str, &str> = [
-            ("at_uri", "String"),    // rsky_syntax::aturi::AtUri
-            ("did", "String"),       // cosmos_domain_types::identifiers::Did
+            ("at_uri", "String"),     // rsky_syntax::aturi::AtUri
+            ("did", "String"),        // cosmos_domain_types::identifiers::Did
             ("collection", "String"), // rsky_syntax::nsid::Nsid
-            ("rkey", "String"),      // cosmos_domain_types::identifiers::RecordKey
+            ("rkey", "String"),       // cosmos_domain_types::identifiers::RecordKey
         ]
         .iter()
         .cloned()
@@ -87,22 +87,21 @@ impl TypesContext {
                 continue;
             }
 
-            let (rust_type, serde_with) = if let Some(atproto_type) =
-                atproto_field_types.get(field_name.as_str())
-            {
-                (atproto_type.to_string(), None)
-            } else {
-                let kind = prop.effective_kind();
-                field_rust_type(
-                    &kind,
-                    prop,
-                    db,
-                    &mut needs_blob_ref,
-                    &mut seen_enum_names,
-                    &mut enum_defs,
-                )
-                .await
-            };
+            let (rust_type, serde_with) =
+                if let Some(atproto_type) = atproto_field_types.get(field_name.as_str()) {
+                    (atproto_type.to_string(), None)
+                } else {
+                    let kind = prop.effective_kind();
+                    field_rust_type(
+                        &kind,
+                        prop,
+                        db,
+                        &mut needs_blob_ref,
+                        &mut seen_enum_names,
+                        &mut enum_defs,
+                    )
+                    .await
+                };
 
             let is_option = !prop.is_required;
 
@@ -141,9 +140,8 @@ impl TypesContext {
             });
         }
 
-        let needs_generated_types_import = fields
-            .iter()
-            .any(|f| f.rust_type == "serde_json::Value");
+        let needs_generated_types_import =
+            fields.iter().any(|f| f.rust_type == "serde_json::Value");
 
         Ok(Self {
             struct_name,
@@ -171,10 +169,7 @@ async fn field_rust_type(
     let kind = match kind {
         Some(k) => k.clone(),
         None => {
-            return (
-                rust_type_from_prop_builtin(prop),
-                serde_with_for_prop(prop),
-            );
+            return (rust_type_from_prop_builtin(prop), serde_with_for_prop(prop));
         }
     };
 
@@ -182,18 +177,15 @@ async fn field_rust_type(
         RefClassificationKind::PrimitiveWrapper => {
             (rust_type_from_prop_builtin(prop), serde_with_for_prop(prop))
         }
-        RefClassificationKind::EntityReference => {
-            ("String".to_string(), None)
-        }
-        RefClassificationKind::InlineEnum | RefClassificationKind::CodelistReference
+        RefClassificationKind::EntityReference => ("String".to_string(), None),
+        RefClassificationKind::InlineEnum
+        | RefClassificationKind::CodelistReference
         | RefClassificationKind::CodelistCheck => {
             resolve_codelist_enum(prop, &kind, db, seen_enum_names, enum_defs).await
         }
         RefClassificationKind::ValueObject
         | RefClassificationKind::CompositeWrapper
-        | RefClassificationKind::StructuredWrapper => {
-            ("serde_json::Value".to_string(), None)
-        }
+        | RefClassificationKind::StructuredWrapper => ("serde_json::Value".to_string(), None),
         RefClassificationKind::ArrayWrapper => {
             if prop.is_array {
                 let inner = rust_type_from_prop_builtin(prop);
@@ -202,9 +194,7 @@ async fn field_rust_type(
                 ("Vec<String>".to_string(), None)
             }
         }
-        RefClassificationKind::RangeWrapper => {
-            ("String".to_string(), None)
-        }
+        RefClassificationKind::RangeWrapper => ("String".to_string(), None),
         RefClassificationKind::MediaWrapper => {
             *needs_blob_ref = true;
             ("BlobRef".to_string(), None)

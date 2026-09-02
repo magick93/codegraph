@@ -3545,7 +3545,9 @@ impl RepositoryImplEmitter {
                     }
                     // Entity reference types (e.g. "ConsultationType") — FK columns
                     // are always UUIDs, even when the DTO wraps them in Option<>.
-                    ty if ty.ends_with("Type") && ty.chars().next().map_or(false, |c| c.is_uppercase()) => {
+                    ty if ty.ends_with("Type")
+                        && ty.chars().next().map_or(false, |c| c.is_uppercase()) =>
+                    {
                         writeln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\")))?;", ff.field_name).unwrap();
                         writeln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col).unwrap();
                     }

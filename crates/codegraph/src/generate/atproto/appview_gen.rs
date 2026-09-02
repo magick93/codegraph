@@ -111,7 +111,8 @@ impl DomainGenerator for AtprotoAppviewEmitter {
                 .list_schemas(None)
                 .await
                 .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-            let mut domains: std::collections::BTreeMap<String, bool> = std::collections::BTreeMap::new();
+            let mut domains: std::collections::BTreeMap<String, bool> =
+                std::collections::BTreeMap::new();
             for schema in &schemas {
                 // Only entity schemas (not codelists) with lexicons
                 if !schema.is_entity || schema.is_codelist {
@@ -121,12 +122,18 @@ impl DomainGenerator for AtprotoAppviewEmitter {
                     if !d.is_empty() {
                         let has_lex = domains.entry(d.clone()).or_insert(false);
                         if !*has_lex {
-                            *has_lex = db.get_lexicon_by_schema(&schema.title).await.ok().flatten().is_some();
+                            *has_lex = db
+                                .get_lexicon_by_schema(&schema.title)
+                                .await
+                                .ok()
+                                .flatten()
+                                .is_some();
                         }
                     }
                 }
             }
-            domains.into_iter()
+            domains
+                .into_iter()
                 .filter(|(_, has_lex)| *has_lex)
                 .map(|(name, _)| DomainEntry {
                     rust_name: name.replace('-', "_"),
@@ -139,12 +146,8 @@ impl DomainGenerator for AtprotoAppviewEmitter {
             domains: all_domains,
         };
 
-        let index_content = render_template_with_project(
-            tera,
-            "atproto/appview_index.tera",
-            &index_ctx,
-            project,
-        )?;
+        let index_content =
+            render_template_with_project(tera, "atproto/appview_index.tera", &index_ctx, project)?;
 
         files.push(GeneratedFile {
             path: self
@@ -310,7 +313,10 @@ mod tests {
             .await
             .expect("generation should succeed");
 
-        assert!(result.is_empty(), "should return empty when authority is blank");
+        assert!(
+            result.is_empty(),
+            "should return empty when authority is blank"
+        );
     }
 
     #[tokio::test]

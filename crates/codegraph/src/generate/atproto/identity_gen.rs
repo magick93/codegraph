@@ -75,7 +75,7 @@ impl GlobalGenerator for AtprotoIdentityEmitter {
         };
 
         let did = format!("did:web:{}", host);
-        let signing_key_placeholder = "z6MkhaXgBxDY..." .to_string();
+        let signing_key_placeholder = "z6MkhaXgBxDY...".to_string();
         let pds_url = format!("https://{}", host);
 
         let mut files = Vec::new();
@@ -86,18 +86,11 @@ impl GlobalGenerator for AtprotoIdentityEmitter {
             pds_url: pds_url.clone(),
         };
 
-        let did_content = render_template_with_project(
-            tera,
-            "atproto/did_web.tera",
-            &did_ctx,
-            project,
-        )?;
+        let did_content =
+            render_template_with_project(tera, "atproto/did_web.tera", &did_ctx, project)?;
 
         files.push(GeneratedFile {
-            path: self
-                .output_dir
-                .join(".well-known")
-                .join("did.json"),
+            path: self.output_dir.join(".well-known").join("did.json"),
             content: did_content,
         });
 
@@ -109,18 +102,11 @@ impl GlobalGenerator for AtprotoIdentityEmitter {
             }],
         };
 
-        let handle_content = render_template_with_project(
-            tera,
-            "atproto/handle.tera",
-            &handle_ctx,
-            project,
-        )?;
+        let handle_content =
+            render_template_with_project(tera, "atproto/handle.tera", &handle_ctx, project)?;
 
         files.push(GeneratedFile {
-            path: self
-                .output_dir
-                .join(".well-known")
-                .join("atproto-did"),
+            path: self.output_dir.join(".well-known").join("atproto-did"),
             content: handle_content,
         });
 
@@ -130,12 +116,8 @@ impl GlobalGenerator for AtprotoIdentityEmitter {
             pds_endpoint: pds_url.clone(),
         };
 
-        let auth_content = render_template_with_project(
-            tera,
-            "atproto/auth.tera",
-            &auth_ctx,
-            project,
-        )?;
+        let auth_content =
+            render_template_with_project(tera, "atproto/auth.tera", &auth_ctx, project)?;
 
         files.push(GeneratedFile {
             path: self
@@ -183,11 +165,8 @@ mod tests {
             r##"{"id":"did:web:{{host}}","verificationMethod":[{"id":"#atproto","type":"Multikey","controller":"did:web:{{host}}"}]}"##,
         )
         .unwrap();
-        tera.add_raw_template(
-            "atproto/handle.tera",
-            r#"# Primary DID: {{primary_did}}"#,
-        )
-        .unwrap();
+        tera.add_raw_template("atproto/handle.tera", r#"# Primary DID: {{primary_did}}"#)
+            .unwrap();
         tera.add_raw_template(
             "atproto/auth.tera",
             r#"use rsky_crypto::verify::verify_signature;pub async fn validate_atproto_token(){}pub struct AtprotoAuth{}pub struct AtprotoDid(pub String);pub fn generate_service_key(){}"#,
@@ -284,6 +263,9 @@ mod tests {
             .await
             .expect("generation should succeed");
 
-        assert!(result.is_empty(), "should return empty when authority is blank");
+        assert!(
+            result.is_empty(),
+            "should return empty when authority is blank"
+        );
     }
 }

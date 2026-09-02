@@ -61,10 +61,7 @@ impl GlobalGenerator for PlatformGrantsGenerator {
         // Only projects that declare an entity-less custom-routes domain need
         // the platform grants — the grants reference basejump/api-key objects
         // that only those handlers use.
-        let has_custom_routes_domain = config
-            .domains
-            .values()
-            .any(|d| d.custom_routes);
+        let has_custom_routes_domain = config.domains.values().any(|d| d.custom_routes);
         if !has_custom_routes_domain {
             return Ok(vec![]);
         }

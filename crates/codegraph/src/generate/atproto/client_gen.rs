@@ -86,10 +86,8 @@ impl EntityGenerator for AtprotoClientEmitter {
             None => return Ok(Vec::new()),
         };
 
-        let entity_name = codegraph_naming::strip_suffix(
-            schema_title,
-            &_config.defaults.type_suffix,
-        );
+        let entity_name =
+            codegraph_naming::strip_suffix(schema_title, &_config.defaults.type_suffix);
 
         let record_type_name = format!("{}Record", entity_name);
 
@@ -124,8 +122,7 @@ impl EntityGenerator for AtprotoClientEmitter {
             operations,
         };
 
-        let content =
-            render_template_with_project(tera, "atproto/client.tera", &context, project)?;
+        let content = render_template_with_project(tera, "atproto/client.tera", &context, project)?;
 
         let module_name = codegraph_naming::to_snake_case(schema_title);
         let path = self
@@ -174,7 +171,9 @@ impl GlobalGenerator for AtprotoClientScaffoldEmitter {
         let entities: Vec<ClientEntityEntry> = collections
             .iter()
             .map(|c| {
-                let parts: Vec<&str> = c.nsid.strip_prefix(&format!("{}.", authority))
+                let parts: Vec<&str> = c
+                    .nsid
+                    .strip_prefix(&format!("{}.", authority))
                     .unwrap_or(&c.nsid)
                     .split('.')
                     .collect();
@@ -195,12 +194,8 @@ impl GlobalGenerator for AtprotoClientScaffoldEmitter {
             authority: authority.clone(),
         };
 
-        let content = render_template_with_project(
-            tera,
-            "atproto/client_scaffold.tera",
-            &context,
-            project,
-        )?;
+        let content =
+            render_template_with_project(tera, "atproto/client_scaffold.tera", &context, project)?;
 
         let path = self
             .output_dir

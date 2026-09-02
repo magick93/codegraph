@@ -5,16 +5,10 @@ use codegraph_core::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, ColumnInfo,
     CompositeColumn, CompositeRange, CompositionNode, CompositionTree, DetectionSource, EnumValue,
     ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, HttpEndpointNode,
-<<<<<<< HEAD
     InteractionNode, LexiconNode, MembershipNode, NamespaceNode, ParameterDefinitionNode,
     ParentCandidate, PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode,
     RepositoryNode, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
     TenantNode, ViewComponentNode, ViewContainerNode,
-=======
-    InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData, SchemaNode,
-    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
->>>>>>> origin/master
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -1098,8 +1092,7 @@ impl GraphQuerier for GrafeoEngine {
     }
 
     async fn get_lexicons(&self, domain: &str) -> Result<Vec<LexiconNode>, GraphError> {
-        let params =
-            HashMap::from([("domain".to_string(), grafeo::Value::String(domain.into()))]);
+        let params = HashMap::from([("domain".to_string(), grafeo::Value::String(domain.into()))]);
         let result = query_gql_params(
             self,
             "MATCH (l:Lexicon {domain: $domain}) RETURN l.nsid, l.lex_type, l.key_strategy, \
@@ -1109,9 +1102,7 @@ impl GraphQuerier for GrafeoEngine {
         let reader = RowReader::from_columns(&result.columns);
         let mut nodes = Vec::new();
         for row in &result.rows {
-            let revision = reader
-                .get_i64(row, "l.revision")
-                .ok();
+            let revision = reader.get_i64(row, "l.revision").ok();
             nodes.push(LexiconNode {
                 nsid: reader.get_string(row, "l.nsid")?,
                 lex_type: reader.get_string(row, "l.lex_type")?,
@@ -1138,9 +1129,7 @@ impl GraphQuerier for GrafeoEngine {
             return Ok(None);
         }
         let reader = RowReader::from_columns(&result.columns);
-        let revision = reader
-            .get_i64(&result.rows[0], "l.revision")
-            .ok();
+        let revision = reader.get_i64(&result.rows[0], "l.revision").ok();
         Ok(Some(LexiconNode {
             nsid: reader.get_string(&result.rows[0], "l.nsid")?,
             lex_type: reader.get_string(&result.rows[0], "l.lex_type")?,
@@ -1152,8 +1141,7 @@ impl GraphQuerier for GrafeoEngine {
     }
 
     async fn get_collections(&self, domain: &str) -> Result<Vec<CollectionNode>, GraphError> {
-        let params =
-            HashMap::from([("domain".to_string(), grafeo::Value::String(domain.into()))]);
+        let params = HashMap::from([("domain".to_string(), grafeo::Value::String(domain.into()))]);
         let result = query_gql_params(
             self,
             "MATCH (c:Collection {domain: $domain}) RETURN c.nsid, c.key_strategy, c.domain ORDER BY c.nsid",
@@ -1191,10 +1179,7 @@ impl GraphQuerier for GrafeoEngine {
         Ok(nodes)
     }
 
-    async fn get_lexicon_references(
-        &self,
-        nsid: &str,
-    ) -> Result<Vec<LexiconNode>, GraphError> {
+    async fn get_lexicon_references(&self, nsid: &str) -> Result<Vec<LexiconNode>, GraphError> {
         let escaped = nsid.replace('\'', "\\'");
         let gql = format!(
             "MATCH (:Lexicon {{nsid: '{escaped}'}})-[:LexiconReferences]->(l:Lexicon) \
@@ -1204,9 +1189,7 @@ impl GraphQuerier for GrafeoEngine {
         let reader = RowReader::from_columns(&result.columns);
         let mut nodes = Vec::new();
         for row in &result.rows {
-            let revision = reader
-                .get_i64(row, "l.revision")
-                .ok();
+            let revision = reader.get_i64(row, "l.revision").ok();
             nodes.push(LexiconNode {
                 nsid: reader.get_string(row, "l.nsid")?,
                 lex_type: reader.get_string(row, "l.lex_type")?,

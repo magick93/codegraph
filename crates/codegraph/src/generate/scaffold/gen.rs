@@ -173,15 +173,12 @@ pub async fn build_scaffold_domains(
         if !seen_scaffold_entities.insert((entry.domain.clone(), module_name.clone())) {
             continue;
         }
-<<<<<<< HEAD
         if let Ok(Some(lexicon)) = db.get_lexicon_by_schema(&entry.schema_title).await {
             domain_nsids
                 .entry(entry.domain.clone())
                 .or_default()
                 .push(lexicon.nsid.clone());
         }
-=======
->>>>>>> origin/master
         let operations = resolve_entity_operations(db, config, &entry.domain, &entity_name).await;
         let has_commands = operations
             .iter()
@@ -436,8 +433,7 @@ impl GlobalGenerator for ScaffoldGenerator {
         // Shared API-key scope guard backing the generated per-route scope
         // middleware (api/router.tera). Emitted per topology by the monolith
         // scaffold here and by the workers scaffold for each worker crate.
-        let scope_content =
-            render_template_with_project(tera, "api/scope.tera", &ctx, project)?;
+        let scope_content = render_template_with_project(tera, "api/scope.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("api").join("scope.rs"),
             content: scope_content,
@@ -465,8 +461,12 @@ impl GlobalGenerator for ScaffoldGenerator {
         // SeaORM migration crate: applies the raw SQL files in migrations/ via
         // the Migrator (run with `sea-orm-cli migrate up` or `cargo run
         // --manifest-path migration/Cargo.toml -- up`), and on app boot.
-        let migration_cargo_toml =
-            render_template_with_project(tera, "scaffold/migration_cargo_toml.tera", &ctx, project)?;
+        let migration_cargo_toml = render_template_with_project(
+            tera,
+            "scaffold/migration_cargo_toml.tera",
+            &ctx,
+            project,
+        )?;
         files.push(GeneratedFile {
             path: self.output_dir.join("migration").join("Cargo.toml"),
             content: migration_cargo_toml,
@@ -482,7 +482,11 @@ impl GlobalGenerator for ScaffoldGenerator {
         let migration_main =
             render_template_with_project(tera, "scaffold/migration_main.tera", &ctx, project)?;
         files.push(GeneratedFile {
-            path: self.output_dir.join("migration").join("src").join("main.rs"),
+            path: self
+                .output_dir
+                .join("migration")
+                .join("src")
+                .join("main.rs"),
             content: migration_main,
         });
 
@@ -498,14 +502,14 @@ impl GlobalGenerator for ScaffoldGenerator {
         });
 
         if self.has_fern {
-            let dump_openapi = render_template_with_project(
-                tera,
-                "scaffold/dump_openapi.tera",
-                &ctx,
-                project,
-            )?;
+            let dump_openapi =
+                render_template_with_project(tera, "scaffold/dump_openapi.tera", &ctx, project)?;
             files.push(GeneratedFile {
-                path: self.output_dir.join("src").join("bin").join("dump_openapi.rs"),
+                path: self
+                    .output_dir
+                    .join("src")
+                    .join("bin")
+                    .join("dump_openapi.rs"),
                 content: dump_openapi,
             });
         }
@@ -567,11 +571,8 @@ mod tests {
                     append_only: true,
                     has_query_hooks: true,
                 }],
-<<<<<<< HEAD
                 has_custom_routes: false,
                 atproto_nsids: vec![],
-=======
->>>>>>> origin/master
             }],
             codegraph_workflow_path: String::new(),
             type_contracts_path: String::new(),
@@ -583,7 +584,6 @@ mod tests {
             has_webhooks: false,
             has_reports: false,
             has_grpc: false,
-<<<<<<< HEAD
             has_atproto: false,
             has_fern: false,
             has_cli: false,
@@ -591,9 +591,6 @@ mod tests {
             has_auth_rate_limit: false,
             has_admin_cli: false,
             has_labels: false,
-=======
-            has_admin_cli: false,
->>>>>>> origin/master
             migration_strategy: "sea-orm".to_string(),
         }
     }

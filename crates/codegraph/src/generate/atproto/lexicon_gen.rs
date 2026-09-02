@@ -48,12 +48,9 @@ impl EntityGenerator for LexiconEmitter {
             None => return Ok(Vec::new()),
         };
 
-        let properties = db
-            .get_properties_in_domain(schema_title, domain)
-            .await?;
+        let properties = db.get_properties_in_domain(schema_title, domain).await?;
 
-        let context =
-            LexiconContext::build(db, &lexicon, &schema, &properties, project).await?;
+        let context = LexiconContext::build(db, &lexicon, &schema, &properties, project).await?;
 
         let template = match lexicon.lex_type.as_str() {
             "record" => "atproto/lexicon_record.tera",
@@ -84,9 +81,6 @@ impl EntityGenerator for LexiconEmitter {
             .join(authority)
             .join(format!("{}.json", file_stem));
 
-        Ok(vec![GeneratedFile {
-            path,
-            content,
-        }])
+        Ok(vec![GeneratedFile { path, content }])
     }
 }

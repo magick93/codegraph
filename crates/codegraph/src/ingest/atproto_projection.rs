@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
+use codegraph_config::DomainConfig;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
     CollectionNode, EdgeType, LexiconNode, NamespaceNode, RepositoryNode, SchemaNode,
 };
-use codegraph_config::DomainConfig;
 use codegraph_naming::{strip_suffix, to_snake_case};
 use codegraph_type_contracts::RefClassificationKind;
 
@@ -153,9 +153,7 @@ pub async fn project_atproto_lexicons(
             };
 
             for prop in &props {
-                if prop.classification_kind
-                    == Some(RefClassificationKind::EntityReference)
-                {
+                if prop.classification_kind == Some(RefClassificationKind::EntityReference) {
                     if let Some(ref ref_target) = &prop.ref_target {
                         let ref_stem = extract_ref_stem(ref_target);
                         if let Some(target_schema) =
@@ -224,13 +222,19 @@ fn find_schema_by_title_or_stem<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codegraph_config::config::{DefaultsConfig, DomainEntry};
     use codegraph_core::mock::MockEngine;
     use codegraph_core::traits::GraphIngestor;
     use codegraph_core::types::SchemaNode;
-    use codegraph_config::config::{DefaultsConfig, DomainEntry};
     use std::collections::HashMap;
 
-    fn make_schema_node(title: &str, domain: &str, is_entity: bool, is_codelist: bool, schema_type: &str) -> SchemaNode {
+    fn make_schema_node(
+        title: &str,
+        domain: &str,
+        is_entity: bool,
+        is_codelist: bool,
+        schema_type: &str,
+    ) -> SchemaNode {
         let snake = to_snake_case(title);
         SchemaNode {
             schema_id: format!("{}/{}.json", domain, title),
@@ -462,10 +466,7 @@ mod tests {
         let repo = &repos[0];
         assert_eq!(repo.did, "did:plc:nz.gravy");
         assert_eq!(repo.handle, Some("nz.gravy.bsky.social".to_string()));
-        assert_eq!(
-            repo.pds_endpoint,
-            "https://pds.nz.gravy.bsky.social"
-        );
+        assert_eq!(repo.pds_endpoint, "https://pds.nz.gravy.bsky.social");
         assert_eq!(repo.org_name, "gravy");
         assert_eq!(repo.tenancy_mode, "shared_pds");
     }

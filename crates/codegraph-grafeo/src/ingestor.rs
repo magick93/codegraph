@@ -2,20 +2,12 @@ use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-<<<<<<< HEAD
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode,
     EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
     NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
     RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode,
     ViewComponentNode, ViewContainerNode,
-=======
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
-    DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode,
-    HttpEndpointNode, IngestStats, InteractionNode, MembershipNode, ParameterDefinitionNode,
-    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaNode,
-    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
->>>>>>> origin/master
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -689,7 +681,6 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(to_id),
                 )
             }
-<<<<<<< HEAD
             // AT Protocol edges — nodes are matched by their natural keys
             // (Lexicon/Collection by nsid, Namespace by authority, Repository by did).
             EdgeType::InNamespace => {
@@ -727,8 +718,6 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(to_id),
                 )
             }
-=======
->>>>>>> origin/master
             EdgeType::ExposesResource
             | EdgeType::CanReturnError
             | EdgeType::HasPolicy

@@ -1089,14 +1089,17 @@ impl DdlGenerator {
             let is_required = ddl_props.iter().any(|p| {
                 codegraph_core::types::resolve_field(p).rust_field_name == fk_col
                     || p.pg_column_name == fk_col
-            }) && ddl_props.iter().find_map(|p| {
-                let fd = codegraph_core::types::resolve_field(p);
-                if fd.rust_field_name == fk_col || p.pg_column_name == fk_col {
-                    Some(p.is_required)
-                } else {
-                    None
-                }
-            }).unwrap_or(false);
+            }) && ddl_props
+                .iter()
+                .find_map(|p| {
+                    let fd = codegraph_core::types::resolve_field(p);
+                    if fd.rust_field_name == fk_col || p.pg_column_name == fk_col {
+                        Some(p.is_required)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false);
             columns.push(ColumnDef {
                 name: fk_col.clone(),
                 pg_type: "UUID".to_string(),

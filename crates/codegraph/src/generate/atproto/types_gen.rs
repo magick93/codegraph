@@ -50,15 +50,18 @@ impl EntityGenerator for AtprotoTypesEmitter {
 
         let properties = db.get_properties_in_domain(schema_title, domain).await?;
 
-        let context =
-            TypesContext::build(db, &lexicon, &schema, &properties, project).await?;
+        let context = TypesContext::build(db, &lexicon, &schema, &properties, project).await?;
 
         let mut content =
             render_template_with_project(tera, "atproto/rust_type.tera", &context, project)?;
 
         if context.is_record {
-            let record_impl =
-                render_template_with_project(tera, "atproto/rust_record_impl.tera", &context, project)?;
+            let record_impl = render_template_with_project(
+                tera,
+                "atproto/rust_record_impl.tera",
+                &context,
+                project,
+            )?;
             content.push('\n');
             content.push_str(&record_impl);
         }
@@ -118,12 +121,8 @@ impl GlobalGenerator for GeneratedTypesEmitter {
             "codelist_names": <&[String]>::default(),
         });
 
-        let content = render_template_with_project(
-            tera,
-            "atproto/generated_types.tera",
-            &context,
-            project,
-        )?;
+        let content =
+            render_template_with_project(tera, "atproto/generated_types.tera", &context, project)?;
 
         let path = self
             .output_dir

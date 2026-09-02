@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod atproto_template_tests {
-    use tera::Tera;
     use std::path::Path;
+    use tera::Tera;
 
     // Canonical LexiconType shape for test fixtures:
     //
@@ -35,7 +35,10 @@ mod atproto_template_tests {
             .get_template_names()
             .filter(|n| n.contains("atproto"))
             .collect();
-        assert!(!atproto.is_empty(), "Expected atproto templates to be loaded");
+        assert!(
+            !atproto.is_empty(),
+            "Expected atproto templates to be loaded"
+        );
         eprintln!("Loaded AT Proto templates: {:?}", atproto);
     }
 
@@ -44,41 +47,54 @@ mod atproto_template_tests {
         let mut tera = load_tera();
         let mut ctx = tera::Context::new();
 
-        ctx.insert("lexicon", &serde_json::json!({
-            "nsid": "app.test.post",
-            "lex_type": "record",
-            "key_strategy": "Tid",
-            "revision": 1,
-            "description": "A test record.",
-            "domain": "test"
-        }));
-        ctx.insert("namespace", &serde_json::json!({
-            "authority": "app.test"
-        }));
-        ctx.insert("record", &serde_json::json!({
-            "name": "Post",
-            "description": "A post record.",
-            "properties": [
-                {
-                    "name": "text",
-                    "type": { "type": "string" },
-                    "is_required": true
-                },
-                {
-                    "name": "createdAt",
-                    "type": { "type": "datetime" },
-                    "is_required": true
-                }
-            ],
-            "required_fields": ["text", "createdAt"]
-        }));
+        ctx.insert(
+            "lexicon",
+            &serde_json::json!({
+                "nsid": "app.test.post",
+                "lex_type": "record",
+                "key_strategy": "Tid",
+                "revision": 1,
+                "description": "A test record.",
+                "domain": "test"
+            }),
+        );
+        ctx.insert(
+            "namespace",
+            &serde_json::json!({
+                "authority": "app.test"
+            }),
+        );
+        ctx.insert(
+            "record",
+            &serde_json::json!({
+                "name": "Post",
+                "description": "A post record.",
+                "properties": [
+                    {
+                        "name": "text",
+                        "type": { "type": "string" },
+                        "is_required": true
+                    },
+                    {
+                        "name": "createdAt",
+                        "type": { "type": "datetime" },
+                        "is_required": true
+                    }
+                ],
+                "required_fields": ["text", "createdAt"]
+            }),
+        );
         ctx.insert("defs", &serde_json::json!([]));
-        ctx.insert("project", &serde_json::json!({
-            "app_name": "test-app",
-            "database_target": "postgres"
-        }));
+        ctx.insert(
+            "project",
+            &serde_json::json!({
+                "app_name": "test-app",
+                "database_target": "postgres"
+            }),
+        );
 
-        let result = tera.render("atproto/lexicon_record.tera", &ctx)
+        let result = tera
+            .render("atproto/lexicon_record.tera", &ctx)
             .expect("lexicon_record.tera should render");
 
         eprintln!("Rendered lexicon_record:\n{}", result);
@@ -95,33 +111,40 @@ mod atproto_template_tests {
         let mut tera = load_tera();
         let mut ctx = tera::Context::new();
 
-        ctx.insert("lexicon", &serde_json::json!({
-            "nsid": "app.test.imageEmbed",
-            "lex_type": "object",
-            "key_strategy": null,
-            "revision": 1,
-            "description": "An embedded image.",
-            "domain": "test"
-        }));
-        ctx.insert("record", &serde_json::json!({
-            "name": "ImageEmbed",
-            "description": "Image embed object.",
-            "properties": [
-                {
-                    "name": "url",
-                    "type": { "type": "uri" },
-                    "is_required": true
-                },
-                {
-                    "name": "width",
-                    "type": { "type": "integer" },
-                    "is_required": false
-                }
-            ],
-            "required_fields": ["url"]
-        }));
+        ctx.insert(
+            "lexicon",
+            &serde_json::json!({
+                "nsid": "app.test.imageEmbed",
+                "lex_type": "object",
+                "key_strategy": null,
+                "revision": 1,
+                "description": "An embedded image.",
+                "domain": "test"
+            }),
+        );
+        ctx.insert(
+            "record",
+            &serde_json::json!({
+                "name": "ImageEmbed",
+                "description": "Image embed object.",
+                "properties": [
+                    {
+                        "name": "url",
+                        "type": { "type": "uri" },
+                        "is_required": true
+                    },
+                    {
+                        "name": "width",
+                        "type": { "type": "integer" },
+                        "is_required": false
+                    }
+                ],
+                "required_fields": ["url"]
+            }),
+        );
 
-        let result = tera.render("atproto/lexicon_object.tera", &ctx)
+        let result = tera
+            .render("atproto/lexicon_object.tera", &ctx)
             .expect("lexicon_object.tera should render");
 
         eprintln!("Rendered lexicon_object:\n{}", result);
@@ -137,21 +160,28 @@ mod atproto_template_tests {
         let mut tera = load_tera();
         let mut ctx = tera::Context::new();
 
-        ctx.insert("lexicon", &serde_json::json!({
-            "nsid": "app.test.status",
-            "lex_type": "enum",
-            "revision": 1,
-            "description": "Post status enum.",
-            "domain": "test"
-        }));
-        ctx.insert("codelist", &serde_json::json!({
-            "name": "Status",
-            "description": "Post status values.",
-            "values": ["draft", "published", "archived"],
-            "is_closed": true
-        }));
+        ctx.insert(
+            "lexicon",
+            &serde_json::json!({
+                "nsid": "app.test.status",
+                "lex_type": "enum",
+                "revision": 1,
+                "description": "Post status enum.",
+                "domain": "test"
+            }),
+        );
+        ctx.insert(
+            "codelist",
+            &serde_json::json!({
+                "name": "Status",
+                "description": "Post status values.",
+                "values": ["draft", "published", "archived"],
+                "is_closed": true
+            }),
+        );
 
-        let result = tera.render("atproto/lexicon_enum.tera", &ctx)
+        let result = tera
+            .render("atproto/lexicon_enum.tera", &ctx)
             .expect("lexicon_enum.tera should render");
 
         eprintln!("Rendered lexicon_enum:\n{}", result);
@@ -166,21 +196,28 @@ mod atproto_template_tests {
         let mut tera = load_tera();
         let mut ctx = tera::Context::new();
 
-        ctx.insert("lexicon", &serde_json::json!({
-            "nsid": "app.test.tags",
-            "lex_type": "enum",
-            "revision": 2,
-            "description": "Open tag values.",
-            "domain": "test"
-        }));
-        ctx.insert("codelist", &serde_json::json!({
-            "name": "Tags",
-            "description": null,
-            "values": ["tech", "news", "sports"],
-            "is_closed": false
-        }));
+        ctx.insert(
+            "lexicon",
+            &serde_json::json!({
+                "nsid": "app.test.tags",
+                "lex_type": "enum",
+                "revision": 2,
+                "description": "Open tag values.",
+                "domain": "test"
+            }),
+        );
+        ctx.insert(
+            "codelist",
+            &serde_json::json!({
+                "name": "Tags",
+                "description": null,
+                "values": ["tech", "news", "sports"],
+                "is_closed": false
+            }),
+        );
 
-        let result = tera.render("atproto/lexicon_enum.tera", &ctx)
+        let result = tera
+            .render("atproto/lexicon_enum.tera", &ctx)
             .expect("lexicon_enum.tera should render");
 
         eprintln!("Rendered open enum:\n{}", result);
@@ -193,40 +230,44 @@ mod atproto_template_tests {
         let mut tera = load_tera();
         let mut ctx = tera::Context::new();
 
-        ctx.insert("scaffold", &serde_json::json!({
-            "nsid": "app.test.shared",
-            "revision": 1,
-            "description": "Shared defs for app.test.",
-            "defs": [
-                {
-                    "name": "strongRef",
-                    "type": "object",
-                    "description": "A strong typed reference.",
-                    "properties": [
-                        {
-                            "name": "uri",
-                            "type": { "type": "uri" },
-                            "is_required": true
-                        },
-                        {
-                            "name": "cid",
-                            "type": { "type": "string" },
-                            "is_required": true
-                        }
-                    ],
-                    "required_fields": ["uri", "cid"]
-                },
-                {
-                    "name": "status",
-                    "type": "string",
-                    "description": "Status values.",
-                    "values": ["active", "inactive"],
-                    "is_closed": true
-                }
-            ]
-        }));
+        ctx.insert(
+            "scaffold",
+            &serde_json::json!({
+                "nsid": "app.test.shared",
+                "revision": 1,
+                "description": "Shared defs for app.test.",
+                "defs": [
+                    {
+                        "name": "strongRef",
+                        "type": "object",
+                        "description": "A strong typed reference.",
+                        "properties": [
+                            {
+                                "name": "uri",
+                                "type": { "type": "uri" },
+                                "is_required": true
+                            },
+                            {
+                                "name": "cid",
+                                "type": { "type": "string" },
+                                "is_required": true
+                            }
+                        ],
+                        "required_fields": ["uri", "cid"]
+                    },
+                    {
+                        "name": "status",
+                        "type": "string",
+                        "description": "Status values.",
+                        "values": ["active", "inactive"],
+                        "is_closed": true
+                    }
+                ]
+            }),
+        );
 
-        let result = tera.render("atproto/scaffold.tera", &ctx)
+        let result = tera
+            .render("atproto/scaffold.tera", &ctx)
             .expect("scaffold.tera should render");
 
         eprintln!("Rendered scaffold:\n{}", result);
@@ -241,49 +282,56 @@ mod atproto_template_tests {
         let mut tera = load_tera();
         let mut ctx = tera::Context::new();
 
-        ctx.insert("lexicon", &serde_json::json!({
-            "nsid": "app.test.media",
-            "lex_type": "object",
-            "revision": 1,
-            "description": "Media test.",
-            "domain": "test"
-        }));
-        ctx.insert("record", &serde_json::json!({
-            "name": "Media",
-            "description": "Media object.",
-            "properties": [
-                {
-                    "name": "file",
-                    "type": {
-                        "type": "bytes"
+        ctx.insert(
+            "lexicon",
+            &serde_json::json!({
+                "nsid": "app.test.media",
+                "lex_type": "object",
+                "revision": 1,
+                "description": "Media test.",
+                "domain": "test"
+            }),
+        );
+        ctx.insert(
+            "record",
+            &serde_json::json!({
+                "name": "Media",
+                "description": "Media object.",
+                "properties": [
+                    {
+                        "name": "file",
+                        "type": {
+                            "type": "bytes"
+                        },
+                        "is_required": true
                     },
-                    "is_required": true
-                },
-                {
-                    "name": "hash",
-                    "type": { "type": "bytes" },
-                    "is_required": false
-                },
-                {
-                    "name": "link",
-                    "type": { "type": "unknown" },
-                    "is_required": false
-                },
-                {
-                    "name": "parent",
-                    "type": { "type": "ref", "ref_name": "app.test.post" },
-                    "is_required": false
-                },
-                {
-                    "name": "item",
-                    "type": { "type": "ref", "ref_name": "app.test.post" },
-                    "is_required": false
-                }
-            ],
-            "required_fields": ["file"]
-        }));
+                    {
+                        "name": "hash",
+                        "type": { "type": "bytes" },
+                        "is_required": false
+                    },
+                    {
+                        "name": "link",
+                        "type": { "type": "unknown" },
+                        "is_required": false
+                    },
+                    {
+                        "name": "parent",
+                        "type": { "type": "ref", "ref_name": "app.test.post" },
+                        "is_required": false
+                    },
+                    {
+                        "name": "item",
+                        "type": { "type": "ref", "ref_name": "app.test.post" },
+                        "is_required": false
+                    }
+                ],
+                "required_fields": ["file"]
+            }),
+        );
 
-        let result = tera.render("atproto/lexicon_object.tera", &ctx)
+        let result = tera
+            .render("atproto/lexicon_object.tera", &ctx)
             .expect("lexicon_object.tera should render");
 
         eprintln!("Rendered complex types:\n{}", result);
@@ -297,54 +345,61 @@ mod atproto_template_tests {
         let mut tera = load_tera();
         let mut ctx = tera::Context::new();
 
-        ctx.insert("lexicon", &serde_json::json!({
-            "nsid": "app.test.edge",
-            "lex_type": "object",
-            "revision": 1,
-            "description": "Edge cases.",
-            "domain": "test"
-        }));
-        ctx.insert("record", &serde_json::json!({
-            "name": "Edge",
-            "description": null,
-            "properties": [
-                {
-                    "name": "tags",
-                    "type": {
-                        "type": "array",
-                        "items": { "type": "string" }
+        ctx.insert(
+            "lexicon",
+            &serde_json::json!({
+                "nsid": "app.test.edge",
+                "lex_type": "object",
+                "revision": 1,
+                "description": "Edge cases.",
+                "domain": "test"
+            }),
+        );
+        ctx.insert(
+            "record",
+            &serde_json::json!({
+                "name": "Edge",
+                "description": null,
+                "properties": [
+                    {
+                        "name": "tags",
+                        "type": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        },
+                        "is_required": false
                     },
-                    "is_required": false
-                },
-                {
-                    "name": "choice",
-                    "type": {
-                        "type": "union",
-                        "refs": ["app.test.foo", "app.test.bar"],
-                        "closed": false
+                    {
+                        "name": "choice",
+                        "type": {
+                            "type": "union",
+                            "refs": ["app.test.foo", "app.test.bar"],
+                            "closed": false
+                        },
+                        "is_required": false
                     },
-                    "is_required": false
-                },
-                {
-                    "name": "token",
-                    "type": { "type": "unknown" },
-                    "is_required": false
-                },
-                {
-                    "name": "any",
-                    "type": { "type": "unknown" },
-                    "is_required": false
-                },
-                {
-                    "name": "flag",
-                    "type": { "type": "boolean" },
-                    "is_required": false
-                }
-            ],
-            "required_fields": []
-        }));
+                    {
+                        "name": "token",
+                        "type": { "type": "unknown" },
+                        "is_required": false
+                    },
+                    {
+                        "name": "any",
+                        "type": { "type": "unknown" },
+                        "is_required": false
+                    },
+                    {
+                        "name": "flag",
+                        "type": { "type": "boolean" },
+                        "is_required": false
+                    }
+                ],
+                "required_fields": []
+            }),
+        );
 
-        let result = tera.render("atproto/lexicon_object.tera", &ctx)
+        let result = tera
+            .render("atproto/lexicon_object.tera", &ctx)
             .expect("lexicon_object.tera should render");
 
         eprintln!("Rendered edge cases:\n{}", result);
@@ -361,13 +416,16 @@ mod atproto_template_tests {
         let mut tera = load_tera();
         let mut ctx = tera::Context::new();
 
-        ctx.insert("lexicon", &serde_json::json!({
-            "nsid": "app.test.formats",
-            "lex_type": "object",
-            "revision": 1,
-            "description": "String format tests.",
-            "domain": "test"
-        }));
+        ctx.insert(
+            "lexicon",
+            &serde_json::json!({
+                "nsid": "app.test.formats",
+                "lex_type": "object",
+                "revision": 1,
+                "description": "String format tests.",
+                "domain": "test"
+            }),
+        );
         ctx.insert("record", &serde_json::json!({
             "name": "Formats",
             "description": null,
@@ -385,7 +443,8 @@ mod atproto_template_tests {
             "required_fields": []
         }));
 
-        let result = tera.render("atproto/lexicon_object.tera", &ctx)
+        let result = tera
+            .render("atproto/lexicon_object.tera", &ctx)
             .expect("lexicon_object.tera should render");
 
         eprintln!("Rendered string formats:\n{}", result);
@@ -399,47 +458,57 @@ mod atproto_template_tests {
         let mut tera = load_tera();
         let mut ctx = tera::Context::new();
 
-        ctx.insert("lexicon", &serde_json::json!({
-            "nsid": "app.test.post",
-            "lex_type": "record",
-            "key_strategy": "Tid",
-            "revision": 1,
-            "description": "Record with defs.",
-            "domain": "test"
-        }));
-        ctx.insert("record", &serde_json::json!({
-            "name": "Post",
-            "description": "A post.",
-            "properties": [
-                {
-                    "name": "text",
-                    "type": { "type": "string" },
-                    "is_required": true
-                }
-            ],
-            "required_fields": ["text"]
-        }));
-        ctx.insert("defs", &serde_json::json!([
-            {
-                "name": "author",
-                "description": "Post author info.",
+        ctx.insert(
+            "lexicon",
+            &serde_json::json!({
+                "nsid": "app.test.post",
+                "lex_type": "record",
+                "key_strategy": "Tid",
+                "revision": 1,
+                "description": "Record with defs.",
+                "domain": "test"
+            }),
+        );
+        ctx.insert(
+            "record",
+            &serde_json::json!({
+                "name": "Post",
+                "description": "A post.",
                 "properties": [
                     {
-                        "name": "name",
+                        "name": "text",
                         "type": { "type": "string" },
                         "is_required": true
-                    },
-                    {
-                        "name": "avatar",
-                        "type": { "type": "uri" },
-                        "is_required": false
                     }
                 ],
-                "required_fields": ["name"]
-            }
-        ]));
+                "required_fields": ["text"]
+            }),
+        );
+        ctx.insert(
+            "defs",
+            &serde_json::json!([
+                {
+                    "name": "author",
+                    "description": "Post author info.",
+                    "properties": [
+                        {
+                            "name": "name",
+                            "type": { "type": "string" },
+                            "is_required": true
+                        },
+                        {
+                            "name": "avatar",
+                            "type": { "type": "uri" },
+                            "is_required": false
+                        }
+                    ],
+                    "required_fields": ["name"]
+                }
+            ]),
+        );
 
-        let result = tera.render("atproto/lexicon_record.tera", &ctx)
+        let result = tera
+            .render("atproto/lexicon_record.tera", &ctx)
             .expect("lexicon_record.tera should render");
 
         eprintln!("Rendered record with defs:\n{}", result);
@@ -460,23 +529,30 @@ mod atproto_template_tests {
             ("Any", "*"),
             ("Nsid", "nsid"),
         ] {
-            ctx.insert("lexicon", &serde_json::json!({
-                "nsid": "app.test.obj",
-                "lex_type": "record",
-                "key_strategy": strategy,
-                "revision": 1,
-                "description": format!("Key strategy: {}", strategy),
-                "domain": "test"
-            }));
-            ctx.insert("record", &serde_json::json!({
-                "name": "Obj",
-                "description": "Object.",
-                "properties": [],
-                "required_fields": []
-            }));
+            ctx.insert(
+                "lexicon",
+                &serde_json::json!({
+                    "nsid": "app.test.obj",
+                    "lex_type": "record",
+                    "key_strategy": strategy,
+                    "revision": 1,
+                    "description": format!("Key strategy: {}", strategy),
+                    "domain": "test"
+                }),
+            );
+            ctx.insert(
+                "record",
+                &serde_json::json!({
+                    "name": "Obj",
+                    "description": "Object.",
+                    "properties": [],
+                    "required_fields": []
+                }),
+            );
             ctx.insert("defs", &serde_json::json!([]));
 
-            let result = tera.render("atproto/lexicon_record.tera", &ctx)
+            let result = tera
+                .render("atproto/lexicon_record.tera", &ctx)
                 .unwrap_or_else(|e| panic!("Failed to render with strategy {}: {}", strategy, e));
 
             assert!(
@@ -494,25 +570,35 @@ mod atproto_template_tests {
         let mut tera = load_tera();
         let mut ctx = tera::Context::new();
 
-        ctx.insert("lexicon", &serde_json::json!({
-            "nsid": "app.test.obj",
-            "lex_type": "record",
-            "key_strategy": "Tid",
-            "description": "No revision specified.",
-            "domain": "test"
-        }));
-        ctx.insert("record", &serde_json::json!({
-            "name": "Obj",
-            "description": null,
-            "properties": [],
-            "required_fields": []
-        }));
+        ctx.insert(
+            "lexicon",
+            &serde_json::json!({
+                "nsid": "app.test.obj",
+                "lex_type": "record",
+                "key_strategy": "Tid",
+                "description": "No revision specified.",
+                "domain": "test"
+            }),
+        );
+        ctx.insert(
+            "record",
+            &serde_json::json!({
+                "name": "Obj",
+                "description": null,
+                "properties": [],
+                "required_fields": []
+            }),
+        );
         ctx.insert("defs", &serde_json::json!([]));
 
-        let result = tera.render("atproto/lexicon_record.tera", &ctx)
+        let result = tera
+            .render("atproto/lexicon_record.tera", &ctx)
             .expect("Should render without revision set");
 
-        assert!(result.contains("\"revision\": 1"), "Should default revision to 1");
+        assert!(
+            result.contains("\"revision\": 1"),
+            "Should default revision to 1"
+        );
     }
 }
 
@@ -697,7 +783,10 @@ mod integration_tests {
         assert_eq!(json["id"], "nz.gravy.grants.grant");
         assert_eq!(json["type"], "record");
         assert_eq!(json["defs"]["main"]["type"], "record");
-        assert!(json["defs"]["main"]["required"].as_array().unwrap().contains(&serde_json::Value::String("name".to_string())));
+        assert!(json["defs"]["main"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::Value::String("name".to_string())));
         assert!(json["defs"]["main"]["properties"]["name"].is_object());
         assert!(json["defs"]["main"]["properties"]["amount"].is_object());
     }
@@ -725,7 +814,10 @@ mod integration_tests {
             .await
             .expect("generation should succeed");
 
-        assert!(result.is_empty(), "should return empty when no lexicon mapping exists");
+        assert!(
+            result.is_empty(),
+            "should return empty when no lexicon mapping exists"
+        );
     }
 
     #[tokio::test]
@@ -764,13 +856,7 @@ mod integration_tests {
         let emitter = LexiconScaffoldEmitter::new(&PathBuf::from("/tmp/test-out"));
 
         let result = emitter
-            .generate(
-                &engine,
-                &make_domain_config(),
-                &[],
-                &tera,
-                &project,
-            )
+            .generate(&engine, &make_domain_config(), &[], &tera, &project)
             .await
             .expect("scaffold generation should succeed");
 
@@ -800,17 +886,14 @@ mod integration_tests {
         let emitter = LexiconScaffoldEmitter::new(&PathBuf::from("/tmp/test-out"));
 
         let result = emitter
-            .generate(
-                &engine,
-                &make_domain_config(),
-                &[],
-                &tera,
-                &project,
-            )
+            .generate(&engine, &make_domain_config(), &[], &tera, &project)
             .await
             .expect("generation should succeed");
 
-        assert!(result.is_empty(), "should return empty when authority is blank");
+        assert!(
+            result.is_empty(),
+            "should return empty when authority is blank"
+        );
     }
 
     #[tokio::test]
@@ -869,13 +952,15 @@ mod integration_tests {
             .expect("generation should succeed");
 
         assert_eq!(result.len(), 1);
-        let json: serde_json::Value =
-            serde_json::from_str(&result[0].content).expect("valid JSON");
+        let json: serde_json::Value = serde_json::from_str(&result[0].content).expect("valid JSON");
 
         let props = &json["defs"]["main"]["properties"];
         assert!(props["email"].is_object());
         assert!(props["score"].is_object());
-        assert!(json["defs"]["main"]["required"].as_array().unwrap().contains(&serde_json::Value::String("email".to_string())));
+        assert!(json["defs"]["main"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::Value::String("email".to_string())));
     }
 }
 
@@ -1235,13 +1320,7 @@ pub enum AtprotoError {
         let emitter = AtprotoClientScaffoldEmitter::new(&PathBuf::from("/tmp/test-out"));
 
         let result = emitter
-            .generate(
-                &engine,
-                &make_domain_config(),
-                &[],
-                &tera,
-                &project,
-            )
+            .generate(&engine, &make_domain_config(), &[], &tera, &project)
             .await
             .expect("scaffold generation should succeed");
 
@@ -1310,13 +1389,7 @@ pub enum AtprotoError {
         let emitter = AtprotoClientScaffoldEmitter::new(&PathBuf::from("/tmp/test-out"));
 
         let result = emitter
-            .generate(
-                &engine,
-                &make_domain_config(),
-                &[],
-                &tera,
-                &project,
-            )
+            .generate(&engine, &make_domain_config(), &[], &tera, &project)
             .await
             .expect("generation should succeed");
 
@@ -1530,10 +1603,7 @@ mod atproto_types_tests {
     async fn record_has_nsid_and_type_field() {
         let engine = MockEngine::builder()
             .with_schema(types_schema("Grant", "grants"))
-            .with_properties(
-                "Grant",
-                vec![types_primitive_prop("name", "string", true)],
-            )
+            .with_properties("Grant", vec![types_primitive_prop("name", "string", true)])
             .with_lexicon_mapping("Grant", "nz.gravy.grants.grant")
             .build();
 
@@ -1572,7 +1642,10 @@ mod atproto_types_tests {
 
         let content = &result[0].content;
 
-        assert!(content.contains("pub const NSID: &str"), "should have NSID constant");
+        assert!(
+            content.contains("pub const NSID: &str"),
+            "should have NSID constant"
+        );
         assert!(
             content.contains("nz.gravy.grants.grant"),
             "NSID should have the correct value"
@@ -1582,7 +1655,8 @@ mod atproto_types_tests {
             "should have type_default function"
         );
         assert!(
-            content.contains("#[serde(rename = \"$type\", default = \"GrantRecord::type_default\")]"),
+            content
+                .contains("#[serde(rename = \"$type\", default = \"GrantRecord::type_default\")]"),
             "should have $type field with serde rename"
         );
         assert!(
@@ -1761,10 +1835,7 @@ mod atproto_types_tests {
         let content = &result[0].content;
 
         eprintln!("Generated with bytes:\n{}", content);
-        assert!(
-            content.contains("Vec<u8>"),
-            "bytes should map to Vec<u8>"
-        );
+        assert!(content.contains("Vec<u8>"), "bytes should map to Vec<u8>");
         assert!(
             content.contains("#[serde(with = \"serde_bytes\")]"),
             "bytes field should have serde_bytes with attribute"
@@ -1823,7 +1894,10 @@ mod atproto_types_tests {
         let content = &result[0].content;
 
         eprintln!("Generated with bool and int:\n{}", content);
-        assert!(content.contains("pub active: bool"), "boolean should be bool");
+        assert!(
+            content.contains("pub active: bool"),
+            "boolean should be bool"
+        );
         assert!(
             content.contains("pub count: Option<i64>"),
             "integer should be i64, optional when not required"
@@ -1838,7 +1912,12 @@ mod atproto_types_tests {
             .with_schema(types_schema("File", "files"))
             .with_properties(
                 "File",
-                vec![types_prop_with_kind("avatar", "string", true, RefClassificationKind::MediaWrapper)],
+                vec![types_prop_with_kind(
+                    "avatar",
+                    "string",
+                    true,
+                    RefClassificationKind::MediaWrapper,
+                )],
             )
             .with_lexicon_mapping("File", "nz.gravy.files.avatar")
             .build();
@@ -1899,7 +1978,12 @@ mod atproto_types_tests {
                 "Grant",
                 vec![
                     types_primitive_prop("name", "string", true),
-                    types_prop_with_kind("grantee", "string", false, RefClassificationKind::EntityReference),
+                    types_prop_with_kind(
+                        "grantee",
+                        "string",
+                        false,
+                        RefClassificationKind::EntityReference,
+                    ),
                 ],
             )
             .with_lexicon_mapping("Grant", "nz.gravy.grants.grant")
@@ -1953,10 +2037,7 @@ mod atproto_types_tests {
     async fn skips_non_atproto_schema() {
         let engine = MockEngine::builder()
             .with_schema(types_schema("Grant", "grants"))
-            .with_properties(
-                "Grant",
-                vec![types_primitive_prop("name", "string", true)],
-            )
+            .with_properties("Grant", vec![types_primitive_prop("name", "string", true)])
             .build();
 
         let tera = make_types_tera();

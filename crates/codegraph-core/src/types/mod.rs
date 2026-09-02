@@ -1,5 +1,5 @@
-mod atproto;
 mod api;
+mod atproto;
 mod codelist;
 mod composite;
 mod composition;
@@ -19,6 +19,7 @@ pub use api::{
     ApiOperationNode, ApiResourceNode, ErrorDefinitionNode, HttpEndpointNode, InteractionNode,
     PermissionNode, PipelineNode,
 };
+pub use atproto::{CollectionNode, LexiconNode, NamespaceNode, RepositoryNode};
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};
@@ -47,7 +48,6 @@ pub use relationship::{
     Cardinality, ForeignKeySpec, Ownership, PropagationRule, PropagationTrigger, RelationshipNode,
 };
 pub use schema::{SchemaClassificationData, SchemaNode};
-pub use atproto::{CollectionNode, LexiconNode, NamespaceNode, RepositoryNode};
 pub use security::{
     MembershipNode, MembershipStatus, Scope, ScopeKind, SecurityIdentityNode, TenantNode,
 };

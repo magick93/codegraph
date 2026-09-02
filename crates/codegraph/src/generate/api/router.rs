@@ -198,8 +198,7 @@ impl DomainGenerator for RouterGenerator {
             .map(|d| d.custom_routes)
             .unwrap_or(false);
         if is_custom_routes_domain
-            && project.deployment_topology_enum()
-                == crate::profile::DeploymentTopology::Monolith
+            && project.deployment_topology_enum() == crate::profile::DeploymentTopology::Monolith
         {
             return Ok(Vec::new());
         }

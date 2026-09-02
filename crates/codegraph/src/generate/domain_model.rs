@@ -87,13 +87,9 @@ pub enum RustType {
     /// Simple scalar without generics: "String", "Uuid", "i32", "bool"
     Simple(String),
     /// Option<T>: Option(Box::new(RustType::Simple("String".into())))
-    Optional {
-        optional: Box<RustType>,
-    },
+    Optional { optional: Box<RustType> },
     /// Vec<T>: Vec(Box::new(RustType::Simple("String".into())))
-    Collection {
-        collection: Box<RustType>,
-    },
+    Collection { collection: Box<RustType> },
     /// Named custom type: Custom("PersonReferenceType".into())
     Custom(String),
 }
@@ -254,7 +250,9 @@ fn resolve_fields(properties: &[PropertyNode], all_of_parents: &[String]) -> Vec
         let rust_type = parse_rust_type(raw_type, prop.is_required);
 
         // Does the SeaORM model use Option<T> for this field?
-        let is_model_optional = !prop.is_required || raw_type.starts_with("Option<") || raw_type.starts_with("Nullable<");
+        let is_model_optional = !prop.is_required
+            || raw_type.starts_with("Option<")
+            || raw_type.starts_with("Nullable<");
 
         let is_fk = prop.ref_target.is_some()
             || matches!(
@@ -268,11 +266,13 @@ fn resolve_fields(properties: &[PropertyNode], all_of_parents: &[String]) -> Vec
         // This covers array codelists (child table), array value objects (child table),
         // scalar value objects (child table OR expanded columns), entity references (FK),
         // composite wrappers (expanded columns), and structured wrappers (JSONB).
-        let is_child_table = prop.is_array && matches!(
-            kind,
-            Some(codegraph_type_contracts::RefClassificationKind::CodelistReference)
-                | Some(codegraph_type_contracts::RefClassificationKind::CodelistCheck)
-                | Some(codegraph_type_contracts::RefClassificationKind::ValueObject))
+        let is_child_table = prop.is_array
+            && matches!(
+                kind,
+                Some(codegraph_type_contracts::RefClassificationKind::CodelistReference)
+                    | Some(codegraph_type_contracts::RefClassificationKind::CodelistCheck)
+                    | Some(codegraph_type_contracts::RefClassificationKind::ValueObject)
+            )
             || matches!(
                 kind,
                 Some(codegraph_type_contracts::RefClassificationKind::ValueObject)
@@ -280,7 +280,8 @@ fn resolve_fields(properties: &[PropertyNode], all_of_parents: &[String]) -> Vec
                     | Some(codegraph_type_contracts::RefClassificationKind::CompositeWrapper)
                     | Some(codegraph_type_contracts::RefClassificationKind::StructuredWrapper)
                     | Some(codegraph_type_contracts::RefClassificationKind::MediaWrapper)
-                    | Some(codegraph_type_contracts::RefClassificationKind::ArrayWrapper));
+                    | Some(codegraph_type_contracts::RefClassificationKind::ArrayWrapper)
+            );
 
         let inherited = all_of_parents.iter().any(|_| false);
 
@@ -303,7 +304,11 @@ fn resolve_fields(properties: &[PropertyNode], all_of_parents: &[String]) -> Vec
             fk_target: prop.ref_target.clone(),
             fk_table: None,
             classification,
-            example_value: example_for_field(&prop.name, &prop.rust_field_type, prop.ref_target.as_deref()),
+            example_value: example_for_field(
+                &prop.name,
+                &prop.rust_field_type,
+                prop.ref_target.as_deref(),
+            ),
             label: prop
                 .description
                 .clone()
@@ -351,8 +356,8 @@ pub(crate) fn parse_rust_type(rust_field_type: &str, is_required: bool) -> RustT
 
     // Known simple types
     match stripped {
-        "String" | "Uuid" | "i32" | "i64" | "bool" | "f64" | "Decimal"
-        | "NaiveDate" | "NaiveDateTime" | "DateTime<Utc>" | "DateTimeUtc" => {
+        "String" | "Uuid" | "i32" | "i64" | "bool" | "f64" | "Decimal" | "NaiveDate"
+        | "NaiveDateTime" | "DateTime<Utc>" | "DateTimeUtc" => {
             RustType::Simple(stripped.to_string())
         }
         "serde_json::Value" | "Json" => RustType::Simple("serde_json::Value".to_string()),
@@ -388,7 +393,11 @@ pub(crate) fn ts_type_for_field(rust_type: &RustType) -> String {
 }
 
 /// Generate a smart example value for test fixtures.
-pub(crate) fn example_for_field(name: &str, rust_type: &str, codelist_target: Option<&str>) -> String {
+pub(crate) fn example_for_field(
+    name: &str,
+    rust_type: &str,
+    codelist_target: Option<&str>,
+) -> String {
     match name {
         "email" => "\"test@example.com\"".into(),
         "first_name" | "firstName" | "preferredName" | "preferred_name" => "\"Test\"".into(),
@@ -407,8 +416,8 @@ pub(crate) fn example_for_field(name: &str, rust_type: &str, codelist_target: Op
         "country" => "\"NZ\"".into(),
         "date_of_birth" | "dateOfBirth" | "startDate" | "endDate" | "date" | "start_date"
         | "end_date" | "openedDate" | "opened_date" | "closingDate" | "closing_date"
-        | "grantedAt" | "granted_at" | "expiresAt" | "expires_at" | "revokedAt"
-        | "revoked_at" | "validFrom" | "valid_from" | "validUntil" | "valid_until" => {
+        | "grantedAt" | "granted_at" | "expiresAt" | "expires_at" | "revokedAt" | "revoked_at"
+        | "validFrom" | "valid_from" | "validUntil" | "valid_until" => {
             if rust_type.contains("DateTime") {
                 "\"2025-01-15T00:00:00Z\"".into()
             } else {
@@ -424,10 +433,14 @@ pub(crate) fn example_for_field(name: &str, rust_type: &str, codelist_target: Op
         "atUri" | "at_uri" => "\"at://did:web:test.community.os/test\"".into(),
         "pronouns" => "\"they_them\"".into(),
         "locale" => "\"en_NZ\"".into(),
-        _ if name.contains("accessibility") && name.contains("pref") => "[\"screen_reader\"]".into(),
+        _ if name.contains("accessibility") && name.contains("pref") => {
+            "[\"screen_reader\"]".into()
+        }
         _ if name.contains("interest") => "[\"advocacy\"]".into(),
         _ if name.contains("skill") => "[\"communication\"]".into(),
-        _ if name.contains("volunteer") && name.contains("interest") => "[\"event_support\"]".into(),
+        _ if name.contains("volunteer") && name.contains("interest") => {
+            "[\"event_support\"]".into()
+        }
         _ if name.contains("support") && name.contains("need") => "[\"mobility\"]".into(),
         _ if name.contains("consent") => "[\"newsletter\"]".into(),
         _ if name.contains("contact") && name.contains("method") => "[]".into(),
@@ -436,10 +449,7 @@ pub(crate) fn example_for_field(name: &str, rust_type: &str, codelist_target: Op
             "\"test-doc-001\"".into()
         }
         _ if name == "targetType" || name == "target_type" => "\"Person\"".into(),
-        _ if name == "trustLevel"
-            || name == "trust_level"
-            || rust_type.contains("TrustLevel") =>
-        {
+        _ if name == "trustLevel" || name == "trust_level" || rust_type.contains("TrustLevel") => {
             "\"Medium\"".into()
         }
         _ if rust_type.contains("RelationshipTypeCodeList")
@@ -447,7 +457,9 @@ pub(crate) fn example_for_field(name: &str, rust_type: &str, codelist_target: Op
         {
             "\"Invited\"".into()
         }
-        _ if name == "theme" || rust_type.contains("ConsultationTheme") => "\"Accessibility\"".into(),
+        _ if name == "theme" || rust_type.contains("ConsultationTheme") => {
+            "\"Accessibility\"".into()
+        }
         _ if name == "subjectDid"
             || name == "subject_did"
             || name == "delegateDid"
@@ -581,7 +593,10 @@ mod tests {
     fn test_humanize_camel_case() {
         assert_eq!(humanize_field_name("preferredName"), "Preferred Name");
         assert_eq!(humanize_field_name("crmNotes"), "Crm Notes");
-        assert_eq!(humanize_field_name("accessibilityPreferences"), "Accessibility Preferences");
+        assert_eq!(
+            humanize_field_name("accessibilityPreferences"),
+            "Accessibility Preferences"
+        );
     }
 
     #[test]

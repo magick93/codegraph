@@ -1,17 +1,10 @@
 use crate::error::GraphError;
 use crate::types::{
-<<<<<<< HEAD
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension,
     HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
     ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode, PolicyNode,
     PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData, SchemaNode,
-=======
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
-    CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension, HttpEndpointNode,
-    InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData, SchemaNode,
->>>>>>> origin/master
     SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
@@ -93,8 +86,8 @@ pub trait GraphQuerier: Send + Sync {
     /// title — the reverse of `get_allof_targets`. Returns full SchemaNode objects
     /// so callers can inspect `is_entity`, `pg_table_name`, etc.
     ///
-/// For example, if both PersonType (entity) and PersonLegalType (VO) allOf-compose
-/// PersonBaseType, then `get_schemas_that_extend("PersonBaseType")` returns both.
+    /// For example, if both PersonType (entity) and PersonLegalType (VO) allOf-compose
+    /// PersonBaseType, then `get_schemas_that_extend("PersonBaseType")` returns both.
     async fn get_schemas_that_extend(
         &self,
         _parent_title: &str,

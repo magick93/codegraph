@@ -1091,7 +1091,10 @@ impl GraphQuerier for MockEngine {
             .collect())
     }
 
-    async fn get_lexicon_by_schema(&self, schema_title: &str) -> Result<Option<LexiconNode>, GraphError> {
+    async fn get_lexicon_by_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Option<LexiconNode>, GraphError> {
         let mapping = self.schema_lexicons.lock().unwrap();
         if let Some(nsid) = mapping.get(schema_title) {
             let lexicons = self.lexicons.lock().unwrap();
@@ -1122,13 +1125,7 @@ impl GraphQuerier for MockEngine {
     }
 
     async fn get_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
-        Ok(self
-            .namespaces
-            .lock()
-            .unwrap()
-            .values()
-            .cloned()
-            .collect())
+        Ok(self.namespaces.lock().unwrap().values().cloned().collect())
     }
 
     #[allow(unused_variables)]
@@ -1209,23 +1206,11 @@ impl GraphQuerier for MockEngine {
     }
 
     async fn get_permissions(&self) -> Result<Vec<PermissionNode>, GraphError> {
-        Ok(self
-            .permissions
-            .lock()
-            .unwrap()
-            .values()
-            .cloned()
-            .collect())
+        Ok(self.permissions.lock().unwrap().values().cloned().collect())
     }
 
     async fn get_pipelines(&self) -> Result<Vec<PipelineNode>, GraphError> {
-        Ok(self
-            .pipelines
-            .lock()
-            .unwrap()
-            .values()
-            .cloned()
-            .collect())
+        Ok(self.pipelines.lock().unwrap().values().cloned().collect())
     }
 
     async fn get_pipeline_for_endpoint(

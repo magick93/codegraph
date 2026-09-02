@@ -6,11 +6,11 @@ use async_trait::async_trait;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
+use super::{e2e_tests_root, TsDomainSummary, TsEntitySummary, TsGlobalContext};
 use crate::error::Result;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{GeneratedFile, GlobalGenerator};
 use crate::generate::GenerationEntry;
-use super::{e2e_tests_root, TsDomainSummary, TsEntitySummary, TsGlobalContext};
 
 pub struct TsGlobalGenerator {
     output_dir: PathBuf,
@@ -67,12 +67,15 @@ impl GlobalGenerator for TsGlobalGenerator {
                 .map(|s| s.api_path_segment.clone())
                 .unwrap_or_else(|| module_name.clone());
 
-            domain_map.entry(entry.domain.clone()).or_default().push(TsEntitySummary {
-                module_name,
-                domain: entry.domain.clone(),
-                path_segment,
-                entity_name,
-            });
+            domain_map
+                .entry(entry.domain.clone())
+                .or_default()
+                .push(TsEntitySummary {
+                    module_name,
+                    domain: entry.domain.clone(),
+                    path_segment,
+                    entity_name,
+                });
         }
 
         let domains: Vec<TsDomainSummary> = domain_map
@@ -135,7 +138,8 @@ impl GlobalGenerator for TsGlobalGenerator {
   },
   "include": ["**/*.ts"],
   "exclude": ["node_modules", "dist"]
-}"#.to_string(),
+}"#
+                .to_string(),
             },
             GeneratedFile {
                 path: e2e_dir.join("package.json"),
@@ -152,7 +156,8 @@ impl GlobalGenerator for TsGlobalGenerator {
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0"
   }
-}"#.to_string(),
+}"#
+                .to_string(),
             },
         ])
     }

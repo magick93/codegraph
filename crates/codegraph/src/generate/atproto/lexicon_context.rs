@@ -85,9 +85,10 @@ impl LexiconContext {
     ) -> Result<Self> {
         let authority = &project.atproto_authority;
 
-        let namespaces = db.get_namespaces().await.map_err(|e| {
-            crate::error::Error::Config(format!("Failed to get namespaces: {}", e))
-        })?;
+        let namespaces = db
+            .get_namespaces()
+            .await
+            .map_err(|e| crate::error::Error::Config(format!("Failed to get namespaces: {}", e)))?;
         let namespace = namespaces
             .iter()
             .find(|n| n.authority == *authority)
@@ -159,14 +160,13 @@ async fn lexicon_type_from_ref_classification(
         Some(RefClassificationKind::EntityReference) => {
             if let Some(ref target) = prop.ref_target {
                 if let Ok(Some(lex)) = db.get_lexicon_by_schema(target).await {
-                    return LexiconType::Ref {
-                        ref_name: lex.nsid,
-                    };
+                    return LexiconType::Ref { ref_name: lex.nsid };
                 }
             }
             LexiconType::String
         }
-        Some(RefClassificationKind::InlineEnum) | Some(RefClassificationKind::CodelistReference)
+        Some(RefClassificationKind::InlineEnum)
+        | Some(RefClassificationKind::CodelistReference)
         | Some(RefClassificationKind::CodelistCheck) => LexiconType::String,
         Some(RefClassificationKind::ValueObject) => {
             if let Some(ref target) = prop.ref_target {
@@ -181,9 +181,7 @@ async fn lexicon_type_from_ref_classification(
             if let Some(ref target) = prop.ref_target {
                 if let Ok(Some(lex)) = db.get_lexicon_by_schema(target).await {
                     LexiconType::Array {
-                        items: Box::new(LexiconType::Ref {
-                            ref_name: lex.nsid,
-                        }),
+                        items: Box::new(LexiconType::Ref { ref_name: lex.nsid }),
                     }
                 } else if target == "String" || target == "string" {
                     LexiconType::Array {

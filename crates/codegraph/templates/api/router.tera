@@ -103,7 +103,6 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 {% for child in entity.children %}
         .nest("/{ {{- entity.param_name -}} }/{{ child.path_segment }}", {{ child.module_name }}_routes())
 {% endfor %}
-<<<<<<< HEAD
 {% if entity.has_pipeline_layer %}
         // Pipeline: {{ entity.pipeline_middleware | join(sep=", ") }}
 {% for mw in entity.pipeline_middleware %}
@@ -165,7 +164,5 @@ async fn {{ entity.module_name }}_scope_guard(
         "{{ entity.api_key_scope }}",
     )
     .await
-=======
->>>>>>> origin/master
 }
 {% endfor %}
