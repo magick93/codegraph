@@ -1,0 +1,61 @@
+@prefix : <urn:samm:com.example.codegraph:1.0.0#> .
+@prefix samm: <urn:samm:org.eclipse.esmf.samm:meta-model:2.2.0#> .
+@prefix samm-c: <urn:samm:org.eclipse.esmf.samm:characteristic:2.2.0#> .
+@prefix unit: <urn:samm:org.eclipse.esmf.samm:unit:2.2.0#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+:SalesOrder a samm:Aspect ;
+    samm:preferredName "Sales Order"@en ;
+    samm:properties ( :orderNumber :amountNzd :customerEmail :quantity ) ;
+    samm:operations ( ) .
+
+:orderNumber a samm:Property ;
+    samm:preferredName "order number"@en ;
+    samm:characteristic :OrderNumber .
+
+:OrderNumber a samm-c:Characteristic ;
+    samm:dataType xsd:string ;
+    samm-c:constraint :OrderNumberLength .
+
+:OrderNumberLength a samm-c:LengthConstraint ;
+    samm-c:minValue "6"^^xsd:nonNegativeInteger ;
+    samm-c:maxValue "20"^^xsd:nonNegativeInteger .
+
+:amountNzd a samm:Property ;
+    samm:preferredName "amount"@en ;
+    samm:characteristic :Amount .
+
+:Amount a samm-c:Measurement ;
+    samm:dataType xsd:decimal ;
+    samm-c:unit unit:newZealandDollar ;
+    samm-c:constraint :AmountRange .
+
+:AmountRange a samm-c:RangeConstraint ;
+    samm-c:minValue "0.00"^^xsd:decimal ;
+    samm-c:maxValue "100000000.00"^^xsd:decimal ;
+    samm-c:lowerBoundDefinition samm-c:AT_LEAST ;
+    samm-c:upperBoundDefinition samm-c:AT_MOST .
+
+:customerEmail a samm:Property ;
+    samm:preferredName "customer email"@en ;
+    samm:characteristic :Email .
+
+:Email a samm-c:Characteristic ;
+    samm:dataType xsd:string ;
+    samm-c:constraint :EmailRegex .
+
+:EmailRegex a samm-c:RegularExpressionConstraint ;
+    samm-c:value "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$" .
+
+:quantity a samm:Property ;
+    samm:preferredName "quantity"@en ;
+    samm:characteristic :Quantity .
+
+:Quantity a samm-c:Quantifiable ;
+    samm:dataType xsd:integer ;
+    samm-c:unit unit:piece ;
+    samm-c:constraint :QuantityRange .
+
+:QuantityRange a samm-c:RangeConstraint ;
+    samm-c:minValue "1"^^xsd:integer ;
+    samm-c:maxValue "9999"^^xsd:integer .
