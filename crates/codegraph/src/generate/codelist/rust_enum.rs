@@ -117,39 +117,47 @@ impl RustCodelistGenerator {
 
         for cl in &codelists {
             let enum_values = db.get_enum_values(&cl.name).await.unwrap_or_default();
-            if enum_values.is_empty() {
-                continue;
-            }
 
             let enum_name = cl.name.clone();
             let snake_name = to_snake_case(&enum_name);
             let default_desc = format!("{} codelist values.", enum_name);
             let description = cl.description.as_deref().unwrap_or(&default_desc);
 
-            let variants: Vec<RustEnumVariant> = enum_values
-                .iter()
-                .map(|v| {
-                    let sanitized = sanitize_variant_name(&v.value);
-                    let serde_rename = if sanitized != v.value {
-                        Some(v.value.clone())
-                    } else {
-                        None
-                    };
-                    RustEnumVariant {
-                        name: sanitized,
-                        code: v.value.clone(),
-                        serde_rename,
-                    }
-                })
-                .collect();
+            let content = if enum_values.is_empty() {
+                // Emit a 0-variant enum stub with manual Display/FromStr/Default
+                // impls so DTO code referencing this codelist compiles.
+                let ctx = RustEnumContext {
+                    enum_name: enum_name.clone(),
+                    description: description.to_string(),
+                    variants: vec![],
+                };
+                render_template_with_project(tera, "codelist/empty_enum.tera", &ctx, project)?
+            } else {
+                let variants: Vec<RustEnumVariant> = enum_values
+                    .iter()
+                    .map(|v| {
+                        let sanitized = sanitize_variant_name(&v.value);
+                        let serde_rename = if sanitized != v.value {
+                            Some(v.value.clone())
+                        } else {
+                            None
+                        };
+                        RustEnumVariant {
+                            name: sanitized,
+                            code: v.value.clone(),
+                            serde_rename,
+                        }
+                    })
+                    .collect();
 
-            let ctx = RustEnumContext {
-                enum_name: enum_name.clone(),
-                description: description.to_string(),
-                variants,
+                let ctx = RustEnumContext {
+                    enum_name: enum_name.clone(),
+                    description: description.to_string(),
+                    variants,
+                };
+                render_template_with_project(tera, "codelist/enum.tera", &ctx, project)?
             };
 
-            let content = render_template_with_project(tera, "codelist/enum.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: codelist_dir.join(format!("{}.rs", snake_name)),
                 content,
@@ -239,12 +247,10 @@ impl RustCodelistGenerator {
         }
 
         // Build a set of all available codelist enum names.
+        // Include empty codelists too — they have stub enums that DTO code may reference.
         let mut available: std::collections::HashSet<String> = std::collections::HashSet::new();
         for cl in &codelists {
-            let enum_values = db.get_enum_values(&cl.name).await.unwrap_or_default();
-            if !enum_values.is_empty() {
-                available.insert(cl.name.clone());
-            }
+            available.insert(cl.name.clone());
         }
 
         // Scan src/domain/ and src/api/ for `crate::codelist::<Name>` references.

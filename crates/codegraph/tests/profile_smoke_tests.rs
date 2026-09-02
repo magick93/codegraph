@@ -257,8 +257,6 @@ fn enterprise_variant_generators_match_base_profile() {
     // from the base, adds features). If a generator is added to the base
     // fullstack profile but not to the enterprise variant, it would silently
     // stop generating. This test catches that drift.
-    let _registry = CapabilityRegistry::new();
-
     let base = profile::load_and_resolve_profile(&profiles_path(), "fullstack", None).unwrap();
     let enterprise =
         profile::load_and_resolve_profile(&profiles_path(), "fullstack", Some("enterprise"))
@@ -786,7 +784,7 @@ generation_mode = "ddd_only"
         let router_file = report
             .files
             .iter()
-            .find(|f| f.path.to_string_lossy() == *rp)
+            .find(|f| f.path.to_string_lossy().to_string() == *rp)
             .unwrap();
         let content = &router_file.content;
         assert!(
