@@ -163,8 +163,7 @@ impl EntityGenerator for UiDescriptorGenerator {
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
         // Operations
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         // FTS detection
         let has_fts = entity_cfg

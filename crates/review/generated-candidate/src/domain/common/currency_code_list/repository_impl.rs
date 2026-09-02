@@ -3,8 +3,7 @@
 
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
@@ -16,7 +15,7 @@ use super::dto_response::CurrencyCodeListResponse;
 pub struct CurrencyCodeListRepositoryImpl;
 
 #[async_trait]
-impl CurrencyCodeListRepository for CurrencyCodeListRepositoryImpl {
+impl CurrencyCodeListRepository<sea_orm::DatabaseTransaction> for CurrencyCodeListRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "common.currency_code_list"))]
     async fn create(
         &self,
@@ -43,11 +42,16 @@ impl CurrencyCodeListRepository for CurrencyCodeListRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<CurrencyCodeListResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::common_currency_code_list::Entity::find()
-            .filter(crate::entity::common_currency_code_list::Column::Id.eq(id))
-            .filter(crate::entity::common_currency_code_list::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::common_currency_code_list::Entity::find()
+            .filter(crate::entity::common_currency_code_list::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::common_currency_code_list::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -62,6 +66,7 @@ impl CurrencyCodeListRepository for CurrencyCodeListRepositoryImpl {
             sort_order: row.sort_order,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -118,10 +123,14 @@ impl CurrencyCodeListRepository for CurrencyCodeListRepositoryImpl {
         page: u64,
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
+        include_deleted: bool,
     ) -> Result<(Vec<CurrencyCodeListResponse>, u64), Box<dyn std::error::Error>> {
-        let query = crate::entity::common_currency_code_list::Entity::find()
-            .filter(crate::entity::common_currency_code_list::Column::DeletedAt.is_null())
-            .order_by_desc(crate::entity::common_currency_code_list::Column::CreatedAt);
+        let mut query = crate::entity::common_currency_code_list::Entity::find()
+;
+        if !include_deleted {
+            query = query.filter(crate::entity::common_currency_code_list::Column::DeletedAt.is_null());
+        }
+        let query = query.order_by_desc(crate::entity::common_currency_code_list::Column::CreatedAt);
         let paginator = query.paginate(db, page_size);
 
         let total = paginator.num_items().await?;
@@ -136,6 +145,7 @@ impl CurrencyCodeListRepository for CurrencyCodeListRepositoryImpl {
                 sort_order: row.sort_order,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

@@ -517,7 +517,7 @@ pub struct EmbeddingContext {
     pub index_name: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ColumnDef {
     pub name: String,
     pub pg_type: String,
@@ -527,7 +527,7 @@ pub struct ColumnDef {
     pub is_array: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ForeignKeyDef {
     pub column: String,
     /// Column name without PG quotes — safe for use in constraint/index names.
@@ -536,6 +536,10 @@ pub struct ForeignKeyDef {
     pub references_table: String,
     pub references_column: String,
     pub on_delete: String,
+    /// True when the FK targets a codelist table. Codelists are generated in
+    /// a separate band and are not entity tables, so the entity-table FK
+    /// filter must not drop them.
+    pub is_codelist: bool,
 }
 
 /// Strip the Rust `r#` keyword escaping prefix from a SQL identifier.
@@ -545,21 +549,21 @@ fn strip_rsharp(name: &str) -> String {
     name.strip_prefix("r#").unwrap_or(name).to_string()
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CheckConstraint {
     pub name: String,
     pub column: String,
     pub expression: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct IndexDef {
     pub name: String,
     pub columns: Vec<String>,
     pub unique: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChildTableDef {
     pub schema_name: String,
     pub table_name: String,
@@ -576,7 +580,7 @@ pub struct ChildTableDef {
     pub child_tables: Vec<ChildTableDef>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ColumnComment {
     pub column: String,
     pub comment: String,
@@ -594,7 +598,7 @@ type DdlArtifacts = (
 ///
 /// Returns `None` for ValueObject-classified columns — those are represented as child
 /// `CompositionNode`s in the tree, not as columns.
-fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts> {
+pub(crate) fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts> {
     let raw_name = &col.name;
     let prop_name = quote_if_reserved(raw_name);
     let description = col.description.as_deref().unwrap_or("");
@@ -681,11 +685,23 @@ fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts
                     references_table: fk.table.clone(),
                     references_column: fk.column.clone(),
                     on_delete: fk.on_delete.clone(),
+                    is_codelist: true,
                 });
             }
         }
         Some(RefClassificationKind::EntityReference) => {
-            let col_name = format!("{}_id", raw_name);
+            // Array entity refs are represented as junction child tables
+            // (CompositionNodes), never as columns on the parent table.
+            if col.is_array {
+                return None;
+            }
+            // Only append `_id` when the schema-side column name doesn't
+            // already carry the suffix (e.g. `tenantId` -> `tenant_id`).
+            let col_name = if raw_name.ends_with("_id") {
+                raw_name.to_string()
+            } else {
+                format!("{}_id", raw_name)
+            };
             if !description.is_empty() {
                 comments.push(ColumnComment {
                     column: col_name.clone(),
@@ -708,6 +724,7 @@ fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts
                     references_table: fk.table.clone(),
                     references_column: fk.column.clone(),
                     on_delete: fk.on_delete.clone(),
+                    is_codelist: false,
                 });
             }
         }
@@ -820,6 +837,59 @@ fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts
     Some((columns, foreign_keys, check_constraints, comments))
 }
 
+/// FK column a child table/entity uses to reference its parent. Suffix-aware
+/// so parents whose table name already ends in `_id` don't double it
+/// (`evidence_extracted_field_id` → `evidence_extracted_field_id`, not
+/// `evidence_extracted_field_id_id`). Single source of truth for DDL and
+/// SeaORM entity generation.
+pub(crate) fn child_parent_fk_column(parent_table_name: &str) -> String {
+    codegraph_naming::truncate_pg_identifier(&codegraph_core::types::ensure_id_suffix(
+        parent_table_name,
+    ))
+}
+
+/// Recursively ensure every child table (and nested child) carries the
+/// tenant column, so org-isolation RLS policies can filter on it.
+fn inject_child_tenant_columns(children: &mut [ChildTableDef], tenant_col: &ColumnDef) {
+    for child in children {
+        if !child.columns.iter().any(|c| c.name == tenant_col.name) {
+            child.columns.insert(0, tenant_col.clone());
+        }
+        inject_child_tenant_columns(&mut child.child_tables, tenant_col);
+    }
+}
+
+/// Build a minimal [`DdlContext`] targeting a child table so the RLS template
+/// emits the parent's org-isolation policies for it. Only org-isolation is
+/// emitted (`is_auditable = false`): child tables are not api-key-scoped
+/// resources.
+pub(crate) fn child_table_rls_context(parent: &DdlContext, child: &ChildTableDef) -> DdlContext {
+    DdlContext {
+        schema_name: child.schema_name.clone(),
+        table_name: child.table_name.clone(),
+        display_name: child.display_name.clone(),
+        domain: parent.domain.clone(),
+        columns: child.columns.clone(),
+        primary_key: "id".to_string(),
+        foreign_keys: child.foreign_keys.clone(),
+        check_constraints: child.check_constraints.clone(),
+        indexes: Vec::new(),
+        has_updated_at: false,
+        is_tenant_scoped: true,
+        tenant_table: parent.tenant_table.clone(),
+        extensions: Vec::new(),
+        child_tables: Vec::new(),
+        comments: child.comments.clone(),
+        has_workflow: false,
+        resource_name: child.table_name.replace('_', "-"),
+        fts: None,
+        embeddings: Vec::new(),
+        is_auditable: false,
+        is_codelist: false,
+        has_demo_flag: false,
+    }
+}
+
 /// Convert a child `CompositionNode` into a `ChildTableDef`, recursively processing
 /// nested children.
 fn composition_node_to_child_table(
@@ -827,6 +897,7 @@ fn composition_node_to_child_table(
     parent_table_name: &str,
     parent_schema_name: &str,
     parent_display_name: &str,
+    generated_tables: &HashSet<(String, String)>,
 ) -> ChildTableDef {
     let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
         "{}_{}",
@@ -877,9 +948,24 @@ fn composition_node_to_child_table(
     }
 
     // Remove any column that collides with the parent FK column
-    let parent_fk_col =
-        codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name));
+    let parent_fk_col = child_parent_fk_column(parent_table_name);
     columns.retain(|col| col.name != parent_fk_col);
+
+    // The child-table template appends standard created_at/updated_at audit
+    // columns; schema-derived timestamps (e.g. provenance.createdAt) would
+    // declare them twice, so schema-derived standards are dropped here.
+    columns.retain(|col| {
+        let normalized = codegraph_naming::to_snake_case(&col.name).to_lowercase();
+        normalized != "created_at" && normalized != "updated_at"
+    });
+
+    // Filter FK constraints: only keep FKs whose target table belongs to a
+    // generated entity (same logic as the parent table FK filter).
+    foreign_keys.retain(|fk| {
+        fk.is_codelist
+            || generated_tables
+                .contains(&(fk.references_schema.clone(), fk.references_table.clone()))
+    });
 
     // Recursively convert nested children
     let nested_children: Vec<ChildTableDef> = node
@@ -891,6 +977,7 @@ fn composition_node_to_child_table(
                 &child_table_name,
                 parent_schema_name,
                 &child_display_name,
+                generated_tables,
             )
         })
         .collect();
@@ -1046,6 +1133,7 @@ impl DdlGenerator {
                                 references_table: parent_schema.pg_table_name.clone(),
                                 references_column: "id".to_string(),
                                 on_delete: "CASCADE".to_string(),
+                                is_codelist: false,
                             });
                             fk_resolved = true;
                         }
@@ -1083,6 +1171,7 @@ impl DdlGenerator {
                             references_table: parent_schema.pg_table_name.clone(),
                             references_column: "id".to_string(),
                             on_delete: "CASCADE".to_string(),
+                            is_codelist: false,
                         });
                     }
                 }
@@ -1107,6 +1196,7 @@ impl DdlGenerator {
                     references_schema: schema_name.clone(),
                     references_table: table_name.clone(),
                     references_column: "id".to_string(),
+                    is_codelist: false,
                     on_delete: "SET NULL".to_string(),
                 });
                 indexes.push(IndexDef {
@@ -1137,19 +1227,81 @@ impl DdlGenerator {
             check_constraints.retain(|chk| seen.insert(chk.name.clone()));
         }
 
+        // Filter FK constraints: only keep FKs whose target table belongs to an
+        // entity that is actually configured in some domain (will have a migration).
+        // This prevents phantom FK constraints to:
+        // - VO types classified as entities by the auto-classifier but not in any domain's entities list
+        // - Excluded types that exist in a different domain
+        // - Cross-domain refs pointing to non-existent schemas (e.g. "jdx")
+        // Build (schema, table) pairs — a FK is valid only if its target
+        // (references_schema, references_table) matches a generated entity.
+        let generated_tables: HashSet<(String, String)> = config
+            .domains
+            .values()
+            .flat_map(|d| {
+                let schema = &d.postgres_schema;
+                d.entities.iter().map(move |title| {
+                    let table = codegraph_naming::to_snake_case(&codegraph_naming::strip_suffix(
+                        title, "Type",
+                    ));
+                    (schema.clone(), table)
+                })
+            })
+            .collect();
+        foreign_keys.retain(|fk| {
+            fk.is_codelist
+                || generated_tables
+                    .contains(&(fk.references_schema.clone(), fk.references_table.clone()))
+        });
+
         // Query graph properties for entity-reference columns that the composition
         // tree may have missed (e.g. cross-domain references where the target schema
         // can't be resolved). The entity model generator includes these columns,
         // so the DDL must match to avoid "column does not exist" at runtime.
+        //
+        // ValueObject properties are handled by the composition tree as child
+        // tables (not FK columns on the parent), so we only emit FK columns for
+        // EntityReference properties whose target schema actually has a table
+        // (i.e. is an entity configured in some domain). This prevents phantom
+        // FK constraints to VO types that were force-classified but never
+        // generated as entities, or to entities excluded in their domain.
         if let Ok(props) = db.get_properties(schema_title).await {
             let existing_names: std::collections::HashSet<String> =
                 columns.iter().map(|c| c.name.clone()).collect();
+
             for prop in &props {
                 let kind = prop.effective_kind();
-                let is_fk_candidate = kind == Some(RefClassificationKind::EntityReference)
-                    || (kind == Some(RefClassificationKind::ValueObject) && !prop.is_array);
-                if !is_fk_candidate {
+                if kind != Some(RefClassificationKind::EntityReference) {
                     continue;
+                }
+                // Array entity refs are junction/FK-on-child relationships
+                // materialized elsewhere (child tables, child-side FKs) — never
+                // columns on this table.
+                if prop.is_array {
+                    continue;
+                }
+                // ValueObject refs only become FK columns when they resolve to a
+                // known entity (directly or through an allOf chain). Pure VOs are
+                // materialized as child tables — an FK to their (nonexistent)
+                // table would break migrations.
+                if kind == Some(RefClassificationKind::ValueObject) {
+                    let target = db
+                        .get_property_ref_target(&prop.name, schema_title)
+                        .await
+                        .ok()
+                        .flatten();
+                    let targets_entity = match &target {
+                        Some(t) if t.is_entity => true,
+                        Some(t) => codegraph_core::traits::find_entity_extended_by_vo(db, &t.title)
+                            .await
+                            .ok()
+                            .flatten()
+                            .is_some(),
+                        None => false,
+                    };
+                    if !targets_entity {
+                        continue;
+                    }
                 }
                 let base = prop
                     .rust_field_name
@@ -1161,25 +1313,31 @@ impl DdlGenerator {
                     format!("{}_id", base)
                 };
                 if !existing_names.contains(col_name.as_str()) {
-                    columns.push(ColumnDef {
-                        name: col_name.clone(),
-                        pg_type: "UUID".to_string(),
-                        nullable: true,
-                        default: None,
-                        is_primary_key: false,
-                        is_array: false,
-                    });
-                    // Try to resolve the FK target for the constraint
+                    // Try to resolve the FK target for the constraint.
+                    // Only emit the FK if the target schema is an entity
+                    // configured in some domain (has its own table/migration).
+                    // VOs, excluded types, and entity types not in any domain's
+                    // entities list don't have tables, so FK constraints to them
+                    // would fail with "undefined_table".
                     if let Ok(Some(target)) =
                         db.get_property_ref_target(&prop.name, schema_title).await
                     {
-                        if !target.pg_table_name.is_empty() {
+                        if !target.pg_table_name.is_empty() && target.is_entity {
+                            columns.push(ColumnDef {
+                                name: col_name.clone(),
+                                pg_type: "UUID".to_string(),
+                                nullable: true,
+                                default: None,
+                                is_primary_key: false,
+                                is_array: false,
+                            });
                             let fk_schema = target.domain.as_deref().unwrap_or(&schema_name);
                             foreign_keys.push(ForeignKeyDef {
                                 column_name: strip_rsharp(&prop.rust_field_name),
                                 column: col_name,
                                 references_schema: fk_schema.to_string(),
                                 references_table: target.pg_table_name.clone(),
+                                is_codelist: false,
                                 references_column: "id".to_string(),
                                 on_delete: "SET NULL".to_string(),
                             });
@@ -1187,14 +1345,27 @@ impl DdlGenerator {
                     }
                 }
             }
+
+            // Re-filter after adding cross-domain FKs (same logic as above)
+            foreign_keys.retain(|fk| {
+                fk.is_codelist
+                    || generated_tables
+                        .contains(&(fk.references_schema.clone(), fk.references_table.clone()))
+            });
         }
 
         // Convert child CompositionNodes → ChildTableDefs
-        let child_tables: Vec<ChildTableDef> = root
+        let mut child_tables: Vec<ChildTableDef> = root
             .children
             .iter()
             .map(|child| {
-                composition_node_to_child_table(child, &table_name, &schema_name, &display_name)
+                composition_node_to_child_table(
+                    child,
+                    &table_name,
+                    &schema_name,
+                    &display_name,
+                    &generated_tables,
+                )
             })
             .collect();
 
@@ -1233,6 +1404,19 @@ impl DdlGenerator {
                     is_array: false,
                 },
             );
+
+            // Child tables (junction + VO) inherit the parent's tenancy: they
+            // carry the same tenant column so org-isolation RLS policies can
+            // be applied to them too. Nested children recurse.
+            let tenant_col = ColumnDef {
+                name: "platform_organization_id".to_string(),
+                pg_type: "UUID".to_string(),
+                nullable: false,
+                default: Some("'00000000-0000-0000-0000-000000000000'::UUID".to_string()),
+                is_primary_key: false,
+                is_array: false,
+            };
+            inject_child_tenant_columns(&mut child_tables, &tenant_col);
         }
 
         // Deduplicate columns by name — CompositeWrapper expansion from
@@ -1328,7 +1512,7 @@ impl DdlGenerator {
         // The codelist generator only creates these for codelist entities in the
         // 'common' domain. Entities outside 'common' are always created by the entity
         // DDL generator with id UUID PRIMARY KEY, even if classified as codelists.
-        let has_codelist_seed = schema.is_codelist
+        let _has_codelist_seed = schema.is_codelist
             && domain == "common"
             && !db
                 .get_enum_values(schema_title)
@@ -1679,6 +1863,29 @@ impl EntityGenerator for DdlGenerator {
                     .join(format!("{}_{}_rls.sql", ctx.schema_name, ctx.table_name)),
                 content: rls_sql,
             });
+
+            // Child tables (junction + VO) get the same org-isolation
+            // policies — without them, junction rows are readable
+            // cross-tenant via direct DB access. Children are not
+            // api-key-scoped resources, so only the org-isolation block
+            // is emitted (is_auditable = false). ctx.child_tables is the
+            // depth-flattened tree, so nested children are covered.
+            for child in &ctx.child_tables {
+                let child_ctx = child_table_rls_context(&ctx, child);
+                let child_rls_sql = render_template_with_project(
+                    tera,
+                    &db_template_for(&*self.dialect, "rls"),
+                    &child_ctx,
+                    project,
+                )?;
+                files.push(GeneratedFile {
+                    path: self.output_dir.join("migrations").join(format!(
+                        "{}_{}_rls.sql",
+                        child_ctx.schema_name, child_ctx.table_name
+                    )),
+                    content: child_rls_sql,
+                });
+            }
         }
 
         // Updated_at trigger — dialect-aware style
@@ -1854,5 +2061,155 @@ mod tests {
         let cols = vec![col("GEOMETRY(Point, 4326)"), col("VECTOR(1536)")];
         let exts = detect_extensions_from_columns(&cols, &[]);
         assert_eq!(exts, vec!["postgis", "vector"]);
+    }
+
+    fn info_col(name: &str, pg_type: &str) -> ColumnInfo {
+        ColumnInfo {
+            name: name.to_string(),
+            description: None,
+            rust_type: "String".to_string(),
+            postgres_type: pg_type.to_string(),
+            is_optional: false,
+            is_codelist_fk: false,
+            composite_columns: vec![],
+            is_array: false,
+            classification: None,
+            fk_target: None,
+            check_values: vec![],
+        }
+    }
+
+    fn node_with_columns(columns: Vec<ColumnInfo>) -> CompositionNode {
+        CompositionNode {
+            field_name: "provenance".to_string(),
+            schema_title: "Provenance".to_string(),
+            table_schema: "core".to_string(),
+            table_name: "trust_provenance".to_string(),
+            fk: None,
+            is_collection: false,
+            columns,
+            jsonb_columns: vec![],
+            children: vec![],
+            composite_range: None,
+            consumed_fields: vec![],
+        }
+    }
+
+    #[test]
+    fn child_parent_fk_column_avoids_double_id_suffix() {
+        assert_eq!(child_parent_fk_column("trust"), "trust_id");
+        assert_eq!(
+            child_parent_fk_column("evidence_extracted_field_id"),
+            "evidence_extracted_field_id"
+        );
+    }
+
+    #[test]
+    fn child_table_dedupes_schema_derived_timestamps() {
+        let node = node_with_columns(vec![
+            info_col("createdAt", "TIMESTAMPTZ"),
+            info_col("note", "TEXT"),
+        ]);
+        let def = composition_node_to_child_table(&node, "trust", "core", "Trust", &HashSet::new());
+        let names: Vec<&str> = def.columns.iter().map(|c| c.name.as_str()).collect();
+        assert!(!names.contains(&"created_at"), "got {:?}", names);
+        assert!(!names.contains(&"updated_at"), "got {:?}", names);
+        assert!(names.contains(&"note"));
+    }
+
+    #[test]
+    fn child_table_timestamp_dedupe_is_case_insensitive() {
+        let node = node_with_columns(vec![info_col("CreatedAt", "TIMESTAMPTZ")]);
+        let def = composition_node_to_child_table(&node, "trust", "core", "Trust", &HashSet::new());
+        assert!(def.columns.iter().all(|c| c.name != "CreatedAt"));
+    }
+
+    #[test]
+    fn child_table_parent_fk_single_suffix_for_id_named_parent() {
+        let node = node_with_columns(vec![info_col("value", "TEXT")]);
+        let def = composition_node_to_child_table(
+            &node,
+            "evidence_extracted_field_id",
+            "compliance",
+            "Evidence Extracted Field Id",
+            &HashSet::new(),
+        );
+        assert_eq!(def.parent_fk_column, "evidence_extracted_field_id");
+        assert!(def
+            .columns
+            .iter()
+            .all(|c| c.name != "evidence_extracted_field_id_id"));
+    }
+
+    #[test]
+    fn rls_template_renders_org_isolation_for_child_table() {
+        let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let tera = crate::generate::template_engine::create_tera(&template_dir).unwrap();
+        let project = crate::generate::ProjectConfig::default();
+
+        let parent = DdlContext {
+            schema_name: "core".to_string(),
+            table_name: "trust".to_string(),
+            display_name: "Trust".to_string(),
+            domain: "core".to_string(),
+            columns: vec![],
+            primary_key: "id".to_string(),
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            indexes: vec![],
+            has_updated_at: true,
+            is_tenant_scoped: true,
+            tenant_table: "platform.organization".to_string(),
+            extensions: vec![],
+            child_tables: vec![],
+            comments: vec![],
+            has_workflow: false,
+            resource_name: "trust".to_string(),
+            fts: None,
+            embeddings: vec![],
+            is_auditable: true,
+            is_codelist: false,
+            has_demo_flag: false,
+        };
+
+        let junction = ChildTableDef {
+            schema_name: "core".to_string(),
+            table_name: "trust_settlor_ids".to_string(),
+            parent_fk_column: "trust_id".to_string(),
+            parent_schema: "core".to_string(),
+            parent_table: "trust".to_string(),
+            columns: vec![
+                ColumnDef {
+                    name: "platform_organization_id".to_string(),
+                    pg_type: "UUID".to_string(),
+                    nullable: false,
+                    default: Some("'00000000-0000-0000-0000-000000000000'::UUID".to_string()),
+                    is_primary_key: false,
+                    is_array: false,
+                },
+                ColumnDef {
+                    name: "party_id".to_string(),
+                    pg_type: "UUID".to_string(),
+                    nullable: false,
+                    default: None,
+                    is_primary_key: false,
+                    is_array: false,
+                },
+            ],
+            display_name: "Trust Settlor Ids".to_string(),
+            comments: vec![],
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            child_tables: vec![],
+        };
+
+        let child_ctx = child_table_rls_context(&parent, &junction);
+        let sql = render_template_with_project(&tera, "db/rls.tera", &child_ctx, &project).unwrap();
+
+        assert!(sql.contains("ALTER TABLE core.trust_settlor_ids ENABLE ROW LEVEL SECURITY"));
+        assert!(sql.contains("CREATE POLICY \"org_isolation_select\""));
+        assert!(sql.contains("CREATE POLICY \"org_isolation_delete\""));
+        // Children are not api-key-scoped resources.
+        assert!(!sql.contains("api_key_scoped_"));
     }
 }

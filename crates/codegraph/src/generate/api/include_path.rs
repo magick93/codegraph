@@ -90,8 +90,7 @@ pub async fn resolve_include_paths(
     allow_include: Option<&Vec<String>>,
 ) -> Result<Vec<ResolvedIncludePath>> {
     // Monolith behaviour: cross-domain include paths stay (same-DB joins).
-    resolve_include_paths_for_topology(db, config, domain, schema_title, allow_include, false)
-        .await
+    resolve_include_paths_for_topology(db, config, domain, schema_title, allow_include, false).await
 }
 
 /// [`resolve_include_paths`] with an explicit workers-topology flag.
@@ -134,7 +133,11 @@ pub async fn resolve_include_paths_for_topology(
                 paths,
             )
             .await?;
-            Ok(filter_cross_domain_paths(domain, resolved, workers_topology))
+            Ok(filter_cross_domain_paths(
+                domain,
+                resolved,
+                workers_topology,
+            ))
         }
         None => {
             let resolved = resolve_auto_paths(
@@ -146,7 +149,11 @@ pub async fn resolve_include_paths_for_topology(
                 source_module,
             )
             .await?;
-            Ok(filter_cross_domain_paths(domain, resolved, workers_topology))
+            Ok(filter_cross_domain_paths(
+                domain,
+                resolved,
+                workers_topology,
+            ))
         }
     }
 }
@@ -164,10 +171,7 @@ fn filter_cross_domain_paths(
     paths
         .into_iter()
         .filter(|path| {
-            let cross_domain = path
-                .segments
-                .iter()
-                .any(|seg| seg.domain != source_domain);
+            let cross_domain = path.segments.iter().any(|seg| seg.domain != source_domain);
             if cross_domain {
                 tracing::warn!(
                     include_path = %path.alias,
@@ -183,6 +187,7 @@ fn filter_cross_domain_paths(
 
 // ── Explicit path resolution ──────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn resolve_explicit_paths(
     db: &dyn GraphQuerier,
     config: &codegraph_config::DomainConfig,
@@ -337,6 +342,28 @@ async fn resolve_explicit_paths(
                 }
             }
 
+            // Gate: the column the fetch will use must actually exist.
+            // Junction arrays (array-of-entity-ref) materialize as junction
+            // tables — neither the source-side FK nor the target-side
+            // back-ref column exists, so paths through them are unfetchable.
+            // VO→entity overrides are exempt: the fetch queries the VO child
+            // table by its own parent FK (child_table_override), not these
+            // columns.
+            if child_table_override.is_none() {
+                let (fetch_column, fetch_on_title): (&String, String) = if is_array {
+                    (&reverse_fk_column, target_title.clone())
+                } else {
+                    (&fk_column, current_source_title.to_string())
+                };
+                if !schema_has_fk_column(db, &fetch_on_title, fetch_column).await? {
+                    tracing::warn!(
+                        "include path '{path}' segment '{seg}' is unfetchable — column \
+                         '{fetch_column}' not found on '{fetch_on_title}' (junction array?) — skipping"
+                    );
+                    break;
+                }
+            }
+
             // Nullability: JSON schema `required` is the source of truth for
             // genuine EntityReference FKs. VO→entity (child_table_override)
             // FKs are always nullable.
@@ -365,6 +392,13 @@ async fn resolve_explicit_paths(
             // Advance the schema_id to the target's identity for the next
             // segment's identity-native property lookup.
             current_source_schema_id = target_schema.schema_id.clone();
+        }
+
+        // Every segment was skipped (junction array, force VO, codelist,
+        // non-entity) — the path is not resolvable, don't emit a fetch
+        // method for a zero-segment path.
+        if segments.is_empty() {
+            continue;
         }
 
         let alias_snake = path.replace('.', "_");
@@ -455,6 +489,21 @@ async fn resolve_auto_paths(
             resolve_child_fk_column(config, domain, target_title, schema_title, db).await?;
         let reverse_fk_column = fk_column.clone();
 
+        // Junction guard: array-of-entity-ref properties (e.g.
+        // trust.settlorIds → party) materialize as junction tables — the
+        // child entity carries no parent FK, so child-style fetch helpers
+        // would reference a nonexistent SeaORM `Column`. ScalarRef children
+        // and VO children DO get the FK injected into their entity model by
+        // the entity generator, so they remain include-able.
+        if parent_holds_child_as_junction(db, schema_title, target_title).await? {
+            tracing::debug!(
+                parent = %schema_title,
+                child = %target_title,
+                "auto-discovery skipping junction relationship"
+            );
+            continue;
+        }
+
         let alias_seg = codegraph_naming::to_snake_case(super::router::strip_suffix(
             target_title,
             &config.defaults.type_suffix,
@@ -466,14 +515,22 @@ async fn resolve_auto_paths(
         let reverse_fk_is_required =
             fk_column_is_required(db, target_title, &reverse_fk_column).await?;
 
-        // Resolve is_array from the graph: does the parent have an array property
-        // pointing to this child via ItemsOf?
-        let is_array = {
-            let props = db.get_properties(schema_title).await.unwrap_or_default();
-            props.iter().any(|p| {
-                p.is_array && p.effective_kind() == Some(RefClassificationKind::ValueObject)
-            })
-        };
+        // Parent-candidate includes are reverse relationships: the FK column is
+        // owned by the child (target) entity, and the fetch scans the child table
+        // by that FK (`deployment.worker_type_id == job.id`) — array semantics in
+        // both discovery modes (`DetectionSource::ScalarRef`: the child holds a
+        // scalar ref to the parent; `DetectionSource::ArrayItems`: the parent
+        // holds an ItemsOf array). This is intrinsic to the discovery source, so
+        // the include always resolves as the array/reverse variant.
+        //
+        // Pre-99da338 this was expressed as `... || true`. The property-list
+        // check it was OR'd onto inspected the PARENT's own properties, which is
+        // unrelated to this candidate relationship; without the `|| true` the
+        // include flips to forward-single semantics, and the generated fetch
+        // reads `source.<fk_column>` off the parent model — a column the parent
+        // doesn't own (it lives on the child) — producing uncompilable
+        // `repository_impl.rs`.
+        let is_array = true;
 
         paths.push(ResolvedIncludePath {
             alias: alias_seg.clone(),
@@ -568,7 +625,18 @@ async fn resolve_auto_paths(
         let source_entity_name =
             super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
         let (reverse_fk_column, _) =
-            resolve_fk_via_graph(db, ref_title, schema_title, &source_entity_name).await?;
+            resolve_fk_via_graph(db, ref_title, schema_title, source_entity_name).await?;
+
+        // Junction guard: array-of-entity-ref cross-refs live in junction
+        // tables and cannot be fetched by either FK column.
+        if parent_holds_child_as_junction(db, schema_title, ref_title).await? {
+            tracing::debug!(
+                source = %schema_title,
+                target = %ref_title,
+                "auto-discovery skipping junction cross-reference"
+            );
+            continue;
+        }
 
         let alias_seg = codegraph_naming::to_snake_case(ref_entity_name);
 
@@ -804,12 +872,53 @@ async fn fk_column_is_required(
     }))
 }
 
+/// Whether `parent_title` holds `child_title` through an array-of-entity-ref
+/// property — i.e. the relationship is materialized as a junction table.
+async fn parent_holds_child_as_junction(
+    db: &dyn GraphQuerier,
+    parent_title: &str,
+    child_title: &str,
+) -> Result<bool> {
+    let props = db.get_properties(parent_title).await?;
+    for p in props.iter().filter(|p| {
+        p.is_array && p.effective_kind() == Some(RefClassificationKind::EntityReference)
+    }) {
+        if let Ok(Some(target)) = db.get_property_ref_target(&p.name, parent_title).await {
+            if target.title == child_title {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Whether the schema genuinely carries a column named `column` (a property
+/// whose resolved or raw pg column matches). Guards include resolution
+/// against emitting fetch helpers that reference nonexistent columns —
+/// the dominant case being junction targets (array-of-entity-ref), which
+/// carry no parent FK column at all.
+async fn schema_has_fk_column(
+    db: &dyn GraphQuerier,
+    child_title: &str,
+    fk_column: &str,
+) -> Result<bool> {
+    let props = db.get_properties(child_title).await?;
+    Ok(props.iter().any(|p| {
+        resolve_field(p).column_name == fk_column
+            || p.pg_column_name == fk_column
+            // VO→entity chains keep the schema-side column unsuffixed
+            // (`person`) while the entity model carries `person_id`.
+            || codegraph_core::types::ensure_id_suffix(&p.pg_column_name) == fk_column
+    }))
+}
+
 /// Resolve the FK column and array flag for a source→target relationship
 /// by querying the source entity's properties from the graph.
 ///
 /// Uses `db.get_properties()` which runs GQL internally (`HasProperty` edges),
 /// then matches properties by `ref_target` or field name.  This is the same
 /// pattern used by `build_composition_node()` in the Grafeo querier.
+///
 async fn resolve_fk_via_graph(
     db: &dyn GraphQuerier,
     source_title: &str,
@@ -937,14 +1046,23 @@ async fn resolve_child_fk_column(
     parent_title: &str,
     db: &dyn GraphQuerier,
 ) -> Result<String> {
-    // Priority 1: parent_ref from the child entity's domain config.
-    if let Some(fk) = config
+    // Priority 1: parent_ref from the child entity's domain config. Only
+    // honored when the config entry's declared `parent` matches the actual
+    // parent schema title — otherwise a parent_ref written for a different
+    // relationship (e.g. DeploymentType.parent_ref = "worker_type_id" for the
+    // DeploymentType → WorkerType link) would leak into FK resolution for an
+    // unrelated parent (e.g. a JobType include of deployment would resolve to
+    // the worker FK instead of the job FK).
+    if let Some(ec) = config
         .domains
         .get(domain)
         .and_then(|d| d.get_entity_config(child_title))
-        .and_then(|ec| ec.parent_ref.clone())
     {
-        return Ok(fk);
+        if let Some(fk) = ec.parent_ref.clone() {
+            if ec.parent.as_deref().is_some_and(|p| p == parent_title) {
+                return Ok(fk);
+            }
+        }
     }
 
     // Priority 2: graph properties — find the property on the child that
@@ -969,4 +1087,278 @@ async fn resolve_child_fk_column(
         return Ok(format!("{}_id", parent_seg));
     }
     Ok(fk)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codegraph_config::config::parse_domain_config_str;
+    use codegraph_core::mock::MockEngine;
+    use codegraph_core::types::PropertyNode;
+    use codegraph_core::types::SchemaNode;
+    use codegraph_core::types::{DetectionSource, ParentCandidate};
+
+    fn schema_node(title: &str, domain: &str, table: &str, is_entity: bool) -> SchemaNode {
+        SchemaNode {
+            schema_id: format!("{domain}/json/{title}.json"),
+            title: title.to_string(),
+            description: None,
+            schema_type: "object".to_string(),
+            classification: if is_entity {
+                "entity_reference".to_string()
+            } else {
+                "value_object".to_string()
+            },
+            domain: Some(domain.to_string()),
+            rel_path: format!("{domain}/json/{title}.json"),
+            pg_type: "UUID".to_string(),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            rust_type_name: title.to_string(),
+            pg_table_name: table.to_string(),
+            api_path_segment: table.to_string(),
+            parent_schema: None,
+            is_entity,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+        }
+    }
+
+    fn ref_property(name: &str, pg_column: &str, ref_target: &str) -> PropertyNode {
+        PropertyNode {
+            name: name.to_string(),
+            prop_type: "string".to_string(),
+            description: None,
+            format: None,
+            is_required: false,
+            is_nullable: true,
+            is_array: false,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: pg_column.to_string(),
+            pg_column_type: "UUID".to_string(),
+            rust_field_name: pg_column.to_string(),
+            rust_field_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            render_strategy: "entity_reference".to_string(),
+            ref_target: Some(ref_target.to_string()),
+            classification: Some("entity_reference".to_string()),
+            classification_kind: None,
+            projection: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    }
+
+    fn hr_config(entities: &[&str], extra: &str) -> codegraph_config::DomainConfig {
+        let entities_list = entities
+            .iter()
+            .map(|e| format!("\"{e}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        parse_domain_config_str(&format!(
+            r#"
+[defaults]
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = [{entities_list}]
+{extra}
+"#
+        ))
+        .unwrap()
+    }
+
+    fn deployment_parent_candidate(parent: &str, field: &str) -> ParentCandidate {
+        ParentCandidate {
+            child_title: "DeploymentType".to_string(),
+            parent_title: parent.to_string(),
+            field_name: field.to_string(),
+            source: DetectionSource::ScalarRef,
+        }
+    }
+
+    /// Auto-discovered parent-candidate includes must resolve as array/reverse
+    /// semantics: the FK column is read from the CHILD (target) model, never
+    /// from the source — `deployment.worker_type_id == job.id`, not
+    /// `job.worker_type_id`. Regression test for 99da338, which dropped the
+    /// array default and flipped these includes to forward-single semantics,
+    /// producing uncompilable `repository_impl.rs`.
+    #[tokio::test]
+    async fn auto_reverse_include_resolves_as_array_with_child_fk() {
+        let engine = MockEngine::builder()
+            .with_schema(schema_node("JobType", "hr", "job", true))
+            .with_schema(schema_node("DeploymentType", "hr", "deployment", true))
+            .with_properties(
+                "DeploymentType",
+                vec![ref_property("worker_type_id", "worker_type_id", "JobType")],
+            )
+            .with_ref_target(
+                "worker_type_id",
+                "DeploymentType",
+                schema_node("JobType", "hr", "job", true),
+            )
+            .with_parent_candidate(deployment_parent_candidate("JobType", "worker_type_id"))
+            .build();
+
+        let config = hr_config(&["JobType", "DeploymentType"], "");
+        let paths = resolve_include_paths(&engine, &config, "hr", "JobType", None)
+            .await
+            .unwrap();
+
+        let deployment = paths
+            .iter()
+            .find(|p| p.alias == "deployment")
+            .expect("auto-discovery should include a 'deployment' path");
+        let seg = &deployment.segments[0];
+        assert!(
+            seg.is_array,
+            "reverse include must resolve with array semantics (fetch scans the child table)"
+        );
+        assert_eq!(
+            seg.fk_column, "worker_type_id",
+            "FK must be read from the CHILD model (deployment.worker_type_id), not the source"
+        );
+        assert_eq!(seg.reverse_fk_column, "worker_type_id");
+    }
+
+    /// End-to-end: the repository code generated for an auto-discovered reverse
+    /// include must filter the child table by the child-side FK column and must
+    /// NOT read the FK off the source (parent) model.
+    #[tokio::test]
+    async fn auto_reverse_include_emits_child_side_fk_fetch() {
+        let engine = MockEngine::builder()
+            .with_schema(schema_node("JobType", "hr", "job", true))
+            .with_schema(schema_node("DeploymentType", "hr", "deployment", true))
+            .with_properties(
+                "DeploymentType",
+                vec![ref_property("worker_type_id", "worker_type_id", "JobType")],
+            )
+            .with_ref_target(
+                "worker_type_id",
+                "DeploymentType",
+                schema_node("JobType", "hr", "job", true),
+            )
+            .with_parent_candidate(deployment_parent_candidate("JobType", "worker_type_id"))
+            .build();
+
+        let config = hr_config(&["JobType", "DeploymentType"], "");
+        let paths = resolve_include_paths(&engine, &config, "hr", "JobType", None)
+            .await
+            .unwrap();
+
+        let code = crate::generate::ddd::repository_emitter::RepositoryImplEmitter
+            .emit(&engine, "JobType", "hr", &config, None, &paths)
+            .await
+            .unwrap();
+
+        assert!(
+            code.contains("Column::WorkerTypeId.eq(source_id)"),
+            "fetch must filter the child table by the child-side FK. Got:\n{code}"
+        );
+        assert!(
+            !code.contains("source.worker_type_id"),
+            "must not read the FK off the SOURCE (job) model — it lives on the child. Got:\n{code}"
+        );
+    }
+
+    /// `resolve_child_fk_column` must honor a config `parent_ref` only when the
+    /// config's `parent` matches the actual parent schema title. Here the
+    /// DeploymentType entry declares parent = WorkerType (parent_ref =
+    /// worker_type_id); resolving the DeploymentType → JobType link must NOT
+    /// apply it and must fall through to the graph (job_type_id).
+    #[tokio::test]
+    async fn child_fk_column_ignores_parent_ref_for_other_parent() {
+        let engine = MockEngine::builder()
+            .with_schema(schema_node("JobType", "hr", "job", true))
+            .with_schema(schema_node("WorkerType", "hr", "worker", true))
+            .with_schema(schema_node("DeploymentType", "hr", "deployment", true))
+            .with_properties(
+                "DeploymentType",
+                vec![
+                    ref_property("worker_type_id", "worker_type_id", "WorkerType"),
+                    ref_property("job_type_id", "job_type_id", "JobType"),
+                ],
+            )
+            .with_ref_target(
+                "worker_type_id",
+                "DeploymentType",
+                schema_node("WorkerType", "hr", "worker", true),
+            )
+            .with_ref_target(
+                "job_type_id",
+                "DeploymentType",
+                schema_node("JobType", "hr", "job", true),
+            )
+            .build();
+
+        let config = hr_config(
+            &["JobType", "WorkerType", "DeploymentType"],
+            r#"
+[domains.hr.entity_config.DeploymentType]
+role = "child"
+parent = "WorkerType"
+parent_ref = "worker_type_id"
+"#,
+        );
+
+        let fk = resolve_child_fk_column(&config, "hr", "DeploymentType", "JobType", &engine)
+            .await
+            .unwrap();
+        assert_eq!(
+            fk, "job_type_id",
+            "parent_ref for the DeploymentType → WorkerType link must not leak into the JobType relationship"
+        );
+    }
+
+    /// When the config's `parent` matches the actual parent, `parent_ref` still
+    /// applies directly.
+    #[tokio::test]
+    async fn child_fk_column_applies_parent_ref_when_parent_matches() {
+        let engine = MockEngine::builder()
+            .with_schema(schema_node("WorkerType", "hr", "worker", true))
+            .with_schema(schema_node("DeploymentType", "hr", "deployment", true))
+            .with_properties(
+                "DeploymentType",
+                vec![ref_property(
+                    "worker_type_id",
+                    "worker_type_id",
+                    "WorkerType",
+                )],
+            )
+            .with_ref_target(
+                "worker_type_id",
+                "DeploymentType",
+                schema_node("WorkerType", "hr", "worker", true),
+            )
+            .build();
+
+        let config = hr_config(
+            &["WorkerType", "DeploymentType"],
+            r#"
+[domains.hr.entity_config.DeploymentType]
+role = "child"
+parent = "WorkerType"
+parent_ref = "worker_type_id"
+"#,
+        );
+
+        let fk = resolve_child_fk_column(&config, "hr", "DeploymentType", "WorkerType", &engine)
+            .await
+            .unwrap();
+        assert_eq!(
+            fk, "worker_type_id",
+            "parent_ref applies when the config parent matches the actual parent"
+        );
+    }
 }

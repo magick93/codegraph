@@ -77,11 +77,8 @@ fn extract_correlation_id(headers: &HeaderMap, body_correlation_id: Option<Uuid>
 #[utoipa::path(
     post,
 
-    path = "/api/recruiting/application/{application_id}/candidate/{candidate_id}/actions/transition",
-    params(
-        ("application_id" = Uuid, Path, description = "Parent ID"),
-        ("candidate_id" = Uuid, Path, description = "Candidate ID"),
-    ),
+    path = "/api/v1/recruiting/candidate/{candidate_id}/actions/transition",
+    params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
 
     tag = "Candidate",
     request_body = TransitionRequest,
@@ -98,14 +95,12 @@ pub async fn transition(
     Extension(api_key_info): Extension<crate::middleware::ApiKeyInfo>,
     headers: HeaderMap,
 
-
-    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
-
+    Path(id): Path<Uuid>,
 
     Json(body): Json<TransitionRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers, body.correlation_id);
-    let entity = state.recruiting_candidate_queries.find_by_id(id, api_key_info.api_key_id, api_key_info.organization_id).await
+    let entity = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
         .map_err(|e| AppError::internal(format!("Failed to find Candidate: {e}")))?
         .ok_or_else(|| AppError::not_found(format!("Candidate {id} not found")))?;
     let entity_data = serde_json::to_value(&entity)
@@ -122,6 +117,8 @@ pub async fn transition(
         comment: body.comment,
         entity_data,
         trigger_source: codegraph_workflow::TriggerSource::User,
+        session_user_id: Some(api_key_info.user_id),
+        session_api_key_id: Some(api_key_info.api_key_id),
     };
     let ws = state.workflow_service.transition(ctx).await.map_err(|e| {
         use codegraph_workflow::WorkflowError;
@@ -151,11 +148,8 @@ pub async fn transition(
 #[utoipa::path(
     post,
 
-    path = "/api/recruiting/application/{application_id}/candidate/{candidate_id}/actions/delegate",
-    params(
-        ("application_id" = Uuid, Path, description = "Parent ID"),
-        ("candidate_id" = Uuid, Path, description = "Candidate ID"),
-    ),
+    path = "/api/v1/recruiting/candidate/{candidate_id}/actions/delegate",
+    params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
 
     tag = "Candidate",
     request_body = DelegateRequest,
@@ -170,9 +164,7 @@ pub async fn delegate(
     Extension(api_key_info): Extension<crate::middleware::ApiKeyInfo>,
     headers: HeaderMap,
 
-
-    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
-
+    Path(id): Path<Uuid>,
 
     Json(body): Json<DelegateRequest>,
 ) -> Result<axum::http::StatusCode, AppError> {
@@ -187,6 +179,8 @@ pub async fn delegate(
         to_actor_id: body.to_actor_id,
         correlation_id,
         reason: body.reason,
+        session_user_id: Some(api_key_info.user_id),
+        session_api_key_id: Some(api_key_info.api_key_id),
     };
     state.workflow_service.delegate(ctx).await
         .map_err(|e| AppError::internal(e.to_string()))?;
@@ -197,11 +191,8 @@ pub async fn delegate(
 #[utoipa::path(
     get,
 
-    path = "/api/recruiting/application/{application_id}/candidate/{candidate_id}/workflow",
-    params(
-        ("application_id" = Uuid, Path, description = "Parent ID"),
-        ("candidate_id" = Uuid, Path, description = "Candidate ID"),
-    ),
+    path = "/api/v1/recruiting/candidate/{candidate_id}/workflow",
+    params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
 
     tag = "Candidate",
     responses(
@@ -214,9 +205,7 @@ pub async fn get_workflow_state(
     Extension(api_key_info): Extension<crate::middleware::ApiKeyInfo>,
     headers: HeaderMap,
 
-
-    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
-
+    Path(id): Path<Uuid>,
 
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = headers
@@ -245,11 +234,8 @@ pub async fn get_workflow_state(
 #[utoipa::path(
     get,
 
-    path = "/api/recruiting/application/{application_id}/candidate/{candidate_id}/workflow/history",
-    params(
-        ("application_id" = Uuid, Path, description = "Parent ID"),
-        ("candidate_id" = Uuid, Path, description = "Candidate ID"),
-    ),
+    path = "/api/v1/recruiting/candidate/{candidate_id}/workflow/history",
+    params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
 
     tag = "Candidate",
     responses(
@@ -262,9 +248,7 @@ pub async fn get_process_history(
     Extension(api_key_info): Extension<crate::middleware::ApiKeyInfo>,
     headers: HeaderMap,
 
-
-    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
-
+    Path(id): Path<Uuid>,
 
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = headers

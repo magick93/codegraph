@@ -3,8 +3,7 @@
 
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
@@ -16,12 +15,12 @@ use super::dto_response::FormattedDateTimeResponse;
 pub struct FormattedDateTimeRepositoryImpl;
 
 #[async_trait]
-impl FormattedDateTimeRepository for FormattedDateTimeRepositoryImpl {
+impl FormattedDateTimeRepository<sea_orm::DatabaseTransaction> for FormattedDateTimeRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "common.formatted_date_time"))]
     async fn create(
         &self,
         tx: &DatabaseTransaction,
-        cmd: CreateFormattedDateTimeRequest,
+        _cmd: CreateFormattedDateTimeRequest,
     ) -> Result<Uuid, Box<dyn std::error::Error>> {
         let id = Uuid::new_v4();
 
@@ -40,11 +39,16 @@ impl FormattedDateTimeRepository for FormattedDateTimeRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<FormattedDateTimeResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::common_formatted_date_time::Entity::find()
-            .filter(crate::entity::common_formatted_date_time::Column::Id.eq(id))
-            .filter(crate::entity::common_formatted_date_time::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::common_formatted_date_time::Entity::find()
+            .filter(crate::entity::common_formatted_date_time::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::common_formatted_date_time::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -56,6 +60,7 @@ impl FormattedDateTimeRepository for FormattedDateTimeRepositoryImpl {
             id: row.id,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -64,7 +69,7 @@ impl FormattedDateTimeRepository for FormattedDateTimeRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         id: Uuid,
-        cmd: UpdateFormattedDateTimeRequest,
+        _cmd: UpdateFormattedDateTimeRequest,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Update common.formatted_date_time — only set fields present in the update request
         let model = crate::entity::common_formatted_date_time::ActiveModel {
@@ -109,10 +114,14 @@ impl FormattedDateTimeRepository for FormattedDateTimeRepositoryImpl {
         page: u64,
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
+        include_deleted: bool,
     ) -> Result<(Vec<FormattedDateTimeResponse>, u64), Box<dyn std::error::Error>> {
-        let query = crate::entity::common_formatted_date_time::Entity::find()
-            .filter(crate::entity::common_formatted_date_time::Column::DeletedAt.is_null())
-            .order_by_desc(crate::entity::common_formatted_date_time::Column::CreatedAt);
+        let mut query = crate::entity::common_formatted_date_time::Entity::find()
+;
+        if !include_deleted {
+            query = query.filter(crate::entity::common_formatted_date_time::Column::DeletedAt.is_null());
+        }
+        let query = query.order_by_desc(crate::entity::common_formatted_date_time::Column::CreatedAt);
         let paginator = query.paginate(db, page_size);
 
         let total = paginator.num_items().await?;
@@ -124,6 +133,7 @@ impl FormattedDateTimeRepository for FormattedDateTimeRepositoryImpl {
                 id: row.id,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

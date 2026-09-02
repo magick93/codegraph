@@ -200,14 +200,37 @@ pub fn supabase_base_url(config: &OpsConfig) -> String {
 /// target, persisting it to the shared file for reuse. `Ok(None)` when
 /// neither the file nor a usable key function is available.
 pub async fn read_or_provision_api_key(config: &OpsConfig) -> OpsResult<Option<String>> {
+    let target = config.e2e_db.as_ref().unwrap_or(&config.api_db);
     if let Ok(contents) = std::fs::read_to_string(API_KEY_FILE) {
         let key = contents.trim().to_string();
         if !key.is_empty() {
-            output::ok(format!("Read API key from {API_KEY_FILE}"));
-            return Ok(Some(key));
+            // A db reset wipes api_keys, so a persisted key can be stale.
+            // Verify it against the live database before trusting it; if
+            // invalid (or unverifiable because the function is absent),
+            // fall through to provisioning a fresh one.
+            let verify = crate::db::psql_query(
+                target,
+                &format!(
+                    "SELECT coalesce(public.verify_api_key('{key}') ->> 'valid', 'false') AS valid;"
+                ),
+            )
+            .await;
+            match verify {
+                Ok(raw) if raw.contains("true") => {
+                    output::ok(format!("Read API key from {API_KEY_FILE} (verified)"));
+                    return Ok(Some(key));
+                }
+                Ok(_) => {
+                    output::warn("persisted API key is stale (db was reset) — re-provisioning");
+                }
+                Err(_) => {
+                    // verify_api_key() absent: keep the historical behavior.
+                    output::ok(format!("Read API key from {API_KEY_FILE}"));
+                    return Ok(Some(key));
+                }
+            }
         }
     }
-    let target = config.e2e_db.as_ref().unwrap_or(&config.api_db);
     let present = match crate::db::psql_query(
         target,
         "SELECT count(*) FROM pg_proc WHERE proname = 'create_api_key';",
@@ -354,6 +377,8 @@ mod tests {
                     database: "postgres".into(),
                     reset_sql: None,
                     seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
                 },
                 e2e: e2e.then(|| OpsDbTarget {
                     host: "localhost".into(),
@@ -363,6 +388,8 @@ mod tests {
                     database: "postgres".into(),
                     reset_sql: None,
                     seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
                 }),
                 e2e_app: None,
             },

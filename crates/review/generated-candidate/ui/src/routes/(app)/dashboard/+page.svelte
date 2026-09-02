@@ -11,13 +11,14 @@
 		{
 			name: 'common',
 			label: 'Common',
-			entityCount: 15,
+			entityCount: 16,
 			entities: [
 				{ name: 'Code', path: '/common/code', label: 'Code' },
 				{ name: 'CurrencyCodeList', path: '/common/currency-code-list', label: 'Currency Code List' },
 				{ name: 'Date', path: '/common/date', label: 'Date' },
 				{ name: 'DistributionBase', path: '/common/distribution-base', label: 'Distribution Base' },
 				{ name: 'EffectiveDate', path: '/common/effective-date', label: 'Effective Date' },
+				{ name: 'EventBase', path: '/common/event-base', label: 'Event Base' },
 				{ name: 'FormattedDateTime', path: '/common/formatted-date-time', label: 'Formatted Date Time' },
 				{ name: 'GenderCodeList', path: '/common/gender-code-list', label: 'Gender Code List' },
 				{ name: 'Identifier', path: '/common/identifier', label: 'Identifier' },
@@ -41,12 +42,30 @@
 		},
 
 		{
+			name: 'events',
+			label: 'Events',
+			entityCount: 1,
+			entities: [
+				{ name: 'PublicEvent', path: '/events/public-event', label: 'Public Event' },
+			]
+		},
+
+		{
 			name: 'recruiting',
 			label: 'Recruiting',
 			entityCount: 2,
 			entities: [
 				{ name: 'Application', path: '/recruiting/application', label: 'Application' },
 				{ name: 'Candidate', path: '/recruiting/candidate', label: 'Candidate' },
+			]
+		},
+
+		{
+			name: 'rsvp',
+			label: 'RSVP',
+			entityCount: 1,
+			entities: [
+				{ name: 'Rsvp', path: '/rsvp/rsvp', label: 'Rsvp' },
 			]
 		},
 

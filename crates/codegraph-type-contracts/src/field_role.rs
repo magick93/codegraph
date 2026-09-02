@@ -45,6 +45,7 @@ impl FieldRole {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ScalarKind {
     String,
+    Uuid,
     Integer,
     Number,
     Boolean,

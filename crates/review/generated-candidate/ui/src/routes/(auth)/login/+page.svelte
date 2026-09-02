@@ -2,7 +2,7 @@
 <!-- Login route — delegates to @crewbase/ui LoginPage component. -->
 <script lang="ts">
 	import { LoginPage } from '@crewbase/ui';
-	import { createSupabaseClient } from '$lib/supabase';
+	import { createSupabaseClient } from '#lib/supabase.ts';
 
 	const supabase = createSupabaseClient();
 </script>

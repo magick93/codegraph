@@ -17,8 +17,13 @@ use crate::pg::PgTarget;
 #[derive(Debug)]
 pub struct OpsConfig {
     pub manifest: OpsManifest,
-    /// Directory containing `codegraph-ops.toml` (repo root).
+    /// Directory containing `codegraph-ops.toml` — the base for manifest-relative
+    /// paths (schemas, classifier, domains, ui, supabase, hurl, sql, hooks).
     pub root_dir: PathBuf,
+    /// Workspace root (the nearest ancestor `Cargo.toml` declaring `[workspace]`).
+    /// Used for `cargo` invocations and `target/` paths, which must run from the
+    /// workspace root even when the manifest lives in the generated output dir.
+    pub workspace_root: PathBuf,
     /// Generated app directory.
     pub app_dir: PathBuf,
     /// UI directory used by e2e (defaults to `{app_dir}/ui`).
@@ -31,6 +36,8 @@ pub struct OpsConfig {
     pub log_file: PathBuf,
     /// Plain-Postgres API target.
     pub api_db: PgTarget,
+    /// Post-migration app-role grant options for the api suite (role + strict).
+    pub grant_options: crate::migrate::GrantOptions,
     /// Supabase postgres target (e2e).
     pub e2e_db: Option<PgTarget>,
     /// App-role target (e2e).
@@ -66,6 +73,7 @@ impl OpsConfig {
 
     /// Build a config from an already-parsed manifest.
     pub fn from_manifest(manifest: OpsManifest, root_dir: PathBuf) -> OpsResult<Self> {
+        let workspace_root = discover_workspace_root(&root_dir);
         let app_dir = root_dir.join(&manifest.output_dir);
         let ui_dir = manifest
             .ui_dir
@@ -76,6 +84,15 @@ impl OpsConfig {
         let hurl_dir = manifest.hurl.as_ref().map(|h| root_dir.join(&h.dir));
 
         let api_db = pg_target(&manifest.database.api, "api");
+        let grant_options = crate::migrate::GrantOptions {
+            role: manifest
+                .database
+                .api
+                .grant_role
+                .clone()
+                .unwrap_or_else(|| "app_user".to_string()),
+            strict: manifest.database.api.grant_strict.unwrap_or(false),
+        };
         let e2e_db = manifest.database.e2e.as_ref().map(|t| pg_target(t, "e2e"));
         let e2e_app_db = manifest
             .database
@@ -100,12 +117,14 @@ impl OpsConfig {
             hooks: manifest.hooks.clone(),
             manifest,
             root_dir,
+            workspace_root,
             app_dir,
             ui_dir,
             supabase_dir,
             hurl_dir,
             log_file: PathBuf::from("/tmp/codegraph-ops-app.log"),
             api_db,
+            grant_options,
             e2e_db,
             e2e_app_db,
             metrics,
@@ -133,6 +152,27 @@ impl OpsConfig {
     pub fn app_binary_name(&self) -> String {
         self.manifest.app_name.clone()
     }
+}
+
+/// Find the outermost ancestor directory (starting at `start`) whose
+/// `Cargo.toml` declares a `[workspace]` section — i.e. the consumer repo root
+/// where `cargo build -p {graph_binary}` and `target/` live. The generated app
+/// is itself often a nested workspace (`[workspace] members = [".", "cli"]`),
+/// so we keep walking up and return the LAST match (closest to the filesystem
+/// root). Falls back to `start` when none is found.
+fn discover_workspace_root(start: &Path) -> PathBuf {
+    let mut found: Option<PathBuf> = None;
+    for dir in start.ancestors() {
+        let cargo = dir.join("Cargo.toml");
+        if cargo.is_file()
+            && std::fs::read_to_string(&cargo)
+                .map(|s| s.contains("[workspace]"))
+                .unwrap_or(false)
+        {
+            found = Some(dir.to_path_buf());
+        }
+    }
+    found.unwrap_or_else(|| start.to_path_buf())
 }
 
 fn pg_target(t: &OpsDbTarget, role: &str) -> PgTarget {
@@ -209,6 +249,8 @@ mod tests {
                     database: "postgres".into(),
                     reset_sql: None,
                     seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
                 },
                 e2e: None,
                 e2e_app: None,
@@ -224,6 +266,53 @@ mod tests {
         assert_eq!(cfg.app_dir, PathBuf::from("/tmp/repo/generated-candidate"));
         assert_eq!(cfg.api_db.port, 5432);
         assert_eq!(cfg.api_url(), "http://localhost:3000");
+    }
+
+    #[test]
+    fn discover_workspace_root_walks_up_to_workspace_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("out/deep")).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+        std::fs::write(root.join("out/Cargo.toml"), "[package]\nname = \"app\"\n").unwrap();
+        // From inside the generated output dir, resolve up to the workspace root.
+        assert_eq!(
+            discover_workspace_root(&root.join("out/deep")),
+            root.to_path_buf()
+        );
+        // A non-workspace Cargo.toml (the generated app) is skipped.
+        assert_eq!(
+            discover_workspace_root(&root.join("out")),
+            root.to_path_buf()
+        );
+    }
+
+    #[test]
+    fn discover_workspace_root_skips_nested_app_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+        // The generated app is itself a workspace — the repo root must win.
+        std::fs::write(
+            root.join("out/Cargo.toml"),
+            "[workspace]\nmembers = [\".\", \"cli\"]\n",
+        )
+        .unwrap();
+        assert_eq!(
+            discover_workspace_root(&root.join("out")),
+            root.to_path_buf()
+        );
+    }
+
+    #[test]
+    fn discover_workspace_root_falls_back_to_start() {
+        let dir = tempfile::tempdir().unwrap();
+        // No Cargo.toml anywhere up the chain → return the start dir.
+        assert_eq!(
+            discover_workspace_root(&dir.path().join("a/b")),
+            dir.path().join("a/b")
+        );
     }
 
     #[test]
@@ -282,6 +371,8 @@ mod tests {
                     database: "postgres".into(),
                     reset_sql: None,
                     seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
                 },
                 e2e: None,
                 e2e_app: None,

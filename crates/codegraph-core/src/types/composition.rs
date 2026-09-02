@@ -232,7 +232,10 @@ mod tests {
     #[test]
     fn dedup_fields_removes_duplicate_children() {
         let mut node = make_node("parent");
-        node.children = vec![make_child("child", "parent_id"), make_child("child", "parent_id")];
+        node.children = vec![
+            make_child("child", "parent_id"),
+            make_child("child", "parent_id"),
+        ];
         node.dedup_fields();
         assert_eq!(node.children.len(), 1);
     }
@@ -268,7 +271,11 @@ mod tests {
     fn dedup_fields_recursive() {
         let mut root = make_node("root");
         let mut child = make_child("child", "root_id");
-        child.columns = vec![make_column("dup"), make_column("dup"), make_column("unique")];
+        child.columns = vec![
+            make_column("dup"),
+            make_column("dup"),
+            make_column("unique"),
+        ];
         root.children = vec![child];
         root.dedup_fields();
         let c = &root.children[0];

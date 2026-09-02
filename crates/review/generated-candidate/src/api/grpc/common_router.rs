@@ -14,6 +14,8 @@ use crate::api::grpc::proto::common::distribution_base_service_server::Distribut
 
 use crate::api::grpc::proto::common::effective_date_service_server::EffectiveDateServiceServer;
 
+use crate::api::grpc::proto::common::event_base_service_server::EventBaseServiceServer;
+
 use crate::api::grpc::proto::common::formatted_date_time_service_server::FormattedDateTimeServiceServer;
 
 use crate::api::grpc::proto::common::gender_code_list_service_server::GenderCodeListServiceServer;
@@ -46,6 +48,8 @@ pub trait Repositories {
     type DistributionBaseRepository: DistributionBaseRepository;
     
     type EffectiveDateRepository: EffectiveDateRepository;
+    
+    type EventBaseRepository: EventBaseRepository;
     
     type FormattedDateTimeRepository: FormattedDateTimeRepository;
     
@@ -90,6 +94,10 @@ pub fn grpc_router<R: Repositories + 'static>() -> Server {
         
         .add_service(EffectiveDateServiceServer::new(
             EffectiveDateGrpcService::<R>::new(),
+        ))
+        
+        .add_service(EventBaseServiceServer::new(
+            EventBaseGrpcService::<R>::new(),
         ))
         
         .add_service(FormattedDateTimeServiceServer::new(

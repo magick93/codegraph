@@ -94,10 +94,14 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
             run_blocking(
                 "cargo",
                 &["build", "-p", binary, "--release"],
-                &config.root_dir,
+                &config.workspace_root,
             )
             .map_err(|e| OpsError::TestFailure(format!("graph binary build failed: {e}")))?;
-            let gen_bin = config.root_dir.join("target").join("release").join(binary);
+            let gen_bin = config
+                .workspace_root
+                .join("target")
+                .join("release")
+                .join(binary);
             if !gen_bin.is_file() {
                 return Err(OpsError::TestFailure(format!(
                     "{binary} build produced no binary at {}",
@@ -474,6 +478,8 @@ mod tests {
                     database: "postgres".into(),
                     reset_sql: None,
                     seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
                 },
                 e2e: None,
                 e2e_app: None,

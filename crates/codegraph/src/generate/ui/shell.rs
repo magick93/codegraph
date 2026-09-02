@@ -69,8 +69,7 @@ impl EntityGenerator for UiShellGenerator {
 
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let ctx = ShellContext {
             entity_name,

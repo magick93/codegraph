@@ -112,7 +112,7 @@ pub async fn execute(
     client: &ApiClient,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
-    let base = format!("/api/common/formatted-date-time");
+    let base = format!("/api/v1/common/formatted-date-time");
 
     match cmd {
 

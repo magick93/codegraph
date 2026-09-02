@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import CandidateForm from '$lib/components/forms/CandidateForm.svelte';
-	import { createCandidate } from '$lib/stores/recruiting_candidate';
+	import CandidateForm from '#lib/components/forms/CandidateForm.svelte';
+	import { createCandidate } from '#lib/stores/recruiting_candidate.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { CreateCandidateRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { CreateCandidateRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/recruiting/candidate';

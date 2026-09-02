@@ -42,7 +42,7 @@ pub async fn ingest_ifml_model(
                     domain: None,
                 })
                 .await
-                .map_err(|e| Error::Graph(e))?;
+                .map_err(Error::Graph)?;
             stats.parameters += 1;
 
             db.ingest_edge(
@@ -55,7 +55,7 @@ pub async fn ingest_ifml_model(
                 }),
             )
             .await
-            .map_err(|e| Error::Graph(e))?;
+            .map_err(Error::Graph)?;
         }
 
         // Ingest nested container contents
@@ -85,7 +85,7 @@ pub async fn ingest_ifml_model(
                 domain: None,
             })
             .await
-            .map_err(|e| Error::Graph(e))?;
+            .map_err(Error::Graph)?;
         stats.actions += 1;
 
         // Ingest action body events
@@ -111,7 +111,7 @@ async fn ingest_view_container(db: &dyn GraphIngestor, view: &ViewDeclaration) -
     let id = db
         .ingest_view_container(&node)
         .await
-        .map_err(|e| Error::Graph(e))?;
+        .map_err(Error::Graph)?;
     Ok(id)
 }
 
@@ -130,7 +130,7 @@ async fn ingest_container_node(
     };
     db.ingest_view_container(&node)
         .await
-        .map_err(|e| Error::Graph(e))
+        .map_err(Error::Graph)
 }
 
 async fn ingest_container_contents(
@@ -142,7 +142,7 @@ async fn ingest_container_contents(
     // Link to parent
     db.ingest_edge(parent_id, container_id, EdgeType::ContainsViewContainer, None)
         .await
-        .map_err(|e| Error::Graph(e))?;
+        .map_err(Error::Graph)?;
 
     // Ingest container's components
     for comp in &container.components {
@@ -240,12 +240,12 @@ async fn ingest_view_component(
     let id = db
         .ingest_view_component(&node)
         .await
-        .map_err(|e| Error::Graph(e))?;
+        .map_err(Error::Graph)?;
 
     // Edge: parent contains component
     db.ingest_edge(parent_id, &id, EdgeType::ContainsViewComponent, None)
         .await
-        .map_err(|e| Error::Graph(e))?;
+        .map_err(Error::Graph)?;
 
     // Data binding activation: when the component declares `data: <entity>`,
     // create a DataBinding node plus BindsToEntity / BindsToProperty edges.
@@ -311,7 +311,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
     let event_name = format!(
         "{}_{}",
         parent_id.replace(':', "_"),
-        event.event_type.to_string()
+        event.event_type.as_str()
     );
     let event_type_str = match &event.event_type {
         EventType::Select => "select",
@@ -338,15 +338,12 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
         domain: None,
     };
 
-    let event_id = db
-        .ingest_event(&event_node)
-        .await
-        .map_err(|e| Error::Graph(e))?;
+    let event_id = db.ingest_event(&event_node).await.map_err(Error::Graph)?;
 
     // Edge: parent has event
     db.ingest_edge(parent_id, &event_id, EdgeType::HasEvent, None)
         .await
-        .map_err(|e| Error::Graph(e))?;
+        .map_err(Error::Graph)?;
 
     // Handle action
     match &event.action {
@@ -370,7 +367,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                 }),
             )
             .await
-            .map_err(|e| Error::Graph(e))?;
+            .map_err(Error::Graph)?;
         }
         EventAction::Refresh { target, binding: _ } => {
             // Data flow to the target component
@@ -381,7 +378,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                 None,
             )
             .await
-            .map_err(|e| Error::Graph(e))?;
+            .map_err(Error::Graph)?;
         }
         EventAction::ActionInvocation { name, body } => {
             let action_id = format!("action:{}", name);
@@ -393,12 +390,12 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
             .map_err(|e| Error::Graph(e))?;
             db.ingest_edge(&event_id, &action_id, EdgeType::TriggersAction, None)
                 .await
-                .map_err(|e| Error::Graph(e))?;
+                .map_err(Error::Graph)?;
 
             // Handle nested action body events (success/error outcomes)
             if let Some(body) = body {
                 for body_event in &body.handlers {
-                    let outcome_str = body_event.event_type.to_string();
+                    let outcome_str = body_event.event_type.as_str().to_string();
                     let outcome_event_id = db
                         .ingest_event(&EventNode {
                             name: format!("{}_{}", action_id.replace(':', "_"), outcome_str),
@@ -407,7 +404,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                             domain: None,
                         })
                         .await
-                        .map_err(|e| Error::Graph(e))?;
+                        .map_err(Error::Graph)?;
 
                     db.ingest_edge(
                         &action_id,
@@ -419,32 +416,29 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                         }),
                     )
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
 
                     // Recurse: outcome events can also have navigate/refresh
-                    match &body_event.action {
-                        EventAction::Navigate { target, binding } => {
-                            let binding_str = binding.as_ref().map(|b| {
-                                let pairs: Vec<String> = b
-                                    .pairs
-                                    .iter()
-                                    .map(|(k, v)| format!("\"{}\": \"{}\"", k, expr_to_string(v)))
-                                    .collect();
-                                format!("{{{}}}", pairs.join(", "))
-                            });
-                            db.ingest_edge(
-                                &outcome_event_id,
-                                &format!("vc:{}", target),
-                                EdgeType::NavigationFlow,
-                                Some(&EdgeProperties {
-                                    target_param_binding: binding_str,
-                                    ..Default::default()
-                                }),
-                            )
-                            .await
-                            .map_err(|e| Error::Graph(e))?;
-                        }
-                        _ => {}
+                    if let EventAction::Navigate { target, binding } = &body_event.action {
+                        let binding_str = binding.as_ref().map(|b| {
+                            let pairs: Vec<String> = b
+                                .pairs
+                                .iter()
+                                .map(|(k, v)| format!("\"{}\": \"{}\"", k, expr_to_string(v)))
+                                .collect();
+                            format!("{{{}}}", pairs.join(", "))
+                        });
+                        db.ingest_edge(
+                            &outcome_event_id,
+                            &format!("vc:{}", target),
+                            EdgeType::NavigationFlow,
+                            Some(&EdgeProperties {
+                                target_param_binding: binding_str,
+                                ..Default::default()
+                            }),
+                        )
+                        .await
+                        .map_err(Error::Graph)?;
                     }
                 }
             }

@@ -171,7 +171,8 @@ mod tests {
             let json = serde_json::to_string(&variant).expect("serialize");
             assert_eq!(json, format!("\"{}\"", expected_str));
 
-            let deserialized: DeletionPropagation = serde_json::from_str(&json).expect("deserialize");
+            let deserialized: DeletionPropagation =
+                serde_json::from_str(&json).expect("deserialize");
             assert_eq!(variant, deserialized);
         }
     }

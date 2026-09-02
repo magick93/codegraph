@@ -3,8 +3,7 @@
 
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
@@ -16,7 +15,7 @@ use super::dto_response::ProcessHistoryResponse;
 pub struct ProcessHistoryRepositoryImpl;
 
 #[async_trait]
-impl ProcessHistoryRepository for ProcessHistoryRepositoryImpl {
+impl ProcessHistoryRepository<sea_orm::DatabaseTransaction> for ProcessHistoryRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "common.process_history"))]
     async fn create(
         &self,
@@ -42,11 +41,16 @@ impl ProcessHistoryRepository for ProcessHistoryRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<ProcessHistoryResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::common_process_history::Entity::find()
-            .filter(crate::entity::common_process_history::Column::Id.eq(id))
-            .filter(crate::entity::common_process_history::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::common_process_history::Entity::find()
+            .filter(crate::entity::common_process_history::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::common_process_history::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -60,6 +64,7 @@ impl ProcessHistoryRepository for ProcessHistoryRepositoryImpl {
             descriptions: row.descriptions,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -115,10 +120,14 @@ impl ProcessHistoryRepository for ProcessHistoryRepositoryImpl {
         page: u64,
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
+        include_deleted: bool,
     ) -> Result<(Vec<ProcessHistoryResponse>, u64), Box<dyn std::error::Error>> {
-        let query = crate::entity::common_process_history::Entity::find()
-            .filter(crate::entity::common_process_history::Column::DeletedAt.is_null())
-            .order_by_desc(crate::entity::common_process_history::Column::CreatedAt);
+        let mut query = crate::entity::common_process_history::Entity::find()
+;
+        if !include_deleted {
+            query = query.filter(crate::entity::common_process_history::Column::DeletedAt.is_null());
+        }
+        let query = query.order_by_desc(crate::entity::common_process_history::Column::CreatedAt);
         let paginator = query.paginate(db, page_size);
 
         let total = paginator.num_items().await?;
@@ -132,6 +141,7 @@ impl ProcessHistoryRepository for ProcessHistoryRepositoryImpl {
                 descriptions: row.descriptions,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

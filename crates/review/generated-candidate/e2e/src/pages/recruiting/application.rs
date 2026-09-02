@@ -22,13 +22,13 @@ impl<'a> ApplicationPage<'a> {
     // ── Navigation ───────────────────────────────────────────────────────────
 
     pub async fn goto_list(&self) -> Result<()> {
-        self.page.goto_builder(&format!("{}/recruiting/application", Self::base_url())).goto().await?;
+        self.page.goto_builder(&format!("{}/recruiting/applications", Self::base_url())).goto().await?;
         Ok(())
     }
 
 
     pub async fn goto_create(&self) -> Result<()> {
-        self.page.goto_builder(&format!("{}/recruiting/application/new", Self::base_url())).goto().await?;
+        self.page.goto_builder(&format!("{}/recruiting/applications/new", Self::base_url())).goto().await?;
         Ok(())
     }
 
@@ -36,7 +36,7 @@ impl<'a> ApplicationPage<'a> {
 
     pub async fn goto_detail(&self, id: &str) -> Result<()> {
         self.page
-            .goto_builder(&format!("{}/recruiting/application/{id}", Self::base_url()))
+            .goto_builder(&format!("{}/recruiting/applications/{id}", Self::base_url()))
             .goto()
             .await?;
         Ok(())
@@ -63,8 +63,8 @@ impl<'a> ApplicationPage<'a> {
 
 
 
-    pub async fn fill_candidate_id_id(&self, id: &str) -> Result<()> {
-        self.page.fill_builder("#candidate_id_id", id).fill().await?;
+    pub async fn fill_candidate_id(&self, id: &str) -> Result<()> {
+        self.page.fill_builder("#candidate_id", id).fill().await?;
         Ok(())
     }
 
@@ -132,8 +132,8 @@ impl<'a> ApplicationPage<'a> {
 
 
 
-        if let Some(v) = data.get("candidate_id_id").and_then(|v| v.as_str()) {
-            self.fill_candidate_id_id(v).await.ok();
+        if let Some(v) = data.get("candidate_id").and_then(|v| v.as_str()) {
+            self.fill_candidate_id(v).await.ok();
         }
 
 

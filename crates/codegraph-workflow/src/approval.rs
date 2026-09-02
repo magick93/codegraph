@@ -1,23 +1,21 @@
-//! Approval chain orchestration.
+//! Approval chain orchestration (client-generic).
 
-use sea_orm::*;
 use uuid::Uuid;
 
 use crate::error::WorkflowError;
+use crate::tx::{WfParam, WorkflowTx};
 use crate::types::PendingApproval;
 
 /// Get the next pending approval step for a workflow instance.
 pub async fn get_pending_step(
-    conn: &impl ConnectionTrait,
+    conn: &dyn WorkflowTx,
     definition_id: Uuid,
     instance_id: Uuid,
     from: &str,
     to: &str,
 ) -> Result<Option<PendingApproval>, WorkflowError> {
-    // Find the first step that doesn't have an 'approved' decision
     let row = conn
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
+        .query_one(
             r#"SELECT s.id, s.step_order, s.role, s.is_required, s.timeout_hours
                FROM platform.approval_step s
                WHERE s.definition_id = $1
@@ -31,31 +29,22 @@ pub async fn get_pending_step(
                  )
                ORDER BY s.step_order ASC
                LIMIT 1"#,
-            [
-                definition_id.into(),
-                from.into(),
-                to.into(),
-                instance_id.into(),
+            &[
+                WfParam::Uuid(definition_id),
+                WfParam::Str(from.to_string()),
+                WfParam::Str(to.to_string()),
+                WfParam::Uuid(instance_id),
             ],
-        ))
-        .await
-        .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
+        )
+        .await?;
 
     match row {
         Some(r) => {
-            let step_id: Uuid = r
-                .try_get("", "id")
-                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-            let step_order: i32 = r
-                .try_get("", "step_order")
-                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-            let role: String = r
-                .try_get("", "role")
-                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-            let is_required: bool = r
-                .try_get("", "is_required")
-                .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-            let timeout_hours: Option<i32> = r.try_get("", "timeout_hours").ok().flatten();
+            let step_id = r.get_uuid("id")?;
+            let step_order = r.get_i32("step_order")?;
+            let role = r.get_string("role")?;
+            let is_required = r.get_bool("is_required")?;
+            let timeout_hours = r.get_opt_i32("timeout_hours")?;
             Ok(Some(PendingApproval {
                 step_id,
                 step_order,
@@ -65,13 +54,13 @@ pub async fn get_pending_step(
                 deadline: None,
             }))
         }
-        None => Ok(None), // All steps approved
+        None => Ok(None),
     }
 }
 
 /// Check if all required approval steps are complete.
 pub async fn is_chain_complete(
-    conn: &impl ConnectionTrait,
+    conn: &dyn WorkflowTx,
     definition_id: Uuid,
     instance_id: Uuid,
     from: &str,
@@ -80,6 +69,6 @@ pub async fn is_chain_complete(
     let pending = get_pending_step(conn, definition_id, instance_id, from, to).await?;
     match pending {
         None => Ok(true),
-        Some(step) => Ok(!step.is_required), // If next pending step is optional, chain is functionally complete
+        Some(step) => Ok(!step.is_required),
     }
 }

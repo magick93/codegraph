@@ -244,6 +244,7 @@ pub fn classify_plain_type(schema: &serde_json::Value) -> ClassificationResult {
     let scalar_kind = match schema_type {
         "string" if format == "date" => Some(ScalarKind::Date),
         "string" if format == "date-time" => Some(ScalarKind::DateTime),
+        "string" if format == "uuid" => Some(ScalarKind::Uuid),
         "string" => Some(ScalarKind::String),
         "integer" => Some(ScalarKind::Integer),
         "number" => Some(ScalarKind::Number),
@@ -256,6 +257,7 @@ pub fn classify_plain_type(schema: &serde_json::Value) -> ClassificationResult {
         let projection = ProjectionBuilder::from_scalar(&sk, "");
         let pg = match sk {
             ScalarKind::String => PgType::Text,
+            ScalarKind::Uuid => PgType::Uuid,
             ScalarKind::Integer => PgType::BigInt,
             ScalarKind::Number => PgType::DoublePrecision,
             ScalarKind::Boolean => PgType::Boolean,

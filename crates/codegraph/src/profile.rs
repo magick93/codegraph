@@ -11,8 +11,9 @@ use crate::generate::db::dialect::DatabaseTarget;
 ///
 /// Selects which ORM/query framework generates entity models and repository
 /// implementations. The DDL generator is provider-agnostic and always runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PersistenceProvider {
+    #[default]
     SeaOrm,
     Cornucopia,
 }
@@ -30,12 +31,6 @@ impl PersistenceProvider {
             Self::SeaOrm => "sea_orm",
             Self::Cornucopia => "cornucopia",
         }
-    }
-}
-
-impl Default for PersistenceProvider {
-    fn default() -> Self {
-        Self::SeaOrm
     }
 }
 
@@ -314,6 +309,21 @@ impl BuildPlan {
             }
             None => DeploymentTopology::default(),
         };
+
+        // Topology × provider rule: the workers scaffold emits per-domain
+        // Cloudflare Worker crates whose wasm32 slice cannot link SeaORM
+        // (sqlx/mio do not compile to wasm32-unknown-unknown). Cornucopia is
+        // the only supported persistence provider for workers topology.
+        if deployment_topology == DeploymentTopology::Workers
+            && persistence_provider != PersistenceProvider::Cornucopia
+        {
+            return Err(Error::Config(format!(
+                "workers topology requires the cornucopia persistence provider \
+                 (deployment_topology = \"workers\" with persistence_provider = \
+                 \"{}\" is not supported)",
+                persistence_provider.as_str()
+            )));
+        }
 
         Ok(BuildPlan {
             entity_generators: entity_gens,
@@ -1534,6 +1544,7 @@ description = ""
 
 [profiles.workers.features]
 deployment_topology = "workers"
+persistence_provider = "cornucopia"
 
 [profiles.workers.api]
 generators = ["ddl"]
@@ -1544,6 +1555,35 @@ generators = ["ddl"]
 
         let plan = BuildPlan::from_profile(&resolved, &registry).unwrap();
         assert_eq!(plan.deployment_topology(), DeploymentTopology::Workers);
+    }
+
+    #[test]
+    fn build_plan_workers_topology_requires_cornucopia() {
+        let registry = CapabilityRegistry::new();
+
+        let toml = r#"
+[profiles.workers-sea-orm.meta]
+name = "workers-sea-orm"
+version = "1.0.0"
+description = ""
+
+[profiles.workers-sea-orm.features]
+deployment_topology = "workers"
+persistence_provider = "sea_orm"
+
+[profiles.workers-sea-orm.api]
+generators = ["ddl"]
+"#;
+        let config: ProfilesConfig = toml::from_str(toml).unwrap();
+        let def = &config.profiles["workers-sea-orm"];
+        let resolved = resolve_profile(def, None).unwrap();
+
+        let err = BuildPlan::from_profile(&resolved, &registry).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("workers topology requires the cornucopia persistence provider"),
+            "expected topology×provider error, got: {msg}"
+        );
     }
 
     #[test]

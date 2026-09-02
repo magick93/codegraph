@@ -82,11 +82,31 @@ async fn run_sea_orm_migrations() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let sql = std::fs::read_to_string(entry.path())?;
-        sea_orm::ConnectionTrait::execute(
-            &db,
-            sea_orm::Statement::from_string(sea_orm::DatabaseBackend::Postgres, &sql),
-        )
-        .await?;
+        let statements = split_sql_statements(&sql);
+
+        // Apply the file's statements one by one inside a transaction;
+        // the version is recorded only after every statement succeeds.
+        let txn = sea_orm::TransactionTrait::begin(&db).await?;
+        let mut failure: Option<(usize, sea_orm::DbErr)> = None;
+        for (idx, stmt_sql) in statements.iter().enumerate() {
+            let res = sea_orm::ConnectionTrait::execute(
+                &txn,
+                sea_orm::Statement::from_string(
+                    sea_orm::DatabaseBackend::Postgres,
+                    stmt_sql.clone(),
+                ),
+            )
+            .await;
+            if let Err(e) = res {
+                failure = Some((idx, e));
+                break;
+            }
+        }
+        if let Some((idx, e)) = failure {
+            txn.rollback().await?;
+            return Err(format!("Migration {fname} failed at statement {idx}: {e}").into());
+        }
+        txn.commit().await?;
 
         // Record migration
         sea_orm::ConnectionTrait::execute(
@@ -109,5 +129,160 @@ async fn run_sea_orm_migrations() -> Result<(), Box<dyn std::error::Error>> {
         println!("Applied {applied} migration(s).");
     }
     Ok(())
+}
+
+/// Split a SQL script into individual statements on `;` terminators,
+/// ignoring semicolons inside single-quoted strings, double-quoted
+/// identifiers, dollar-quoted strings, and comments. Returns statements
+/// with surrounding whitespace trimmed; chunks that contain only
+/// whitespace and/or comments are skipped.
+fn split_sql_statements(sql: &str) -> Vec<String> {
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let mut has_code = false;
+    let mut chars = sql.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' | '"' => {
+                // Quoted string/identifier; the quote character escapes itself ('' or "").
+                has_code = true;
+                current.push(c);
+                while let Some(sc) = chars.next() {
+                    current.push(sc);
+                    if sc == c {
+                        if chars.peek() == Some(&c) {
+                            current.push(chars.next().unwrap());
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            '-' if chars.peek() == Some(&'-') => {
+                // Line comment: consume to end of line (inclusive).
+                current.push(c);
+                current.push(chars.next().unwrap());
+                while let Some(sc) = chars.next() {
+                    current.push(sc);
+                    if sc == '\n' {
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                // Block comment; PostgreSQL allows nesting.
+                current.push(c);
+                current.push(chars.next().unwrap());
+                let mut depth = 1usize;
+                while depth > 0 {
+                    match chars.next() {
+                        Some('*') if chars.peek() == Some(&'/') => {
+                            current.push('*');
+                            current.push(chars.next().unwrap());
+                            depth -= 1;
+                        }
+                        Some('/') if chars.peek() == Some(&'*') => {
+                            current.push('/');
+                            current.push(chars.next().unwrap());
+                            depth += 1;
+                        }
+                        Some(sc) => current.push(sc),
+                        None => break,
+                    }
+                }
+            }
+            '$' => {
+                // Dollar-quoted string: $tag$ ... $tag$, tag is [A-Za-z0-9_]* (may be empty).
+                let mut tag = String::new();
+                let mut opened = false;
+                while let Some(&sc) = chars.peek() {
+                    if sc == '$' {
+                        chars.next();
+                        opened = true;
+                        break;
+                    } else if sc.is_ascii_alphanumeric() || sc == '_' {
+                        chars.next();
+                        tag.push(sc);
+                    } else {
+                        break;
+                    }
+                }
+                if opened {
+                    has_code = true;
+                    current.push('$');
+                    current.push_str(&tag);
+                    current.push('$');
+                    // Scan for the closing $tag$.
+                    while let Some(sc) = chars.next() {
+                        current.push(sc);
+                        if sc != '$' {
+                            continue;
+                        }
+                        // Check for the closing $tag$.
+                        let mut tail = String::new();
+                        let mut closed = true;
+                        for tc in tag.chars() {
+                            match chars.next() {
+                                Some(nc) => {
+                                    tail.push(nc);
+                                    if nc != tc {
+                                        closed = false;
+                                        break;
+                                    }
+                                }
+                                None => {
+                                    closed = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if closed {
+                            match chars.next() {
+                                Some('$') => {
+                                    current.push_str(&tail);
+                                    current.push('$');
+                                    break;
+                                }
+                                other => {
+                                    if let Some(nc) = other {
+                                        tail.push(nc);
+                                    }
+                                    closed = false;
+                                }
+                            }
+                        }
+                        if !closed {
+                            current.push_str(&tail);
+                        }
+                    }
+                } else {
+                    // Not a dollar quote: plain '$' plus any peeked tag characters.
+                    current.push('$');
+                    current.push_str(&tag);
+                }
+            }
+            ';' => {
+                let trimmed = current.trim();
+                if has_code && !trimmed.is_empty() {
+                    statements.push(trimmed.to_string());
+                }
+                current.clear();
+                has_code = false;
+            }
+            _ => {
+                if !c.is_whitespace() {
+                    has_code = true;
+                }
+                current.push(c);
+            }
+        }
+    }
+
+    let trimmed = current.trim();
+    if has_code && !trimmed.is_empty() {
+        statements.push(trimmed.to_string());
+    }
+    statements
 }
 {% endif %}

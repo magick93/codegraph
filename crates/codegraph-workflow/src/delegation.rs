@@ -1,20 +1,26 @@
-//! Delegation operations.
-
-use sea_orm::*;
-use uuid::Uuid;
+//! Delegation operations (client-generic).
 
 use crate::error::WorkflowError;
+use crate::tx::{WfParam, WorkflowTx};
 use crate::types::DelegationContext;
 
-/// Execute a delegation: record a 'delegated' decision from one actor to another.
+/// Execute a delegation: record a 'delegated' decision from one actor to
+/// another. Runs inside the caller's transaction, with RLS session variables
+/// set so the per-request worker connection can reach `platform.*` rows.
 pub async fn execute_delegation(
-    db: &DatabaseConnection,
+    tx: &mut dyn WorkflowTx,
     ctx: &DelegationContext,
 ) -> Result<(), WorkflowError> {
-    // Find the pending approval step for this entity
-    let step = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
+    crate::engine::set_rls_org(
+        tx,
+        ctx.tenant_id,
+        ctx.session_user_id,
+        ctx.session_api_key_id,
+    )
+    .await?;
+
+    let step = tx
+        .query_one(
             r#"SELECT s.id as step_id, wi.id as instance_id
                FROM platform.approval_step s
                JOIN platform.workflow_definition wd ON s.definition_id = wd.id
@@ -28,45 +34,39 @@ pub async fn execute_delegation(
                  )
                ORDER BY s.step_order ASC
                LIMIT 1"#,
-            [
-                ctx.entity_id.into(),
-                ctx.domain.clone().into(),
-                ctx.entity_table.clone().into(),
-                ctx.tenant_id.into(),
+            &[
+                WfParam::Uuid(ctx.entity_id),
+                WfParam::Str(ctx.domain.clone()),
+                WfParam::Str(ctx.entity_table.clone()),
+                WfParam::Uuid(ctx.tenant_id),
             ],
-        ))
-        .await
-        .map_err(|e| WorkflowError::Internal(Box::new(e)))?
+        )
+        .await?
         .ok_or(WorkflowError::NoPendingApproval)?;
 
-    let step_id: Uuid = step
-        .try_get("", "step_id")
-        .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
-    let instance_id: Uuid = step
-        .try_get("", "instance_id")
-        .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
+    let step_id = step.get_uuid("step_id")?;
+    let instance_id = step.get_uuid("instance_id")?;
 
-    // Record delegation decision
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
+    tx.execute(
         r#"INSERT INTO platform.approval_decision
            (tenant_id, instance_id, step_id, actor_id, delegated_from, decision, correlation_id, comment)
            VALUES ($1, $2, $3, $4, $5, 'delegated', $6, $7)"#,
-        [
-            ctx.tenant_id.into(),
-            instance_id.into(),
-            step_id.into(),
-            ctx.to_actor_id.into(),
-            ctx.from_actor_id.into(),
-            ctx.correlation_id.into(),
+        &[
+            WfParam::Uuid(ctx.tenant_id),
+            WfParam::Uuid(instance_id),
+            WfParam::Uuid(step_id),
+            WfParam::Uuid(ctx.to_actor_id),
+            WfParam::Uuid(ctx.from_actor_id),
+            WfParam::Uuid(ctx.correlation_id),
             ctx.reason
                 .clone()
-                .map(sea_orm::Value::from)
-                .unwrap_or(sea_orm::Value::from(None::<String>)),
+                .map(WfParam::Str)
+                .unwrap_or(WfParam::Null("text")),
         ],
-    ))
-    .await
-    .map_err(|e| WorkflowError::Internal(Box::new(e)))?;
+    )
+    .await?;
+
+    tx.commit().await?;
 
     Ok(())
 }

@@ -2,8 +2,8 @@
 <!-- Workflow state machine panel showing current state and available transitions. -->
 
 <script lang="ts">
-	import { Badge } from '$lib/components/ui/badge/index.js';
-	import { Button } from '$lib/components/ui/button/index.js';
+	import { Badge } from '#lib/components/ui/badge/index.js';
+	import { Button } from '#lib/components/ui/button/index.js';
 
 	interface WorkflowState {
 		current_state: string;

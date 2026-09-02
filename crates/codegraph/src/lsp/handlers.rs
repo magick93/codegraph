@@ -45,7 +45,7 @@ where
     f(guard.as_ref().and_then(|g| g.as_ref()))
 }
 
-static IFML_LANG: LazyLock<tree_sitter::Language> = LazyLock::new(|| tree_sitter_ifml::language());
+static IFML_LANG: LazyLock<tree_sitter::Language> = LazyLock::new(tree_sitter_ifml::language);
 
 const VALID_COMPONENT_TYPES: &[&str] = &["list", "form", "details", "search", "tree", "chart"];
 
@@ -105,7 +105,7 @@ pub fn handle_completion(
 
     if trimmed.ends_with(":") || trimmed.ends_with(": ") {
         let prefix = before_cursor
-            .trim_end_matches(|c: char| c == ' ' || c == '\t')
+            .trim_end_matches([' ', '\t'])
             .trim_end_matches(':')
             .split_whitespace()
             .last()
@@ -248,28 +248,25 @@ pub fn handle_completion(
         }
     }
 
-    if items.is_empty() {
-        if trimmed.is_empty() || trimmed.starts_with("//") {
-            if source.contains('{') {
-                for prop in &[
-                    "type:",
-                    "data:",
-                    "fields:",
-                    "mode:",
-                    "filter:",
-                    "sort:",
-                    "label:",
-                    "landmark:",
-                    "xor:",
-                    "default:",
-                ] {
-                    items.push(CompletionItem {
-                        label: prop.to_string(),
-                        kind: Some(CompletionItemKind::PROPERTY),
-                        ..Default::default()
-                    });
-                }
-            }
+    if items.is_empty() && (trimmed.is_empty() || trimmed.starts_with("//")) && source.contains('{')
+    {
+        for prop in &[
+            "type:",
+            "data:",
+            "fields:",
+            "mode:",
+            "filter:",
+            "sort:",
+            "label:",
+            "landmark:",
+            "xor:",
+            "default:",
+        ] {
+            items.push(CompletionItem {
+                label: prop.to_string(),
+                kind: Some(CompletionItemKind::PROPERTY),
+                ..Default::default()
+            });
         }
     }
 

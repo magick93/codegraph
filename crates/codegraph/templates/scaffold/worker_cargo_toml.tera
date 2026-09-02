@@ -17,12 +17,10 @@ path = "src/main.rs"
 
 [features]
 default = ["native"]
-native = ["dep:tokio", "dep:tracing-subscriber"]
-cloudflare-worker = ["worker/axum", "worker/http"]
+native = ["dep:tracing-subscriber", "dep:reqwest"{% if project.persistence_provider == "cornucopia" %}, "cornucopia-queries/deadpool"{% endif %}]
+cloudflare-worker = ["dep:worker", "worker/axum", "worker/http", "worker/tokio-postgres", "worker/queue"{% if project.persistence_provider == "cornucopia" %}, "cornucopia-queries/wasm-async"{% endif %}]
 
 [dependencies]
-axum = { workspace = true }
-sea-orm = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_qs = { workspace = true }
@@ -33,12 +31,16 @@ utoipa = { workspace = true }
 garde = { workspace = true }
 rust_decimal = { workspace = true }
 jsonwebtoken = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tokio = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
+tower-service = { workspace = true }
 worker = { workspace = true, optional = true }
+reqwest = { version = "0.12", features = ["json"], optional = true }
 codegraph-workflow = { workspace = true }
 codegraph-type-contracts = { workspace = true }
 {% if domain_types_path %}{{ project.domain_types_crate | replace(from="_", to="-") }} = { path = "{{ domain_types_path }}" }{% endif %}
@@ -46,5 +48,20 @@ codegraph-type-contracts = { workspace = true }
 {% if project.persistence_provider == "cornucopia" %}
 tokio-postgres = { workspace = true }
 deadpool-postgres = { workspace = true }
-cornucopia-queries = { path = "../../cornucopia-queries" }
+cornucopia-queries = { path = "../../cornucopia-queries", default-features = false }
 {% endif %}
+
+# ── Target-specific deps ───────────────────────────────────────────────────
+# sea-orm (sqlx/mio) and axum's "tokio" feature (tokio/net) do not compile to
+# wasm32-unknown-unknown; they are only available in native (host) builds.
+# The wasm32 slice gets the minimal tokio feature set instead.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+axum = { workspace = true, features = ["tokio"] }
+tokio = { workspace = true, features = ["full"] }
+sea-orm = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+axum = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
+futures-channel = { workspace = true }
+console_error_panic_hook = { workspace = true }

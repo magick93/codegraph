@@ -3,8 +3,7 @@
 
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
@@ -16,7 +15,7 @@ use super::dto_response::PayRunResponse;
 pub struct PayRunRepositoryImpl;
 
 #[async_trait]
-impl PayRunRepository for PayRunRepositoryImpl {
+impl PayRunRepository<sea_orm::DatabaseTransaction> for PayRunRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "compensation.pay_run"))]
     async fn create(
         &self,
@@ -44,11 +43,16 @@ impl PayRunRepository for PayRunRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<PayRunResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::compensation_pay_run::Entity::find()
-            .filter(crate::entity::compensation_pay_run::Column::Id.eq(id))
-            .filter(crate::entity::compensation_pay_run::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::compensation_pay_run::Entity::find()
+            .filter(crate::entity::compensation_pay_run::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::compensation_pay_run::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -64,6 +68,7 @@ impl PayRunRepository for PayRunRepositoryImpl {
             total_amount_currency: row.total_amount_currency.and_then(|v| v.parse().ok()),
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -121,6 +126,7 @@ impl PayRunRepository for PayRunRepositoryImpl {
         page: u64,
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
+        include_deleted: bool,
     ) -> Result<(Vec<PayRunResponse>, u64), Box<dyn std::error::Error>> {
         let mut condition = sea_orm::Condition::all();
         if let Some(val) = filters.get("pay_run_id") {
@@ -132,10 +138,12 @@ impl PayRunRepository for PayRunRepositoryImpl {
                 vec![sea_orm::Value::from(val.clone())],
             )));
         }
-        let query = crate::entity::compensation_pay_run::Entity::find()
-            .filter(condition)
-            .filter(crate::entity::compensation_pay_run::Column::DeletedAt.is_null())
-            .order_by_desc(crate::entity::compensation_pay_run::Column::CreatedAt);
+        let mut query = crate::entity::compensation_pay_run::Entity::find()
+            .filter(condition);
+        if !include_deleted {
+            query = query.filter(crate::entity::compensation_pay_run::Column::DeletedAt.is_null());
+        }
+        let query = query.order_by_desc(crate::entity::compensation_pay_run::Column::CreatedAt);
         let paginator = query.paginate(db, page_size);
 
         let total = paginator.num_items().await?;
@@ -151,6 +159,7 @@ impl PayRunRepository for PayRunRepositoryImpl {
                 total_amount_currency: row.total_amount_currency.and_then(|v| v.parse().ok()),
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

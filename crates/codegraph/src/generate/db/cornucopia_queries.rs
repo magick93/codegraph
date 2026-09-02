@@ -75,7 +75,7 @@ impl EntityGenerator for CornucopiaQueryGenerator {
                 .domains
                 .get(domain)
                 .and_then(|d| d.get_entity_config(schema_title)),
-            &domain.to_string(),
+            domain,
             config,
             db,
         )
@@ -92,14 +92,9 @@ impl EntityGenerator for CornucopiaQueryGenerator {
         // Column → PostgreSQL type name, from the persistence IR (used to
         // derive SQL casts for columns whose rust_type doesn't reveal the DB
         // type, e.g. geometry/geography columns stored as String).
-        let entity_ir = build_persistence_entity(
-            db,
-            schema_title,
-            domain,
-            config,
-            &self.parent_candidates,
-        )
-        .await?;
+        let entity_ir =
+            build_persistence_entity(db, schema_title, domain, config, &self.parent_candidates)
+                .await?;
         let pg_types: std::collections::HashMap<String, String> = entity_ir
             .columns
             .iter()
@@ -115,7 +110,6 @@ impl EntityGenerator for CornucopiaQueryGenerator {
         }])
     }
 }
-
 
 /// The Postgres cast target for a column — explicit range casts win; otherwise
 /// derive from the DTO rust type. Scalar params bind as text (Option<String>
@@ -218,10 +212,24 @@ fn render_entity_sql(
     ));
 
     // ── list (+ count) ─────────────────────────────────────────────────
-    write_list_queries(&mut sql, &table, &entity_name, soft_delete_col, &row_cols, pg_types);
+    write_list_queries(
+        &mut sql,
+        &table,
+        &entity_name,
+        soft_delete_col,
+        &row_cols,
+        pg_types,
+    );
 
     // ── get by id ──────────────────────────────────────────────────────
-    write_get_queries(&mut sql, &table, &entity_name, soft_delete_col, &row_cols, pg_types);
+    write_get_queries(
+        &mut sql,
+        &table,
+        &entity_name,
+        soft_delete_col,
+        &row_cols,
+        pg_types,
+    );
     if let Some(ref parent_fk) = tree.parent_ref {
         write_get_scoped_queries(
             &mut sql,
@@ -238,7 +246,14 @@ fn render_entity_sql(
     write_create_query(&mut sql, &table, &entity_name, tree, pg_types);
 
     // ── update (COALESCE so missing Option fields keep existing values) ─
-    write_update_query(&mut sql, &table, &entity_name, tree, soft_delete_col, pg_types);
+    write_update_query(
+        &mut sql,
+        &table,
+        &entity_name,
+        tree,
+        soft_delete_col,
+        pg_types,
+    );
 
     // ── delete ─────────────────────────────────────────────────────────
     write_delete_query(&mut sql, &table, &entity_name, soft_delete_col);
@@ -280,7 +295,10 @@ fn render_entity_sql(
     sql
 }
 
-fn row_col_list(cols: &[&TreeColumn], pg_types: &std::collections::HashMap<String, String>) -> String {
+fn row_col_list(
+    cols: &[&TreeColumn],
+    pg_types: &std::collections::HashMap<String, String>,
+) -> String {
     let mut names: Vec<String> = vec!["\"id\"".to_string()];
     for c in cols {
         if needs_text_cast(c, pg_types) {
@@ -296,7 +314,9 @@ fn row_col_list(cols: &[&TreeColumn], pg_types: &std::collections::HashMap<Strin
 
 /// Whether a column's DB type needs an explicit `::text` cast in SELECT lists
 /// because its mapped Rust type (String) cannot be read directly by
-/// tokio-postgres (ranges, geometry/geography, vector).
+/// tokio-postgres (ranges, geometry/geography, vector, numeric — `String`'s
+/// `FromSql` rejects all of these, even for NULL values, because
+/// `Row::try_get` type-checks `accepts()` before checking for NULL).
 fn needs_text_cast(col: &TreeColumn, pg_types: &std::collections::HashMap<String, String>) -> bool {
     if col.pg_cast.is_some() {
         return true;
@@ -309,6 +329,7 @@ fn needs_text_cast(col: &TreeColumn, pg_types: &std::collections::HashMap<String
         || pg_upper.contains("GEOGRAPHY")
         || pg_upper.contains("VECTOR")
         || pg_upper.contains("RANGE")
+        || pg_upper.contains("NUMERIC")
 }
 
 fn row_hints(cols: &[&TreeColumn]) -> String {
@@ -525,7 +546,11 @@ fn write_update_query(
     soft_delete_col: Option<&str>,
     pg_types: &std::collections::HashMap<String, String>,
 ) {
-    let updatable: Vec<&TreeColumn> = tree.direct_columns.iter().filter(|c| is_writable_col(c)).collect();
+    let updatable: Vec<&TreeColumn> = tree
+        .direct_columns
+        .iter()
+        .filter(|c| is_writable_col(c))
+        .collect();
 
     if updatable.is_empty() {
         sql.push_str(&format!(
@@ -632,9 +657,14 @@ fn write_child_queries(
     let col_names: Vec<String> = data_cols
         .iter()
         .map(|c| {
-            if c.pg_cast.is_some() {
-                // Range/geometry columns: the DTO holds strings — cast to text
-                // so tokio-postgres can deserialize them.
+            if c.pg_cast.is_some()
+                || matches!(
+                    c.rust_type.as_str(),
+                    "String" | "Decimal" | "rust_decimal::Decimal"
+                )
+            {
+                // Range/geometry/numeric columns: the DTO holds strings — cast
+                // to text so tokio-postgres can deserialize them.
                 format!("\"{}\"::text", c.pg_column_name)
             } else {
                 format!("\"{}\"", c.pg_column_name)
@@ -754,8 +784,7 @@ fn write_nested_filter_queries(sql: &mut String, tree: &EntityTree) {
     };
     for nf in &tree.nested_filter_fields {
         let is_vo_style = nf.parent_fk_column == vo_pattern;
-        let is_child_entity =
-            nf.intermediate_join.is_none() && !is_vo_style;
+        let is_child_entity = nf.intermediate_join.is_none() && !is_vo_style;
         let is_real_table = real_vo_tables.contains(&nf.sql_table_name);
         if !is_real_table && !is_child_entity {
             continue;
@@ -808,9 +837,7 @@ fn nested_filter_cast(rust_type: &str) -> &'static str {
     match base {
         "Uuid" | "uuid::Uuid" => "uuid",
         // Entity reference types (e.g. "OrganizationType") are always UUID FK columns.
-        ty if ty.ends_with("Type") && ty.chars().next().map_or(false, |c| c.is_uppercase()) => {
-            "uuid"
-        }
+        ty if ty.ends_with("Type") && ty.chars().next().is_some_and(|c| c.is_uppercase()) => "uuid",
         "i32" => "int4",
         "i64" => "int8",
         "f32" => "float4",

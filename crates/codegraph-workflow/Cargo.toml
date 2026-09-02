@@ -7,14 +7,24 @@ edition = "2021"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 nom = "7"
-sea-orm = { version = "1", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "serde", "js"] }
+# Row extraction for the tokio-postgres backend (worker slice + native
+# cornucopia). No default features: `runtime` pulls tokio/net (mio), which does
+# not compile to wasm32. `js` enables the wasm build.
+tokio-postgres = { version = "0.7", default-features = false, features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
+
+# The SeaORM-backed workflow engine does not compile to wasm32 (sqlx/mio).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sea-orm = { version = "1", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio-postgres = { version = "0.7", default-features = false, features = ["js", "with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

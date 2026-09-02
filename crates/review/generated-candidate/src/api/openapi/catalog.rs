@@ -32,11 +32,27 @@ pub async fn api_catalog() -> Json<Vec<ApiCatalogEntry>> {
         },
 
         ApiCatalogEntry {
+            name: "events".to_string(),
+            label: "Events".to_string(),
+            spec_url: "/api-docs/events/openapi.json".to_string(),
+            docs_url: "/swagger-ui/?urls.primaryName=Events".to_string(),
+            entity_count: 1,
+        },
+
+        ApiCatalogEntry {
             name: "recruiting".to_string(),
             label: "Recruiting".to_string(),
             spec_url: "/api-docs/recruiting/openapi.json".to_string(),
             docs_url: "/swagger-ui/?urls.primaryName=Recruiting".to_string(),
             entity_count: 2,
+        },
+
+        ApiCatalogEntry {
+            name: "rsvp".to_string(),
+            label: "RSVP".to_string(),
+            spec_url: "/api-docs/rsvp/openapi.json".to_string(),
+            docs_url: "/swagger-ui/?urls.primaryName=RSVP".to_string(),
+            entity_count: 1,
         },
 
     ])

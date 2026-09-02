@@ -76,7 +76,13 @@ fn assert_scaffold_files_exist(project: &Path) {
 fn init_scaffolds_expected_file_tree() {
     let dir = TempDir::new().unwrap();
     let root = repo_root().canonicalize().unwrap();
-    cmd_init(&init_args(dir.path(), "demo-app", Some(root.clone()), false)).unwrap();
+    cmd_init(&init_args(
+        dir.path(),
+        "demo-app",
+        Some(root.clone()),
+        false,
+    ))
+    .unwrap();
 
     let project = dir.path().join("demo-app");
     assert_scaffold_files_exist(&project);
@@ -90,8 +96,7 @@ fn init_scaffolds_expected_file_tree() {
     let plan = BuildPlan::from_profile(&resolved, &CapabilityRegistry::new()).unwrap();
     assert!(!plan.entity_generators.is_empty());
 
-    codegraph_config::ops_manifest::OpsManifest::load(&project.join("codegraph-ops.toml"))
-        .unwrap();
+    codegraph_config::ops_manifest::OpsManifest::load(&project.join("codegraph-ops.toml")).unwrap();
 
     codegraph_classifier::config::parse_classifier_config(&project.join("classifier.toml"))
         .unwrap();

@@ -9,7 +9,7 @@ mod tests {
     #[test]
     fn test_currency_code_list_entity_columns() {
         // Verify the entity model compiles and has expected columns
-        let _model = app::entity::currency_code_list::Model {
+        let _model = app::entity::common_currency_code_list::Model {
             id: Uuid::new_v4(),
             ..Default::default()
         };

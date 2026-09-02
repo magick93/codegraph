@@ -5,10 +5,9 @@ use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
     DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode,
-    HttpEndpointNode, IngestStats, InteractionNode, MembershipNode,
-    ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
-    RelationshipNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    HttpEndpointNode, IngestStats, InteractionNode, MembershipNode, ParameterDefinitionNode,
+    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaNode,
+    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -709,7 +708,9 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(strip_api_prefix(to_id)),
                 )
             }
-            EdgeType::HasPolicy
+            EdgeType::ExposesResource
+            | EdgeType::CanReturnError
+            | EdgeType::HasPolicy
             | EdgeType::PolicyAppliesTo
             | EdgeType::HasRelationship
             | EdgeType::RelationshipSource
@@ -945,9 +946,10 @@ impl GraphIngestor for GrafeoEngine {
         let id = format!("ar:{}", node.name);
         let gql = format!(
             "INSERT (:ApiResource {{ \
-                name: '{}', schema_title: '{}', domain: '{}', \
+                _node_id: '{}', name: '{}', schema_title: '{}', domain: '{}', \
                 label: {}, path_segment: '{}' \
             }})",
+            escape_gql(&id),
             escape_gql(&node.name),
             escape_gql(&node.schema_title),
             escape_gql(&node.domain),
@@ -960,17 +962,15 @@ impl GraphIngestor for GrafeoEngine {
         Ok(id)
     }
 
-    async fn ingest_api_operation(
-        &self,
-        node: &ApiOperationNode,
-    ) -> Result<String, GraphError> {
+    async fn ingest_api_operation(&self, node: &ApiOperationNode) -> Result<String, GraphError> {
         let session = self.db().session();
         let id = format!("ao:{}", node.name);
         let gql = format!(
             "INSERT (:ApiOperation {{ \
-                name: '{}', kind: '{}', input_schema: {}, output_schema: '{}', \
+                _node_id: '{}', name: '{}', kind: '{}', input_schema: {}, output_schema: '{}', \
                 paging: {}, sorting: {}, filtering: {}, domain: {} \
             }})",
+            escape_gql(&id),
             escape_gql(&node.name),
             escape_gql(&node.kind),
             opt_str(&node.input_schema),
@@ -1001,10 +1001,7 @@ impl GraphIngestor for GrafeoEngine {
         Ok(id)
     }
 
-    async fn ingest_http_endpoint(
-        &self,
-        node: &HttpEndpointNode,
-    ) -> Result<String, GraphError> {
+    async fn ingest_http_endpoint(&self, node: &HttpEndpointNode) -> Result<String, GraphError> {
         let session = self.db().session();
         let id = format!("he:{}", uuid::Uuid::new_v4());
         let gql = format!(
@@ -1028,7 +1025,8 @@ impl GraphIngestor for GrafeoEngine {
             .as_ref()
             .map(|m| serde_json::to_string(m).unwrap_or_default());
         let gql = format!(
-            "INSERT (:Pipeline {{ name: '{}', middleware: {}, domain: {} }})",
+            "INSERT (:Pipeline {{ _node_id: '{}', name: '{}', middleware: {}, domain: {} }})",
+            escape_gql(&id),
             escape_gql(&node.name),
             opt_str(&middleware_str),
             opt_str(&node.domain),
@@ -1064,7 +1062,8 @@ impl GraphIngestor for GrafeoEngine {
         let session = self.db().session();
         let id = format!("pm:{}", node.name);
         let gql = format!(
-            "INSERT (:Permission {{ name: '{}', domain: {} }})",
+            "INSERT (:Permission {{ _node_id: '{}', name: '{}', domain: {} }})",
+            escape_gql(&id),
             escape_gql(&node.name),
             opt_str(&node.domain),
         );
@@ -1078,8 +1077,8 @@ impl GraphIngestor for GrafeoEngine {
 
     async fn ingest_policy(&self, policy: &PolicyNode) -> Result<(), GraphError> {
         let session = self.db().session();
-        let kind_json = serde_json::to_string(&policy.kind)
-            .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let kind_json =
+            serde_json::to_string(&policy.kind).map_err(|e| GraphError::Ingest(e.to_string()))?;
         let domain = policy.domain.clone().unwrap_or_default();
         let gql = format!(
             "INSERT (:Policy {{ \
@@ -1096,10 +1095,7 @@ impl GraphIngestor for GrafeoEngine {
         Ok(())
     }
 
-    async fn ingest_relationship(
-        &self,
-        relationship: &RelationshipNode,
-    ) -> Result<(), GraphError> {
+    async fn ingest_relationship(&self, relationship: &RelationshipNode) -> Result<(), GraphError> {
         let session = self.db().session();
         let fk_json = serde_json::to_string(&relationship.foreign_key)
             .map_err(|e| GraphError::Ingest(e.to_string()))?;

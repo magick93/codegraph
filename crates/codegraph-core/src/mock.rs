@@ -25,6 +25,8 @@ pub struct MockEngine {
     events: Mutex<HashMap<String, EventNode>>,
     action_nodes: Mutex<HashMap<String, ActionNode>>,
     parameter_definitions: Mutex<HashMap<String, ParameterDefinitionNode>>,
+    /// Written by the builder; no querier reads it yet.
+    #[allow(dead_code)]
     data_bindings: Mutex<HashMap<String, DataBindingNode>>,
     view_container_components: Mutex<HashMap<String, Vec<String>>>,
     events_by_parent: Mutex<HashMap<String, Vec<String>>>,
@@ -654,10 +656,7 @@ impl GraphIngestor for MockEngine {
         Ok(id)
     }
 
-    async fn ingest_api_operation(
-        &self,
-        node: &ApiOperationNode,
-    ) -> Result<String, GraphError> {
+    async fn ingest_api_operation(&self, node: &ApiOperationNode) -> Result<String, GraphError> {
         let id = format!("ao:{}", node.name);
         self.api_operations
             .lock()
@@ -675,10 +674,7 @@ impl GraphIngestor for MockEngine {
         Ok(id)
     }
 
-    async fn ingest_http_endpoint(
-        &self,
-        node: &HttpEndpointNode,
-    ) -> Result<String, GraphError> {
+    async fn ingest_http_endpoint(&self, node: &HttpEndpointNode) -> Result<String, GraphError> {
         let id = format!("he:{}", Uuid::new_v4());
         self.http_endpoints
             .lock()
@@ -745,10 +741,7 @@ impl GraphIngestor for MockEngine {
         Ok(())
     }
 
-    async fn ingest_security_identity(
-        &self,
-        id: &SecurityIdentityNode,
-    ) -> Result<(), GraphError> {
+    async fn ingest_security_identity(&self, id: &SecurityIdentityNode) -> Result<(), GraphError> {
         self.security_identities
             .lock()
             .unwrap()
@@ -1261,7 +1254,10 @@ impl GraphQuerier for MockEngine {
 
     // ── Persistence metamodel queries ─────────────────────────────────
 
-    async fn get_policies_for_schema(&self, schema_title: &str) -> Result<Vec<PolicyNode>, GraphError> {
+    async fn get_policies_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<PolicyNode>, GraphError> {
         Ok(self
             .policies
             .lock()
@@ -1272,7 +1268,10 @@ impl GraphQuerier for MockEngine {
             .collect())
     }
 
-    async fn get_relationships_for_schema(&self, schema_title: &str) -> Result<Vec<RelationshipNode>, GraphError> {
+    async fn get_relationships_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<RelationshipNode>, GraphError> {
         Ok(self
             .relationships
             .lock()
@@ -1283,7 +1282,10 @@ impl GraphQuerier for MockEngine {
             .collect())
     }
 
-    async fn get_relationship_by_name(&self, name: &str) -> Result<Option<RelationshipNode>, GraphError> {
+    async fn get_relationship_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<RelationshipNode>, GraphError> {
         Ok(self.relationships.lock().unwrap().get(name).cloned())
     }
 
@@ -1292,12 +1294,21 @@ impl GraphQuerier for MockEngine {
     }
 
     async fn list_all_relationships(&self) -> Result<Vec<RelationshipNode>, GraphError> {
-        Ok(self.relationships.lock().unwrap().values().cloned().collect())
+        Ok(self
+            .relationships
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
     }
 
     // ── Security metamodel queries ─────────────────────────────────────
 
-    async fn get_security_identity(&self, subject: &str) -> Result<Option<SecurityIdentityNode>, GraphError> {
+    async fn get_security_identity(
+        &self,
+        subject: &str,
+    ) -> Result<Option<SecurityIdentityNode>, GraphError> {
         Ok(self
             .security_identities
             .lock()
@@ -1307,7 +1318,10 @@ impl GraphQuerier for MockEngine {
             .cloned())
     }
 
-    async fn get_memberships_for_identity(&self, identity_name: &str) -> Result<Vec<MembershipNode>, GraphError> {
+    async fn get_memberships_for_identity(
+        &self,
+        identity_name: &str,
+    ) -> Result<Vec<MembershipNode>, GraphError> {
         Ok(self
             .memberships
             .lock()

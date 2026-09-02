@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { EntityForm, createEntityApi } from '@crewbase/entities';
 	import { IdentifierDescriptor } from '../descriptor';
-	import { apiClient } from '$lib/api/client';
+	import { apiClient } from '#lib/api/client.ts';
 	import { goto } from '$app/navigation';
 
 	const api = createEntityApi(IdentifierDescriptor, { fetch, baseUrl: apiClient.baseUrl });

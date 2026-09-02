@@ -76,6 +76,20 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
 
         for entry in generation_order {
             let stripped = config.defaults.strip_suffix(&entry.schema_title);
+            // Sanitize to a PascalCase Rust identifier matching rust_type_name.
+            // Naively pascal-casing the title is NOT enough for titles with
+            // acronyms/hyphens (e.g. "...LER-RSType" -> "...Lerrs..." vs the
+            // graph's canonical "...LERRS..."), which made this mod.rs re-export
+            // disagree with the trait emitted by the query_service generator.
+            // Prefer the graph's canonical name and fall back to the sanitized
+            // title when the schema is absent (tests).
+            let entity_name = db
+                .get_schema_in_domain(&entry.schema_title, &entry.domain)
+                .await
+                .ok()
+                .flatten()
+                .map(|s| s.rust_type_name)
+                .unwrap_or_else(|| codegraph_naming::to_pascal_case(&stripped));
             let module_name = codegraph_naming::to_snake_case(&stripped);
 
             if seen_domains.insert(entry.domain.clone()) {
@@ -90,7 +104,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
             domain_entity_map
                 .entry(entry.domain.clone())
                 .or_default()
-                .push((stripped, module_name));
+                .push((entity_name, module_name));
         }
 
         let src_dir = &self.src_dir;

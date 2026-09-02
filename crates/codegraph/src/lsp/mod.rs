@@ -34,13 +34,13 @@ pub fn run_lsp_server(
 
     let db = BaseDb::default();
     let init_options = InitOptions {
-        parsers: &*IFML_PARSERS,
+        parsers: &IFML_PARSERS,
         capabilities: server_capabilities(),
         server_info: None,
     };
 
     let (mut session, init_params) = Session::create(init_options, connection, db)
-        .map_err(|e| {
+        .inspect_err(|e| {
             // Provide a helpful message if the client forgot initializationOptions
             let msg = e.to_string();
             if msg.contains("MissingPerFileParser") || msg.contains("perFileParser") {
@@ -50,7 +50,6 @@ pub fn run_lsp_server(
                      include: {{ \"initializationOptions\": {{ \"perFileParser\": {{ \"ifml\": \"ifml\" }} }} }}"
                 );
             }
-            e
         })?;
 
     let mut request_registry = RequestRegistry::<BaseDb>::default();

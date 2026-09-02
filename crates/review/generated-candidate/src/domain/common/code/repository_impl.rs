@@ -3,8 +3,7 @@
 
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
@@ -16,12 +15,12 @@ use super::dto_response::CodeResponse;
 pub struct CodeRepositoryImpl;
 
 #[async_trait]
-impl CodeRepository for CodeRepositoryImpl {
+impl CodeRepository<sea_orm::DatabaseTransaction> for CodeRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "common.code"))]
     async fn create(
         &self,
         tx: &DatabaseTransaction,
-        cmd: CreateCodeRequest,
+        _cmd: CreateCodeRequest,
     ) -> Result<Uuid, Box<dyn std::error::Error>> {
         let id = Uuid::new_v4();
 
@@ -40,11 +39,16 @@ impl CodeRepository for CodeRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<CodeResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::common_code::Entity::find()
-            .filter(crate::entity::common_code::Column::Id.eq(id))
-            .filter(crate::entity::common_code::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::common_code::Entity::find()
+            .filter(crate::entity::common_code::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::common_code::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -56,6 +60,7 @@ impl CodeRepository for CodeRepositoryImpl {
             id: row.id,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -64,7 +69,7 @@ impl CodeRepository for CodeRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         id: Uuid,
-        cmd: UpdateCodeRequest,
+        _cmd: UpdateCodeRequest,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Update common.code — only set fields present in the update request
         let model = crate::entity::common_code::ActiveModel {
@@ -109,10 +114,14 @@ impl CodeRepository for CodeRepositoryImpl {
         page: u64,
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
+        include_deleted: bool,
     ) -> Result<(Vec<CodeResponse>, u64), Box<dyn std::error::Error>> {
-        let query = crate::entity::common_code::Entity::find()
-            .filter(crate::entity::common_code::Column::DeletedAt.is_null())
-            .order_by_desc(crate::entity::common_code::Column::CreatedAt);
+        let mut query = crate::entity::common_code::Entity::find()
+;
+        if !include_deleted {
+            query = query.filter(crate::entity::common_code::Column::DeletedAt.is_null());
+        }
+        let query = query.order_by_desc(crate::entity::common_code::Column::CreatedAt);
         let paginator = query.paginate(db, page_size);
 
         let total = paginator.num_items().await?;
@@ -124,6 +133,7 @@ impl CodeRepository for CodeRepositoryImpl {
                 id: row.id,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

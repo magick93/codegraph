@@ -17,7 +17,14 @@ pub struct {{ entity_name }}Response {
 {%- for field in fields %}
 {%- if field.name == "id" %}{% continue %}{%- endif %}
 {%- if field.is_entity_ref %}
+{%- if field.is_array %}
 {%- if field.is_required %}
+    pub {{ field.name }}: Vec<uuid::Uuid>,
+{%- else %}
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub {{ field.name }}: Option<Vec<uuid::Uuid>>,
+{%- endif %}
+{%- elif field.is_required %}
     pub {{ field.name }}: uuid::Uuid,
 {%- else %}
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -13,14 +13,14 @@ use std::collections::HashMap;
 #[async_trait]
 pub trait GraphQuerier: Send + Sync {
     async fn get_schema(&self, title: &str) -> Result<Option<SchemaNode>, GraphError>;
-    async fn get_schema_by_id(&self, schema_id: &str) -> Result<Option<SchemaNode>, GraphError> {
+    async fn get_schema_by_id(&self, _schema_id: &str) -> Result<Option<SchemaNode>, GraphError> {
         Ok(None)
     }
 
     async fn get_schema_in_domain(
         &self,
         title: &str,
-        domain: &str,
+        _domain: &str,
     ) -> Result<Option<SchemaNode>, GraphError> {
         self.get_schema(title).await
     }
@@ -90,7 +90,7 @@ pub trait GraphQuerier: Send + Sync {
     /// PersonBaseType, then `get_schemas_that_extend("PersonBaseType")` returns both.
     async fn get_schemas_that_extend(
         &self,
-        parent_title: &str,
+        _parent_title: &str,
     ) -> Result<Vec<SchemaNode>, GraphError> {
         Ok(Vec::new())
     }
@@ -118,7 +118,7 @@ pub trait GraphQuerier: Send + Sync {
     /// Get properties associated with a schema by its unique schema_id (not title).
     async fn get_properties_by_schema_id(
         &self,
-        schema_id: &str,
+        _schema_id: &str,
     ) -> Result<Vec<PropertyNode>, GraphError> {
         // Default: return empty
         Ok(Vec::new())

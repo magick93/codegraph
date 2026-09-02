@@ -97,8 +97,7 @@ impl EntityGenerator for RepositoryTraitGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(schema_title));
 
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let search = entity_cfg.map(|ec| &ec.search);
         let has_fts = search
@@ -168,7 +167,9 @@ impl EntityGenerator for RepositoryTraitGenerator {
 
         // Query policies to determine audit and soft-delete behavior.
         let policies = db.get_policies_for_schema(schema_title).await?;
-        let has_audit_policy = policies.iter().any(|p| matches!(p.kind, PolicyKind::Audit(_)));
+        let has_audit_policy = policies
+            .iter()
+            .any(|p| matches!(p.kind, PolicyKind::Audit(_)));
         let is_auditable = if has_audit_policy {
             policies
                 .iter()
@@ -231,7 +232,8 @@ impl EntityGenerator for RepositoryTraitGenerator {
 
         let mut files = Vec::new();
 
-        // Repository trait (Tera template)
+        // Repository trait (Tera template) — provider-agnostic: both the
+        // SeaORM and cornucopia impls target the same generic trait.
         let trait_content =
             render_template_with_project(tera, "ddd/repository.tera", &ctx, project)?;
         files.push(GeneratedFile {
@@ -239,22 +241,27 @@ impl EntityGenerator for RepositoryTraitGenerator {
             content: trait_content,
         });
 
-        // Repository implementation (Rust emitter)
-        let emitter = RepositoryImplEmitter;
-        let impl_content = emitter
-            .emit(
-                db,
-                schema_title,
-                &domain,
-                config,
-                parent_ref.as_deref(),
-                &include_paths,
-            )
-            .await?;
-        files.push(GeneratedFile {
-            path: base_dir.join("repository_impl.rs"),
-            content: impl_content,
-        });
+        // The SeaORM repository implementation (Rust emitter) is only
+        // emitted for the SeaORM provider; cornucopia builds get
+        // `cornucopia_repository_impl.rs` from the cornucopia_repo generator
+        // instead.
+        if !project.is_cornucopia() {
+            let emitter = RepositoryImplEmitter;
+            let impl_content = emitter
+                .emit(
+                    db,
+                    schema_title,
+                    &domain,
+                    config,
+                    parent_ref.as_deref(),
+                    &include_paths,
+                )
+                .await?;
+            files.push(GeneratedFile {
+                path: base_dir.join("repository_impl.rs"),
+                content: impl_content,
+            });
+        }
 
         Ok(files)
     }

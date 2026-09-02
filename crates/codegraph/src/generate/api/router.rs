@@ -254,7 +254,9 @@ impl DomainGenerator for RouterGenerator {
                         role: entity_cfg
                             .and_then(|ec| ec.role.clone())
                             .unwrap_or_else(|| "root".into()),
-                        param_name: param_name_from_path_segment(&resolve_path_segment(entity_cfg, &schema)),
+                        param_name: param_name_from_path_segment(&resolve_path_segment(
+                            entity_cfg, &schema,
+                        )),
                         parent: None,
                         children: vec![],
                         cross_refs: vec![],
@@ -444,7 +446,7 @@ impl DomainGenerator for RouterGenerator {
         let perms = db.get_permissions().await.unwrap_or_default();
         let has_permission_middleware = !perms.is_empty();
 
-        let pipelines = db.get_pipelines().await.unwrap_or_default();
+        let _pipelines = db.get_pipelines().await.unwrap_or_default();
         let endpoints = db.get_http_endpoints().await.unwrap_or_default();
 
         for entity in &mut entities {

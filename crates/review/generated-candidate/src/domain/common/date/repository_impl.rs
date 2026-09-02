@@ -3,8 +3,7 @@
 
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
@@ -16,12 +15,12 @@ use super::dto_response::DateResponse;
 pub struct DateRepositoryImpl;
 
 #[async_trait]
-impl DateRepository for DateRepositoryImpl {
+impl DateRepository<sea_orm::DatabaseTransaction> for DateRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "common.date"))]
     async fn create(
         &self,
         tx: &DatabaseTransaction,
-        cmd: CreateDateRequest,
+        _cmd: CreateDateRequest,
     ) -> Result<Uuid, Box<dyn std::error::Error>> {
         let id = Uuid::new_v4();
 
@@ -40,11 +39,16 @@ impl DateRepository for DateRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<DateResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::common_date::Entity::find()
-            .filter(crate::entity::common_date::Column::Id.eq(id))
-            .filter(crate::entity::common_date::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::common_date::Entity::find()
+            .filter(crate::entity::common_date::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::common_date::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -56,6 +60,7 @@ impl DateRepository for DateRepositoryImpl {
             id: row.id,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -64,7 +69,7 @@ impl DateRepository for DateRepositoryImpl {
         &self,
         tx: &DatabaseTransaction,
         id: Uuid,
-        cmd: UpdateDateRequest,
+        _cmd: UpdateDateRequest,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Update common.date — only set fields present in the update request
         let model = crate::entity::common_date::ActiveModel {
@@ -109,10 +114,14 @@ impl DateRepository for DateRepositoryImpl {
         page: u64,
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
+        include_deleted: bool,
     ) -> Result<(Vec<DateResponse>, u64), Box<dyn std::error::Error>> {
-        let query = crate::entity::common_date::Entity::find()
-            .filter(crate::entity::common_date::Column::DeletedAt.is_null())
-            .order_by_desc(crate::entity::common_date::Column::CreatedAt);
+        let mut query = crate::entity::common_date::Entity::find()
+;
+        if !include_deleted {
+            query = query.filter(crate::entity::common_date::Column::DeletedAt.is_null());
+        }
+        let query = query.order_by_desc(crate::entity::common_date::Column::CreatedAt);
         let paginator = query.paginate(db, page_size);
 
         let total = paginator.num_items().await?;
@@ -124,6 +133,7 @@ impl DateRepository for DateRepositoryImpl {
                 id: row.id,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

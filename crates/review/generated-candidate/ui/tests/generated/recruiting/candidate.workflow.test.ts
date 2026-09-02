@@ -82,7 +82,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
+    ...(depIds['referred_by_application_id'] ? { 'referred_by_application_id': depIds['referred_by_application_id'] } : {}),
 
 
 
@@ -104,8 +104,8 @@ test.describe('Candidate Workflow', () => {
 
 
     try {
-      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/application', {  });
-      depIds['referred_by_application_id_id'] = dep_1['id'] as string;
+      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/applications', { 'applied_date': '2025-01-15' });
+      depIds['referred_by_application_id'] = dep_1['id'] as string;
     } catch (_e) {
       // Dependency entity may already exist or have its own required fields
     }
@@ -115,9 +115,9 @@ test.describe('Candidate Workflow', () => {
   test.afterAll(async ({ orgContext }) => {
     const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
 
-    if (depIds['referred_by_application_id_id']) {
+    if (depIds['referred_by_application_id']) {
       try {
-        await fetch(`${baseUrl}/api/recruiting/application/${depIds['referred_by_application_id_id']}`, {
+        await fetch(`${baseUrl}/api/v1/recruiting/applications/${depIds['referred_by_application_id']}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
         });
@@ -136,7 +136,7 @@ test.describe('Candidate Workflow', () => {
     if (entityId) {
       const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
       try {
-        await fetch(`${baseUrl}/api${BASE_PATH}/${entityId}`, {
+        await fetch(`${baseUrl}/api/v1${BASE_PATH}/${entityId}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
         });

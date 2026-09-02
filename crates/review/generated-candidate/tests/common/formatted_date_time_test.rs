@@ -9,7 +9,7 @@ mod tests {
     #[test]
     fn test_formatted_date_time_entity_columns() {
         // Verify the entity model compiles and has expected columns
-        let _model = app::entity::formatted_date_time::Model {
+        let _model = app::entity::common_formatted_date_time::Model {
             id: Uuid::new_v4(),
             ..Default::default()
         };

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Server configuration with 3-layer loading:
 ///   1. CLI arguments (highest precedence)
-///   2. Environment variables (HR_APP_*)
+///   2. Environment variables
 ///   3. Configuration file (config.toml)
 ///   4. Defaults (lowest precedence)
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -47,7 +47,7 @@ impl ServerConfig {
     pub fn load(config_path: Option<&str>) -> Result<Self, Box<dyn std::error::Error>> {
         let default_path = config_path
             .map(|p| p.to_string())
-            .or_else(|| std::env::var("HR_APP_CONFIG").ok())
+            .or_else(|| std::env::var("APP_CONFIG").ok())
             .unwrap_or_else(|| "config.toml".to_string());
 
         let mut config = Self::default();
@@ -72,10 +72,10 @@ impl ServerConfig {
         }
 
         // Layer 2: environment variables
-        if let Ok(val) = std::env::var("HR_APP_BIND_ADDR") {
+        if let Ok(val) = std::env::var("BIND_ADDR") {
             config.bind_addr = val;
         }
-        if let Ok(val) = std::env::var("HR_APP_LOG_LEVEL") {
+        if let Ok(val) = std::env::var("RUST_LOG") {
             config.log_level = val;
         }
         if let Ok(val) = std::env::var("DATABASE_URL") {
@@ -98,7 +98,7 @@ impl ServerConfig {
     /// Resolve JWT secret from config or environment.
     pub fn jwt_secret(&self) -> Result<String, Box<dyn std::error::Error>> {
         self.jwt_secret.clone().ok_or_else(|| {
-            "SUPABASE_JWT_SECRET must be set via environment, config file, or --jwt-secret CLI flag".into()
+            "SUPABASE_JWT_SECRET must be set via environment or config file".into()
         })
     }
 }

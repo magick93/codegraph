@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { EntityList, createEntityApi } from '@crewbase/entities';
 	import { StringTypeArrayDescriptor } from './descriptor';
-	import { apiClient } from '$lib/api/client';
+	import { apiClient } from '#lib/api/client.ts';
 
 	const api = createEntityApi(StringTypeArrayDescriptor, { fetch, baseUrl: apiClient.baseUrl });
 </script>
