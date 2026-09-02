@@ -129,7 +129,6 @@ fn test_lsp_initialize_returns_capabilities() {
     });
 
     do_init_handshake(&client_conn);
-    assert!(true, "Server initialized successfully");
 
     do_shutdown(&client_conn);
 }
@@ -200,7 +199,6 @@ fn test_lsp_diagnostic_for_invalid_ifml() {
     do_shutdown(&client_conn);
 }
 
-#[test]
 /// Regression test: entity names have the "Type" suffix stripped
 /// (CustomerType → Customer). Verifies that data: Customer passes
 /// when entity_names contains "Customer", while data: Nonexistent fails.
@@ -842,7 +840,9 @@ fn test_lsp_update_positions() {
         .map(|e| e.new_text.as_str())
         .collect();
     assert!(
-        texts.iter().any(|t| t.contains("position: { x: 120; y: 240 };")),
+        texts
+            .iter()
+            .any(|t| t.contains("position: { x: 120; y: 240 };")),
         "inserted text should contain position property, got {:?}",
         texts
     );
@@ -866,7 +866,11 @@ fn test_lsp_update_positions() {
         other => panic!("Expected response, got {:?}", other),
     };
     let edits2 = edit2.changes.as_ref().expect("changes present");
-    assert_eq!(edits2.values().flatten().count(), 1, "exactly one edit expected");
+    assert_eq!(
+        edits2.values().flatten().count(),
+        1,
+        "exactly one edit expected"
+    );
     let final_text = apply_workspace_edit(&updated, &edit2);
     assert_eq!(
         final_text.matches("position:").count(),
@@ -954,7 +958,10 @@ fn test_lsp_update_positions_malformed_params() {
     let msg = client_conn.receiver.recv().unwrap();
     match msg {
         Message::Response(resp) => {
-            assert!(resp.error.is_some(), "malformed params should produce an error response");
+            assert!(
+                resp.error.is_some(),
+                "malformed params should produce an error response"
+            );
         }
         other => panic!("Expected response, got {:?}", other),
     }

@@ -121,8 +121,7 @@ async fn test_grafeo_http_endpoint_for_operation() {
         .expect("endpoint for list_Candidate should exist");
     assert_eq!(endpoint.method, "GET");
     assert_eq!(
-        endpoint.path_template,
-        "/api/v1/recruiting/CandidateType",
+        endpoint.path_template, "/api/v1/recruiting/CandidateType",
         "list path template from api_ingest"
     );
 

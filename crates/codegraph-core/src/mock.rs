@@ -7,6 +7,8 @@ use std::sync::Mutex;
 use std::time::Instant;
 use uuid::Uuid;
 
+type DataFlowKey = (String, String, Option<String>, Option<String>);
+
 pub struct MockEngine {
     schemas: Mutex<HashMap<String, SchemaNode>>,
     properties: Mutex<HashMap<String, Vec<PropertyNode>>>,
@@ -31,7 +33,7 @@ pub struct MockEngine {
     view_container_components: Mutex<HashMap<String, Vec<String>>>,
     events_by_parent: Mutex<HashMap<String, Vec<String>>>,
     navigation_flows: Mutex<Vec<(String, String, String)>>,
-    data_flows: Mutex<Vec<(String, String, Option<String>, Option<String>)>>,
+    data_flows: Mutex<Vec<DataFlowKey>>,
     data_binding_edges: Mutex<Vec<(String, String)>>,
     binding_entity_edges: Mutex<Vec<(String, String)>>,
     binding_property_edges: Mutex<Vec<(String, String)>>,
@@ -530,10 +532,11 @@ impl GraphIngestor for MockEngine {
                     .push(strip_ifml_prefix(to_id).to_string());
             }
             EdgeType::NavigationFlow => {
-                self.navigation_flows
-                    .lock()
-                    .unwrap()
-                    .push((from_id.to_string(), to_id.to_string(), String::new()));
+                self.navigation_flows.lock().unwrap().push((
+                    from_id.to_string(),
+                    to_id.to_string(),
+                    String::new(),
+                ));
             }
             EdgeType::DataFlow => {
                 let props = props.cloned().unwrap_or_default();
@@ -551,23 +554,23 @@ impl GraphIngestor for MockEngine {
                 ));
             }
             EdgeType::BindsToEntity => {
-                self.binding_entity_edges.lock().unwrap().push((
-                    strip_ifml_prefix(from_id).to_string(),
-                    to_id.to_string(),
-                ));
+                self.binding_entity_edges
+                    .lock()
+                    .unwrap()
+                    .push((strip_ifml_prefix(from_id).to_string(), to_id.to_string()));
             }
             EdgeType::BindsToProperty => {
                 let property = to_id.split_once("::").map(|(p, _)| p).unwrap_or(to_id);
-                self.binding_property_edges.lock().unwrap().push((
-                    strip_ifml_prefix(from_id).to_string(),
-                    property.to_string(),
-                ));
+                self.binding_property_edges
+                    .lock()
+                    .unwrap()
+                    .push((strip_ifml_prefix(from_id).to_string(), property.to_string()));
             }
             EdgeType::HasInteraction => {
-                self.op_interaction.lock().unwrap().insert(
-                    strip_api_prefix(from_id).to_string(),
-                    to_id.to_string(),
-                );
+                self.op_interaction
+                    .lock()
+                    .unwrap()
+                    .insert(strip_api_prefix(from_id).to_string(), to_id.to_string());
             }
             EdgeType::HasOperation => {
                 self.resource_operations
@@ -578,10 +581,10 @@ impl GraphIngestor for MockEngine {
                     .push(strip_api_prefix(to_id).to_string());
             }
             EdgeType::BindsHttpEndpoint => {
-                self.interaction_endpoint.lock().unwrap().insert(
-                    strip_ifml_prefix(from_id).to_string(),
-                    to_id.to_string(),
-                );
+                self.interaction_endpoint
+                    .lock()
+                    .unwrap()
+                    .insert(strip_ifml_prefix(from_id).to_string(), to_id.to_string());
             }
             _ => {}
         }
@@ -1133,7 +1136,7 @@ impl GraphQuerier for MockEngine {
             let event_name = strip_ifml_prefix(event_id).to_string();
             let parent = events_by_parent
                 .iter()
-                .find(|(_, evs)| evs.iter().any(|n| *n == event_name))
+                .find(|(_, evs)| evs.contains(&event_name))
                 .map(|(p, _)| p.clone())
                 .unwrap_or_default();
             result.push((
@@ -1209,7 +1212,13 @@ impl GraphQuerier for MockEngine {
     }
 
     async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
-        Ok(self.api_resources.lock().unwrap().values().cloned().collect())
+        Ok(self
+            .api_resources
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
     }
 
     async fn get_api_operations(
@@ -1225,10 +1234,7 @@ impl GraphQuerier for MockEngine {
             .collect())
     }
 
-    async fn get_api_operation(
-        &self,
-        name: &str,
-    ) -> Result<Option<ApiOperationNode>, GraphError> {
+    async fn get_api_operation(&self, name: &str) -> Result<Option<ApiOperationNode>, GraphError> {
         Ok(self
             .api_operations
             .lock()

@@ -1380,18 +1380,24 @@ fn line_indent(source: &str, offset: usize) -> String {
         .map(|i| offset + i)
         .unwrap_or(source.len());
     let line = &source[line_start..line_end];
-    let ws: String = line.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+    let ws: String = line
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect();
     ws
 }
 
 fn find_view_body<'a>(view_decl: &tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
-    let mut cursor = view_decl.walk();
-    for child in view_decl.children(&mut cursor) {
-        if child.kind() == "view_body" {
-            return Some(child);
+    #[allow(clippy::manual_find)] // returning Node<'a> ties to the tree, not the cursor
+    {
+        let mut cursor = view_decl.walk();
+        for child in view_decl.children(&mut cursor) {
+            if child.kind() == "view_body" {
+                return Some(child);
+            }
         }
+        None
     }
-    None
 }
 
 fn find_property_assignment<'a>(

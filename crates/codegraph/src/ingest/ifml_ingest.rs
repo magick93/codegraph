@@ -128,9 +128,7 @@ async fn ingest_container_node(
         is_modal: false,
         domain: None,
     };
-    db.ingest_view_container(&node)
-        .await
-        .map_err(Error::Graph)
+    db.ingest_view_container(&node).await.map_err(Error::Graph)
 }
 
 async fn ingest_container_contents(
@@ -140,9 +138,14 @@ async fn ingest_container_contents(
     parent_id: &str,
 ) -> Result<()> {
     // Link to parent
-    db.ingest_edge(parent_id, container_id, EdgeType::ContainsViewContainer, None)
-        .await
-        .map_err(Error::Graph)?;
+    db.ingest_edge(
+        parent_id,
+        container_id,
+        EdgeType::ContainsViewContainer,
+        None,
+    )
+    .await
+    .map_err(Error::Graph)?;
 
     // Ingest container's components
     for comp in &container.components {
@@ -259,11 +262,11 @@ async fn ingest_view_component(
                 domain: None,
             })
             .await
-            .map_err(|e| Error::Graph(e))?;
+            .map_err(Error::Graph)?;
 
         db.ingest_edge(&id, &binding_id, EdgeType::HasDataBinding, None)
             .await
-            .map_err(|e| Error::Graph(e))?;
+            .map_err(Error::Graph)?;
 
         let schema_title = if entity.ends_with("Type") {
             entity.clone()
@@ -272,7 +275,7 @@ async fn ingest_view_component(
         };
         db.ingest_edge(&binding_id, &schema_title, EdgeType::BindsToEntity, None)
             .await
-            .map_err(|e| Error::Graph(e))?;
+            .map_err(Error::Graph)?;
 
         if let Some(ref fields) = node.fields {
             for field in fields {
@@ -286,7 +289,7 @@ async fn ingest_view_component(
                     }),
                 )
                 .await
-                .map_err(|e| Error::Graph(e))?;
+                .map_err(Error::Graph)?;
             }
         }
     }
@@ -296,7 +299,7 @@ async fn ingest_view_component(
     if let Some(ref op_name) = node.api_operation {
         db.ingest_edge(&id, op_name, EdgeType::BindsToOperation, None)
             .await
-            .map_err(|e| Error::Graph(e))?;
+            .map_err(Error::Graph)?;
     }
 
     // Ingest events
@@ -387,7 +390,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                 domain: None,
             })
             .await
-            .map_err(|e| Error::Graph(e))?;
+            .map_err(Error::Graph)?;
             db.ingest_edge(&event_id, &action_id, EdgeType::TriggersAction, None)
                 .await
                 .map_err(Error::Graph)?;

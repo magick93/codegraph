@@ -132,7 +132,7 @@ fn snapshot_grpc_proto_candidate_contains_entity_message() {
 
     let proto_file = files
         .iter()
-        .find(|f| f.path.extension().map_or(false, |e| e == "proto"))
+        .find(|f| f.path.extension().is_some_and(|e| e == "proto"))
         .expect("Expected a .proto file");
 
     assert!(proto_file.content.contains("message Candidate"));

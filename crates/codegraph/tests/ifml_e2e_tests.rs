@@ -180,7 +180,10 @@ async fn test_ifml_grafeo_round_trip_edges() {
     assert!(names.contains(&"CustomerDetail".to_string()));
     assert!(names.contains(&"CustomerEdit".to_string()));
 
-    let components = engine.get_ifml_view_components("CustomerList").await.unwrap();
+    let components = engine
+        .get_ifml_view_components("CustomerList")
+        .await
+        .unwrap();
     assert_eq!(components.len(), 1);
     assert_eq!(components[0].name, "grid");
 

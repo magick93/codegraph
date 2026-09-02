@@ -223,10 +223,7 @@ pub trait GraphQuerier: Send + Sync {
         Ok(None)
     }
 
-    async fn get_api_operation(
-        &self,
-        _name: &str,
-    ) -> Result<Option<ApiOperationNode>, GraphError> {
+    async fn get_api_operation(&self, _name: &str) -> Result<Option<ApiOperationNode>, GraphError> {
         Ok(None)
     }
 

@@ -93,7 +93,10 @@ fn collect_sql_files(dir: &Path) -> Vec<std::path::PathBuf> {
     if !dir.exists() {
         return out;
     }
-    for entry in walkdir::WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.path().extension().is_some_and(|e| e == "sql") {
             out.push(entry.path().to_path_buf());
         }
@@ -132,12 +135,21 @@ async fn ifml_generate_svelte_produces_routes_only() {
     let output = dir.path().join("out");
     let domains_toml = dir.path().join("domains.toml");
 
-    codegraph::driver::ifml_generate(make_args(&domains_toml, &output, &[ifml_path], &frameworks(&["svelte"])))
-        .await
-        .unwrap();
+    codegraph::driver::ifml_generate(make_args(
+        &domains_toml,
+        &output,
+        &[ifml_path],
+        &frameworks(&["svelte"]),
+    ))
+    .await
+    .unwrap();
 
-    assert!(output.join("svelte/src/routes/customerlist/+page.svelte").exists());
-    assert!(output.join("svelte/src/routes/customerdetail/+page.svelte").exists());
+    assert!(output
+        .join("svelte/src/routes/customerlist/+page.svelte")
+        .exists());
+    assert!(output
+        .join("svelte/src/routes/customerdetail/+page.svelte")
+        .exists());
     assert!(output.join("svelte/src/lib/routes.ts").exists());
 
     // Narrowness: nothing but the IFML framework output is generated.
@@ -156,7 +168,10 @@ async fn ifml_generate_with_schemas_enriches_entity_resolution() {
     let classifier_path = dir.path().join("classifier.toml");
     std::fs::write(&classifier_path, "# minimal classifier config\n").unwrap();
     let schemas_dir = dir.path().join("schemas");
-    let schema_file = schemas_dir.join("sales").join("json").join("CustomerType.json");
+    let schema_file = schemas_dir
+        .join("sales")
+        .join("json")
+        .join("CustomerType.json");
     std::fs::create_dir_all(schema_file.parent().unwrap()).unwrap();
     std::fs::write(&schema_file, CUSTOMER_SCHEMA).unwrap();
     let ifml_path = dir.path().join("app.ifml");
@@ -177,8 +192,12 @@ async fn ifml_generate_with_schemas_enriches_entity_resolution() {
     .await
     .unwrap();
 
-    assert!(output.join("svelte/src/routes/customerlist/+page.svelte").exists());
-    assert!(output.join("svelte/src/routes/customerdetail/+page.svelte").exists());
+    assert!(output
+        .join("svelte/src/routes/customerlist/+page.svelte")
+        .exists());
+    assert!(output
+        .join("svelte/src/routes/customerdetail/+page.svelte")
+        .exists());
 }
 
 #[tokio::test]
@@ -190,21 +209,35 @@ async fn ifml_generate_removes_stale_routes_incrementally() {
     let output = dir.path().join("out");
     let domains_toml = dir.path().join("domains.toml");
 
-    codegraph::driver::ifml_generate(make_args(&domains_toml, &output, &[ifml_path.clone()], &frameworks(&["svelte"])))
-        .await
-        .unwrap();
-    assert!(output.join("svelte/src/routes/customerdetail/+page.svelte").exists());
+    codegraph::driver::ifml_generate(make_args(
+        &domains_toml,
+        &output,
+        std::slice::from_ref(&ifml_path),
+        &frameworks(&["svelte"]),
+    ))
+    .await
+    .unwrap();
+    assert!(output
+        .join("svelte/src/routes/customerdetail/+page.svelte")
+        .exists());
 
     std::fs::write(&ifml_path, APP_IFML_NO_DETAIL).unwrap();
-    codegraph::driver::ifml_generate(make_args(&domains_toml, &output, &[ifml_path], &frameworks(&["svelte"])))
-        .await
-        .unwrap();
+    codegraph::driver::ifml_generate(make_args(
+        &domains_toml,
+        &output,
+        &[ifml_path],
+        &frameworks(&["svelte"]),
+    ))
+    .await
+    .unwrap();
 
     assert!(
         !output.join("svelte/src/routes/customerdetail").exists(),
         "stale CustomerDetail route should be removed"
     );
-    assert!(output.join("svelte/src/routes/customerlist/+page.svelte").exists());
+    assert!(output
+        .join("svelte/src/routes/customerlist/+page.svelte")
+        .exists());
 }
 
 #[tokio::test]
@@ -214,9 +247,14 @@ async fn ifml_generate_requires_ifml_files() {
     let output = dir.path().join("out");
     let domains_toml = dir.path().join("domains.toml");
 
-    let err = codegraph::driver::ifml_generate(make_args(&domains_toml, &output, &[], &frameworks(&["svelte"])))
-        .await
-        .unwrap_err();
+    let err = codegraph::driver::ifml_generate(make_args(
+        &domains_toml,
+        &output,
+        &[],
+        &frameworks(&["svelte"]),
+    ))
+    .await
+    .unwrap_err();
 
     assert!(
         err.to_string().contains("--ifml-files"),
@@ -246,7 +284,9 @@ async fn ifml_generate_multiple_frameworks() {
     .await
     .unwrap();
 
-    assert!(output.join("svelte/src/routes/customerlist/+page.svelte").exists());
+    assert!(output
+        .join("svelte/src/routes/customerlist/+page.svelte")
+        .exists());
     assert!(output.join("react/app/customer-list/page.tsx").exists());
     assert!(output.join("react/app/customer-detail/page.tsx").exists());
 }

@@ -1814,10 +1814,7 @@ view "Pos2" {
         assert_eq!(view.properties[0].key, "position");
 
         let container = &model.views[1].containers[0];
-        assert_eq!(
-            container.position,
-            Some(Position { x: 30.75, y: -5.0 })
-        );
+        assert_eq!(container.position, Some(Position { x: 30.75, y: -5.0 }));
     }
 
     #[test]

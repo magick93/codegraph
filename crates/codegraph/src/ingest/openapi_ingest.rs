@@ -55,7 +55,9 @@ pub async fn ingest_openapi_spec(
             tracing::warn!(version = %v, "OpenAPI version is not 3.0/3.1; attempting best-effort parse");
         }
         None => {
-            tracing::warn!("OpenAPI document has no 'openapi' version field; attempting best-effort parse");
+            tracing::warn!(
+                "OpenAPI document has no 'openapi' version field; attempting best-effort parse"
+            );
         }
     }
 
@@ -93,13 +95,13 @@ pub async fn ingest_openapi_spec(
                 path_segment: path_segment.clone(),
             })
             .await
-            .map_err(|e| Error::Graph(e))?;
+            .map_err(Error::Graph)?;
         stats.resources += 1;
 
         if !schema_title.is_empty() {
             db.ingest_edge(&resource_id, schema_title, EdgeType::BindsToSchema, None)
                 .await
-                .map_err(|e| Error::Graph(e))?;
+                .map_err(Error::Graph)?;
         }
 
         for (path, path_item) in &spec.paths {
@@ -140,12 +142,12 @@ pub async fn ingest_openapi_spec(
                         domain: Some("external".to_string()),
                     })
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
                 stats.operations += 1;
 
                 db.ingest_edge(&resource_id, &op_id, EdgeType::HasOperation, None)
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
 
                 let interaction_id = db
                     .ingest_interaction(&InteractionNode {
@@ -153,12 +155,12 @@ pub async fn ingest_openapi_spec(
                         domain: Some("external".to_string()),
                     })
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
                 stats.interactions += 1;
 
                 db.ingest_edge(&op_id, &interaction_id, EdgeType::HasInteraction, None)
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
 
                 let endpoint_id = db
                     .ingest_http_endpoint(&HttpEndpointNode {
@@ -167,7 +169,7 @@ pub async fn ingest_openapi_spec(
                         domain: Some("external".to_string()),
                     })
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
                 stats.endpoints += 1;
 
                 db.ingest_edge(
@@ -177,7 +179,7 @@ pub async fn ingest_openapi_spec(
                     None,
                 )
                 .await
-                .map_err(|e| Error::Graph(e))?;
+                .map_err(Error::Graph)?;
             }
         }
     }
@@ -252,10 +254,7 @@ fn ref_schema_title(value: &serde_json::Value) -> Option<String> {
 }
 
 fn response_schema_title(responses: &HashMap<String, Response>) -> Option<String> {
-    let mut success_keys: Vec<&String> = responses
-        .keys()
-        .filter(|k| k.starts_with('2'))
-        .collect();
+    let mut success_keys: Vec<&String> = responses.keys().filter(|k| k.starts_with('2')).collect();
     success_keys.sort();
     for key in success_keys {
         let response = responses.get(key)?;
@@ -359,7 +358,7 @@ struct Response {
 impl Response {
     fn schema_title(&self) -> Option<String> {
         let content = self.content.as_ref()?;
-        for (_, media) in content {
+        for media in content.values() {
             if let Some(schema) = &media.schema {
                 if let Some(title) = ref_schema_title(schema) {
                     return Some(title);

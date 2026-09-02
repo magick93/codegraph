@@ -574,10 +574,7 @@ impl GraphQuerier for CachingQuerier<'_> {
         self.inner.get_api_resource(name).await
     }
 
-    async fn get_api_operation(
-        &self,
-        name: &str,
-    ) -> Result<Option<ApiOperationNode>, GraphError> {
+    async fn get_api_operation(&self, name: &str) -> Result<Option<ApiOperationNode>, GraphError> {
         self.inner.get_api_operation(name).await
     }
 
@@ -585,7 +582,9 @@ impl GraphQuerier for CachingQuerier<'_> {
         &self,
         operation_name: &str,
     ) -> Result<Option<HttpEndpointNode>, GraphError> {
-        self.inner.get_http_endpoint_for_operation(operation_name).await
+        self.inner
+            .get_http_endpoint_for_operation(operation_name)
+            .await
     }
 
     async fn get_api_operations(

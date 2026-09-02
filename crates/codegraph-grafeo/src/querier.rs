@@ -5,11 +5,10 @@ use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, ColumnInfo, CompositeColumn,
     CompositeRange, CompositionNode, CompositionTree, DataBindingResolution, DetectionSource,
-    EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget,
-    HttpEndpointNode, InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate,
-    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode,
-    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, HttpEndpointNode,
+    InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate, PermissionNode,
+    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -1102,7 +1101,9 @@ impl GraphQuerier for GrafeoEngine {
                 .push(reader.get_string(row, "p.name")?);
         }
         for binding in &mut bindings {
-            binding.fields = fields_by_component.remove(&binding.component).unwrap_or_default();
+            binding.fields = fields_by_component
+                .remove(&binding.component)
+                .unwrap_or_default();
         }
         Ok(bindings)
     }
@@ -1178,10 +1179,7 @@ impl GraphQuerier for GrafeoEngine {
         Ok(nodes)
     }
 
-    async fn get_api_operation(
-        &self,
-        name: &str,
-    ) -> Result<Option<ApiOperationNode>, GraphError> {
+    async fn get_api_operation(&self, name: &str) -> Result<Option<ApiOperationNode>, GraphError> {
         let params = HashMap::from([("name".to_string(), grafeo::Value::String(name.into()))]);
         let result = query_gql_params(
             self,
@@ -1211,7 +1209,10 @@ impl GraphQuerier for GrafeoEngine {
         &self,
         operation_name: &str,
     ) -> Result<Option<HttpEndpointNode>, GraphError> {
-        let params = HashMap::from([("name".to_string(), grafeo::Value::String(operation_name.into()))]);
+        let params = HashMap::from([(
+            "name".to_string(),
+            grafeo::Value::String(operation_name.into()),
+        )]);
         let result = query_gql_params(
             self,
             "MATCH (op:ApiOperation {name: $name})-[:HasInteraction]->(ia:Interaction) \

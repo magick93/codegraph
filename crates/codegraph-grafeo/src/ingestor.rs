@@ -708,9 +708,7 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(strip_api_prefix(to_id)),
                 )
             }
-            EdgeType::ExposesResource
-            | EdgeType::CanReturnError
-            | EdgeType::HasPolicy
+            EdgeType::HasPolicy
             | EdgeType::PolicyAppliesTo
             | EdgeType::HasRelationship
             | EdgeType::RelationshipSource

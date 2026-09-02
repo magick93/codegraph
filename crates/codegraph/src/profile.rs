@@ -351,10 +351,7 @@ impl BuildPlan {
     pub fn ifml_only(frameworks: &[String]) -> Result<Self> {
         let registry = CapabilityRegistry::new();
         let mut features = toml::Table::new();
-        features.insert(
-            "ifml_backend".to_string(),
-            toml::Value::Boolean(true),
-        );
+        features.insert("ifml_backend".to_string(), toml::Value::Boolean(true));
         let mut global_generators = Vec::new();
         let mut ifml_frameworks = Vec::new();
         for fw in frameworks {
@@ -365,10 +362,7 @@ impl BuildPlan {
                      svelte, react, vue, flutter, swiftui"
                 )));
             }
-            features.insert(
-                format!("framework_{fw}"),
-                toml::Value::Boolean(true),
-            );
+            features.insert(format!("framework_{fw}"), toml::Value::Boolean(true));
             global_generators.push(route_name);
             global_generators.push(format!("ifml_navigation_{fw}"));
             ifml_frameworks.push(IfmlFrameworkTarget {

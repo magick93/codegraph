@@ -204,8 +204,9 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
     if !openapi_files.is_empty() {
         println!("Pass 1d: {} OpenAPI files to ingest", openapi_files.len());
         for openapi_path in openapi_files {
-            let stats = crate::ingest::openapi_ingest::ingest_openapi_file(be.ingestor(), openapi_path)
-                .await?;
+            let stats =
+                crate::ingest::openapi_ingest::ingest_openapi_file(be.ingestor(), openapi_path)
+                    .await?;
             println!("  ingested {}: {stats}", openapi_path.display());
         }
     }
@@ -523,10 +524,8 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         project_config.extensions_base = meta.extensions_base.clone().unwrap_or_default();
         project_config.app_config_base = meta.app_config_base.clone().unwrap_or_default();
         project_config.decision_engine_base = meta.decision_engine_base.clone().unwrap_or_default();
-        project_config.codegraph_workflow_base = meta
-            .codegraph_workflow_base
-            .clone()
-            .unwrap_or_default();
+        project_config.codegraph_workflow_base =
+            meta.codegraph_workflow_base.clone().unwrap_or_default();
         project_config.type_contracts_base = meta.type_contracts_base.clone().unwrap_or_default();
         project_config.database_target = plan.database_target().to_string();
         project_config.persistence_provider = plan.persistence_provider().to_string();
