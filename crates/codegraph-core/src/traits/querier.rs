@@ -90,7 +90,7 @@ pub trait GraphQuerier: Send + Sync {
 /// PersonBaseType, then `get_schemas_that_extend("PersonBaseType")` returns both.
     async fn get_schemas_that_extend(
         &self,
-        parent_title: &str,
+        _parent_title: &str,
     ) -> Result<Vec<SchemaNode>, GraphError> {
         Ok(Vec::new())
     }

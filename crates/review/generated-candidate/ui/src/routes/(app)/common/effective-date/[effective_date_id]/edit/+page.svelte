@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import EffectiveDateForm from '$lib/components/forms/EffectiveDateForm.svelte';
-	import { updateEffectiveDate } from '$lib/stores/common_effective_date';
+	import EffectiveDateForm from '#lib/components/forms/EffectiveDateForm.svelte';
+	import { updateEffectiveDate } from '#lib/stores/common_effective_date.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { EffectiveDateResponse, UpdateEffectiveDateRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { EffectiveDateResponse, UpdateEffectiveDateRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/effective-date';

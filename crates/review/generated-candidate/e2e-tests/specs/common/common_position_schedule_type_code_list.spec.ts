@@ -49,6 +49,7 @@ test.describe('PositionScheduleTypeCodeList — Read', () => {
     });
         expect(response.status()).toBe(404);
   });
+});
 
 
 

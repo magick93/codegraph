@@ -5,24 +5,24 @@
 
 	import { page } from '$app/state';
 
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { Badge } from '$lib/components/ui/badge/index.js';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { Badge } from '#lib/components/ui/badge/index.js';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 
-	import WorkflowPanel from '$lib/components/ui/WorkflowPanel.svelte';
-	import { transitionCandidate } from '$lib/stores/recruiting_candidate';
+	import WorkflowPanel from '#lib/components/ui/WorkflowPanel.svelte';
+	import { transitionCandidate } from '#lib/stores/recruiting_candidate.ts';
 
 
 
 	import { onMount } from 'svelte';
-	import { entityNavigation, pushChild, popTo, resetNavigation, markDirty, clearDirty } from '$lib/stores/entity-navigation';
-	import { apiGet, apiPost, apiDelete } from '$lib/api/client';
+	import { entityNavigation, pushChild, popTo, resetNavigation, markDirty, clearDirty } from '#lib/stores/entity-navigation.ts';
+	import { apiGet, apiPost, apiDelete } from '#lib/api/client.ts';
 
 	import { TimeAgo } from '@crewbase/entities';
 	import { toast } from 'svelte-sonner';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { CandidateResponse } from '$lib/api/types';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { CandidateResponse } from '#lib/api/types.ts';
 
 	function formatRange(range: unknown): string {
 		if (!range || typeof range !== 'string') return '—';

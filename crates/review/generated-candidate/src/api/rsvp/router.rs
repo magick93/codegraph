@@ -4,6 +4,7 @@
 use axum::Router;
 
 use crate::app_state::AppState;
+use crate::middleware::permission::PermissionGuard as _;
 
 // Handwritten extensions — create this file to add custom routes.
 // #[path = "handwritten_routes.rs"]
@@ -26,10 +27,19 @@ fn rsvp_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(rsvp_handler::list).post(rsvp_handler::create))
+        .route(
+            "/",
+            axum::routing::get(rsvp_handler::list).guard("rsvp", "list")
+                .merge(axum::routing::post(rsvp_handler::create).guard("rsvp", "create")),
+        )
 
 
-        .route("/{rsvp_id}", axum::routing::get(rsvp_handler::get_by_id).put(rsvp_handler::update).delete(rsvp_handler::delete))
+        .route(
+            "/{rsvp_id}",
+            axum::routing::get(rsvp_handler::get_by_id).guard("rsvp", "read")
+                .merge(axum::routing::put(rsvp_handler::update).guard("rsvp", "update"))
+                .merge(axum::routing::delete(rsvp_handler::delete).guard("rsvp", "delete")),
+        )
 
 
 
@@ -38,6 +48,25 @@ fn rsvp_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (rsvp.rsvp):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(rsvp_scope_guard))
 }
 
+async fn rsvp_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "rsvp",
+        "rsvp",
+    )
+    .await
+}
 

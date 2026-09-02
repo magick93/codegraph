@@ -1,0 +1,87 @@
+{
+  "domain": "recruiting",
+  "basePath": "/api/v1/recruiting",
+  "entities": {
+    "applications": {
+      "entity": "Application",
+      "module": "application",
+      "pathSegment": "applications",
+      "basePath": "/api/v1/recruiting/applications",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/recruiting/applications",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/recruiting/applications",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/recruiting/applications/{application_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/recruiting/applications/{application_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/recruiting/applications/{application_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "candidate": {
+      "entity": "Candidate",
+      "module": "candidate",
+      "pathSegment": "candidate",
+      "basePath": "/api/v1/recruiting/candidate",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/recruiting/candidate",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/recruiting/candidate",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/recruiting/candidate/{candidate_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/recruiting/candidate/{candidate_id}",
+          "operation": "update"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/recruiting/candidate/{candidate_id}/actions/transition",
+          "operation": "workflow_transition"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/recruiting/candidate/{candidate_id}/actions/delegate",
+          "operation": "workflow_delegate"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/recruiting/candidate/{candidate_id}/workflow",
+          "operation": "workflow_state"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/recruiting/candidate/{candidate_id}/workflow/history",
+          "operation": "workflow_history"
+        }
+      ]
+    }
+  }
+}

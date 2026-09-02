@@ -49,6 +49,7 @@ test.describe('StringTypeArray — Read', () => {
     });
         expect(response.status()).toBe(404);
   });
+});
 
 
 

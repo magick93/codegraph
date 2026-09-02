@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import CurrencyCodeListForm from '$lib/components/forms/CurrencyCodeListForm.svelte';
-	import { updateCurrencyCodeList } from '$lib/stores/common_currency_code_list';
+	import CurrencyCodeListForm from '#lib/components/forms/CurrencyCodeListForm.svelte';
+	import { updateCurrencyCodeList } from '#lib/stores/common_currency_code_list.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { CurrencyCodeListResponse, UpdateCurrencyCodeListRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { CurrencyCodeListResponse, UpdateCurrencyCodeListRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/currency-code-list';

@@ -9,7 +9,7 @@ mod tests {
     #[test]
     fn test_public_event_entity_columns() {
         // Verify the entity model compiles and has expected columns
-        let _model = cosmos::entity::public_event::Model {
+        let _model = app::entity::events_public_event::Model {
             id: Uuid::new_v4(),
             ..Default::default()
         };

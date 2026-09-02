@@ -4,6 +4,7 @@
 use axum::Router;
 
 use crate::app_state::AppState;
+use crate::middleware::permission::PermissionGuard as _;
 
 // Handwritten extensions — create this file to add custom routes.
 // #[path = "handwritten_routes.rs"]
@@ -86,10 +87,19 @@ fn code_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(code_handler::list).post(code_handler::create))
+        .route(
+            "/",
+            axum::routing::get(code_handler::list).guard("code", "list")
+                .merge(axum::routing::post(code_handler::create).guard("code", "create")),
+        )
 
 
-        .route("/{code_id}", axum::routing::get(code_handler::get_by_id).put(code_handler::update).delete(code_handler::delete))
+        .route(
+            "/{code_id}",
+            axum::routing::get(code_handler::get_by_id).guard("code", "read")
+                .merge(axum::routing::put(code_handler::update).guard("code", "update"))
+                .merge(axum::routing::delete(code_handler::delete).guard("code", "delete")),
+        )
 
 
 
@@ -98,8 +108,27 @@ fn code_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.code):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(code_scope_guard))
 }
 
+async fn code_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "code",
+    )
+    .await
+}
 
 
 fn currency_code_list_routes() -> Router<AppState> {
@@ -109,10 +138,19 @@ fn currency_code_list_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(currency_code_list_handler::list).post(currency_code_list_handler::create))
+        .route(
+            "/",
+            axum::routing::get(currency_code_list_handler::list).guard("currency-code-list", "list")
+                .merge(axum::routing::post(currency_code_list_handler::create).guard("currency-code-list", "create")),
+        )
 
 
-        .route("/{currency_code_list_id}", axum::routing::get(currency_code_list_handler::get_by_id).put(currency_code_list_handler::update).delete(currency_code_list_handler::delete))
+        .route(
+            "/{currency_code_list_id}",
+            axum::routing::get(currency_code_list_handler::get_by_id).guard("currency-code-list", "read")
+                .merge(axum::routing::put(currency_code_list_handler::update).guard("currency-code-list", "update"))
+                .merge(axum::routing::delete(currency_code_list_handler::delete).guard("currency-code-list", "delete")),
+        )
 
 
 
@@ -121,8 +159,27 @@ fn currency_code_list_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.currency_code_list):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(currency_code_list_scope_guard))
 }
 
+async fn currency_code_list_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "currency_code_list",
+    )
+    .await
+}
 
 
 fn date_routes() -> Router<AppState> {
@@ -132,10 +189,19 @@ fn date_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(date_handler::list).post(date_handler::create))
+        .route(
+            "/",
+            axum::routing::get(date_handler::list).guard("date", "list")
+                .merge(axum::routing::post(date_handler::create).guard("date", "create")),
+        )
 
 
-        .route("/{date_id}", axum::routing::get(date_handler::get_by_id).put(date_handler::update).delete(date_handler::delete))
+        .route(
+            "/{date_id}",
+            axum::routing::get(date_handler::get_by_id).guard("date", "read")
+                .merge(axum::routing::put(date_handler::update).guard("date", "update"))
+                .merge(axum::routing::delete(date_handler::delete).guard("date", "delete")),
+        )
 
 
 
@@ -144,8 +210,27 @@ fn date_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.date):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(date_scope_guard))
 }
 
+async fn date_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "date",
+    )
+    .await
+}
 
 
 fn distribution_base_routes() -> Router<AppState> {
@@ -155,10 +240,19 @@ fn distribution_base_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(distribution_base_handler::list).post(distribution_base_handler::create))
+        .route(
+            "/",
+            axum::routing::get(distribution_base_handler::list).guard("distribution-base", "list")
+                .merge(axum::routing::post(distribution_base_handler::create).guard("distribution-base", "create")),
+        )
 
 
-        .route("/{distribution_base_id}", axum::routing::get(distribution_base_handler::get_by_id).put(distribution_base_handler::update).delete(distribution_base_handler::delete))
+        .route(
+            "/{distribution_base_id}",
+            axum::routing::get(distribution_base_handler::get_by_id).guard("distribution-base", "read")
+                .merge(axum::routing::put(distribution_base_handler::update).guard("distribution-base", "update"))
+                .merge(axum::routing::delete(distribution_base_handler::delete).guard("distribution-base", "delete")),
+        )
 
 
 
@@ -167,8 +261,27 @@ fn distribution_base_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.distribution_base):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(distribution_base_scope_guard))
 }
 
+async fn distribution_base_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "distribution_base",
+    )
+    .await
+}
 
 
 fn effective_date_routes() -> Router<AppState> {
@@ -178,10 +291,19 @@ fn effective_date_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(effective_date_handler::list).post(effective_date_handler::create))
+        .route(
+            "/",
+            axum::routing::get(effective_date_handler::list).guard("effective-date", "list")
+                .merge(axum::routing::post(effective_date_handler::create).guard("effective-date", "create")),
+        )
 
 
-        .route("/{effective_date_id}", axum::routing::get(effective_date_handler::get_by_id).put(effective_date_handler::update).delete(effective_date_handler::delete))
+        .route(
+            "/{effective_date_id}",
+            axum::routing::get(effective_date_handler::get_by_id).guard("effective-date", "read")
+                .merge(axum::routing::put(effective_date_handler::update).guard("effective-date", "update"))
+                .merge(axum::routing::delete(effective_date_handler::delete).guard("effective-date", "delete")),
+        )
 
 
 
@@ -190,8 +312,27 @@ fn effective_date_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.effective_date):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(effective_date_scope_guard))
 }
 
+async fn effective_date_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "effective_date",
+    )
+    .await
+}
 
 
 fn event_base_routes() -> Router<AppState> {
@@ -201,10 +342,19 @@ fn event_base_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(event_base_handler::list).post(event_base_handler::create))
+        .route(
+            "/",
+            axum::routing::get(event_base_handler::list).guard("event-base", "list")
+                .merge(axum::routing::post(event_base_handler::create).guard("event-base", "create")),
+        )
 
 
-        .route("/{event_base_id}", axum::routing::get(event_base_handler::get_by_id).put(event_base_handler::update).delete(event_base_handler::delete))
+        .route(
+            "/{event_base_id}",
+            axum::routing::get(event_base_handler::get_by_id).guard("event-base", "read")
+                .merge(axum::routing::put(event_base_handler::update).guard("event-base", "update"))
+                .merge(axum::routing::delete(event_base_handler::delete).guard("event-base", "delete")),
+        )
 
 
 
@@ -213,8 +363,27 @@ fn event_base_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.event_base):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(event_base_scope_guard))
 }
 
+async fn event_base_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "event_base",
+    )
+    .await
+}
 
 
 fn formatted_date_time_routes() -> Router<AppState> {
@@ -224,10 +393,19 @@ fn formatted_date_time_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(formatted_date_time_handler::list).post(formatted_date_time_handler::create))
+        .route(
+            "/",
+            axum::routing::get(formatted_date_time_handler::list).guard("formatted-date-time", "list")
+                .merge(axum::routing::post(formatted_date_time_handler::create).guard("formatted-date-time", "create")),
+        )
 
 
-        .route("/{formatted_date_time_id}", axum::routing::get(formatted_date_time_handler::get_by_id).put(formatted_date_time_handler::update).delete(formatted_date_time_handler::delete))
+        .route(
+            "/{formatted_date_time_id}",
+            axum::routing::get(formatted_date_time_handler::get_by_id).guard("formatted-date-time", "read")
+                .merge(axum::routing::put(formatted_date_time_handler::update).guard("formatted-date-time", "update"))
+                .merge(axum::routing::delete(formatted_date_time_handler::delete).guard("formatted-date-time", "delete")),
+        )
 
 
 
@@ -236,8 +414,27 @@ fn formatted_date_time_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.formatted_date_time):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(formatted_date_time_scope_guard))
 }
 
+async fn formatted_date_time_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "formatted_date_time",
+    )
+    .await
+}
 
 
 fn gender_code_list_routes() -> Router<AppState> {
@@ -247,10 +444,19 @@ fn gender_code_list_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(gender_code_list_handler::list).post(gender_code_list_handler::create))
+        .route(
+            "/",
+            axum::routing::get(gender_code_list_handler::list).guard("gender-code-list", "list")
+                .merge(axum::routing::post(gender_code_list_handler::create).guard("gender-code-list", "create")),
+        )
 
 
-        .route("/{gender_code_list_id}", axum::routing::get(gender_code_list_handler::get_by_id).put(gender_code_list_handler::update).delete(gender_code_list_handler::delete))
+        .route(
+            "/{gender_code_list_id}",
+            axum::routing::get(gender_code_list_handler::get_by_id).guard("gender-code-list", "read")
+                .merge(axum::routing::put(gender_code_list_handler::update).guard("gender-code-list", "update"))
+                .merge(axum::routing::delete(gender_code_list_handler::delete).guard("gender-code-list", "delete")),
+        )
 
 
 
@@ -259,8 +465,27 @@ fn gender_code_list_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.gender_code_list):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(gender_code_list_scope_guard))
 }
 
+async fn gender_code_list_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "gender_code_list",
+    )
+    .await
+}
 
 
 fn identifier_routes() -> Router<AppState> {
@@ -270,10 +495,19 @@ fn identifier_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(identifier_handler::list).post(identifier_handler::create))
+        .route(
+            "/",
+            axum::routing::get(identifier_handler::list).guard("identifier", "list")
+                .merge(axum::routing::post(identifier_handler::create).guard("identifier", "create")),
+        )
 
 
-        .route("/{identifier_id}", axum::routing::get(identifier_handler::get_by_id).put(identifier_handler::update).delete(identifier_handler::delete))
+        .route(
+            "/{identifier_id}",
+            axum::routing::get(identifier_handler::get_by_id).guard("identifier", "read")
+                .merge(axum::routing::put(identifier_handler::update).guard("identifier", "update"))
+                .merge(axum::routing::delete(identifier_handler::delete).guard("identifier", "delete")),
+        )
 
 
 
@@ -282,8 +516,27 @@ fn identifier_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.identifier):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(identifier_scope_guard))
 }
 
+async fn identifier_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "identifier",
+    )
+    .await
+}
 
 
 fn name_routes() -> Router<AppState> {
@@ -293,10 +546,19 @@ fn name_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(name_handler::list).post(name_handler::create))
+        .route(
+            "/",
+            axum::routing::get(name_handler::list).guard("name", "list")
+                .merge(axum::routing::post(name_handler::create).guard("name", "create")),
+        )
 
 
-        .route("/{name_id}", axum::routing::get(name_handler::get_by_id).put(name_handler::update).delete(name_handler::delete))
+        .route(
+            "/{name_id}",
+            axum::routing::get(name_handler::get_by_id).guard("name", "read")
+                .merge(axum::routing::put(name_handler::update).guard("name", "update"))
+                .merge(axum::routing::delete(name_handler::delete).guard("name", "delete")),
+        )
 
 
 
@@ -305,8 +567,27 @@ fn name_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.name):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(name_scope_guard))
 }
 
+async fn name_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "name",
+    )
+    .await
+}
 
 
 fn person_base_routes() -> Router<AppState> {
@@ -316,10 +597,19 @@ fn person_base_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(person_base_handler::list).post(person_base_handler::create))
+        .route(
+            "/",
+            axum::routing::get(person_base_handler::list).guard("person-base", "list")
+                .merge(axum::routing::post(person_base_handler::create).guard("person-base", "create")),
+        )
 
 
-        .route("/{person_base_id}", axum::routing::get(person_base_handler::get_by_id).put(person_base_handler::update).delete(person_base_handler::delete))
+        .route(
+            "/{person_base_id}",
+            axum::routing::get(person_base_handler::get_by_id).guard("person-base", "read")
+                .merge(axum::routing::put(person_base_handler::update).guard("person-base", "update"))
+                .merge(axum::routing::delete(person_base_handler::delete).guard("person-base", "delete")),
+        )
 
 
 
@@ -328,8 +618,27 @@ fn person_base_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.person_base):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(person_base_scope_guard))
 }
 
+async fn person_base_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "person_base",
+    )
+    .await
+}
 
 
 fn position_schedule_type_code_list_routes() -> Router<AppState> {
@@ -339,10 +648,19 @@ fn position_schedule_type_code_list_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(position_schedule_type_code_list_handler::list).post(position_schedule_type_code_list_handler::create))
+        .route(
+            "/",
+            axum::routing::get(position_schedule_type_code_list_handler::list).guard("position-schedule-type-code-list", "list")
+                .merge(axum::routing::post(position_schedule_type_code_list_handler::create).guard("position-schedule-type-code-list", "create")),
+        )
 
 
-        .route("/{position_schedule_type_code_list_id}", axum::routing::get(position_schedule_type_code_list_handler::get_by_id).put(position_schedule_type_code_list_handler::update).delete(position_schedule_type_code_list_handler::delete))
+        .route(
+            "/{position_schedule_type_code_list_id}",
+            axum::routing::get(position_schedule_type_code_list_handler::get_by_id).guard("position-schedule-type-code-list", "read")
+                .merge(axum::routing::put(position_schedule_type_code_list_handler::update).guard("position-schedule-type-code-list", "update"))
+                .merge(axum::routing::delete(position_schedule_type_code_list_handler::delete).guard("position-schedule-type-code-list", "delete")),
+        )
 
 
 
@@ -351,8 +669,27 @@ fn position_schedule_type_code_list_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.position_schedule_type_code_list):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(position_schedule_type_code_list_scope_guard))
 }
 
+async fn position_schedule_type_code_list_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "position_schedule_type_code_list",
+    )
+    .await
+}
 
 
 fn string_type_array_routes() -> Router<AppState> {
@@ -362,10 +699,19 @@ fn string_type_array_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(string_type_array_handler::list).post(string_type_array_handler::create))
+        .route(
+            "/",
+            axum::routing::get(string_type_array_handler::list).guard("string-type-array", "list")
+                .merge(axum::routing::post(string_type_array_handler::create).guard("string-type-array", "create")),
+        )
 
 
-        .route("/{string_type_array_id}", axum::routing::get(string_type_array_handler::get_by_id).put(string_type_array_handler::update).delete(string_type_array_handler::delete))
+        .route(
+            "/{string_type_array_id}",
+            axum::routing::get(string_type_array_handler::get_by_id).guard("string-type-array", "read")
+                .merge(axum::routing::put(string_type_array_handler::update).guard("string-type-array", "update"))
+                .merge(axum::routing::delete(string_type_array_handler::delete).guard("string-type-array", "delete")),
+        )
 
 
 
@@ -374,8 +720,27 @@ fn string_type_array_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.string_type_array):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(string_type_array_scope_guard))
 }
 
+async fn string_type_array_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "string_type_array",
+    )
+    .await
+}
 
 
 fn amount_routes() -> Router<AppState> {
@@ -385,10 +750,19 @@ fn amount_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(amount_handler::list).post(amount_handler::create))
+        .route(
+            "/",
+            axum::routing::get(amount_handler::list).guard("amount", "list")
+                .merge(axum::routing::post(amount_handler::create).guard("amount", "create")),
+        )
 
 
-        .route("/{amount_id}", axum::routing::get(amount_handler::get_by_id).put(amount_handler::update).delete(amount_handler::delete))
+        .route(
+            "/{amount_id}",
+            axum::routing::get(amount_handler::get_by_id).guard("amount", "read")
+                .merge(axum::routing::put(amount_handler::update).guard("amount", "update"))
+                .merge(axum::routing::delete(amount_handler::delete).guard("amount", "delete")),
+        )
 
 
 
@@ -397,8 +771,27 @@ fn amount_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.amount):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(amount_scope_guard))
 }
 
+async fn amount_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "amount",
+    )
+    .await
+}
 
 
 fn process_history_item_routes() -> Router<AppState> {
@@ -408,10 +801,19 @@ fn process_history_item_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(process_history_item_handler::list).post(process_history_item_handler::create))
+        .route(
+            "/",
+            axum::routing::get(process_history_item_handler::list).guard("process-history-item", "list")
+                .merge(axum::routing::post(process_history_item_handler::create).guard("process-history-item", "create")),
+        )
 
 
-        .route("/{process_history_item_id}", axum::routing::get(process_history_item_handler::get_by_id).put(process_history_item_handler::update).delete(process_history_item_handler::delete))
+        .route(
+            "/{process_history_item_id}",
+            axum::routing::get(process_history_item_handler::get_by_id).guard("process-history-item", "read")
+                .merge(axum::routing::put(process_history_item_handler::update).guard("process-history-item", "update"))
+                .merge(axum::routing::delete(process_history_item_handler::delete).guard("process-history-item", "delete")),
+        )
 
 
 
@@ -420,8 +822,27 @@ fn process_history_item_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.process_history_item):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(process_history_item_scope_guard))
 }
 
+async fn process_history_item_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "process_history_item",
+    )
+    .await
+}
 
 
 fn process_history_routes() -> Router<AppState> {
@@ -431,10 +852,19 @@ fn process_history_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(process_history_handler::list).post(process_history_handler::create))
+        .route(
+            "/",
+            axum::routing::get(process_history_handler::list).guard("process-history", "list")
+                .merge(axum::routing::post(process_history_handler::create).guard("process-history", "create")),
+        )
 
 
-        .route("/{process_history_id}", axum::routing::get(process_history_handler::get_by_id).put(process_history_handler::update).delete(process_history_handler::delete))
+        .route(
+            "/{process_history_id}",
+            axum::routing::get(process_history_handler::get_by_id).guard("process-history", "read")
+                .merge(axum::routing::put(process_history_handler::update).guard("process-history", "update"))
+                .merge(axum::routing::delete(process_history_handler::delete).guard("process-history", "delete")),
+        )
 
 
 
@@ -443,6 +873,25 @@ fn process_history_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (common.process_history):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(process_history_scope_guard))
 }
 
+async fn process_history_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "process_history",
+    )
+    .await
+}
 

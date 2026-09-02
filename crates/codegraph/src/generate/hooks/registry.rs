@@ -81,7 +81,7 @@ impl GlobalGenerator for HookRegistryGenerator {
 
     async fn generate(
         &self,
-        _db: &dyn GraphQuerier,
+        db: &dyn GraphQuerier,
         config: &DomainConfig,
         generation_order: &[GenerationEntry],
         tera: &tera::Tera,
@@ -96,7 +96,16 @@ impl GlobalGenerator for HookRegistryGenerator {
 
         for entry in generation_order {
             let stripped = config.defaults.strip_suffix(&entry.schema_title);
-            let entity_name_pascal = codegraph_naming::to_pascal_case(&stripped);
+            // Prefer the graph's canonical rust_type_name so registry imports
+            // match hr-domain-types emissions exactly — naive pascal-casing
+            // mangles acronym titles ("...LER-RSType" -> "...Lerrs...").
+            let entity_name = db
+                .get_schema_in_domain(&entry.schema_title, &entry.domain)
+                .await
+                .ok()
+                .flatten()
+                .map(|s| s.rust_type_name)
+                .unwrap_or_else(|| codegraph_naming::to_pascal_case(&stripped));
             let module_name = codegraph_naming::to_snake_case(&stripped);
 
             if seen_domains.insert(entry.domain.clone()) {
@@ -112,7 +121,7 @@ impl GlobalGenerator for HookRegistryGenerator {
                 .entry(entry.domain.clone())
                 .or_default()
                 .push(RegistryEntity {
-                    name: entity_name_pascal,
+                    name: entity_name,
                     module_name,
                 });
         }

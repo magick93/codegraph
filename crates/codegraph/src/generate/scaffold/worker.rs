@@ -39,6 +39,27 @@ pub fn worker_binding_name(domain: &str) -> String {
     domain.replace('-', "_").to_ascii_uppercase()
 }
 
+/// Path from a worker crate dir (`{output}/workers/{domain}/`) to a shared
+/// crate whose base path is absolute or declared relative to the process CWD
+/// (repo root). Empty bases (disabled crates) yield an empty path.
+fn worker_crate_path(base: &str, abs_output: &Path, domain: &str) -> String {
+    if base.is_empty() {
+        return String::new();
+    }
+    let base_path = Path::new(base);
+    let abs_base = if base_path.is_absolute() {
+        base_path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .expect("current_dir should be accessible")
+            .join(base_path)
+    };
+    let worker_dir = abs_output.join("workers").join(domain);
+    pathdiff::diff_paths(&abs_base, &worker_dir)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 /// Whether any entity in a domain's config declares a workflow with SLA timers.
 fn domain_has_workflow_timers(entry: &codegraph_config::DomainEntry) -> bool {
     entry
@@ -175,9 +196,7 @@ pub fn build_worker_domains(
                 .map(|e| e.queue_binding_or("WEBHOOK_QUEUE"))
                 .unwrap_or_else(|| "WEBHOOK_QUEUE".to_string());
             let queue_name = entry
-                .map(|e| {
-                    e.queue_name_or(&format!("{app_name}-{}-webhooks", d.name))
-                })
+                .map(|e| e.queue_name_or(&format!("{app_name}-{}-webhooks", d.name)))
                 .unwrap_or_else(|| format!("{app_name}-{}-webhooks", d.name));
             WorkerDomain {
                 name: d.name.clone(),
@@ -197,13 +216,9 @@ pub fn build_worker_domains(
                 has_webhooks,
                 queue_name,
                 queue_binding,
-                queue_max_retries: entry
-                    .map(|e| e.queue_max_retries_or(5))
-                    .unwrap_or(5),
+                queue_max_retries: entry.map(|e| e.queue_max_retries_or(5)).unwrap_or(5),
                 queue_max_concurrency: entry.and_then(|e| e.queue_max_concurrency),
-                observability: entry
-                    .map(|e| e.observability_or(false))
-                    .unwrap_or(false),
+                observability: entry.map(|e| e.observability_or(false)).unwrap_or(false),
                 domain_types_path: String::new(),
                 hooks_api_path: String::new(),
             }
@@ -253,24 +268,12 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
                 .join(&self.output_dir)
         };
 
-        // Domain-types crate path relative to the output root, then re-based
-        // to each worker crate dir (`workers/{domain}/` → `../../{rel}`).
-        let domain_types_rel = resolve_path(&project.domain_types_base, &abs_output);
-        let worker_domain_types_path = if domain_types_rel.is_empty() {
-            String::new()
-        } else {
-            format!("../../{domain_types_rel}")
-        };
-
-        // Hooks-api crate path, same re-basing (empty when hooks are disabled).
-        let hooks_api_rel = resolve_path(&project.hooks_api_base, &abs_output);
-        let worker_hooks_api_path =
-            if hooks_api_rel.is_empty() || project.hooks_api_crate.is_empty() {
-                String::new()
-            } else {
-                format!("../../{hooks_api_rel}")
-            };
-
+        // Domain-types / hooks-api crate paths, re-based to each worker crate
+        // dir (`workers/{domain}/`). Crate bases are declared relative to the
+        // process CWD (repo root); a fixed `../../` prefix (as used by the
+        // monolith scaffold's Cargo.toml, which sits directly at the output
+        // root) would land one level short here because worker crates nest
+        // under `workers/{domain}/`.
         let app_name = project.app_name.clone();
         let gateway_name = format!("{app_name}-gateway");
         let gateway_lib_name = codegraph_naming::to_snake_case(&gateway_name);
@@ -284,10 +287,26 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
 
         let mut domains = build_worker_domains(&app_name, config, scaffold_domains);
         for domain in &mut domains {
-            domain.domain_types_path = worker_domain_types_path.clone();
-            domain.hooks_api_path = worker_hooks_api_path.clone();
+            domain.domain_types_path =
+                worker_crate_path(&project.domain_types_base, &abs_output, &domain.name);
+            domain.hooks_api_path = if project.hooks_api_crate.is_empty() {
+                String::new()
+            } else {
+                worker_crate_path(&project.hooks_api_base, &abs_output, &domain.name)
+            };
         }
         let gateway_observability = domains.iter().any(|d| d.observability);
+
+        // Schemas the API-key migration grants app_user DML on: every
+        // domain schema plus common (codelists) and the platform infra
+        // schema — the same list the monolith scaffold uses.
+        let mut grant_schemas: Vec<String> = domains
+            .iter()
+            .map(|d| d.postgres_schema.clone())
+            .chain(["common".to_string(), "platform".to_string()])
+            .collect();
+        grant_schemas.sort();
+        grant_schemas.dedup();
 
         let ctx = WorkerScaffoldContext {
             app_name,
@@ -311,9 +330,9 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         // `0002_api_key_management.sql`; workers topology gates the monolith
         // scaffold off, so the worker scaffold owns it here (same numbering,
         // same template).
-        let empty_ctx = std::collections::HashMap::<String, String>::new();
+        let grant_ctx = serde_json::json!({ "grant_schemas": grant_schemas });
         let api_key_migration =
-            render_template_with_project(tera, "db/api_key_migration.tera", &empty_ctx, project)?;
+            render_template_with_project(tera, "db/api_key_migration.tera", &grant_ctx, project)?;
         files.push(GeneratedFile {
             path: crate::generate::db::migrations_root(&self.output_dir)
                 .join("0002_api_key_management.sql"),
@@ -597,7 +616,9 @@ service_bindings = ["timecard"]
                 name: "PayRun".to_string(),
                 module_name: "pay_run".to_string(),
                 domain: name.to_string(),
+                table_name: "pay_run".to_string(),
                 has_commands: true,
+                append_only: false,
                 has_query_hooks: true,
             }],
             has_custom_routes: false,
@@ -1028,5 +1049,108 @@ entities = ["CodeType"]
         assert!(member_names.contains(&"payroll"));
         assert_eq!(member_names.len(), 3);
         assert!(parsed["workspace"]["dependencies"].get("worker").is_some());
+    }
+
+    /// Render worker_app_state.tera: command handlers are only emitted for
+    /// entities with commands, and the query-handler hooks argument is only
+    /// passed when the entity has query hooks (matches the generated
+    /// command.rs/query.rs `new` signatures).
+    #[test]
+    fn worker_app_state_guards_commands_and_query_hooks() {
+        let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let tera = crate::generate::template_engine::create_tera(&template_dir).unwrap();
+        let project = ProjectConfig {
+            deployment_topology: "workers".to_string(),
+            hooks_api_crate: "hr_hooks_api".to_string(),
+            ..Default::default()
+        };
+        let config = test_config();
+
+        let full = scaffold_domain("common");
+        let query_only = ScaffoldDomain {
+            name: "compliance".to_string(),
+            label: "compliance label".to_string(),
+            postgres_schema: "compliance".to_string(),
+            entities: vec![ScaffoldEntity {
+                name: "ComplianceCheckResult".to_string(),
+                module_name: "compliance_check_result".to_string(),
+                domain: "compliance".to_string(),
+                table_name: "compliance_check_result".to_string(),
+                has_commands: false,
+                append_only: false,
+                has_query_hooks: false,
+                }],
+                has_custom_routes: false,
+                atproto_nsids: vec![],
+        };
+        let mut domains = build_worker_domains("hr", &config, vec![full, query_only]);
+        for d in &mut domains {
+            d.domain_types_path = "crates/hr-domain-types".to_string();
+            d.hooks_api_path = "crates/hr-hooks-api".to_string();
+        }
+        let full_domain = domains.iter().find(|d| d.name == "common").unwrap();
+        let rendered = render_template_with_project(
+            &tera,
+            "scaffold/worker_app_state.tera",
+            full_domain,
+            &project,
+        )
+        .unwrap();
+        assert!(
+            rendered.contains("common_pay_run_commands"),
+            "entity with commands must get a command handler field:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("common_pay_run_queries"),
+            "entity with query hooks must get a query handler field:\n{rendered}"
+        );
+
+        let query_only_domain = domains.iter().find(|d| d.name == "compliance").unwrap();
+        let rendered = render_template_with_project(
+            &tera,
+            "scaffold/worker_app_state.tera",
+            query_only_domain,
+            &project,
+        )
+        .unwrap();
+        assert!(
+            !rendered.contains("compliance_compliance_check_result_commands"),
+            "query-only entity must NOT get a command handler field:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("compliance_compliance_check_result_queries"),
+            "query-only entity must still get a query handler field:\n{rendered}"
+        );
+    }
+
+    /// Render worker_lib.tera: cornucopia workers keep `pub mod entity;` (the
+    /// routed media handlers reference `crate::entity::...` even though CRUD
+    /// persistence runs through cornucopia) in addition to the cornucopia
+    /// client modules.
+    #[test]
+    fn worker_lib_declares_entity_in_cornucopia_workers() {
+        let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let tera = crate::generate::template_engine::create_tera(&template_dir).unwrap();
+        let project = ProjectConfig {
+            deployment_topology: "workers".to_string(),
+            persistence_provider: "cornucopia".to_string(),
+            hooks_api_crate: "hr_hooks_api".to_string(),
+            ..Default::default()
+        };
+        let config = test_config();
+        let domains = build_worker_domains("hr", &config, vec![scaffold_domain("payroll")]);
+        let rendered =
+            render_template_with_project(&tera, "scaffold/worker_lib.tera", &domains[0], &project)
+                .unwrap();
+        for needle in [
+            "pub mod entity;",
+            "pub mod db_client;",
+            "pub mod workflow_client;",
+        ] {
+            assert!(
+                rendered.contains(needle),
+                "worker lib.rs must declare `{needle}`, got:\n{rendered}"
+            );
+        }
     }
 }

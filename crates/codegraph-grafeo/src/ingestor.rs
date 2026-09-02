@@ -627,6 +627,62 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(to_id),
                 )
             }
+            // API metamodel edges — match endpoints by the synthetic `_node_id`
+            // property stored at ingest (ids like "ar:<name>" are NOT node
+            // `name` values, and Interaction/HttpEndpoint nodes have no usable
+            // name at all). `BindsToSchema`/`OutputBoundTo` target Schema nodes,
+            // which are matched by `title`.
+            EdgeType::BindsToSchema => {
+                format!(
+                    "MATCH (a:ApiResource {{_node_id: '{}'}}), (b:Schema {{title: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasOperation => {
+                format!(
+                    "MATCH (a:ApiResource {{_node_id: '{}'}}), (b:ApiOperation {{_node_id: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::InputBoundTo | EdgeType::OutputBoundTo => {
+                format!(
+                    "MATCH (a:ApiOperation {{_node_id: '{}'}}), (b:Schema {{title: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::RequiresPermission => {
+                format!(
+                    "MATCH (a:ApiOperation {{_node_id: '{}'}}), (b:Permission {{_node_id: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::HasInteraction => {
+                format!(
+                    "MATCH (a:ApiOperation {{_node_id: '{}'}}), (b:Interaction {{_node_id: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::BindsHttpEndpoint => {
+                format!(
+                    "MATCH (a:Interaction {{_node_id: '{}'}}), (b:HttpEndpoint {{_node_id: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::UsesPipeline => {
+                format!(
+                    "MATCH (a:HttpEndpoint {{_node_id: '{}'}}), (b:Pipeline {{_node_id: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            // AT Protocol edges — nodes are matched by their natural keys
+            // (Lexicon/Collection by nsid, Namespace by authority, Repository by did).
             EdgeType::InNamespace => {
                 format!(
                     "MATCH (a:Lexicon {{nsid: '{}'}}), (b:Namespace {{authority: '{}'}})",
@@ -663,15 +719,7 @@ impl GraphIngestor for GrafeoEngine {
                 )
             }
             EdgeType::ExposesResource
-            | EdgeType::BindsToSchema
-            | EdgeType::HasOperation
-            | EdgeType::InputBoundTo
-            | EdgeType::OutputBoundTo
             | EdgeType::CanReturnError
-            | EdgeType::RequiresPermission
-            |             EdgeType::HasInteraction
-            | EdgeType::BindsHttpEndpoint
-            | EdgeType::UsesPipeline
             | EdgeType::HasPolicy
             | EdgeType::PolicyAppliesTo
             | EdgeType::HasRelationship
@@ -989,9 +1037,10 @@ impl GraphIngestor for GrafeoEngine {
         let id = format!("ar:{}", node.name);
         let gql = format!(
             "INSERT (:ApiResource {{ \
-                name: '{}', schema_title: '{}', domain: '{}', \
+                _node_id: '{}', name: '{}', schema_title: '{}', domain: '{}', \
                 label: {}, path_segment: '{}' \
             }})",
+            escape_gql(&id),
             escape_gql(&node.name),
             escape_gql(&node.schema_title),
             escape_gql(&node.domain),
@@ -1004,17 +1053,15 @@ impl GraphIngestor for GrafeoEngine {
         Ok(id)
     }
 
-    async fn ingest_api_operation(
-        &self,
-        node: &ApiOperationNode,
-    ) -> Result<String, GraphError> {
+    async fn ingest_api_operation(&self, node: &ApiOperationNode) -> Result<String, GraphError> {
         let session = self.db().session();
         let id = format!("ao:{}", node.name);
         let gql = format!(
             "INSERT (:ApiOperation {{ \
-                name: '{}', kind: '{}', input_schema: {}, output_schema: '{}', \
+                _node_id: '{}', name: '{}', kind: '{}', input_schema: {}, output_schema: '{}', \
                 paging: {}, sorting: {}, filtering: {}, domain: {} \
             }})",
+            escape_gql(&id),
             escape_gql(&node.name),
             escape_gql(&node.kind),
             opt_str(&node.input_schema),
@@ -1034,7 +1081,8 @@ impl GraphIngestor for GrafeoEngine {
         let session = self.db().session();
         let id = format!("ia:{}", uuid::Uuid::new_v4());
         let gql = format!(
-            "INSERT (:Interaction {{ transport: '{}', domain: {} }})",
+            "INSERT (:Interaction {{ _node_id: '{}', transport: '{}', domain: {} }})",
+            escape_gql(&id),
             escape_gql(&node.transport),
             opt_str(&node.domain),
         );
@@ -1044,14 +1092,12 @@ impl GraphIngestor for GrafeoEngine {
         Ok(id)
     }
 
-    async fn ingest_http_endpoint(
-        &self,
-        node: &HttpEndpointNode,
-    ) -> Result<String, GraphError> {
+    async fn ingest_http_endpoint(&self, node: &HttpEndpointNode) -> Result<String, GraphError> {
         let session = self.db().session();
         let id = format!("he:{}", uuid::Uuid::new_v4());
         let gql = format!(
-            "INSERT (:HttpEndpoint {{ method: '{}', path_template: '{}', domain: {} }})",
+            "INSERT (:HttpEndpoint {{ _node_id: '{}', method: '{}', path_template: '{}', domain: {} }})",
+            escape_gql(&id),
             escape_gql(&node.method),
             escape_gql(&node.path_template),
             opt_str(&node.domain),
@@ -1070,7 +1116,8 @@ impl GraphIngestor for GrafeoEngine {
             .as_ref()
             .map(|m| serde_json::to_string(m).unwrap_or_default());
         let gql = format!(
-            "INSERT (:Pipeline {{ name: '{}', middleware: {}, domain: {} }})",
+            "INSERT (:Pipeline {{ _node_id: '{}', name: '{}', middleware: {}, domain: {} }})",
+            escape_gql(&id),
             escape_gql(&node.name),
             opt_str(&middleware_str),
             opt_str(&node.domain),
@@ -1106,7 +1153,8 @@ impl GraphIngestor for GrafeoEngine {
         let session = self.db().session();
         let id = format!("pm:{}", node.name);
         let gql = format!(
-            "INSERT (:Permission {{ name: '{}', domain: {} }})",
+            "INSERT (:Permission {{ _node_id: '{}', name: '{}', domain: {} }})",
+            escape_gql(&id),
             escape_gql(&node.name),
             opt_str(&node.domain),
         );
@@ -1120,8 +1168,8 @@ impl GraphIngestor for GrafeoEngine {
 
     async fn ingest_policy(&self, policy: &PolicyNode) -> Result<(), GraphError> {
         let session = self.db().session();
-        let kind_json = serde_json::to_string(&policy.kind)
-            .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let kind_json =
+            serde_json::to_string(&policy.kind).map_err(|e| GraphError::Ingest(e.to_string()))?;
         let domain = policy.domain.clone().unwrap_or_default();
         let gql = format!(
             "INSERT (:Policy {{ \
@@ -1138,10 +1186,7 @@ impl GraphIngestor for GrafeoEngine {
         Ok(())
     }
 
-    async fn ingest_relationship(
-        &self,
-        relationship: &RelationshipNode,
-    ) -> Result<(), GraphError> {
+    async fn ingest_relationship(&self, relationship: &RelationshipNode) -> Result<(), GraphError> {
         let session = self.db().session();
         let fk_json = serde_json::to_string(&relationship.foreign_key)
             .map_err(|e| GraphError::Ingest(e.to_string()))?;

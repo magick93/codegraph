@@ -235,6 +235,143 @@ async fn candidate_ddl_table() {
         table_file.content.contains("updated_at TIMESTAMPTZ"),
         "Should contain updated_at"
     );
+    // App role DML grant must be emitted on the table so the RLS-aware
+    // app_user role can access it regardless of application order.
+    assert!(
+        table_file.content.contains(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE recruiting.candidate TO app_user;"
+        ),
+        "Entity table must grant DML to app_user. Got:\n{}",
+        table_file.content
+    );
+}
+
+#[tokio::test]
+async fn table_tera_grants_child_table_dml() {
+    // Child tables rendered by db/table.tera must also carry the app-role DML
+    // grant (the RLS-aware role queries child rows too).
+    let tera = test_tera();
+    let ctx = serde_json::json!({
+        "schema_name": "recruiting",
+        "table_name": "candidate",
+        "columns": [{"name": "id", "pg_type": "UUID", "is_primary_key": true, "nullable": false}],
+        "check_constraints": [],
+        "is_auditable": false,
+        "foreign_keys": [],
+        "indexes": [],
+        "child_tables": [{
+            "schema_name": "recruiting",
+            "table_name": "candidate_person_name",
+            "parent_fk_column": "candidate_id",
+            "parent_schema": "recruiting",
+            "parent_table": "candidate",
+            "columns": [{"name": "id", "pg_type": "UUID"}],
+            "check_constraints": [],
+            "foreign_keys": [],
+            "comments": []
+        }],
+        "comments": [],
+        "extensions": []
+    });
+    let rendered = generate::render_template_with_project(
+        &tera,
+        "db/table.tera",
+        &ctx,
+        &test_project_config(),
+    )
+    .unwrap();
+    assert!(
+        rendered.contains(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE recruiting.candidate TO app_user;"
+        ),
+        "Entity table must grant DML to app_user. Got:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE recruiting.candidate_person_name TO app_user;"
+        ),
+        "Child table must grant DML to app_user. Got:\n{rendered}"
+    );
+}
+
+#[tokio::test]
+async fn scaffold_api_key_migration_grants_app_user_dml() {
+    // 0002_api_key_management.sql must grant the app role DML up front (before
+    // any domain table exists) via CREATE SCHEMA + ALTER DEFAULT PRIVILEGES,
+    // covering every configured domain schema + the infra schemas. This is what
+    // makes the grant independent of migration application order.
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-grants");
+
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
+    let files = gen
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let api_key_file = files
+        .iter()
+        .find(|f| f.path.ends_with("0002_api_key_management.sql"))
+        .expect("Should generate 0002_api_key_management.sql");
+    let content = &api_key_file.content;
+
+    assert!(
+        content.contains("CREATE SCHEMA IF NOT EXISTS"),
+        "0002 must create schemas upfront. Got:\n{content}"
+    );
+    assert!(
+        content.contains("ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user"),
+        "0002 must set default privileges for future tables. Got:\n{content}"
+    );
+    assert!(
+        content.contains(
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO app_user"
+        ),
+        "0002 must grant current tables too. Got:\n{content}"
+    );
+    // The configured domain schema + the infra schema appear in the list.
+    for schema in ["recruiting", "platform"] {
+        assert!(
+            content.contains(&format!("'{schema}'")),
+            "0002 grant list must include {schema}. Got:\n{content}"
+        );
+    }
+    // `common` carries the generated codelist tables (app_user needs DML on
+    // them); the list is derived from the configured domains, not the old
+    // hardcoded domain list: with only the fixture domains in scope,
+    // `screening`/`compliance` must NOT appear.
+    for schema in ["'screening'", "'compliance'", "'payroll'"] {
+        assert!(
+            !content.contains(schema),
+            "0002 grant list must not include hardcoded {schema}. Got:\n{content}"
+        );
+    }
+    // The old order-dependent guard must be gone.
+    assert!(
+        !content.contains("information_schema.schemata WHERE schema_name"),
+        "0002 must not be gated on pre-existing schemas. Got:\n{content}"
+    );
 }
 
 #[tokio::test]
@@ -432,6 +569,7 @@ async fn scaffold_middleware_supports_dual_auth() {
 
     let gen = generate::scaffold::gen::ScaffoldGenerator::new(
         &output_dir,
+        false,
         false,
         false,
         false,
@@ -2035,6 +2173,7 @@ async fn scaffold_main() {
         false,
         false,
         false,
+        false,
         "sea-orm",
     );
     let files = gen
@@ -2148,6 +2287,7 @@ async fn scaffold_error_module() {
         false,
         false,
         false,
+        false,
         "sea-orm",
     );
     let files = gen
@@ -2201,6 +2341,7 @@ async fn openapi_error_schemas_are_defined_by_error_module() {
 
     let scaffold = generate::scaffold::gen::ScaffoldGenerator::new(
         &output_dir,
+        false,
         false,
         false,
         false,
@@ -2322,6 +2463,7 @@ async fn scaffold_generates_middleware() {
         false,
         false,
         false,
+        false,
         "sea-orm",
     );
     let files = gen
@@ -2358,11 +2500,14 @@ async fn test_permission_middleware_generated() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-permission-mw");
 
+    // has_atproto = true: the permission middleware (with extract_uuid_from_path)
+    // lives in the atproto branch of the template.
     let gen = generate::scaffold::gen::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
         false,
+        true,
         false,
         false,
         false,
@@ -2370,7 +2515,8 @@ async fn test_permission_middleware_generated() {
         false,
         false,
         "sea-orm",
-    );    let files = gen
+    );
+    let files = gen
         .generate(
             &mock,
             &config,
@@ -2434,6 +2580,7 @@ async fn middleware_test_mode_did_validation_uses_rsky_when_atproto() {
         false,
         false,
         false,
+        false,
         "sea-orm",
     );
     let files = gen
@@ -2453,21 +2600,12 @@ async fn middleware_test_mode_did_validation_uses_rsky_when_atproto() {
         .expect("Should generate middleware/mod.rs");
     let content = &middleware_file.content;
 
+    // With atproto enabled the generated module re-exports the shared
+    // vocabulary from cosmos-extensions; DID validation (rsky_syntax) and the
+    // test-mode persona tokens live in that hand-written crate, not here.
     assert!(
-        content.contains("pub did: Option<String>,"),
-        "AuthInfo should carry the optional DID. Got:\n{content}"
-    );
-    assert!(
-        content.contains("test-mode:"),
-        "Middleware should accept test-mode:<did> persona tokens. Got:\n{content}"
-    );
-    assert!(
-        content.contains("rsky_syntax::did::ensure_valid_did(did).is_ok()"),
-        "With atproto enabled, DID validation should use rsky_syntax. Got:\n{content}"
-    );
-    assert!(
-        content.contains("did: None"),
-        "Real auth paths should leave did: None. Got:\n{content}"
+        content.contains("cosmos_extensions::http::middleware"),
+        "With atproto enabled, middleware should re-export cosmos-extensions auth types. Got:\n{content}"
     );
 }
 
@@ -3897,6 +4035,7 @@ async fn scaffold_main_has_security_middleware() {
         false,
         false,
         false,
+        false,
         "sea-orm",
     );
     let files = gen
@@ -3992,6 +4131,7 @@ async fn scaffold_main_has_graceful_shutdown() {
         false,
         false,
         false,
+        false,
         "sea-orm",
     );
     let files = gen
@@ -4032,6 +4172,7 @@ async fn scaffold_main_has_health_ready() {
 
     let gen = generate::scaffold::gen::ScaffoldGenerator::new(
         &output_dir,
+        false,
         false,
         false,
         false,
@@ -5049,6 +5190,7 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
         false,
         false,
         false,
+        false,
         "sea-orm",
     );
     let files = gen
@@ -5095,6 +5237,7 @@ async fn scaffold_generates_build_rs() {
         false,
         false,
         false,
+        false,
         "sea-orm",
     );
     let files = gen
@@ -5128,6 +5271,7 @@ async fn scaffold_main_has_version_endpoint() {
 
     let gen = generate::scaffold::gen::ScaffoldGenerator::new(
         &output_dir,
+        false,
         false,
         false,
         false,
@@ -5448,7 +5592,7 @@ entities = ["WorkerType"]
                     "deployment_id",
                     "deployment_id",
                     "DeploymentType",
-                    true,
+                    false,
                 )],
             )
             .with_properties(
@@ -5490,8 +5634,8 @@ entities = ["WorkerType"]
             "first segment entity should be DeploymentType"
         );
         assert!(
-            paths[0].segments[0].is_array,
-            "deployments property is an array"
+            !paths[0].segments[0].is_array,
+            "deployment_id is a scalar FK (entity-ref arrays are junction tables, not include-able)"
         );
 
         // Second segment: PositionType (scalar FK)
@@ -5513,6 +5657,7 @@ entities = ["WorkerType"]
     #[tokio::test]
     async fn resolve_vo_through_allof_to_entity() {
         let legal_type = SchemaNode {
+        custom_annotations: Default::default(),
             pg_table_name: String::new(),
             is_entity: false,
             classification: "value_object".to_string(),
@@ -5565,6 +5710,7 @@ entities = ["WorkerType"]
     #[tokio::test]
     async fn entity_model_emits_fk_for_vo_that_extends_entity() {
         let legal_type = SchemaNode {
+        custom_annotations: Default::default(),
             pg_table_name: String::new(),
             is_entity: false,
             classification: "value_object".to_string(),
@@ -5677,6 +5823,7 @@ operations = ["create", "read", "update", "list"]
     /// Shared setup: WorkerType → PersonLegalType (VO) → PersonType (entity) via allOf.
     fn setup_vo_entity_mock() -> MockEngine {
         let legal_type = SchemaNode {
+        custom_annotations: Default::default(),
             pg_table_name: String::new(),
             is_entity: false,
             classification: "value_object".to_string(),
@@ -7128,7 +7275,7 @@ async fn dto_include_dot_notation() {
         format: None,
         is_required: false,
         is_nullable: true,
-        is_array: true,
+        is_array: false,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -7378,12 +7525,12 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
         "deployment",
         "deployment",
         "deployment_id",
-        "Vec<Uuid>",
+        "Uuid",
         "UUID",
         false,
         Some(RefClassificationKind::EntityReference),
         Some("DeploymentType"),
-        true,
+        false,
     );
 
     // Deployment → Position FK (the leaf segment, emitted as a nested field).
@@ -7665,6 +7812,7 @@ allow_include = ["deployment.position"]
 #[tokio::test]
 async fn ui_e2e_include_test_generated_when_allow_include_configured() {
     let dep_schema = SchemaNode {
+        custom_annotations: Default::default(),
         schema_id: "hr/json/DepEntityType.json".into(),
         title: "DepEntityType".into(),
         schema_type: "object".into(),
@@ -7689,6 +7837,7 @@ async fn ui_e2e_include_test_generated_when_allow_include_configured() {
     };
 
     let worker_schema = SchemaNode {
+        custom_annotations: Default::default(),
         schema_id: "hr/json/WorkerType.json".into(),
         title: "WorkerType".into(),
         schema_type: "object".into(),
@@ -8001,6 +8150,7 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
 
     let gen = generate::scaffold::gen::ScaffoldGenerator::new(
         &output_dir,
+        false,
         false,
         false,
         false,

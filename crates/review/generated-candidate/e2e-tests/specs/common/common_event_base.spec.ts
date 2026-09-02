@@ -80,6 +80,7 @@ test.describe('EventBase — Read', () => {
     });
         expect(response.status()).toBe(404);
   });
+});
 
 
 

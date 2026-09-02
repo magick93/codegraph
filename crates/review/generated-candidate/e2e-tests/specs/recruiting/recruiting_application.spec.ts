@@ -70,6 +70,7 @@ test.describe('Application — Read', () => {
     });
         expect(response.status()).toBe(404);
   });
+});
 
 
 

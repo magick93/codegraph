@@ -15,9 +15,10 @@ use std::fmt;
 use codegraph_naming::PG_RESERVED;
 
 /// Supported database targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DatabaseTarget {
     /// PostgreSQL (default, current behavior)
+    #[default]
     Postgres,
     /// SQLite (for environments like Cloudflare D1, Trailbase)
     Sqlite,
@@ -52,12 +53,6 @@ impl fmt::Display for DatabaseTarget {
             DatabaseTarget::Postgres => write!(f, "postgres"),
             DatabaseTarget::Sqlite => write!(f, "sqlite"),
         }
-    }
-}
-
-impl Default for DatabaseTarget {
-    fn default() -> Self {
-        DatabaseTarget::Postgres
     }
 }
 

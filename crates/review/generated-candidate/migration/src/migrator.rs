@@ -51,7 +51,9 @@ impl MigrationTrait for RawSqlMigration {
 ///
 /// Resolution order:
 /// 1. `MIGRATIONS_DIR` environment variable
-/// 2. `<app>/migrations` (derived from this crate's manifest dir)
+/// 2. `<repo>/migrations` (derived from this crate's manifest dir — the
+///    migration crate lives at `<repo>/generated/cosmos-app/migration`, so
+///    `../../../migrations` resolves to the repo root)
 /// 3. `./migrations` relative to the current working directory
 fn migrations_dir() -> std::path::PathBuf {
     if let Ok(dir) = std::env::var("MIGRATIONS_DIR") {
@@ -61,6 +63,8 @@ fn migrations_dir() -> std::path::PathBuf {
         }
     }
     let manifest_relative = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
         .join("..")
         .join("migrations");
     if manifest_relative.exists() {

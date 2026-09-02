@@ -183,6 +183,17 @@ async fn health_ready(
 /// Handles tracing, DB connection, state construction, router
 /// building, and signal handling.
 pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
+    // HSTS — only when explicitly enabled (production with TLS termination)
+    let app = if std::env::var("HSTS_ENABLED").as_deref() == Ok("true") {
+        app.layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("strict-transport-security"),
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        ))
+    } else {
+        app
+    };
+
+
     let otel_provider = init_tracing();
     START_TIME.get_or_init(std::time::Instant::now);
 
@@ -192,11 +203,13 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| "app".to_string());
 
+
     let db_url = std::env::var("DATABASE_URL").map_err(|_| {
         
         "DATABASE_URL environment variable is required. Set it to your Postgres connection string, e.g. postgres://user:pass@host:5432/dbname"
         
     })?;
+
 
     let db = sea_orm::Database::connect(&db_url).await?;
 
@@ -542,9 +555,11 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         db: db.clone(),
 
 
+
         jwt_secret: std::env::var("SUPABASE_JWT_SECRET").map_err(|_| {
             "SUPABASE_JWT_SECRET environment variable is required. Set it to your Supabase project JWT secret"
         })?,
+
         workflow_service: {
             let svc = std::sync::Arc::new(
                 codegraph_workflow::engine::SeaOrmWorkflowService::new(db.clone())
@@ -656,19 +671,24 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         .nest("/webhooks", crate::webhook_router::webhook_routes())
 
 
+        // The pooled DB connection as an extension: the permission middleware
+        // runs from per-route layers where State is not available.
+        .layer(axum::extract::Extension(state.db.clone()))
+
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
 
+
+    // The whole router is assembled as `Router<()>`: the generated AppState
+    // pieces (health, /api/v1 stack, per-domain XRPC routers) are closed with
+    // `.with_state(state.clone())`, and the hand-written extension routers
+    // (already `Router<()>` via `AppContext`) merge in directly.
     let app = axum::Router::new()
 
-        // ── Hand-written route registrations ──
-        // These are preserved across regens via the // --- END GENERATED --- marker.
-        .merge(crate::api::ad_hoc::routes())
-
         .route("/version", axum::routing::get(version))
-        .route("/health", axum::routing::get(health))
-        .route("/health/ready", axum::routing::get(health_ready))
+        .route("/health", axum::routing::get(health).with_state(state.clone()))
+        .route("/health/ready", axum::routing::get(health_ready).with_state(state.clone()))
         .route("/metrics", axum::routing::get(move || std::future::ready(metrics_handle.render())))
-        .nest("/api/v1", api_routes)
+        .nest("/api/v1", api_routes.with_state(state.clone()))
         .route("/api-catalog.json", axum::routing::get(crate::api::openapi::catalog::api_catalog))
         .merge(
             SwaggerUi::new("/swagger-ui")
@@ -698,7 +718,13 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
                 ])
         )
 
-         .with_state(state);
+        // ── Hand-written extension routes (cosmos-extensions) ──
+        // The auth / oauth / identity / migration / oauth-admin / platform /
+        // well-known / XRPC-identity routers are hand-written extension code
+        // (cosmos_extensions::http::*) built against a single `Arc<AppContext>`
+        // and closed to `Router<()>` inside the crate.
+
+         ;
 
     // --- END GENERATED ---
 
@@ -709,29 +735,35 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         .layer(axum::middleware::from_fn(crate::metrics_middleware::track_metrics))
         .layer(cors)
         .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024)) // 10MB
-        .layer(SetResponseHeaderLayer::overriding(
+        // Security response headers — applied to every response via
+        // SetResponseHeaderLayer::overriding (one layer per header).
+                .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::HeaderName::from_static("x-content-type-options"),
             HeaderValue::from_static("nosniff"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::HeaderName::from_static("x-frame-options"),
-            HeaderValue::from_static("DENY"),
+            HeaderValue::from_static("SAMEORIGIN"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self'; font-src 'self' data:"),
         ));
 
-    // HSTS — only when explicitly enabled (production with TLS termination)
-    let app = if std::env::var("HSTS_ENABLED").as_deref() == Ok("true") {
-        app.layer(SetResponseHeaderLayer::overriding(
-            axum::http::header::HeaderName::from_static("strict-transport-security"),
-            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
-        ))
-    } else {
-        app
-    };
 
     let addr: SocketAddr = std::env::var("BIND_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:3000".to_string())
         .parse()
         .expect("BIND_ADDR must be a valid socket address (e.g. 0.0.0.0:3000 or 127.0.0.1:8080)");
+
     tracing::info!(app_name = %app_name, "Swagger UI: http://{addr}/swagger-ui/  |  API Catalog: http://{addr}/api-catalog.json");
     tracing::info!("Listening on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;

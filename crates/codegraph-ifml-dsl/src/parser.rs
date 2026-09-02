@@ -739,17 +739,16 @@ fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
     }
 }
 
-#[allow(clippy::type_complexity)]
-fn parse_view_body_content(
-    pair: Pair<Rule>,
-) -> (
+type ViewBodyParts = (
     Vec<ParameterDecl>,
     Option<String>,
     Vec<PropertyAssignment>,
     Vec<ContainerDeclaration>,
     Vec<ComponentDeclaration>,
     Vec<EventHandler>,
-) {
+);
+
+fn parse_view_body_content(pair: Pair<Rule>) -> ViewBodyParts {
     let mut params = Vec::new();
     let mut label = None;
     let mut properties = Vec::new();

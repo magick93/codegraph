@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import ProcessHistoryForm from '$lib/components/forms/ProcessHistoryForm.svelte';
-	import { createProcessHistory } from '$lib/stores/common_process_history';
+	import ProcessHistoryForm from '#lib/components/forms/ProcessHistoryForm.svelte';
+	import { createProcessHistory } from '#lib/stores/common_process_history.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { CreateProcessHistoryRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { CreateProcessHistoryRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/process-history';

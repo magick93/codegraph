@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { EntityList, createEntityApi } from '@crewbase/entities';
 	import { PayRunDescriptor } from './descriptor';
-	import { apiClient } from '$lib/api/client';
+	import { apiClient } from '#lib/api/client.ts';
 
 	const api = createEntityApi(PayRunDescriptor, { fetch, baseUrl: apiClient.baseUrl });
 </script>

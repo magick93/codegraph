@@ -102,6 +102,7 @@ test.describe('Candidate — Read', () => {
     });
         expect(response.status()).toBe(404);
   });
+});
 
 
 

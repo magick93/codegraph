@@ -5,9 +5,11 @@
 mod api;
 mod app_state;
 mod codelist;
+// SeaORM entity module: still generated in cornucopia workers — the routed
+// media handlers reference `crate::entity::...` (see worker_lib.tera).
+mod entity;
 {% if project.persistence_provider == "cornucopia" %}mod db_client;
 mod workflow_client;
-{% else %}mod entity;
 {% endif %}mod domain;
 mod error;
 mod middleware;

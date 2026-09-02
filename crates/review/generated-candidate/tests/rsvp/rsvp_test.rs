@@ -9,7 +9,7 @@ mod tests {
     #[test]
     fn test_rsvp_entity_columns() {
         // Verify the entity model compiles and has expected columns
-        let _model = cosmos::entity::rsvp::Model {
+        let _model = app::entity::rsvp_rsvp::Model {
             id: Uuid::new_v4(),
             ..Default::default()
         };

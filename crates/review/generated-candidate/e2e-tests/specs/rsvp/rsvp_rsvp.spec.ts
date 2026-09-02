@@ -72,6 +72,7 @@ test.describe('Rsvp — Read', () => {
     });
         expect(response.status()).toBe(404);
   });
+});
 
 
 

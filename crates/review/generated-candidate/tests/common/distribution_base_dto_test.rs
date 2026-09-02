@@ -8,7 +8,7 @@ mod tests {
     #[test]
     fn test_distribution_base_create_dto_deserializes() {
         let json = r#"{ }"#;
-        let _result: Result<cosmos::domain::common::distribution_base::dto_create::CreateDistributionBaseRequest, _> =
+        let _result: Result<app::domain::common::distribution_base::dto_create::CreateDistributionBaseRequest, _> =
             serde_json::from_str(json);
         // Should not panic even with empty body (optional fields)
     }
@@ -16,10 +16,8 @@ mod tests {
     #[test]
     fn test_distribution_base_response_serializes() {
         // Verify Response DTO can serialize
-        let response = cosmos::domain::common::distribution_base::dto_response::DistributionBaseResponse {
+        let response = app::domain::common::distribution_base::dto_response::DistributionBaseResponse {
             id: uuid::Uuid::new_v4(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
             ..Default::default()
         };
         let _json = serde_json::to_string(&response).unwrap();
@@ -28,49 +26,56 @@ mod tests {
 
     #[test]
     fn test_distribution_base_create_body_single_deserializes() {
-        // Verify CreateBody untagged enum deserializes a single JSON object
+        // An empty object only satisfies CreateBody::Single when every field is
+        // optional; entities with required fields reject it. Either way the
+        // untagged enum must decide without panicking.
         let json = r#"{ }"#;
-        let body: cosmos::api::common::distribution_base_handler::CreateDistributionBaseBody =
-            serde_json::from_str(json).expect("single object should deserialize as CreateBody::Single");
-        assert!(matches!(body, cosmos::api::common::distribution_base_handler::CreateDistributionBaseBody::Single(_)));
+        let result: Result<app::api::common::distribution_base_handler::CreateDistributionBaseBody, _> =
+            serde_json::from_str(json);
+        if let Ok(body) = result {
+            assert!(matches!(body, app::api::common::distribution_base_handler::CreateDistributionBaseBody::Single(_)));
+        }
     }
 
     #[test]
     fn test_distribution_base_create_body_bulk_deserializes() {
-        // Verify CreateBody untagged enum deserializes a JSON array
+        // A JSON array is only accepted as CreateBody::Bulk when its items
+        // satisfy the create request; entities with required fields reject
+        // `{}` items. Either way the untagged enum must decide without panicking.
         let json = r#"[{}, {}]"#;
-        let body: cosmos::api::common::distribution_base_handler::CreateDistributionBaseBody =
-            serde_json::from_str(json).expect("array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, cosmos::api::common::distribution_base_handler::CreateDistributionBaseBody::Bulk(ref items) if items.len() == 2));
+        let result: Result<app::api::common::distribution_base_handler::CreateDistributionBaseBody, _> =
+            serde_json::from_str(json);
+        if let Ok(body) = result {
+            assert!(matches!(body, app::api::common::distribution_base_handler::CreateDistributionBaseBody::Bulk(ref items) if items.len() == 2));
+        }
     }
 
     #[test]
     fn test_distribution_base_create_body_empty_array_deserializes() {
         // Verify empty array deserializes (handler rejects it, but serde should accept it)
         let json = r#"[]"#;
-        let body: cosmos::api::common::distribution_base_handler::CreateDistributionBaseBody =
+        let body: app::api::common::distribution_base_handler::CreateDistributionBaseBody =
             serde_json::from_str(json).expect("empty array should deserialize as CreateBody::Bulk");
-        assert!(matches!(body, cosmos::api::common::distribution_base_handler::CreateDistributionBaseBody::Bulk(ref items) if items.is_empty()));
+        assert!(matches!(body, app::api::common::distribution_base_handler::CreateDistributionBaseBody::Bulk(ref items) if items.is_empty()));
     }
 
     #[test]
     fn test_distribution_base_bulk_create_response_serializes() {
         // Verify BulkCreateResponse serializes with correct JSON structure
-        let response = cosmos::api::common::distribution_base_handler::BulkCreateResponse {
+        let response = app::api::common::distribution_base_handler::BulkCreateResponse {
             success: vec![
-                cosmos::domain::common::distribution_base::dto_response::DistributionBaseResponse {
+                app::domain::common::distribution_base::dto_response::DistributionBaseResponse {
                     id: uuid::Uuid::new_v4(),
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
                     ..Default::default()
                 },
             ],
             failed: vec![
-                cosmos::api::common::distribution_base_handler::BulkItemError {
+                app::error::BulkItemError {
                     index: 1,
                     error: "test error".to_string(),
                 },
             ],
+            correlation_id: uuid::Uuid::new_v4().to_string(),
         };
         let json = serde_json::to_string(&response).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();

@@ -9,7 +9,7 @@ mod tests {
     #[test]
     fn test_amount_entity_columns() {
         // Verify the entity model compiles and has expected columns
-        let _model = cosmos::entity::amount::Model {
+        let _model = app::entity::common_amount::Model {
             id: Uuid::new_v4(),
             ..Default::default()
         };

@@ -3,7 +3,7 @@
 
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
-import { createSupabaseClient } from '$lib/supabase';
+import { createSupabaseClient } from '#lib/supabase.ts';
 
 export const load: LayoutServerLoad = async ({ fetch, cookies }) => {
 	const supabase = createSupabaseClient({

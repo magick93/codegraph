@@ -244,7 +244,8 @@ impl EntityGenerator for WorkflowActionGenerator {
             0
         };
 
-        let param_name = super::router::param_name_from_path_segment(&resolve_path_segment(entity_cfg, &schema));
+        let param_name =
+            super::router::param_name_from_path_segment(&resolve_path_segment(entity_cfg, &schema));
         // Resolve parent param name, path segment, and domain for child entities.
         let (parent_param_name, parent_path_segment, parent_domain) = if resolved_role == "child" {
             let pt = entity_cfg.and_then(|ec| ec.parent.clone()).or_else(|| {

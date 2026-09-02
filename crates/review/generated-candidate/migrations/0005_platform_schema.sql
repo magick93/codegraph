@@ -339,3 +339,9 @@ CREATE TRIGGER trg_app_registry_updated_at
 CREATE TRIGGER trg_webhook_endpoint_updated_at
     BEFORE UPDATE ON platform.webhook_endpoint
     FOR EACH ROW EXECUTE FUNCTION platform.set_updated_at();
+
+-- App role DML on platform tables (workflow engine, app registry, webhooks).
+-- ALTER DEFAULT PRIVILEGES additionally covers any platform tables added by
+-- later migrations (e.g. the integration tables in 0007).
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA platform TO app_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA platform GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;

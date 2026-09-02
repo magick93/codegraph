@@ -15,7 +15,6 @@ mod integrations;
 mod metrics_middleware;
 mod middleware;
 mod qs_query;
-
 mod server;
 
 mod webhook_api;

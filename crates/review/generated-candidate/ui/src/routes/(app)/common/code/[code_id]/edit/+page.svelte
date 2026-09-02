@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import CodeForm from '$lib/components/forms/CodeForm.svelte';
-	import { updateCode } from '$lib/stores/common_code';
+	import CodeForm from '#lib/components/forms/CodeForm.svelte';
+	import { updateCode } from '#lib/stores/common_code.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { CodeResponse, UpdateCodeRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { CodeResponse, UpdateCodeRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/common/code';

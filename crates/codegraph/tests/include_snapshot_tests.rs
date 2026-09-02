@@ -206,20 +206,23 @@ fn setup_dot_notation_mock() -> MockEngine {
             vec![PropertyNode {
                 name: "deployment".into(),
                 prop_type: "object".into(),
-                description: Some("Deployments".into()),
+                description: Some("Deployment".into()),
                 format: None,
                 is_required: false,
                 is_nullable: true,
-                is_array: true,
+                // Scalar entity-ref: since junction support, array-of-entity-ref
+                // properties materialize as junction tables and are not
+                // include-able; dot-notation paths use scalar FKs.
+                is_array: false,
                 pattern: None,
                 min_length: None,
                 max_length: None,
                 minimum: None,
                 maximum: None,
-                pg_column_name: "deployment".into(),
+                pg_column_name: "deployment_id".into(),
                 pg_column_type: "UUID".into(),
                 rust_field_name: "deployment".into(),
-                rust_field_type: "Option<Vec<Uuid>>".into(),
+                rust_field_type: "Option<Uuid>".into(),
                 sea_orm_type: "Uuid".into(),
                 render_strategy: "entity_reference".into(),
                 ref_target: Some("DeploymentType".into()),
@@ -227,8 +230,8 @@ fn setup_dot_notation_mock() -> MockEngine {
                 projection: None,
                 classification_kind: Some(RefClassificationKind::EntityReference),
                 ui_override_detail: None,
-                ui_override_list_cell: None,
                 ui_override_form: None,
+                ui_override_list_cell: None,
                 ui_override_inline: None,
             }],
         )

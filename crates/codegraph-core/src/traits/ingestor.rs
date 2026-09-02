@@ -116,10 +116,7 @@ pub trait GraphIngestor: Send + Sync {
         Ok(())
     }
 
-    async fn ingest_relationship(
-        &self,
-        relationship: &RelationshipNode,
-    ) -> Result<(), GraphError> {
+    async fn ingest_relationship(&self, relationship: &RelationshipNode) -> Result<(), GraphError> {
         let _ = relationship;
         Ok(())
     }

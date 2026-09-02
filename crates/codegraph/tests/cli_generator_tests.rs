@@ -681,8 +681,8 @@ async fn cli_scaffold_cargo_toml_has_correct_deps() {
         "Should depend on serde_json for JSON handling"
     );
     assert!(
-        cargo_file.content.contains("hr-cli"),
-        "Should use hr-cli as package name"
+        cargo_file.content.contains("app-cli"),
+        "Should derive the CLI package name from project app_name"
     );
 }
 

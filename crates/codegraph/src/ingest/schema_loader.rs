@@ -80,6 +80,12 @@ impl SchemaLoader {
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
+            // Files named `<name>.schema.json` yield file_stem "<name>.schema";
+            // normalize to "<name>" so stems match $ref stems and schema titles.
+            let stem = stem
+                .strip_suffix(".schema")
+                .map(String::from)
+                .unwrap_or(stem);
 
             let content = std::fs::read_to_string(&full_path)?;
             let schema: serde_json::Value = serde_json::from_str(&content)?;

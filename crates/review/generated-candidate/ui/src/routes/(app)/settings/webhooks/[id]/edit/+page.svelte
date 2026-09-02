@@ -3,11 +3,11 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { Button } from '$lib/components/ui/button';
-  import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
-  import { Textarea } from '$lib/components/ui/textarea';
-  import { apiGet, apiPost, apiPut } from '$lib/api/client';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import { Input } from '#lib/components/ui/input/index.js';
+  import { Label } from '#lib/components/ui/label/index.js';
+  import { Textarea } from '#lib/components/ui/textarea/index.js';
+  import { apiGet, apiPost, apiPut } from '#lib/api/client.ts';
 
   const isEdit = $derived(!!page.params.id);
   const endpointId = $derived(page.params.id);

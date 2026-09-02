@@ -4,6 +4,7 @@
 use axum::Router;
 
 use crate::app_state::AppState;
+use crate::middleware::permission::PermissionGuard as _;
 
 // Handwritten extensions — create this file to add custom routes.
 // #[path = "handwritten_routes.rs"]
@@ -30,10 +31,19 @@ fn application_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(application_handler::list).post(application_handler::create))
+        .route(
+            "/",
+            axum::routing::get(application_handler::list).guard("applications", "list")
+                .merge(axum::routing::post(application_handler::create).guard("applications", "create")),
+        )
 
 
-        .route("/{application_id}", axum::routing::get(application_handler::get_by_id).put(application_handler::update).delete(application_handler::delete))
+        .route(
+            "/{application_id}",
+            axum::routing::get(application_handler::get_by_id).guard("applications", "read")
+                .merge(axum::routing::put(application_handler::update).guard("applications", "update"))
+                .merge(axum::routing::delete(application_handler::delete).guard("applications", "delete")),
+        )
 
 
 
@@ -42,8 +52,27 @@ fn application_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (recruiting.application):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(application_scope_guard))
 }
 
+async fn application_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "recruiting",
+        "application",
+    )
+    .await
+}
 
 
 fn candidate_routes() -> Router<AppState> {
@@ -55,24 +84,51 @@ fn candidate_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(candidate_handler::list).post(candidate_handler::create))
+        .route(
+            "/",
+            axum::routing::get(candidate_handler::list).guard("candidate", "list")
+                .merge(axum::routing::post(candidate_handler::create).guard("candidate", "create")),
+        )
 
 
-        .route("/{candidate_id}", axum::routing::get(candidate_handler::get_by_id).put(candidate_handler::update))
-
-
-
-
-        .route("/{candidate_id}/actions/transition", axum::routing::post(candidate_workflow::transition))
-
-        .route("/{candidate_id}/actions/delegate", axum::routing::post(candidate_workflow::delegate))
-        .route("/{candidate_id}/workflow", axum::routing::get(candidate_workflow::get_workflow_state))
-        .route("/{candidate_id}/workflow/history", axum::routing::get(candidate_workflow::get_process_history))
-
+        .route(
+            "/{candidate_id}",
+            axum::routing::get(candidate_handler::get_by_id).guard("candidate", "read")
+                .merge(axum::routing::put(candidate_handler::update).guard("candidate", "update")),
+        )
 
 
 
 
+        .route("/{candidate_id}/actions/transition", axum::routing::post(candidate_workflow::transition).guard("candidate", "update"))
+
+        .route("/{candidate_id}/actions/delegate", axum::routing::post(candidate_workflow::delegate).guard("candidate", "update"))
+        .route("/{candidate_id}/workflow", axum::routing::get(candidate_workflow::get_workflow_state).guard("candidate", "read"))
+        .route("/{candidate_id}/workflow/history", axum::routing::get(candidate_workflow::get_process_history).guard("candidate", "read"))
+
+
+
+
+
+        // API-key scope enforcement (recruiting.candidate):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(candidate_scope_guard))
 }
 
+async fn candidate_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "recruiting",
+        "candidate",
+    )
+    .await
+}
 

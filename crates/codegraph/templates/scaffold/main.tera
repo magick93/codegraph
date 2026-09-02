@@ -52,11 +52,11 @@ struct Cli {
 enum Commands {
     /// Start the API server
     Start {
-        #[arg(long = "bind-addr", env = "BIND_ADDR", default_value = "0.0.0.0:3000")]
-        bind_addr: String,
+        #[arg(long = "bind-addr", env = "BIND_ADDR")]
+        bind_addr: Option<String>,
         #[arg(long = "database-url", env = "DATABASE_URL")]
         database_url: Option<String>,
-        #[arg(long = "config", env = "HR_APP_CONFIG")]
+        #[arg(long = "config", env = "APP_CONFIG")]
         config: Option<String>,
         #[arg(long = "pid-file")]
         pid_file: Option<String>,
@@ -83,7 +83,7 @@ enum Commands {
     Migrate {
         #[arg(long = "database-url", env = "DATABASE_URL")]
         database_url: Option<String>,
-        #[arg(long = "config", env = "HR_APP_CONFIG")]
+        #[arg(long = "config", env = "APP_CONFIG")]
         config: Option<String>,
     },
     /// Generate a default configuration file
@@ -95,7 +95,7 @@ enum Commands {
     Doctor {
         #[arg(long = "database-url", env = "DATABASE_URL")]
         database_url: Option<String>,
-        #[arg(long = "config", env = "HR_APP_CONFIG")]
+        #[arg(long = "config", env = "APP_CONFIG")]
         config: Option<String>,
     },
     /// Print version information
@@ -182,12 +182,17 @@ fn find_pid_by_port(_port: u16) -> Option<u32> {
 async fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Start { bind_addr, database_url, config: _config, pid_file } => {
-            std::env::set_var("BIND_ADDR", &bind_addr);
+        Commands::Start { bind_addr, database_url, config, pid_file } => {
+            if let Some(a) = bind_addr.as_deref() {
+                std::env::set_var("BIND_ADDR", a);
+            }
             if let Some(u) = database_url {
                 std::env::set_var("DATABASE_URL", &u);
             }
-            let pf_path = pid_file_path(Some(&bind_addr), pid_file.as_deref());
+            if let Some(c) = config {
+                std::env::set_var("APP_CONFIG", &c);
+            }
+            let pf_path = pid_file_path(bind_addr.as_deref(), pid_file.as_deref());
             let pid = std::process::id();
             if let Err(e) = std::fs::write(&pf_path, pid.to_string()) {
                 eprintln!("warning: could not write PID file {pf_path}: {e}");
@@ -227,13 +232,26 @@ async fn main() {
                 }
             }
         }
-        Commands::Doctor { database_url, config: _config } => {
+        Commands::Doctor { database_url, config } => {
             if let Some(u) = database_url {
                 std::env::set_var("DATABASE_URL", &u);
             }
+            if let Some(c) = config {
+                std::env::set_var("APP_CONFIG", &c);
+            }
             crate::doctor::run_checks().await;
         }
-        Commands::Migrate { database_url, config: _config } => {
+        Commands::Migrate { database_url, config } => {
+            if let Some(c) = config {
+                std::env::set_var("APP_CONFIG", &c);
+            }
+            if std::env::var("DATABASE_URL").is_err() {
+                if let Ok(cfg) = crate::config::ServerConfig::load(None) {
+                    if let Some(url) = cfg.database_url {
+                        std::env::set_var("DATABASE_URL", url);
+                    }
+                }
+            }
             if let Some(u) = database_url {
                 std::env::set_var("DATABASE_URL", &u);
             }

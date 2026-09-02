@@ -11,8 +11,9 @@ use crate::generate::db::dialect::DatabaseTarget;
 ///
 /// Selects which ORM/query framework generates entity models and repository
 /// implementations. The DDL generator is provider-agnostic and always runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PersistenceProvider {
+    #[default]
     SeaOrm,
     Cornucopia,
 }
@@ -30,12 +31,6 @@ impl PersistenceProvider {
             Self::SeaOrm => "sea_orm",
             Self::Cornucopia => "cornucopia",
         }
-    }
-}
-
-impl Default for PersistenceProvider {
-    fn default() -> Self {
-        Self::SeaOrm
     }
 }
 

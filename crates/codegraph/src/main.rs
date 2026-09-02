@@ -46,14 +46,8 @@ async fn main() -> codegraph::error::Result<()> {
                 cli::ClassifyFormat::Table => codegraph::driver::ClassifyFormat::Table,
                 cli::ClassifyFormat::Json => codegraph::driver::ClassifyFormat::Json,
             };
-            codegraph::driver::classify(
-                &schemas,
-                &classifier,
-                &config,
-                domain.as_deref(),
-                format,
-            )
-            .await
+            codegraph::driver::classify(&schemas, &classifier, &config, domain.as_deref(), format)
+                .await
         }
         cli::Commands::Run {
             schemas,
@@ -146,7 +140,6 @@ async fn main() -> codegraph::error::Result<()> {
         },
     }
 }
-
 
 async fn cmd_migrate(args: cli::MigrateArgs) -> codegraph::error::Result<()> {
     let domain_config = codegraph_config::config::parse_domain_config(&args.config)
@@ -327,4 +320,3 @@ async fn cmd_lsp(
 
     Ok(())
 }
-

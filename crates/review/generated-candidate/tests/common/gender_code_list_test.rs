@@ -9,7 +9,7 @@ mod tests {
     #[test]
     fn test_gender_code_list_entity_columns() {
         // Verify the entity model compiles and has expected columns
-        let _model = cosmos::entity::gender_code_list::Model {
+        let _model = app::entity::common_gender_code_list::Model {
             id: Uuid::new_v4(),
             ..Default::default()
         };

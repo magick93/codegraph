@@ -82,6 +82,7 @@ test.describe('PublicEvent — Read', () => {
     });
         expect(response.status()).toBe(404);
   });
+});
 
 
 

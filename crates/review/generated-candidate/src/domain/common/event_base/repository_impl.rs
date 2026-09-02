@@ -70,6 +70,7 @@ impl EventBaseRepository<sea_orm::DatabaseTransaction> for EventBaseRepositoryIm
             given_name: row.given_name,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -152,6 +153,7 @@ impl EventBaseRepository<sea_orm::DatabaseTransaction> for EventBaseRepositoryIm
                 given_name: row.given_name,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

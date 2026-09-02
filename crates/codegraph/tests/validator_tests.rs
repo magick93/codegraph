@@ -33,9 +33,7 @@ fn test_file_presence_validator_pass() {
     write_temp_file(dir.path(), "foo.txt", "hello");
     write_temp_file(dir.path(), "bar.txt", "world");
 
-    let files = vec![
-        make_file("foo.txt", "hello"),
-    ];
+    let files = vec![make_file("foo.txt", "hello")];
 
     let v = FilePresenceValidator {
         label: "test".into(),
@@ -51,9 +49,7 @@ fn test_file_presence_validator_fail() {
     let dir = tempfile::tempdir().unwrap();
     write_temp_file(dir.path(), "foo.txt", "hello");
 
-    let files = vec![
-        make_file("foo.txt", "hello"),
-    ];
+    let files = vec![make_file("foo.txt", "hello")];
 
     let v = FilePresenceValidator {
         label: "test".into(),
@@ -75,9 +71,7 @@ fn test_file_presence_validator_fail() {
 #[test]
 fn test_string_pattern_validator_contains() {
     let dir = tempfile::tempdir().unwrap();
-    let files = vec![
-        make_file("a.txt", "hello world"),
-    ];
+    let files = vec![make_file("a.txt", "hello world")];
 
     let v = StringPatternValidator {
         label: "test".into(),
@@ -92,9 +86,7 @@ fn test_string_pattern_validator_contains() {
 #[test]
 fn test_string_pattern_validator_missing_pattern() {
     let dir = tempfile::tempdir().unwrap();
-    let files = vec![
-        make_file("a.txt", "hello world"),
-    ];
+    let files = vec![make_file("a.txt", "hello world")];
 
     let v = StringPatternValidator {
         label: "test".into(),
@@ -115,9 +107,7 @@ fn test_string_pattern_validator_missing_pattern() {
 #[test]
 fn test_string_pattern_validator_forbidden_pattern() {
     let dir = tempfile::tempdir().unwrap();
-    let files = vec![
-        make_file("a.txt", "hello badword world"),
-    ];
+    let files = vec![make_file("a.txt", "hello badword world")];
 
     let v = StringPatternValidator {
         label: "test".into(),

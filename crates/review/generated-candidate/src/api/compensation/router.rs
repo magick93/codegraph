@@ -4,6 +4,7 @@
 use axum::Router;
 
 use crate::app_state::AppState;
+use crate::middleware::permission::PermissionGuard as _;
 
 // Handwritten extensions — create this file to add custom routes.
 // #[path = "handwritten_routes.rs"]
@@ -26,10 +27,19 @@ fn pay_run_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(pay_run_handler::list).post(pay_run_handler::create))
+        .route(
+            "/",
+            axum::routing::get(pay_run_handler::list).guard("pay-runs", "list")
+                .merge(axum::routing::post(pay_run_handler::create).guard("pay-runs", "create")),
+        )
 
 
-        .route("/{pay_run_id}", axum::routing::get(pay_run_handler::get_by_id).put(pay_run_handler::update).delete(pay_run_handler::delete))
+        .route(
+            "/{pay_run_id}",
+            axum::routing::get(pay_run_handler::get_by_id).guard("pay-runs", "read")
+                .merge(axum::routing::put(pay_run_handler::update).guard("pay-runs", "update"))
+                .merge(axum::routing::delete(pay_run_handler::delete).guard("pay-runs", "delete")),
+        )
 
 
 
@@ -38,6 +48,25 @@ fn pay_run_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (compensation.pay_run):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(pay_run_scope_guard))
 }
 
+async fn pay_run_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "compensation",
+        "pay_run",
+    )
+    .await
+}
 

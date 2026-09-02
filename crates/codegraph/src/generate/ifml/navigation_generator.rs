@@ -48,7 +48,7 @@ impl GlobalGenerator for IfmlNavigationGenerator {
         let model = querier
             .get_ifml_model()
             .await
-            .map_err(|e| crate::error::Error::Graph(e))?;
+            .map_err(crate::error::Error::Graph)?;
 
         if model.view_containers.is_empty() {
             return Ok(vec![]);

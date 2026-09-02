@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { EntityDetail, createEntityApi } from '@crewbase/entities';
 	import { PositionScheduleTypeCodeListDescriptor } from '../../descriptor';
-	import { apiClient } from '$lib/api/client';
+	import { apiClient } from '#lib/api/client.ts';
 
 	let { data } = $props();
 

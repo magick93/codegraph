@@ -59,8 +59,7 @@ impl EntityGenerator for PlaywrightEntityGenerator {
 
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
-        let operations =
-            resolve_entity_operations(db, config, domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, domain, &entity_name).await;
 
         let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
         let has_workflow = workflow

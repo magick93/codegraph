@@ -8,6 +8,7 @@ expression: "&f.content"
 use axum::Router;
 
 use crate::app_state::AppState;
+use crate::middleware::permission::PermissionGuard as _;
 
 // Handwritten extensions — create this file to add custom routes.
 // #[path = "handwritten_routes.rs"]
@@ -30,10 +31,19 @@ fn candidate_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(candidate_handler::list).post(candidate_handler::create))
+        .route(
+            "/",
+            axum::routing::get(candidate_handler::list).guard("candidates", "list")
+                .merge(axum::routing::post(candidate_handler::create).guard("candidates", "create")),
+        )
 
 
-        .route("/{candidate_id}", axum::routing::get(candidate_handler::get_by_id).put(candidate_handler::update).delete(candidate_handler::delete))
+        .route(
+            "/{candidate_id}",
+            axum::routing::get(candidate_handler::get_by_id).guard("candidates", "read")
+                .merge(axum::routing::put(candidate_handler::update).guard("candidates", "update"))
+                .merge(axum::routing::delete(candidate_handler::delete).guard("candidates", "delete")),
+        )
 
 
 
@@ -42,4 +52,24 @@ fn candidate_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (recruiting.candidate):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(candidate_scope_guard))
+}
+
+async fn candidate_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "recruiting",
+        "candidate",
+    )
+    .await
 }

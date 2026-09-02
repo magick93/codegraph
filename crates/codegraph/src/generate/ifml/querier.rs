@@ -101,7 +101,7 @@ impl<'a> IfmlQuerier for IfmlGraphQuerier<'a> {
 
         for vc in &raw_containers {
             let components = self.get_components_for(&vc.name).await?;
-            let events = self.get_events_for(&format!("vc:{}", &vc.name)).await?;
+            let events = self.get_events_for(&format!("vc:{}", vc.name)).await?;
 
             containers.push(IfmlViewContainer {
                 name: vc.name.clone(),

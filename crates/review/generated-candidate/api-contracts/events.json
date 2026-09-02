@@ -1,0 +1,39 @@
+{
+  "domain": "events",
+  "basePath": "/api/v1/events",
+  "entities": {
+    "public-event": {
+      "entity": "PublicEvent",
+      "module": "public_event",
+      "pathSegment": "public-event",
+      "basePath": "/api/v1/events/public-event",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/events/public-event",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/events/public-event",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/events/public-event/{public_event_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/events/public-event/{public_event_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/events/public-event/{public_event_id}",
+          "operation": "delete"
+        }
+      ]
+    }
+  }
+}

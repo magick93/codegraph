@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import PublicEventForm from '$lib/components/forms/PublicEventForm.svelte';
-	import { updatePublicEvent } from '$lib/stores/events_public_event';
+	import PublicEventForm from '#lib/components/forms/PublicEventForm.svelte';
+	import { updatePublicEvent } from '#lib/stores/events_public_event.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { PublicEventResponse, UpdatePublicEventRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { PublicEventResponse, UpdatePublicEventRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/events/public-event';

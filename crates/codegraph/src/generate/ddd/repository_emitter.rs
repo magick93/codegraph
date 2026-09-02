@@ -51,9 +51,11 @@ async fn resolve_worker_detail_joins(
     let person_fk = format!("{}_id", parent_table);
     let name_table = format!("{}.{}_{}_{}", schema, parent_table, "person", "name");
     let name_fk = format!("{}_{}_{}", parent_table, "person", "id");
-    let mut joins = Vec::new();
-    joins.push((name_table, name_fk, "wp".to_string()));
-    joins.push((person_table, person_fk, "w".to_string()));
+    let joins = vec![
+        (name_table, name_fk, "wp".to_string()),
+        (person_table, person_fk, "w".to_string()),
+    ];
+    let mut joins = joins;
     joins.reverse();
     joins
 }
@@ -92,6 +94,9 @@ pub struct EntityTree {
     pub entity_module: String,
     pub direct_columns: Vec<TreeColumn>,
     pub child_tables: Vec<ChildTableInfo>,
+    /// Junction (many-to-many) tables for array-of-entity-ref properties that
+    /// lack a back-reference column on the target schema.
+    pub junction_tables: Vec<JunctionTableInfo>,
     pub has_create: bool,
     pub has_read: bool,
     pub has_update: bool,
@@ -176,7 +181,12 @@ impl TreeColumn {
 /// Handles codelist enum parsing, JSONB deserialization, and plain copy.
 /// `pad` is the indentation prefix (e.g. `"            "`).
 /// `row_var` is the variable name holding the entity row (e.g. `"row"`).
-pub(crate) fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_var: &str, pad: &str) {
+pub(crate) fn emit_entity_to_dto_field(
+    code: &mut String,
+    col: &TreeColumn,
+    row_var: &str,
+    pad: &str,
+) {
     let dto_field = col.dto_name();
     let entity_field = &col.field_name;
     // StructuredWrapper must take priority over dto_rust_type — it uses
@@ -229,7 +239,11 @@ pub(crate) fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_
 ///
 /// For array children: `field: field_rows,`
 /// For single children: `field: field_rows.into_iter().next(),`
-pub(crate) fn emit_child_field_population(code: &mut String, children: &[ChildTableInfo], pad: &str) {
+pub(crate) fn emit_child_field_population(
+    code: &mut String,
+    children: &[ChildTableInfo],
+    pad: &str,
+) {
     for child in children {
         if child.is_array {
             writeln!(
@@ -252,6 +266,7 @@ pub(crate) fn emit_child_field_population(code: &mut String, children: &[ChildTa
 /// Emit the response struct construction shared by `find_by_id` and `find_by_id_scoped`.
 fn emit_response_construction(code: &mut String, tree: &EntityTree) {
     emit_child_reads(code, &tree.child_tables, "id", 2);
+    emit_junction_reads(code, &tree.junction_tables, "id", 2);
     writeln!(code).unwrap();
     writeln!(code, "        Ok(Some({}Response {{", tree.entity_name).unwrap();
     writeln!(code, "            id: row.id,").unwrap();
@@ -259,14 +274,23 @@ fn emit_response_construction(code: &mut String, tree: &EntityTree) {
         if col.is_composite_range {
             continue;
         }
+        // Schema-defined created_at/updated_at are emitted by the trailing
+        // standard fields below — avoid duplicate struct fields.
+        if col.field_name == "created_at" || col.field_name == "updated_at" {
+            continue;
+        }
         emit_entity_to_dto_field(code, col, "row", "            ");
     }
     emit_child_field_population(code, &tree.child_tables, "            ");
+    emit_junction_field_population(code, &tree.junction_tables, "            ");
     if tree.has_workflow {
         writeln!(code, "            workflow_state: None,").unwrap();
     }
     writeln!(code, "            created_at: row.created_at,").unwrap();
     writeln!(code, "            updated_at: row.updated_at,").unwrap();
+    // DTO fields the tree does not load (e.g. base-inherited junction arrays
+    // under nested composition nodes) default to None instead of failing E0063.
+    writeln!(code, "            ..Default::default()").unwrap();
     writeln!(code, "        }}))").unwrap();
     writeln!(code, "    }}").unwrap();
 }
@@ -291,6 +315,26 @@ pub struct ChildTableInfo {
     pub columns: Vec<ChildColumn>,
     /// Nested child tables (ValueObject properties within this child table)
     pub child_tables: Vec<ChildTableInfo>,
+}
+
+/// Tracks a junction (many-to-many) table persisted and read via raw SQL.
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct JunctionTableInfo {
+    /// Rust field name on parent DTO — raw junction property name, no `_id`
+    /// suffix (e.g. "settlor_ids" → Vec<uuid::Uuid>).
+    pub field_name: String,
+    /// SQL table name — `<parent_table>_<raw_field>` (e.g. "trust_settlor_ids"),
+    /// matching the DDL junction-table formula exactly.
+    pub sql_table_name: String,
+    /// SQL schema name (e.g. "core")
+    pub sql_schema_name: String,
+    /// Parent FK column (e.g. "case_id")
+    pub parent_fk_column: String,
+    /// Child FK column (e.g. "party_id")
+    pub child_fk_column: String,
+    /// Whether the schema marks the array property as required
+    pub is_required: bool,
 }
 
 #[allow(dead_code)]
@@ -476,7 +520,7 @@ fn emit_nested_filter_parse(code: &mut String, nf: &NestedFilterFieldInfo) -> &'
             "parsed"
         }
         // Entity reference types (e.g. "OrganizationType") — always UUID FK columns.
-        ty if ty.ends_with("Type") && ty.chars().next().map_or(false, |c| c.is_uppercase()) => {
+        ty if ty.ends_with("Type") && ty.chars().next().is_some_and(|c| c.is_uppercase()) => {
             writeln!(
                 code,
                 "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{key}': {{e}}\")))?;",
@@ -806,6 +850,16 @@ async fn build_child_table_info(
                 });
             }
             Some(RefClassificationKind::EntityReference) => {
+                // Array entity refs are junction tables, never columns — the
+                // same rule the DDL generator applies (ddl.rs: array
+                // EntityReference => return None, junction CompositionNode).
+                // Emitting them as scalar UUID columns made INSERT/SELECT
+                // reference columns the DDL never created (e.g.
+                // assessment_report."results", worker_person.employment_permits
+                // → "column ... does not exist" at runtime).
+                if c.is_array {
+                    continue;
+                }
                 child_columns.push(ChildColumn {
                     field_name: field_def.rust_field_name,
                     pg_column_name: field_def.column_name,
@@ -1055,13 +1109,193 @@ fn emit_child_inserts(
     }
 }
 
-/// Emit entity INSERT code for VO→entity properties.
-///
-/// For each entry, generates an `if let Some(ref item) = cmd.{field}` block that:
-/// 1. Creates a new UUID for the entity table
-/// 2. INSERTS into the entity table with the VO's columns
-/// 3. Recursively handles the entity's own child tables (e.g. person_name)
-/// 4. UPDATEs the parent entity's FK column with the new entity ID
+/// Emit junction (many-to-many) INSERT statements for array-of-entity-ref
+/// properties. The DTO carries `Vec<uuid::Uuid>` (required) or
+/// `Option<Vec<uuid::Uuid>>` (optional).
+fn emit_junction_inserts(
+    code: &mut String,
+    junctions: &[JunctionTableInfo],
+    parent_id_var: &str,
+    item_accessor: &str,
+    indent: usize,
+) {
+    let pad = "    ".repeat(indent);
+    for j in junctions {
+        writeln!(code).unwrap();
+        writeln!(
+            code,
+            "{pad}// Insert junction rows: {}.{}",
+            j.sql_schema_name, j.sql_table_name
+        )
+        .unwrap();
+        let sql = format!(
+            "INSERT INTO {}.{} ({}, {}) VALUES ($1, $2)",
+            j.sql_schema_name,
+            q(&j.sql_table_name),
+            q(&j.parent_fk_column),
+            q(&j.child_fk_column),
+        );
+        if j.is_required {
+            writeln!(
+                code,
+                "{pad}for item in &{item_accessor}.{field} {{",
+                field = j.field_name
+            )
+            .unwrap();
+            writeln!(code, "{pad}    let stmt = Statement::from_sql_and_values(").unwrap();
+            writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
+            writeln!(code, "{pad}        \"{sql}\",").unwrap();
+            writeln!(
+                code,
+                "{pad}        vec![{parent_id_var}.into(), (*item).into()],"
+            )
+            .unwrap();
+            writeln!(code, "{pad}    );").unwrap();
+            writeln!(code, "{pad}    tx.execute(stmt).await?;").unwrap();
+            writeln!(code, "{pad}}}").unwrap();
+        } else {
+            writeln!(
+                code,
+                "{pad}if let Some(ref ids) = {item_accessor}.{field} {{",
+                field = j.field_name
+            )
+            .unwrap();
+            writeln!(code, "{pad}    for item in ids {{").unwrap();
+            writeln!(
+                code,
+                "{pad}        let stmt = Statement::from_sql_and_values("
+            )
+            .unwrap();
+            writeln!(code, "{pad}            DatabaseBackend::Postgres,").unwrap();
+            writeln!(code, "{pad}            \"{sql}\",").unwrap();
+            writeln!(
+                code,
+                "{pad}            vec![{parent_id_var}.into(), (*item).into()],"
+            )
+            .unwrap();
+            writeln!(code, "{pad}        );").unwrap();
+            writeln!(code, "{pad}        tx.execute(stmt).await?;").unwrap();
+            writeln!(code, "{pad}    }}").unwrap();
+            writeln!(code, "{pad}}}").unwrap();
+        }
+    }
+}
+
+/// Emit junction replace logic for UPDATE: when the update request carries the
+/// field, delete existing junction rows and re-insert the supplied ids.
+fn emit_junction_replace(code: &mut String, junctions: &[JunctionTableInfo], indent: usize) {
+    let pad = "    ".repeat(indent);
+    for j in junctions {
+        writeln!(code).unwrap();
+        writeln!(
+            code,
+            "{pad}// Replace junction rows: {}.{}",
+            j.sql_schema_name, j.sql_table_name
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "{pad}if let Some(ref ids) = cmd.{field} {{",
+            field = j.field_name
+        )
+        .unwrap();
+        let del_sql = format!(
+            "DELETE FROM {}.{} WHERE {} = $1",
+            j.sql_schema_name,
+            q(&j.sql_table_name),
+            q(&j.parent_fk_column),
+        );
+        writeln!(code, "{pad}    let stmt = Statement::from_sql_and_values(").unwrap();
+        writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
+        writeln!(code, "{pad}        \"{del_sql}\",").unwrap();
+        writeln!(code, "{pad}        vec![id.into()],").unwrap();
+        writeln!(code, "{pad}    );").unwrap();
+        writeln!(code, "{pad}    tx.execute(stmt).await?;").unwrap();
+        let ins_sql = format!(
+            "INSERT INTO {}.{} ({}, {}) VALUES ($1, $2)",
+            j.sql_schema_name,
+            q(&j.sql_table_name),
+            q(&j.parent_fk_column),
+            q(&j.child_fk_column),
+        );
+        writeln!(code, "{pad}    for item in ids {{").unwrap();
+        writeln!(
+            code,
+            "{pad}        let stmt = Statement::from_sql_and_values("
+        )
+        .unwrap();
+        writeln!(code, "{pad}            DatabaseBackend::Postgres,").unwrap();
+        writeln!(code, "{pad}            \"{ins_sql}\",").unwrap();
+        writeln!(code, "{pad}            vec![id.into(), (*item).into()],").unwrap();
+        writeln!(code, "{pad}        );").unwrap();
+        writeln!(code, "{pad}        tx.execute(stmt).await?;").unwrap();
+        writeln!(code, "{pad}    }}").unwrap();
+        writeln!(code, "{pad}}}").unwrap();
+    }
+}
+
+/// Emit junction SELECT statements for response construction: fetch child ids
+/// for the parent row and expose them as `Vec<Uuid>` variables named
+/// `<field>_rows`.
+fn emit_junction_reads(
+    code: &mut String,
+    junctions: &[JunctionTableInfo],
+    parent_id_expr: &str,
+    indent: usize,
+) {
+    let pad = "    ".repeat(indent);
+    for j in junctions {
+        writeln!(code).unwrap();
+        let select_sql = format!(
+            "SELECT {} FROM {}.{} WHERE {} = $1 ORDER BY created_at",
+            q(&j.child_fk_column),
+            j.sql_schema_name,
+            q(&j.sql_table_name),
+            q(&j.parent_fk_column),
+        );
+        writeln!(code, "{pad}let {field}_rows = {{", field = j.field_name).unwrap();
+        writeln!(code, "{pad}    let stmt = Statement::from_sql_and_values(").unwrap();
+        writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
+        writeln!(code, "{pad}        \"{select_sql}\",").unwrap();
+        writeln!(code, "{pad}        vec![{parent_id_expr}.into()],").unwrap();
+        writeln!(code, "{pad}    );").unwrap();
+        writeln!(code, "{pad}    let rows = db.query_all(stmt).await?;").unwrap();
+        writeln!(
+            code,
+            "{pad}    let mut items = Vec::with_capacity(rows.len());"
+        )
+        .unwrap();
+        writeln!(code, "{pad}    for row in &rows {{").unwrap();
+        writeln!(code, "{pad}        use sea_orm::TryGetable;").unwrap();
+        writeln!(
+            code,
+            "{pad}        let v: Uuid = Uuid::try_get_by(row, \"{}\").map_err(|e| format!(\"{{e:?}}\"))?;",
+            j.child_fk_column
+        )
+        .unwrap();
+        writeln!(code, "{pad}        items.push(v);").unwrap();
+        writeln!(code, "{pad}    }}").unwrap();
+        writeln!(code, "{pad}    items").unwrap();
+        writeln!(code, "{pad}}};").unwrap();
+    }
+}
+
+/// Populate junction fields into the response struct construction.
+fn emit_junction_field_population(code: &mut String, junctions: &[JunctionTableInfo], pad: &str) {
+    for j in junctions {
+        if j.is_required {
+            writeln!(code, "{pad}{field}: {field}_rows,", field = j.field_name).unwrap();
+        } else {
+            writeln!(
+                code,
+                "{pad}{field}: Some({field}_rows),",
+                field = j.field_name
+            )
+            .unwrap();
+        }
+    }
+}
+
 /// Recursively emit SELECT + Response-building code for child tables.
 ///
 /// For each child table, emits code that:
@@ -1185,6 +1419,10 @@ fn emit_child_reads(
         }
         // Wire nested children into the response struct.
         emit_child_field_population(code, &child.child_tables, &format!("{pad}            "));
+        // DTO fields the child columns do not cover (e.g. scalar `*_id` mirrors
+        // of array entity-ref properties that the DDL stores as junction
+        // tables) default to None instead of failing E0063.
+        writeln!(code, "{pad}        ..Default::default()").unwrap();
         writeln!(code, "{pad}        }});").unwrap();
         writeln!(code, "{pad}    }}").unwrap();
         writeln!(code, "{pad}    items").unwrap();
@@ -1256,7 +1494,7 @@ async fn build_columns_and_children(
     db: &dyn GraphQuerier,
     props: &[codegraph_core::types::PropertyNode],
     ctx: &ClassificationContext<'_>,
-) -> Result<(Vec<TreeColumn>, Vec<ChildTableInfo>)> {
+) -> Result<(Vec<TreeColumn>, Vec<ChildTableInfo>, Vec<JunctionTableInfo>)> {
     use crate::generate::pg_cast_for_type;
 
     let schema_title = ctx.schema_title;
@@ -1264,7 +1502,7 @@ async fn build_columns_and_children(
     let schema_name = ctx.schema_name;
     let entity_name = ctx.entity_name;
     let consumed_fields = ctx.consumed_fields;
-    let all_field_names = ctx.all_field_names;
+    let _all_field_names = ctx.all_field_names;
     let entity_titles = ctx.entity_titles;
     let workflow_managed = ctx.workflow_managed;
 
@@ -1290,6 +1528,7 @@ async fn build_columns_and_children(
         });
     }
     let mut child_tables = Vec::new();
+    let mut junction_tables = Vec::new();
     let mut seen_child_structs = std::collections::HashSet::new();
 
     for prop in props {
@@ -1435,6 +1674,59 @@ async fn build_columns_and_children(
                 is_media: false,
             });
         } else if prop.effective_kind() == Some(RefClassificationKind::EntityReference) {
+            // Array entity refs: junction table (no back-ref on target) or
+            // FK-on-child (target has <parent>_id). Either way the parent model
+            // has no column for this property.
+            if prop.is_array {
+                let target = db
+                    .get_array_item_schema(&prop.name, schema_title)
+                    .await
+                    .ok()
+                    .flatten();
+                let back_ref = format!(
+                    "{}_id",
+                    codegraph_naming::truncate_pg_identifier(module_name)
+                );
+                let has_back_ref = match &target {
+                    Some(t) => db
+                        .get_properties(&t.title)
+                        .await
+                        .map(|ps| {
+                            ps.iter().any(|p| {
+                                p.pg_column_name == back_ref
+                                    || p.pg_column_name
+                                        == format!(
+                                            "{}_id",
+                                            codegraph_naming::to_snake_case(entity_name)
+                                        )
+                            })
+                        })
+                        .unwrap_or(false),
+                    None => false,
+                };
+                if !has_back_ref {
+                    if let Some(t) = target {
+                        junction_tables.push(JunctionTableInfo {
+                            field_name: field_def.rust_field_name.clone(),
+                            sql_table_name: codegraph_naming::truncate_pg_identifier(&format!(
+                                "{}_{}",
+                                module_name, field_def.column_name
+                            )),
+                            sql_schema_name: schema_name.to_string(),
+                            parent_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
+                                "{}_id",
+                                module_name
+                            )),
+                            child_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
+                                "{}_id",
+                                t.pg_table_name
+                            )),
+                            is_required: prop.is_required,
+                        });
+                    }
+                }
+                continue;
+            }
             // Nullability honors the schema's `required` (JSON schema is the source
             // of truth): required refs emit Set(v) against a Uuid model column,
             // optional refs emit Set(Some(v)) against Option<Uuid>.
@@ -1512,7 +1804,7 @@ async fn build_columns_and_children(
         direct_columns.retain(|c| seen_fields.insert(c.field_name.clone()));
     }
 
-    Ok((direct_columns, child_tables))
+    Ok((direct_columns, child_tables, junction_tables))
 }
 
 /// Which CRUD operation is being emitted.
@@ -1855,7 +2147,7 @@ impl RepositoryImplEmitter {
                 if path.segments.len() > 1 && seen_enriched.insert(path.response_rust_type.clone())
                 {
                     let already_imported = !type_registry::resolve_imports(
-                        &[path.response_rust_type.clone()],
+                        std::slice::from_ref(&path.response_rust_type),
                         &caller_base,
                     )
                     .is_empty();
@@ -1908,8 +2200,7 @@ impl RepositoryImplEmitter {
         let schema_name = domain.to_string();
 
         // Determine enabled operations
-        let operations =
-            resolve_entity_operations(db, config, domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, domain, &entity_name).await;
         let has_create = operations.contains(&"create".to_string());
         let has_read = operations.contains(&"read".to_string());
         let has_update = operations.contains(&"update".to_string());
@@ -1924,7 +2215,9 @@ impl RepositoryImplEmitter {
             .unwrap_or(false);
 
         let policies = db.get_policies_for_schema(schema_title).await?;
-        let has_audit_policy = policies.iter().any(|p| matches!(p.kind, PolicyKind::Audit(_)));
+        let has_audit_policy = policies
+            .iter()
+            .any(|p| matches!(p.kind, PolicyKind::Audit(_)));
         let soft_delete_policy = policies.iter().find_map(|p| {
             if let PolicyKind::SoftDelete(ref sd) = p.kind {
                 Some(sd.clone())
@@ -1978,8 +2271,14 @@ impl RepositoryImplEmitter {
             })
             .unwrap_or_else(|| "restrict".to_string());
 
-        let track_updated_user = audit_policy.as_ref().map(|a| a.track_updated).unwrap_or(false);
-        let track_deleted_user = audit_policy.as_ref().map(|a| a.track_deleted).unwrap_or(false);
+        let track_updated_user = audit_policy
+            .as_ref()
+            .map(|a| a.track_updated)
+            .unwrap_or(false);
+        let track_deleted_user = audit_policy
+            .as_ref()
+            .map(|a| a.track_deleted)
+            .unwrap_or(false);
 
         // Workflow-managed fields are excluded from create/update DTOs but
         // included in response DTOs. Mark them so the repository can include
@@ -2037,7 +2336,7 @@ impl RepositoryImplEmitter {
             workflow_managed: &workflow_managed,
             suffix: &config.defaults.type_suffix,
         };
-        let (mut direct_columns, child_tables) =
+        let (mut direct_columns, child_tables, junction_tables) =
             build_columns_and_children(db, &props, &cls_ctx).await?;
 
         // Add synthetic hierarchy column (self-referential FK) when configured.
@@ -2187,6 +2486,7 @@ impl RepositoryImplEmitter {
             entity_module,
             direct_columns,
             child_tables,
+            junction_tables,
             has_create,
             has_read,
             has_update,
@@ -2236,6 +2536,7 @@ impl RepositoryImplEmitter {
             .iter()
             .any(|c| !c.columns.is_empty() || !c.child_tables.is_empty());
         let needs_raw_sql = has_meaningful_children
+            || !tree.junction_tables.is_empty()
             || tree.has_fts
             || tree.has_embeddings
             || has_range_cols
@@ -2340,6 +2641,9 @@ impl RepositoryImplEmitter {
 
         // Insert child table rows (recursively handles nested children).
         emit_child_inserts(&mut body, &tree.child_tables, "id", "cmd", 2);
+
+        // Insert junction rows (many-to-many array-of-entity-ref fields).
+        emit_junction_inserts(&mut body, &tree.junction_tables, "id", "cmd", 2);
 
         let cmd_ident = if body.contains("cmd.") { "cmd" } else { "_cmd" };
 
@@ -2646,11 +2950,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code).unwrap();
-            writeln!(
-                code,
-                "        if !include_deleted {{"
-            )
-            .unwrap();
+            writeln!(code, "        if !include_deleted {{").unwrap();
             writeln!(
                 code,
                 "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
@@ -2733,11 +3033,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code).unwrap();
-            writeln!(
-                code,
-                "        if !include_deleted {{"
-            )
-            .unwrap();
+            writeln!(code, "        if !include_deleted {{").unwrap();
             writeln!(
                 code,
                 "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
@@ -2881,6 +3177,9 @@ impl RepositoryImplEmitter {
         writeln!(code, "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}").unwrap();
         writeln!(code, "            Err(e) => return Err(e.into()),").unwrap();
         writeln!(code, "        }}").unwrap();
+
+        // Replace junction rows when the update request carries the field.
+        emit_junction_replace(code, &tree.junction_tables, 2);
 
         // Update range columns via a single raw SQL UPDATE with explicit casts.
         // All range columns are collected into one statement to avoid per-column round-trips.
@@ -3351,11 +3650,7 @@ impl RepositoryImplEmitter {
         .unwrap();
         if has_any_filters {
             if tree.is_auditable {
-                writeln!(
-                    code,
-                    "            .filter(condition);"
-                )
-                .unwrap();
+                writeln!(code, "            .filter(condition);").unwrap();
             } else {
                 writeln!(code, "            .filter(condition)").unwrap();
             }
@@ -3407,6 +3702,7 @@ impl RepositoryImplEmitter {
 
         // Query child tables for each parent row (recursively handles nested children).
         emit_child_reads(code, &tree.child_tables, "row.id", 3);
+        emit_junction_reads(code, &tree.junction_tables, "row.id", 3);
 
         writeln!(
             code,
@@ -3419,14 +3715,19 @@ impl RepositoryImplEmitter {
             if col.is_composite_range {
                 continue;
             }
+            if col.field_name == "created_at" || col.field_name == "updated_at" {
+                continue;
+            }
             emit_entity_to_dto_field(code, col, "row", "                ");
         }
         emit_child_field_population(code, &tree.child_tables, "                ");
+        emit_junction_field_population(code, &tree.junction_tables, "                ");
         if tree.has_workflow {
             writeln!(code, "                workflow_state: None,").unwrap();
         }
         writeln!(code, "                created_at: row.created_at,").unwrap();
         writeln!(code, "                updated_at: row.updated_at,").unwrap();
+        writeln!(code, "                ..Default::default()").unwrap();
         writeln!(code, "            }});").unwrap();
         writeln!(code, "        }}").unwrap();
         writeln!(code).unwrap();
@@ -3687,6 +3988,7 @@ impl RepositoryImplEmitter {
         .unwrap();
         writeln!(code, "        for row in rows {{").unwrap();
         emit_child_reads(code, &tree.child_tables, "row.id", 3);
+        emit_junction_reads(code, &tree.junction_tables, "row.id", 3);
         if has_tree_include {
             writeln!(
                 code,
@@ -3707,14 +4009,19 @@ impl RepositoryImplEmitter {
             if col.is_composite_range {
                 continue;
             }
+            if col.field_name == "created_at" || col.field_name == "updated_at" {
+                continue;
+            }
             emit_entity_to_dto_field(code, col, "row", "                ");
         }
         emit_child_field_population(code, &tree.child_tables, "                ");
+        emit_junction_field_population(code, &tree.junction_tables, "                ");
         if tree.has_workflow {
             writeln!(code, "                workflow_state: None,").unwrap();
         }
         writeln!(code, "                created_at: row.created_at,").unwrap();
         writeln!(code, "                updated_at: row.updated_at,").unwrap();
+        writeln!(code, "                ..Default::default()").unwrap();
         if has_tree_include {
             writeln!(code, "            }}).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Serialization error: {{e}}\").into() }})?;").unwrap();
             // Emit worker merge block
@@ -3814,6 +4121,7 @@ impl RepositoryImplEmitter {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_include_fetch_methods(
         &self,
         tree: &EntityTree,
@@ -3947,26 +4255,7 @@ impl RepositoryImplEmitter {
         }
     }
 
-    /// Emit field assignments for a SeaORM entity row into a response struct.
-    /// Uses `dto_fields` for the left side (response struct field names) and
-    /// `col_fields` for the right side (entity Model field names from pg_column_name).
-    /// These differ for codelist fields: DTO uses "worker_type", entity uses "worker_type_code".
-    fn emit_field_assignments(
-        code: &mut String,
-        row_var: &str,
-        dto_fields: &[String],
-        col_fields: &[String],
-    ) {
-        for (dto_name, col_name) in dto_fields.iter().zip(col_fields.iter()) {
-            writeln!(
-                code,
-                "                {}: {}.{},",
-                dto_name, row_var, col_name
-            )
-            .unwrap();
-        }
-    }
-
+    #[allow(clippy::too_many_arguments)]
     /// Like emit_field_assignments but applies the same type conversions as
     /// emit_entity_to_dto_field — serde_json::from_value() for structured
     /// wrappers, .parse() for codelists, direct assignment otherwise.
@@ -4012,6 +4301,7 @@ impl RepositoryImplEmitter {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_single_fetch_method(
         &self,
         tree: &EntityTree,
@@ -4145,12 +4435,7 @@ impl RepositoryImplEmitter {
             writeln!(code, "        }};").unwrap();
             if seg.fk_is_required {
                 // Required genuine EntityReference: the FK field is a plain Uuid.
-                writeln!(
-                    code,
-                    "        let fk_value = source.{};",
-                    seg.fk_column
-                )
-                .unwrap();
+                writeln!(code, "        let fk_value = source.{};", seg.fk_column).unwrap();
             } else {
                 writeln!(
                     code,
@@ -4201,6 +4486,7 @@ impl RepositoryImplEmitter {
         writeln!(code, "    }}").unwrap();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_batch_fetch_method(
         &self,
         tree: &EntityTree,
@@ -4316,12 +4602,7 @@ impl RepositoryImplEmitter {
             writeln!(code, "        for row in rows {{").unwrap();
             if seg.reverse_fk_is_required {
                 // Required reverse FK (genuine EntityReference): plain Uuid.
-                writeln!(
-                    code,
-                    "            let key = row.{};",
-                    seg.reverse_fk_column
-                )
-                .unwrap();
+                writeln!(code, "            let key = row.{};", seg.reverse_fk_column).unwrap();
             } else {
                 writeln!(
                     code,
@@ -4458,6 +4739,7 @@ impl RepositoryImplEmitter {
         writeln!(code, "    }}").unwrap();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_dot_fetch_method(
         &self,
         _tree: &EntityTree,

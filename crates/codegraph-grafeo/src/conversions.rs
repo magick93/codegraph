@@ -271,10 +271,9 @@ pub fn row_to_relationship_node(
     let fk_json = reader.get_string(row, "fk_json")?;
     let propagation_json = reader.get_string(row, "propagation_json")?;
 
-    let cardinality: Cardinality =
-        serde_json::from_str(&format!("\"{}\"", cardinality_str))
-            .or_else(|_| serde_json::from_str(&cardinality_str))
-            .unwrap_or(Cardinality::OneToMany);
+    let cardinality: Cardinality = serde_json::from_str(&format!("\"{}\"", cardinality_str))
+        .or_else(|_| serde_json::from_str(&cardinality_str))
+        .unwrap_or(Cardinality::OneToMany);
     let ownership: Ownership = serde_json::from_str(&format!("\"{}\"", ownership_str))
         .or_else(|_| serde_json::from_str(&ownership_str))
         .unwrap_or(Ownership::References);
@@ -312,10 +311,9 @@ pub fn row_to_membership_node(
     let status_str = reader.get_string(row, "status")?;
     let roles_json = reader.get_string(row, "roles_json")?;
 
-    let status: MembershipStatus =
-        serde_json::from_str(&format!("\"{}\"", status_str))
-            .or_else(|_| serde_json::from_str(&status_str))
-            .unwrap_or(MembershipStatus::Active);
+    let status: MembershipStatus = serde_json::from_str(&format!("\"{}\"", status_str))
+        .or_else(|_| serde_json::from_str(&status_str))
+        .unwrap_or(MembershipStatus::Active);
     let roles: Vec<String> = serde_json::from_str(&roles_json).unwrap_or_default();
 
     Ok(MembershipNode {

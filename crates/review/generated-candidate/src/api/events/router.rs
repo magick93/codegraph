@@ -4,6 +4,7 @@
 use axum::Router;
 
 use crate::app_state::AppState;
+use crate::middleware::permission::PermissionGuard as _;
 
 // Handwritten extensions — create this file to add custom routes.
 // #[path = "handwritten_routes.rs"]
@@ -26,10 +27,19 @@ fn public_event_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(public_event_handler::list).post(public_event_handler::create))
+        .route(
+            "/",
+            axum::routing::get(public_event_handler::list).guard("public-event", "list")
+                .merge(axum::routing::post(public_event_handler::create).guard("public-event", "create")),
+        )
 
 
-        .route("/{public_event_id}", axum::routing::get(public_event_handler::get_by_id).put(public_event_handler::update).delete(public_event_handler::delete))
+        .route(
+            "/{public_event_id}",
+            axum::routing::get(public_event_handler::get_by_id).guard("public-event", "read")
+                .merge(axum::routing::put(public_event_handler::update).guard("public-event", "update"))
+                .merge(axum::routing::delete(public_event_handler::delete).guard("public-event", "delete")),
+        )
 
 
 
@@ -38,6 +48,25 @@ fn public_event_routes() -> Router<AppState> {
 
 
 
+        // API-key scope enforcement (events.public_event):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(public_event_scope_guard))
 }
 
+async fn public_event_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "events",
+        "public_event",
+    )
+    .await
+}
 

@@ -4,6 +4,7 @@
 use axum::Router;
 
 use crate::app_state::AppState;
+use crate::middleware::permission::PermissionGuard as _;
 
 {% if has_custom_routes -%}
 // Hand-written custom routes live in `handwritten_routes.rs` (a sibling module
@@ -36,40 +37,68 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 
     Router::new()
 {% if entity.has_create %}
-        .route("/", axum::routing::get({{ entity.module_name }}_handler::list).post({{ entity.module_name }}_handler::create))
+        .route(
+            "/",
+            axum::routing::get({{ entity.module_name }}_handler::list).guard("{{ entity.path_segment }}", "list")
+                .merge(axum::routing::post({{ entity.module_name }}_handler::create).guard("{{ entity.path_segment }}", "create")),
+        )
 {% else %}
-        .route("/", axum::routing::get({{ entity.module_name }}_handler::list))
+        .route(
+            "/",
+            axum::routing::get({{ entity.module_name }}_handler::list).guard("{{ entity.path_segment }}", "list"),
+        )
 {% endif %}
 {% if entity.has_update and entity.has_delete %}
-        .route("/{ {{- entity.param_name -}} }", axum::routing::get({{ entity.module_name }}_handler::get_by_id).put({{ entity.module_name }}_handler::update).delete({{ entity.module_name }}_handler::delete))
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::get({{ entity.module_name }}_handler::get_by_id).guard("{{ entity.path_segment }}", "read")
+                .merge(axum::routing::put({{ entity.module_name }}_handler::update).guard("{{ entity.path_segment }}", "update"))
+                .merge(axum::routing::delete({{ entity.module_name }}_handler::delete).guard("{{ entity.path_segment }}", "delete")),
+        )
 {% elif entity.has_update %}
-        .route("/{ {{- entity.param_name -}} }", axum::routing::get({{ entity.module_name }}_handler::get_by_id).put({{ entity.module_name }}_handler::update))
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::get({{ entity.module_name }}_handler::get_by_id).guard("{{ entity.path_segment }}", "read")
+                .merge(axum::routing::put({{ entity.module_name }}_handler::update).guard("{{ entity.path_segment }}", "update")),
+        )
 {% elif entity.has_delete %}
-        .route("/{ {{- entity.param_name -}} }", axum::routing::get({{ entity.module_name }}_handler::get_by_id).delete({{ entity.module_name }}_handler::delete))
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::get({{ entity.module_name }}_handler::get_by_id).guard("{{ entity.path_segment }}", "read")
+                .merge(axum::routing::delete({{ entity.module_name }}_handler::delete).guard("{{ entity.path_segment }}", "delete")),
+        )
 {% else %}
-        .route("/{ {{- entity.param_name -}} }", axum::routing::get({{ entity.module_name }}_handler::get_by_id))
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::get({{ entity.module_name }}_handler::get_by_id).guard("{{ entity.path_segment }}", "read"),
+        )
 {% endif %}
 {% if entity.hierarchy_field %}
-        .route("/{ {{- entity.param_name -}} }/tree", axum::routing::get({{ entity.module_name }}_handler::tree))
+        .route("/{ {{- entity.param_name -}} }/tree", axum::routing::get({{ entity.module_name }}_handler::tree).guard("{{ entity.path_segment }}", "list"))
 {% endif %}
 {% if entity.has_embeddings %}
-        .route("/semantic-search", axum::routing::post({{ entity.module_name }}_handler::semantic_search))
+        .route("/semantic-search", axum::routing::post({{ entity.module_name }}_handler::semantic_search).guard("{{ entity.path_segment }}", "list"))
 {% endif %}
 {%- if entity.has_fts and entity.fts_rest_mode != "query_param" %}
-        .route("/search", axum::routing::get({{ entity.module_name }}_handler::search))
+        .route("/search", axum::routing::get({{ entity.module_name }}_handler::search).guard("{{ entity.path_segment }}", "list"))
 {% endif %}
 {% if entity.has_workflow %}
-        .route("/{ {{- entity.param_name -}} }/actions/transition", axum::routing::post({{ entity.module_name }}_workflow::transition))
+        .route("/{ {{- entity.param_name -}} }/actions/transition", axum::routing::post({{ entity.module_name }}_workflow::transition).guard("{{ entity.path_segment }}", "update"))
 {% if entity.has_approval_status %}
-        .route("/{ {{- entity.param_name -}} }/actions/approve", axum::routing::post({{ entity.module_name }}_workflow::approve))
-        .route("/{ {{- entity.param_name -}} }/actions/reject", axum::routing::post({{ entity.module_name }}_workflow::reject))
+        .route("/{ {{- entity.param_name -}} }/actions/approve", axum::routing::post({{ entity.module_name }}_workflow::approve).guard("{{ entity.path_segment }}", "update"))
+        .route("/{ {{- entity.param_name -}} }/actions/reject", axum::routing::post({{ entity.module_name }}_workflow::reject).guard("{{ entity.path_segment }}", "update"))
 {% endif %}
-        .route("/{ {{- entity.param_name -}} }/actions/delegate", axum::routing::post({{ entity.module_name }}_workflow::delegate))
-        .route("/{ {{- entity.param_name -}} }/workflow", axum::routing::get({{ entity.module_name }}_workflow::get_workflow_state))
-        .route("/{ {{- entity.param_name -}} }/workflow/history", axum::routing::get({{ entity.module_name }}_workflow::get_process_history))
+        .route("/{ {{- entity.param_name -}} }/actions/delegate", axum::routing::post({{ entity.module_name }}_workflow::delegate).guard("{{ entity.path_segment }}", "update"))
+        .route("/{ {{- entity.param_name -}} }/workflow", axum::routing::get({{ entity.module_name }}_workflow::get_workflow_state).guard("{{ entity.path_segment }}", "read"))
+        .route("/{ {{- entity.param_name -}} }/workflow/history", axum::routing::get({{ entity.module_name }}_workflow::get_process_history).guard("{{ entity.path_segment }}", "read"))
 {% endif %}
 {% for mf in entity.media_fields %}
-        .route("/{id}/{{ mf }}", axum::routing::put(media_{{ entity.module_name }}_{{ mf }}::upload).get(media_{{ entity.module_name }}_{{ mf }}::download).delete(media_{{ entity.module_name }}_{{ mf }}::delete))
+        .route(
+            "/{id}/{{ mf }}",
+            axum::routing::put(media_{{ entity.module_name }}_{{ mf }}::upload).guard("{{ entity.path_segment }}", "update")
+                .merge(axum::routing::get(media_{{ entity.module_name }}_{{ mf }}::download).guard("{{ entity.path_segment }}", "read"))
+                .merge(axum::routing::delete(media_{{ entity.module_name }}_{{ mf }}::delete).guard("{{ entity.path_segment }}", "delete")),
+        )
 {% endfor %}
 {% for child in entity.children %}
         .nest("/{ {{- entity.param_name -}} }/{{ child.path_segment }}", {{ child.module_name }}_routes())

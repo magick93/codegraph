@@ -180,6 +180,7 @@ pub struct IngestResult {
     pub edges_created: usize,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn ingest_schema_node(
     db: &dyn GraphIngestor,
     loader: &SchemaLoader,
@@ -221,7 +222,7 @@ async fn ingest_schema_node(
             .schema
             .get("description")
             .and_then(|v| v.as_str())
-            .map(|s| sanitize_description(s)),
+            .map(sanitize_description),
         schema_type: entry
             .schema
             .get("type")
@@ -523,7 +524,7 @@ async fn ingest_properties_from_schema(
                 description: prop_schema
                     .get("description")
                     .and_then(|v| v.as_str())
-                    .map(|s| sanitize_description(s)),
+                    .map(sanitize_description),
                 format: prop_schema
                     .get("format")
                     .and_then(|v| v.as_str())
@@ -812,7 +813,7 @@ async fn ingest_codelist_values(
     let description = schema
         .get("description")
         .and_then(|v| v.as_str())
-        .map(|s| sanitize_description(s));
+        .map(sanitize_description);
 
     let pg_table_name = to_snake_case(&strip_suffix(title, suffix));
 
@@ -864,6 +865,7 @@ struct PropertyClassification {
     projection: Option<DddFieldProjection>,
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Classify a single property and return its type mapping and classification.
 fn classify_single_property(
     prop_schema: &serde_json::Value,
@@ -902,7 +904,7 @@ fn classify_single_property(
         let synthetic_name = format!(
             "{}{}{}",
             domain.to_upper_camel_case(),
-            pascal_entity,
+            sanitize_rust_type_name(&strip_suffix(schema_title, suffix)),
             prop_name.to_upper_camel_case(),
         );
         let kind = codegraph_type_contracts::RefClassificationKind::CodelistCheck;
@@ -1054,7 +1056,10 @@ fn extract_ref_stem(ref_path: &str) -> &str {
     if ref_path.starts_with("#/") {
         return filename;
     }
-    filename.strip_suffix(".json").unwrap_or(filename)
+    filename
+        .strip_suffix(".schema.json")
+        .or_else(|| filename.strip_suffix(".json"))
+        .unwrap_or(filename)
 }
 
 /// Pass 2: Update entity flags and re-classify property $ref targets.
@@ -1064,8 +1069,22 @@ pub async fn reclassify_with_entities(
     querier: &dyn codegraph_core::traits::GraphQuerier,
     entity_names: &HashSet<String>,
 ) -> Result<()> {
-    let is_entity =
-        |name: &str| entity_names.contains(name) || entity_names.contains(&format!("{}Type", name));
+    // Match schema titles AND filename stems. Stems may differ in case and
+    // word separators (e.g. "risk-assessment" vs title "Risk Assessment"),
+    // so compare on a normalized form (lowercase alphanumerics only).
+    fn normalize(name: &str) -> String {
+        name.chars()
+            .filter(|c| c.is_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    }
+    let normalized_entities: HashSet<String> = entity_names.iter().map(|n| normalize(n)).collect();
+    let is_entity = |name: &str| {
+        entity_names.contains(name)
+            || entity_names.contains(&format!("{}Type", name))
+            || normalized_entities.contains(&normalize(name))
+            || normalized_entities.contains(&normalize(&format!("{}Type", name)))
+    };
 
     // Update schema nodes
     let schemas = querier.list_schemas(None).await.map_err(Error::Graph)?;
@@ -1086,8 +1105,33 @@ pub async fn reclassify_with_entities(
             .map_err(Error::Graph)?;
         for prop in &properties {
             if let Some(ref ref_target) = prop.ref_target {
-                let ref_stem = extract_ref_stem(ref_target);
-                let target_is_entity = is_entity(ref_stem);
+                // Resolve the target schema through the graph (ReferencesSchema /
+                // ItemsOf edges) and classify by its TITLE. Stem-based matching
+                // breaks when the filename differs from the title (e.g.
+                // eta.schema.json vs title "Estimated Time of Completion").
+                let target_title = if prop.is_array {
+                    querier
+                        .get_array_item_schema(&prop.name, &schema.title)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|s| s.title)
+                } else {
+                    querier
+                        .get_property_ref_target(&prop.name, &schema.title)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|s| s.title)
+                };
+                let target_is_entity = match target_title.as_deref() {
+                    Some(title) => is_entity(title),
+                    None => {
+                        // Fallback: stem matching (normalized).
+                        let ref_stem = extract_ref_stem(ref_target);
+                        is_entity(ref_stem)
+                    }
+                };
                 let current_is_entity_ref = prop.classification_kind
                     == Some(codegraph_type_contracts::RefClassificationKind::EntityReference);
 

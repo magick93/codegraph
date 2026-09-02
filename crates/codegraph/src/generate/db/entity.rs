@@ -128,6 +128,38 @@ impl EntityGenerator for SeaOrmEntityGenerator {
 
         let all_props = db.get_properties(schema_title).await?;
 
+        // The DDL generator is the source of truth for which columns a table
+        // has: it derives them from the composition tree via
+        // `column_info_to_ddl` (which normalizes array entity-refs to junction
+        // tables, collapses composite ranges, and expands composite wrappers).
+        // Restrict the SeaORM model to exactly those column names so
+        // SELECT/INSERT/RETURNING never reference a column the DDL did not
+        // create (e.g. subject_id on screening."order").
+        let mut ddl_column_names: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        match db.get_composition_tree(schema_title).await {
+            Ok(tree) => {
+                if let Some(range) = &tree.root.composite_range {
+                    ddl_column_names.insert(range.pg_column_name.clone());
+                }
+                for col in &tree.root.columns {
+                    if col.name == "id" {
+                        continue;
+                    }
+                    if let Some((cols, _, _, _)) =
+                        crate::generate::db::ddl::column_info_to_ddl(col, table_name)
+                    {
+                        for c in cols {
+                            ddl_column_names.insert(c.name);
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                // No composition tree (plain codelist entities): no filter.
+            }
+        }
+
         // Deduplicate properties by field name — allOf composition can produce
         // duplicate HasProperty edges (parent + child both contribute the same field).
         let mut props = {
@@ -378,6 +410,18 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     // the source of truth. A required entity ref produces a NOT NULL
                     // FK column (Uuid, is_nullable: false) in both the DDL and the
                     // model; an optional ref produces Option<Uuid>.
+                    // Array entity refs are junction child tables (persisted via
+                    // raw SQL in the repository), never columns on this model.
+                    if prop.is_array {
+                        continue;
+                    }
+                    // The DDL is the source of truth for the column universe:
+                    // array entity-refs and `type: object` + `items` refs are
+                    // junction tables with no column. Skipping anything the DDL
+                    // does not have keeps SELECT/RETURNING off phantom columns.
+                    if !ddl_column_names.contains(&field_def.column_name) {
+                        continue;
+                    }
                     let is_nullable = !prop.is_required;
                     columns.push(EntityColumn {
                         field_name: field_def.rust_field_name,
@@ -422,12 +466,12 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                         }
                     }
                 }
-                Some(RefClassificationKind::ValueObject) => {
+                Some(RefClassificationKind::ValueObject)
                     // When a non-array VO property targets a known entity (directly
                     // or through an allOf composition chain), emit an FK column on
                     // this entity model. Uses the shared resolve_fk_column_name utility
                     // — single source of truth for FK column naming across layers.
-                    if !prop.is_array {
+                    if !prop.is_array => {
                         let (fk_field, fk_col) = codegraph_core::types::resolve_fk_column_name(
                             db,
                             prop,
@@ -458,7 +502,6 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                         }
                     }
                     // Child tables for non-entity VO targets are generated below
-                }
                 _ => {}
             }
         }
@@ -472,18 +515,18 @@ impl EntityGenerator for SeaOrmEntityGenerator {
 
         // Add tenant column — policy-driven when TenantIsolationPolicy exists,
         // otherwise fall back to legacy config-based behavior.
-        let (is_tenant_scoped, tenant_column_name): (bool, String) =
-            if let Some(ti) = tenant_policy {
-                match &ti.strategy {
-                    TenantStrategy::Column { property } => (true, property.clone()),
-                    _ => (true, String::new()),
-                }
-            } else {
-                (
-                    !is_global_entity(table_name, config),
-                    "platform_organization_id".to_string(),
-                )
-            };
+        let (is_tenant_scoped, tenant_column_name): (bool, String) = if let Some(ti) = tenant_policy
+        {
+            match &ti.strategy {
+                TenantStrategy::Column { property } => (true, property.clone()),
+                _ => (true, String::new()),
+            }
+        } else {
+            (
+                !is_global_entity(table_name, config),
+                "platform_organization_id".to_string(),
+            )
+        };
         if is_tenant_scoped && !tenant_column_name.is_empty() {
             columns.insert(
                 1, // After id, before other columns
@@ -886,18 +929,12 @@ async fn build_child_entity(
             sea_orm_attr: None,
         },
         EntityColumn {
-            field_name: codegraph_naming::truncate_pg_identifier(&format!(
-                "{}_id",
-                parent_table_name
-            )),
+            field_name: super::ddl::child_parent_fk_column(parent_table_name),
             rust_type: "Uuid".to_string(),
             sea_orm_type: dialect
                 .map_sea_orm_type("Uuid")
                 .unwrap_or("Uuid".to_string()),
-            column_name: codegraph_naming::truncate_pg_identifier(&format!(
-                "{}_id",
-                parent_table_name
-            )),
+            column_name: super::ddl::child_parent_fk_column(parent_table_name),
             is_primary_key: false,
             is_nullable: false,
             pg_cast: None,
@@ -1021,6 +1058,19 @@ async fn build_child_entity(
                 }
             }
             Some(RefClassificationKind::EntityReference) => {
+                // Array entity refs (declared via items or `type: object` +
+                // `items` $ref) are junction tables per the DDL generator —
+                // never columns on the child model.
+                if child_prop.is_array
+                    || db
+                        .get_array_item_schema(&child_prop.name, &ts.title)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some()
+                {
+                    continue;
+                }
                 columns.push(EntityColumn {
                     field_name: child_field_def.rust_field_name,
                     rust_type: "Option<Uuid>".to_string(),
@@ -1176,6 +1226,7 @@ async fn build_child_entity(
     Ok(files)
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Build a synthetic SeaORM entity for a codelist array property.
 ///
 /// Codelist schemas are plain enums with no object properties, so we create
@@ -1216,18 +1267,12 @@ fn build_codelist_child_entity(
             sea_orm_attr: None,
         },
         EntityColumn {
-            field_name: codegraph_naming::truncate_pg_identifier(&format!(
-                "{}_id",
-                parent_table_name
-            )),
+            field_name: super::ddl::child_parent_fk_column(parent_table_name),
             rust_type: "Uuid".to_string(),
             sea_orm_type: dialect
                 .map_sea_orm_type("Uuid")
                 .unwrap_or("Uuid".to_string()),
-            column_name: codegraph_naming::truncate_pg_identifier(&format!(
-                "{}_id",
-                parent_table_name
-            )),
+            column_name: super::ddl::child_parent_fk_column(parent_table_name),
             is_primary_key: false,
             is_nullable: false,
             pg_cast: None,

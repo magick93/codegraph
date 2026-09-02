@@ -167,8 +167,7 @@ impl SeedDataGenerator {
             .names
             .into_iter()
             .map(|name| {
-                let id =
-                    Uuid::new_v5(&ns, format!("person:{}", &name.email).as_bytes()).to_string();
+                let id = Uuid::new_v5(&ns, format!("person:{}", name.email).as_bytes()).to_string();
                 SeedPerson {
                     id,
                     given_name: name.given,
