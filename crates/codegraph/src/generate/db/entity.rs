@@ -128,6 +128,38 @@ impl EntityGenerator for SeaOrmEntityGenerator {
 
         let all_props = db.get_properties(schema_title).await?;
 
+        // The DDL generator is the source of truth for which columns a table
+        // has: it derives them from the composition tree via
+        // `column_info_to_ddl` (which normalizes array entity-refs to junction
+        // tables, collapses composite ranges, and expands composite wrappers).
+        // Restrict the SeaORM model to exactly those column names so
+        // SELECT/INSERT/RETURNING never reference a column the DDL did not
+        // create (e.g. subject_id on screening."order").
+        let mut ddl_column_names: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        match db.get_composition_tree(schema_title).await {
+            Ok(tree) => {
+                if let Some(range) = &tree.root.composite_range {
+                    ddl_column_names.insert(range.pg_column_name.clone());
+                }
+                for col in &tree.root.columns {
+                    if col.name == "id" {
+                        continue;
+                    }
+                    if let Some((cols, _, _, _)) =
+                        crate::generate::db::ddl::column_info_to_ddl(col, table_name)
+                    {
+                        for c in cols {
+                            ddl_column_names.insert(c.name);
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                // No composition tree (plain codelist entities): no filter.
+            }
+        }
+
         // Deduplicate properties by field name — allOf composition can produce
         // duplicate HasProperty edges (parent + child both contribute the same field).
         let mut props = {
@@ -374,6 +406,13 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     // Array entity refs are junction child tables (persisted via
                     // raw SQL in the repository), never columns on this model.
                     if prop.is_array {
+                        continue;
+                    }
+                    // The DDL is the source of truth for the column universe:
+                    // array entity-refs and `type: object` + `items` refs are
+                    // junction tables with no column. Skipping anything the DDL
+                    // does not have keeps SELECT/RETURNING off phantom columns.
+                    if !ddl_column_names.contains(&field_def.column_name) {
                         continue;
                     }
                     let is_nullable = !prop.is_required;
@@ -1012,6 +1051,19 @@ async fn build_child_entity(
                 }
             }
             Some(RefClassificationKind::EntityReference) => {
+                // Array entity refs (declared via items or `type: object` +
+                // `items` $ref) are junction tables per the DDL generator —
+                // never columns on the child model.
+                if child_prop.is_array
+                    || db
+                        .get_array_item_schema(&child_prop.name, &ts.title)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some()
+                {
+                    continue;
+                }
                 columns.push(EntityColumn {
                     field_name: child_field_def.rust_field_name,
                     rust_type: "Option<Uuid>".to_string(),

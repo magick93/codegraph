@@ -598,7 +598,7 @@ type DdlArtifacts = (
 ///
 /// Returns `None` for ValueObject-classified columns — those are represented as child
 /// `CompositionNode`s in the tree, not as columns.
-fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts> {
+pub(crate) fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<DdlArtifacts> {
     let raw_name = &col.name;
     let prop_name = quote_if_reserved(raw_name);
     let description = col.description.as_deref().unwrap_or("");
