@@ -1036,6 +1036,21 @@ Cloudflare Workers Observability (decision #111) — no hand-rolled OTLP:
   monolith's Prometheus `metrics` recorder (`metrics_middleware.tera`) is
   untouched. Analytics-Engine ingestion remains a future TODO.
 
+## Branch & PR Workflow
+
+- **`master` is the single trunk.** All PRs target `master`; feature branches are
+  short-lived (merge within ~2 weeks) and deleted after merge
+  (`delete_branch_on_merge` is enabled on the repo).
+- No long-lived integration branches: sync trunk into your feature branch with
+  `git merge master` instead of maintaining a parallel line.
+- CI (`lint`, `test`, `test-ops-integration`) must be green before merging;
+  lint runs `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings`.
+- Pruning merged branches: `git branch --merged master | xargs -r git branch -d`
+  locally; remote heads vanish automatically on merge. Stale/discontinued lines
+  are tagged `archive/<name>` before deletion (see `archive/*` tags).
+- Worktrees in use: `~/git/codegraph-atproto` (atproto line), `~/git/codegraph-ifml`
+  (IFML line), `~/git/codegraph-samm` (SAMM spike).
+
 ## Code conventions
 
 - No `unwrap()` in production code. Use `thiserror` + `?` propagation.
