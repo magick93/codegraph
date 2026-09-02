@@ -191,12 +191,12 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
 
         // Hooks-api crate path, same re-basing (empty when hooks are disabled).
         let hooks_api_rel = resolve_path(&project.hooks_api_base, &abs_output);
-        let worker_hooks_api_path = if hooks_api_rel.is_empty() || project.hooks_api_crate.is_empty()
-        {
-            String::new()
-        } else {
-            format!("../../{hooks_api_rel}")
-        };
+        let worker_hooks_api_path =
+            if hooks_api_rel.is_empty() || project.hooks_api_crate.is_empty() {
+                String::new()
+            } else {
+                format!("../../{hooks_api_rel}")
+            };
 
         let app_name = project.app_name.clone();
         let gateway_name = format!("{app_name}-gateway");

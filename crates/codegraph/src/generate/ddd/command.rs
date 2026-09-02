@@ -76,8 +76,7 @@ impl EntityGenerator for CommandGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         // Resolve parent_ref for child entities
         let parent_ref = crate::generate::resolve_parent_fk_column_same_domain(

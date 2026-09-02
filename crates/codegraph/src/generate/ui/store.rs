@@ -11,7 +11,9 @@ use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
-use crate::generate::api::api_model::{resolve_entity_operations, resolve_path_segment, resolve_path_segment_with_config};
+use crate::generate::api::api_model::{
+    resolve_entity_operations, resolve_path_segment, resolve_path_segment_with_config,
+};
 
 /// Parent entity metadata exposed to the store template.
 #[derive(Debug, Clone, Serialize)]
@@ -192,8 +194,7 @@ impl EntityGenerator for UiStoreGenerator {
 
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
         let has_workflow = workflow
@@ -245,10 +246,18 @@ impl EntityGenerator for UiStoreGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &resolve_path_segment_with_config(None, &parent_schema, config),
+                                        &resolve_path_segment_with_config(
+                                            None,
+                                            &parent_schema,
+                                            config,
+                                        ),
                                     ),
                                 domain: parent_domain,
-                                path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
+                                path_segment: resolve_path_segment_with_config(
+                                    None,
+                                    &parent_schema,
+                                    config,
+                                ),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent: gp,
@@ -303,10 +312,18 @@ impl EntityGenerator for UiStoreGenerator {
                             result = Some(UiParentInfo {
                                 param_name:
                                     crate::generate::api::router::param_name_from_path_segment(
-                                        &resolve_path_segment_with_config(None, &parent_schema, config),
+                                        &resolve_path_segment_with_config(
+                                            None,
+                                            &parent_schema,
+                                            config,
+                                        ),
                                     ),
                                 domain: domain.clone(),
-                                path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
+                                path_segment: resolve_path_segment_with_config(
+                                    None,
+                                    &parent_schema,
+                                    config,
+                                ),
                                 module_name: parent_schema.pg_table_name.clone(),
                                 entity_name: parent_schema.rust_type_name.clone(),
                                 grandparent: gp,

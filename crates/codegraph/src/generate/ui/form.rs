@@ -200,8 +200,7 @@ impl EntityGenerator for UiFormGenerator {
 
         let path_segment = resolve_path_segment(entity_cfg, &schema);
 
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let has_create = operations.contains(&"create".to_string());
         let has_update = operations.contains(&"update".to_string());
@@ -225,7 +224,8 @@ impl EntityGenerator for UiFormGenerator {
             }
         }
 
-        let fields = collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
+        let fields =
+            collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
 
         let create_fields: Vec<UiField> = fields
             .iter()

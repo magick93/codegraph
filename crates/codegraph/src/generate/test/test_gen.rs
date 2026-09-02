@@ -62,8 +62,7 @@ impl EntityGenerator for TestGenerator {
             return Ok(Vec::new());
         }
 
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let has_create = operations.contains(&"create".to_string());
 

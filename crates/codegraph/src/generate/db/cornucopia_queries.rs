@@ -92,14 +92,9 @@ impl EntityGenerator for CornucopiaQueryGenerator {
         // Column → PostgreSQL type name, from the persistence IR (used to
         // derive SQL casts for columns whose rust_type doesn't reveal the DB
         // type, e.g. geometry/geography columns stored as String).
-        let entity_ir = build_persistence_entity(
-            db,
-            schema_title,
-            domain,
-            config,
-            &self.parent_candidates,
-        )
-        .await?;
+        let entity_ir =
+            build_persistence_entity(db, schema_title, domain, config, &self.parent_candidates)
+                .await?;
         let pg_types: std::collections::HashMap<String, String> = entity_ir
             .columns
             .iter()
@@ -115,7 +110,6 @@ impl EntityGenerator for CornucopiaQueryGenerator {
         }])
     }
 }
-
 
 /// The Postgres cast target for a column — explicit range casts win; otherwise
 /// derive from the DTO rust type. Scalar params bind as text (Option<String>
@@ -218,10 +212,24 @@ fn render_entity_sql(
     ));
 
     // ── list (+ count) ─────────────────────────────────────────────────
-    write_list_queries(&mut sql, &table, &entity_name, soft_delete_col, &row_cols, pg_types);
+    write_list_queries(
+        &mut sql,
+        &table,
+        &entity_name,
+        soft_delete_col,
+        &row_cols,
+        pg_types,
+    );
 
     // ── get by id ──────────────────────────────────────────────────────
-    write_get_queries(&mut sql, &table, &entity_name, soft_delete_col, &row_cols, pg_types);
+    write_get_queries(
+        &mut sql,
+        &table,
+        &entity_name,
+        soft_delete_col,
+        &row_cols,
+        pg_types,
+    );
     if let Some(ref parent_fk) = tree.parent_ref {
         write_get_scoped_queries(
             &mut sql,
@@ -238,7 +246,14 @@ fn render_entity_sql(
     write_create_query(&mut sql, &table, &entity_name, tree, pg_types);
 
     // ── update (COALESCE so missing Option fields keep existing values) ─
-    write_update_query(&mut sql, &table, &entity_name, tree, soft_delete_col, pg_types);
+    write_update_query(
+        &mut sql,
+        &table,
+        &entity_name,
+        tree,
+        soft_delete_col,
+        pg_types,
+    );
 
     // ── delete ─────────────────────────────────────────────────────────
     write_delete_query(&mut sql, &table, &entity_name, soft_delete_col);
@@ -280,7 +295,10 @@ fn render_entity_sql(
     sql
 }
 
-fn row_col_list(cols: &[&TreeColumn], pg_types: &std::collections::HashMap<String, String>) -> String {
+fn row_col_list(
+    cols: &[&TreeColumn],
+    pg_types: &std::collections::HashMap<String, String>,
+) -> String {
     let mut names: Vec<String> = vec!["\"id\"".to_string()];
     for c in cols {
         if needs_text_cast(c, pg_types) {
@@ -525,7 +543,11 @@ fn write_update_query(
     soft_delete_col: Option<&str>,
     pg_types: &std::collections::HashMap<String, String>,
 ) {
-    let updatable: Vec<&TreeColumn> = tree.direct_columns.iter().filter(|c| is_writable_col(c)).collect();
+    let updatable: Vec<&TreeColumn> = tree
+        .direct_columns
+        .iter()
+        .filter(|c| is_writable_col(c))
+        .collect();
 
     if updatable.is_empty() {
         sql.push_str(&format!(
@@ -754,8 +776,7 @@ fn write_nested_filter_queries(sql: &mut String, tree: &EntityTree) {
     };
     for nf in &tree.nested_filter_fields {
         let is_vo_style = nf.parent_fk_column == vo_pattern;
-        let is_child_entity =
-            nf.intermediate_join.is_none() && !is_vo_style;
+        let is_child_entity = nf.intermediate_join.is_none() && !is_vo_style;
         let is_real_table = real_vo_tables.contains(&nf.sql_table_name);
         if !is_real_table && !is_child_entity {
             continue;

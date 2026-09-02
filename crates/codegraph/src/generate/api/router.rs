@@ -254,7 +254,9 @@ impl DomainGenerator for RouterGenerator {
                         role: entity_cfg
                             .and_then(|ec| ec.role.clone())
                             .unwrap_or_else(|| "root".into()),
-                        param_name: param_name_from_path_segment(&resolve_path_segment(entity_cfg, &schema)),
+                        param_name: param_name_from_path_segment(&resolve_path_segment(
+                            entity_cfg, &schema,
+                        )),
                         parent: None,
                         children: vec![],
                         cross_refs: vec![],

@@ -176,7 +176,12 @@ impl TreeColumn {
 /// Handles codelist enum parsing, JSONB deserialization, and plain copy.
 /// `pad` is the indentation prefix (e.g. `"            "`).
 /// `row_var` is the variable name holding the entity row (e.g. `"row"`).
-pub(crate) fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_var: &str, pad: &str) {
+pub(crate) fn emit_entity_to_dto_field(
+    code: &mut String,
+    col: &TreeColumn,
+    row_var: &str,
+    pad: &str,
+) {
     let dto_field = col.dto_name();
     let entity_field = &col.field_name;
     // StructuredWrapper must take priority over dto_rust_type — it uses
@@ -229,7 +234,11 @@ pub(crate) fn emit_entity_to_dto_field(code: &mut String, col: &TreeColumn, row_
 ///
 /// For array children: `field: field_rows,`
 /// For single children: `field: field_rows.into_iter().next(),`
-pub(crate) fn emit_child_field_population(code: &mut String, children: &[ChildTableInfo], pad: &str) {
+pub(crate) fn emit_child_field_population(
+    code: &mut String,
+    children: &[ChildTableInfo],
+    pad: &str,
+) {
     for child in children {
         if child.is_array {
             writeln!(
@@ -1904,8 +1913,7 @@ impl RepositoryImplEmitter {
         let schema_name = domain.to_string();
 
         // Determine enabled operations
-        let operations =
-            resolve_entity_operations(db, config, domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, domain, &entity_name).await;
         let has_create = operations.contains(&"create".to_string());
         let has_read = operations.contains(&"read".to_string());
         let has_update = operations.contains(&"update".to_string());
@@ -1920,7 +1928,9 @@ impl RepositoryImplEmitter {
             .unwrap_or(false);
 
         let policies = db.get_policies_for_schema(schema_title).await?;
-        let has_audit_policy = policies.iter().any(|p| matches!(p.kind, PolicyKind::Audit(_)));
+        let has_audit_policy = policies
+            .iter()
+            .any(|p| matches!(p.kind, PolicyKind::Audit(_)));
         let soft_delete_policy = policies.iter().find_map(|p| {
             if let PolicyKind::SoftDelete(ref sd) = p.kind {
                 Some(sd.clone())
@@ -1974,8 +1984,14 @@ impl RepositoryImplEmitter {
             })
             .unwrap_or_else(|| "restrict".to_string());
 
-        let track_updated_user = audit_policy.as_ref().map(|a| a.track_updated).unwrap_or(false);
-        let track_deleted_user = audit_policy.as_ref().map(|a| a.track_deleted).unwrap_or(false);
+        let track_updated_user = audit_policy
+            .as_ref()
+            .map(|a| a.track_updated)
+            .unwrap_or(false);
+        let track_deleted_user = audit_policy
+            .as_ref()
+            .map(|a| a.track_deleted)
+            .unwrap_or(false);
 
         // Workflow-managed fields are excluded from create/update DTOs but
         // included in response DTOs. Mark them so the repository can include
@@ -2642,11 +2658,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code).unwrap();
-            writeln!(
-                code,
-                "        if !include_deleted {{"
-            )
-            .unwrap();
+            writeln!(code, "        if !include_deleted {{").unwrap();
             writeln!(
                 code,
                 "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
@@ -2729,11 +2741,7 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code).unwrap();
-            writeln!(
-                code,
-                "        if !include_deleted {{"
-            )
-            .unwrap();
+            writeln!(code, "        if !include_deleted {{").unwrap();
             writeln!(
                 code,
                 "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
@@ -3334,11 +3342,7 @@ impl RepositoryImplEmitter {
         .unwrap();
         if has_any_filters {
             if tree.is_auditable {
-                writeln!(
-                    code,
-                    "            .filter(condition);"
-                )
-                .unwrap();
+                writeln!(code, "            .filter(condition);").unwrap();
             } else {
                 writeln!(code, "            .filter(condition)").unwrap();
             }
@@ -4128,12 +4132,7 @@ impl RepositoryImplEmitter {
             writeln!(code, "        }};").unwrap();
             if seg.fk_is_required {
                 // Required genuine EntityReference: the FK field is a plain Uuid.
-                writeln!(
-                    code,
-                    "        let fk_value = source.{};",
-                    seg.fk_column
-                )
-                .unwrap();
+                writeln!(code, "        let fk_value = source.{};", seg.fk_column).unwrap();
             } else {
                 writeln!(
                     code,
@@ -4299,12 +4298,7 @@ impl RepositoryImplEmitter {
             writeln!(code, "        for row in rows {{").unwrap();
             if seg.reverse_fk_is_required {
                 // Required reverse FK (genuine EntityReference): plain Uuid.
-                writeln!(
-                    code,
-                    "            let key = row.{};",
-                    seg.reverse_fk_column
-                )
-                .unwrap();
+                writeln!(code, "            let key = row.{};", seg.reverse_fk_column).unwrap();
             } else {
                 writeln!(
                     code,

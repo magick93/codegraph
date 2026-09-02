@@ -97,8 +97,7 @@ impl EntityGenerator for RepositoryTraitGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(schema_title));
 
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let search = entity_cfg.map(|ec| &ec.search);
         let has_fts = search
@@ -168,7 +167,9 @@ impl EntityGenerator for RepositoryTraitGenerator {
 
         // Query policies to determine audit and soft-delete behavior.
         let policies = db.get_policies_for_schema(schema_title).await?;
-        let has_audit_policy = policies.iter().any(|p| matches!(p.kind, PolicyKind::Audit(_)));
+        let has_audit_policy = policies
+            .iter()
+            .any(|p| matches!(p.kind, PolicyKind::Audit(_)));
         let is_auditable = if has_audit_policy {
             policies
                 .iter()

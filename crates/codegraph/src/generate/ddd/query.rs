@@ -83,8 +83,7 @@ impl EntityGenerator for QueryGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations =
-            resolve_entity_operations(db, config, &domain, &entity_name).await;
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
 
         let search = entity_cfg.map(|ec| &ec.search);
         let has_fts = search
@@ -117,9 +116,15 @@ impl EntityGenerator for QueryGenerator {
 
         let policies = db.get_policies_for_schema(schema_title).await?;
         let is_auditable = if policies.is_empty() {
-            config.domains.get(&domain).and_then(|d| d.auditable).unwrap_or(true)
+            config
+                .domains
+                .get(&domain)
+                .and_then(|d| d.auditable)
+                .unwrap_or(true)
         } else {
-            policies.iter().any(|p| matches!(&p.kind, PolicyKind::Audit(a) if a.track_deleted))
+            policies
+                .iter()
+                .any(|p| matches!(&p.kind, PolicyKind::Audit(a) if a.track_deleted))
         };
 
         let ctx = QueryContext {

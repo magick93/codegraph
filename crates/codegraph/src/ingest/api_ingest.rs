@@ -104,14 +104,9 @@ pub async fn ingest_api_model(
                 .map_err(|e| Error::Graph(e))?;
             stats.resources += 1;
 
-            db.ingest_edge(
-                &resource_id,
-                &schema_title,
-                EdgeType::BindsToSchema,
-                None,
-            )
-            .await
-            .map_err(|e| Error::Graph(e))?;
+            db.ingest_edge(&resource_id, &schema_title, EdgeType::BindsToSchema, None)
+                .await
+                .map_err(|e| Error::Graph(e))?;
 
             let op_mappings: Vec<(&str, &str, &str)> = operations
                 .iter()

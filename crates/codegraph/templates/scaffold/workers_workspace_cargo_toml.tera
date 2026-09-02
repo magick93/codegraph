@@ -35,8 +35,10 @@ tracing-subscriber = { version = "0.3" }
 tower-service = "0.3"
 http-body-util = "0.1"
 worker = { version = "0.8", default-features = false }
-codegraph-workflow = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }
-codegraph-type-contracts = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }
+{% if project.codegraph_workflow_base %}codegraph-workflow = { path = "{{ project.codegraph_workflow_base }}" }
+{% else %}codegraph-workflow = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }{% endif %}
+{% if project.type_contracts_base %}codegraph-type-contracts = { path = "{{ project.type_contracts_base }}" }
+{% else %}codegraph-type-contracts = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }{% endif %}
 {% if project.persistence_provider == "cornucopia" %}
 tokio-postgres = "0.7"
 deadpool-postgres = "0.14"

@@ -146,12 +146,8 @@ fn cornucopia_toml() -> String {
     toml.push_str("# Codegraph type mappings — covers all classified property types\n");
     toml.push_str("[types.mapping]\n");
     toml.push_str("\"pg_catalog.uuid\" = \"uuid::Uuid\"\n");
-    toml.push_str(
-        "\"pg_catalog.text\" = { rust-type = \"String\", is-copy = false }\n",
-    );
-    toml.push_str(
-        "\"pg_catalog.varchar\" = { rust-type = \"String\", is-copy = false }\n",
-    );
+    toml.push_str("\"pg_catalog.text\" = { rust-type = \"String\", is-copy = false }\n");
+    toml.push_str("\"pg_catalog.varchar\" = { rust-type = \"String\", is-copy = false }\n");
     toml.push_str("\"pg_catalog.timestamptz\" = \"chrono::DateTime<chrono::Utc>\"\n");
     toml.push_str("\"pg_catalog.timestamp\" = \"chrono::NaiveDateTime\"\n");
     toml.push_str("\"pg_catalog.bool\" = \"bool\"\n");
@@ -162,9 +158,7 @@ fn cornucopia_toml() -> String {
     toml.push_str(
         "\"pg_catalog.jsonb\" = { rust-type = \"serde_json::Value\", is-copy = false }\n",
     );
-    toml.push_str(
-        "\"pg_catalog.json\" = { rust-type = \"serde_json::Value\", is-copy = false }\n",
-    );
+    toml.push_str("\"pg_catalog.json\" = { rust-type = \"serde_json::Value\", is-copy = false }\n");
     toml.push_str("\"pg_catalog.date\" = \"chrono::NaiveDate\"\n");
     toml.push_str("\"pg_catalog.bytea\" = { rust-type = \"Vec<u8>\", is-copy = false }\n");
     toml.push_str("\"pg_catalog.numeric\" = \"rust_decimal::Decimal\"\n");
@@ -175,9 +169,7 @@ fn cornucopia_toml() -> String {
     toml.push_str("\"pg_catalog.int4range\" = { rust-type = \"String\", is-copy = false }\n");
     toml.push_str("\"pg_catalog.int8range\" = { rust-type = \"String\", is-copy = false }\n");
     toml.push_str("\"pg_catalog.numrange\" = { rust-type = \"String\", is-copy = false }\n");
-    toml.push_str(
-        "\"public.vector\" = { rust-type = \"pgvector::Vector\", is-copy = false }\n",
-    );
+    toml.push_str("\"public.vector\" = { rust-type = \"pgvector::Vector\", is-copy = false }\n");
     toml.push_str(
         "\"extensions.vector\" = { rust-type = \"pgvector::Vector\", is-copy = false }\n",
     );

@@ -1904,9 +1904,7 @@ async fn workers_topology_emits_per_worker_codelist_reexports() {
         .files
         .iter()
         .filter(|f| {
-            f.path
-                .to_string_lossy()
-                .contains("/workers/compensation/")
+            f.path.to_string_lossy().contains("/workers/compensation/")
                 && (f.content.contains("crate::domain::common")
                     || f.content.contains("crate::entity::common_code"))
         })
