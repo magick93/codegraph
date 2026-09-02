@@ -282,11 +282,7 @@ pub async fn delete(
     state.common_formatted_date_time_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
         .map_err(|e: CommonError| {
             let msg = e.to_string();
-            // Repository errors render as "NOT_FOUND: ..." while some paths
-            // say "Entity not found" — treat any not-found phrasing as 404
-            // (an RLS-blocked delete affects 0 rows and must not surface as
-            // a 500).
-            if msg.to_lowercase().contains("not found") {
+            if msg.contains("Entity not found") {
                 AppError::not_found(format!("FormattedDateTime {id} not found"))
             } else {
                 AppError::internal(format!("Failed to delete FormattedDateTime: {e}"))

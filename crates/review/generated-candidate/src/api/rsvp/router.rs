@@ -46,27 +46,5 @@ fn rsvp_routes() -> Router<AppState> {
 
 
 
-
-
-        // API-key scope enforcement (rsvp.rsvp):
-        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
-        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
-        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
-        // DatabaseConnection / worker ClientSource) injected into request
-        // extensions by the server and delegates to crate::api::scope.
-        .layer(axum::middleware::from_fn(rsvp_scope_guard))
-}
-
-async fn rsvp_scope_guard(
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    crate::api::scope::require_scope_for_request(
-        request,
-        next,
-        "rsvp",
-        "rsvp",
-    )
-    .await
 }
 

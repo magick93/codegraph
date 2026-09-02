@@ -5,10 +5,16 @@ use codegraph_core::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, ColumnInfo,
     CompositeColumn, CompositeRange, CompositionNode, CompositionTree, DetectionSource, EnumValue,
     ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, HttpEndpointNode,
+<<<<<<< HEAD
     InteractionNode, LexiconNode, MembershipNode, NamespaceNode, ParameterDefinitionNode,
     ParentCandidate, PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode,
     RepositoryNode, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
     TenantNode, ViewComponentNode, ViewContainerNode,
+=======
+    InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate, PermissionNode,
+    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
+>>>>>>> origin/master
 };
 use std::collections::{HashMap, VecDeque};
 

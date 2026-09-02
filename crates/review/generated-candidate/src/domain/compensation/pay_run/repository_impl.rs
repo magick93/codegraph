@@ -68,7 +68,6 @@ impl PayRunRepository<sea_orm::DatabaseTransaction> for PayRunRepositoryImpl {
             total_amount_currency: row.total_amount_currency.and_then(|v| v.parse().ok()),
             created_at: row.created_at,
             updated_at: row.updated_at,
-            ..Default::default()
         }))
     }
 
@@ -159,7 +158,6 @@ impl PayRunRepository<sea_orm::DatabaseTransaction> for PayRunRepositoryImpl {
                 total_amount_currency: row.total_amount_currency.and_then(|v| v.parse().ok()),
                 created_at: row.created_at,
                 updated_at: row.updated_at,
-                ..Default::default()
             });
         }
 

@@ -311,12 +311,15 @@ async fn scaffold_api_key_migration_grants_app_user_dml() {
         false,
         false,
         false,
+<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -573,12 +576,15 @@ async fn scaffold_middleware_supports_dual_auth() {
         false,
         false,
         false,
+<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -2168,12 +2174,15 @@ async fn scaffold_main() {
         false,
         false,
         false,
+<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -2282,12 +2291,15 @@ async fn scaffold_error_module() {
         false,
         false,
         false,
+<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -2458,12 +2470,15 @@ async fn scaffold_generates_middleware() {
         false,
         false,
         false,
+<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -2500,19 +2515,25 @@ async fn test_permission_middleware_generated() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-permission-mw");
 
+<<<<<<< HEAD
     // has_atproto = true: the permission middleware (with extract_uuid_from_path)
     // lives in the atproto branch of the template.
+=======
+>>>>>>> origin/master
     let gen = generate::scaffold::gen::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
         false,
+<<<<<<< HEAD
         true,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         false,
         "sea-orm",
     );
@@ -4030,12 +4051,15 @@ async fn scaffold_main_has_security_middleware() {
         false,
         false,
         false,
+<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -4126,12 +4150,15 @@ async fn scaffold_main_has_graceful_shutdown() {
         false,
         false,
         false,
+<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -4176,12 +4203,15 @@ async fn scaffold_main_has_health_ready() {
         false,
         false,
         false,
+<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -5185,12 +5215,15 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
         false,
         false,
         false,
+<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -5232,12 +5265,15 @@ async fn scaffold_generates_build_rs() {
         false,
         false,
         false,
+<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -5275,12 +5311,15 @@ async fn scaffold_main_has_version_endpoint() {
         false,
         false,
         false,
+<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -8154,12 +8193,15 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
         false,
         false,
         false,
+<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
+=======
+>>>>>>> origin/master
         "sea-orm",
     );
     let files = gen

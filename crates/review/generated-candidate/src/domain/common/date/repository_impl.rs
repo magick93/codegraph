@@ -60,7 +60,6 @@ impl DateRepository<sea_orm::DatabaseTransaction> for DateRepositoryImpl {
             id: row.id,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            ..Default::default()
         }))
     }
 
@@ -133,7 +132,6 @@ impl DateRepository<sea_orm::DatabaseTransaction> for DateRepositoryImpl {
                 id: row.id,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
-                ..Default::default()
             });
         }
 

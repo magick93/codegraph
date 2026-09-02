@@ -733,7 +733,10 @@ through unchanged.
 
 Seeded by the generator from `ProjectConfig`/`BuildPlan` (app name, ports,
 db targets, capabilities, api version). Consumers extend:
-`database.*.reset_sql`/`seed_sql`, `supabase` dir + keys,
+`database.*.reset_sql`/`seed_sql`, `database.api.grant_role` (default
+`app_user`) / `database.api.grant_strict` (default `false`; when `true` the
+api suite hard-fails if the grant role is missing DML on any domain table
+after migration instead of warning), `supabase` dir + keys,
 `hurl.dir`/`skip`/org ids, `smoke.entity` (entity used for the api suite's
 curl CRUD checks) + `api_version` (route prefix, default `v1`), `ui_dir`
 override (for monorepo sync setups), hooks, extensions.

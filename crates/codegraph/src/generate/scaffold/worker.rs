@@ -1079,9 +1079,13 @@ entities = ["CodeType"]
                 has_commands: false,
                 append_only: false,
                 has_query_hooks: false,
+<<<<<<< HEAD
                 }],
                 has_custom_routes: false,
                 atproto_nsids: vec![],
+=======
+            }],
+>>>>>>> origin/master
         };
         let mut domains = build_worker_domains("hr", &config, vec![full, query_only]);
         for d in &mut domains {

@@ -66,7 +66,6 @@ impl PersonBaseRepository<sea_orm::DatabaseTransaction> for PersonBaseRepository
             given_name: row.given_name,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            ..Default::default()
         }))
     }
 
@@ -145,7 +144,6 @@ impl PersonBaseRepository<sea_orm::DatabaseTransaction> for PersonBaseRepository
                 given_name: row.given_name,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
-                ..Default::default()
             });
         }
 

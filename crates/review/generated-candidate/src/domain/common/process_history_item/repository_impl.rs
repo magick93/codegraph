@@ -64,7 +64,6 @@ impl ProcessHistoryItemRepository<sea_orm::DatabaseTransaction> for ProcessHisto
             descriptions: row.descriptions,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            ..Default::default()
         }))
     }
 
@@ -141,7 +140,6 @@ impl ProcessHistoryItemRepository<sea_orm::DatabaseTransaction> for ProcessHisto
                 descriptions: row.descriptions,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
-                ..Default::default()
             });
         }
 

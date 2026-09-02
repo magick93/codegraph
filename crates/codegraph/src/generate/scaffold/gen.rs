@@ -173,12 +173,15 @@ pub async fn build_scaffold_domains(
         if !seen_scaffold_entities.insert((entry.domain.clone(), module_name.clone())) {
             continue;
         }
+<<<<<<< HEAD
         if let Ok(Some(lexicon)) = db.get_lexicon_by_schema(&entry.schema_title).await {
             domain_nsids
                 .entry(entry.domain.clone())
                 .or_default()
                 .push(lexicon.nsid.clone());
         }
+=======
+>>>>>>> origin/master
         let operations = resolve_entity_operations(db, config, &entry.domain, &entity_name).await;
         let has_commands = operations
             .iter()
@@ -521,6 +524,20 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: app_user_grants,
         });
 
+        // Late-binding app_user grants: 0002 runs before entity DDL, so its
+        // IF EXISTS-guarded grants never fire on a fresh database. This
+        // migration sorts after every codelist/entity band and derives its
+        // schema list + append-only revokes from the project config.
+        let app_user_grants =
+            render_template_with_project(tera, "db/app_user_grants.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self
+                .output_dir
+                .join("migrations")
+                .join("9000_app_user_grants.sql"),
+            content: app_user_grants,
+        });
+
         Ok(files)
     }
 }
@@ -550,8 +567,11 @@ mod tests {
                     append_only: true,
                     has_query_hooks: true,
                 }],
+<<<<<<< HEAD
                 has_custom_routes: false,
                 atproto_nsids: vec![],
+=======
+>>>>>>> origin/master
             }],
             codegraph_workflow_path: String::new(),
             type_contracts_path: String::new(),
@@ -563,6 +583,7 @@ mod tests {
             has_webhooks: false,
             has_reports: false,
             has_grpc: false,
+<<<<<<< HEAD
             has_atproto: false,
             has_fern: false,
             has_cli: false,
@@ -570,6 +591,9 @@ mod tests {
             has_auth_rate_limit: false,
             has_admin_cli: false,
             has_labels: false,
+=======
+            has_admin_cli: false,
+>>>>>>> origin/master
             migration_strategy: "sea-orm".to_string(),
         }
     }

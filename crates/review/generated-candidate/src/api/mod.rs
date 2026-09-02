@@ -7,4 +7,3 @@ pub mod meta;
 pub mod openapi;
 pub mod recruiting;
 pub mod rsvp;
-pub mod scope;

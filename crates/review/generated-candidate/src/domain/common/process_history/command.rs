@@ -91,6 +91,7 @@ impl ProcessHistoryCommandHandler {
     pub async fn bulk_create(
         &self,
         items: Vec<CreateProcessHistoryRequest>,
+
         source: domain_types::SourceContext,
         correlation_id: Uuid,
         api_key_id: Uuid,

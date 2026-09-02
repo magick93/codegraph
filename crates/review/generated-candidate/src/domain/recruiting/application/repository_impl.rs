@@ -68,7 +68,6 @@ impl ApplicationRepository<sea_orm::DatabaseTransaction> for ApplicationReposito
             status: row.status.and_then(|v| v.parse().ok()),
             created_at: row.created_at,
             updated_at: row.updated_at,
-            ..Default::default()
         }))
     }
 
@@ -133,8 +132,7 @@ impl ApplicationRepository<sea_orm::DatabaseTransaction> for ApplicationReposito
             condition = condition.add(crate::entity::recruiting_application::Column::ApplicationId.eq(val.clone()));
         }
         if let Some(val) = filters.get("candidate_id") {
-            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid UUID for filter 'candidate_id': {e}")))?;
-            condition = condition.add(crate::entity::recruiting_application::Column::CandidateId.eq(parsed));
+            condition = condition.add(crate::entity::recruiting_application::Column::CandidateId.eq(val.clone()));
         }
         if let Some(val) = filters.get("status") {
             condition = condition.add(crate::entity::recruiting_application::Column::Status.eq(val.clone()));
@@ -160,7 +158,6 @@ impl ApplicationRepository<sea_orm::DatabaseTransaction> for ApplicationReposito
                 status: row.status.and_then(|v| v.parse().ok()),
                 created_at: row.created_at,
                 updated_at: row.updated_at,
-                ..Default::default()
             });
         }
 

@@ -64,7 +64,6 @@ impl AmountRepository<sea_orm::DatabaseTransaction> for AmountRepositoryImpl {
             value: row.value,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            ..Default::default()
         }))
     }
 
@@ -145,7 +144,6 @@ impl AmountRepository<sea_orm::DatabaseTransaction> for AmountRepositoryImpl {
                 value: row.value,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
-                ..Default::default()
             });
         }
 

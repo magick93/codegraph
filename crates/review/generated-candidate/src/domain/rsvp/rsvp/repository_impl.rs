@@ -86,7 +86,6 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
                     birth_date: Option::<chrono::NaiveDate>::try_get_by(child_row, "birth_date").ok().flatten(),
                     family_name: String::try_get_by(child_row, "family_name").map_err(|e| format!("{e:?}"))?,
                     given_name: String::try_get_by(child_row, "given_name").map_err(|e| format!("{e:?}"))?,
-                ..Default::default()
                 });
             }
             items
@@ -99,7 +98,6 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
             event: event_rows.into_iter().next(),
             created_at: row.created_at,
             updated_at: row.updated_at,
-            ..Default::default()
         }))
     }
 
@@ -204,7 +202,6 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
                         birth_date: Option::<chrono::NaiveDate>::try_get_by(child_row, "birth_date").ok().flatten(),
                         family_name: String::try_get_by(child_row, "family_name").map_err(|e| format!("{e:?}"))?,
                         given_name: String::try_get_by(child_row, "given_name").map_err(|e| format!("{e:?}"))?,
-                    ..Default::default()
                     });
                 }
                 items
@@ -216,7 +213,6 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
                 event: event_rows.into_iter().next(),
                 created_at: row.created_at,
                 updated_at: row.updated_at,
-                ..Default::default()
             });
         }
 

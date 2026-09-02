@@ -307,20 +307,6 @@ RETURNS uuid AS $$
   LIMIT 1;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
--- get_current_user_role(): the caller's basejump role within an org.
--- SECURITY DEFINER: the request path runs as app_user, which has no direct
--- SELECT on basejump.account_user — without this, the role lookup silently
--- fails and every JWT user degrades to the least-privileged role ("member"),
--- which the per-operation permission middleware rejects for delete.
-CREATE OR REPLACE FUNCTION public.get_current_user_role(p_account_id uuid, p_user_id uuid)
-RETURNS text AS $$
-  SELECT au.account_role::text
-  FROM basejump.account_user au
-  WHERE au.account_id = p_account_id
-    AND au.user_id = p_user_id
-  LIMIT 1;
-$$ LANGUAGE sql STABLE SECURITY DEFINER;
-
 -- Grant to all roles
 GRANT EXECUTE ON FUNCTION public.get_current_org_id TO authenticated, api_key, anon;
 GRANT EXECUTE ON FUNCTION public.resolve_user_org TO authenticated, api_key, anon;
@@ -346,7 +332,6 @@ END $$;
 -- Grant app_user access to public functions (needed for Axum API auth)
 GRANT USAGE ON SCHEMA public TO app_user;
 GRANT EXECUTE ON FUNCTION public.resolve_user_org TO app_user;
-GRANT EXECUTE ON FUNCTION public.get_current_user_role TO app_user;
 GRANT EXECUTE ON FUNCTION public.verify_api_key TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_verified_api_key_info TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_api_key_org_id TO app_user;

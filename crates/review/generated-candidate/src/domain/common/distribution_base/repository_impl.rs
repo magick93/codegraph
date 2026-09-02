@@ -66,7 +66,6 @@ impl DistributionBaseRepository<sea_orm::DatabaseTransaction> for DistributionBa
             start_date: row.start_date,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            ..Default::default()
         }))
     }
 
@@ -145,7 +144,6 @@ impl DistributionBaseRepository<sea_orm::DatabaseTransaction> for DistributionBa
                 start_date: row.start_date,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
-                ..Default::default()
             });
         }
 

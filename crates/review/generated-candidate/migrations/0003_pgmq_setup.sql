@@ -5,29 +5,14 @@ CREATE EXTENSION IF NOT EXISTS pgmq;
 
 
 SELECT pgmq.create('events_common');
--- pgmq queue tables are created without default PUBLIC grants on PG15+;
--- the app and api_key roles need access for the dispatch worker.
-GRANT ALL ON TABLE pgmq.q_events_common TO app_user, api_key;
 
 SELECT pgmq.create('events_compensation');
--- pgmq queue tables are created without default PUBLIC grants on PG15+;
--- the app and api_key roles need access for the dispatch worker.
-GRANT ALL ON TABLE pgmq.q_events_compensation TO app_user, api_key;
 
 SELECT pgmq.create('events_events');
--- pgmq queue tables are created without default PUBLIC grants on PG15+;
--- the app and api_key roles need access for the dispatch worker.
-GRANT ALL ON TABLE pgmq.q_events_events TO app_user, api_key;
 
 SELECT pgmq.create('events_recruiting');
--- pgmq queue tables are created without default PUBLIC grants on PG15+;
--- the app and api_key roles need access for the dispatch worker.
-GRANT ALL ON TABLE pgmq.q_events_recruiting TO app_user, api_key;
 
 SELECT pgmq.create('events_rsvp');
--- pgmq queue tables are created without default PUBLIC grants on PG15+;
--- the app and api_key roles need access for the dispatch worker.
-GRANT ALL ON TABLE pgmq.q_events_rsvp TO app_user, api_key;
 
 
 -- Queue access for the application role. The app runs domain-table DML as
