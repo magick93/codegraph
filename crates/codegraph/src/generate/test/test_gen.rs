@@ -19,6 +19,9 @@ pub struct TestContext {
     pub table_name: String,
     pub schema_name: String,
     pub has_create: bool,
+    /// App crate name as importable in Rust code (dashes replaced with
+    /// underscores, matching cargo's default lib target name).
+    pub app_crate_name: String,
 }
 
 pub struct TestGenerator {
@@ -73,6 +76,7 @@ impl EntityGenerator for TestGenerator {
             table_name: module_name.clone(),
             schema_name,
             has_create,
+            app_crate_name: project.app_name.replace('-', "_"),
         };
 
         let mut files = Vec::new();

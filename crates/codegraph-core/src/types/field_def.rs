@@ -16,9 +16,15 @@ pub struct FieldDefinition {
 ///
 /// - For `EntityReference`: appends `_id` suffix to both field and column names
 ///   (idempotent — does not double `_id` if already present).
+///   Array-of-entity-ref properties (junction tables) keep their raw names —
+///   the junction table is `<parent>_<field>` and the DTO field must match it.
 /// - For all other kinds: returns the field names as-is from the property.
 pub fn resolve_field(prop: &PropertyNode) -> FieldDefinition {
     match prop.effective_kind() {
+        Some(RefClassificationKind::EntityReference) if prop.is_array => FieldDefinition {
+            rust_field_name: prop.rust_field_name.clone(),
+            column_name: prop.pg_column_name.clone(),
+        },
         Some(RefClassificationKind::EntityReference) => {
             let rust_field_name = if prop.rust_field_name.ends_with("_id") {
                 prop.rust_field_name.clone()
@@ -58,6 +64,11 @@ pub async fn resolve_fk_column_name(
     source_title: &str,
     entity_titles: &HashSet<String>,
 ) -> Result<(String, String), GraphError> {
+    // Array-of-entity-ref properties are junction tables, not FK columns —
+    // the raw names are the junction field/table identity (see resolve_field).
+    if prop.is_array {
+        return Ok((prop.rust_field_name.clone(), prop.pg_column_name.clone()));
+    }
     // Direct $ref target is a known entity.
     if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, source_title).await {
         if entity_titles.contains(&target.title) {
@@ -112,5 +123,84 @@ pub fn codelist_enum_name_from_ref(ref_target: &Option<String>) -> Option<String
         None
     } else {
         Some(name.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entity_ref_prop(name: &str, is_array: bool) -> PropertyNode {
+        PropertyNode {
+            name: name.to_string(),
+            prop_type: "array".into(),
+            description: None,
+            format: None,
+            is_required: false,
+            is_nullable: false,
+            is_array,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: name.to_string(),
+            pg_column_type: "TEXT".into(),
+            rust_field_name: name.to_string(),
+            rust_field_type: "String".into(),
+            sea_orm_type: "String".into(),
+            render_strategy: "flat".into(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: Some(RefClassificationKind::EntityReference),
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    }
+
+    #[test]
+    fn scalar_entity_ref_gets_id_suffix() {
+        let def = resolve_field(&entity_ref_prop("settlor", false));
+        assert_eq!(def.rust_field_name, "settlor_id");
+        assert_eq!(def.column_name, "settlor_id");
+    }
+
+    #[test]
+    fn scalar_entity_ref_id_suffix_is_idempotent() {
+        let def = resolve_field(&entity_ref_prop("tenant_id", false));
+        assert_eq!(def.rust_field_name, "tenant_id");
+        assert_eq!(def.column_name, "tenant_id");
+    }
+
+    #[test]
+    fn junction_array_entity_ref_keeps_raw_name() {
+        let def = resolve_field(&entity_ref_prop("settlor_ids", true));
+        assert_eq!(def.rust_field_name, "settlor_ids");
+        assert_eq!(def.column_name, "settlor_ids");
+    }
+
+    #[test]
+    fn junction_array_without_ids_stem_keeps_raw_name() {
+        let def = resolve_field(&entity_ref_prop("parties", true));
+        assert_eq!(def.rust_field_name, "parties");
+        assert_eq!(def.column_name, "parties");
+    }
+
+    #[test]
+    fn non_entity_ref_unchanged() {
+        let mut prop = entity_ref_prop("status", false);
+        prop.classification_kind = Some(RefClassificationKind::PrimitiveWrapper);
+        let def = resolve_field(&prop);
+        assert_eq!(def.rust_field_name, "status");
+        assert_eq!(def.column_name, "status");
+    }
+
+    #[test]
+    fn ensure_id_suffix_is_idempotent() {
+        assert_eq!(ensure_id_suffix("trust"), "trust_id");
+        assert_eq!(ensure_id_suffix("trust_id"), "trust_id");
     }
 }

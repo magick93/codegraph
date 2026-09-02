@@ -85,6 +85,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 items.push(CandidatePersonNameResponse {
                     first_name: String::try_get_by(child_row, "first_name").map_err(|e| format!("{e:?}"))?,
                     last_name: Option::<String>::try_get_by(child_row, "last_name").ok().flatten(),
+                ..Default::default()
                 });
             }
             items
@@ -96,6 +97,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             workflow_state: None,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -171,6 +173,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     items.push(CandidatePersonNameResponse {
                         first_name: String::try_get_by(child_row, "first_name").map_err(|e| format!("{e:?}"))?,
                         last_name: Option::<String>::try_get_by(child_row, "last_name").ok().flatten(),
+                    ..Default::default()
                     });
                 }
                 items
@@ -181,6 +184,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 workflow_state: None,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

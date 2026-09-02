@@ -2,7 +2,7 @@
 // Svelte store for Candidate CRUD operations.
 
 import { writable } from 'svelte/store';
-import { apiGet, apiPost, apiPut, apiDelete } from '$lib/api/client';
+import { apiGet, apiPost, apiPut, apiDelete } from '#lib/api/client.ts';
 import type {
 	CandidateResponse,
 
@@ -14,7 +14,7 @@ import type {
 
 	WorkflowState,
 
-} from '$lib/api/types';
+} from '#lib/api/types.ts';
 
 
 const API_PATH = '/recruiting/candidate';

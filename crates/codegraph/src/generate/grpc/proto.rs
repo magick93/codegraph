@@ -60,7 +60,7 @@ impl EntityGenerator for GrpcProtoGenerator {
             render_template_with_project(tera, "grpc/proto_service.tera", &ctx, project)?;
         // Append service definition to the same file
         if let Some(existing) = files.last_mut() {
-            existing.content.push_str("\n");
+            existing.content.push('\n');
             existing.content.push_str(&svc_content);
         }
 

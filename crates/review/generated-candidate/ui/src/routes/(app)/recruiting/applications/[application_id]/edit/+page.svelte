@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import ApplicationForm from '$lib/components/forms/ApplicationForm.svelte';
-	import { updateApplication } from '$lib/stores/recruiting_application';
+	import ApplicationForm from '#lib/components/forms/ApplicationForm.svelte';
+	import { updateApplication } from '#lib/stores/recruiting_application.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { ApplicationResponse, UpdateApplicationRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { ApplicationResponse, UpdateApplicationRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/recruiting/applications';

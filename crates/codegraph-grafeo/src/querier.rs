@@ -1718,6 +1718,113 @@ impl GrafeoEngine {
                 continue;
             }
 
+            // Array of entity refs: the relationship cannot be represented by a
+            // column on the parent table. Two shapes are supported:
+            //   1. FK-on-child: the target schema carries a back-reference
+            //      column to this schema (e.g. party.case_id for case.party_ids).
+            //      The child-side FK is injected by the DDL generator's parent
+            //      candidate handling, so the parent side is skipped entirely.
+            //   2. Junction table: no back-reference exists. Emit a
+            //      `<parent>_<field>` junction child table holding parent_id +
+            //      child_id FKs (many-to-many).
+            if prop.is_array
+                && classification
+                    == Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
+            {
+                let target_title = self
+                    .get_array_item_schema(&prop.name, schema_title)
+                    .await
+                    .ok()
+                    .flatten();
+                let has_back_ref = match &target_title {
+                    Some(target_schema) => {
+                        let back_ref = format!(
+                            "{}_id",
+                            codegraph_naming::truncate_pg_identifier(&schema.pg_table_name)
+                        );
+                        self.get_properties(&target_schema.title)
+                            .await
+                            .map(|ps| {
+                                ps.iter().any(|p| {
+                                    p.pg_column_name == back_ref
+                                        || p.pg_column_name
+                                            == format!(
+                                                "{}_id",
+                                                codegraph_naming::to_snake_case(&schema.title)
+                                            )
+                                })
+                            })
+                            .unwrap_or(false)
+                    }
+                    None => false,
+                };
+
+                if !has_back_ref {
+                    if let Some(target_schema) = target_title {
+                        let child_table = codegraph_naming::truncate_pg_identifier(&format!(
+                            "{}_{}",
+                            schema.pg_table_name, prop.pg_column_name
+                        ));
+                        let child_fk_col = codegraph_naming::truncate_pg_identifier(&format!(
+                            "{}_id",
+                            schema.pg_table_name
+                        ));
+                        let child_id_col = codegraph_naming::truncate_pg_identifier(&format!(
+                            "{}_id",
+                            target_schema.pg_table_name
+                        ));
+
+                        let child_col = ColumnInfo {
+                            name: child_id_col.clone(),
+                            description: Some(format!(
+                                "FK to {}.{}",
+                                target_schema
+                                    .domain
+                                    .clone()
+                                    .unwrap_or_else(|| default_schema.clone()),
+                                target_schema.pg_table_name
+                            )),
+                            rust_type: "uuid::Uuid".to_string(),
+                            postgres_type: "UUID".to_string(),
+                            is_optional: false,
+                            is_codelist_fk: false,
+                            composite_columns: vec![],
+                            is_array: false,
+                            classification: Some(
+                                codegraph_type_contracts::RefClassificationKind::EntityReference,
+                            ),
+                            fk_target: Some(FkTarget {
+                                schema: target_schema
+                                    .domain
+                                    .clone()
+                                    .unwrap_or_else(|| default_schema.clone()),
+                                table: target_schema.pg_table_name.clone(),
+                                column: "id".to_string(),
+                                on_delete: "CASCADE".to_string(),
+                            }),
+                            check_values: vec![],
+                        };
+
+                        children.push(CompositionNode {
+                            field_name: prop.pg_column_name.clone(),
+                            schema_title: target_schema.title.clone(),
+                            table_schema: default_schema.clone(),
+                            table_name: child_table,
+                            fk: Some(FkDirection::OnChild {
+                                column: child_fk_col,
+                            }),
+                            is_collection: true,
+                            columns: vec![child_col],
+                            jsonb_columns: vec![],
+                            children: vec![],
+                            composite_range: None,
+                            consumed_fields: vec![],
+                        });
+                    }
+                }
+                continue;
+            }
+
             if let Some(ref_target) = &prop.ref_target {
                 if let Some(target_schema) = self.get_schema(ref_target).await? {
                     if !target_schema.is_entity
@@ -1859,9 +1966,7 @@ impl GrafeoEngine {
 
         // Verify the target exists as an entity in the graph before emitting FK.
         // Try to find the target by table name in the resolved schema domain.
-        if let Ok(Some(target_check)) =
-            self.get_schema_in_domain(&table, &schema_name).await
-        {
+        if let Ok(Some(target_check)) = self.get_schema_in_domain(&table, &schema_name).await {
             if !target_check.is_entity {
                 return None;
             }
@@ -1869,8 +1974,7 @@ impl GrafeoEngine {
         // If the schema doesn't exist in the resolved domain, try the default domain
         // as a fallback (cross-domain allOf references).
         if schema_name != default_schema {
-            if let Ok(Some(target_check)) =
-                self.get_schema_in_domain(&table, default_schema).await
+            if let Ok(Some(target_check)) = self.get_schema_in_domain(&table, default_schema).await
             {
                 if target_check.is_entity {
                     return Some(FkTarget {
@@ -1919,6 +2023,6 @@ fn extract_ref_table(ref_target: &str) -> Option<String> {
         .or_else(|| filename.strip_suffix(".json"))
         .unwrap_or(filename);
     Some(codegraph_naming::to_snake_case(
-        &codegraph_naming::strip_type_suffix(stem),
+        &codegraph_naming::strip_suffix(stem, "Type"),
     ))
 }

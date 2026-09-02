@@ -3,6 +3,7 @@
 # One crate per domain under workers/{domain}/ plus the gateway.
 
 [workspace]
+resolver = "2"
 members = [
 {% for domain in domains %}
     "{{ domain.name }}",
@@ -11,7 +12,12 @@ members = [
 ]
 
 [workspace.dependencies]
-axum = { version = "0.8", features = ["json", "multipart"] }
+# axum default features pull hyper/hyper-util's `tokio/net` (via the "tokio"
+# feature), which does not compile to wasm32-unknown-unknown. Worker crates
+# enable the "tokio" feature only in native (host) builds via target-specific
+# dependency tables. "http1" is wasm-safe and required by axum::serve in
+# native builds.
+axum = { version = "0.8", default-features = false, features = ["json", "form", "query", "matched-path", "original-uri", "multipart", "tower-log", "tracing", "http1"] }
 {% if project.database_target == "sqlite" %}
 sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 {% else %}
@@ -21,25 +27,44 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_qs = "0.13"
 percent-encoding = "2"
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "serde", "js"] }
 chrono = { version = "0.4", features = ["serde"] }
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid", "decimal"] }
 garde = { version = "0.22", features = ["derive"] }
 rust_decimal = { version = "1", features = ["serde-with-str"] }
 jsonwebtoken = "9"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 async-trait = "0.1"
 thiserror = "2"
-tokio = { version = "1", features = ["full"] }
+# Base tokio entry is feature-less: wasm32 cannot take `net`/`rt-multi-thread`
+# (mio). Worker/gateway crates add target-specific features per build mode.
+tokio = { version = "1", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3" }
 tower-service = "0.3"
 http-body-util = "0.1"
+futures-channel = "0.3"
 worker = { version = "0.8", default-features = false }
-{% if project.codegraph_workflow_base %}codegraph-workflow = { path = "{{ project.codegraph_workflow_base }}" }
-{% else %}codegraph-workflow = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }{% endif %}
-{% if project.type_contracts_base %}codegraph-type-contracts = { path = "{{ project.type_contracts_base }}" }
-{% else %}codegraph-type-contracts = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }{% endif %}
+# Wasm-only panic hook; no-op on native targets. worker-rs 0.8 ships its own
+# `console_log!`/`console_error!` macros unconditionally, so console logging
+# needs no feature gate — only the panic hook is a separate crate.
+console_error_panic_hook = "0.1"
+{% if codegraph_workflow_path %}
+codegraph-workflow = { path = "{{ codegraph_workflow_path }}" }
+{% else %}
+codegraph-workflow = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }
+{% endif %}
+{% if type_contracts_path %}
+codegraph-type-contracts = { path = "{{ type_contracts_path }}" }
+{% else %}
+codegraph-type-contracts = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }
+{% endif %}
 {% if project.persistence_provider == "cornucopia" %}
-tokio-postgres = "0.7"
+# tokio-postgres without its default "runtime" feature: runtime enables
+# tokio/net → mio, which does not compile to wasm32-unknown-unknown.
+# deadpool-postgres re-enables the runtime on host targets itself.
+tokio-postgres = { version = "0.7", default-features = false, features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
 deadpool-postgres = "0.14"
 {% endif %}

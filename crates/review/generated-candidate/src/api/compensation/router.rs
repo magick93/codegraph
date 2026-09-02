@@ -4,6 +4,11 @@
 use axum::Router;
 
 use crate::app_state::AppState;
+use crate::middleware::permission::PermissionGuard as _;
+
+// Handwritten extensions — create this file to add custom routes.
+// #[path = "handwritten_routes.rs"]
+// mod handwritten_routes;
 
 // Handwritten extensions — create this file to add custom routes.
 // #[path = "handwritten_routes.rs"]
@@ -26,10 +31,19 @@ fn pay_run_routes() -> Router<AppState> {
 
     Router::new()
 
-        .route("/", axum::routing::get(pay_run_handler::list).post(pay_run_handler::create))
+        .route(
+            "/",
+            axum::routing::get(pay_run_handler::list).guard("pay-runs", "list")
+                .merge(axum::routing::post(pay_run_handler::create).guard("pay-runs", "create")),
+        )
 
 
-        .route("/{pay_run_id}", axum::routing::get(pay_run_handler::get_by_id).put(pay_run_handler::update).delete(pay_run_handler::delete))
+        .route(
+            "/{pay_run_id}",
+            axum::routing::get(pay_run_handler::get_by_id).guard("pay-runs", "read")
+                .merge(axum::routing::put(pay_run_handler::update).guard("pay-runs", "update"))
+                .merge(axum::routing::delete(pay_run_handler::delete).guard("pay-runs", "delete")),
+        )
 
 
 

@@ -173,10 +173,49 @@ pub struct DomainEntry {
     /// When None, consumers default to "sql".
     #[serde(default)]
     pub remote_include_mode: Option<String>,
+    /// Enable webhook endpoint/subscription CRUD + dispatch + delivery on this
+    /// domain's worker. When true, the worker compiles and serves
+    /// `webhook_api.rs`/`webhook_router.rs` and, in workers topology, emits a
+    /// cron drain handler plus a Cloudflare Queues consumer. When None,
+    /// consumers default to false for workers topology (opt-in per domain) —
+    /// the monolith keeps its existing global `has_webhooks` gate.
+    #[serde(default)]
+    pub webhooks: Option<bool>,
+    /// Cloudflare Queue name for webhook delivery jobs (producer + consumer).
+    /// When None, consumers default to `{app_name}-{domain}-webhooks`.
+    #[serde(default)]
+    pub queue_name: Option<String>,
+    /// Cloudflare Queue binding name used in `env.queue(binding)` and wrangler.
+    /// When None, consumers default to "WEBHOOK_QUEUE".
+    #[serde(default)]
+    pub queue_binding: Option<String>,
+    /// Max delivery attempts before an endpoint is auto-deactivated. Matches
+    /// the monolith `WebhookDispatcher.max_retries` (default 5).
+    #[serde(default)]
+    pub queue_max_retries: Option<u32>,
+    /// Cloudflare Queues consumer max_concurrency (consumers only). Emitted as
+    /// `max_concurrency` in the wrangler queue consumer config when set.
+    #[serde(default)]
+    pub queue_max_concurrency: Option<u32>,
+    /// Enable Cloudflare Workers native observability for this domain's worker.
+    /// When true, the generated wrangler.toml emits an `[observability]` block
+    /// (`enabled` + `head_sampling_rate`), the wasm entry installs a console
+    /// panic hook + tracing subscriber, and the metrics middleware emits a
+    /// structured per-request console log. When None, consumers default to
+    /// false (off — generated output stays byte-identical to pre-observability).
+    #[serde(default)]
+    pub observability: Option<bool>,
 }
 
 fn default_tier() -> String {
     "extended".to_string()
+}
+
+/// Normalize a name/key for fuzzy entity-config lookup: drop hyphens and
+/// spaces so "LER-RSType", "Screening Result" etc. can match their
+/// concatenated rust_type_name forms ("LERRSType", "ScreeningResult").
+fn normalize_config_key(name: &str) -> String {
+    name.replace(['-', ' '], "")
 }
 
 impl DomainEntry {
@@ -201,11 +240,13 @@ impl DomainEntry {
                 }
             })
             .or_else(|| {
-                // Fallback: match config keys whose normalized form (hyphens removed)
-                // equals the input name. Handles LER-RSType → LERRS.
-                let normalized = name.replace('-', "");
+                // Fallback: match config keys whose normalized form (hyphens
+                // and spaces removed) equals the input name. Handles
+                // LER-RSType → LERRS and "Screening Result" → ScreeningResult
+                // (titles with spaces produce concatenated rust_type_names).
+                let normalized = normalize_config_key(name);
                 self.entity_config.iter().find_map(|(key, cfg)| {
-                    let key_normalized = key.replace('-', "");
+                    let key_normalized = normalize_config_key(key);
                     if key_normalized == normalized
                         || key_normalized == format!("{}Type", normalized)
                     {
@@ -249,6 +290,39 @@ impl DomainEntry {
         self.remote_include_mode
             .clone()
             .unwrap_or_else(|| default.to_string())
+    }
+
+    /// Resolved webhook flag: the explicit `webhooks`, or `default` when unset.
+    pub fn webhooks_or(&self, default: bool) -> bool {
+        self.webhooks.unwrap_or(default)
+    }
+
+    /// Resolved Cloudflare Queue binding name: the explicit `queue_binding`,
+    /// or `default` (conventionally "WEBHOOK_QUEUE") when unset.
+    pub fn queue_binding_or(&self, default: &str) -> String {
+        self.queue_binding
+            .clone()
+            .unwrap_or_else(|| default.to_string())
+    }
+
+    /// Resolved Cloudflare Queue name: the explicit `queue_name`, or `default`
+    /// (conventionally `{app_name}-{domain}-webhooks`) when unset.
+    pub fn queue_name_or(&self, default: &str) -> String {
+        self.queue_name
+            .clone()
+            .unwrap_or_else(|| default.to_string())
+    }
+
+    /// Resolved max delivery attempts: the explicit `queue_max_retries`,
+    /// or `default` (conventionally 5) when unset.
+    pub fn queue_max_retries_or(&self, default: u32) -> u32 {
+        self.queue_max_retries.unwrap_or(default)
+    }
+
+    /// Resolved observability flag: the explicit `observability`, or `default`
+    /// (conventionally false) when unset.
+    pub fn observability_or(&self, default: bool) -> bool {
+        self.observability.unwrap_or(default)
     }
 }
 
@@ -598,6 +672,41 @@ pub fn parse_ui_domains_config_str(content: &str) -> Result<UiDomainConfig, Doma
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Entity config keys may contain spaces (raw schema titles). The lookup
+    /// by concatenated rust_type_name ("ScreeningResult") must still find them.
+    #[test]
+    fn test_get_entity_config_matches_space_titled_keys() {
+        let toml = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.compliance]
+label = "Compliance"
+schema_dir = "compliance"
+postgres_schema = "compliance"
+entities = ["Screening Result"]
+
+[domains.compliance.entity_config."Screening Result"]
+operations = ["create", "read", "list"]
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        let entry = &config.domains["compliance"];
+
+        // Direct (raw title) lookup
+        let cfg = entry.get_entity_config("Screening Result").unwrap();
+        assert_eq!(
+            cfg.operations.as_deref(),
+            Some(&["create".to_string(), "read".to_string(), "list".to_string()][..])
+        );
+
+        // Concatenated rust_type_name lookup (generate-time call pattern)
+        let cfg = entry.get_entity_config("ScreeningResult").unwrap();
+        assert_eq!(
+            cfg.operations.as_deref(),
+            Some(&["create".to_string(), "read".to_string(), "list".to_string()][..])
+        );
+    }
 
     #[test]
     fn test_parse_minimal_config() {
@@ -1246,6 +1355,12 @@ service_bindings = ["common", "timecard"]
 hyperdrive_binding = "PAYROLL_DB"
 cron_triggers = ["0 0 * * *", "*/15 * * * *"]
 remote_include_mode = "http"
+webhooks = true
+queue_name = "payroll-webhook-jobs"
+queue_binding = "PAYROLL_WEBHOOKS"
+queue_max_retries = 7
+queue_max_concurrency = 10
+observability = true
 "#;
         let config = parse_domain_config_str(toml).unwrap();
         let payroll = &config.domains["payroll"];
@@ -1264,6 +1379,12 @@ remote_include_mode = "http"
             Some(&["0 0 * * *".to_string(), "*/15 * * * *".to_string()][..])
         );
         assert_eq!(payroll.remote_include_mode.as_deref(), Some("http"));
+        assert_eq!(payroll.webhooks, Some(true));
+        assert_eq!(payroll.queue_name.as_deref(), Some("payroll-webhook-jobs"));
+        assert_eq!(payroll.queue_binding.as_deref(), Some("PAYROLL_WEBHOOKS"));
+        assert_eq!(payroll.queue_max_retries, Some(7));
+        assert_eq!(payroll.queue_max_concurrency, Some(10));
+        assert_eq!(payroll.observability, Some(true));
 
         // Accessors return explicit values when set.
         assert_eq!(
@@ -1276,6 +1397,19 @@ remote_include_mode = "http"
             payroll.service_bindings_or_depends(),
             vec!["common", "timecard"]
         );
+        assert!(payroll.webhooks_or(false));
+        assert_eq!(
+            payroll.queue_binding_or("WEBHOOK_QUEUE"),
+            "PAYROLL_WEBHOOKS"
+        );
+        assert_eq!(
+            payroll.queue_name_or("payroll-webhooks"),
+            "payroll-webhook-jobs"
+        );
+        assert_eq!(payroll.queue_max_retries_or(5), 7);
+
+        // Accessor returns the explicit value when set.
+        assert!(payroll.observability_or(false));
     }
 
     #[test]
@@ -1295,11 +1429,27 @@ depends_on = ["common"]
         assert!(payroll.hyperdrive_binding.is_none());
         assert!(payroll.cron_triggers.is_none());
         assert!(payroll.remote_include_mode.is_none());
+        assert!(payroll.webhooks.is_none());
+        assert!(payroll.queue_name.is_none());
+        assert!(payroll.queue_binding.is_none());
+        assert!(payroll.queue_max_retries.is_none());
+        assert!(payroll.queue_max_concurrency.is_none());
+        assert!(payroll.observability.is_none());
 
         // Accessors fall back to defaults.
         assert_eq!(payroll.worker_name_or("hr-app-payroll"), "hr-app-payroll");
         assert_eq!(payroll.hyperdrive_binding_or("HYPERDRIVE"), "HYPERDRIVE");
         assert_eq!(payroll.remote_include_mode_or("sql"), "sql");
         assert_eq!(payroll.service_bindings_or_depends(), vec!["common"]);
+        assert!(!payroll.webhooks_or(false));
+        assert_eq!(payroll.queue_binding_or("WEBHOOK_QUEUE"), "WEBHOOK_QUEUE");
+        assert_eq!(
+            payroll.queue_name_or("hr-app-payroll-webhooks"),
+            "hr-app-payroll-webhooks"
+        );
+        assert_eq!(payroll.queue_max_retries_or(5), 5);
+
+        // Observability defaults off when unset.
+        assert!(!payroll.observability_or(false));
     }
 }

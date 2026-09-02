@@ -5,19 +5,19 @@
 
 	import { page } from '$app/state';
 
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { Badge } from '$lib/components/ui/badge/index.js';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { Badge } from '#lib/components/ui/badge/index.js';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 
 
-	import { deleteProcessHistory } from '$lib/stores/common_process_history';
+	import { deleteProcessHistory } from '#lib/stores/common_process_history.ts';
 
 
 	import { TimeAgo } from '@crewbase/entities';
 	import { toast } from 'svelte-sonner';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { ProcessHistoryResponse } from '$lib/api/types';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { ProcessHistoryResponse } from '#lib/api/types.ts';
 
 	function formatRange(range: unknown): string {
 		if (!range || typeof range !== 'string') return '—';

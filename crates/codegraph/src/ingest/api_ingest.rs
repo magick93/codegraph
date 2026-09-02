@@ -50,7 +50,7 @@ pub async fn ingest_api_model(
             domain: Some("common".to_string()),
         })
         .await
-        .map_err(|e| Error::Graph(e))?;
+        .map_err(Error::Graph)?;
 
     let public_pipeline_id = db
         .ingest_pipeline(&PipelineNode {
@@ -59,7 +59,7 @@ pub async fn ingest_api_model(
             domain: Some("common".to_string()),
         })
         .await
-        .map_err(|e| Error::Graph(e))?;
+        .map_err(Error::Graph)?;
 
     let _admin_pipeline_id = db
         .ingest_pipeline(&PipelineNode {
@@ -72,7 +72,7 @@ pub async fn ingest_api_model(
             domain: Some("common".to_string()),
         })
         .await
-        .map_err(|e| Error::Graph(e))?;
+        .map_err(Error::Graph)?;
 
     for (domain_name, domain_entry) in &config.domains {
         for entity_name in &domain_entry.entities {
@@ -88,7 +88,8 @@ pub async fn ingest_api_model(
                 .unwrap_or(&config.defaults.operations);
 
             let schema_title = entity_name.clone();
-            let resource_name = entity_name.trim_end_matches("Type");
+            let resource_name =
+                crate::generate::api::api_model::normalized_resource_name(entity_name);
 
             let resource_id = db
                 .ingest_api_resource(&ApiResourceNode {
@@ -101,12 +102,12 @@ pub async fn ingest_api_model(
                     path_segment: path_segment.clone(),
                 })
                 .await
-                .map_err(|e| Error::Graph(e))?;
+                .map_err(Error::Graph)?;
             stats.resources += 1;
 
             db.ingest_edge(&resource_id, &schema_title, EdgeType::BindsToSchema, None)
                 .await
-                .map_err(|e| Error::Graph(e))?;
+                .map_err(Error::Graph)?;
 
             let op_mappings: Vec<(&str, &str, &str)> = operations
                 .iter()
@@ -136,16 +137,16 @@ pub async fn ingest_api_model(
                         domain: Some(domain_name.to_string()),
                     })
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
                 stats.operations += 1;
 
                 db.ingest_edge(&resource_id, &op_id, EdgeType::HasOperation, None)
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
 
                 db.ingest_edge(&op_id, &schema_title, EdgeType::OutputBoundTo, None)
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
 
                 let public_ops: &[String] = ec
                     .and_then(|c| c.public_operations.as_deref())
@@ -163,12 +164,12 @@ pub async fn ingest_api_model(
                             domain: Some(domain_name.clone()),
                         })
                         .await
-                        .map_err(|e| Error::Graph(e))?;
+                        .map_err(Error::Graph)?;
                     stats.permissions += 1;
 
                     db.ingest_edge(&op_id, &perm_id, EdgeType::RequiresPermission, None)
                         .await
-                        .map_err(|e| Error::Graph(e))?;
+                        .map_err(Error::Graph)?;
                 }
 
                 let interaction_id = db
@@ -177,12 +178,12 @@ pub async fn ingest_api_model(
                         domain: Some(domain_name.to_string()),
                     })
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
                 stats.interactions += 1;
 
                 db.ingest_edge(&op_id, &interaction_id, EdgeType::HasInteraction, None)
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
 
                 let path_template = format!("{}{}", base_path, path_suffix);
                 let endpoint_id = db
@@ -192,7 +193,7 @@ pub async fn ingest_api_model(
                         domain: Some(domain_name.to_string()),
                     })
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
                 stats.endpoints += 1;
 
                 db.ingest_edge(
@@ -202,7 +203,7 @@ pub async fn ingest_api_model(
                     None,
                 )
                 .await
-                .map_err(|e| Error::Graph(e))?;
+                .map_err(Error::Graph)?;
 
                 let pipeline_id = if public_ops.contains(&op_kind.to_string()) {
                     &public_pipeline_id
@@ -211,7 +212,7 @@ pub async fn ingest_api_model(
                 };
                 db.ingest_edge(&endpoint_id, pipeline_id, EdgeType::UsesPipeline, None)
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
             }
 
             // Add search as a first-class operation when the entity has a dedicated
@@ -237,16 +238,16 @@ pub async fn ingest_api_model(
                         domain: Some(domain_name.to_string()),
                     })
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
                 stats.operations += 1;
 
                 db.ingest_edge(&resource_id, &op_id, EdgeType::HasOperation, None)
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
 
                 db.ingest_edge(&op_id, &schema_title, EdgeType::OutputBoundTo, None)
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
 
                 // Interaction + HttpEndpoint for the search operation
                 let interaction_id = db
@@ -255,12 +256,12 @@ pub async fn ingest_api_model(
                         domain: Some(domain_name.to_string()),
                     })
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
                 stats.interactions += 1;
 
                 db.ingest_edge(&op_id, &interaction_id, EdgeType::HasInteraction, None)
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
 
                 let path_template = format!("{}/search", base_path);
                 let endpoint_id = db
@@ -270,7 +271,7 @@ pub async fn ingest_api_model(
                         domain: Some(domain_name.to_string()),
                     })
                     .await
-                    .map_err(|e| Error::Graph(e))?;
+                    .map_err(Error::Graph)?;
                 stats.endpoints += 1;
 
                 db.ingest_edge(
@@ -280,7 +281,7 @@ pub async fn ingest_api_model(
                     None,
                 )
                 .await
-                .map_err(|e| Error::Graph(e))?;
+                .map_err(Error::Graph)?;
             }
         }
     }

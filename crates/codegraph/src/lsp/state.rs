@@ -21,20 +21,11 @@ where
     }
 }
 
+#[derive(Default)]
 pub struct GrafeoState {
     pub entity_names: Vec<String>,
     pub schema_infos: HashMap<String, SchemaInfo>,
     pub schema_dirs: Vec<std::path::PathBuf>,
-}
-
-impl Default for GrafeoState {
-    fn default() -> Self {
-        Self {
-            entity_names: Vec::new(),
-            schema_infos: HashMap::new(),
-            schema_dirs: Vec::new(),
-        }
-    }
 }
 
 pub struct SchemaInfo {

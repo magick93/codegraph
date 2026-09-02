@@ -51,15 +51,6 @@ CREATE TABLE IF NOT EXISTS recruiting.candidate (
     uri TEXT,
 
 
-    application_process_history_id UUID,
-
-
-    distribution_guidelines_id UUID,
-
-
-    person_name_id UUID,
-
-
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
 
@@ -100,6 +91,7 @@ EXCEPTION
 END $$;
 
 
+<<<<<<<< HEAD:crates/review/generated-candidate/migrations/1423_recruiting_candidate.sql
 DO $$ BEGIN
   ALTER TABLE recruiting.candidate ADD CONSTRAINT fk_candidate_application_process_history FOREIGN KEY (application_process_history_id) REFERENCES common.process_history(id) ON DELETE SET NULL;
 EXCEPTION
@@ -127,12 +119,16 @@ EXCEPTION
 END $$;
 
 
+========
+>>>>>>>> origin/refactor/persistence-metamodel:crates/review/generated-candidate/migrations/1428_recruiting_candidate.sql
 
 
 -- Child table: recruiting.candidate_application_process_history
 CREATE TABLE IF NOT EXISTS recruiting.candidate_application_process_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     candidate_id UUID NOT NULL,
+
+    platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
 
     action_date TIMESTAMPTZ,
 
@@ -162,6 +158,8 @@ COMMENT ON COLUMN recruiting.candidate_application_process_history.descriptions 
 CREATE TABLE IF NOT EXISTS recruiting.candidate_distribution_guidelines (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     candidate_id UUID NOT NULL,
+
+    platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
 
     do_not_redistribute_indicator BOOLEAN,
 
@@ -207,6 +205,8 @@ CREATE TABLE IF NOT EXISTS recruiting.candidate_distribution_guidelines_distribu
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     candidate_distribution_guidelines_id UUID NOT NULL,
 
+    platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
+
     description TEXT,
 
     end_date DATE,
@@ -241,6 +241,8 @@ CREATE TABLE IF NOT EXISTS recruiting.candidate_person_name (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     candidate_id UUID NOT NULL,
 
+    platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
+
     family_name TEXT,
 
     formatted_name TEXT,
@@ -265,6 +267,8 @@ CREATE INDEX idx_candidate_person_name_parent ON recruiting.candidate_person_nam
 CREATE TABLE IF NOT EXISTS recruiting.candidate_position_schedule_type_codes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     candidate_id UUID NOT NULL,
+
+    platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
 
     code TEXT NOT NULL,
 
@@ -299,6 +303,8 @@ CREATE TABLE IF NOT EXISTS recruiting.candidate_qualifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     candidate_id UUID NOT NULL,
 
+    platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
+
     date_awarded DATE,
 
     issuer TEXT,
@@ -323,6 +329,8 @@ CREATE INDEX idx_candidate_qualifications_parent ON recruiting.candidate_qualifi
 CREATE TABLE IF NOT EXISTS recruiting.candidate_personbasetype (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     candidate_id UUID NOT NULL,
+
+    platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
 
     birth_date DATE,
 

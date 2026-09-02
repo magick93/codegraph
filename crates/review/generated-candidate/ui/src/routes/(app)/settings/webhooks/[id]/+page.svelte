@@ -2,10 +2,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import * as Card from '$lib/components/ui/card';
-  import { Badge } from '$lib/components/ui/badge';
-  import { Button } from '$lib/components/ui/button';
-  import { apiGet, apiPut, apiPost, apiDelete } from '$lib/api/client';
+  import * as Card from '#lib/components/ui/card/index.js';
+  import { Badge } from '#lib/components/ui/badge/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
+  import { apiGet, apiPut, apiPost, apiDelete } from '#lib/api/client.ts';
 
   interface WebhookEndpoint {
     id: string;

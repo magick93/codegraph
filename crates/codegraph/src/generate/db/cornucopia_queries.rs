@@ -75,7 +75,7 @@ impl EntityGenerator for CornucopiaQueryGenerator {
                 .domains
                 .get(domain)
                 .and_then(|d| d.get_entity_config(schema_title)),
-            &domain.to_string(),
+            domain,
             config,
             db,
         )
@@ -314,7 +314,9 @@ fn row_col_list(
 
 /// Whether a column's DB type needs an explicit `::text` cast in SELECT lists
 /// because its mapped Rust type (String) cannot be read directly by
-/// tokio-postgres (ranges, geometry/geography, vector).
+/// tokio-postgres (ranges, geometry/geography, vector, numeric — `String`'s
+/// `FromSql` rejects all of these, even for NULL values, because
+/// `Row::try_get` type-checks `accepts()` before checking for NULL).
 fn needs_text_cast(col: &TreeColumn, pg_types: &std::collections::HashMap<String, String>) -> bool {
     if col.pg_cast.is_some() {
         return true;
@@ -327,6 +329,7 @@ fn needs_text_cast(col: &TreeColumn, pg_types: &std::collections::HashMap<String
         || pg_upper.contains("GEOGRAPHY")
         || pg_upper.contains("VECTOR")
         || pg_upper.contains("RANGE")
+        || pg_upper.contains("NUMERIC")
 }
 
 fn row_hints(cols: &[&TreeColumn]) -> String {
@@ -654,9 +657,14 @@ fn write_child_queries(
     let col_names: Vec<String> = data_cols
         .iter()
         .map(|c| {
-            if c.pg_cast.is_some() {
-                // Range/geometry columns: the DTO holds strings — cast to text
-                // so tokio-postgres can deserialize them.
+            if c.pg_cast.is_some()
+                || matches!(
+                    c.rust_type.as_str(),
+                    "String" | "Decimal" | "rust_decimal::Decimal"
+                )
+            {
+                // Range/geometry/numeric columns: the DTO holds strings — cast
+                // to text so tokio-postgres can deserialize them.
                 format!("\"{}\"::text", c.pg_column_name)
             } else {
                 format!("\"{}\"", c.pg_column_name)
@@ -829,9 +837,7 @@ fn nested_filter_cast(rust_type: &str) -> &'static str {
     match base {
         "Uuid" | "uuid::Uuid" => "uuid",
         // Entity reference types (e.g. "OrganizationType") are always UUID FK columns.
-        ty if ty.ends_with("Type") && ty.chars().next().map_or(false, |c| c.is_uppercase()) => {
-            "uuid"
-        }
+        ty if ty.ends_with("Type") && ty.chars().next().is_some_and(|c| c.is_uppercase()) => "uuid",
         "i32" => "int4",
         "i64" => "int8",
         "f32" => "float4",

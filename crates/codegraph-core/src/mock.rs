@@ -25,6 +25,8 @@ pub struct MockEngine {
     events: Mutex<HashMap<String, EventNode>>,
     action_nodes: Mutex<HashMap<String, ActionNode>>,
     parameter_definitions: Mutex<HashMap<String, ParameterDefinitionNode>>,
+    /// Written by the builder; no querier reads it yet.
+    #[allow(dead_code)]
     data_bindings: Mutex<HashMap<String, DataBindingNode>>,
     api_resources: Mutex<HashMap<String, ApiResourceNode>>,
     api_operations: Mutex<HashMap<String, ApiOperationNode>>,

@@ -1349,10 +1349,8 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
         .find(|f| f.path.ends_with("workers/gateway/src/worker.rs"))
         .unwrap();
     assert!(
-        gateway_worker
-            .content
-            .contains("/api/v1/compensation/{*path}"),
-        "gateway must route compensation with the prefix-stripping wildcard"
+        gateway_worker.content.contains("/api/v1/{domain}/{*path}"),
+        "gateway must route domains with the prefix-stripping wildcard"
     );
     assert!(
         gateway_worker.content.contains("env.service"),
@@ -2015,7 +2013,7 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
         hooks_api_base: "crates/hr-hooks-api".to_string(),
         ..Default::default()
     };
-    let (report, _output_dir) = run_routing_generators_with_parts(
+    let (report, output_dir) = run_routing_generators_with_parts(
         mock,
         config,
         tera,
@@ -2052,14 +2050,36 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
         .content
         .contains("use crate::hooks::HookRegistry;"));
     // The worker manifest carries a path dependency on the hooks-api crate so
-    // the `hooks_api::...` references in command/query/app_state compile.
+    // the `hooks_api::...` references in command/query/app_state compile. The
+    // relative path must resolve from the worker crate dir to the hooks crate.
     let worker_cargo = find("workers/compensation/Cargo.toml");
-    assert!(
-        worker_cargo
-            .content
-            .contains("hr-hooks-api = { path = \"../../crates/hr-hooks-api\" }"),
-        "worker Cargo.toml must depend on the hooks-api crate, got:\n{}",
-        worker_cargo.content
+    let dep_line = worker_cargo
+        .content
+        .lines()
+        .find(|l| l.contains("hr-hooks-api = { path ="))
+        .unwrap_or_else(|| {
+            panic!(
+                "worker Cargo.toml missing hooks-api path dependency, got:\n{}",
+                worker_cargo.content
+            )
+        });
+    let q0 = dep_line.find('"').expect("quoted path");
+    let rest = &dep_line[q0 + 1..];
+    let q1 = rest.find('"').expect("closing quote");
+    let dep_path = Path::new(&rest[..q1]);
+    let worker_dir = output_dir.path().join("workers/compensation");
+    let resolved = normalize_abs(&worker_dir.join(dep_path));
+    let expected = normalize_abs(
+        &std::env::current_dir()
+            .expect("cwd")
+            .join("crates/hr-hooks-api"),
+    );
+    assert_eq!(
+        resolved,
+        expected,
+        "worker hooks-api dep must resolve to the hooks crate from the worker \
+         crate dir, got path `{}` (did not account for workers/{{domain}} nesting)",
+        dep_path.display()
     );
     // Common worker gets the same hooks module.
     assert!(report.files.iter().any(|f| f
@@ -2119,4 +2139,36 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
         .files
         .iter()
         .any(|f| f.path.to_string_lossy().ends_with("hooks/mod.rs")));
+}
+
+/// Lexically normalize an absolute path (collapse `.`/`..`) into its ordered
+/// normal components, for comparing generated relative paths against a base.
+fn normalize_abs(path: &Path) -> Vec<std::ffi::OsString> {
+    use std::path::Component;
+    let mut out: Vec<std::ffi::OsString> = Vec::new();
+    for c in path.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(seg) => out.push(seg.to_os_string()),
+            Component::RootDir => out.clear(),
+            Component::CurDir => {}
+            Component::Prefix(_) => {}
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_abs_collapses_dotdot() {
+        assert_eq!(
+            normalize_abs(Path::new("/a/b/c/../../d")),
+            vec![std::ffi::OsString::from("a"), std::ffi::OsString::from("d")]
+        );
+    }
 }

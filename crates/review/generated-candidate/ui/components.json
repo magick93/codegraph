@@ -7,11 +7,11 @@
 		"baseColor": "neutral"
 	},
 	"aliases": {
-		"components": "$lib/components",
-		"utils": "$lib/utils",
-		"hooks": "$lib/hooks",
-		"ui": "$lib/components/ui",
-		"lib": "$lib"
+		"components": "#lib/components",
+		"utils": "#lib/utils",
+		"hooks": "#lib/hooks",
+		"ui": "#lib/components/ui",
+		"lib": "#lib"
 	},
 	"typescript": true
 }

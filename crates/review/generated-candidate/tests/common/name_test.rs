@@ -9,7 +9,7 @@ mod tests {
     #[test]
     fn test_name_entity_columns() {
         // Verify the entity model compiles and has expected columns
-        let _model = app::entity::name::Model {
+        let _model = app::entity::common_name::Model {
             id: Uuid::new_v4(),
             ..Default::default()
         };

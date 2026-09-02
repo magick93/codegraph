@@ -74,7 +74,7 @@ impl EntityGenerator for CornucopiaRepoGenerator {
                 .domains
                 .get(domain)
                 .and_then(|d| d.get_entity_config(schema_title)),
-            &domain.to_string(),
+            domain,
             config,
             db,
         )
@@ -414,7 +414,7 @@ fn emit_adapter_find_by_id(tree: &EntityTree, code: &mut String) {
 fn emit_adapter_find_by_id_scoped(tree: &EntityTree, code: &mut String) {
     let entity_name = &tree.entity_name;
     let qmod = qmod(tree);
-    let parent_fk = tree.parent_ref.as_deref().unwrap_or("parent_id");
+    let _parent_fk = tree.parent_ref.as_deref().unwrap_or("parent_id");
     writeln!(code).unwrap();
     writeln!(
         code,
@@ -1013,7 +1013,32 @@ fn emit_response_expr(
         if col.is_composite_range {
             continue;
         }
-        emit_entity_to_dto_field(code, col, row_var, &format!("{pad}    "));
+        if col.dto_rust_type.is_none()
+            && (col.rust_type == "Decimal" || col.rust_type.ends_with("::Decimal"))
+            && !col.is_structured_wrapper
+        {
+            // Numeric columns travel as String through the SQL layer (see the
+            // `pg_catalog.numeric` entry in the generated cornucopia.toml)
+            // and are parsed back at the DTO boundary.
+            let dto_field = col.dto_name();
+            if col.is_nullable {
+                writeln!(
+                    code,
+                    "{pad}    {dto_field}: {row_var}.{field}.and_then(|v| v.parse().ok()),",
+                    field = col.field_name,
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    code,
+                    "{pad}    {dto_field}: {row_var}.{field}.parse().unwrap_or_default(),",
+                    field = col.field_name,
+                )
+                .unwrap();
+            }
+        } else {
+            emit_entity_to_dto_field(code, col, row_var, &format!("{pad}    "));
+        }
     }
     emit_child_field_population(code, &tree.child_tables, &format!("{pad}    "));
     if tree.has_workflow {
@@ -1094,7 +1119,13 @@ fn emit_child_reads_cornucopia(
 
 /// Emit a single child column mapping from a typed Cornucopia row.
 fn emit_child_col_read_value_cornucopia(code: &mut String, col: &ChildColumn, pad: &str) {
-    if col.dto_rust_type.is_some() {
+    // Decimal columns travel as String through the SQL layer (see the
+    // `pg_catalog.numeric` entry in the generated cornucopia.toml) and are
+    // parsed back at the DTO boundary, same as codelist/typed columns.
+    let needs_parse = col.dto_rust_type.is_some()
+        || col.rust_type == "Decimal"
+        || col.rust_type.ends_with("::Decimal");
+    if needs_parse {
         if col.is_nullable {
             writeln!(
                 code,
@@ -1287,8 +1318,6 @@ fn update_bind_args(tree: &EntityTree) -> Vec<String> {
             } else {
                 args.push(format!("&cmd.{field}"));
             }
-        } else if col.dto_rust_type.is_some() || col.pg_cast.is_some() {
-            args.push(format!("&cmd.{field}.as_ref().map(|v| v.to_string())"));
         } else {
             args.push(format!("&cmd.{field}.as_ref().map(|v| v.to_string())"));
         }

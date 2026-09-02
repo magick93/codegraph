@@ -3,12 +3,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
-	import PayRunForm from '$lib/components/forms/PayRunForm.svelte';
-	import { createPayRun } from '$lib/stores/compensation_pay_run';
+	import PayRunForm from '#lib/components/forms/PayRunForm.svelte';
+	import { createPayRun } from '#lib/stores/compensation_pay_run.ts';
 	import { toast } from 'svelte-sonner';
-	import * as Card from '$lib/components/ui/card/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { CreatePayRunRequest } from '$lib/api/types';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { CreatePayRunRequest } from '#lib/api/types.ts';
 
 
 	const basePath = '/compensation/pay-runs';

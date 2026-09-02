@@ -58,7 +58,13 @@ pub fn fk_column_for_candidate(
         codegraph_core::types::DetectionSource::ArrayItems => {
             codegraph_naming::to_snake_case(parent_name) + "_id"
         }
-        _ => codegraph_naming::to_snake_case(&pc.field_name) + "_id",
+        // ScalarRef: the FK column already exists on the child — it is the
+        // child's own reference property (e.g. `tenantId` → `tenant_id`).
+        // Apply ensure_id_suffix instead of unconditionally appending `_id`
+        // so Id-suffixed schema properties don't produce `tenant_id_id`.
+        _ => codegraph_core::types::ensure_id_suffix(&codegraph_naming::to_snake_case(
+            &pc.field_name,
+        )),
     }
 }
 
@@ -345,11 +351,15 @@ pub fn is_api_entity_generator(name: &str) -> bool {
 /// Everything else — DDL migrations, API tests, UI, CLI, gRPC, playwright,
 /// domain-types, hooks — stays anchored at the output root (single shared
 /// database, unchanged frontend).
+///
+/// `cornucopia_queries` is deliberately root-anchored in both topologies:
+/// the annotated `.sql` files feed the single shared `cornucopia-queries`
+/// codegen crate at the output root (`queries/{domain}/{entity}.sql`), which
+/// every worker crate depends on by path.
 pub fn is_worker_routed_entity_generator(name: &str) -> bool {
     matches!(
         name,
         "sea_orm_entity"
-            | "cornucopia_queries"
             | "cornucopia_repo"
             | "repository"
             | "command"
@@ -526,7 +536,13 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let suffix = &config.defaults.type_suffix;
     for (domain_name, domain_entry) in &config.domains {
         for entity_title in &domain_entry.entities {
-            let entity_name = codegraph_naming::strip_suffix(entity_title, suffix);
+            // Match the naming used by the DTO generators: strip the configured
+            // suffix, then PascalCase what remains (titles may contain spaces,
+            // e.g. "Validation Issue" -> "ValidationIssue").
+            let entity_name = codegraph_naming::to_pascal_case(&codegraph_naming::strip_suffix(
+                entity_title,
+                suffix,
+            ));
             let module_name = codegraph_naming::to_snake_case(&entity_name);
             let base = || -> Vec<String> {
                 vec![
@@ -1311,6 +1327,14 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
+    // Emit integration-test glue (tests/<domain>/mod.rs + tests/tests.rs) so
+    // cargo actually compiles the generated entity tests under tests/.
+    let test_mod_files = generate_test_mod_files(output_dir)?;
+    for file in &test_mod_files {
+        write_output(file)?;
+    }
+    report.files.extend(test_mod_files);
+
     Ok(report)
 }
 
@@ -1710,6 +1734,12 @@ pub fn render_template_with_project_and_dialect<C: serde::Serialize>(
 
 /// Add a numeric prefix to migration file paths so alphabetical order matches
 /// dependency order. Non-migration files are returned unchanged.
+///
+/// The prefix is zero-padded to SIX digits: consumers (supabase db reset,
+/// glob-based migration loops) order files lexicographically, so an
+/// unpadded width would break once the sequence crosses 9999 — e.g. the
+/// entity DDL `9996_benefits_dependent.sql` sorting *after* its own child
+/// RLS at `10000_..._rls.sql` (SQLSTATE 42P01 during db reset).
 fn prefix_migration_path(mut file: GeneratedFile, seq: usize) -> GeneratedFile {
     let is_migration = file
         .path
@@ -1718,9 +1748,9 @@ fn prefix_migration_path(mut file: GeneratedFile, seq: usize) -> GeneratedFile {
         .is_some_and(|d| d == "migrations");
     if is_migration {
         if let Some(name) = file.path.file_name().and_then(|n| n.to_str()) {
-            // Skip files that already have a numeric prefix (e.g. 0005_pgmq_setup.sql)
+            // Skip files that already have a numeric prefix (e.g. 000005_pgmq_setup.sql)
             if !name.starts_with(|c: char| c.is_ascii_digit()) {
-                let prefixed = format!("{:04}_{}", seq, name);
+                let prefixed = format!("{:06}_{}", seq, name);
                 file.path = file.path.with_file_name(prefixed);
             }
         }
@@ -1732,6 +1762,50 @@ fn prefix_migration_path(mut file: GeneratedFile, seq: usize) -> GeneratedFile {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn clean_generated_output_removes_stale_dto_included() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let entity_dir = dir
+            .path()
+            .join("src")
+            .join("domain")
+            .join("hr")
+            .join("worker");
+        std::fs::create_dir_all(&entity_dir).unwrap();
+        // Stale dto_included.rs from a run where the entity had include
+        // paths; dto_response.rs is a regular per-run file.
+        std::fs::write(entity_dir.join("dto_included.rs"), "pub struct Stale;").unwrap();
+        std::fs::write(entity_dir.join("dto_response.rs"), "pub struct Keep;").unwrap();
+        // A stale entity directory (not in the generation order) that also
+        // carries a dto_included.rs must be removed whole.
+        let stale_dir = dir
+            .path()
+            .join("src")
+            .join("domain")
+            .join("hr")
+            .join("ghost");
+        std::fs::create_dir_all(&stale_dir).unwrap();
+        std::fs::write(stale_dir.join("dto_included.rs"), "pub struct Ghost;").unwrap();
+
+        let order = vec![GenerationEntry {
+            schema_title: "WorkerType".to_string(),
+            domain: "hr".to_string(),
+            pg_schema: "hr".to_string(),
+            is_cyclic: false,
+        }];
+        clean_generated_output(dir.path(), &order, "Type", false);
+
+        assert!(
+            !entity_dir.join("dto_included.rs").exists(),
+            "stale dto_included.rs must be removed so generate_mod_files cannot re-declare it"
+        );
+        assert!(entity_dir.join("dto_response.rs").exists());
+        assert!(
+            !stale_dir.exists(),
+            "stale entity directory must still be removed whole"
+        );
+    }
 
     fn make_migration(name: &str) -> GeneratedFile {
         GeneratedFile {
@@ -1747,18 +1821,18 @@ mod tests {
             let file = make_migration("common_some_codelist.sql");
             let result = prefix_migration_path(file, (idx + 10) as usize);
             let name = result.path.file_name().unwrap().to_str().unwrap();
-            // Must start with 4-digit zero-padded prefix
-            let prefix: String = name.chars().take(4).collect();
+            // Must start with 6-digit zero-padded prefix
+            let prefix: String = name.chars().take(6).collect();
             assert!(
                 prefix.chars().all(|c| c.is_ascii_digit()),
-                "codelist prefix must be 4 digits, got: {name}"
+                "codelist prefix must be 6 digits, got: {name}"
             );
             let num: u16 = prefix.parse().unwrap();
             assert!(
                 (10..100).contains(&num),
                 "codelist seq {num} out of range 10..99 for idx {idx}"
             );
-            assert_eq!(&name[4..5], "_", "5th char must be underscore: {name}");
+            assert_eq!(&name[6..7], "_", "7th char must be underscore: {name}");
         }
     }
 
@@ -1769,18 +1843,40 @@ mod tests {
             let file = make_migration("recruiting_candidate.sql");
             let result = prefix_migration_path(file, (idx + 500) as usize);
             let name = result.path.file_name().unwrap().to_str().unwrap();
-            let prefix: String = name.chars().take(4).collect();
+            let prefix: String = name.chars().take(6).collect();
             assert!(
                 prefix.chars().all(|c| c.is_ascii_digit()),
-                "entity prefix must be 4 digits, got: {name}"
+                "entity prefix must be 6 digits, got: {name}"
             );
             let num: u16 = prefix.parse().unwrap();
             assert!(
                 num >= 500,
                 "entity seq {num} should be >= 500 for idx {idx}"
             );
-            assert_eq!(&name[4..5], "_", "5th char must be underscore: {name}");
+            assert_eq!(&name[6..7], "_", "7th char must be underscore: {name}");
         }
+    }
+
+    #[test]
+    fn test_prefix_migration_path_sorts_across_five_digit_boundary() {
+        // Regression: with 4-digit padding, an entity DDL at seq 9996 and its
+        // child RLS at seq 10000 produced `9996_...` vs `10000_...`, which sort
+        // in the WRONG order lexicographically — supabase db reset then applies
+        // the RLS migration before the table exists (SQLSTATE 42P01).
+        // 6-digit padding keeps lexicographic == numeric across the boundary.
+        let ddl = prefix_migration_path(make_migration("benefits_dependent.sql"), 9996);
+        let rls = prefix_migration_path(
+            make_migration("benefits_dependent_child_address_rls.sql"),
+            10000,
+        );
+        let ddl_name = ddl.path.file_name().unwrap().to_str().unwrap();
+        let rls_name = rls.path.file_name().unwrap().to_str().unwrap();
+        assert_eq!(ddl_name, "009996_benefits_dependent.sql");
+        assert_eq!(rls_name, "010000_benefits_dependent_child_address_rls.sql");
+        assert!(
+            ddl_name < rls_name,
+            "DDL must sort before its child RLS across the 9999/10000 boundary"
+        );
     }
 
     #[test]
@@ -1858,13 +1954,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_rust_module_name_passthrough() {
+        // Names already valid as identifiers must be returned unchanged.
+        assert_eq!(rust_module_name("case_test"), "case_test");
+        assert_eq!(rust_module_name("individual_profile"), "individual_profile");
+    }
+
+    #[test]
+    fn test_rust_module_name_sanitizes() {
+        // Dashes/spaces become underscores, keywords get _mod, digits get n_.
+        assert_eq!(rust_module_name("my-domain"), "my_domain");
+        assert_eq!(rust_module_name("my domain"), "my_domain");
+        assert_eq!(rust_module_name("type"), "type_mod");
+        assert_eq!(rust_module_name("3d"), "n_3d");
+    }
+
+    #[test]
+    fn test_module_declaration_plain_and_path() {
+        // Valid identifier: plain mod declaration.
+        assert_eq!(test_module_declaration("core", true), "mod core;");
+        // Invalid identifier: #[path] keeps the on-disk name (dir vs file form).
+        assert_eq!(
+            test_module_declaration("my-domain", true),
+            "#[path = \"my-domain\"]\nmod my_domain;"
+        );
+        assert_eq!(
+            test_module_declaration("type", false),
+            "#[path = \"type.rs\"]\nmod type_mod;"
+        );
+    }
+
+    #[test]
+    fn test_test_mod_content_joins_declarations() {
+        let modules: BTreeSet<String> = [
+            "mod case_test;".to_string(),
+            "mod case_dto_test;".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        let content = test_mod_content(&modules);
+        let mut lines: Vec<&str> = content.lines().collect();
+        lines.sort_unstable();
+        assert_eq!(lines, vec!["mod case_dto_test;", "mod case_test;"]);
+        assert!(content.ends_with('\n'), "mod content must end with newline");
+    }
+
     // ── Workers topology output routing ────────────────────────────────
 
     #[test]
     fn test_worker_routed_generator_classification() {
         let routed_entity = [
             "sea_orm_entity",
-            "cornucopia_queries",
             "cornucopia_repo",
             "repository",
             "command",
@@ -2051,6 +2192,15 @@ fn clean_generated_output(
             // if a generator fails partway through, the previous working state is preserved.
             let key = (domain.to_string(), module_name.clone());
             if expected.contains(&key) {
+                // dto_included.rs is emitted only when the entity currently
+                // has include paths. Delete any stale copy up front so the
+                // per-run filesystem scan in generate_mod_files cannot
+                // re-declare `pub mod dto_included;` for a file this run
+                // will not regenerate (e.g. after allow_include changes).
+                let dto_included = path.join("dto_included.rs");
+                if dto_included.is_file() {
+                    let _ = fs::remove_file(&dto_included);
+                }
                 continue;
             }
             tracing::debug!(
@@ -2149,6 +2299,67 @@ fn clean_generated_output(
                                 "removing stale UI test file"
                             );
                             let _ = fs::remove_file(&path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Clean stale entity test files: tests/{domain}/{module}_test.rs and
+    // {module}_dto_test.rs. The integration-test glue (tests/<domain>/mod.rs,
+    // tests/tests.rs) is regenerated from the filesystem after generation, so
+    // removed files simply disappear from the declared modules.
+    let tests_dir = output_dir.join("tests");
+    if tests_dir.is_dir() {
+        if let Ok(test_domain_entries) = fs::read_dir(&tests_dir) {
+            for child in test_domain_entries.flatten() {
+                let path = child.path();
+                if !path.is_dir() {
+                    continue; // top-level test crates are not per-domain
+                }
+                let domain = match path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n.to_string(),
+                    None => continue,
+                };
+                if !domains.contains(domain.as_str()) {
+                    tracing::debug!(
+                        domain = %domain,
+                        path = %path.display(),
+                        "removing stale test domain directory"
+                    );
+                    let _ = fs::remove_dir_all(&path);
+                    continue;
+                }
+                if let Ok(file_entries) = fs::read_dir(&path) {
+                    for child in file_entries.flatten() {
+                        let file_path = child.path();
+                        if file_path.is_dir() {
+                            continue;
+                        }
+                        let name = match child.file_name().to_str() {
+                            Some(n) => n.to_string(),
+                            None => continue,
+                        };
+                        // Only clean the generated per-entity test file
+                        // patterns ({module}_test.rs, {module}_dto_test.rs);
+                        // mod.rs and anything else is left alone.
+                        let module = if let Some(m) = name.strip_suffix("_dto_test.rs") {
+                            m
+                        } else if let Some(m) = name.strip_suffix("_test.rs") {
+                            m
+                        } else {
+                            continue;
+                        };
+                        let key = (domain.clone(), module.to_string());
+                        if !expected.contains(&key) {
+                            tracing::debug!(
+                                domain = %domain,
+                                file = %name,
+                                path = %file_path.display(),
+                                "removing stale entity test file"
+                            );
+                            let _ = fs::remove_file(&file_path);
                         }
                     }
                 }
@@ -2298,6 +2509,132 @@ fn generate_mod_files_recursive(dir: &Path, out: &mut Vec<GeneratedFile>) -> Res
     }
 
     Ok(has_content)
+}
+
+/// Emit cargo integration-test glue for the generated entity tests.
+///
+/// Entity test generators write into `tests/<domain>/<entity>_test.rs`
+/// subdirectories, but cargo only auto-discovers top-level `tests/*.rs` files
+/// as integration test crates. This pass gives the tree the missing module
+/// structure: a `mod.rs` in every test subdirectory declaring its `*_test.rs`
+/// files, plus a top-level `tests/tests.rs` declaring every domain module, so
+/// `cargo test` compiles and runs every generated test.
+///
+/// Like [`generate_mod_files`], this scans the filesystem after generation, so
+/// files removed by the stale-cleanup pass in [`clean_generated_output`]
+/// simply disappear from the declared modules on the next run.
+fn generate_test_mod_files(output_dir: &Path) -> Result<Vec<GeneratedFile>> {
+    let mut out = Vec::new();
+    let tests_dir = output_dir.join("tests");
+    if !tests_dir.is_dir() {
+        return Ok(out);
+    }
+
+    // Only subdirectories are glued into the crate: bare `tests/*.rs` files
+    // are standalone integration test crates that cargo discovers itself.
+    let mut domains = BTreeSet::new();
+    for entry in fs::read_dir(&tests_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let disk_name = entry.file_name().to_string_lossy().to_string();
+        let mut modules = BTreeSet::new();
+        collect_test_mods(&path, &mut modules, &mut out)?;
+        if modules.is_empty() {
+            // Nothing to declare (e.g. every test file was stale) — drop any
+            // leftover mod.rs from a previous run so it cannot dangle.
+            let _ = fs::remove_file(path.join("mod.rs"));
+            continue;
+        }
+        out.push(GeneratedFile {
+            path: path.join("mod.rs"),
+            content: test_mod_content(&modules),
+        });
+        domains.insert(test_module_declaration(&disk_name, true));
+    }
+
+    if !domains.is_empty() {
+        out.push(GeneratedFile {
+            path: tests_dir.join("tests.rs"),
+            content: test_mod_content(&domains),
+        });
+    }
+    Ok(out)
+}
+
+/// Collect `mod` declarations for every `.rs` file under `dir`, recursing into
+/// subdirectories (each of which gets its own `mod.rs`, appended to `out`).
+fn collect_test_mods(
+    dir: &Path,
+    modules: &mut BTreeSet<String>,
+    out: &mut Vec<GeneratedFile>,
+) -> Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let disk_name = entry.file_name().to_string_lossy().to_string();
+        if path.is_dir() {
+            let mut submodules = BTreeSet::new();
+            collect_test_mods(&path, &mut submodules, out)?;
+            if submodules.is_empty() {
+                let _ = fs::remove_file(path.join("mod.rs"));
+                continue;
+            }
+            out.push(GeneratedFile {
+                path: path.join("mod.rs"),
+                content: test_mod_content(&submodules),
+            });
+            modules.insert(test_module_declaration(&disk_name, true));
+        } else if path.extension().is_some_and(|e| e == "rs") && disk_name != "mod.rs" {
+            let stem = disk_name
+                .strip_suffix(".rs")
+                .unwrap_or(&disk_name)
+                .to_string();
+            modules.insert(test_module_declaration(&stem, false));
+        }
+    }
+    Ok(())
+}
+
+/// Render `mod` declarations as a mod file body.
+fn test_mod_content(modules: &BTreeSet<String>) -> String {
+    modules.iter().cloned().collect::<Vec<_>>().join("\n") + "\n"
+}
+
+/// Build a `mod` declaration for a test-tree entry. Returns a plain
+/// `mod <name>;` when the name is already a valid Rust identifier, otherwise
+/// a `#[path]`-attributed declaration using the sanitized module name so
+/// names with spaces, dashes, keyword or digit collisions still compile.
+fn test_module_declaration(disk_name: &str, is_dir: bool) -> String {
+    let module = rust_module_name(disk_name);
+    if module == disk_name {
+        return format!("mod {};", module);
+    }
+    let target = if is_dir {
+        disk_name.to_string()
+    } else {
+        format!("{}.rs", disk_name)
+    };
+    format!("#[path = {:?}]\nmod {};", target, module)
+}
+
+/// Sanitize an on-disk name into a valid Rust module identifier: characters
+/// outside `[A-Za-z0-9_]` become underscores, digit-leading names get an
+/// `n_` prefix, and reserved keywords get a `_mod` suffix.
+fn rust_module_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    codegraph_naming::escape_module_keyword(&sanitized)
 }
 
 /// Scan `src/domain/` for `crate::entity::<module>::` references and rewrite
