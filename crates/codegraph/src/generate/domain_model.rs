@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::{PropertyNode, SchemaNode};
+use codegraph_core::types::PropertyNode;
 use serde::Serialize;
 
 use crate::error::Result;
@@ -331,7 +331,7 @@ fn resolve_fields(properties: &[PropertyNode], all_of_parents: &[String]) -> Vec
 }
 
 /// Parse a Rust field type string into canonical RustType.
-pub(crate) fn parse_rust_type(rust_field_type: &str, is_required: bool) -> RustType {
+pub(crate) fn parse_rust_type(rust_field_type: &str, _is_required: bool) -> RustType {
     let stripped = rust_field_type.trim();
 
     // Option<T> → Optional { ... }

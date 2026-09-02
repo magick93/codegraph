@@ -900,7 +900,7 @@ fn classify_single_property(
             .collect();
         // Build a synthetic codelist name: {Domain}{EntityName}{PropName}
         let stripped_entity = strip_suffix(schema_title, suffix);
-        let pascal_entity = stripped_entity.to_upper_camel_case();
+        let _pascal_entity = stripped_entity.to_upper_camel_case();
         let synthetic_name = format!(
             "{}{}{}",
             domain.to_upper_camel_case(),

@@ -161,11 +161,10 @@ fn candidate_properties() -> Vec<PropertyNode> {
 }
 
 async fn setup_mock() -> MockEngine {
-    let engine = MockEngine::builder()
+    MockEngine::builder()
         .with_schema(candidate_schema())
         .with_properties("CandidateType", candidate_properties())
-        .build();
-    engine
+        .build()
 }
 
 // === DDL Template Tests ===
@@ -2672,7 +2671,7 @@ async fn router_permission_gated_emits_layers_and_helper() {
         "Permission helper should build <scope>:<op> strings. Got:\n{content}"
     );
     // Backward compat: an entity WITHOUT permissions must NOT get the layers.
-    let mut plain_config = test_domain_config();
+    let plain_config = test_domain_config();
     let plain = generate::api::router::RouterGenerator::new(&output_dir);
     let files = plain
         .generate(

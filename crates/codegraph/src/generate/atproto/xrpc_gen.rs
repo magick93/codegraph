@@ -5,7 +5,7 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::generate::domain_model::{build_entity_model, EntityField};
+use crate::generate::domain_model::build_entity_model;
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{DomainGenerator, EntityGenerator, GeneratedFile};
 use crate::generate::ProjectConfig;

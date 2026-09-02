@@ -193,7 +193,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
                 let operations =
                     resolve_entity_operations(db, config, domain_name, entity_name).await;
 
-                let entity_name_pascal = codegraph_naming::to_pascal_case(&entity_name);
+                let entity_name_pascal = codegraph_naming::to_pascal_case(entity_name);
                 let entity_mod_ctx = EntityModContext {
                     entity_name: entity_name_pascal,
                     has_create: operations.contains(&"create".to_string()),

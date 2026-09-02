@@ -454,7 +454,8 @@ mod tests {
         e.media_fields = vec!["avatar".into()];
         let routes = entity_routes(&e, "/api/v1/events/public-event");
         let paths: Vec<&str> = routes.iter().map(|r| r.path.as_str()).collect();
-        for expected in ["/api/v1/events/public-event/{id}/avatar"] {
+        {
+            let expected = "/api/v1/events/public-event/{id}/avatar";
             assert!(paths.contains(&expected), "missing media route {expected}");
         }
         // The router template hardcodes `{id}` for media routes, NOT the

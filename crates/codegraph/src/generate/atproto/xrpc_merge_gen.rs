@@ -139,8 +139,10 @@ mod tests {
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("templates"),
         )
         .unwrap();
-        let mut project = ProjectConfig::default();
-        project.atproto_authority = "community.os".to_string();
+        let project = ProjectConfig {
+            atproto_authority: "community.os".to_string(),
+            ..Default::default()
+        };
 
         let emitter = AtprotoXrpcMergeEmitter::new(&out);
         let config = codegraph_config::DomainConfig {
@@ -204,8 +206,10 @@ mod tests {
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("templates"),
         )
         .unwrap();
-        let mut project = ProjectConfig::default();
-        project.atproto_authority = "community.os".to_string();
+        let project = ProjectConfig {
+            atproto_authority: "community.os".to_string(),
+            ..Default::default()
+        };
 
         let emitter = AtprotoXrpcMergeEmitter::new(&out);
         let config = codegraph_config::DomainConfig {

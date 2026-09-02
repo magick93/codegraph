@@ -597,6 +597,7 @@ async fn test_repository_emitter_uses_num_items() {
 // === Repository Emitter Snapshot Tests ===
 
 /// Helper: build a PropertyNode with defaults, overriding key fields.
+#[allow(clippy::too_many_arguments)]
 fn prop(
     name: &str,
     rust_type: &str,
@@ -1620,6 +1621,7 @@ async fn test_domain_types_codelist_generates_enum_not_string_alias() {
 /// Like `prop()` but allows split `rust_field_name` ≠ `pg_column_name`,
 /// matching real ingestion where strip_code_suffix_safe strips _code from
 /// rust_field_name but pg_column_name retains it.
+#[allow(clippy::too_many_arguments)]
 fn prop_split(
     name: &str,
     rust_field_name: &str,

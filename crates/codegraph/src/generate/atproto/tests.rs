@@ -44,7 +44,7 @@ mod atproto_template_tests {
 
     #[test]
     fn lexicon_record_template_renders_basic_record() {
-        let mut tera = load_tera();
+        let tera = load_tera();
         let mut ctx = tera::Context::new();
 
         ctx.insert(
@@ -108,7 +108,7 @@ mod atproto_template_tests {
 
     #[test]
     fn lexicon_object_template_renders_basic_object() {
-        let mut tera = load_tera();
+        let tera = load_tera();
         let mut ctx = tera::Context::new();
 
         ctx.insert(
@@ -157,7 +157,7 @@ mod atproto_template_tests {
 
     #[test]
     fn lexicon_enum_template_renders_closed_enum() {
-        let mut tera = load_tera();
+        let tera = load_tera();
         let mut ctx = tera::Context::new();
 
         ctx.insert(
@@ -193,7 +193,7 @@ mod atproto_template_tests {
 
     #[test]
     fn lexicon_enum_template_renders_open_enum() {
-        let mut tera = load_tera();
+        let tera = load_tera();
         let mut ctx = tera::Context::new();
 
         ctx.insert(
@@ -227,7 +227,7 @@ mod atproto_template_tests {
 
     #[test]
     fn scaffold_template_renders_shared_defs() {
-        let mut tera = load_tera();
+        let tera = load_tera();
         let mut ctx = tera::Context::new();
 
         ctx.insert(
@@ -279,7 +279,7 @@ mod atproto_template_tests {
 
     #[test]
     fn lexicon_type_renders_blob_and_bytes() {
-        let mut tera = load_tera();
+        let tera = load_tera();
         let mut ctx = tera::Context::new();
 
         ctx.insert(
@@ -342,7 +342,7 @@ mod atproto_template_tests {
 
     #[test]
     fn lexicon_type_renders_array_union_token_unknown_boolean() {
-        let mut tera = load_tera();
+        let tera = load_tera();
         let mut ctx = tera::Context::new();
 
         ctx.insert(
@@ -413,7 +413,7 @@ mod atproto_template_tests {
 
     #[test]
     fn lexicon_type_renders_string_formats() {
-        let mut tera = load_tera();
+        let tera = load_tera();
         let mut ctx = tera::Context::new();
 
         ctx.insert(
@@ -455,7 +455,7 @@ mod atproto_template_tests {
 
     #[test]
     fn lexicon_record_renders_defs_as_additional_types() {
-        let mut tera = load_tera();
+        let tera = load_tera();
         let mut ctx = tera::Context::new();
 
         ctx.insert(
@@ -520,7 +520,7 @@ mod atproto_template_tests {
 
     #[test]
     fn lexicon_record_renders_key_strategy_variants() {
-        let mut tera = load_tera();
+        let tera = load_tera();
         let mut ctx = tera::Context::new();
 
         for (strategy, expected) in &[
@@ -567,7 +567,7 @@ mod atproto_template_tests {
 
     #[test]
     fn lexicon_record_defaults_revision_to_1() {
-        let mut tera = load_tera();
+        let tera = load_tera();
         let mut ctx = tera::Context::new();
 
         ctx.insert(

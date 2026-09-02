@@ -141,11 +141,11 @@ mod tests {
 
         for edge in &edges {
             match edge {
-                EdgeType::InNamespace => assert!(true),
-                EdgeType::ProjectsToLexicon => assert!(true),
-                EdgeType::DefinesCollection => assert!(true),
-                EdgeType::LexiconReferences => assert!(true),
-                EdgeType::StoredInRepository => assert!(true),
+                EdgeType::InNamespace
+                | EdgeType::ProjectsToLexicon
+                | EdgeType::DefinesCollection
+                | EdgeType::LexiconReferences
+                | EdgeType::StoredInRepository => {}
                 _ => panic!("unexpected edge variant"),
             }
         }

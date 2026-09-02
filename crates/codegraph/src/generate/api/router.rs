@@ -831,7 +831,7 @@ pub async fn build_router_context(
     let perms = db.get_permissions().await.unwrap_or_default();
     let has_permission_middleware = !perms.is_empty();
 
-    let pipelines = db.get_pipelines().await.unwrap_or_default();
+    let _pipelines = db.get_pipelines().await.unwrap_or_default();
     let endpoints = db.get_http_endpoints().await.unwrap_or_default();
 
     for entity in &mut entities {
@@ -1148,8 +1148,10 @@ mod tests {
         );
         assert!(sea_rendered.contains("INSUFFICIENT_SCOPE"));
 
-        let mut cornucopia = ProjectConfig::default();
-        cornucopia.persistence_provider = "cornucopia".to_string();
+        let cornucopia = ProjectConfig {
+            persistence_provider: "cornucopia".to_string(),
+            ..Default::default()
+        };
         let corn_rendered = render_template_with_project(
             &tera,
             "api/scope.tera",

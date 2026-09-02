@@ -404,7 +404,7 @@ async fn validation_warns_on_circular_entity_refs() {
         .collect();
     // Both CandidateType and ApplicationType should flag the circular ref
     assert!(
-        circular.len() >= 1,
+        !circular.is_empty(),
         "Should detect circular entity references, got: {:?}",
         circular
     );

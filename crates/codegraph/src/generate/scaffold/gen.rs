@@ -94,6 +94,7 @@ pub struct ScaffoldGenerator {
 }
 
 impl ScaffoldGenerator {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         output_dir: &Path,
         has_webhooks: bool,

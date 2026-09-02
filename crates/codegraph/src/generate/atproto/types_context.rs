@@ -65,7 +65,7 @@ impl TypesContext {
         let mut fields = Vec::new();
         let mut enum_defs = Vec::new();
         let mut needs_blob_ref = false;
-        let mut needs_atproto_syntax_imports = false;
+        let needs_atproto_syntax_imports = false;
         let mut seen_enum_names = std::collections::HashSet::new();
         let mut seen_field_names = std::collections::HashSet::new();
         // Use String (not rsky_syntax types) for AT Protocol identifier fields.

@@ -263,11 +263,7 @@ fn snake_case_domain_contract_matches_router() {
         "community_graph",
         &["RelationshipType", "TrustConnectionType", "AmbassadorType"],
     );
-    let titles: Vec<String> = config.domains["community_graph"]
-        .entities
-        .iter()
-        .cloned()
-        .collect();
+    let titles: Vec<String> = config.domains["community_graph"].entities.to_vec();
     assert_contract_matches_router(&engine, &config, "community_graph", &titles);
 }
 
@@ -275,7 +271,7 @@ fn snake_case_domain_contract_matches_router() {
 fn lowercase_domain_contract_matches_router() {
     let engine = events_engine();
     let config = domain_config("events", &["PublicEventType", "EventsAppType"]);
-    let titles: Vec<String> = config.domains["events"].entities.iter().cloned().collect();
+    let titles: Vec<String> = config.domains["events"].entities.to_vec();
     assert_contract_matches_router(&engine, &config, "events", &titles);
 }
 

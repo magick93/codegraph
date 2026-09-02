@@ -129,7 +129,6 @@ fn test_lsp_initialize_returns_capabilities() {
     });
 
     do_init_handshake(&client_conn);
-    assert!(true, "Server initialized successfully");
 
     do_shutdown(&client_conn);
 }
@@ -200,7 +199,6 @@ fn test_lsp_diagnostic_for_invalid_ifml() {
     do_shutdown(&client_conn);
 }
 
-#[test]
 /// Regression test: entity names have the "Type" suffix stripped
 /// (CustomerType → Customer). Verifies that data: Customer passes
 /// when entity_names contains "Customer", while data: Nonexistent fails.
