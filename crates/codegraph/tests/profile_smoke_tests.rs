@@ -257,8 +257,6 @@ fn enterprise_variant_generators_match_base_profile() {
     // from the base, adds features). If a generator is added to the base
     // fullstack profile but not to the enterprise variant, it would silently
     // stop generating. This test catches that drift.
-    let _registry = CapabilityRegistry::new();
-
     let base = profile::load_and_resolve_profile(&profiles_path(), "fullstack", None).unwrap();
     let enterprise =
         profile::load_and_resolve_profile(&profiles_path(), "fullstack", Some("enterprise"))
