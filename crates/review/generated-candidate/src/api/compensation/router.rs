@@ -5,11 +5,15 @@ use axum::Router;
 
 use crate::app_state::AppState;
 
+// Handwritten extensions — create this file to add custom routes.
+// #[path = "handwritten_routes.rs"]
+// mod handwritten_routes;
+
 pub fn router() -> Router<AppState> {
     Router::new()
 
 
-        .nest("/pay-run", pay_run_routes())
+        .nest("/pay-runs", pay_run_routes())
 
 
 }
@@ -26,6 +30,7 @@ fn pay_run_routes() -> Router<AppState> {
 
 
         .route("/{pay_run_id}", axum::routing::get(pay_run_handler::get_by_id).put(pay_run_handler::update).delete(pay_run_handler::delete))
+
 
 
 

@@ -16,6 +16,8 @@ pub mod pages {
 
         pub mod effective_date;
 
+        pub mod event_base;
+
         pub mod formatted_date_time;
 
         pub mod gender_code_list;
@@ -44,11 +46,23 @@ pub mod pages {
 
     }
 
+    pub mod events {
+
+        pub mod public_event;
+
+    }
+
     pub mod recruiting {
 
         pub mod application;
 
         pub mod candidate;
+
+    }
+
+    pub mod rsvp {
+
+        pub mod rsvp;
 
     }
 
@@ -67,6 +81,8 @@ pub mod factories {
         pub mod distribution_base_factory;
 
         pub mod effective_date_factory;
+
+        pub mod event_base_factory;
 
         pub mod formatted_date_time_factory;
 
@@ -96,11 +112,23 @@ pub mod factories {
 
     }
 
+    pub mod events {
+
+        pub mod public_event_factory;
+
+    }
+
     pub mod recruiting {
 
         pub mod application_factory;
 
         pub mod candidate_factory;
+
+    }
+
+    pub mod rsvp {
+
+        pub mod rsvp_factory;
 
     }
 

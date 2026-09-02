@@ -1,0 +1,157 @@
+syntax = "proto3";
+package events;
+
+import "google/protobuf/timestamp.proto";
+
+import "shared.proto";
+option go_package = "events/;events";
+
+
+
+
+/// PublicEvent entity
+message PublicEvent {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional bool isPublished = 2;
+  
+  
+  optional int64 capacity = 3;
+  
+    // Event title
+  string title = 4;
+  
+  
+  optional google.protobuf.Timestamp birthDate = 5;
+  
+    // Last name
+  string familyName = 6;
+  
+    // First name
+  string givenName = 7;
+  
+    // Creation timestamp
+  optional google.protobuf.Timestamp created_at = 998;
+  
+    // Last update timestamp
+  optional google.protobuf.Timestamp updated_at = 999;
+  
+}
+
+/// Create request for PublicEvent
+message CreatePublicEventRequest {
+  
+  
+  optional bool isPublished = 2;
+  
+  
+  optional int64 capacity = 3;
+  
+    // Event title
+  string title = 4;
+  
+  
+  optional google.protobuf.Timestamp birthDate = 5;
+  
+    // Last name
+  string familyName = 6;
+  
+    // First name
+  string givenName = 7;
+  
+}
+
+/// Update request for PublicEvent
+message UpdatePublicEventRequest {
+  
+    // Unique identifier (UUID)
+  string id = 1;
+  
+  
+  optional bool isPublished = 2;
+  
+  
+  optional int64 capacity = 3;
+  
+    // Event title
+  optional string title = 4;
+  
+  
+  optional google.protobuf.Timestamp birthDate = 5;
+  
+    // Last name
+  optional string familyName = 6;
+  
+    // First name
+  optional string givenName = 7;
+  
+}
+
+/// Get request for PublicEvent
+message GetPublicEventRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// Delete request for PublicEvent
+message DeletePublicEventRequest {
+  
+    // Entity UUID
+  string id = 1;
+  
+}
+
+/// List request for PublicEvent
+message ListPublicEventRequest {
+  
+    // Number of items per page
+  optional int32 page_size = 1;
+  
+    // Pagination token
+  optional string page_token = 2;
+  
+    // Additional field filters
+  repeated FilterClause filters = 5;
+  
+}
+
+/// List response for PublicEvent
+message ListPublicEventResponse {
+  
+  
+  repeated PublicEvent data = 1;
+  
+    // Total number of items
+  int32 total = 2;
+  
+    // Pagination token for next page
+  optional string next_page_token = 3;
+  
+}
+
+
+
+// ── PublicEvent Service ──────────────────────────────────────────
+service PublicEventService {
+  
+  // Create a new entity
+  rpc Create(CreatePublicEventRequest) returns (PublicEvent);
+  
+  // Get an entity by ID
+  rpc Get(GetPublicEventRequest) returns (PublicEvent);
+  
+  // Update an existing entity
+  rpc Update(UpdatePublicEventRequest) returns (PublicEvent);
+  
+  // Delete an entity by ID
+  rpc Delete(DeletePublicEventRequest) returns (google.protobuf.Empty);
+  
+  // List entities with pagination
+  rpc List(ListPublicEventRequest) returns (ListPublicEventResponse);
+  
+}

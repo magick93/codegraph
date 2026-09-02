@@ -20,28 +20,28 @@ END $$;
 -- Org isolation: SELECT
 CREATE POLICY "org_isolation_select" ON common.effective_date
   FOR SELECT
-  USING (platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid);
+  USING ((platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
 
 -- Org isolation: INSERT
 CREATE POLICY "org_isolation_insert" ON common.effective_date
   FOR INSERT
-  WITH CHECK (platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid);
+  WITH CHECK ((platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
 
 -- Org isolation: UPDATE
 CREATE POLICY "org_isolation_update" ON common.effective_date
   FOR UPDATE
-  USING (platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid)
-  WITH CHECK (platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid);
+  USING ((platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid))
+  WITH CHECK ((platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
 
 -- Org isolation: DELETE
 CREATE POLICY "org_isolation_delete" ON common.effective_date
   FOR DELETE
-  USING (platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid);
+  USING ((platform_organization_id = public.get_current_org_id()
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
 
 
 -- API key scope-aware policies
@@ -49,7 +49,7 @@ CREATE POLICY "api_key_scoped_select" ON common.effective_date
   FOR SELECT TO api_key
   USING (
     public.get_api_key_org_id() IS NOT NULL
-    AND (platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id())
+    AND ((platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id()))
     AND public.check_api_key_scope('effective-date', id::text, 'read')
   );
 
@@ -57,7 +57,7 @@ CREATE POLICY "api_key_scoped_insert" ON common.effective_date
   FOR INSERT TO api_key
   WITH CHECK (
     public.get_api_key_org_id() IS NOT NULL
-    AND (platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id())
+    AND ((platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id()))
     AND public.check_api_key_scope('effective-date', '*', 'create')
   );
 
@@ -65,12 +65,12 @@ CREATE POLICY "api_key_scoped_update" ON common.effective_date
   FOR UPDATE TO api_key
   USING (
     public.get_api_key_org_id() IS NOT NULL
-    AND (platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id())
+    AND ((platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id()))
     AND public.check_api_key_scope('effective-date', id::text, 'update')
   )
   WITH CHECK (
     public.get_api_key_org_id() IS NOT NULL
-    AND (platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id())
+    AND ((platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id()))
     AND public.check_api_key_scope('effective-date', id::text, 'update')
   );
 
@@ -78,7 +78,7 @@ CREATE POLICY "api_key_scoped_delete" ON common.effective_date
   FOR DELETE TO api_key
   USING (
     public.get_api_key_org_id() IS NOT NULL
-    AND (platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id())
+    AND ((platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id()))
     AND public.check_api_key_scope('effective-date', id::text, 'delete')
   );
 

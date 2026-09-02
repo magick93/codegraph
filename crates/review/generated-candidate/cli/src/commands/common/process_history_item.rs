@@ -112,7 +112,7 @@ pub async fn execute(
     client: &ApiClient,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
-    let base = format!("/api/common/process-history-item");
+    let base = format!("/api/v1/common/process-history-item");
 
     match cmd {
 

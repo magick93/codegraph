@@ -8,7 +8,11 @@ SELECT pgmq.create('events_common');
 
 SELECT pgmq.create('events_compensation');
 
+SELECT pgmq.create('events_events');
+
 SELECT pgmq.create('events_recruiting');
+
+SELECT pgmq.create('events_rsvp');
 
 
 -- Shared domain event emitter function.
@@ -53,6 +57,14 @@ BEGIN
         ELSIF to_jsonb(NEW) ? 'tenant_id' THEN
             v_tenant_id := NEW.tenant_id;
         END IF;
+    END IF;
+
+    -- Fallback: try session variable if column has zero-UUID default
+    IF v_tenant_id = '00000000-0000-0000-0000-000000000000' THEN
+        v_tenant_id := COALESCE(
+            NULLIF(current_setting('app.organization_id', true), '')::UUID,
+            v_tenant_id
+        );
     END IF;
 
     -- Compute changed fields on UPDATE

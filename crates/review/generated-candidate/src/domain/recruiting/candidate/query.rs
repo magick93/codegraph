@@ -3,11 +3,15 @@
 
 use std::sync::Arc;
 
+
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
+
 use uuid::Uuid;
 
 use super::dto_response::CandidateResponse;
 use super::repository::CandidateRepository;
+use super::super::errors::RecruitingError;
+
 
 /// Set API key + org session variables within a transaction so Postgres RLS policies
 /// can enforce tenant isolation and scope checks on read queries.
@@ -15,14 +19,17 @@ async fn set_rls_session_vars(
     tx: &impl ConnectionTrait,
     api_key_id: Uuid,
     organization_id: Uuid,
-) -> Result<(), Box<dyn std::error::Error>> {
+    user_id: Uuid,
+) -> Result<(), RecruitingError> {
     tx.execute(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.current_api_key', $1, true), \
-                set_config('app.organization_id', $2, true)",
+                set_config('app.organization_id', $2, true), \
+                set_config('app.user_id', $3, true)",
         [
             api_key_id.to_string().into(),
             organization_id.to_string().into(),
+            user_id.to_string().into(),
         ],
     )).await?;
     tx.execute(Statement::from_string(
@@ -32,16 +39,22 @@ async fn set_rls_session_vars(
     Ok(())
 }
 
+
 #[derive(Clone)]
 pub struct CandidateQueryHandler {
-    repo: Arc<dyn CandidateRepository>,
+
+    repo: Arc<dyn CandidateRepository<sea_orm::DatabaseTransaction>>,
+
     db: DatabaseConnection,
+
 
 }
 
 impl CandidateQueryHandler {
     pub fn new(
-        repo: Arc<dyn CandidateRepository>,
+
+        repo: Arc<dyn CandidateRepository<sea_orm::DatabaseTransaction>>,
+
         db: DatabaseConnection,
 
     ) -> Self {
@@ -49,11 +62,15 @@ impl CandidateQueryHandler {
     }
 
 
-    pub async fn find_by_id(&self, id: Uuid, api_key_id: Uuid, organization_id: Uuid) -> Result<Option<CandidateResponse>, Box<dyn std::error::Error>> {
+
+    pub async fn find_by_id(&self, id: Uuid, include_deleted: bool, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Option<CandidateResponse>, RecruitingError> {
+
         let tx = self.db.begin().await?;
-        set_rls_session_vars(&tx, api_key_id, organization_id).await?;
-        let mut result = self.repo.find_by_id(&tx, id).await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
+        let mut result = self.repo.find_by_id(&tx, id, include_deleted).await
+            .map_err(|e| RecruitingError::InternalError(e.to_string()))?;
         tx.commit().await?;
+
 
         
 
@@ -63,11 +80,15 @@ impl CandidateQueryHandler {
 
 
 
-    pub async fn list_filtered(&self, page: u64, page_size: u64, filters: &std::collections::HashMap<String, String>, api_key_id: Uuid, organization_id: Uuid) -> Result<(Vec<CandidateResponse>, u64), Box<dyn std::error::Error>> {
+
+    pub async fn list_filtered(&self, page: u64, page_size: u64, filters: &std::collections::HashMap<String, String>, include_deleted: bool, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(Vec<CandidateResponse>, u64), RecruitingError> {
+
         let tx = self.db.begin().await?;
-        set_rls_session_vars(&tx, api_key_id, organization_id).await?;
-        let result = self.repo.list(&tx, page, page_size, filters).await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
+        let result = self.repo.list(&tx, page, page_size, filters, include_deleted).await
+            .map_err(|e| RecruitingError::InternalError(e.to_string()))?;
         tx.commit().await?;
+
         Ok(result)
     }
 

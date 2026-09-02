@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS common.distribution_base (
 
 );
 
+-- App role DML (RLS policies gate rows; this grants base table access)
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE common.distribution_base TO app_user;
+
 
 
 

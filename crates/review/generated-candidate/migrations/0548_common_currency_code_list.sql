@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS common.currency_code_list (
 
 );
 
+-- App role DML (RLS policies gate rows; this grants base table access)
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE common.currency_code_list TO app_user;
+
 
 
 

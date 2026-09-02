@@ -3,7 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-use uuid::Uuid;
 use crate::domain::recruiting::application::dto_response::ApplicationResponse;
 use crate::domain::recruiting::candidate::dto_response::CandidateLinkedResponse;
 use crate::api::meta::Meta;
@@ -25,5 +24,5 @@ pub struct CandidateIncludedData {
 pub struct CandidateWithIncludeResponse {
     pub data: CandidateLinkedResponse,
     pub included: Option<CandidateIncludedData>,
-    pub meta: crate::api::meta::Meta,
+    pub meta: Meta,
 }

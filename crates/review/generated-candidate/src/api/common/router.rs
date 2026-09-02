@@ -5,6 +5,10 @@ use axum::Router;
 
 use crate::app_state::AppState;
 
+// Handwritten extensions — create this file to add custom routes.
+// #[path = "handwritten_routes.rs"]
+// mod handwritten_routes;
+
 pub fn router() -> Router<AppState> {
     Router::new()
 
@@ -26,6 +30,10 @@ pub fn router() -> Router<AppState> {
 
 
         .nest("/effective-date", effective_date_routes())
+
+
+
+        .nest("/event-base", event_base_routes())
 
 
 
@@ -88,6 +96,7 @@ fn code_routes() -> Router<AppState> {
 
 
 
+
 }
 
 
@@ -102,6 +111,7 @@ fn currency_code_list_routes() -> Router<AppState> {
 
 
         .route("/{currency_code_list_id}", axum::routing::get(currency_code_list_handler::get_by_id).put(currency_code_list_handler::update).delete(currency_code_list_handler::delete))
+
 
 
 
@@ -128,6 +138,7 @@ fn date_routes() -> Router<AppState> {
 
 
 
+
 }
 
 
@@ -142,6 +153,7 @@ fn distribution_base_routes() -> Router<AppState> {
 
 
         .route("/{distribution_base_id}", axum::routing::get(distribution_base_handler::get_by_id).put(distribution_base_handler::update).delete(distribution_base_handler::delete))
+
 
 
 
@@ -168,6 +180,28 @@ fn effective_date_routes() -> Router<AppState> {
 
 
 
+
+}
+
+
+fn event_base_routes() -> Router<AppState> {
+    use super::event_base_handler;
+
+
+
+    Router::new()
+
+        .route("/", axum::routing::get(event_base_handler::list).post(event_base_handler::create))
+
+
+        .route("/{event_base_id}", axum::routing::get(event_base_handler::get_by_id).put(event_base_handler::update).delete(event_base_handler::delete))
+
+
+
+
+
+
+
 }
 
 
@@ -182,6 +216,7 @@ fn formatted_date_time_routes() -> Router<AppState> {
 
 
         .route("/{formatted_date_time_id}", axum::routing::get(formatted_date_time_handler::get_by_id).put(formatted_date_time_handler::update).delete(formatted_date_time_handler::delete))
+
 
 
 
@@ -208,6 +243,7 @@ fn gender_code_list_routes() -> Router<AppState> {
 
 
 
+
 }
 
 
@@ -222,6 +258,7 @@ fn identifier_routes() -> Router<AppState> {
 
 
         .route("/{identifier_id}", axum::routing::get(identifier_handler::get_by_id).put(identifier_handler::update).delete(identifier_handler::delete))
+
 
 
 
@@ -248,6 +285,7 @@ fn name_routes() -> Router<AppState> {
 
 
 
+
 }
 
 
@@ -262,6 +300,7 @@ fn person_base_routes() -> Router<AppState> {
 
 
         .route("/{person_base_id}", axum::routing::get(person_base_handler::get_by_id).put(person_base_handler::update).delete(person_base_handler::delete))
+
 
 
 
@@ -288,6 +327,7 @@ fn position_schedule_type_code_list_routes() -> Router<AppState> {
 
 
 
+
 }
 
 
@@ -302,6 +342,7 @@ fn string_type_array_routes() -> Router<AppState> {
 
 
         .route("/{string_type_array_id}", axum::routing::get(string_type_array_handler::get_by_id).put(string_type_array_handler::update).delete(string_type_array_handler::delete))
+
 
 
 
@@ -328,6 +369,7 @@ fn amount_routes() -> Router<AppState> {
 
 
 
+
 }
 
 
@@ -348,6 +390,7 @@ fn process_history_item_routes() -> Router<AppState> {
 
 
 
+
 }
 
 
@@ -362,6 +405,7 @@ fn process_history_routes() -> Router<AppState> {
 
 
         .route("/{process_history_id}", axum::routing::get(process_history_handler::get_by_id).put(process_history_handler::update).delete(process_history_handler::delete))
+
 
 
 

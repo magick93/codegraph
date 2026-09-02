@@ -61,6 +61,8 @@
 
 				{ path: '/common/effective-date', label: 'Effective Date' },
 
+				{ path: '/common/event-base', label: 'Event Base' },
+
 				{ path: '/common/formatted-date-time', label: 'Formatted Date Time' },
 
 				{ path: '/common/gender-code-list', label: 'Gender Code List' },
@@ -96,6 +98,17 @@
 		},
 
 		{
+			name: 'events',
+			label: 'Events',
+			tier: 'extended',
+			entities: [
+
+				{ path: '/events/public-event', label: 'Public Event' },
+
+			],
+		},
+
+		{
 			name: 'recruiting',
 			label: 'Recruiting',
 			tier: 'extended',
@@ -104,6 +117,17 @@
 				{ path: '/recruiting/application', label: 'Application' },
 
 				{ path: '/recruiting/candidate', label: 'Candidate' },
+
+			],
+		},
+
+		{
+			name: 'rsvp',
+			label: 'RSVP',
+			tier: 'extended',
+			entities: [
+
+				{ path: '/rsvp/rsvp', label: 'Rsvp' },
 
 			],
 		},

@@ -27,7 +27,7 @@ function testData(): Record<string, unknown> {
     'position_schedule_type_codes': [{ code: 'FullTime' }],
     'position_titles': ['Test Position Titles'],
     'qualifications': [],
-    ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
+    ...(depIds['referred_by_application_id'] ? { 'referred_by_application_id': depIds['referred_by_application_id'] } : {}),
     'status': 'active',
     'uri': 'Test Uri',
   };
@@ -49,7 +49,7 @@ function updatedData(): Record<string, unknown> {
     'position_schedule_type_codes': [{ code: 'SharedTime' }],
     'position_titles': ['Updated Position Titles'],
     'qualifications': [],
-    ...(depIds['referred_by_application_id_id'] ? { 'referred_by_application_id_id': depIds['referred_by_application_id_id'] } : {}),
+    ...(depIds['referred_by_application_id'] ? { 'referred_by_application_id': depIds['referred_by_application_id'] } : {}),
     'status': 'withdrawn',
     'uri': 'Updated Uri',
   };
@@ -62,8 +62,8 @@ test.describe('Candidate Owner CRUD', () => {
 
 
     try {
-      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/application', {  });
-      depIds['referred_by_application_id_id'] = dep_1['id'] as string;
+      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/applications', { 'applied_date': '2025-01-15' });
+      depIds['referred_by_application_id'] = dep_1['id'] as string;
     } catch (_e) {
       // Dependency entity may already exist or have its own required fields
     }
@@ -74,9 +74,9 @@ test.describe('Candidate Owner CRUD', () => {
   test.afterAll(async ({ orgContext }) => {
     const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
 
-    if (depIds['referred_by_application_id_id']) {
+    if (depIds['referred_by_application_id']) {
       try {
-        await fetch(`${baseUrl}/api/recruiting/application/${depIds['referred_by_application_id_id']}`, {
+        await fetch(`${baseUrl}/api/v1/recruiting/applications/${depIds['referred_by_application_id']}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
         });
@@ -87,8 +87,12 @@ test.describe('Candidate Owner CRUD', () => {
 
 
 
-  const data = testData();
-  const updated = updatedData();
+  let data: Record<string, unknown>;
+  let updated: Record<string, unknown>;
+  test.beforeEach(() => {
+    data = testData();
+    updated = updatedData();
+  });
 
 
 
@@ -137,8 +141,8 @@ test.describe('Candidate Owner CRUD', () => {
       }
     }
     // 'qualifications' is a ValueObject — provide nested structure in testData()
-    if (data['referred_by_application_id_id'] && await ownerPage.locator('#referred_by_application_id_id').isVisible()) {
-      await ownerPage.locator('#referred_by_application_id_id').fill(String(data['referred_by_application_id_id']));
+    if (data['referred_by_application_id'] && await ownerPage.locator('#referred_by_application_id').isVisible()) {
+      await ownerPage.locator('#referred_by_application_id').fill(String(data['referred_by_application_id']));
     }
     if (await ownerPage.locator('#status').isVisible()) {
       await ownerPage.locator('#status').selectOption(String(data['status']));
@@ -187,7 +191,7 @@ test.describe('Candidate Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="candidate-field-position_schedule_type_codes"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="candidate-field-position_titles"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="candidate-field-qualifications"]')).toBeVisible();
-    await expect(ownerPage.locator('[data-testid="candidate-field-referred_by_application_id_id"]')).toBeVisible();
+    await expect(ownerPage.locator('[data-testid="candidate-field-referred_by_application_id"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="candidate-field-status"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="candidate-field-uri"]')).toBeVisible();
   });
@@ -254,9 +258,9 @@ test.describe('Candidate Owner CRUD', () => {
       }
     }
     // 'qualifications' is a ValueObject — provide nested structure in testData()
-    if (updated['referred_by_application_id_id'] && await ownerPage.locator('#referred_by_application_id_id').isVisible()) {
-      await ownerPage.locator('#referred_by_application_id_id').clear();
-      await ownerPage.locator('#referred_by_application_id_id').fill(String(updated['referred_by_application_id_id']));
+    if (updated['referred_by_application_id'] && await ownerPage.locator('#referred_by_application_id').isVisible()) {
+      await ownerPage.locator('#referred_by_application_id').clear();
+      await ownerPage.locator('#referred_by_application_id').fill(String(updated['referred_by_application_id']));
     }
     if (await ownerPage.locator('#status').isVisible()) {
       await ownerPage.locator('#status').selectOption('withdrawn');

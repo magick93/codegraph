@@ -4,6 +4,8 @@ pub mod currency_code_list;
 pub mod date;
 pub mod distribution_base;
 pub mod effective_date;
+pub mod errors;
+pub mod event_base;
 pub mod formatted_date_time;
 pub mod gender_code_list;
 pub mod identifier;

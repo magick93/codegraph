@@ -251,16 +251,19 @@ CREATE POLICY tenant_isolation_installed_app ON platform.installed_app
 ALTER TABLE platform.event_subscription ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_event_subscription ON platform.event_subscription
     USING (tenant_id = public.get_current_org_id()
+           OR tenant_id = '00000000-0000-0000-0000-000000000000'::uuid
            OR nullif(current_setting('app.organization_id', true), '') IS NULL);
 
 ALTER TABLE platform.webhook_endpoint ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_webhook_endpoint ON platform.webhook_endpoint
     USING (tenant_id = public.get_current_org_id()
+           OR tenant_id = '00000000-0000-0000-0000-000000000000'::uuid
            OR nullif(current_setting('app.organization_id', true), '') IS NULL);
 
 ALTER TABLE platform.webhook_delivery ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation_webhook_delivery ON platform.webhook_delivery
     USING (tenant_id = public.get_current_org_id()
+           OR tenant_id = '00000000-0000-0000-0000-000000000000'::uuid
            OR nullif(current_setting('app.organization_id', true), '') IS NULL);
 
 -- SECURITY DEFINER function for the webhook dispatch worker.
@@ -336,3 +339,9 @@ CREATE TRIGGER trg_app_registry_updated_at
 CREATE TRIGGER trg_webhook_endpoint_updated_at
     BEFORE UPDATE ON platform.webhook_endpoint
     FOR EACH ROW EXECUTE FUNCTION platform.set_updated_at();
+
+-- App role DML on platform tables (workflow engine, app registry, webhooks).
+-- ALTER DEFAULT PRIVILEGES additionally covers any platform tables added by
+-- later migrations (e.g. the integration tables in 0007).
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA platform TO app_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA platform GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;

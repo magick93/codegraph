@@ -316,14 +316,17 @@ GRANT USAGE ON SCHEMA api_keys_private TO app_user;
 GRANT SELECT, INSERT, UPDATE ON api_keys_private.api_keys TO app_user;
 GRANT SELECT, INSERT ON api_keys_private.api_key_logs TO app_user;
 
--- Grant app_user access to domain schemas (needed for SET LOCAL ROLE in RLS)
--- Schemas may not exist yet (created by later migrations), so check first.
+-- Grant app_user DML access to domain/platform schemas (needed for
+-- SET LOCAL ROLE / app-role RLS). Each schema is created here first so
+-- ALTER DEFAULT PRIVILEGES covers every table created by later migrations,
+-- regardless of application order (supabase db reset or the ops harness);
+-- GRANT ... ON ALL TABLES additionally covers any tables that already exist
+-- when this migration is (re)run.
 DO $$ DECLARE s TEXT; BEGIN
-  FOREACH s IN ARRAY ARRAY['common','recruiting','compensation','payroll','benefits','timecard','screening','interviewing','assessments','wellness','platform'] LOOP
-    IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = s) THEN
-      EXECUTE format('GRANT USAGE ON SCHEMA %I TO app_user', s);
-      EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO app_user', s);
-      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user', s);
-    END IF;
+  FOREACH s IN ARRAY ARRAY['common','compensation','events','platform','platform_integrations','recruiting','rsvp'] LOOP
+    EXECUTE format('CREATE SCHEMA IF NOT EXISTS %I', s);
+    EXECUTE format('GRANT USAGE ON SCHEMA %I TO app_user', s);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO app_user', s);
+    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user', s);
   END LOOP;
 END $$;

@@ -3,9 +3,7 @@
 
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait,
-    DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
-    DatabaseBackend, Statement,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set, DatabaseBackend, Statement,
 };
 use uuid::Uuid;
 
@@ -22,7 +20,7 @@ use super::dto_response::CandidateQualificationResponse;
 pub struct CandidateRepositoryImpl;
 
 #[async_trait]
-impl CandidateRepository for CandidateRepositoryImpl {
+impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryImpl {
     #[tracing::instrument(skip(self, tx), fields(db.operation = "insert", db.table = "recruiting.candidate"))]
     async fn create(
         &self,
@@ -113,11 +111,16 @@ impl CandidateRepository for CandidateRepositoryImpl {
         &self,
         db: &DatabaseTransaction,
         id: Uuid,
+        include_deleted: bool,
     ) -> Result<Option<CandidateResponse>, Box<dyn std::error::Error>> {
-        let row = crate::entity::recruiting_candidate::Entity::find()
-            .filter(crate::entity::recruiting_candidate::Column::Id.eq(id))
-            .filter(crate::entity::recruiting_candidate::Column::DeletedAt.is_null())
-            .one(db)
+        let mut query = crate::entity::recruiting_candidate::Entity::find()
+            .filter(crate::entity::recruiting_candidate::Column::Id.eq(id));
+
+        if !include_deleted {
+            query = query.filter(crate::entity::recruiting_candidate::Column::DeletedAt.is_null());
+        }
+
+        let row = query.one(db)
             .await?;
 
         let row = match row {
@@ -353,6 +356,7 @@ impl CandidateRepository for CandidateRepositoryImpl {
         page: u64,
         page_size: u64,
         filters: &std::collections::HashMap<String, String>,
+        include_deleted: bool,
     ) -> Result<(Vec<CandidateResponse>, u64), Box<dyn std::error::Error>> {
         let mut condition = sea_orm::Condition::all();
         if let Some(val) = filters.get("candidate_id") {
@@ -373,10 +377,12 @@ impl CandidateRepository for CandidateRepositoryImpl {
                 vec![sea_orm::Value::from(val.clone())],
             )));
         }
-        let query = crate::entity::recruiting_candidate::Entity::find()
-            .filter(condition)
-            .filter(crate::entity::recruiting_candidate::Column::DeletedAt.is_null())
-            .order_by_desc(crate::entity::recruiting_candidate::Column::CreatedAt);
+        let mut query = crate::entity::recruiting_candidate::Entity::find()
+            .filter(condition);
+        if !include_deleted {
+            query = query.filter(crate::entity::recruiting_candidate::Column::DeletedAt.is_null());
+        }
+        let query = query.order_by_desc(crate::entity::recruiting_candidate::Column::CreatedAt);
         let paginator = query.paginate(db, page_size);
 
         let total = paginator.num_items().await?;

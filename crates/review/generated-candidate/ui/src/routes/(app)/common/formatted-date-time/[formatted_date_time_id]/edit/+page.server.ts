@@ -15,7 +15,7 @@ export const load: PageServerLoad = async ({ params, locals, fetch: skFetch }) =
 	};
 
 
-	const res = await skFetch(`${BASE_URL}/api/common/formatted-date-time/${params.formatted_date_time_id}`, { headers });
+	const res = await skFetch(`${BASE_URL}/api/v1/common/formatted-date-time/${params.formatted_date_time_id}`, { headers });
 
 
 	if (!res.ok) {

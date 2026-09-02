@@ -21,7 +21,6 @@ function testData(): Record<string, unknown> {
 
 test.describe('Name Employee View', () => {
   let createdId: string;
-  const data = testData();
 
   test.beforeAll(async ({ orgContext }) => {
 

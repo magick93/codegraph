@@ -15,7 +15,7 @@ export const load: PageServerLoad = async ({ params, locals, fetch: skFetch }) =
 	};
 
 
-	const res = await skFetch(`${BASE_URL}/api/common/process-history/${params.process_history_id}`, { headers });
+	const res = await skFetch(`${BASE_URL}/api/v1/common/process-history/${params.process_history_id}`, { headers });
 
 
 	if (!res.ok) {
