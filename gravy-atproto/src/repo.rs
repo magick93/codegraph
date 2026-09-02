@@ -15,11 +15,7 @@ pub trait RepoWriter: Send + Sync {
         rkey: &str,
     ) -> Result<Option<T>, AtprotoError>;
 
-    async fn delete_record(
-        &self,
-        collection: &str,
-        rkey: &str,
-    ) -> Result<(), AtprotoError>;
+    async fn delete_record(&self, collection: &str, rkey: &str) -> Result<(), AtprotoError>;
 
     async fn list_records<T: DeserializeOwned>(
         &self,
@@ -55,10 +51,7 @@ impl RepoWriter for HttpRepoWriter {
         collection: &str,
         record: &T,
     ) -> Result<CreateRecordResponse, AtprotoError> {
-        let url = format!(
-            "{}/xrpc/com.atproto.repo.createRecord",
-            self.pds_endpoint
-        );
+        let url = format!("{}/xrpc/com.atproto.repo.createRecord", self.pds_endpoint);
         let body = serde_json::json!({
             "repo": self.did,
             "collection": collection,
@@ -77,10 +70,7 @@ impl RepoWriter for HttpRepoWriter {
         collection: &str,
         rkey: &str,
     ) -> Result<Option<T>, AtprotoError> {
-        let url = format!(
-            "{}/xrpc/com.atproto.repo.getRecord",
-            self.pds_endpoint
-        );
+        let url = format!("{}/xrpc/com.atproto.repo.getRecord", self.pds_endpoint);
         let resp = self
             .client
             .get(&url)
@@ -110,10 +100,7 @@ impl RepoWriter for HttpRepoWriter {
     }
 
     async fn delete_record(&self, collection: &str, rkey: &str) -> Result<(), AtprotoError> {
-        let url = format!(
-            "{}/xrpc/com.atproto.repo.deleteRecord",
-            self.pds_endpoint
-        );
+        let url = format!("{}/xrpc/com.atproto.repo.deleteRecord", self.pds_endpoint);
         let body = serde_json::json!({
             "repo": self.did,
             "collection": collection,
@@ -132,10 +119,7 @@ impl RepoWriter for HttpRepoWriter {
         limit: u32,
         cursor: Option<&str>,
     ) -> Result<ListRecordsResponse<T>, AtprotoError> {
-        let url = format!(
-            "{}/xrpc/com.atproto.repo.listRecords",
-            self.pds_endpoint
-        );
+        let url = format!("{}/xrpc/com.atproto.repo.listRecords", self.pds_endpoint);
         let mut query = vec![
             ("repo", self.did.clone()),
             ("collection", collection.to_string()),

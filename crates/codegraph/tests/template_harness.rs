@@ -311,15 +311,12 @@ async fn scaffold_api_key_migration_grants_app_user_dml() {
         false,
         false,
         false,
-<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -576,15 +573,12 @@ async fn scaffold_middleware_supports_dual_auth() {
         false,
         false,
         false,
-<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -2174,15 +2168,12 @@ async fn scaffold_main() {
         false,
         false,
         false,
-<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -2291,15 +2282,12 @@ async fn scaffold_error_module() {
         false,
         false,
         false,
-<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -2470,15 +2458,12 @@ async fn scaffold_generates_middleware() {
         false,
         false,
         false,
-<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -2515,25 +2500,19 @@ async fn test_permission_middleware_generated() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-permission-mw");
 
-<<<<<<< HEAD
     // has_atproto = true: the permission middleware (with extract_uuid_from_path)
     // lives in the atproto branch of the template.
-=======
->>>>>>> origin/master
     let gen = generate::scaffold::gen::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
         false,
-<<<<<<< HEAD
         true,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         false,
         "sea-orm",
     );
@@ -2671,7 +2650,9 @@ async fn router_permission_gated_emits_layers_and_helper() {
         .join("\n");
 
     assert!(
-        content.contains(".layer(axum::middleware::from_fn(crate::middleware::permission::require_permission))"),
+        content.contains(
+            ".layer(axum::middleware::from_fn(crate::middleware::permission::require_permission))"
+        ),
         "Router should add require_permission layer. Got:\n{content}"
     );
     assert!(
@@ -4051,15 +4032,12 @@ async fn scaffold_main_has_security_middleware() {
         false,
         false,
         false,
-<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -4150,15 +4128,12 @@ async fn scaffold_main_has_graceful_shutdown() {
         false,
         false,
         false,
-<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -4203,15 +4178,12 @@ async fn scaffold_main_has_health_ready() {
         false,
         false,
         false,
-<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -5215,15 +5187,12 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
         false,
         false,
         false,
-<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -5265,15 +5234,12 @@ async fn scaffold_generates_build_rs() {
         false,
         false,
         false,
-<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -5311,15 +5277,12 @@ async fn scaffold_main_has_version_endpoint() {
         false,
         false,
         false,
-<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         "sea-orm",
     );
     let files = gen
@@ -5696,7 +5659,7 @@ entities = ["WorkerType"]
     #[tokio::test]
     async fn resolve_vo_through_allof_to_entity() {
         let legal_type = SchemaNode {
-        custom_annotations: Default::default(),
+            custom_annotations: Default::default(),
             pg_table_name: String::new(),
             is_entity: false,
             classification: "value_object".to_string(),
@@ -5749,7 +5712,7 @@ entities = ["WorkerType"]
     #[tokio::test]
     async fn entity_model_emits_fk_for_vo_that_extends_entity() {
         let legal_type = SchemaNode {
-        custom_annotations: Default::default(),
+            custom_annotations: Default::default(),
             pg_table_name: String::new(),
             is_entity: false,
             classification: "value_object".to_string(),
@@ -5862,7 +5825,7 @@ operations = ["create", "read", "update", "list"]
     /// Shared setup: WorkerType → PersonLegalType (VO) → PersonType (entity) via allOf.
     fn setup_vo_entity_mock() -> MockEngine {
         let legal_type = SchemaNode {
-        custom_annotations: Default::default(),
+            custom_annotations: Default::default(),
             pg_table_name: String::new(),
             is_entity: false,
             classification: "value_object".to_string(),
@@ -8193,15 +8156,12 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
         false,
         false,
         false,
-<<<<<<< HEAD
         false,
         false,
         false,
         false,
         false,
         false,
-=======
->>>>>>> origin/master
         "sea-orm",
     );
     let files = gen

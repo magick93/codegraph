@@ -2424,7 +2424,14 @@ async fn ts_fixture_required_entity_ref_is_required() {
         "/tmp/ts-fixture-required-ref",
     ));
     let files = gen
-        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .generate(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        )
         .await
         .unwrap();
 
@@ -2530,7 +2537,14 @@ async fn ts_fixture_optional_entity_ref_stays_optional() {
         "/tmp/ts-fixture-optional-ref",
     ));
     let files = gen
-        .generate(&mock, "ApplicationType", "recruiting", &config, &tera, &project)
+        .generate(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        )
         .await
         .unwrap();
 

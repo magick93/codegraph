@@ -58,7 +58,10 @@ fn main() {
         writeln!(out, "}}").unwrap();
 
         println!("cargo:rerun-if-changed=templates/");
-        println!("cargo:warning=embedded {} .tera template files", templates.len());
+        println!(
+            "cargo:warning=embedded {} .tera template files",
+            templates.len()
+        );
     } else {
         eprintln!("cargo:warning=codegraph templates dir not found");
     }

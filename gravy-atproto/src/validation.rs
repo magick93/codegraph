@@ -23,9 +23,8 @@ pub fn validate_at_uri(value: &str) -> Result<(), AtprotoError> {
 
 pub fn validate_datetime(value: &str) -> Result<(), AtprotoError> {
     // ISO 8601 datetime validation
-    chrono::DateTime::parse_from_rfc3339(value).map_err(|e| {
-        AtprotoError::Validation(format!("Invalid datetime '{}': {}", value, e))
-    })?;
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map_err(|e| AtprotoError::Validation(format!("Invalid datetime '{}': {}", value, e)))?;
     Ok(())
 }
 

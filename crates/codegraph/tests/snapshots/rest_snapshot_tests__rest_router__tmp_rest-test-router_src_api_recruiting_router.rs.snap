@@ -44,10 +44,7 @@ fn candidate_routes() -> Router<AppState> {
                 .merge(axum::routing::put(candidate_handler::update).guard("candidates", "update"))
                 .merge(axum::routing::delete(candidate_handler::delete).guard("candidates", "delete")),
         )
-<<<<<<< HEAD
 
-=======
->>>>>>> origin/master
 
 
 

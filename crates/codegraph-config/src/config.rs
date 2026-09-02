@@ -814,7 +814,10 @@ scope = "recruiting:candidate"
         let config = parse_domain_config_str(toml).unwrap();
         let candidate = &config.domains["recruiting"].entity_config["CandidateType"];
         assert_eq!(candidate.api_key_scope.as_deref(), Some("candidates"));
-        assert_eq!(candidate.permissions.scope.as_deref(), Some("recruiting:candidate"));
+        assert_eq!(
+            candidate.permissions.scope.as_deref(),
+            Some("recruiting:candidate")
+        );
     }
 
     #[test]

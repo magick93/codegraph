@@ -7,17 +7,35 @@ use crate::RefClassificationKind;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LexiconType {
-    String { format: Option<LexiconStringFormat> },
+    String {
+        format: Option<LexiconStringFormat>,
+    },
     Integer,
     Boolean,
-    Bytes { max_size: Option<u64> },
+    Bytes {
+        max_size: Option<u64>,
+    },
     CidLink,
-    Blob { accept: Vec<String>, max_size: Option<u64> },
-    Array { items: Box<LexiconType> },
-    Object { properties: Vec<(String, LexiconType)> },
-    Ref { nsid: String },
-    StrongRef { nsid: String },
-    Union { refs: Vec<String>, closed: bool },
+    Blob {
+        accept: Vec<String>,
+        max_size: Option<u64>,
+    },
+    Array {
+        items: Box<LexiconType>,
+    },
+    Object {
+        properties: Vec<(String, LexiconType)>,
+    },
+    Ref {
+        nsid: String,
+    },
+    StrongRef {
+        nsid: String,
+    },
+    Union {
+        refs: Vec<String>,
+        closed: bool,
+    },
     Token,
     Unknown,
 }
@@ -56,15 +74,9 @@ pub fn lexicon_type_from_ref_classification(kind: &RefClassificationKind) -> Lex
         RefClassificationKind::EntityReference => LexiconType::Ref {
             nsid: String::new(),
         },
-        RefClassificationKind::ValueObject => LexiconType::Object {
-            properties: vec![],
-        },
-        RefClassificationKind::CompositeWrapper => LexiconType::Object {
-            properties: vec![],
-        },
-        RefClassificationKind::StructuredWrapper => LexiconType::Object {
-            properties: vec![],
-        },
+        RefClassificationKind::ValueObject => LexiconType::Object { properties: vec![] },
+        RefClassificationKind::CompositeWrapper => LexiconType::Object { properties: vec![] },
+        RefClassificationKind::StructuredWrapper => LexiconType::Object { properties: vec![] },
         RefClassificationKind::MediaWrapper => LexiconType::Blob {
             accept: vec![],
             max_size: None,
@@ -257,25 +269,15 @@ mod tests {
     #[test]
     fn test_lexicon_type_object_variant() {
         assert_eq!(
-            LexiconType::Object {
-                properties: vec![]
-            },
-            LexiconType::Object {
-                properties: vec![]
-            }
+            LexiconType::Object { properties: vec![] },
+            LexiconType::Object { properties: vec![] }
         );
         assert_eq!(
             LexiconType::Object {
-                properties: vec![(
-                    "name".into(),
-                    LexiconType::String { format: None }
-                )]
+                properties: vec![("name".into(), LexiconType::String { format: None })]
             },
             LexiconType::Object {
-                properties: vec![(
-                    "name".into(),
-                    LexiconType::String { format: None }
-                )]
+                properties: vec![("name".into(), LexiconType::String { format: None })]
             }
         );
     }
@@ -475,9 +477,7 @@ mod tests {
     fn test_canonical_mapping_value_object() {
         assert_eq!(
             lexicon_type_from_ref_classification(&RefClassificationKind::ValueObject),
-            LexiconType::Object {
-                properties: vec![]
-            }
+            LexiconType::Object { properties: vec![] }
         );
     }
 
@@ -485,9 +485,7 @@ mod tests {
     fn test_canonical_mapping_composite_wrapper() {
         assert_eq!(
             lexicon_type_from_ref_classification(&RefClassificationKind::CompositeWrapper),
-            LexiconType::Object {
-                properties: vec![]
-            }
+            LexiconType::Object { properties: vec![] }
         );
     }
 
@@ -495,9 +493,7 @@ mod tests {
     fn test_canonical_mapping_structured_wrapper() {
         assert_eq!(
             lexicon_type_from_ref_classification(&RefClassificationKind::StructuredWrapper),
-            LexiconType::Object {
-                properties: vec![]
-            }
+            LexiconType::Object { properties: vec![] }
         );
     }
 
@@ -535,10 +531,7 @@ mod tests {
 
     #[test]
     fn test_lexicon_type_display_string_formats() {
-        assert_eq!(
-            LexiconType::String { format: None }.to_string(),
-            "string"
-        );
+        assert_eq!(LexiconType::String { format: None }.to_string(), "string");
         assert_eq!(
             LexiconType::String {
                 format: Some(LexiconStringFormat::DateTime)
@@ -632,18 +625,12 @@ mod tests {
     #[test]
     fn test_lexicon_type_display_object() {
         assert_eq!(
-            LexiconType::Object {
-                properties: vec![]
-            }
-            .to_string(),
+            LexiconType::Object { properties: vec![] }.to_string(),
             "object"
         );
         assert_eq!(
             LexiconType::Object {
-                properties: vec![(
-                    "name".into(),
-                    LexiconType::String { format: None }
-                )]
+                properties: vec![("name".into(), LexiconType::String { format: None })]
             }
             .to_string(),
             "object(name:string)"

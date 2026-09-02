@@ -492,23 +492,21 @@ async fn generation_emits_ownership_manifests_at_each_root() {
     );
 
     // A manifest must exist at every output root...
-    for root in [
-        output_dir.path(),
-        domain_types_tmp.path(),
-        hooks_tmp.path(),
-    ] {
+    for root in [output_dir.path(), domain_types_tmp.path(), hooks_tmp.path()] {
         let manifest_path = root.join(codegraph::generate::manifest::MANIFEST_FILENAME);
         assert!(
             manifest_path.exists(),
             "expected manifest at {}",
             manifest_path.display()
         );
-        let m: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&manifest_path).unwrap(),
-        )
-        .expect("manifest must be valid JSON");
+        let m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap())
+                .expect("manifest must be valid JSON");
         assert!(
-            m["generated"].as_array().map(|a| !a.is_empty()).unwrap_or(false),
+            m["generated"]
+                .as_array()
+                .map(|a| !a.is_empty())
+                .unwrap_or(false),
             "manifest at {} must list generated files",
             manifest_path.display()
         );
@@ -542,10 +540,7 @@ async fn generation_emits_ownership_manifests_at_each_root() {
     );
 
     let dt_manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(
-            domain_types_tmp.path().join(".codegraph-manifest.json"),
-        )
-        .unwrap(),
+        &std::fs::read_to_string(domain_types_tmp.path().join(".codegraph-manifest.json")).unwrap(),
     )
     .unwrap();
     let dt_generated: Vec<&str> = dt_manifest["generated"]
