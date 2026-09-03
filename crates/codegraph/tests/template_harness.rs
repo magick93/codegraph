@@ -159,11 +159,10 @@ fn candidate_properties() -> Vec<PropertyNode> {
 }
 
 async fn setup_mock() -> MockEngine {
-    let engine = MockEngine::builder()
+    MockEngine::builder()
         .with_schema(candidate_schema())
         .with_properties("CandidateType", candidate_properties())
-        .build();
-    engine
+        .build()
 }
 
 // === DDL Template Tests ===

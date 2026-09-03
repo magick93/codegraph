@@ -28,7 +28,7 @@ impl OutputValidator for ProtoCompileValidator {
         // Collect proto files
         let proto_files: Vec<&GeneratedFile> = files
             .iter()
-            .filter(|f| f.path.extension().map_or(false, |e| e == "proto"))
+            .filter(|f| f.path.extension().is_some_and(|e| e == "proto"))
             .collect();
 
         if proto_files.is_empty() {

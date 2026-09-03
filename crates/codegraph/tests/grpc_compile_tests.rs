@@ -65,7 +65,7 @@ message SearchResult {
     // Collect all .proto files
     let proto_files: Vec<_> = files
         .iter()
-        .filter(|f| f.path.extension().map_or(false, |e| e == "proto"))
+        .filter(|f| f.path.extension().is_some_and(|e| e == "proto"))
         .map(|f| proto_root.join(&f.path))
         .collect();
 
