@@ -331,3 +331,92 @@ allow_include = ["review_decision"]
         included.content
     );
 }
+
+// ── 5. Config child (parent + parent_ref) include survives the gate ─────
+//
+// Mirrors hr-specs: WorkerType has an array `deployments` property pointing
+// at DeploymentType, which is configured as `role = "child"`,
+// `parent = "WorkerType"`, `parent_ref = "worker_type_id"` — and carries NO
+// workerId property of its own. The include gate must not skip the
+// `deployment.*` path: the parent_ref column is authored by the DDL from the
+// same config, so it exists even though the schema JSON cannot see it.
+
+#[test]
+fn config_child_parent_ref_include_is_fetchable() {
+    let worker = schema_for("WorkerType", "worker", "Worker");
+    let deployment = schema_for("DeploymentType", "deployment", "Deployment");
+    let position = schema_for("PositionType", "position", "Position");
+    let engine = MockEngine::builder()
+        .with_schema(worker.clone())
+        .with_schema(deployment.clone())
+        .with_schema(position.clone())
+        .with_ref_target("deployments", "WorkerType", deployment.clone())
+        .with_ref_target("position", "DeploymentType", position.clone())
+        .with_properties(
+            "WorkerType",
+            vec![prop(
+                "deployments",
+                "deployments",
+                "DeploymentType",
+                true,
+                RefClassificationKind::EntityReference,
+            )],
+        )
+        .with_properties(
+            "DeploymentType",
+            vec![prop(
+                "position",
+                "position",
+                "PositionType",
+                false,
+                RefClassificationKind::EntityReference,
+            )],
+        )
+        .build();
+
+    let toml_str = r#"
+[defaults]
+operations = ["read"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType", "DeploymentType", "PositionType"]
+
+[domains.hr.entity_config.WorkerType]
+role = "root"
+allow_include = ["deployment.position"]
+
+[domains.hr.entity_config.DeploymentType]
+role = "child"
+parent = "WorkerType"
+parent_ref = "worker_type_id"
+"#;
+    let config = codegraph_config::config::parse_domain_config_str(toml_str).unwrap();
+
+    let paths = rt()
+        .block_on(resolve_include_paths(
+            &engine,
+            &config,
+            "hr",
+            "WorkerType",
+            Some(&vec!["deployment.position".into()]),
+        ))
+        .expect("resolution should not fail");
+
+    assert!(
+        !paths.is_empty(),
+        "config-child parent_ref include must survive the gate, got 0 paths"
+    );
+    let path = &paths[0];
+    let reverse_seg = path
+        .segments
+        .iter()
+        .find(|s| s.schema_title == "DeploymentType")
+        .expect("path must contain the deployment segment");
+    assert_eq!(
+        reverse_seg.reverse_fk_column, "worker_type_id",
+        "reverse fetch must use the configured parent_ref column"
+    );
+}
