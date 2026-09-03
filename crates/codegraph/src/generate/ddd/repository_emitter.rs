@@ -2160,11 +2160,26 @@ impl RepositoryImplEmitter {
             }
 
             writeln!(code).unwrap();
+            // Build the target entity trees so include-fetch responses hydrate
+            // the target's child tables (e.g. person.name) instead of emitting
+            // all-None sub-objects. Targets whose tree cannot be built simply
+            // skip child hydration.
+            let mut include_target_trees: Vec<Option<EntityTree>> = Vec::new();
+            for path in &include_paths {
+                let last = path.segments.last().unwrap();
+                let ttree = self
+                    .query_entity_tree(db, &last.schema_title, &last.domain, config, None)
+                    .await
+                    .ok();
+                include_target_trees.push(ttree);
+            }
+
             writeln!(code, "impl {}RepositoryImpl {{", tree.entity_name).unwrap();
             self.emit_include_fetch_methods(
                 &tree,
                 &mut code,
                 &include_paths,
+                &include_target_trees,
                 &include_segment_dto_fields,
                 &include_segment_col_fields,
                 &include_segment_is_structured,
@@ -4105,11 +4120,13 @@ impl RepositoryImplEmitter {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn emit_include_fetch_methods(
         &self,
         tree: &EntityTree,
         code: &mut String,
         include_paths: &[ResolvedIncludePath],
+        include_target_trees: &[Option<EntityTree>],
         include_segment_dto_fields: &[Vec<Vec<String>>],
         include_segment_col_fields: &[Vec<Vec<String>>],
         include_segment_is_structured: &[Vec<Vec<bool>>],
@@ -4118,6 +4135,7 @@ impl RepositoryImplEmitter {
         include_segment_is_nullable: &[Vec<Vec<bool>>],
     ) {
         for (idx, path) in include_paths.iter().enumerate() {
+            let target_tree = include_target_trees.get(idx).and_then(|t| t.as_ref());
             let per_seg_dto = include_segment_dto_fields
                 .get(idx)
                 .map(|v| v.as_slice())
@@ -4165,6 +4183,7 @@ impl RepositoryImplEmitter {
                     tree,
                     code,
                     path,
+                    target_tree,
                     dto_fields,
                     col_fields,
                     is_structured,
@@ -4176,6 +4195,7 @@ impl RepositoryImplEmitter {
                     tree,
                     code,
                     path,
+                    target_tree,
                     dto_fields,
                     col_fields,
                     is_structured,
@@ -4234,6 +4254,7 @@ impl RepositoryImplEmitter {
                     leaf_dto_types,
                     leaf_nullable,
                 );
+                self.emit_dot_batch_fetch_method(tree, code, path);
             }
         }
     }
@@ -4285,11 +4306,13 @@ impl RepositoryImplEmitter {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn emit_single_fetch_method(
         &self,
         tree: &EntityTree,
         code: &mut String,
         path: &ResolvedIncludePath,
+        target_tree: Option<&EntityTree>,
         dto_fields: &[String],
         col_fields: &[String],
         is_structured: &[bool],
@@ -4379,6 +4402,9 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code, "        for row in rows {{").unwrap();
+            if let Some(ttree) = target_tree {
+                emit_child_reads(code, &ttree.child_tables, "row.id", 3);
+            }
             writeln!(code, "            results.push({} {{", resp_type).unwrap();
             writeln!(code, "                id: row.id,").unwrap();
             Self::emit_field_assignments_typed(
@@ -4393,6 +4419,9 @@ impl RepositoryImplEmitter {
             );
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
+            if let Some(ttree) = target_tree {
+                emit_child_field_population(code, &ttree.child_tables, "                ");
+            }
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }});").unwrap();
             writeln!(code, "        }}").unwrap();
@@ -4448,6 +4477,9 @@ impl RepositoryImplEmitter {
             writeln!(code, "            Some(t) => t,").unwrap();
             writeln!(code, "            None => return Ok(None),").unwrap();
             writeln!(code, "        }};").unwrap();
+            if let Some(ttree) = target_tree {
+                emit_child_reads(code, &ttree.child_tables, "target.id", 2);
+            }
             writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
             writeln!(code, "            id: target.id,").unwrap();
             Self::emit_field_assignments_typed(
@@ -4462,6 +4494,9 @@ impl RepositoryImplEmitter {
             );
             writeln!(code, "            created_at: target.created_at,").unwrap();
             writeln!(code, "            updated_at: target.updated_at,").unwrap();
+            if let Some(ttree) = target_tree {
+                emit_child_field_population(code, &ttree.child_tables, "            ");
+            }
             writeln!(code, "            ..Default::default()").unwrap();
             writeln!(code, "        }}))").unwrap();
         }
@@ -4470,11 +4505,13 @@ impl RepositoryImplEmitter {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn emit_batch_fetch_method(
         &self,
         tree: &EntityTree,
         code: &mut String,
         path: &ResolvedIncludePath,
+        target_tree: Option<&EntityTree>,
         dto_fields: &[String],
         col_fields: &[String],
         is_structured: &[bool],
@@ -4534,6 +4571,9 @@ impl RepositoryImplEmitter {
             writeln!(code, "            result.entry(*id).or_insert(None);").unwrap();
             writeln!(code, "        }}").unwrap();
             writeln!(code, "        for row in rows {{").unwrap();
+            if let Some(ttree) = target_tree {
+                emit_child_reads(code, &ttree.child_tables, "row.id", 3);
+            }
             writeln!(
                 code,
                 "            result.insert(row.{}, Some({} {{",
@@ -4550,6 +4590,9 @@ impl RepositoryImplEmitter {
                 dto_rust_types,
                 is_nullable,
             );
+            if let Some(ttree) = target_tree {
+                emit_child_field_population(code, &ttree.child_tables, "                ");
+            }
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }}));").unwrap();
             writeln!(code, "        }}").unwrap();
@@ -4597,6 +4640,9 @@ impl RepositoryImplEmitter {
                 writeln!(code, "                None => continue,").unwrap();
                 writeln!(code, "            }};").unwrap();
             }
+            if let Some(ttree) = target_tree {
+                emit_child_reads(code, &ttree.child_tables, "row.id", 3);
+            }
             writeln!(
                 code,
                 "            result.entry(key).or_default().push({} {{",
@@ -4616,6 +4662,9 @@ impl RepositoryImplEmitter {
             );
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
+            if let Some(ttree) = target_tree {
+                emit_child_field_population(code, &ttree.child_tables, "                ");
+            }
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }});").unwrap();
             writeln!(code, "        }}").unwrap();
@@ -4669,13 +4718,25 @@ impl RepositoryImplEmitter {
             .unwrap();
             writeln!(code, "            .all(db)").unwrap();
             writeln!(code, "            .await?;").unwrap();
+            // A plain for-loop (not .map) so target child-table hydration can
+            // await inside the body.
             writeln!(
                 code,
-                "        let target_by_id: std::collections::HashMap<Uuid, {}> = targets.into_iter().map(|t| (t.id, {} {{",
-                resp_type, resp_type
+                "        let mut target_by_id: std::collections::HashMap<Uuid, {}> = std::collections::HashMap::new();",
+                resp_type
             )
             .unwrap();
-            writeln!(code, "            id: t.id,").unwrap();
+            writeln!(code, "        for t in targets {{").unwrap();
+            if let Some(ttree) = target_tree {
+                emit_child_reads(code, &ttree.child_tables, "t.id", 3);
+            }
+            writeln!(
+                code,
+                "            target_by_id.insert(t.id, {} {{",
+                resp_type
+            )
+            .unwrap();
+            writeln!(code, "                id: t.id,").unwrap();
             Self::emit_field_assignments_typed(
                 code,
                 "t",
@@ -4686,10 +4747,14 @@ impl RepositoryImplEmitter {
                 dto_rust_types,
                 is_nullable,
             );
-            writeln!(code, "            created_at: t.created_at,").unwrap();
-            writeln!(code, "            updated_at: t.updated_at,").unwrap();
-            writeln!(code, "            ..Default::default()").unwrap();
-            writeln!(code, "        }})).collect();").unwrap();
+            writeln!(code, "                created_at: t.created_at,").unwrap();
+            writeln!(code, "                updated_at: t.updated_at,").unwrap();
+            if let Some(ttree) = target_tree {
+                emit_child_field_population(code, &ttree.child_tables, "                ");
+            }
+            writeln!(code, "                ..Default::default()").unwrap();
+            writeln!(code, "            }});").unwrap();
+            writeln!(code, "        }}").unwrap();
             writeln!(
                 code,
                 "        let mut result: std::collections::HashMap<Uuid, Option<{}>> = std::collections::HashMap::new();",
@@ -4869,6 +4934,47 @@ impl RepositoryImplEmitter {
         writeln!(code, "            ..Default::default()").unwrap();
         writeln!(code, "        }}))").unwrap();
 
+        writeln!(code, "    }}").unwrap();
+    }
+
+    /// Batch variant of [`Self::emit_dot_fetch_method`] for list endpoints:
+    /// delegates to the single-source dot fetch per id. Dot-path chains are
+    /// point queries (indexed fk hops), so the loop is acceptable at page
+    /// sizes; a set-based chain with HashMap grouping would be the
+    /// optimization if it ever shows up in profiles.
+    fn emit_dot_batch_fetch_method(
+        &self,
+        _tree: &EntityTree,
+        code: &mut String,
+        path: &ResolvedIncludePath,
+    ) {
+        let resp_type = &path.response_rust_type;
+        writeln!(code).unwrap();
+        writeln!(code, "    pub(crate) async fn {}(", path.batch_fetch_method).unwrap();
+        writeln!(code, "        &self,").unwrap();
+        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
+        writeln!(code, "        source_ids: &[Uuid],").unwrap();
+        writeln!(
+            code,
+            "    ) -> Result<std::collections::HashMap<Uuid, {resp_type}>, Box<dyn std::error::Error>> {{"
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "        let mut result = std::collections::HashMap::new();"
+        )
+        .unwrap();
+        writeln!(code, "        for source_id in source_ids {{").unwrap();
+        writeln!(
+            code,
+            "            if let Some(combined) = self.{}(db, *source_id).await? {{",
+            path.fetch_method
+        )
+        .unwrap();
+        writeln!(code, "                result.insert(*source_id, combined);").unwrap();
+        writeln!(code, "            }}").unwrap();
+        writeln!(code, "        }}").unwrap();
+        writeln!(code, "        Ok(result)").unwrap();
         writeln!(code, "    }}").unwrap();
     }
 
