@@ -4234,6 +4234,7 @@ impl RepositoryImplEmitter {
                     leaf_dto_types,
                     leaf_nullable,
                 );
+                self.emit_dot_batch_fetch_method(tree, code, path);
             }
         }
     }
@@ -4869,6 +4870,47 @@ impl RepositoryImplEmitter {
         writeln!(code, "            ..Default::default()").unwrap();
         writeln!(code, "        }}))").unwrap();
 
+        writeln!(code, "    }}").unwrap();
+    }
+
+    /// Batch variant of [`Self::emit_dot_fetch_method`] for list endpoints:
+    /// delegates to the single-source dot fetch per id. Dot-path chains are
+    /// point queries (indexed fk hops), so the loop is acceptable at page
+    /// sizes; a set-based chain with HashMap grouping would be the
+    /// optimization if it ever shows up in profiles.
+    fn emit_dot_batch_fetch_method(
+        &self,
+        _tree: &EntityTree,
+        code: &mut String,
+        path: &ResolvedIncludePath,
+    ) {
+        let resp_type = &path.response_rust_type;
+        writeln!(code).unwrap();
+        writeln!(code, "    pub(crate) async fn {}(", path.batch_fetch_method).unwrap();
+        writeln!(code, "        &self,").unwrap();
+        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
+        writeln!(code, "        source_ids: &[Uuid],").unwrap();
+        writeln!(
+            code,
+            "    ) -> Result<std::collections::HashMap<Uuid, {resp_type}>, Box<dyn std::error::Error>> {{"
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "        let mut result = std::collections::HashMap::new();"
+        )
+        .unwrap();
+        writeln!(code, "        for source_id in source_ids {{").unwrap();
+        writeln!(
+            code,
+            "            if let Some(combined) = self.{}(db, *source_id).await? {{",
+            path.fetch_method
+        )
+        .unwrap();
+        writeln!(code, "                result.insert(*source_id, combined);").unwrap();
+        writeln!(code, "            }}").unwrap();
+        writeln!(code, "        }}").unwrap();
+        writeln!(code, "        Ok(result)").unwrap();
         writeln!(code, "    }}").unwrap();
     }
 

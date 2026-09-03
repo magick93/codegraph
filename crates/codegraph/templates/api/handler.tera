@@ -647,6 +647,33 @@ pub async fn list(
                         .with_correlation_id(correlation_id))?).unwrap_or_default(),
             );
         }
+        {% else %}
+        // Dot-notation path: batch-fetch the combined struct per source id and
+        // merge each leaf field into `included.<segments[0]>[<source_id>]` so
+        // sibling dot paths sharing the first segment accumulate instead of
+        // clobbering each other.
+        if include_paths.contains(&"{{ ipath.alias }}".to_string()) {
+            let batch = repo.{{ ipath.batch_fetch_method }}(&tx, &ids).await
+                .map_err(|e| AppError::internal(format!("Failed to include {{ ipath.alias }}: {e}"))
+                    .with_correlation_id(correlation_id))?;
+            let entry = included_map
+                .entry("{{ ipath.segments[0].module_name }}".to_string())
+                .or_insert_with(|| serde_json::json!({}));
+            if let Some(by_source) = entry.as_object_mut() {
+                for (source_id, combined) in batch {
+                    let leaf = serde_json::json!(combined.{{ ipath.segments[1].module_name }});
+                    let leaf_entry = by_source
+                        .entry(source_id.to_string())
+                        .or_insert_with(|| serde_json::json!({}));
+                    if let Some(leaf_obj) = leaf_entry.as_object_mut() {
+                        leaf_obj.insert(
+                            "{{ ipath.segments[1].module_name }}".to_string(),
+                            leaf,
+                        );
+                    }
+                }
+            }
+        }
         {% endif %}
         {% endfor %}
         tx.commit().await
