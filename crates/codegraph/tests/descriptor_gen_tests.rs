@@ -1,5 +1,3 @@
-use serde_json;
-
 #[test]
 fn test_descriptor_template_renders_minimal() {
     let mut tera = tera::Tera::default();

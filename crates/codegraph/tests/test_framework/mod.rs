@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod validators;
 
 use std::path::Path;

@@ -348,14 +348,32 @@ async fn resolve_explicit_paths(
             // back-ref column exists, so paths through them are unfetchable.
             // VO→entity overrides are exempt: the fetch queries the VO child
             // table by its own parent FK (child_table_override), not these
-            // columns.
+            // columns. Config-declared child entities are also exempt when
+            // the fetch column IS the configured parent_ref: the DDL emits
+            // that column from the same config (`parent = <source>` +
+            // `parent_ref`), so it exists in the database even though the
+            // schema JSON carries no matching property — the property-based
+            // gate below cannot see it and would over-skip valid reverse
+            // includes (e.g. `worker?include=deployment.position` with
+            // DeploymentType.parent_ref = "worker_type_id").
+            let src_title: &str = current_source_title;
+            let config_child_fk: Option<String> = config
+                .domains
+                .get(domain)
+                .and_then(|d| d.get_entity_config(&target_title))
+                .filter(|ec| ec.parent.as_deref().is_some_and(|p| p == src_title))
+                .and_then(|ec| ec.parent_ref.clone());
             if child_table_override.is_none() {
                 let (fetch_column, fetch_on_title): (&String, String) = if is_array {
                     (&reverse_fk_column, target_title.clone())
                 } else {
                     (&fk_column, current_source_title.to_string())
                 };
-                if !schema_has_fk_column(db, &fetch_on_title, fetch_column).await? {
+                let config_authoritative =
+                    config_child_fk.as_deref() == Some(fetch_column.as_str());
+                if !config_authoritative
+                    && !schema_has_fk_column(db, &fetch_on_title, fetch_column).await?
+                {
                     tracing::warn!(
                         "include path '{path}' segment '{seg}' is unfetchable — column \
                          '{fetch_column}' not found on '{fetch_on_title}' (junction array?) — skipping"

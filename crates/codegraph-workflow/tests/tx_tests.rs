@@ -208,8 +208,7 @@ fn invalid_transition_rolls_back() {
         .build()
         .unwrap()
         .block_on(service.transition(ctx("closed")))
-        .err()
-        .expect("draft -> closed must be invalid");
+        .expect_err("draft -> closed must be invalid");
 
     assert!(
         matches!(
@@ -248,8 +247,7 @@ fn already_terminal_is_conflict() {
         .build()
         .unwrap()
         .block_on(service.transition(ctx("active")))
-        .err()
-        .expect("terminal instance must reject transition");
+        .expect_err("terminal instance must reject transition");
 
     assert!(matches!(
         result,
