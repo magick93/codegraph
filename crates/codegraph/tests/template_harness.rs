@@ -8223,6 +8223,7 @@ async fn dot_include_list_handler_wires_batch_and_merge() {
             has_one_of: false,
             has_any_of: false,
             has_definitions: false,
+            custom_annotations: Default::default(),
         }
     }
 
@@ -8448,6 +8449,7 @@ async fn person_include_hydrates_target_child_tables() {
             has_one_of: false,
             has_any_of: false,
             has_definitions: false,
+            custom_annotations: Default::default(),
         }
     }
 
