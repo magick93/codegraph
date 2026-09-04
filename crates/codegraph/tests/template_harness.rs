@@ -8283,6 +8283,7 @@ async fn person_include_hydrates_scoped_child_tables() {
     fn prop_plain(name: &str) -> PropertyNode {
         PropertyNode {
             prop_type: "object".to_string(),
+            rust_field_type: "String".to_string(),
             ..prop_defaults()
         }
         .with_overrides(|p| {
@@ -8437,4 +8438,174 @@ allow_include = ["person"]
     if let Err(e) = syn::parse_str::<syn::File>(&code) {
         panic!("emitted repository_impl.rs is not valid Rust: {e}");
     }
+}
+
+/// #162 Phase 3: config-driven extension points on entity detail pages.
+/// `ui_detail_extensions` on an entity config must make the generated
+/// `+page.svelte` import and mount the consumer-owned panel components from
+/// `#lib/components/extensions/` with a conventional testid — replacing the
+/// client-side overlay workaround (rsync-owned generated pages).
+#[tokio::test]
+async fn detail_page_emits_extension_points() {
+    use codegraph::generate::ui::page::UiPageGenerator;
+    use codegraph_config::config::parse_domain_config_str;
+    use codegraph_core::types::{PropertyNode, SchemaNode};
+
+    fn worker_schema() -> SchemaNode {
+        SchemaNode {
+            schema_id: "hr/json/WorkerType.json".to_string(),
+            title: "WorkerType".to_string(),
+            description: None,
+            schema_type: "object".to_string(),
+            classification: "entity_reference".to_string(),
+            domain: Some("hr".to_string()),
+            rel_path: "hr/json/WorkerType.json".to_string(),
+            pg_type: "UUID".to_string(),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            rust_type_name: "Worker".to_string(),
+            pg_table_name: "worker".to_string(),
+            api_path_segment: "workers".to_string(),
+            parent_schema: None,
+            is_entity: true,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+        }
+    }
+
+    fn full_name_prop() -> PropertyNode {
+        PropertyNode {
+            name: "fullName".to_string(),
+            prop_type: "string".to_string(),
+            description: None,
+            format: None,
+            is_required: true,
+            is_nullable: false,
+            is_array: false,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: "full_name".to_string(),
+            pg_column_type: "TEXT".to_string(),
+            rust_field_name: "full_name".to_string(),
+            rust_field_type: "String".to_string(),
+            sea_orm_type: "Text".to_string(),
+            render_strategy: "direct_column".to_string(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    }
+
+    fn config_with_extensions(extensions: Option<&str>) -> codegraph_config::DomainConfig {
+        let ext_line = match extensions {
+            Some(e) => format!("ui_detail_extensions = [{e}]"),
+            None => String::new(),
+        };
+        let toml = format!(
+            r#"
+[defaults]
+type_suffix = "Type"
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType"]
+
+[domains.hr.entity_config.WorkerType]
+role = "root"
+{ext_line}
+"#
+        );
+        parse_domain_config_str(&toml).unwrap()
+    }
+
+    let mock = MockEngine::builder()
+        .with_schema(worker_schema())
+        .with_properties("WorkerType", vec![full_name_prop()])
+        .build();
+    let tera = {
+        let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        codegraph::generate::template_engine::create_tera(&template_dir).unwrap()
+    };
+    let project = codegraph::generate::ProjectConfig::default();
+    let output_dir = tempfile::tempdir().unwrap();
+
+    // ── Positive: entity with ui_detail_extensions mounts the panel ──
+    let config = config_with_extensions(Some("\"ird-registration-panel\""));
+    let gen = UiPageGenerator::new(output_dir.path());
+    let files = gen
+        .generate(&mock, "WorkerType", "hr", &config, &tera, &project)
+        .await
+        .expect("detail page generation should not fail");
+
+    let page = files
+        .iter()
+        .find(|f| {
+            f.path.ends_with("+page.svelte") && f.path.to_string_lossy().contains("[worker_id]")
+        })
+        .expect("detail +page.svelte must be emitted");
+
+    assert!(
+        page.content
+            .contains("import IrdRegistrationPanel from '#lib/components/extensions/IrdRegistrationPanel.svelte';"),
+        "detail page must import the extension component from the consumer-owned extensions dir"
+    );
+    assert!(
+        page.content.contains("<IrdRegistrationPanel"),
+        "detail page must mount the extension component"
+    );
+    assert!(
+        page.content.contains("data-testid=\"ird-registration-panel\""),
+        "extension mount must carry the conventional testid"
+    );
+
+    // ── Negative: extension-less entities render byte-identical to today ──
+    let config_plain = config_with_extensions(None);
+    let output_plain = tempfile::tempdir().unwrap();
+    let files_plain = UiPageGenerator::new(output_plain.path())
+        .generate(&mock, "WorkerType", "hr", &config_plain, &tera, &project)
+        .await
+        .expect("plain detail page generation should not fail");
+    let page_plain = files_plain
+        .iter()
+        .find(|f| f.path.ends_with("+page.svelte") && f.path.to_string_lossy().contains("[worker_id]"))
+        .expect("plain detail +page.svelte must be emitted");
+    assert!(
+        !page_plain.content.contains("components/extensions/"),
+        "extension-less entities must not emit extension imports"
+    );
+    assert!(
+        !page_plain.content.contains("IrdRegistrationPanel"),
+        "extension-less entities must not reference extension components"
+    );
+
+    // Explicit empty list must equal the no-key render (default = empty).
+    let config_empty = config_with_extensions(Some(""));
+    let output_empty = tempfile::tempdir().unwrap();
+    let files_empty = UiPageGenerator::new(output_empty.path())
+        .generate(&mock, "WorkerType", "hr", &config_empty, &tera, &project)
+        .await
+        .expect("empty-list detail page generation should not fail");
+    let page_empty = files_empty
+        .iter()
+        .find(|f| f.path.ends_with("+page.svelte") && f.path.to_string_lossy().contains("[worker_id]"))
+        .expect("empty-list detail +page.svelte must be emitted");
+    assert_eq!(
+        page_plain.content, page_empty.content,
+        "ui_detail_extensions = [] must render byte-identical to the config being absent"
+    );
 }
