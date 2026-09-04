@@ -2176,32 +2176,46 @@ impl RepositoryImplEmitter {
                 }
             }
 
-            // Child-table response structs live in the child entity's
-            // dto_response module (generated re-export shim). The include-fetch
-            // child hydration references them; without these imports the
-            // repository fails to compile wherever a target tree nests deeply.
+            // Child-table response structs are all re-exported through the
+            // TARGET entity's dto_response module (the domain-types crate
+            // emits every nested level there). The include-fetch child
+            // hydration references them; without these imports the repository
+            // fails to compile wherever a target tree nests deeply.
             {
                 let mut seen_child_imports = std::collections::HashSet::new();
                 let mut child_import_lines: Vec<String> = Vec::new();
                 fn walk_child_imports(
                     child: &ChildTableInfo,
+                    base: &str,
                     seen: &mut std::collections::HashSet<String>,
                     out: &mut Vec<String>,
                 ) {
-                    let line = format!(
-                        "use crate::domain::{}::{}::dto_response::{};",
-                        child.sql_schema_name, child.sql_table_name, child.struct_name
-                    );
                     if seen.insert(child.struct_name.clone()) {
-                        out.push(line);
+                        out.push(format!(
+                            "use {}{}::dto_response::{};",
+                            base, child.sql_table_name, child.struct_name
+                        ));
                     }
                     for nested in &child.child_tables {
-                        walk_child_imports(nested, seen, out);
+                        walk_child_imports(nested, base, seen, out);
                     }
                 }
-                for ttree in include_target_trees.iter().flatten() {
+                for (idx, path) in include_paths.iter().enumerate() {
+                    let Some(Some(ttree)) = include_target_trees.get(idx) else {
+                        continue;
+                    };
+                    if ttree.child_tables.is_empty() {
+                        continue;
+                    }
+                    let last = path.segments.last().unwrap();
+                    let base = format!("crate::domain::{}::{}::", last.domain, last.module_name);
                     for child in &ttree.child_tables {
-                        walk_child_imports(child, &mut seen_child_imports, &mut child_import_lines);
+                        walk_child_imports(
+                            child,
+                            &base,
+                            &mut seen_child_imports,
+                            &mut child_import_lines,
+                        );
                     }
                 }
                 for line in child_import_lines {
