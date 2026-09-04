@@ -8586,3 +8586,414 @@ allow_include = ["person"]
         panic!("emitted repository_impl.rs is not valid Rust: {e}");
     }
 }
+
+/// #162 Phase 2: VO-child (scoped-response) includes must hydrate nested child
+/// tables. `worker?include=person` resolves via `child_table_override` (the
+/// `person` VO materializes as `worker_person`); the scoped response type is
+/// `WorkerPersonLegalResponse` — not entity-native — so the override branch
+/// must hydrate from the SOURCE tree's matching child subtree, whose struct
+/// names (`WorkerPersonLegal*`) align with the scoped prefix by construction.
+#[tokio::test]
+async fn person_include_hydrates_scoped_child_tables() {
+    use codegraph::generate::api::include_path::resolve_include_paths;
+    use codegraph_config::config::parse_domain_config_str;
+    use codegraph_core::types::PropertyNode;
+
+    fn schema_node(
+        title: &str,
+        domain: &str,
+        table: &str,
+        is_entity: bool,
+    ) -> codegraph_core::types::SchemaNode {
+        codegraph_core::types::SchemaNode {
+            schema_id: format!("{domain}/json/{title}.json"),
+            title: title.to_string(),
+            description: None,
+            schema_type: "object".to_string(),
+            classification: "entity_reference".to_string(),
+            domain: Some(domain.to_string()),
+            rel_path: format!("{domain}/json/{title}.json"),
+            pg_type: "UUID".to_string(),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            rust_type_name: title.strip_suffix("Type").unwrap_or(title).to_string(),
+            pg_table_name: table.to_string(),
+            api_path_segment: table.to_string(),
+            parent_schema: None,
+            is_entity,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+            custom_annotations: Default::default(),
+        }
+    }
+
+    fn prop_defaults() -> PropertyNode {
+        PropertyNode {
+            name: String::new(),
+            prop_type: "object".to_string(),
+            description: None,
+            format: None,
+            is_required: false,
+            is_nullable: true,
+            is_array: false,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: String::new(),
+            pg_column_type: "UUID".to_string(),
+            rust_field_name: String::new(),
+            rust_field_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            render_strategy: "direct_column".to_string(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    }
+
+    fn prop_plain(name: &str) -> PropertyNode {
+        PropertyNode {
+            prop_type: "object".to_string(),
+            rust_field_type: "String".to_string(),
+            ..prop_defaults()
+        }
+        .with_overrides(|p| {
+            p.name = name.to_string();
+            p.rust_field_name = name.to_string();
+            p.pg_column_name = name.to_string();
+        })
+    }
+
+    fn prop_vo(name: &str, target: &str, is_array: bool) -> PropertyNode {
+        PropertyNode {
+            classification_kind: Some(codegraph_type_contracts::RefClassificationKind::ValueObject),
+            render_strategy: "structured".to_string(),
+            is_array,
+            prop_type: if is_array { "array" } else { "object" }.to_string(),
+            ..prop_defaults()
+        }
+        .with_overrides(|p| {
+            p.name = name.to_string();
+            p.rust_field_name = name.to_string();
+            p.pg_column_name = name.to_string();
+            p.ref_target = Some(target.to_string());
+        })
+    }
+
+    trait WithOverrides {
+        fn with_overrides(self, f: impl FnOnce(&mut PropertyNode)) -> PropertyNode;
+    }
+    impl WithOverrides for PropertyNode {
+        fn with_overrides(mut self, f: impl FnOnce(&mut PropertyNode)) -> PropertyNode {
+            f(&mut self);
+            self
+        }
+    }
+
+    let worker = schema_node("WorkerType", "hr", "worker", true);
+    let person = schema_node("PersonType", "hr", "person", true);
+    // The `person` prop refs this VO, not the Person entity — the VO→entity
+    // allOf chain is what triggers the child_table_override path.
+    let person_legal_vo = schema_node("PersonLegalType", "hr", "person_legal", false);
+    let person_name_vo = schema_node("PersonNameType", "hr", "person_name", false);
+    let citizenship_vo = schema_node("CitizenshipType", "hr", "citizenship", false);
+
+    let mock = MockEngine::builder()
+        .with_schema(worker.clone())
+        .with_schema(person.clone())
+        .with_schema(person_legal_vo.clone())
+        .with_schema(person_name_vo.clone())
+        .with_schema(citizenship_vo.clone())
+        // VO→entity: PersonType extends PersonLegalType (allOf chain).
+        .with_extending_schema("PersonLegalType", person.clone())
+        .with_ref_target("person", "WorkerType", person_legal_vo.clone())
+        .with_ref_target("name", "PersonLegalType", person_name_vo.clone())
+        .with_ref_target("citizenship", "PersonLegalType", citizenship_vo.clone())
+        .with_properties(
+            "WorkerType",
+            vec![prop_vo("person", "PersonLegalType", false)],
+        )
+        .with_properties(
+            "PersonLegalType",
+            vec![
+                prop_vo("name", "PersonNameType", false),
+                prop_vo("citizenship", "CitizenshipType", true),
+            ],
+        )
+        .with_properties(
+            "PersonNameType",
+            vec![prop_plain("given"), prop_plain("family")],
+        )
+        .with_properties("CitizenshipType", vec![prop_plain("country")])
+        .build();
+
+    let config = {
+        let toml = r#"
+[defaults]
+type_suffix = "Type"
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType", "PersonType"]
+
+[domains.hr.entity_config.WorkerType]
+role = "root"
+allow_include = ["person"]
+"#;
+        parse_domain_config_str(toml).unwrap()
+    };
+
+    let include_paths = resolve_include_paths(
+        &mock,
+        &config,
+        "hr",
+        "WorkerType",
+        Some(&vec!["person".to_string()]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(include_paths.len(), 1, "person path must resolve");
+    let path = &include_paths[0];
+    assert!(
+        path.segments[0].child_table_override.is_some(),
+        "person must resolve via the VO child_table_override path"
+    );
+    assert_eq!(
+        path.response_rust_type, "WorkerPersonLegalResponse",
+        "scoped response type must use the WorkerPersonLegal prefix"
+    );
+
+    use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
+    let code = RepositoryImplEmitter
+        .emit(&mock, "WorkerType", "hr", &config, None, &include_paths)
+        .await
+        .expect("repository emission should not fail");
+
+    assert!(
+        code.contains("fetch_person_for_worker"),
+        "single fetch method must be emitted"
+    );
+
+    // Slice out just the fetch method so assertions pin the override branch's
+    // emission (the main find_by_id hydration shares the same struct names).
+    let fetch_start = code
+        .find("pub(crate) async fn fetch_person_for_worker")
+        .expect("fetch_person_for_worker must be emitted");
+    let fetch_code = &code[fetch_start..];
+    let fetch_end = fetch_start
+        + fetch_code
+            .find("\n    pub(crate) async fn")
+            .unwrap_or(fetch_code.len());
+    let fetch_code = &code[fetch_start..fetch_end];
+
+    assert!(
+        fetch_code.contains("WorkerPersonLegalPersonNameResponse"),
+        "fetch_person_for_worker must read the person's nested `name` child \
+         table into WorkerPersonLegalPersonNameResponse"
+    );
+    assert!(
+        fetch_code.contains("name: name_rows.into_iter().next(),"),
+        "scoped response must populate the `name` field, not leave it None"
+    );
+    assert!(
+        fetch_code.contains("citizenship: citizenship_rows,"),
+        "scoped response must populate the `citizenship` array field"
+    );
+    assert!(
+        fetch_code.contains("worker_person_name"),
+        "nested name reads must query the worker_person_name child table"
+    );
+    if let Err(e) = syn::parse_str::<syn::File>(&code) {
+        panic!("emitted repository_impl.rs is not valid Rust: {e}");
+    }
+}
+
+/// #162 Phase 3: config-driven extension points on entity detail pages.
+/// `ui_detail_extensions` on an entity config must make the generated
+/// `+page.svelte` import and mount the consumer-owned panel components from
+/// `#lib/components/extensions/` with a conventional testid — replacing the
+/// client-side overlay workaround (rsync-owned generated pages).
+#[tokio::test]
+async fn detail_page_emits_extension_points() {
+    use codegraph::generate::ui::page::UiPageGenerator;
+    use codegraph_config::config::parse_domain_config_str;
+    use codegraph_core::types::{PropertyNode, SchemaNode};
+
+    fn worker_schema() -> SchemaNode {
+        SchemaNode {
+            schema_id: "hr/json/WorkerType.json".to_string(),
+            title: "WorkerType".to_string(),
+            description: None,
+            schema_type: "object".to_string(),
+            classification: "entity_reference".to_string(),
+            domain: Some("hr".to_string()),
+            rel_path: "hr/json/WorkerType.json".to_string(),
+            pg_type: "UUID".to_string(),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            rust_type_name: "Worker".to_string(),
+            pg_table_name: "worker".to_string(),
+            api_path_segment: "workers".to_string(),
+            parent_schema: None,
+            is_entity: true,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+            custom_annotations: Default::default(),
+        }
+    }
+
+    fn full_name_prop() -> PropertyNode {
+        PropertyNode {
+            name: "fullName".to_string(),
+            prop_type: "string".to_string(),
+            description: None,
+            format: None,
+            is_required: true,
+            is_nullable: false,
+            is_array: false,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: "full_name".to_string(),
+            pg_column_type: "TEXT".to_string(),
+            rust_field_name: "full_name".to_string(),
+            rust_field_type: "String".to_string(),
+            sea_orm_type: "Text".to_string(),
+            render_strategy: "direct_column".to_string(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    }
+
+    fn config_with_extensions(extensions: Option<&str>) -> codegraph_config::DomainConfig {
+        let ext_line = match extensions {
+            Some(e) => format!("ui_detail_extensions = [{e}]"),
+            None => String::new(),
+        };
+        let toml = format!(
+            r#"
+[defaults]
+type_suffix = "Type"
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType"]
+
+[domains.hr.entity_config.WorkerType]
+role = "root"
+{ext_line}
+"#
+        );
+        parse_domain_config_str(&toml).unwrap()
+    }
+
+    let mock = MockEngine::builder()
+        .with_schema(worker_schema())
+        .with_properties("WorkerType", vec![full_name_prop()])
+        .build();
+    let tera = {
+        let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        codegraph::generate::template_engine::create_tera(&template_dir).unwrap()
+    };
+    let project = codegraph::generate::ProjectConfig::default();
+    let output_dir = tempfile::tempdir().unwrap();
+
+    // ── Positive: entity with ui_detail_extensions mounts the panel ──
+    let config = config_with_extensions(Some("\"ird-registration-panel\""));
+    let gen = UiPageGenerator::new(output_dir.path());
+    let files = gen
+        .generate(&mock, "WorkerType", "hr", &config, &tera, &project)
+        .await
+        .expect("detail page generation should not fail");
+
+    let page = files
+        .iter()
+        .find(|f| {
+            f.path.ends_with("+page.svelte") && f.path.to_string_lossy().contains("[worker_id]")
+        })
+        .expect("detail +page.svelte must be emitted");
+
+    assert!(
+        page.content
+            .contains("import IrdRegistrationPanel from '#lib/components/extensions/IrdRegistrationPanel.svelte';"),
+        "detail page must import the extension component from the consumer-owned extensions dir"
+    );
+    assert!(
+        page.content.contains("<IrdRegistrationPanel"),
+        "detail page must mount the extension component"
+    );
+    assert!(
+        page.content
+            .contains("data-testid=\"ird-registration-panel\""),
+        "extension mount must carry the conventional testid"
+    );
+
+    // ── Negative: extension-less entities render byte-identical to today ──
+    let config_plain = config_with_extensions(None);
+    let output_plain = tempfile::tempdir().unwrap();
+    let files_plain = UiPageGenerator::new(output_plain.path())
+        .generate(&mock, "WorkerType", "hr", &config_plain, &tera, &project)
+        .await
+        .expect("plain detail page generation should not fail");
+    let page_plain = files_plain
+        .iter()
+        .find(|f| {
+            f.path.ends_with("+page.svelte") && f.path.to_string_lossy().contains("[worker_id]")
+        })
+        .expect("plain detail +page.svelte must be emitted");
+    assert!(
+        !page_plain.content.contains("components/extensions/"),
+        "extension-less entities must not emit extension imports"
+    );
+    assert!(
+        !page_plain.content.contains("IrdRegistrationPanel"),
+        "extension-less entities must not reference extension components"
+    );
+
+    // Explicit empty list must equal the no-key render (default = empty).
+    let config_empty = config_with_extensions(Some(""));
+    let output_empty = tempfile::tempdir().unwrap();
+    let files_empty = UiPageGenerator::new(output_empty.path())
+        .generate(&mock, "WorkerType", "hr", &config_empty, &tera, &project)
+        .await
+        .expect("empty-list detail page generation should not fail");
+    let page_empty = files_empty
+        .iter()
+        .find(|f| {
+            f.path.ends_with("+page.svelte") && f.path.to_string_lossy().contains("[worker_id]")
+        })
+        .expect("empty-list detail +page.svelte must be emitted");
+    assert_eq!(
+        page_plain.content, page_empty.content,
+        "ui_detail_extensions = [] must render byte-identical to the config being absent"
+    );
+}

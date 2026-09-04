@@ -496,6 +496,14 @@ pub struct EntityConfig {
     /// E.g. ["read", "list"] to allow unauthenticated access to read operations.
     #[serde(default)]
     pub public_operations: Option<Vec<String>>,
+    /// Consumer-owned Svelte components mounted on this entity's generated
+    /// detail page. Each entry is a kebab-case component name (e.g.
+    /// "ird-registration-panel") mapped to
+    /// `#lib/components/extensions/IrdRegistrationPanel.svelte`. The
+    /// component files stay consumer-owned (non-synced), so generated pages
+    /// can host custom panels without client-side overlay hacks (#162).
+    #[serde(default)]
+    pub ui_detail_extensions: Vec<String>,
     /// AT Protocol permission gating. When `scope` is set, the entity's API
     /// routes run through the generated permission middleware.
     #[serde(default)]
