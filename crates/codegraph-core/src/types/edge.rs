@@ -35,6 +35,13 @@ pub enum EdgeType {
     HasViewComponentPart,
     HasConditionalExpr,
 
+    // AT Protocol edge types
+    InNamespace,
+    ProjectsToLexicon,
+    DefinesCollection,
+    LexiconReferences,
+    StoredInRepository,
+
     // API metamodel edge types
     ExposesResource,
     BindsToSchema,

@@ -4,6 +4,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use migration::MigratorTrait;
 use tokio_util::sync::CancellationToken;
 
 use tracing_subscriber::layer::SubscriberExt;
@@ -182,6 +183,16 @@ async fn health_ready(
 /// Handles tracing, DB connection, state construction, router
 /// building, and signal handling.
 pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
+    // HSTS — only when explicitly enabled (production with TLS termination)
+    let app = if std::env::var("HSTS_ENABLED").as_deref() == Ok("true") {
+        app.layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("strict-transport-security"),
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        ))
+    } else {
+        app
+    };
+
 {% if has_admin_cli %}
     let config = crate::config::ServerConfig::load(None)?;
     if std::env::var("RUST_LOG").is_err() {
@@ -211,20 +222,111 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     let db = sea_orm::Database::connect(&db_url).await?;
 
+    // Apply pending migrations on startup (idempotent — applied files are
+    // tracked in the seaql_migrations table). Manual runs:
+    //   DATABASE_URL=... sea-orm-cli migrate up
+    if let Err(e) = migration::Migrator::up(&db, None).await {
+        tracing::error!("Failed to apply database migrations: {e}");
+        return Err(e.into());
+    }
+
+{% if project.hooks_api_crate %}
+    // Hook registry — lifecycle hooks + authz service. Built before AppState so
+    // command/query handlers receive their per-entity lifecycle hook.
+    let mut hooks_registry = crate::hooks::HookRegistry::default();
+{% if has_atproto %}
+    hooks_registry.register_authorization(std::sync::Arc::new(
+        cosmos_extensions::authorization::AuthorizationServiceImpl::new(db.clone()),
+    ));
+    cosmos_extensions::did_validation::register_did_validation_hooks(&mut hooks_registry);
+{% endif %}
+{% endif %}
+
+{% if has_atproto %}
+    // Application context for the hand-written HTTP layer (cosmos-extensions).
+    // Builds the identity service, AT Protocol service auth and the OAuth
+    // provider from the environment (AppContext::from_env — ATPROTO_* /
+    // OAUTH_* / SUPABASE_JWT_SECRET) and shares the HookRegistry so the
+    // hand-written auth / oauth / migration / identity routers can reach the
+    // email adapter and the AuthorizationService.
+    let app_ctx = cosmos_extensions::http::AppContext::from_env(
+        db.clone(),
+        {% if project.hooks_api_crate %}Some(std::sync::Arc::new(hooks_registry.clone())){% else %}None{% endif %},
+    )?;
+
+    {
+        // Trust attestation verification (issue #43): cryptographically verify
+        // the attestation signature before the row is created. Rejects
+        // tampered signatures and unresolvable issuers with 422.
+        hooks_registry.community_graph_trust_attestation = Some(std::sync::Arc::new(
+            cosmos_extensions::trust_lifecycle::TrustAttestationLifecycleHook::from_app_context(
+                app_ctx.as_ref(),
+            ),
+        ));
+    }
+
+    {
+        // Issue #34: declare the accessibility labeler service (idempotent).
+        // Best-effort: a did:web authority may not have a hosted repo, so a
+        // failure to persist is logged, not fatal.
+        if let (Some(labeler), Some(client)) =
+            (app_ctx.labeler.clone(), app_ctx.atproto_client.clone())
+        {
+            let did = labeler.labeler_did().to_string();
+            let declaration = serde_json::json!({
+                "policies": { "labelValues": cosmos_extensions::labels::ALL_LABEL_VALUES },
+                "createdAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            });
+            tokio::spawn(async move {
+                match client
+                    .create_record_with_rkey("app.bsky.labeler.service", "self", &declaration)
+                    .await
+                {
+                    Ok(_) => tracing::info!("declared labeler service for {}", did),
+                    Err(e) => tracing::warn!("failed to declare labeler service: {}", e),
+                }
+            });
+        }
+    }
+{% endif %}
+
     let state = crate::app_state::AppState {
 {% for domain in domains %}
 {% for entity in domain.entities %}
         {{ domain.name }}_{{ entity.module_name }}_commands: crate::domain::{{ domain.name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler::new(
             Arc::new(crate::domain::{{ domain.name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl),
             db.clone(),
+{% if project.hooks_api_crate %}
+            hooks_registry.{{ domain.name }}_{{ entity.module_name }}.clone(),
+{% else %}
+            None,
+{% endif %}
         ),
         {{ domain.name }}_{{ entity.module_name }}_queries: crate::domain::{{ domain.name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler::new(
             Arc::new(crate::domain::{{ domain.name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl),
             db.clone(),
+{% if project.hooks_api_crate %}
+            hooks_registry.{{ domain.name }}_{{ entity.module_name }}.clone(),
+{% else %}
+            None,
+{% endif %}
         ),
 {% endfor %}
 {% endfor %}
         db: db.clone(),
+{% if project.hooks_api_crate %}
+        registry: hooks_registry,
+{% endif %}
+{% if has_atproto %}
+        identity: app_ctx.identity.clone(),
+
+        atproto_auth: app_ctx.atproto_auth.clone(),
+
+        atproto_client: app_ctx.atproto_client.clone(),
+
+        oauth_provider: app_ctx.oauth_provider.clone(),
+
+{% endif %}
 {% if has_admin_cli %}
         jwt_secret: config.jwt_secret()?,
 {% else %}
@@ -264,6 +366,88 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             _ = webhook_dispatcher.run() => {}
         }
     });
+{% endif %}
+
+{% if has_atproto %}
+    // AT Protocol live-stream consumers. The rsky firehose is the durable
+    // default; setting JETSTREAM_ENABLED=true swaps every per-domain consumer
+    // to a Jetstream WebSocket (pre-decoded JSON, collection-filtered) that
+    // emits the identical CommitEvent through the same persist sink.
+    let firehose_url = std::env::var("FIREHOSE_URL")
+        .unwrap_or_else(|_| "wss://bsky.network/xrpc".to_string());
+    let use_jetstream = std::env::var("JETSTREAM_ENABLED")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false);
+    let jetstream_url = std::env::var("JETSTREAM_URL")
+        .unwrap_or_else(|_| cosmos_extensions::atproto::jetstream::DEFAULT_JETSTREAM_URL.to_string());
+{% for domain in domains %}
+{% if domain.entities | length > 0 %}
+    {
+        let db = db.clone();
+        let firehose_url = firehose_url.clone();
+        let jetstream_url = jetstream_url.clone();
+        let fh_token = shutdown_token.child_token();
+        tokio::spawn(async move {
+            use crate::atproto::appview::ingest_{{ domain.name }};
+            if use_jetstream {
+                let mut client = cosmos_extensions::atproto::jetstream::JetstreamClient::new(
+                    &jetstream_url,
+                    &[{% for nsid in domain.atproto_nsids %}"{{ nsid }}"{% if not loop.last %}, {% endif %}{% endfor %}],
+                )
+                .expect("invalid JETSTREAM_URL");
+                tracing::info!("Starting jetstream consumer for domain: {{ domain.name }}");
+                tokio::select! {
+                    _ = fh_token.cancelled() => {
+                        tracing::info!("jetstream consumer shutting down: {{ domain.name }}");
+                    }
+                    _ = ingest_{{ domain.name }}::ingest_{{ domain.name }}(client, db) => {}
+                }
+                } else {
+                    let mut firehose = crate::atproto::firehose::FirehoseClient::new(&firehose_url).unwrap();
+                    tracing::info!("Starting firehose consumer for domain: {{ domain.name }}");
+                    tokio::select! {
+                        _ = fh_token.cancelled() => {
+                            tracing::info!("firehose consumer shutting down: {{ domain.name }}");
+                        }
+                        _ = ingest_{{ domain.name }}::ingest_{{ domain.name }}(firehose, db) => {}
+                    }
+                }
+            });
+        }
+{% endif %}
+{% endfor %}
+{% if has_labels %}
+    {
+        // AT Protocol labels subscriber (issue #33): consumes
+        // com.atproto.label.subscribeLabels (#labels frames) and persists
+        // applied labels into `atproto.label`. This is an independent consumer
+        // (labels are free-standing data objects, not per-domain records), so
+        // it spawns beside the record consumers with the same child_token +
+        // tokio::select! graceful-shutdown pattern.
+        let db = db.clone();
+        let firehose_url = firehose_url.clone();
+        let label_token = shutdown_token.child_token();
+        let labeler = app_ctx.labeler.clone();
+        let label_resolver: Option<std::sync::Arc<cosmos_extensions::http::identity::IdentityService>> =
+            app_ctx.identity.as_ref().map(|id| std::sync::Arc::new(id.clone()));
+        tokio::spawn(async move {
+            let mut firehose = crate::atproto::firehose::FirehoseClient::new_labels(&firehose_url)
+                .expect("invalid FIREHOSE_URL for label subscriber");
+            tracing::info!("Starting label firehose consumer (com.atproto.label.subscribeLabels)");
+            tokio::select! {
+                _ = label_token.cancelled() => {
+                    tracing::info!("label firehose consumer shutting down");
+                }
+                _ = cosmos_extensions::label_ingest::ingest_labels(
+                    firehose,
+                    db,
+                    labeler,
+                    label_resolver,
+                ) => {}
+            }
+        });
+    }
+{% endif %}
 {% endif %}
 
     let shutdown_signal = async move {
@@ -326,17 +510,41 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {% if has_webhooks %}
         .nest("/webhooks", crate::webhook_router::webhook_routes())
 {% endif %}
+{% if has_atproto and project.hooks_api_crate %}
+        // Inject the registered AuthorizationService into request extensions so
+        // the generated permission middleware can reach it without a State
+        // extractor (route-level layers cannot access router state).
+        .layer(axum::Extension(state.registry.authorization.clone()))
+{% endif %}
         // The pooled DB connection as an extension: the permission middleware
         // runs from per-route layers where State is not available.
         .layer(axum::extract::Extension(state.db.clone()))
+{% if has_atproto %}
+        .layer(axum::middleware::from_fn({
+            let app_ctx = app_ctx.clone();
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                cosmos_extensions::http::middleware::auth_middleware(
+                    app_ctx.clone(),
+                    request,
+                    next,
+                )
+            }
+        }));
+{% else %}
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
+{% endif %}
 
+    // The whole router is assembled as `Router<()>`: the generated AppState
+    // pieces (health, /api/v1 stack, per-domain XRPC routers) are closed with
+    // `.with_state(state.clone())`, and the hand-written extension routers
+    // (already `Router<()>` via `AppContext`) merge in directly.
     let app = axum::Router::new()
+
         .route("/version", axum::routing::get(version))
-        .route("/health", axum::routing::get(health))
-        .route("/health/ready", axum::routing::get(health_ready))
+        .route("/health", axum::routing::get(health).with_state(state.clone()))
+        .route("/health/ready", axum::routing::get(health_ready).with_state(state.clone()))
         .route("/metrics", axum::routing::get(move || std::future::ready(metrics_handle.render())))
-        .nest("/api/{{ project.api_version }}", api_routes)
+        .nest("/api/{{ project.api_version }}", api_routes.with_state(state.clone()))
         .route("/api-catalog.json", axum::routing::get(crate::api::openapi::catalog::api_catalog))
         .merge(
             SwaggerUi::new("/swagger-ui")
@@ -349,7 +557,85 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {% endfor %}
                 ])
         )
-        .with_state(state);
+
+        // ── Hand-written extension routes (cosmos-extensions) ──
+        // The auth / oauth / identity / migration / oauth-admin / platform /
+        // well-known / XRPC-identity routers are hand-written extension code
+        // (cosmos_extensions::http::*) built against a single `Arc<AppContext>`
+        // and closed to `Router<()>` inside the crate.
+{% if has_atproto %}
+        .merge(cosmos_extensions::http::well_known_routes(app_ctx.clone()))
+        .nest("/auth", cosmos_extensions::http::auth_routes(app_ctx.clone()))
+        .merge(cosmos_extensions::http::oauth_routes(app_ctx.clone()))
+        .route(
+            "/api-docs/oauth/openapi.json",
+            axum::routing::get(cosmos_extensions::http::auth::oauth_openapi::oauth_openapi_json),
+        )
+        .nest(
+            "/api/identity",
+            cosmos_extensions::http::identity_admin_routes(app_ctx.clone()),
+        )
+        // Email-claim ownership for unconfirmed person records (issue #74).
+        .nest(
+            "/api/claims",
+            cosmos_extensions::http::claims_routes(app_ctx.clone()),
+        )
+        .nest(
+            "/api/migration",
+            cosmos_extensions::http::migration_routes(app_ctx.clone()),
+        )
+        .nest(
+            "/api/oauth-admin",
+            cosmos_extensions::http::oauth_admin_routes(app_ctx.clone()),
+        )
+        .nest(
+            "/api/v1/platform",
+            cosmos_extensions::http::platform_routes(app_ctx.clone()),
+        )
+         .merge(crate::atproto::xrpc::xrpc_routes().with_state(state.clone()))
+         .merge(cosmos_extensions::http::xrpc_identity_routes(app_ctx.clone()))
+         // XRPC labels (issue #34) + push (issue #40): hand-written extension
+         // routers with full /xrpc paths, merged at the app root.
+         .merge(cosmos_extensions::http::xrpc_labels_routes(app_ctx.clone()))
+         .merge(cosmos_extensions::http::xrpc_push_routes(app_ctx.clone()))
+         // Labeler admin issuance (issue #34): POST /api/admin/labels.
+         .merge(cosmos_extensions::http::label_admin_routes(app_ctx.clone()))
+         // Trust transitivity (issue #43): /api/community_graph/trust-path.
+         // NOTE: deliberately NOT under /api/v1/community_graph — that prefix
+         // is owned by the generated domain router (nested inside /api/v1) and
+         // double-nesting the same prefix drops extension routes (axum).
+         .nest(
+             "/api/community_graph",
+             cosmos_extensions::http::trust_routes(app_ctx.clone()),
+         )
+         // Starter packs (issue #44): /api/v1/onboarding/starter-pack/*.
+         .nest(
+             "/api/v1/onboarding/starter-pack",
+             cosmos_extensions::http::onboarding_routes(app_ctx.clone()),
+         )
+         // Embedded space authority (issue #39, teaser — bearer flow):
+         // /xrpc/com.atproto.space.{getSpaceCredential,getDelegationToken,getSpace,listRepos}.
+         // Armed from SPACE_AUTHORITY_DID / SPACE_SIGNING_KEY_HEX /
+         // SPACE_CREDENTIAL_TTL_SECS; the consent-backed care-circle policy
+         // consults the delegation/consent/support tables.
+         .merge(cosmos_extensions::space::http::space_routes(app_ctx.clone()))
+         // XRPC resource-server auth (issue #36 Wave C sub-task 12): accepts
+         // OAuth DPoP-bound access tokens alongside the AT Protocol service JWT
+         // and TEST_MODE persona paths, injecting AtprotoDid into extensions.
+         .layer(axum::middleware::from_fn({
+             let app_ctx = app_ctx.clone();
+             move |request: axum::extract::Request, next: axum::middleware::Next| {
+                 cosmos_extensions::http::auth::oauth_middleware::oauth_xrpc_auth(
+                     app_ctx.clone(),
+                     request,
+                     next,
+                 )
+             }
+         }))
+{% endif %}
+         ;
+
+    // --- END GENERATED ---
 
     // Merge custom extension routes (Router<()>) after .with_state()
 {% if ext_points %}
@@ -362,24 +648,28 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         .layer(axum::middleware::from_fn(crate::metrics_middleware::track_metrics))
         .layer(cors)
         .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024)) // 10MB
-        .layer(SetResponseHeaderLayer::overriding(
+        // Security response headers — applied to every response via
+        // SetResponseHeaderLayer::overriding (one layer per header).
+                .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::HeaderName::from_static("x-content-type-options"),
             HeaderValue::from_static("nosniff"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::HeaderName::from_static("x-frame-options"),
-            HeaderValue::from_static("DENY"),
-        ));
-
-    // HSTS — only when explicitly enabled (production with TLS termination)
-    let app = if std::env::var("HSTS_ENABLED").as_deref() == Ok("true") {
-        app.layer(SetResponseHeaderLayer::overriding(
-            axum::http::header::HeaderName::from_static("strict-transport-security"),
-            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+            HeaderValue::from_static("SAMEORIGIN"),
         ))
-    } else {
-        app
-    };
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self'; font-src 'self' data:"),
+        ));
 
 {% if has_admin_cli %}
     let addr: SocketAddr = config

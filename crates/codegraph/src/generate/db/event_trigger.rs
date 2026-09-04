@@ -62,7 +62,15 @@ impl GlobalGenerator for PgmqSetupGenerator {
             return Ok(vec![]);
         }
 
-        let mut domains: Vec<String> = config.domains.keys().cloned().collect();
+        // One pgmq queue per domain with generated domain-event triggers.
+        // Entity-less custom-routes domains (entities = [] + custom_routes)
+        // have no event triggers, so they get no queue.
+        let mut domains: Vec<String> = config
+            .domains
+            .iter()
+            .filter(|(_, entry)| !(entry.custom_routes && entry.entities.is_empty()))
+            .map(|(name, _)| name.clone())
+            .collect();
         domains.sort();
 
         let ctx = PgmqSetupContext { domains };
@@ -74,9 +82,7 @@ impl GlobalGenerator for PgmqSetupGenerator {
             project,
         )?;
         Ok(vec![GeneratedFile {
-            path: self
-                .output_dir
-                .join("migrations")
+            path: crate::generate::db::migrations_root(&self.output_dir)
                 .join("0003_pgmq_setup.sql"),
             content,
         }])

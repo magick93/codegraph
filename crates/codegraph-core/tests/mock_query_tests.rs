@@ -26,6 +26,7 @@ async fn builder_creates_engine_with_preloaded_data() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let prop = PropertyNode {

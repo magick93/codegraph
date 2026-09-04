@@ -32,7 +32,7 @@ fn collect_protos(dir: &std::path::Path, protos: &mut Vec<std::path::PathBuf>) {
             let path = entry.path();
             if path.is_dir() {
                 collect_protos(&path, protos);
-            } else if path.extension().map_or(false, |e| e == "proto") {
+            } else if path.extension().is_some_and(|e| e == "proto") {
                 protos.push(path);
             }
         }

@@ -334,9 +334,7 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         let api_key_migration =
             render_template_with_project(tera, "db/api_key_migration.tera", &grant_ctx, project)?;
         files.push(GeneratedFile {
-            path: self
-                .output_dir
-                .join("migrations")
+            path: crate::generate::db::migrations_root(&self.output_dir)
                 .join("0002_api_key_management.sql"),
             content: api_key_migration,
         });
@@ -523,6 +521,16 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
                 content: middleware,
             });
 
+            // Shared API-key scope guard backing the generated per-route scope
+            // middleware (api/router.tera). Each worker crate gets its own copy
+            // over its cornucopia client stack; `generate_mod_files` declares it
+            // in the crate's `api/mod.rs`.
+            let scope = render_template_with_project(tera, "api/scope.tera", domain, project)?;
+            files.push(GeneratedFile {
+                path: base.join("src").join("api").join("scope.rs"),
+                content: scope,
+            });
+
             // Shared API metadata type — routed handlers reference
             // `crate::api::meta::Meta`, so each worker crate needs its own
             // copy (same template as the monolith scaffold).
@@ -613,6 +621,8 @@ service_bindings = ["timecard"]
                 append_only: false,
                 has_query_hooks: true,
             }],
+            has_custom_routes: false,
+            atproto_nsids: vec![],
         }
     }
 
@@ -1070,6 +1080,8 @@ entities = ["CodeType"]
                 append_only: false,
                 has_query_hooks: false,
             }],
+            has_custom_routes: false,
+            atproto_nsids: vec![],
         };
         let mut domains = build_worker_domains("hr", &config, vec![full, query_only]);
         for d in &mut domains {

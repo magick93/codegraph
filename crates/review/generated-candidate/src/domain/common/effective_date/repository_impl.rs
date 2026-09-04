@@ -60,6 +60,7 @@ impl EffectiveDateRepository<sea_orm::DatabaseTransaction> for EffectiveDateRepo
             id: row.id,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -132,6 +133,7 @@ impl EffectiveDateRepository<sea_orm::DatabaseTransaction> for EffectiveDateRepo
                 id: row.id,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

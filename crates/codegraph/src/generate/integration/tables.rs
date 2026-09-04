@@ -89,9 +89,7 @@ impl GlobalGenerator for IntegrationTablesGenerator {
 
         let ddl = render_template_with_project(tera, "integration/tables.tera", &ctx, project)?;
         files.push(GeneratedFile {
-            path: self
-                .output_dir
-                .join("migrations")
+            path: crate::generate::db::migrations_root(&self.output_dir)
                 .join("0007_integration_tables.sql"),
             content: ddl,
         });
@@ -105,18 +103,14 @@ impl GlobalGenerator for IntegrationTablesGenerator {
         };
         let rls = render_template_with_project(tera, "integration/rls.tera", &rls_ctx, project)?;
         files.push(GeneratedFile {
-            path: self
-                .output_dir
-                .join("migrations")
+            path: crate::generate::db::migrations_root(&self.output_dir)
                 .join("0008_integration_rls.sql"),
             content: rls,
         });
 
         let seed = render_template_with_project(tera, "integration/seed.tera", &ctx, project)?;
         files.push(GeneratedFile {
-            path: self
-                .output_dir
-                .join("migrations")
+            path: crate::generate::db::migrations_root(&self.output_dir)
                 .join("0009_integration_seed.sql"),
             content: seed,
         });

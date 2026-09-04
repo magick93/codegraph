@@ -30,7 +30,15 @@ pub struct ScaffoldContext {
     pub has_webhooks: bool,
     pub has_reports: bool,
     pub has_grpc: bool,
+    pub has_atproto: bool,
+    pub has_fern: bool,
+    pub has_cli: bool,
+    pub has_test_gen: bool,
+    pub has_auth_rate_limit: bool,
     pub has_admin_cli: bool,
+    /// Whether the labels substrate (atproto.label table + SubscribeLabels
+    /// consumer + selfLabels bridge) is enabled (issue #33).
+    pub has_labels: bool,
     pub migration_strategy: String,
 }
 
@@ -59,6 +67,15 @@ pub struct ScaffoldDomain {
     pub label: String,
     pub postgres_schema: String,
     pub entities: Vec<ScaffoldEntity>,
+    /// True for entity-less domains flagged `custom_routes` — the domain gets
+    /// a router scaffold + (workers topology) a worker crate/gateway binding
+    /// even though it has zero entities. The server template nests such
+    /// domains at `/api/{version}/{name}` even with an empty entity list.
+    pub has_custom_routes: bool,
+    /// The `community.os.*` (or authority-scoped) NSIDs of the domain's
+    /// portable-record entities, in generation order. Used by server.tera to
+    /// build Jetstream `?wantedCollections=` filters per domain consumer.
+    pub atproto_nsids: Vec<String>,
 }
 
 pub struct ScaffoldGenerator {
@@ -66,17 +83,30 @@ pub struct ScaffoldGenerator {
     has_webhooks: bool,
     has_reports: bool,
     has_grpc: bool,
+    has_atproto: bool,
+    has_fern: bool,
+    has_cli: bool,
+    has_test_gen: bool,
+    has_auth_rate_limit: bool,
     has_admin_cli: bool,
+    has_labels: bool,
     migration_strategy: String,
 }
 
 impl ScaffoldGenerator {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         output_dir: &Path,
         has_webhooks: bool,
         has_reports: bool,
         has_grpc: bool,
+        has_atproto: bool,
+        has_cli: bool,
+        has_test_gen: bool,
+        has_fern: bool,
+        has_auth_rate_limit: bool,
         has_admin_cli: bool,
+        has_labels: bool,
         migration_strategy: &str,
     ) -> Self {
         Self {
@@ -84,7 +114,13 @@ impl ScaffoldGenerator {
             has_webhooks,
             has_reports,
             has_grpc,
+            has_atproto,
+            has_fern,
+            has_cli,
+            has_test_gen,
+            has_auth_rate_limit,
             has_admin_cli,
+            has_labels,
             migration_strategy: migration_strategy.to_string(),
         }
     }
@@ -116,6 +152,8 @@ pub async fn build_scaffold_domains(
 ) -> Vec<ScaffoldDomain> {
     let mut domain_entity_map: std::collections::HashMap<String, Vec<ScaffoldEntity>> =
         std::collections::HashMap::new();
+    let mut domain_nsids: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     let mut seen_scaffold_entities = std::collections::HashSet::new();
     for entry in generation_order {
         let stripped = config.defaults.strip_suffix(&entry.schema_title);
@@ -135,6 +173,12 @@ pub async fn build_scaffold_domains(
         // Dedup by (domain, module_name) to prevent cross-domain name collisions
         if !seen_scaffold_entities.insert((entry.domain.clone(), module_name.clone())) {
             continue;
+        }
+        if let Ok(Some(lexicon)) = db.get_lexicon_by_schema(&entry.schema_title).await {
+            domain_nsids
+                .entry(entry.domain.clone())
+                .or_default()
+                .push(lexicon.nsid.clone());
         }
         let operations = resolve_entity_operations(db, config, &entry.domain, &entity_name).await;
         let has_commands = operations
@@ -176,12 +220,22 @@ pub async fn build_scaffold_domains(
         .domains
         .iter()
         .filter_map(|(name, entry)| {
-            let entities = domain_entity_map.remove(name.as_str())?;
+            // Domains with entities in the generation order get their scaffold
+            // entities; entity-less custom-routes domains are included with an
+            // empty entity list so the monolith nests their router and the
+            // workers scaffold emits a worker crate + gateway binding.
+            let entities = match domain_entity_map.remove(name.as_str()) {
+                Some(entities) => entities,
+                None if entry.custom_routes => Vec::new(),
+                None => return None,
+            };
             Some(ScaffoldDomain {
                 name: name.clone(),
                 label: entry.label.clone(),
                 postgres_schema: entry.postgres_schema.clone(),
                 entities,
+                has_custom_routes: entry.custom_routes,
+                atproto_nsids: domain_nsids.remove(name.as_str()).unwrap_or_default(),
             })
         })
         .collect();
@@ -247,7 +301,13 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_webhooks: self.has_webhooks,
             has_reports: self.has_reports,
             has_grpc: self.has_grpc,
+            has_atproto: self.has_atproto,
+            has_fern: self.has_fern,
+            has_cli: self.has_cli,
+            has_test_gen: self.has_test_gen,
+            has_auth_rate_limit: self.has_auth_rate_limit,
             has_admin_cli: self.has_admin_cli,
+            has_labels: self.has_labels,
             migration_strategy: self.migration_strategy.clone(),
         };
 
@@ -371,6 +431,15 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: meta_content,
         });
 
+        // Shared API-key scope guard backing the generated per-route scope
+        // middleware (api/router.tera). Emitted per topology by the monolith
+        // scaffold here and by the workers scaffold for each worker crate.
+        let scope_content = render_template_with_project(tera, "api/scope.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self.output_dir.join("src").join("api").join("scope.rs"),
+            content: scope_content,
+        });
+
         let integrations_rs = render_template_with_project(
             tera,
             "scaffold/integrations_handler.tera",
@@ -385,11 +454,79 @@ impl GlobalGenerator for ScaffoldGenerator {
         let api_key_migration =
             render_template_with_project(tera, "db/api_key_migration.tera", &ctx, project)?;
         files.push(GeneratedFile {
+            path: crate::generate::db::migrations_root(&self.output_dir)
+                .join("0002_api_key_management.sql"),
+            content: api_key_migration,
+        });
+
+        // SeaORM migration crate: applies the raw SQL files in migrations/ via
+        // the Migrator (run with `sea-orm-cli migrate up` or `cargo run
+        // --manifest-path migration/Cargo.toml -- up`), and on app boot.
+        let migration_cargo_toml = render_template_with_project(
+            tera,
+            "scaffold/migration_cargo_toml.tera",
+            &ctx,
+            project,
+        )?;
+        files.push(GeneratedFile {
+            path: self.output_dir.join("migration").join("Cargo.toml"),
+            content: migration_cargo_toml,
+        });
+
+        let migration_lib =
+            render_template_with_project(tera, "scaffold/migration_lib.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self.output_dir.join("migration").join("src").join("lib.rs"),
+            content: migration_lib,
+        });
+
+        let migration_main =
+            render_template_with_project(tera, "scaffold/migration_main.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self
+                .output_dir
+                .join("migration")
+                .join("src")
+                .join("main.rs"),
+            content: migration_main,
+        });
+
+        let migration_migrator =
+            render_template_with_project(tera, "scaffold/migration_migrator.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: self
+                .output_dir
+                .join("migration")
+                .join("src")
+                .join("migrator.rs"),
+            content: migration_migrator,
+        });
+
+        if self.has_fern {
+            let dump_openapi =
+                render_template_with_project(tera, "scaffold/dump_openapi.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("src")
+                    .join("bin")
+                    .join("dump_openapi.rs"),
+                content: dump_openapi,
+            });
+        }
+
+        // Late-binding app_user grants: 0002 runs before entity DDL, so its
+        // IF EXISTS-guarded grants never fire on a fresh database. This
+        // migration sorts after every codelist/entity band and derives its
+        // schema list + append-only revokes from the project config.
+        let app_user_grants =
+            render_template_with_project(tera, "db/app_user_grants.tera", &ctx, project)?;
+        files.push(GeneratedFile {
             path: self
                 .output_dir
                 .join("migrations")
-                .join("0002_api_key_management.sql"),
-            content: api_key_migration,
+                .join("9000_app_user_grants.sql"),
+            content: app_user_grants,
         });
 
         // Late-binding app_user grants: 0002 runs before entity DDL, so its
@@ -435,6 +572,8 @@ mod tests {
                     append_only: true,
                     has_query_hooks: true,
                 }],
+                has_custom_routes: false,
+                atproto_nsids: vec![],
             }],
             codegraph_workflow_path: String::new(),
             type_contracts_path: String::new(),
@@ -446,7 +585,13 @@ mod tests {
             has_webhooks: false,
             has_reports: false,
             has_grpc: false,
+            has_atproto: false,
+            has_fern: false,
+            has_cli: false,
+            has_test_gen: false,
+            has_auth_rate_limit: false,
             has_admin_cli: false,
+            has_labels: false,
             migration_strategy: "sea-orm".to_string(),
         }
     }

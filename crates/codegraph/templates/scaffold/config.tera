@@ -19,6 +19,69 @@ pub struct ServerConfig {
     pub database_url: Option<String>,
 
     pub jwt_secret: Option<String>,
+
+{% if has_atproto %}
+    #[serde(default = "default_atproto_authority")]
+    pub atproto_authority: String,
+
+    pub atproto_signing_key_hex: Option<String>,
+
+    #[serde(default = "default_pds_endpoint")]
+    pub pds_endpoint: String,
+
+    pub plc_directory_url: Option<String>,
+
+    #[serde(default = "default_did_cache_ttl")]
+    pub did_document_cache_ttl_secs: u64,
+
+    #[serde(default = "default_firehose_url")]
+    pub firehose_url: String,
+
+    /// Opt-in Jetstream ingestion (issue #41): when true, per-domain
+    /// live-stream consumers use a Jetstream WebSocket (pre-decoded JSON)
+    /// instead of the rsky CBOR/CAR firehose. Firehose stays the default.
+    #[serde(default)]
+    pub jetstream_enabled: bool,
+
+    /// Jetstream WebSocket endpoint (`{host}/subscribe`, v1 legacy protocol).
+    #[serde(default = "default_jetstream_url")]
+    pub jetstream_url: String,
+
+    // Embedded space authority (issue #39, teaser): the DID that mints bearer
+    // space credentials for care-circle spaces, the secp256k1 signing key
+    // (defaults to ATPROTO_SIGNING_KEY_HEX), and the credential lifetime.
+    /// Space authority DID (`SPACE_AUTHORITY_DID`). Defaults to
+    /// `did:web:{atproto_authority}` — the same server answers for the space.
+    #[serde(default = "default_space_authority_did")]
+    pub space_authority_did: String,
+    /// secp256k1 authority signing key, hex (`SPACE_SIGNING_KEY_HEX`).
+    /// Falls back to `ATPROTO_SIGNING_KEY_HEX`. TEST_MODE uses a deterministic
+    /// per-DID demo key when unset.
+    pub space_signing_key_hex: Option<String>,
+    /// Lifetime of minted space credentials in seconds (default 7200 = 2h).
+    #[serde(default = "default_space_credential_ttl_secs")]
+    pub space_credential_ttl_secs: u64,
+{% endif %}
+
+    #[serde(default = "default_cors_origins")]
+    pub cors_allowed_origins: Option<String>,
+
+{% if has_atproto %}
+    // OAuth 2.0 with DPoP (issue #36). When oauth_issuer + oauth_audience +
+    // oauth_signing_key_hex are set, the server constructs an OAuthProvider
+    // (see server.tera) and serves /oauth/par, /oauth/token, /oauth/revoke,
+    // /oauth/jwks, /.well-known/oauth-authorization-server and
+    // /.well-known/oauth-protected-resource.
+    pub oauth_issuer: Option<String>,
+    pub oauth_audience: Option<String>,
+    pub oauth_signing_key_hex: Option<String>,
+    /// 32-byte hex shared secret for stateless DPoP nonces (multi-instance
+    /// safe). Omitted → a random per-boot nonce is used (single instance).
+    pub dpop_nonce_secret: Option<String>,
+    /// Comma-separated client_ids treated as first-party for the consent UI
+    /// (display only — never an authorization decision).
+    pub oauth_trusted_clients: Option<String>,
+{% endif %}
 }
 
 fn default_bind_addr() -> String {
@@ -29,6 +92,42 @@ fn default_log_level() -> String {
     "info".into()
 }
 
+{% if has_atproto %}
+fn default_atproto_authority() -> String {
+    "{{ project.atproto_authority }}".into()
+}
+
+fn default_pds_endpoint() -> String {
+    "https://pds.{{ project.atproto_authority }}".into()
+}
+
+fn default_did_cache_ttl() -> u64 {
+    300
+}
+
+fn default_firehose_url() -> String {
+    "wss://bsky.network/xrpc".into()
+}
+
+fn default_jetstream_url() -> String {
+    "wss://jetstream1.us-west.bsky.network".into()
+}
+
+fn default_space_authority_did() -> String {
+    let authority = std::env::var("ATPROTO_AUTHORITY")
+        .unwrap_or_else(|_| "{{ project.atproto_authority }}".to_string());
+    format!("did:web:{authority}")
+}
+
+fn default_space_credential_ttl_secs() -> u64 {
+    7200
+}
+{% endif %}
+
+fn default_cors_origins() -> Option<String> {
+    None
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -36,6 +135,27 @@ impl Default for ServerConfig {
             log_level: default_log_level(),
             database_url: None,
             jwt_secret: None,
+{% if has_atproto %}
+            atproto_authority: default_atproto_authority(),
+            atproto_signing_key_hex: None,
+            pds_endpoint: default_pds_endpoint(),
+            plc_directory_url: None,
+            did_document_cache_ttl_secs: default_did_cache_ttl(),
+            firehose_url: default_firehose_url(),
+            jetstream_enabled: false,
+            jetstream_url: default_jetstream_url(),
+            space_authority_did: default_space_authority_did(),
+            space_signing_key_hex: None,
+            space_credential_ttl_secs: default_space_credential_ttl_secs(),
+{% endif %}
+            cors_allowed_origins: default_cors_origins(),
+{% if has_atproto %}
+            oauth_issuer: None,
+            oauth_audience: None,
+            oauth_signing_key_hex: None,
+            dpop_nonce_secret: None,
+            oauth_trusted_clients: None,
+{% endif %}
         }
     }
 }
@@ -67,6 +187,63 @@ impl ServerConfig {
             if file_cfg.jwt_secret.is_some() {
                 config.jwt_secret = file_cfg.jwt_secret;
             }
+{% if has_atproto %}
+            if !file_cfg.atproto_authority.is_empty() && file_cfg.atproto_authority != default_atproto_authority() {
+                config.atproto_authority = file_cfg.atproto_authority;
+            }
+            if file_cfg.atproto_signing_key_hex.is_some() {
+                config.atproto_signing_key_hex = file_cfg.atproto_signing_key_hex;
+            }
+            if !file_cfg.pds_endpoint.is_empty() && file_cfg.pds_endpoint != default_pds_endpoint() {
+                config.pds_endpoint = file_cfg.pds_endpoint;
+            }
+            if file_cfg.plc_directory_url.is_some() {
+                config.plc_directory_url = file_cfg.plc_directory_url;
+            }
+            if file_cfg.did_document_cache_ttl_secs != default_did_cache_ttl() {
+                config.did_document_cache_ttl_secs = file_cfg.did_document_cache_ttl_secs;
+            }
+            if !file_cfg.firehose_url.is_empty() && file_cfg.firehose_url != default_firehose_url() {
+                config.firehose_url = file_cfg.firehose_url;
+            }
+            if file_cfg.jetstream_enabled {
+                config.jetstream_enabled = true;
+            }
+            if !file_cfg.jetstream_url.is_empty() && file_cfg.jetstream_url != default_jetstream_url() {
+                config.jetstream_url = file_cfg.jetstream_url;
+            }
+            if !file_cfg.space_authority_did.is_empty()
+                && file_cfg.space_authority_did != default_space_authority_did()
+            {
+                config.space_authority_did = file_cfg.space_authority_did;
+            }
+            if file_cfg.space_signing_key_hex.is_some() {
+                config.space_signing_key_hex = file_cfg.space_signing_key_hex;
+            }
+            if file_cfg.space_credential_ttl_secs != default_space_credential_ttl_secs() {
+                config.space_credential_ttl_secs = file_cfg.space_credential_ttl_secs;
+            }
+{% endif %}
+            if file_cfg.cors_allowed_origins.is_some() {
+                config.cors_allowed_origins = file_cfg.cors_allowed_origins;
+            }
+{% if has_atproto %}
+            if file_cfg.oauth_issuer.is_some() {
+                config.oauth_issuer = file_cfg.oauth_issuer;
+            }
+            if file_cfg.oauth_audience.is_some() {
+                config.oauth_audience = file_cfg.oauth_audience;
+            }
+            if file_cfg.oauth_signing_key_hex.is_some() {
+                config.oauth_signing_key_hex = file_cfg.oauth_signing_key_hex;
+            }
+            if file_cfg.dpop_nonce_secret.is_some() {
+                config.dpop_nonce_secret = file_cfg.dpop_nonce_secret;
+            }
+            if file_cfg.oauth_trusted_clients.is_some() {
+                config.oauth_trusted_clients = file_cfg.oauth_trusted_clients;
+            }
+{% endif %}
         } else {
             tracing::warn!("No config file found at {default_path}, using defaults");
         }
@@ -84,6 +261,65 @@ impl ServerConfig {
         if let Ok(val) = std::env::var("SUPABASE_JWT_SECRET") {
             config.jwt_secret = Some(val);
         }
+{% if has_atproto %}
+        if let Ok(val) = std::env::var("ATPROTO_AUTHORITY") {
+            config.atproto_authority = val;
+        }
+        if let Ok(val) = std::env::var("ATPROTO_SIGNING_KEY_HEX") {
+            config.atproto_signing_key_hex = Some(val);
+        }
+        if let Ok(val) = std::env::var("PDS_ENDPOINT") {
+            config.pds_endpoint = val;
+        }
+        if let Ok(val) = std::env::var("PLC_DIRECTORY_URL") {
+            config.plc_directory_url = Some(val);
+        }
+        if let Ok(val) = std::env::var("DID_DOCUMENT_CACHE_TTL_SECS") {
+            if let Ok(ttl) = val.parse() {
+                config.did_document_cache_ttl_secs = ttl;
+            }
+        }
+        if let Ok(val) = std::env::var("FIREHOSE_URL") {
+            config.firehose_url = val;
+        }
+        if let Ok(val) = std::env::var("JETSTREAM_ENABLED") {
+            config.jetstream_enabled = val == "1" || val.to_lowercase() == "true";
+        }
+        if let Ok(val) = std::env::var("JETSTREAM_URL") {
+            config.jetstream_url = val;
+        }
+        if let Ok(val) = std::env::var("SPACE_AUTHORITY_DID") {
+            config.space_authority_did = val;
+        }
+        if let Ok(val) = std::env::var("SPACE_SIGNING_KEY_HEX") {
+            config.space_signing_key_hex = Some(val);
+        }
+        if let Ok(val) = std::env::var("SPACE_CREDENTIAL_TTL_SECS") {
+            if let Ok(ttl) = val.parse() {
+                config.space_credential_ttl_secs = ttl;
+            }
+        }
+{% endif %}
+        if let Ok(val) = std::env::var("CORS_ALLOWED_ORIGINS") {
+            config.cors_allowed_origins = Some(val);
+        }
+{% if has_atproto %}
+        if let Ok(val) = std::env::var("OAUTH_ISSUER") {
+            config.oauth_issuer = Some(val);
+        }
+        if let Ok(val) = std::env::var("OAUTH_AUDIENCE") {
+            config.oauth_audience = Some(val);
+        }
+        if let Ok(val) = std::env::var("OAUTH_SIGNING_KEY_HEX") {
+            config.oauth_signing_key_hex = Some(val);
+        }
+        if let Ok(val) = std::env::var("DPOP_NONCE_SECRET") {
+            config.dpop_nonce_secret = Some(val);
+        }
+        if let Ok(val) = std::env::var("OAUTH_TRUSTED_CLIENTS") {
+            config.oauth_trusted_clients = Some(val);
+        }
+{% endif %}
 
         Ok(config)
     }

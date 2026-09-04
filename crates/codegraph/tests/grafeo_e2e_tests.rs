@@ -102,7 +102,7 @@ async fn generate_full_app(output_dir: &std::path::Path) {
             let module = &schema.pg_table_name;
 
             let code = emitter
-                .emit(&engine, entity_title, domain, &config, None)
+                .emit(&engine, entity_title, domain, &config, None, &[])
                 .await
                 .unwrap();
             let repo_dir = output_dir

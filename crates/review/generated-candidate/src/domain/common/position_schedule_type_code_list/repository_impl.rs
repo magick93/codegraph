@@ -66,6 +66,7 @@ impl PositionScheduleTypeCodeListRepository<sea_orm::DatabaseTransaction> for Po
             sort_order: row.sort_order,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -144,6 +145,7 @@ impl PositionScheduleTypeCodeListRepository<sea_orm::DatabaseTransaction> for Po
                 sort_order: row.sort_order,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

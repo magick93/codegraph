@@ -115,6 +115,8 @@ pub fn row_to_schema_node(
         has_one_of: reader.get_bool(row, "s.has_one_of")?,
         has_any_of: reader.get_bool(row, "s.has_any_of")?,
         has_definitions: reader.get_bool(row, "s.has_definitions")?,
+        custom_annotations: serde_json::from_str(&reader.get_string(row, "s.custom_annotations")?)
+            .unwrap_or_default(),
     })
 }
 

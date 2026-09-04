@@ -4,6 +4,8 @@ use tera::Tera;
 
 use crate::error::{Error, Result};
 
+include!(concat!(env!("OUT_DIR"), "/embedded_templates.rs"));
+
 fn register_filters(tera: &mut Tera) {
     tera.register_filter("snake_case", snake_case_filter);
     tera.register_filter("upper_camel", upper_camel_filter);
@@ -16,21 +18,20 @@ fn register_filters(tera: &mut Tera) {
     tera.register_filter("quote_pg", quote_pg_filter);
 }
 
-/// Initialize the Tera template engine from a template directory.
-pub fn create_tera(template_dir: &Path) -> Result<Tera> {
-    let glob = template_dir.join("**/*.tera").to_string_lossy().to_string();
-    let mut tera = Tera::new(&glob).map_err(|e| Error::Template(e.to_string()))?;
+/// Initialize the Tera template engine with embedded templates.
+pub fn create_tera(_template_dir: &Path) -> Result<Tera> {
+    let mut tera = Tera::default();
+    add_embedded_templates(&mut tera).map_err(|e| Error::Template(e.to_string()))?;
     register_filters(&mut tera);
     Ok(tera)
 }
 
-/// Create a Tera instance with codegraph's built-in templates as defaults,
+/// Create a Tera instance with codegraph's built-in embedded templates,
 /// plus zero or more override directories that shadow templates by name.
 /// Later directories take precedence over earlier ones.
 pub fn create_tera_with_overrides(override_dirs: &[&Path]) -> Result<Tera> {
-    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-    let glob = base.join("**/*.tera").to_string_lossy().to_string();
-    let mut tera = Tera::new(&glob).map_err(|e| Error::Template(e.to_string()))?;
+    let mut tera = Tera::default();
+    add_embedded_templates(&mut tera).map_err(|e| Error::Template(e.to_string()))?;
     for dir in override_dirs {
         if dir.exists() {
             merge_tera_dir(&mut tera, dir)?;

@@ -193,8 +193,9 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
                 let operations =
                     resolve_entity_operations(db, config, domain_name, entity_name).await;
 
+                let entity_name_pascal = codegraph_naming::to_pascal_case(entity_name);
                 let entity_mod_ctx = EntityModContext {
-                    entity_name: entity_name.clone(),
+                    entity_name: entity_name_pascal,
                     has_create: operations.contains(&"create".to_string()),
                     has_update: operations.contains(&"update".to_string()),
                 };
@@ -227,7 +228,9 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
         for entry in generation_order {
             if let Ok(props) = db.get_properties(&entry.schema_title).await {
                 for prop in &props {
-                    if prop.effective_kind() == Some(RefClassificationKind::StructuredWrapper) {
+                    if prop.effective_kind() == Some(RefClassificationKind::StructuredWrapper)
+                        || prop.effective_kind() == Some(RefClassificationKind::PrimitiveWrapper)
+                    {
                         let mut ty = prop.rust_field_type.as_str();
                         if let Some(s) = ty.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
                             ty = s;
@@ -237,7 +240,22 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
                         {
                             ty = s;
                         }
-                        if !ty.is_empty() && ty != "serde_json::Value" {
+                        if !ty.is_empty()
+                            && ty != "serde_json::Value"
+                            && ty != "String"
+                            && ty != "bool"
+                            && ty != "f64"
+                            && ty != "i64"
+                            && ty != "i32"
+                            && ty != "i16"
+                            && ty != "u64"
+                            && ty != "u32"
+                            && ty != "Decimal"
+                            && ty != "NaiveDate"
+                            && ty != "DateTime"
+                            && !ty.contains('<')
+                            && !ty.contains("::")
+                        {
                             structured_types.insert(ty.to_string());
                         }
                     }

@@ -106,6 +106,28 @@ fn code_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.code):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(code_scope_guard))
+}
+
+async fn code_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "code",
+    )
+    .await
 }
 
 
@@ -135,6 +157,28 @@ fn currency_code_list_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.currency_code_list):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(currency_code_list_scope_guard))
+}
+
+async fn currency_code_list_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "currency_code_list",
+    )
+    .await
 }
 
 
@@ -164,6 +208,28 @@ fn date_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.date):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(date_scope_guard))
+}
+
+async fn date_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "date",
+    )
+    .await
 }
 
 
@@ -193,6 +259,28 @@ fn distribution_base_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.distribution_base):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(distribution_base_scope_guard))
+}
+
+async fn distribution_base_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "distribution_base",
+    )
+    .await
 }
 
 
@@ -222,6 +310,28 @@ fn effective_date_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.effective_date):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(effective_date_scope_guard))
+}
+
+async fn effective_date_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "effective_date",
+    )
+    .await
 }
 
 
@@ -251,6 +361,28 @@ fn event_base_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.event_base):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(event_base_scope_guard))
+}
+
+async fn event_base_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "event_base",
+    )
+    .await
 }
 
 
@@ -280,6 +412,28 @@ fn formatted_date_time_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.formatted_date_time):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(formatted_date_time_scope_guard))
+}
+
+async fn formatted_date_time_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "formatted_date_time",
+    )
+    .await
 }
 
 
@@ -309,6 +463,28 @@ fn gender_code_list_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.gender_code_list):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(gender_code_list_scope_guard))
+}
+
+async fn gender_code_list_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "gender_code_list",
+    )
+    .await
 }
 
 
@@ -338,6 +514,28 @@ fn identifier_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.identifier):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(identifier_scope_guard))
+}
+
+async fn identifier_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "identifier",
+    )
+    .await
 }
 
 
@@ -367,6 +565,28 @@ fn name_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.name):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(name_scope_guard))
+}
+
+async fn name_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "name",
+    )
+    .await
 }
 
 
@@ -396,6 +616,28 @@ fn person_base_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.person_base):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(person_base_scope_guard))
+}
+
+async fn person_base_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "person_base",
+    )
+    .await
 }
 
 
@@ -425,6 +667,28 @@ fn position_schedule_type_code_list_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.position_schedule_type_code_list):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(position_schedule_type_code_list_scope_guard))
+}
+
+async fn position_schedule_type_code_list_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "position_schedule_type_code_list",
+    )
+    .await
 }
 
 
@@ -454,6 +718,28 @@ fn string_type_array_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.string_type_array):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(string_type_array_scope_guard))
+}
+
+async fn string_type_array_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "string_type_array",
+    )
+    .await
 }
 
 
@@ -483,6 +769,28 @@ fn amount_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.amount):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(amount_scope_guard))
+}
+
+async fn amount_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "amount",
+    )
+    .await
 }
 
 
@@ -512,6 +820,28 @@ fn process_history_item_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.process_history_item):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(process_history_item_scope_guard))
+}
+
+async fn process_history_item_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "process_history_item",
+    )
+    .await
 }
 
 
@@ -541,5 +871,27 @@ fn process_history_routes() -> Router<AppState> {
 
 
 
+
+
+        // API-key scope enforcement (common.process_history):
+        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
+        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
+        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
+        // DatabaseConnection / worker ClientSource) injected into request
+        // extensions by the server and delegates to crate::api::scope.
+        .layer(axum::middleware::from_fn(process_history_scope_guard))
+}
+
+async fn process_history_scope_guard(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    crate::api::scope::require_scope_for_request(
+        request,
+        next,
+        "common",
+        "process_history",
+    )
+    .await
 }
 

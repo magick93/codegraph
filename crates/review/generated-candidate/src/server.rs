@@ -4,6 +4,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use migration::MigratorTrait;
 use tokio_util::sync::CancellationToken;
 
 use tracing_subscriber::layer::SubscriberExt;
@@ -182,6 +183,16 @@ async fn health_ready(
 /// Handles tracing, DB connection, state construction, router
 /// building, and signal handling.
 pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
+    // HSTS — only when explicitly enabled (production with TLS termination)
+    let app = if std::env::var("HSTS_ENABLED").as_deref() == Ok("true") {
+        app.layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("strict-transport-security"),
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        ))
+    } else {
+        app
+    };
+
 
     let otel_provider = init_tracing();
     START_TIME.get_or_init(std::time::Instant::now);
@@ -202,151 +213,259 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     let db = sea_orm::Database::connect(&db_url).await?;
 
+    // Apply pending migrations on startup (idempotent — applied files are
+    // tracked in the seaql_migrations table). Manual runs:
+    //   DATABASE_URL=... sea-orm-cli migrate up
+    if let Err(e) = migration::Migrator::up(&db, None).await {
+        tracing::error!("Failed to apply database migrations: {e}");
+        return Err(e.into());
+    }
+
+
+
+
+
     let state = crate::app_state::AppState {
 
 
         common_code_commands: crate::domain::common::code::command::CodeCommandHandler::new(
             Arc::new(crate::domain::common::code::repository_impl::CodeRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_code_queries: crate::domain::common::code::query::CodeQueryHandler::new(
             Arc::new(crate::domain::common::code::repository_impl::CodeRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_currency_code_list_commands: crate::domain::common::currency_code_list::command::CurrencyCodeListCommandHandler::new(
             Arc::new(crate::domain::common::currency_code_list::repository_impl::CurrencyCodeListRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_currency_code_list_queries: crate::domain::common::currency_code_list::query::CurrencyCodeListQueryHandler::new(
             Arc::new(crate::domain::common::currency_code_list::repository_impl::CurrencyCodeListRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_date_commands: crate::domain::common::date::command::DateCommandHandler::new(
             Arc::new(crate::domain::common::date::repository_impl::DateRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_date_queries: crate::domain::common::date::query::DateQueryHandler::new(
             Arc::new(crate::domain::common::date::repository_impl::DateRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_distribution_base_commands: crate::domain::common::distribution_base::command::DistributionBaseCommandHandler::new(
             Arc::new(crate::domain::common::distribution_base::repository_impl::DistributionBaseRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_distribution_base_queries: crate::domain::common::distribution_base::query::DistributionBaseQueryHandler::new(
             Arc::new(crate::domain::common::distribution_base::repository_impl::DistributionBaseRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_effective_date_commands: crate::domain::common::effective_date::command::EffectiveDateCommandHandler::new(
             Arc::new(crate::domain::common::effective_date::repository_impl::EffectiveDateRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_effective_date_queries: crate::domain::common::effective_date::query::EffectiveDateQueryHandler::new(
             Arc::new(crate::domain::common::effective_date::repository_impl::EffectiveDateRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_event_base_commands: crate::domain::common::event_base::command::EventBaseCommandHandler::new(
             Arc::new(crate::domain::common::event_base::repository_impl::EventBaseRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_event_base_queries: crate::domain::common::event_base::query::EventBaseQueryHandler::new(
             Arc::new(crate::domain::common::event_base::repository_impl::EventBaseRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_formatted_date_time_commands: crate::domain::common::formatted_date_time::command::FormattedDateTimeCommandHandler::new(
             Arc::new(crate::domain::common::formatted_date_time::repository_impl::FormattedDateTimeRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_formatted_date_time_queries: crate::domain::common::formatted_date_time::query::FormattedDateTimeQueryHandler::new(
             Arc::new(crate::domain::common::formatted_date_time::repository_impl::FormattedDateTimeRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_gender_code_list_commands: crate::domain::common::gender_code_list::command::GenderCodeListCommandHandler::new(
             Arc::new(crate::domain::common::gender_code_list::repository_impl::GenderCodeListRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_gender_code_list_queries: crate::domain::common::gender_code_list::query::GenderCodeListQueryHandler::new(
             Arc::new(crate::domain::common::gender_code_list::repository_impl::GenderCodeListRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_identifier_commands: crate::domain::common::identifier::command::IdentifierCommandHandler::new(
             Arc::new(crate::domain::common::identifier::repository_impl::IdentifierRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_identifier_queries: crate::domain::common::identifier::query::IdentifierQueryHandler::new(
             Arc::new(crate::domain::common::identifier::repository_impl::IdentifierRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_name_commands: crate::domain::common::name::command::NameCommandHandler::new(
             Arc::new(crate::domain::common::name::repository_impl::NameRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_name_queries: crate::domain::common::name::query::NameQueryHandler::new(
             Arc::new(crate::domain::common::name::repository_impl::NameRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_person_base_commands: crate::domain::common::person_base::command::PersonBaseCommandHandler::new(
             Arc::new(crate::domain::common::person_base::repository_impl::PersonBaseRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_person_base_queries: crate::domain::common::person_base::query::PersonBaseQueryHandler::new(
             Arc::new(crate::domain::common::person_base::repository_impl::PersonBaseRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_position_schedule_type_code_list_commands: crate::domain::common::position_schedule_type_code_list::command::PositionScheduleTypeCodeListCommandHandler::new(
             Arc::new(crate::domain::common::position_schedule_type_code_list::repository_impl::PositionScheduleTypeCodeListRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_position_schedule_type_code_list_queries: crate::domain::common::position_schedule_type_code_list::query::PositionScheduleTypeCodeListQueryHandler::new(
             Arc::new(crate::domain::common::position_schedule_type_code_list::repository_impl::PositionScheduleTypeCodeListRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_string_type_array_commands: crate::domain::common::string_type_array::command::StringTypeArrayCommandHandler::new(
             Arc::new(crate::domain::common::string_type_array::repository_impl::StringTypeArrayRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_string_type_array_queries: crate::domain::common::string_type_array::query::StringTypeArrayQueryHandler::new(
             Arc::new(crate::domain::common::string_type_array::repository_impl::StringTypeArrayRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_amount_commands: crate::domain::common::amount::command::AmountCommandHandler::new(
             Arc::new(crate::domain::common::amount::repository_impl::AmountRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_amount_queries: crate::domain::common::amount::query::AmountQueryHandler::new(
             Arc::new(crate::domain::common::amount::repository_impl::AmountRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_process_history_item_commands: crate::domain::common::process_history_item::command::ProcessHistoryItemCommandHandler::new(
             Arc::new(crate::domain::common::process_history_item::repository_impl::ProcessHistoryItemRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_process_history_item_queries: crate::domain::common::process_history_item::query::ProcessHistoryItemQueryHandler::new(
             Arc::new(crate::domain::common::process_history_item::repository_impl::ProcessHistoryItemRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         common_process_history_commands: crate::domain::common::process_history::command::ProcessHistoryCommandHandler::new(
             Arc::new(crate::domain::common::process_history::repository_impl::ProcessHistoryRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         common_process_history_queries: crate::domain::common::process_history::query::ProcessHistoryQueryHandler::new(
             Arc::new(crate::domain::common::process_history::repository_impl::ProcessHistoryRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
 
@@ -354,10 +473,16 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         compensation_pay_run_commands: crate::domain::compensation::pay_run::command::PayRunCommandHandler::new(
             Arc::new(crate::domain::compensation::pay_run::repository_impl::PayRunRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         compensation_pay_run_queries: crate::domain::compensation::pay_run::query::PayRunQueryHandler::new(
             Arc::new(crate::domain::compensation::pay_run::repository_impl::PayRunRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
 
@@ -365,10 +490,16 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         events_public_event_commands: crate::domain::events::public_event::command::PublicEventCommandHandler::new(
             Arc::new(crate::domain::events::public_event::repository_impl::PublicEventRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         events_public_event_queries: crate::domain::events::public_event::query::PublicEventQueryHandler::new(
             Arc::new(crate::domain::events::public_event::repository_impl::PublicEventRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
 
@@ -376,19 +507,31 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         recruiting_application_commands: crate::domain::recruiting::application::command::ApplicationCommandHandler::new(
             Arc::new(crate::domain::recruiting::application::repository_impl::ApplicationRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         recruiting_application_queries: crate::domain::recruiting::application::query::ApplicationQueryHandler::new(
             Arc::new(crate::domain::recruiting::application::repository_impl::ApplicationRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
         recruiting_candidate_commands: crate::domain::recruiting::candidate::command::CandidateCommandHandler::new(
             Arc::new(crate::domain::recruiting::candidate::repository_impl::CandidateRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         recruiting_candidate_queries: crate::domain::recruiting::candidate::query::CandidateQueryHandler::new(
             Arc::new(crate::domain::recruiting::candidate::repository_impl::CandidateRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
 
@@ -396,14 +539,22 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         rsvp_rsvp_commands: crate::domain::rsvp::rsvp::command::RsvpCommandHandler::new(
             Arc::new(crate::domain::rsvp::rsvp::repository_impl::RsvpRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
         rsvp_rsvp_queries: crate::domain::rsvp::rsvp::query::RsvpQueryHandler::new(
             Arc::new(crate::domain::rsvp::rsvp::repository_impl::RsvpRepositoryImpl),
             db.clone(),
+
+            None,
+
         ),
 
 
         db: db.clone(),
+
+
 
         jwt_secret: std::env::var("SUPABASE_JWT_SECRET").map_err(|_| {
             "SUPABASE_JWT_SECRET environment variable is required. Set it to your Supabase project JWT secret"
@@ -441,6 +592,8 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             _ = webhook_dispatcher.run() => {}
         }
     });
+
+
 
 
     let shutdown_signal = async move {
@@ -517,17 +670,25 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
         .nest("/webhooks", crate::webhook_router::webhook_routes())
 
+
         // The pooled DB connection as an extension: the permission middleware
         // runs from per-route layers where State is not available.
         .layer(axum::extract::Extension(state.db.clone()))
+
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
 
+
+    // The whole router is assembled as `Router<()>`: the generated AppState
+    // pieces (health, /api/v1 stack, per-domain XRPC routers) are closed with
+    // `.with_state(state.clone())`, and the hand-written extension routers
+    // (already `Router<()>` via `AppContext`) merge in directly.
     let app = axum::Router::new()
+
         .route("/version", axum::routing::get(version))
-        .route("/health", axum::routing::get(health))
-        .route("/health/ready", axum::routing::get(health_ready))
+        .route("/health", axum::routing::get(health).with_state(state.clone()))
+        .route("/health/ready", axum::routing::get(health_ready).with_state(state.clone()))
         .route("/metrics", axum::routing::get(move || std::future::ready(metrics_handle.render())))
-        .nest("/api/v1", api_routes)
+        .nest("/api/v1", api_routes.with_state(state.clone()))
         .route("/api-catalog.json", axum::routing::get(crate::api::openapi::catalog::api_catalog))
         .merge(
             SwaggerUi::new("/swagger-ui")
@@ -556,7 +717,16 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
                 ])
         )
-        .with_state(state);
+
+        // ── Hand-written extension routes (cosmos-extensions) ──
+        // The auth / oauth / identity / migration / oauth-admin / platform /
+        // well-known / XRPC-identity routers are hand-written extension code
+        // (cosmos_extensions::http::*) built against a single `Arc<AppContext>`
+        // and closed to `Router<()>` inside the crate.
+
+         ;
+
+    // --- END GENERATED ---
 
     // Merge custom extension routes (Router<()>) after .with_state()
 
@@ -565,24 +735,28 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         .layer(axum::middleware::from_fn(crate::metrics_middleware::track_metrics))
         .layer(cors)
         .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024)) // 10MB
-        .layer(SetResponseHeaderLayer::overriding(
+        // Security response headers — applied to every response via
+        // SetResponseHeaderLayer::overriding (one layer per header).
+                .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::HeaderName::from_static("x-content-type-options"),
             HeaderValue::from_static("nosniff"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::HeaderName::from_static("x-frame-options"),
-            HeaderValue::from_static("DENY"),
-        ));
-
-    // HSTS — only when explicitly enabled (production with TLS termination)
-    let app = if std::env::var("HSTS_ENABLED").as_deref() == Ok("true") {
-        app.layer(SetResponseHeaderLayer::overriding(
-            axum::http::header::HeaderName::from_static("strict-transport-security"),
-            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+            HeaderValue::from_static("SAMEORIGIN"),
         ))
-    } else {
-        app
-    };
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self'; font-src 'self' data:"),
+        ));
 
 
     let addr: SocketAddr = std::env::var("BIND_ADDR")

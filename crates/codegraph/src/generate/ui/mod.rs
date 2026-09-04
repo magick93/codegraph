@@ -1,5 +1,6 @@
 pub mod codelist;
 pub mod common;
+pub mod cosmos_entity_form;
 pub mod descriptor;
 pub mod domain_layout;
 pub mod e2e_test;

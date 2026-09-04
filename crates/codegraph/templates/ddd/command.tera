@@ -137,9 +137,6 @@ impl {{ entity_name }}CommandHandler {
     pub async fn bulk_create(
         &self,
         items: Vec<Create{{ entity_name }}Request>,
-{% if parent_ref %}
-        parent_id: Uuid,
-{% endif %}
         source: {{ project.domain_types_crate }}::SourceContext,
         correlation_id: Uuid,
         api_key_id: Uuid,

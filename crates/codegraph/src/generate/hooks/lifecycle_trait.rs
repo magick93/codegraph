@@ -30,7 +30,12 @@ pub struct LifecycleTraitGenerator {
 impl LifecycleTraitGenerator {
     pub fn new_with_base(base_dir: PathBuf) -> Self {
         Self {
-            generated_dir: base_dir,
+            // Hooks-api output lives under `src/generated/` (mirrors the
+            // domain-types convention of writing into `{base}/src/`). The
+            // base points at the crate root so the generated app's
+            // `cosmos-hooks-api = { path = "../crates/cosmos-hooks-api" }`
+            // dependency resolves to the crate's Cargo.toml.
+            generated_dir: base_dir.join("src").join("generated"),
         }
     }
 }

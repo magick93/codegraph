@@ -68,3 +68,7 @@ codegraph-type-contracts = { git = "https://github.com/magick93/codegraph.git", 
 tokio-postgres = { version = "0.7", default-features = false, features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
 deadpool-postgres = "0.14"
 {% endif %}
+{% if project.cargo_patch %}
+[patch.'https://github.com/magick93/codegraph.git']
+{{ project.cargo_patch }}
+{% endif %}

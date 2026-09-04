@@ -66,6 +66,7 @@ impl CurrencyCodeListRepository<sea_orm::DatabaseTransaction> for CurrencyCodeLi
             sort_order: row.sort_order,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -144,6 +145,7 @@ impl CurrencyCodeListRepository<sea_orm::DatabaseTransaction> for CurrencyCodeLi
                 sort_order: row.sort_order,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

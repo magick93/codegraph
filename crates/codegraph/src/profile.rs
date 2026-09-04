@@ -223,10 +223,19 @@ pub struct BuildPlan {
     pub template_pack_path: Option<PathBuf>,
     /// Database target dialect for SQL generation (default: Postgres).
     pub database_target: DatabaseTarget,
+    /// Whether atproto generators are enabled (from `atproto_backend` feature).
+    pub has_atproto: bool,
+    /// AT Protocol tenancy mode: "shared_pds" or "per_org_pds".
+    pub atproto_tenancy: String,
+    /// Whether Fern SDK generation is enabled (from `fern_sdk` feature).
+    pub has_fern: bool,
+    /// Fern SDK languages to generate (from `fern_sdk_languages` feature, defaults to ["typescript"]).
+    pub fern_sdk_languages: Vec<String>,
     /// Persistence provider for entity/repository code generation (default: SeaOrm).
     pub persistence_provider: PersistenceProvider,
     /// Deployment topology for the generated application (default: Monolith).
     pub deployment_topology: DeploymentTopology,
+    /// Feature flags from the profile (e.g., has_admin_cli, auth, etc.).
     pub features: toml::Table,
 }
 
@@ -290,6 +299,36 @@ impl BuildPlan {
             .map(DatabaseTarget::from_config)
             .unwrap_or_default();
 
+        // Parse atproto features
+        let has_atproto = profile
+            .features
+            .get("atproto_backend")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let atproto_tenancy = profile
+            .features
+            .get("atproto_tenancy")
+            .and_then(|v| v.as_str())
+            .unwrap_or("shared_pds")
+            .to_string();
+
+        // Parse fern sdk features
+        let has_fern = profile
+            .features
+            .get("fern_sdk")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let fern_sdk_languages: Vec<String> = profile
+            .features
+            .get("fern_sdk_languages")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_else(|| vec!["typescript".to_string()]);
+
         // Parse persistence_provider from features (default: SeaOrm)
         let persistence_provider = profile
             .features
@@ -333,6 +372,10 @@ impl BuildPlan {
             ifml_frameworks: profile.ifml_frameworks.clone(),
             template_pack_path: profile.template_pack_path.clone(),
             database_target,
+            has_atproto,
+            atproto_tenancy,
+            has_fern,
+            fern_sdk_languages,
             persistence_provider,
             deployment_topology,
             features: profile.features.clone(),
@@ -468,9 +511,11 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
 
         cap("ui_page",              Entity, Ui,   &[], &[]),
         cap("ui_form",              Entity, Ui,   &[], &[]),
+        cap("cosmos_entity_form",   Entity, Ui,   &[], &[]),
         cap("ui_store",             Entity, Ui,   &[], &[]),
         cap("ui_e2e_test",          Entity, Ui,   &[], &[]),
         cap("playwright-entity",    Entity, Ui,   &[], &[]),
+        cap("playwright_ts_entity", Entity, Ui, &[], &[]),
         cap("ui_descriptor",        Entity, Ui,   &[], &[]),
         cap("ui-shell",             Entity, Ui,   &[], &[]),
 
@@ -479,6 +524,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         // ── Domain generators ──────────────────────────────────────────
         cap("errors",               Domain, Api,  &[], &[]),
         cap("router",               Domain, Api,  &[], &[]),
+        cap("api_contract",         Domain, Api,  &[], &[]),
         cap("links",                Domain, Api,  &[], &[]),
         cap("ui-domain-layout",     Domain, Ui,   &[], &[]),
         cap("cli_domain",           Domain, Cli,  &[], &[]),
@@ -486,9 +532,13 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         // ── Global generators ──────────────────────────────────────────
         cap("basejump_setup",       Global, Common, &[], &[]),
         cap("pgmq_setup",           Global, Common, &[], &[]),
+        cap("label_setup",          Global, Common, &["has_labels"], &[]),
+        cap("service_tables",        Global, Common, &["atproto_backend"], &[]),
         cap("platform_schema",      Global, Common, &[], &[]),
+        cap("platform_grants",      Global, Common, &[], &[]),
         cap("workflow_seed",        Global, Common, &[], &[]),
         cap("openapi",              Global, Common, &[], &[]),
+        cap("api_contract_index",   Global, Common, &[], &[]),
         cap("scaffold",             Global, Common, &[], &[]),
         cap("worker_scaffold",      Global, Common, &[], &[]),
         cap("ui_scaffold",          Global, Ui,    &[], &[]),
@@ -500,6 +550,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("report_views",         Global, Common, &[], &[]),
         cap("cli_scaffold",         Global, Cli,   &[], &[]),
         cap("playwright-global",    Global, Ui,    &[], &[]),
+        cap("playwright_ts_global", Global, Ui,   &[], &[]),
         cap("integration_tables",   Global, Common, &[], &[]),
         cap("integration_config",   Global, Common, &[], &[]),
         cap("integration_dispatch", Global, Common, &[], &[]),
@@ -515,6 +566,21 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("grpc_service",         Entity,  Api, &["grpc_backend"], &[]),
         cap("grpc_router",          Domain,  Api, &["grpc_backend"], &[]),
         cap("grpc_scaffold",        Global,  Api, &["grpc_backend"], &[]),
+
+        // ── Fern SDK generators ─────────────────────────────────────────
+        cap("fern_config",          Global, Api,   &["fern_sdk"], &[]),
+
+        // ── AT Protocol generators ─────────────────────────────────────
+        cap("lexicon",              Entity, Common, &["atproto_backend"], &[]),
+        cap("lexicon_scaffold",     Global, Common, &["atproto_backend"], &[]),
+        cap("atproto_types",        Entity, Common, &["atproto_backend"], &[]),
+        cap("atproto_client",       Entity, Common, &["atproto_backend"], &[]),
+        cap("atproto_client_scaffold", Global, Common, &["atproto_backend"], &[]),
+        cap("atproto_appview",      Domain, Common, &["atproto_backend"], &[]),
+        cap("atproto_xrpc",         Entity, Common, &["atproto_backend"], &[]),
+        cap("atproto_xrpc_router",  Domain, Common, &["atproto_backend"], &[]),
+        cap("atproto_xrpc_merge",   Global, Common, &["atproto_backend"], &[]),
+        cap("atproto_identity",     Global, Common, &["atproto_backend"], &[]),
     ];
 
     entries.into_iter().map(|c| (c.name.clone(), c)).collect()

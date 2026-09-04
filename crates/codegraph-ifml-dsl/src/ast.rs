@@ -98,6 +98,7 @@ pub enum EventType {
     Custom(String),
 }
 
+#[allow(clippy::inherent_to_string)]
 impl EventType {
     pub fn as_str(&self) -> &str {
         match self {
