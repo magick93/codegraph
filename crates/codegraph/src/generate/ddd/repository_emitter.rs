@@ -2191,9 +2191,12 @@ impl RepositoryImplEmitter {
                     out: &mut Vec<String>,
                 ) {
                     if seen.insert(child.struct_name.clone()) {
+                        // base already ends at the target entity's module —
+                        // every nested level is re-exported by its dto_response.
+                        // The hydration reads emit {Struct}Response types.
                         out.push(format!(
-                            "use {}{}::dto_response::{};",
-                            base, child.sql_table_name, child.struct_name
+                            "use {}dto_response::{}Response;",
+                            base, child.struct_name
                         ));
                     }
                     for nested in &child.child_tables {
