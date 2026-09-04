@@ -17,9 +17,6 @@ pub mod webhook_router;
 {% endif %}
 pub mod qs_query;
 pub mod server;
-{% if project.hooks_api_crate %}
-pub mod hooks;
-{% endif %}
 {% if has_atproto %}
 pub mod atproto;
 {% endif %}

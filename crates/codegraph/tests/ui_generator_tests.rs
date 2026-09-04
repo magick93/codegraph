@@ -349,6 +349,57 @@ async fn ui_scaffold_generator_produces_scaffold_files() {
     // ConfirmDialog was replaced by shadcn AlertDialog (from @crewbase/ui)
 }
 
+#[tokio::test]
+async fn ui_scaffold_nav_respects_configured_path_segment() {
+    // #162 phase 4 route convention: the dashboard nav must link to the same
+    // route the page generator emits — including configured path_segment
+    // overrides (e.g. plural "candidates-custom").
+    let mock = setup_mock();
+    let toml = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting"
+postgres_schema = "recruiting"
+entities = ["CandidateType"]
+
+[domains.recruiting.entity_config.CandidateType]
+role = "root"
+path_segment = "candidates-custom"
+"#;
+    let config = codegraph_config::config::parse_domain_config_str(toml).unwrap();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-scaffold-nav");
+
+    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = gen
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let dashboard = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("dashboard"))
+        .expect("Should have a dashboard page");
+    assert!(
+        dashboard.content.contains("/recruiting/candidates-custom"),
+        "dashboard nav must use the configured path_segment override"
+    );
+    assert!(
+        !dashboard.content.contains("/recruiting/candidate\'")
+            && !dashboard.content.contains("path: '/recruiting/candidate'"),
+        "dashboard nav must not emit the singular auto-derived segment"
+    );
+}
+
 // === Org Signup Scaffold Tests ===
 
 #[tokio::test]
