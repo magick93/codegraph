@@ -111,7 +111,7 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 {% elif mw == "permission" %}
         .route_layer(axum::middleware::from_fn(crate::middleware::permission::require_permission))
 {% elif mw == "metrics" %}
-        .route_layer(axum::middleware::from_fn(crate::middleware::metrics_middleware::track_metrics))
+        .route_layer(axum::middleware::from_fn(crate::metrics_middleware::track_metrics))
 {% endif %}
 {% endfor %}
 {% endif %}
