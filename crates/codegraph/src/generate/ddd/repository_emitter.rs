@@ -2131,27 +2131,13 @@ impl RepositoryImplEmitter {
                 include_target_trees.push(ttree);
             }
 
-            fn collect_child_struct_names(tree: &EntityTree, out: &mut Vec<String>) {
-                fn walk(child: &ChildTableInfo, out: &mut Vec<String>) {
-                    out.push(child.struct_name.clone());
-                    for nested in &child.child_tables {
-                        walk(nested, out);
-                    }
-                }
-                for child in &tree.child_tables {
-                    walk(child, out);
-                }
-            }
             let mut include_type_names: Vec<String> = Vec::new();
-            for (idx, path) in include_paths.iter().enumerate() {
+            for path in &include_paths {
                 include_type_names.push(path.response_rust_type.clone());
                 if path.segments.len() > 1 {
                     if let Some(last_seg) = path.segments.last() {
                         include_type_names.push(format!("{}Response", last_seg.entity_name));
                     }
-                }
-                if let Some(Some(ttree)) = include_target_trees.get(idx) {
-                    collect_child_struct_names(ttree, &mut include_type_names);
                 }
             }
             // Deduplicate while preserving order.
@@ -2187,6 +2173,39 @@ impl RepositoryImplEmitter {
                         path.response_rust_type
                     )
                     .unwrap();
+                }
+            }
+
+            // Child-table response structs live in the child entity's
+            // dto_response module (generated re-export shim). The include-fetch
+            // child hydration references them; without these imports the
+            // repository fails to compile wherever a target tree nests deeply.
+            {
+                let mut seen_child_imports = std::collections::HashSet::new();
+                let mut child_import_lines: Vec<String> = Vec::new();
+                fn walk_child_imports(
+                    child: &ChildTableInfo,
+                    seen: &mut std::collections::HashSet<String>,
+                    out: &mut Vec<String>,
+                ) {
+                    let line = format!(
+                        "use crate::domain::{}::{}::dto_response::{};",
+                        child.sql_schema_name, child.sql_table_name, child.struct_name
+                    );
+                    if seen.insert(child.struct_name.clone()) {
+                        out.push(line);
+                    }
+                    for nested in &child.child_tables {
+                        walk_child_imports(nested, seen, out);
+                    }
+                }
+                for ttree in include_target_trees.iter().flatten() {
+                    for child in &ttree.child_tables {
+                        walk_child_imports(child, &mut seen_child_imports, &mut child_import_lines);
+                    }
+                }
+                for line in child_import_lines {
+                    writeln!(code, "{}", line).unwrap();
                 }
             }
 
