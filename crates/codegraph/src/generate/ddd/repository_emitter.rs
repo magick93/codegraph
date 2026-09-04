@@ -1426,6 +1426,49 @@ fn emit_child_reads(
     }
 }
 
+/// Nested children of the source-tree child subtree matching a VO→entity
+/// child-table override.
+///
+/// The override fetch queries the VO child table directly (e.g.
+/// `worker_person`) and builds the scoped response (e.g.
+/// `WorkerPersonLegalResponse`). Its nested children must hydrate from the
+/// same subtree the main response hydration uses, so struct names align with
+/// the scoped prefix by construction (`WorkerPersonLegal*`).
+fn override_subtree_children<'a>(
+    tree: &'a EntityTree,
+    over: &crate::generate::api::include_path::ChildTableOverride,
+) -> &'a [ChildTableInfo] {
+    tree.child_tables
+        .iter()
+        .find(|c| c.sql_table_name == over.child_table_name)
+        .map(|c| c.child_tables.as_slice())
+        .unwrap_or(&[])
+}
+
+/// Which child tables an include-fetch response should hydrate.
+///
+/// Two cases hydrate (everything else yields no children):
+/// - `child_table_override` (VO→entity): the SOURCE tree's matching subtree's
+///   nested children — struct names align with the scoped response prefix
+///   (`WorkerPersonLegal*`) by construction (#162 phase 2).
+/// - entity-native responses (`{Target}Response`): the TARGET tree's own
+///   child tables (#161).
+fn include_hydration_children<'a>(
+    tree: &'a EntityTree,
+    path: &ResolvedIncludePath,
+    target_tree: Option<&'a EntityTree>,
+) -> &'a [ChildTableInfo] {
+    let seg = &path.segments[0];
+    if let Some(ref over) = seg.child_table_override {
+        return override_subtree_children(tree, over);
+    }
+    let entity_native = path.response_rust_type == format!("{}Response", seg.entity_name);
+    match target_tree {
+        Some(ttree) if entity_native => &ttree.child_tables,
+        _ => &[],
+    }
+}
+
 /// Emit a single child column read expression for response struct construction.
 fn emit_child_col_read_value(code: &mut String, col: &ChildColumn, pad: &str) {
     if col.dto_rust_type.is_some() {
@@ -4399,11 +4442,10 @@ impl RepositoryImplEmitter {
             .unwrap();
         }
 
-        // Child hydration only when the response type is the target entity's
-        // own ({Target}Response): then the tree's struct names align. Scoped
-        // responses (e.g. WorkerPersonLegalResponse) name their nested types
-        // relative to a different prefix the emitter cannot derive.
-        let entity_native = resp_type == &format!("{}Response", seg.entity_name);
+        // Which child tables the response hydrates: the override subtree's
+        // nested children (scoped responses, #162 phase 2) or the target
+        // tree's own children (entity-native responses, #161).
+        let hydration_children = include_hydration_children(tree, path, target_tree);
 
         if let Some(ref over) = seg.child_table_override {
             // VO→entity: query child table directly by parent FK
@@ -4426,6 +4468,9 @@ impl RepositoryImplEmitter {
             writeln!(code, "            Some(t) => t,").unwrap();
             writeln!(code, "            None => return Ok(None),").unwrap();
             writeln!(code, "        }};").unwrap();
+            if !hydration_children.is_empty() {
+                emit_child_reads(code, hydration_children, "target.id", 2);
+            }
             writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
             Self::emit_field_assignments_typed(
                 code,
@@ -4437,6 +4482,9 @@ impl RepositoryImplEmitter {
                 dto_rust_types,
                 is_nullable,
             );
+            if !hydration_children.is_empty() {
+                emit_child_field_population(code, hydration_children, "            ");
+            }
             writeln!(code, "            ..Default::default()").unwrap();
             writeln!(code, "        }}))").unwrap();
         } else if seg.is_array {
@@ -4461,10 +4509,8 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code, "        for row in rows {{").unwrap();
-            if let Some(ttree) = target_tree {
-                if entity_native {
-                    emit_child_reads(code, &ttree.child_tables, "row.id", 3);
-                }
+            if !hydration_children.is_empty() {
+                emit_child_reads(code, hydration_children, "row.id", 3);
             }
             writeln!(code, "            results.push({} {{", resp_type).unwrap();
             writeln!(code, "                id: row.id,").unwrap();
@@ -4480,10 +4526,8 @@ impl RepositoryImplEmitter {
             );
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
-            if let Some(ttree) = target_tree {
-                if entity_native {
-                    emit_child_field_population(code, &ttree.child_tables, "                ");
-                }
+            if !hydration_children.is_empty() {
+                emit_child_field_population(code, hydration_children, "                ");
             }
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }});").unwrap();
@@ -4540,10 +4584,8 @@ impl RepositoryImplEmitter {
             writeln!(code, "            Some(t) => t,").unwrap();
             writeln!(code, "            None => return Ok(None),").unwrap();
             writeln!(code, "        }};").unwrap();
-            if let Some(ttree) = target_tree {
-                if entity_native {
-                    emit_child_reads(code, &ttree.child_tables, "target.id", 2);
-                }
+            if !hydration_children.is_empty() {
+                emit_child_reads(code, hydration_children, "target.id", 2);
             }
             writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
             writeln!(code, "            id: target.id,").unwrap();
@@ -4559,10 +4601,8 @@ impl RepositoryImplEmitter {
             );
             writeln!(code, "            created_at: target.created_at,").unwrap();
             writeln!(code, "            updated_at: target.updated_at,").unwrap();
-            if let Some(ttree) = target_tree {
-                if entity_native {
-                    emit_child_field_population(code, &ttree.child_tables, "            ");
-                }
+            if !hydration_children.is_empty() {
+                emit_child_field_population(code, hydration_children, "            ");
             }
             writeln!(code, "            ..Default::default()").unwrap();
             writeln!(code, "        }}))").unwrap();
@@ -4590,9 +4630,8 @@ impl RepositoryImplEmitter {
         let src_module = &tree.entity_module;
         let resp_type = &path.response_rust_type;
         let target_module = format!("{}_{}", seg.domain, seg.module_name);
-        // Child hydration only for entity-native response types — scoped
-        // responses name nested types with a different prefix (see single).
-        let entity_native = resp_type == &format!("{}Response", seg.entity_name);
+        // Which child tables the response hydrates (see single fetch, #162).
+        let hydration_children = include_hydration_children(tree, path, target_tree);
 
         writeln!(code).unwrap();
         writeln!(code, "    pub(crate) async fn {}(", path.batch_fetch_method).unwrap();
@@ -4641,10 +4680,8 @@ impl RepositoryImplEmitter {
             writeln!(code, "            result.entry(*id).or_insert(None);").unwrap();
             writeln!(code, "        }}").unwrap();
             writeln!(code, "        for row in rows {{").unwrap();
-            if let Some(ttree) = target_tree {
-                if entity_native {
-                    emit_child_reads(code, &ttree.child_tables, "row.id", 3);
-                }
+            if !hydration_children.is_empty() {
+                emit_child_reads(code, hydration_children, "row.id", 3);
             }
             writeln!(
                 code,
@@ -4662,10 +4699,8 @@ impl RepositoryImplEmitter {
                 dto_rust_types,
                 is_nullable,
             );
-            if let Some(ttree) = target_tree {
-                if entity_native {
-                    emit_child_field_population(code, &ttree.child_tables, "                ");
-                }
+            if !hydration_children.is_empty() {
+                emit_child_field_population(code, hydration_children, "                ");
             }
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }}));").unwrap();
@@ -4714,10 +4749,8 @@ impl RepositoryImplEmitter {
                 writeln!(code, "                None => continue,").unwrap();
                 writeln!(code, "            }};").unwrap();
             }
-            if let Some(ttree) = target_tree {
-                if entity_native {
-                    emit_child_reads(code, &ttree.child_tables, "row.id", 3);
-                }
+            if !hydration_children.is_empty() {
+                emit_child_reads(code, hydration_children, "row.id", 3);
             }
             writeln!(
                 code,
@@ -4738,10 +4771,8 @@ impl RepositoryImplEmitter {
             );
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
-            if let Some(ttree) = target_tree {
-                if entity_native {
-                    emit_child_field_population(code, &ttree.child_tables, "                ");
-                }
+            if !hydration_children.is_empty() {
+                emit_child_field_population(code, hydration_children, "                ");
             }
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }});").unwrap();
@@ -4805,10 +4836,8 @@ impl RepositoryImplEmitter {
             )
             .unwrap();
             writeln!(code, "        for t in targets {{").unwrap();
-            if let Some(ttree) = target_tree {
-                if entity_native {
-                    emit_child_reads(code, &ttree.child_tables, "t.id", 3);
-                }
+            if !hydration_children.is_empty() {
+                emit_child_reads(code, hydration_children, "t.id", 3);
             }
             writeln!(
                 code,
@@ -4829,10 +4858,8 @@ impl RepositoryImplEmitter {
             );
             writeln!(code, "                created_at: t.created_at,").unwrap();
             writeln!(code, "                updated_at: t.updated_at,").unwrap();
-            if let Some(ttree) = target_tree {
-                if entity_native {
-                    emit_child_field_population(code, &ttree.child_tables, "                ");
-                }
+            if !hydration_children.is_empty() {
+                emit_child_field_population(code, hydration_children, "                ");
             }
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }});").unwrap();
