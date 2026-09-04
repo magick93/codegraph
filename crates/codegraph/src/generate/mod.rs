@@ -1517,7 +1517,6 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // merged with any manifest already on disk. The pinned generator-source
     // rev (`project.codegraph_rev`) is recorded so drift/CI can reproduce the
     // exact checkout the committed tree was produced at.
-    manifest::emit_manifests(&manifest_roots, &report.files, &project.codegraph_rev)?;
     // Emit integration-test glue (tests/<domain>/mod.rs + tests/tests.rs) so
     // cargo actually compiles the generated entity tests under tests/.
     let test_mod_files = generate_test_mod_files(output_dir)?;
@@ -1525,6 +1524,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         write_output(file)?;
     }
     report.files.extend(test_mod_files);
+
+    manifest::emit_manifests(&manifest_roots, &report.files, &project.codegraph_rev)?;
 
     Ok(report)
 }
@@ -2128,15 +2129,14 @@ fn clean_generated_output(
             // if a generator fails partway through, the previous working state is preserved.
             let key = (domain.to_string(), module_name.clone());
             if expected.contains(&key) {
-                // dto_included.rs is emitted only when the entity currently
-                // has include paths. Delete any stale copy up front so the
-                // per-run filesystem scan in generate_mod_files cannot
-                // re-declare `pub mod dto_included;` for a file this run
-                // will not regenerate (e.g. after allow_include changes).
-                let dto_included = path.join("dto_included.rs");
-                if dto_included.is_file() {
-                    let _ = fs::remove_file(&dto_included);
-                }
+                // NOTE: dto_included.rs is deliberately NOT deleted here. The
+                // dto generator emits it only when include paths resolve, so a
+                // profile whose plan skips dto hydration (e.g. an e2e-only
+                // regen after a fullstack run) would otherwise destroy the
+                // fullstack-emitted file while handlers still import it. The
+                // per-run filesystem scan in generate_mod_files re-declares
+                // `pub mod dto_included;` only while the file exists, which is
+                // exactly the desired behaviour.
                 continue;
             }
             tracing::debug!(

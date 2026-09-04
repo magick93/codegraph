@@ -16,6 +16,8 @@ use axum::{
     extract::Request,
     middleware::Next,
     response::{IntoResponse, Response},
+    routing::MethodRouter,
+    Extension,
 };
 
 use super::AuthInfo;
@@ -87,6 +89,34 @@ fn extract_uuid_from_path(path: &str) -> Option<String> {
         Some(last.to_string())
     } else {
         None
+    }
+}
+
+/// Decorator for method routers that attaches this route's permission guard:
+/// the `require_permission` middleware plus the permission it must check.
+///
+/// ```ignore
+/// .route(
+///     "/",
+///     axum::routing::get(handler::list).guard("case", "list")
+///         .merge(axum::routing::post(handler::create).guard("case", "create")),
+/// )
+/// ```
+pub trait PermissionGuard<S> {
+    fn guard(self, resource: &'static str, action: &'static str) -> Self;
+}
+
+impl<S: Clone + 'static> PermissionGuard<S> for axum::routing::MethodRouter<S> {
+    fn guard(self, resource: &'static str, action: &'static str) -> Self {
+        self
+            // from_fn first (inner), Extension second (outer): the extension
+            // must insert the permission BEFORE the middleware reads it.
+            // The router passes `domain:entity` as the resource; the atproto
+            // authz layer matches full `domain:entity:action` strings.
+            .route_layer(axum::middleware::from_fn(require_permission))
+            .route_layer(Extension(RequiredPermission(format!(
+                "{resource}:{action}"
+            ))))
     }
 }
 {% else %}

@@ -1943,7 +1943,7 @@ impl RepositoryImplEmitter {
                 .collect::<Vec<_>>()
         };
 
-        self.emit_header(&tree, &mut code);
+        self.emit_header(&tree, &include_paths, &mut code);
         if tree.has_create {
             self.emit_create_fn(&tree, &mut code);
         }
@@ -2620,7 +2620,7 @@ impl RepositoryImplEmitter {
         })
     }
 
-    fn emit_header(&self, tree: &EntityTree, code: &mut String) {
+    fn emit_header(&self, tree: &EntityTree, include_paths: &[ResolvedIncludePath], code: &mut String) {
         writeln!(
             code,
             "//! Generated repository implementation for {}.",
@@ -2651,7 +2651,11 @@ impl RepositoryImplEmitter {
             || tree.has_fts
             || tree.has_embeddings
             || has_range_cols
-            || tree.hierarchy_field.is_some();
+            || tree.hierarchy_field.is_some()
+            // Scoped-include hydration emits raw-SQL child fetches
+            // (Statement/DatabaseBackend/db.query_all) even when the CRUD
+            // child tree is empty — the imports must match.
+            || !include_paths.is_empty();
         let needs_active_model =
             tree.has_create || tree.has_update || (tree.is_auditable && tree.has_delete);
 
