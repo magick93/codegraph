@@ -4399,6 +4399,12 @@ impl RepositoryImplEmitter {
             .unwrap();
         }
 
+        // Child hydration only when the response type is the target entity's
+        // own ({Target}Response): then the tree's struct names align. Scoped
+        // responses (e.g. WorkerPersonLegalResponse) name their nested types
+        // relative to a different prefix the emitter cannot derive.
+        let entity_native = resp_type == &format!("{}Response", seg.entity_name);
+
         if let Some(ref over) = seg.child_table_override {
             // VO→entity: query child table directly by parent FK
             let over_fk_pascal = codegraph_naming::to_pascal_case(&over.parent_fk_column);
@@ -4456,7 +4462,9 @@ impl RepositoryImplEmitter {
             .unwrap();
             writeln!(code, "        for row in rows {{").unwrap();
             if let Some(ttree) = target_tree {
-                emit_child_reads(code, &ttree.child_tables, "row.id", 3);
+                if entity_native {
+                    emit_child_reads(code, &ttree.child_tables, "row.id", 3);
+                }
             }
             writeln!(code, "            results.push({} {{", resp_type).unwrap();
             writeln!(code, "                id: row.id,").unwrap();
@@ -4473,7 +4481,9 @@ impl RepositoryImplEmitter {
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
             if let Some(ttree) = target_tree {
-                emit_child_field_population(code, &ttree.child_tables, "                ");
+                if entity_native {
+                    emit_child_field_population(code, &ttree.child_tables, "                ");
+                }
             }
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }});").unwrap();
@@ -4531,7 +4541,9 @@ impl RepositoryImplEmitter {
             writeln!(code, "            None => return Ok(None),").unwrap();
             writeln!(code, "        }};").unwrap();
             if let Some(ttree) = target_tree {
-                emit_child_reads(code, &ttree.child_tables, "target.id", 2);
+                if entity_native {
+                    emit_child_reads(code, &ttree.child_tables, "target.id", 2);
+                }
             }
             writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
             writeln!(code, "            id: target.id,").unwrap();
@@ -4548,7 +4560,9 @@ impl RepositoryImplEmitter {
             writeln!(code, "            created_at: target.created_at,").unwrap();
             writeln!(code, "            updated_at: target.updated_at,").unwrap();
             if let Some(ttree) = target_tree {
-                emit_child_field_population(code, &ttree.child_tables, "            ");
+                if entity_native {
+                    emit_child_field_population(code, &ttree.child_tables, "            ");
+                }
             }
             writeln!(code, "            ..Default::default()").unwrap();
             writeln!(code, "        }}))").unwrap();
@@ -4576,6 +4590,9 @@ impl RepositoryImplEmitter {
         let src_module = &tree.entity_module;
         let resp_type = &path.response_rust_type;
         let target_module = format!("{}_{}", seg.domain, seg.module_name);
+        // Child hydration only for entity-native response types — scoped
+        // responses name nested types with a different prefix (see single).
+        let entity_native = resp_type == &format!("{}Response", seg.entity_name);
 
         writeln!(code).unwrap();
         writeln!(code, "    pub(crate) async fn {}(", path.batch_fetch_method).unwrap();
@@ -4625,7 +4642,9 @@ impl RepositoryImplEmitter {
             writeln!(code, "        }}").unwrap();
             writeln!(code, "        for row in rows {{").unwrap();
             if let Some(ttree) = target_tree {
-                emit_child_reads(code, &ttree.child_tables, "row.id", 3);
+                if entity_native {
+                    emit_child_reads(code, &ttree.child_tables, "row.id", 3);
+                }
             }
             writeln!(
                 code,
@@ -4644,7 +4663,9 @@ impl RepositoryImplEmitter {
                 is_nullable,
             );
             if let Some(ttree) = target_tree {
-                emit_child_field_population(code, &ttree.child_tables, "                ");
+                if entity_native {
+                    emit_child_field_population(code, &ttree.child_tables, "                ");
+                }
             }
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }}));").unwrap();
@@ -4694,7 +4715,9 @@ impl RepositoryImplEmitter {
                 writeln!(code, "            }};").unwrap();
             }
             if let Some(ttree) = target_tree {
-                emit_child_reads(code, &ttree.child_tables, "row.id", 3);
+                if entity_native {
+                    emit_child_reads(code, &ttree.child_tables, "row.id", 3);
+                }
             }
             writeln!(
                 code,
@@ -4716,7 +4739,9 @@ impl RepositoryImplEmitter {
             writeln!(code, "                created_at: row.created_at,").unwrap();
             writeln!(code, "                updated_at: row.updated_at,").unwrap();
             if let Some(ttree) = target_tree {
-                emit_child_field_population(code, &ttree.child_tables, "                ");
+                if entity_native {
+                    emit_child_field_population(code, &ttree.child_tables, "                ");
+                }
             }
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }});").unwrap();
@@ -4781,7 +4806,9 @@ impl RepositoryImplEmitter {
             .unwrap();
             writeln!(code, "        for t in targets {{").unwrap();
             if let Some(ttree) = target_tree {
-                emit_child_reads(code, &ttree.child_tables, "t.id", 3);
+                if entity_native {
+                    emit_child_reads(code, &ttree.child_tables, "t.id", 3);
+                }
             }
             writeln!(
                 code,
@@ -4803,7 +4830,9 @@ impl RepositoryImplEmitter {
             writeln!(code, "                created_at: t.created_at,").unwrap();
             writeln!(code, "                updated_at: t.updated_at,").unwrap();
             if let Some(ttree) = target_tree {
-                emit_child_field_population(code, &ttree.child_tables, "                ");
+                if entity_native {
+                    emit_child_field_population(code, &ttree.child_tables, "                ");
+                }
             }
             writeln!(code, "                ..Default::default()").unwrap();
             writeln!(code, "            }});").unwrap();
