@@ -1,3 +1,4 @@
+pub mod atproto;
 pub mod column_type;
 pub mod error;
 pub mod field_role;

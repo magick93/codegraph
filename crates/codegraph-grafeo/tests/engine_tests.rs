@@ -46,7 +46,8 @@ fn test_basic_gql_insert_and_query() {
             has_all_of: false,
             has_one_of: false,
             has_any_of: false,
-            has_definitions: false
+            has_definitions: false,
+            custom_annotations: '{}'
         })",
         )
         .expect("INSERT should succeed");

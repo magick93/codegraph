@@ -1,0 +1,534 @@
+{
+  "domain": "common",
+  "basePath": "/api/v1/common",
+  "entities": {
+    "amount": {
+      "entity": "Amount",
+      "module": "amount",
+      "pathSegment": "amount",
+      "basePath": "/api/v1/common/amount",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/amount",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/amount",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/amount/{amount_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/amount/{amount_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/amount/{amount_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "code": {
+      "entity": "Code",
+      "module": "code",
+      "pathSegment": "code",
+      "basePath": "/api/v1/common/code",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/code",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/code",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/code/{code_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/code/{code_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/code/{code_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "currency-code-list": {
+      "entity": "CurrencyCodeList",
+      "module": "currency_code_list",
+      "pathSegment": "currency-code-list",
+      "basePath": "/api/v1/common/currency-code-list",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/currency-code-list",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/currency-code-list",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/currency-code-list/{currency_code_list_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/currency-code-list/{currency_code_list_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/currency-code-list/{currency_code_list_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "date": {
+      "entity": "Date",
+      "module": "date",
+      "pathSegment": "date",
+      "basePath": "/api/v1/common/date",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/date",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/date",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/date/{date_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/date/{date_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/date/{date_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "distribution-base": {
+      "entity": "DistributionBase",
+      "module": "distribution_base",
+      "pathSegment": "distribution-base",
+      "basePath": "/api/v1/common/distribution-base",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/distribution-base",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/distribution-base",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/distribution-base/{distribution_base_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/distribution-base/{distribution_base_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/distribution-base/{distribution_base_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "effective-date": {
+      "entity": "EffectiveDate",
+      "module": "effective_date",
+      "pathSegment": "effective-date",
+      "basePath": "/api/v1/common/effective-date",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/effective-date",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/effective-date",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/effective-date/{effective_date_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/effective-date/{effective_date_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/effective-date/{effective_date_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "event-base": {
+      "entity": "EventBase",
+      "module": "event_base",
+      "pathSegment": "event-base",
+      "basePath": "/api/v1/common/event-base",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/event-base",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/event-base",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/event-base/{event_base_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/event-base/{event_base_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/event-base/{event_base_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "formatted-date-time": {
+      "entity": "FormattedDateTime",
+      "module": "formatted_date_time",
+      "pathSegment": "formatted-date-time",
+      "basePath": "/api/v1/common/formatted-date-time",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/formatted-date-time",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/formatted-date-time",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/formatted-date-time/{formatted_date_time_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/formatted-date-time/{formatted_date_time_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/formatted-date-time/{formatted_date_time_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "gender-code-list": {
+      "entity": "GenderCodeList",
+      "module": "gender_code_list",
+      "pathSegment": "gender-code-list",
+      "basePath": "/api/v1/common/gender-code-list",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/gender-code-list",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/gender-code-list",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/gender-code-list/{gender_code_list_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/gender-code-list/{gender_code_list_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/gender-code-list/{gender_code_list_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "identifier": {
+      "entity": "Identifier",
+      "module": "identifier",
+      "pathSegment": "identifier",
+      "basePath": "/api/v1/common/identifier",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/identifier",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/identifier",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/identifier/{identifier_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/identifier/{identifier_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/identifier/{identifier_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "name": {
+      "entity": "Name",
+      "module": "name",
+      "pathSegment": "name",
+      "basePath": "/api/v1/common/name",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/name",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/name",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/name/{name_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/name/{name_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/name/{name_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "person-base": {
+      "entity": "PersonBase",
+      "module": "person_base",
+      "pathSegment": "person-base",
+      "basePath": "/api/v1/common/person-base",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/person-base",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/person-base",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/person-base/{person_base_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/person-base/{person_base_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/person-base/{person_base_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "position-schedule-type-code-list": {
+      "entity": "PositionScheduleTypeCodeList",
+      "module": "position_schedule_type_code_list",
+      "pathSegment": "position-schedule-type-code-list",
+      "basePath": "/api/v1/common/position-schedule-type-code-list",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/position-schedule-type-code-list",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/position-schedule-type-code-list",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/position-schedule-type-code-list/{position_schedule_type_code_list_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/position-schedule-type-code-list/{position_schedule_type_code_list_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/position-schedule-type-code-list/{position_schedule_type_code_list_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "process-history": {
+      "entity": "ProcessHistory",
+      "module": "process_history",
+      "pathSegment": "process-history",
+      "basePath": "/api/v1/common/process-history",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/process-history",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/process-history",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/process-history/{process_history_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/process-history/{process_history_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/process-history/{process_history_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "process-history-item": {
+      "entity": "ProcessHistoryItem",
+      "module": "process_history_item",
+      "pathSegment": "process-history-item",
+      "basePath": "/api/v1/common/process-history-item",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/process-history-item",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/process-history-item",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/process-history-item/{process_history_item_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/process-history-item/{process_history_item_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/process-history-item/{process_history_item_id}",
+          "operation": "delete"
+        }
+      ]
+    },
+    "string-type-array": {
+      "entity": "StringTypeArray",
+      "module": "string_type_array",
+      "pathSegment": "string-type-array",
+      "basePath": "/api/v1/common/string-type-array",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/common/string-type-array",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/common/string-type-array",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/common/string-type-array/{string_type_array_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/common/string-type-array/{string_type_array_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/common/string-type-array/{string_type_array_id}",
+          "operation": "delete"
+        }
+      ]
+    }
+  }
+}

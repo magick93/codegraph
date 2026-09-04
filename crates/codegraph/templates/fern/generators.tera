@@ -1,0 +1,13 @@
+default-group: local
+api:
+  path: ./openapi/openapi.json
+groups:
+  local:
+    generators:
+{% for lang in languages %}
+      - name: fernapi/fern-{{ lang }}-sdk
+        version: latest
+        output:
+          location: local-file-system
+          path: ../../../generated/sdks/{{ lang }}
+{% endfor %}

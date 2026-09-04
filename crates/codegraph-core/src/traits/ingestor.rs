@@ -1,10 +1,11 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
-    DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode,
-    HttpEndpointNode, IngestStats, InteractionNode, MembershipNode, ParameterDefinitionNode,
-    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaNode,
-    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode,
+    EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
+    NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
+    RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -66,6 +67,11 @@ pub trait GraphIngestor: Send + Sync {
     ) -> Result<String, GraphError>;
 
     async fn ingest_data_binding(&self, node: &DataBindingNode) -> Result<String, GraphError>;
+
+    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError>;
+    async fn ingest_lexicon(&self, node: &LexiconNode) -> Result<String, GraphError>;
+    async fn ingest_collection(&self, node: &CollectionNode) -> Result<String, GraphError>;
+    async fn ingest_repository(&self, node: &RepositoryNode) -> Result<String, GraphError>;
 
     async fn update_entity_flag(&self, title: &str, is_entity: bool) -> Result<(), GraphError>;
 

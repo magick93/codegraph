@@ -372,7 +372,8 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             condition = condition.add(crate::entity::recruiting_candidate::Column::Gender.eq(val.clone()));
         }
         if let Some(val) = filters.get("referred_by_application_id") {
-            condition = condition.add(crate::entity::recruiting_candidate::Column::ReferredByApplicationId.eq(val.clone()));
+            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid UUID for filter 'referred_by_application_id': {e}")))?;
+            condition = condition.add(crate::entity::recruiting_candidate::Column::ReferredByApplicationId.eq(parsed));
         }
         if let Some(val) = filters.get("status") {
             condition = condition.add(crate::entity::recruiting_candidate::Column::Status.eq(val.clone()));

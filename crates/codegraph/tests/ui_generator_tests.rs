@@ -49,6 +49,7 @@ fn candidate_schema() -> SchemaNode {
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     }
 }
 
@@ -840,6 +841,7 @@ async fn ui_form_generator_skips_when_no_create_or_update() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let mock = MockEngine::builder()

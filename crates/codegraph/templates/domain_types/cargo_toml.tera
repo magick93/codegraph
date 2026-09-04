@@ -13,7 +13,7 @@ chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde-with-str"] }
 utoipa = { version = "5", features = ["chrono", "uuid", "decimal"] }
 async-trait = "0.1"
-garde = { version = "0.22", features = ["derive"] }
+garde = { version = "0.22", features = ["derive", "regex"] }
 thiserror = "2"
 {% if project.type_contracts_base %}codegraph-type-contracts = { path = "{{ project.type_contracts_base }}" }
 {% elif project.codegraph_rev %}codegraph-type-contracts = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }{% endif %}

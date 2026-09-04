@@ -29,6 +29,7 @@ fn schema_node_serde_round_trip() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     };
     let json = serde_json::to_string(&node).unwrap();
     let deserialized: SchemaNode = serde_json::from_str(&json).unwrap();
@@ -94,6 +95,7 @@ fn schema_node_with_parent_schema() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
     assert_eq!(node.parent_schema, Some("PersonType".into()));
 }

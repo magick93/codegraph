@@ -16,6 +16,9 @@ pub fn indexed_properties() -> Vec<&'static str> {
         "_schema_id",
         "name",
         "_codelist_name",
+        "nsid",
+        "authority",
+        "did",
         "target_schema",
         "source_schema",
         "subject",
@@ -26,6 +29,35 @@ pub fn indexed_properties() -> Vec<&'static str> {
 
 fn node_type_ddl() -> Vec<&'static str> {
     vec![
+        // Namespace — AT Protocol
+        "CREATE NODE TYPE IF NOT EXISTS Namespace (
+            authority STRING NOT NULL,
+            segment STRING NOT NULL,
+            domain STRING NOT NULL
+        )",
+        // Lexicon — AT Protocol
+        "CREATE NODE TYPE IF NOT EXISTS Lexicon (
+            nsid STRING NOT NULL,
+            lex_type STRING NOT NULL,
+            key_strategy STRING NOT NULL,
+            revision INTEGER,
+            description STRING,
+            domain STRING NOT NULL
+        )",
+        // Collection — AT Protocol
+        "CREATE NODE TYPE IF NOT EXISTS Collection (
+            nsid STRING NOT NULL,
+            key_strategy STRING NOT NULL,
+            domain STRING NOT NULL
+        )",
+        // Repository — AT Protocol
+        "CREATE NODE TYPE IF NOT EXISTS Repository (
+            did STRING NOT NULL,
+            handle STRING,
+            pds_endpoint STRING NOT NULL,
+            org_name STRING NOT NULL,
+            tenancy_mode STRING NOT NULL
+        )",
         // SchemaNode — 21 fields from codegraph-core/src/types/schema.rs
         "CREATE NODE TYPE IF NOT EXISTS Schema (
             schema_id STRING NOT NULL,
@@ -48,7 +80,8 @@ fn node_type_ddl() -> Vec<&'static str> {
             has_all_of BOOLEAN NOT NULL,
             has_one_of BOOLEAN NOT NULL,
             has_any_of BOOLEAN NOT NULL,
-            has_definitions BOOLEAN NOT NULL
+            has_definitions BOOLEAN NOT NULL,
+            custom_annotations STRING NOT NULL
         )",
         // PropertyNode — 16 fields + _schema_title denormalized
         "CREATE NODE TYPE IF NOT EXISTS Property (
@@ -271,6 +304,12 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS RequiresExtension",
         "CREATE EDGE TYPE IF NOT EXISTS InDomain",
         "CREATE EDGE TYPE IF NOT EXISTS DomainDepends (dependency_type STRING)",
+        // AT Protocol edge types
+        "CREATE EDGE TYPE IF NOT EXISTS InNamespace ()",
+        "CREATE EDGE TYPE IF NOT EXISTS ProjectsToLexicon ()",
+        "CREATE EDGE TYPE IF NOT EXISTS DefinesCollection ()",
+        "CREATE EDGE TYPE IF NOT EXISTS LexiconReferences (ref_path STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS StoredInRepository ()",
         // IFML edge types
         "CREATE EDGE TYPE IF NOT EXISTS ContainsViewContainer (sort_order INTEGER)",
         "CREATE EDGE TYPE IF NOT EXISTS ContainsViewComponent (sort_order INTEGER)",

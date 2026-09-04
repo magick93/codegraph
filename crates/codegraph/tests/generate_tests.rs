@@ -41,6 +41,7 @@ fn mock_schema(
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     }
 }
 
@@ -328,6 +329,7 @@ async fn test_generation_ordering_excludes_inline_def_schemas() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     // Also add a top-level schema for the same domain to ensure the domain
@@ -824,6 +826,7 @@ async fn snapshot_repository_emitter_child_tables() {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        custom_annotations: Default::default(),
     };
 
     let mock = MockEngine::builder()
@@ -1085,12 +1088,18 @@ async fn required_genuine_entity_ref_is_not_null_across_all_layers() {
     );
 }
 
-/// When a REQUIRED genuine EntityReference is ALSO detected as a ParentCandidate
-/// (ScalarRef), the parent-candidate FK injection path must NOT override the
-/// schema-required nullability. The injection path runs before the property loop
-/// and the dedup keeps the first column — if the injected column hardcodes
-/// nullable, it wins and the model emits Option<Uuid> while the DTO/repo emit
-/// Uuid/Set(v) → E0308.
+/// Regression test: a required genuine EntityReference that is ALSO detected as
+/// a parent candidate (ScalarRef) must stay non-nullable across ALL layers.
+///
+/// The parent-candidates injection in `entity.rs` historically hardcoded
+/// `Option<Uuid>` / `is_nullable: true` and won the dedup over the
+/// property-driven EntityReference branch, producing:
+///   - entity model: `candidate_id: Option<Uuid>`   (contradicts schema required)
+///   - DDL:          `candidate_id UUID` (nullable) (contradicts schema required)
+/// while the DTO and repository emitter correctly honored `required`
+/// (`uuid::Uuid` / `Set(v)`), causing E0308 type mismatches at build time.
+///
+/// JSON Schema `required` is the source of truth: all layers must agree.
 #[tokio::test]
 async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers() {
     let mock = MockEngine::builder()
@@ -1112,7 +1121,9 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
             "ApplicationType",
             vec![
                 prop("title", "String", "TEXT", true, None, None, None, false),
-                // Required genuine EntityReference → candidate_id FK.
+                // Required genuine EntityReference → candidate_id FK. This is
+                // ALSO detected as a ScalarRef parent candidate, which triggers
+                // the parent-candidates injection path in entity.rs/ddl.rs.
                 prop(
                     "candidate_id",
                     "Uuid",
@@ -1125,10 +1136,29 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
                 ),
             ],
         )
+        .with_ref_target(
+            "candidate_id",
+            "ApplicationType",
+            mock_schema(
+                "recruiting/json/CandidateType.json",
+                "CandidateType",
+                "candidate",
+                "recruiting",
+                "entity_reference",
+            ),
+        )
+        .with_parent_candidate(ParentCandidate {
+            child_title: "ApplicationType".to_string(),
+            parent_title: "CandidateType".to_string(),
+            field_name: "candidate_id".to_string(),
+            source: DetectionSource::ScalarRef,
+        })
         .build();
 
-    // The relationship is ALSO a parent candidate (ScalarRef): the injection
-    // path fires and previously won dedup with hardcoded nullable output.
+    let config = test_domain_config();
+    let project = test_project_config();
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
     let parent_candidates = vec![ParentCandidate {
         child_title: "ApplicationType".to_string(),
         parent_title: "CandidateType".to_string(),
@@ -1136,14 +1166,8 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
         source: DetectionSource::ScalarRef,
     }];
 
-    let config = test_domain_config();
-    let project = test_project_config();
-    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
-
     // 1. Entity model: required ref + parent candidate → Uuid (non-Option).
-    let entity_gen = generate::db::entity::SeaOrmEntityGenerator::new(Path::new("/tmp/out"))
-        .with_parent_candidates(parent_candidates.clone());
+    let entity_gen = generate::db::entity::SeaOrmEntityGenerator::new(Path::new("/tmp/out"));
     let entity_files = entity_gen
         .generate(
             &mock,
@@ -1170,7 +1194,7 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
         "required entity ref with parent candidate must NOT be Option<Uuid>. Got:\n{entity}"
     );
 
-    // 2. Repository emitter: required ref → Set(v) (unaffected by injection).
+    // 2. Repository emitter: required ref → Set(v).
     let emitter = generate::ddd::repository_emitter::RepositoryImplEmitter;
     let repo_code = emitter
         .emit(&mock, "ApplicationType", "recruiting", &config, None, &[])
@@ -1185,8 +1209,8 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
         "required entity ref must NOT emit Set(Some(v)). Got:\n{repo_code}"
     );
 
-    // 3. Create DTO: required ref → non-Option uuid::Uuid (unaffected by injection).
-    let tmp = std::env::temp_dir().join("required-genuine-ref-pc-dto");
+    // 3. DTO: required ref → non-Option uuid::Uuid in the CREATE DTO.
+    let tmp = std::env::temp_dir().join("required-parent-candidate-dto");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     let dto_gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
@@ -1201,6 +1225,7 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
         )
         .await
         .unwrap();
+
     let create_dto = dto_files
         .iter()
         .find(|f| f.path.to_string_lossy().contains("dto_create"))
@@ -2335,6 +2360,213 @@ async fn ui_form_uses_stripped_names_for_codelist() {
     assert!(
         !content.contains("status_code"),
         "form must NOT bind pg_column_name with _code suffix"
+    );
+}
+
+/// Regression test: the Playwright fixture generator must honor the schema's
+/// `required` for scalar EntityReference FKs. A required FK must produce a
+/// plain `campaignId: string` field (present in `valid()`); an optional FK
+/// keeps `campaignId?: string | null` and is omitted from `valid()`.
+///
+/// Mirrors the #58/#59 pattern — JSON Schema `required` is the source of truth
+/// across ALL generator layers, including the TS fixture generator.
+#[tokio::test]
+async fn ts_fixture_required_entity_ref_is_required() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "recruiting/json/ApplicationType.json",
+            "ApplicationType",
+            "application",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_schema(mock_schema(
+            "recruiting/json/CandidateType.json",
+            "CandidateType",
+            "candidate",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_properties(
+            "ApplicationType",
+            vec![
+                prop("title", "String", "TEXT", true, None, None, None, false),
+                // Required genuine EntityReference → campaign_id FK.
+                prop(
+                    "candidate_id",
+                    "Uuid",
+                    "UUID",
+                    true,
+                    Some("entity_reference"),
+                    Some(RefClassificationKind::EntityReference),
+                    Some("recruiting/json/CandidateType.json"),
+                    false,
+                ),
+            ],
+        )
+        .with_ref_target(
+            "candidate_id",
+            "ApplicationType",
+            mock_schema(
+                "recruiting/json/CandidateType.json",
+                "CandidateType",
+                "candidate",
+                "recruiting",
+                "entity_reference",
+            ),
+        )
+        .build();
+
+    let config = test_domain_config();
+    let project = test_project_config();
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
+
+    let gen = generate::playwright::ts_entity_gen::TsEntityGenerator::new(Path::new(
+        "/tmp/ts-fixture-required-ref",
+    ));
+    let files = gen
+        .generate(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        )
+        .await
+        .unwrap();
+
+    let fixture = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("fixtures"))
+        .expect("should produce a fixture file")
+        .content
+        .clone();
+
+    // Required FK → plain `candidateId: string` (no `?`, no `| null`).
+    assert!(
+        fixture.contains("candidateId: string;"),
+        "required entity ref FK must be a required TS field. Got:\n{fixture}"
+    );
+    assert!(
+        !fixture.contains("candidateId?:"),
+        "required entity ref FK must NOT be optional in TS. Got:\n{fixture}"
+    );
+    // The valid() fixture must populate the required FK.
+    assert!(
+        fixture.contains("candidateId:"),
+        "required FK must appear in valid() fixture body. Got:\n{fixture}"
+    );
+
+    // The spec must create a real parent row and thread its id into the child
+    // payload (Issue #61) — the all-zeros placeholder would violate the FK.
+    let spec = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains(".spec.ts"))
+        .expect("should produce a spec file")
+        .content
+        .clone();
+    assert!(
+        spec.contains("CandidateFixture"),
+        "spec must import the parent fixture for beforeAll parent creation. Got:\n{spec}"
+    );
+    assert!(
+        spec.contains("candidateIdId"),
+        "spec must capture a parent id variable. Got:\n{spec}"
+    );
+    assert!(
+        spec.contains("Fixture.valid({ candidateId: candidateIdId })"),
+        "spec create payload must reference the real parent id. Got:\n{spec}"
+    );
+}
+
+/// Companion case: an optional EntityReference FK keeps `?` / `| null` and is
+/// omitted from `valid()`.
+#[tokio::test]
+async fn ts_fixture_optional_entity_ref_stays_optional() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "recruiting/json/ApplicationType.json",
+            "ApplicationType",
+            "application",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_schema(mock_schema(
+            "recruiting/json/CandidateType.json",
+            "CandidateType",
+            "candidate",
+            "recruiting",
+            "entity_reference",
+        ))
+        .with_properties(
+            "ApplicationType",
+            vec![
+                prop("title", "String", "TEXT", true, None, None, None, false),
+                // Optional genuine EntityReference → candidate_id FK.
+                prop(
+                    "candidate_id",
+                    "Uuid",
+                    "UUID",
+                    false,
+                    Some("entity_reference"),
+                    Some(RefClassificationKind::EntityReference),
+                    Some("recruiting/json/CandidateType.json"),
+                    false,
+                ),
+            ],
+        )
+        .with_ref_target(
+            "candidate_id",
+            "ApplicationType",
+            mock_schema(
+                "recruiting/json/CandidateType.json",
+                "CandidateType",
+                "candidate",
+                "recruiting",
+                "entity_reference",
+            ),
+        )
+        .build();
+
+    let config = test_domain_config();
+    let project = test_project_config();
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
+
+    let gen = generate::playwright::ts_entity_gen::TsEntityGenerator::new(Path::new(
+        "/tmp/ts-fixture-optional-ref",
+    ));
+    let files = gen
+        .generate(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            &tera,
+            &project,
+        )
+        .await
+        .unwrap();
+
+    let fixture = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("fixtures"))
+        .expect("should produce a fixture file")
+        .content
+        .clone();
+
+    // Optional FK → `candidateId?: string | null` retained, omitted from valid().
+    assert!(
+        fixture.contains("candidateId?: string | null;"),
+        "optional entity ref FK must stay optional in TS. Got:\n{fixture}"
+    );
+    // valid() must NOT contain a bare `candidateId:` assignment (it only emits
+    // required fields). The interface line has `?` so `candidateId?:` is fine.
+    assert!(
+        !fixture.contains("\n      candidateId: "),
+        "optional FK must NOT be populated in valid(). Got:\n{fixture}"
     );
 }
 

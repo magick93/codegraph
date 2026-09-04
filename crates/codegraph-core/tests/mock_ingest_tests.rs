@@ -25,6 +25,7 @@ fn test_schema() -> SchemaNode {
         has_one_of: false,
         has_any_of: false,
         has_definitions: true,
+        custom_annotations: Default::default(),
     }
 }
 

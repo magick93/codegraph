@@ -106,6 +106,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         let deployment_topology_str = plan.deployment_topology().to_string();
         project_config = Some(ProjectConfig {
             app_name: meta.app_name.clone().unwrap_or_else(|| "app".into()),
+            lib_name: "cosmos".into(),
             domain_types_crate: meta
                 .domain_types_crate
                 .clone()
@@ -131,6 +132,20 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
             deployment_topology: deployment_topology_str,
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
             codegraph_rev: codegraph_rev.unwrap_or_else(current_git_rev),
+            has_atproto: plan.has_atproto,
+            has_fern: plan.has_fern,
+            fern_sdk_languages: plan.fern_sdk_languages.clone(),
+            atproto_authority: String::new(),
+            atproto_tenancy: plan.atproto_tenancy.clone(),
+            atproto_float_policy: resolved
+                .features
+                .get("atproto_float_policy")
+                .and_then(|v| v.as_str())
+                .unwrap_or("integer_scaled")
+                .to_string(),
+            cargo_patch: String::new(),
+            extra_dependencies: String::new(),
+            cargo_workspace: false,
             api_version: domain_config.defaults.api_version.clone(),
         });
 
@@ -267,6 +282,22 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         &entity_names,
     )
     .await?;
+
+    // AT Protocol projection pass — populates Lexicon/Collection/Namespace nodes
+    if let Some(ref pc) = project_config {
+        if pc.has_atproto {
+            crate::ingest::atproto_projection::project_atproto_lexicons(
+                be.ingestor(),
+                be.querier(),
+                &domain_config,
+                pc,
+            )
+            .await
+            .map_err(|e| {
+                crate::error::Error::Config(format!("AT Protocol projection failed: {e}"))
+            })?;
+        }
+    }
 
     let override_dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
 

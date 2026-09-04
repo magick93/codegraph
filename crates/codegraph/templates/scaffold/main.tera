@@ -26,6 +26,9 @@ mod webhook_router;
 {% if project.hooks_api_crate %}
 mod hooks;
 {% endif %}
+{% if has_atproto %}
+mod atproto;
+{% endif %}
 
 fn pid_file_path(bind_addr: Option<&str>, pid_file: Option<&str>) -> String {
     if let Some(pf) = pid_file {
@@ -107,6 +110,72 @@ fn send_signal(pid: u32, sig: i32) -> bool {
 #[cfg(unix)]
 fn process_exists(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+/// Extract the TCP port from a bind address like "0.0.0.0:3000" or "127.0.0.1:3099".
+fn port_from_bind_addr(bind_addr: &str) -> Option<u16> {
+    bind_addr
+        .rsplit(':')
+        .next()
+        .and_then(|p| p.parse::<u16>().ok())
+}
+
+/// Discover the PID of the process listening on `port` by scanning /proc.
+/// Used as a fallback for `stop`/`status` when the PID file is missing or stale.
+#[cfg(target_os = "linux")]
+fn find_pid_by_port(port: u16) -> Option<u32> {
+    let port_hex = format!("{:04X}", port);
+    // 1. Collect socket inodes for the port from /proc/net/tcp and tcp6.
+    let mut inodes: Vec<String> = Vec::new();
+    for path in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            for line in content.lines().skip(1) {
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                if fields.len() >= 10 {
+                    if let Some(addr) = fields[1].split(':').nth(1) {
+                        if addr == port_hex {
+                            inodes.push(fields[9].to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if inodes.is_empty() {
+        return None;
+    }
+    // 2. Scan every process's open fds for a socket matching one of the inodes.
+    if let Ok(entries) = std::fs::read_dir("/proc") {
+        for entry in entries.flatten() {
+            let pid = match entry.file_name().to_string_lossy().parse::<u32>() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let fd_dir = format!("/proc/{pid}/fd");
+            if let Ok(fds) = std::fs::read_dir(&fd_dir) {
+                for fd in fds.flatten() {
+                    let target = match std::fs::read_link(fd.path()) {
+                        Ok(t) => t.to_string_lossy().to_string(),
+                        Err(_) => continue,
+                    };
+                    if let Some(inode) = target
+                        .strip_prefix("socket:[")
+                        .and_then(|s| s.strip_suffix(']'))
+                    {
+                        if inodes.iter().any(|i| i == inode) {
+                            return Some(pid);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn find_pid_by_port(_port: u16) -> Option<u32> {
+    None
 }
 
 #[tokio::main]
@@ -203,8 +272,20 @@ async fn main() {
                 let pid_str = match std::fs::read_to_string(&pf_path) {
                     Ok(s) => s.trim().to_string(),
                     Err(_) => {
-                        eprintln!("No server appears to be running (PID file {pf_path} not found).");
-                        std::process::exit(1);
+                        // PID file missing — try to discover the listener on the
+                        // configured port so a stale/cleaned PID file can still
+                        // be stopped (frees the port).
+                        let discovered = bind_addr
+                            .as_deref()
+                            .and_then(port_from_bind_addr)
+                            .and_then(find_pid_by_port);
+                        match discovered {
+                            Some(p) => p.to_string(),
+                            None => {
+                                eprintln!("No server appears to be running (PID file {pf_path} not found and no listener on {})", bind_addr.as_deref().unwrap_or("0.0.0.0:3000"));
+                                std::process::exit(1);
+                            }
+                        }
                     }
                 };
                 let pid: u32 = match pid_str.parse() {
@@ -261,8 +342,17 @@ async fn main() {
                 let pid_str = match std::fs::read_to_string(&pf_path) {
                     Ok(s) => s.trim().to_string(),
                     Err(_) => {
-                        println!("Server is stopped (no PID file at {pf_path}).");
-                        std::process::exit(1);
+                        let discovered = bind_addr
+                            .as_deref()
+                            .and_then(port_from_bind_addr)
+                            .and_then(find_pid_by_port);
+                        match discovered {
+                            Some(p) => p.to_string(),
+                            None => {
+                                println!("Server is stopped (no PID file at {pf_path}, no listener on {}).", bind_addr.as_deref().unwrap_or("0.0.0.0:3000"));
+                                std::process::exit(1);
+                            }
+                        }
                     }
                 };
                 let pid: u32 = match pid_str.parse() {
@@ -304,6 +394,9 @@ mod webhook_router;
 {% endif %}
 {% if project.hooks_api_crate %}
 mod hooks;
+{% endif %}
+{% if has_atproto %}
+mod atproto;
 {% endif %}
 
 #[tokio::main]

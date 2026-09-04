@@ -40,13 +40,6 @@ role = "root"
 path_segment = "applications"
 tag = "Applications"
 
-[domains.compensation]
-label = "Compensation"
-schema_dir = "compensation"
-postgres_schema = "compensation"
-depends_on = ["common"]
-entities = ["PayRunType", "CompensationType", "RewardType"]
-
 [domains.events]
 label = "Events"
 schema_dir = "events"
@@ -66,6 +59,13 @@ entities = ["RsvpType"]
 
 [domains.rsvp.entity_config.RsvpType]
 operations = ["create", "read", "update", "delete", "list"]
+
+[domains.compensation]
+label = "Compensation"
+schema_dir = "compensation"
+postgres_schema = "compensation"
+depends_on = ["common"]
+entities = ["PayRunType", "CompensationType", "RewardType"]
 
 [domains.compensation.entity_config.PayRunType]
 role = "root"

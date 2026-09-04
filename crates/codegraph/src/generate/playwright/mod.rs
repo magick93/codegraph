@@ -1,10 +1,75 @@
 // hr-graph/src/generate/playwright/mod.rs
 pub mod entity_gen;
 pub mod global_gen;
+pub mod ts_entity_gen;
+pub mod ts_global_gen;
+
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
 use super::ui::page::UiField;
+
+/// Resolve the repo-level `e2e-tests` root for the TypeScript Playwright
+/// harness.
+///
+/// The harness is hand-extended under `e2e-tests/specs/manual/` (and the a11y
+/// specs / a11y config), so it must live OUTSIDE the generated tree, at the
+/// repository root. The codegen output dir is `<repo>/generated/cosmos-app`,
+/// so the e2e root is two parents up, joined with `e2e-tests`.
+///
+/// Falls back to `output_dir.join("e2e-tests")` when the output dir isn't
+/// shaped like `<root>/generated/cosmos-app` (e.g. codegraph unit tests or a
+/// project with a different layout), preserving the pre-relocation behavior
+/// for those callers.
+pub fn e2e_tests_root(output_dir: &Path) -> PathBuf {
+    let in_repo_layout = output_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n == "cosmos-app")
+        .unwrap_or(false)
+        && output_dir
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .map(|n| n == "generated")
+            .unwrap_or(false);
+    if in_repo_layout {
+        if let Some(repo_root) = output_dir.parent().and_then(Path::parent) {
+            return repo_root.join("e2e-tests");
+        }
+    }
+    output_dir.join("e2e-tests")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn e2e_root_derives_repo_level_path_for_repo_layout() {
+        let out = Path::new("/repo/community-os/generated/cosmos-app");
+        assert_eq!(
+            e2e_tests_root(out),
+            PathBuf::from("/repo/community-os/e2e-tests")
+        );
+    }
+
+    #[test]
+    fn e2e_root_resolves_relative_repo_layout_against_cwd() {
+        let out = Path::new("generated/cosmos-app");
+        assert_eq!(e2e_tests_root(out), PathBuf::from("e2e-tests"));
+    }
+
+    #[test]
+    fn e2e_root_falls_back_to_output_dir_subdir() {
+        let out = Path::new("/tmp/ts-fixture-required-ref");
+        assert_eq!(
+            e2e_tests_root(out),
+            PathBuf::from("/tmp/ts-fixture-required-ref/e2e-tests")
+        );
+    }
+}
 
 /// Per-entity context passed to playwright/entity_page.tera and
 /// playwright/test_data_factory.tera.
@@ -46,4 +111,113 @@ pub struct PlaywrightDomainSummary {
 #[derive(Debug, Serialize)]
 pub struct PlaywrightCrateContext {
     pub domains: Vec<PlaywrightDomainSummary>,
+}
+
+/// Per-entity context for TypeScript spec + fixture + API client templates.
+#[derive(Debug, Serialize)]
+pub struct TsEntityContext {
+    pub entity_name: String,
+    pub module_name: String,
+    pub domain: String,
+    pub path_segment: String,
+    pub nsid: String,
+    pub has_create: bool,
+    pub has_read: bool,
+    pub has_update: bool,
+    pub has_delete: bool,
+    pub has_list: bool,
+    pub create_fields: Vec<TsFieldDef>,
+    /// True when at least one create field is required (gates the
+    /// missing-required-fields test in ts_spec.tera).
+    pub has_required_fields: bool,
+    /// Required entity-ref FK fields (with target metadata) — drives the
+    /// parent-creation `beforeAll` in ts_spec.tera and `withParent*` helpers
+    /// in ts_fixture.tera. Always serialized (empty vec when no required FKs)
+    /// so Tera templates can safely reference it.
+    pub fk_fields: Vec<TsFkField>,
+    pub schema_name: String,
+    /// Whether this entity has full-text search (search.fts_* config).
+    pub has_fts: bool,
+    /// camelCase create-DTO field used to seed FTS search terms.
+    pub fts_search_field: String,
+    /// True when `fts_search_field` is a required create field.
+    pub fts_search_field_required: bool,
+    /// camelCase create-DTO field of a secondary (D-weight) search column,
+    /// usable in a create payload. Empty when no such column exists.
+    pub fts_secondary_field: String,
+    /// True when the entity is permission-gated (`permissions.scope` set).
+    /// The generated spec then uses a DID persona token so requests carry an
+    /// actor DID the AuthorizationService can evaluate.
+    pub use_persona_token: bool,
+    /// True when the entity has `permissions.record_scoped` set. The generated
+    /// spec then expects 403 (authz-before-handler) for unknown record ids
+    /// instead of 404.
+    pub permission_record_scoped: bool,
+    /// DID injected as the test persona (both in the auth token and in
+    /// did-carrying fixture fields). Defaults to "did:plc:test.generated".
+    pub persona_did: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TsFieldDef {
+    pub name: String,
+    pub label: String,
+    pub ts_type: String,
+    pub required: bool,
+    pub example_value: String,
+    /// FK target metadata for required entity-ref FKs — used by the spec
+    /// generator to create parent rows in `beforeAll` so the child fixture
+    /// can reference a real parent id. None for non-FK / optional-FK fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fk_target_domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fk_target_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fk_target_module: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fk_target_entity_name: Option<String>,
+    /// JS-safe variable name for the captured parent id (camelCase of
+    /// `name`), present when `fk_target_entity_name` is Some.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub js_var: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TsFkField {
+    /// camelCase create-DTO field name, e.g. "campaignId".
+    pub name: String,
+    /// PascalCase target entity name, e.g. "Campaign".
+    pub entity_name: String,
+    /// Domain of the FK target entity, e.g. "campaigns".
+    pub target_domain: String,
+    /// REST path segment of the FK target, e.g. "campaign".
+    pub target_path: String,
+    /// snake_case module of the FK target, e.g. "campaign".
+    pub target_module: String,
+    /// JS-safe variable name for the captured parent id, e.g. "campaignId".
+    pub js_var: String,
+}
+
+/// Per-entity summary for global generators.
+#[derive(Debug, Serialize, Clone)]
+pub struct TsEntitySummary {
+    pub module_name: String,
+    pub domain: String,
+    pub path_segment: String,
+    pub entity_name: String,
+}
+
+/// Domain grouping for TypeScript E2E tests.
+#[derive(Debug, Serialize, Clone)]
+pub struct TsDomainSummary {
+    pub name: String,
+    pub entities: Vec<TsEntitySummary>,
+}
+
+/// Global context for playwright config, auth, docker-compose.
+#[derive(Debug, Serialize)]
+pub struct TsGlobalContext {
+    pub domains: Vec<TsDomainSummary>,
+    pub project_name: String,
+    pub api_base_url: String,
 }

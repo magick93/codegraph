@@ -3,22 +3,23 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, ColumnInfo, CompositeColumn,
-    CompositeRange, CompositionNode, CompositionTree, DataBindingResolution, DetectionSource,
-    EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, HttpEndpointNode,
-    InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData, SchemaNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, ColumnInfo,
+    CompositeColumn, CompositeRange, CompositionNode, CompositionTree, DataBindingResolution,
+    DetectionSource, EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode, PolicyNode,
+    PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData, SchemaNode,
     SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
-/// The RETURN clause for all SchemaNode queries — keeps the 21 columns in one place.
+/// The RETURN clause for all SchemaNode queries — keeps the 22 columns in one place.
 const SCHEMA_RETURN_COLS: &str = "\
     s.schema_id, s.title, s.description, \
     s.schema_type, s.classification, s.domain, s.rel_path, s.pg_type, s.rust_type, \
     s.sea_orm_type, s.rust_type_name, s.pg_table_name, s.api_path_segment, \
     s.parent_schema, s.is_entity, s.is_codelist, s.is_primitive_wrapper, \
-    s.has_all_of, s.has_one_of, s.has_any_of, s.has_definitions";
+    s.has_all_of, s.has_one_of, s.has_any_of, s.has_definitions, s.custom_annotations";
 
 /// The RETURN clause for all PropertyNode queries — keeps the 17 columns in one place.
 const PROPERTY_RETURN_COLS: &str = "\
@@ -1108,6 +1109,136 @@ impl GraphQuerier for GrafeoEngine {
         Ok(bindings)
     }
 
+    // ── AT Protocol query methods ──────────────────────────────────────
+
+    async fn get_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+        let result = query_gql(
+            self,
+            "MATCH (n:Namespace) RETURN n.authority, n.segment, n.domain ORDER BY n.authority",
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(NamespaceNode {
+                authority: reader.get_string(row, "n.authority")?,
+                segment: reader.get_string(row, "n.segment")?,
+                domain: reader.get_string(row, "n.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_lexicons(&self, domain: &str) -> Result<Vec<LexiconNode>, GraphError> {
+        let params = HashMap::from([("domain".to_string(), grafeo::Value::String(domain.into()))]);
+        let result = query_gql_params(
+            self,
+            "MATCH (l:Lexicon {domain: $domain}) RETURN l.nsid, l.lex_type, l.key_strategy, \
+             l.revision, l.description, l.domain ORDER BY l.nsid",
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            let revision = reader.get_i64(row, "l.revision").ok();
+            nodes.push(LexiconNode {
+                nsid: reader.get_string(row, "l.nsid")?,
+                lex_type: reader.get_string(row, "l.lex_type")?,
+                key_strategy: reader.get_string(row, "l.key_strategy")?,
+                revision,
+                description: reader.get_opt_string(row, "l.description")?,
+                domain: reader.get_string(row, "l.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_lexicon_by_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Option<LexiconNode>, GraphError> {
+        let escaped = schema_title.replace('\'', "\\'");
+        let gql = format!(
+            "MATCH (:Schema {{title: '{escaped}'}})-[:ProjectsToLexicon]->(l:Lexicon) \
+             RETURN l.nsid, l.lex_type, l.key_strategy, l.revision, l.description, l.domain"
+        );
+        let result = query_gql(self, &gql)?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        let revision = reader.get_i64(&result.rows[0], "l.revision").ok();
+        Ok(Some(LexiconNode {
+            nsid: reader.get_string(&result.rows[0], "l.nsid")?,
+            lex_type: reader.get_string(&result.rows[0], "l.lex_type")?,
+            key_strategy: reader.get_string(&result.rows[0], "l.key_strategy")?,
+            revision,
+            description: reader.get_opt_string(&result.rows[0], "l.description")?,
+            domain: reader.get_string(&result.rows[0], "l.domain")?,
+        }))
+    }
+
+    async fn get_collections(&self, domain: &str) -> Result<Vec<CollectionNode>, GraphError> {
+        let params = HashMap::from([("domain".to_string(), grafeo::Value::String(domain.into()))]);
+        let result = query_gql_params(
+            self,
+            "MATCH (c:Collection {domain: $domain}) RETURN c.nsid, c.key_strategy, c.domain ORDER BY c.nsid",
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(CollectionNode {
+                nsid: reader.get_string(row, "c.nsid")?,
+                key_strategy: reader.get_string(row, "c.key_strategy")?,
+                domain: reader.get_string(row, "c.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_repositories(&self) -> Result<Vec<RepositoryNode>, GraphError> {
+        let result = query_gql(
+            self,
+            "MATCH (r:Repository) RETURN r.did, r.handle, r.pds_endpoint, \
+             r.org_name, r.tenancy_mode ORDER BY r.did",
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(RepositoryNode {
+                did: reader.get_string(row, "r.did")?,
+                handle: reader.get_opt_string(row, "r.handle")?,
+                pds_endpoint: reader.get_string(row, "r.pds_endpoint")?,
+                org_name: reader.get_string(row, "r.org_name")?,
+                tenancy_mode: reader.get_string(row, "r.tenancy_mode")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_lexicon_references(&self, nsid: &str) -> Result<Vec<LexiconNode>, GraphError> {
+        let escaped = nsid.replace('\'', "\\'");
+        let gql = format!(
+            "MATCH (:Lexicon {{nsid: '{escaped}'}})-[:LexiconReferences]->(l:Lexicon) \
+             RETURN l.nsid, l.lex_type, l.key_strategy, l.revision, l.description, l.domain ORDER BY l.nsid"
+        );
+        let result = query_gql(self, &gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            let revision = reader.get_i64(row, "l.revision").ok();
+            nodes.push(LexiconNode {
+                nsid: reader.get_string(row, "l.nsid")?,
+                lex_type: reader.get_string(row, "l.lex_type")?,
+                key_strategy: reader.get_string(row, "l.key_strategy")?,
+                revision,
+                description: reader.get_opt_string(row, "l.description")?,
+                domain: reader.get_string(row, "l.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
     // ── API metamodel query methods ────────────────────────────────────
 
     async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
@@ -1676,16 +1807,12 @@ impl GrafeoEngine {
                             entity_col.classification = Some(
                                 codegraph_type_contracts::RefClassificationKind::EntityReference,
                             );
-                            // VO→entity FK columns are always nullable: the DTO and
-                            // repository generators model the VO as a nested child
-                            // table, so no create command ever supplies a value for
-                            // this column. Deriving nullability from the schema's
-                            // `required` makes required VO refs unmaterializable
-                            // (NOT NULL violation on every create).
-                            //
-                            // Genuine entity targets are NOT overridden: the base
-                            // column already derived `is_optional: !prop.is_required`
-                            // so the schema's `required` is honored (source of truth).
+                            // VO→entity synthetic FK columns are always nullable: the
+                            // DTO and repository generators model the VO as a nested
+                            // child table, so no create command ever supplies a value
+                            // for this column. Genuine EntityReference columns honor
+                            // the schema's `required` (is_optional was already derived
+                            // from !prop.is_required above).
                             if vo_entity.is_some() {
                                 entity_col.is_optional = true;
                             }

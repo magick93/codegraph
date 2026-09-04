@@ -432,6 +432,10 @@ fn vec_array_type_and_ctor(rust_type: &str) -> (&'static str, &'static str) {
             "sea_orm::sea_query::ArrayType::Bool",
             "sea_orm::Value::Bool(Some(s))",
         ),
+        "serde_json::Value" => (
+            "sea_orm::sea_query::ArrayType::Json",
+            "sea_orm::Value::Json(Some(Box::new(s)))",
+        ),
         _ => (
             "sea_orm::sea_query::ArrayType::String",
             "sea_orm::Value::String(Some(Box::new(s.to_string())))",
@@ -3582,8 +3586,15 @@ impl RepositoryImplEmitter {
                     ff.field_name
                 )
                 .unwrap();
-                // Generate type-appropriate parsing.
-                match ff.rust_type.as_str() {
+                // Generate type-appropriate parsing. Optional (`Option<T>`) types
+                // are handled via their base type — the column still stores a
+                // concrete value, and filter values are never null.
+                let base_type = ff
+                    .rust_type
+                    .trim_start_matches("Option<")
+                    .trim_end_matches('>')
+                    .to_string();
+                match base_type.as_str() {
                     "Uuid" | "uuid::Uuid" => {
                         writeln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\", )))?;", ff.field_name).unwrap();
                         writeln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col).unwrap();
@@ -3598,6 +3609,14 @@ impl RepositoryImplEmitter {
                     }
                     "bool" => {
                         writeln!(code, "            let parsed: bool = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid bool for filter '{}': {{e}}\")))?;", ff.field_name).unwrap();
+                        writeln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col).unwrap();
+                    }
+                    // Entity reference types (e.g. "ConsultationType") — FK columns
+                    // are always UUIDs, even when the DTO wraps them in Option<>.
+                    ty if ty.ends_with("Type")
+                        && ty.chars().next().is_some_and(|c| c.is_uppercase()) =>
+                    {
+                        writeln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\")))?;", ff.field_name).unwrap();
                         writeln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col).unwrap();
                     }
                     _ => {

@@ -1,4 +1,5 @@
 pub mod api_model;
+pub mod contract;
 pub mod handler;
 pub mod include_path;
 pub mod links;

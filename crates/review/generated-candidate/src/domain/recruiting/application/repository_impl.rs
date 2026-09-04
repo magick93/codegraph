@@ -133,7 +133,8 @@ impl ApplicationRepository<sea_orm::DatabaseTransaction> for ApplicationReposito
             condition = condition.add(crate::entity::recruiting_application::Column::ApplicationId.eq(val.clone()));
         }
         if let Some(val) = filters.get("candidate_id") {
-            condition = condition.add(crate::entity::recruiting_application::Column::CandidateId.eq(val.clone()));
+            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid UUID for filter 'candidate_id': {e}")))?;
+            condition = condition.add(crate::entity::recruiting_application::Column::CandidateId.eq(parsed));
         }
         if let Some(val) = filters.get("status") {
             condition = condition.add(crate::entity::recruiting_application::Column::Status.eq(val.clone()));
@@ -167,6 +168,11 @@ impl ApplicationRepository<sea_orm::DatabaseTransaction> for ApplicationReposito
     }
 }
 use crate::domain::recruiting::candidate::dto_response::CandidateResponse;
+use crate::domain::recruiting::candidate::dto_response::CandidateProcessHistoryResponse;
+use crate::domain::recruiting::candidate::dto_response::CandidateDistributionGuidelinesResponse;
+use crate::domain::recruiting::candidate::dto_response::CandidateNameResponse;
+use crate::domain::recruiting::candidate::dto_response::CandidatePositionScheduleTypeCodesResponse;
+use crate::domain::recruiting::candidate::dto_response::CandidateQualificationResponse;
 
 impl ApplicationRepositoryImpl {
 
@@ -181,6 +187,105 @@ impl ApplicationRepositoryImpl {
             .await?;
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
+
+            let application_process_history_rows = {
+                let stmt = Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "SELECT id, action_date, descriptions FROM recruiting.candidate_application_process_history WHERE candidate_id = $1 ORDER BY created_at",
+                    vec![row.id.into()],
+                );
+                let rows = db.query_all(stmt).await?;
+                let mut items = Vec::with_capacity(rows.len());
+                for child_row in &rows {
+                    use sea_orm::TryGetable;
+                    items.push(CandidateProcessHistoryResponse {
+                        action_date: Option::<chrono::DateTime<chrono::Utc>>::try_get_by(child_row, "action_date").ok().flatten(),
+                        descriptions: Option::<Vec<String>>::try_get_by(child_row, "descriptions").ok().flatten(),
+                    ..Default::default()
+                    });
+                }
+                items
+            };
+
+            let distribution_guidelines_rows = {
+                let stmt = Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "SELECT id, do_not_redistribute_indicator, scope, description, end_date, start_date FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1 ORDER BY created_at",
+                    vec![row.id.into()],
+                );
+                let rows = db.query_all(stmt).await?;
+                let mut items = Vec::with_capacity(rows.len());
+                for child_row in &rows {
+                    use sea_orm::TryGetable;
+                    items.push(CandidateDistributionGuidelinesResponse {
+                        do_not_redistribute_indicator: Option::<bool>::try_get_by(child_row, "do_not_redistribute_indicator").ok().flatten(),
+                        scope: Option::<String>::try_get_by(child_row, "scope").ok().flatten(),
+                        description: Option::<String>::try_get_by(child_row, "description").ok().flatten(),
+                        end_date: Option::<chrono::NaiveDate>::try_get_by(child_row, "end_date").ok().flatten(),
+                        start_date: chrono::NaiveDate::try_get_by(child_row, "start_date").map_err(|e| format!("{e:?}"))?,
+                    ..Default::default()
+                    });
+                }
+                items
+            };
+
+            let person_name_rows = {
+                let stmt = Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "SELECT id, family_name, formatted_name, given_name FROM recruiting.candidate_person_name WHERE candidate_id = $1 ORDER BY created_at",
+                    vec![row.id.into()],
+                );
+                let rows = db.query_all(stmt).await?;
+                let mut items = Vec::with_capacity(rows.len());
+                for child_row in &rows {
+                    use sea_orm::TryGetable;
+                    items.push(CandidateNameResponse {
+                        family_name: Option::<String>::try_get_by(child_row, "family_name").ok().flatten(),
+                        formatted_name: Option::<String>::try_get_by(child_row, "formatted_name").ok().flatten(),
+                        given_name: Option::<String>::try_get_by(child_row, "given_name").ok().flatten(),
+                    ..Default::default()
+                    });
+                }
+                items
+            };
+
+            let position_schedule_type_codes_rows = {
+                let stmt = Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "SELECT id, code FROM recruiting.candidate_position_schedule_type_codes WHERE candidate_id = $1 ORDER BY created_at",
+                    vec![row.id.into()],
+                );
+                let rows = db.query_all(stmt).await?;
+                let mut items = Vec::with_capacity(rows.len());
+                for child_row in &rows {
+                    use sea_orm::TryGetable;
+                    items.push(CandidatePositionScheduleTypeCodesResponse {
+                        code: String::try_get_by(child_row, "code").map_err(|e| format!("{e:?}"))?.parse().unwrap_or_default(),
+                    ..Default::default()
+                    });
+                }
+                items
+            };
+
+            let qualifications_rows = {
+                let stmt = Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "SELECT id, date_awarded, issuer, qualification_name FROM recruiting.candidate_qualifications WHERE candidate_id = $1 ORDER BY created_at",
+                    vec![row.id.into()],
+                );
+                let rows = db.query_all(stmt).await?;
+                let mut items = Vec::with_capacity(rows.len());
+                for child_row in &rows {
+                    use sea_orm::TryGetable;
+                    items.push(CandidateQualificationResponse {
+                        date_awarded: Option::<chrono::NaiveDate>::try_get_by(child_row, "date_awarded").ok().flatten(),
+                        issuer: Option::<String>::try_get_by(child_row, "issuer").ok().flatten(),
+                        qualification_name: String::try_get_by(child_row, "qualification_name").map_err(|e| format!("{e:?}"))?,
+                    ..Default::default()
+                    });
+                }
+                items
+            };
             results.push(CandidateResponse {
                 id: row.id,
                 birth_date: row.birth_date,
@@ -192,6 +297,11 @@ impl ApplicationRepositoryImpl {
                 uri: row.uri,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                application_process_history: application_process_history_rows.into_iter().next(),
+                distribution_guidelines: distribution_guidelines_rows.into_iter().next(),
+                person_name: person_name_rows.into_iter().next(),
+                position_schedule_type_codes: position_schedule_type_codes_rows,
+                qualifications: qualifications_rows,
                 ..Default::default()
             });
         }
@@ -216,6 +326,105 @@ impl ApplicationRepositoryImpl {
                 Some(v) => v,
                 None => continue,
             };
+
+            let application_process_history_rows = {
+                let stmt = Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "SELECT id, action_date, descriptions FROM recruiting.candidate_application_process_history WHERE candidate_id = $1 ORDER BY created_at",
+                    vec![row.id.into()],
+                );
+                let rows = db.query_all(stmt).await?;
+                let mut items = Vec::with_capacity(rows.len());
+                for child_row in &rows {
+                    use sea_orm::TryGetable;
+                    items.push(CandidateProcessHistoryResponse {
+                        action_date: Option::<chrono::DateTime<chrono::Utc>>::try_get_by(child_row, "action_date").ok().flatten(),
+                        descriptions: Option::<Vec<String>>::try_get_by(child_row, "descriptions").ok().flatten(),
+                    ..Default::default()
+                    });
+                }
+                items
+            };
+
+            let distribution_guidelines_rows = {
+                let stmt = Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "SELECT id, do_not_redistribute_indicator, scope, description, end_date, start_date FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1 ORDER BY created_at",
+                    vec![row.id.into()],
+                );
+                let rows = db.query_all(stmt).await?;
+                let mut items = Vec::with_capacity(rows.len());
+                for child_row in &rows {
+                    use sea_orm::TryGetable;
+                    items.push(CandidateDistributionGuidelinesResponse {
+                        do_not_redistribute_indicator: Option::<bool>::try_get_by(child_row, "do_not_redistribute_indicator").ok().flatten(),
+                        scope: Option::<String>::try_get_by(child_row, "scope").ok().flatten(),
+                        description: Option::<String>::try_get_by(child_row, "description").ok().flatten(),
+                        end_date: Option::<chrono::NaiveDate>::try_get_by(child_row, "end_date").ok().flatten(),
+                        start_date: chrono::NaiveDate::try_get_by(child_row, "start_date").map_err(|e| format!("{e:?}"))?,
+                    ..Default::default()
+                    });
+                }
+                items
+            };
+
+            let person_name_rows = {
+                let stmt = Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "SELECT id, family_name, formatted_name, given_name FROM recruiting.candidate_person_name WHERE candidate_id = $1 ORDER BY created_at",
+                    vec![row.id.into()],
+                );
+                let rows = db.query_all(stmt).await?;
+                let mut items = Vec::with_capacity(rows.len());
+                for child_row in &rows {
+                    use sea_orm::TryGetable;
+                    items.push(CandidateNameResponse {
+                        family_name: Option::<String>::try_get_by(child_row, "family_name").ok().flatten(),
+                        formatted_name: Option::<String>::try_get_by(child_row, "formatted_name").ok().flatten(),
+                        given_name: Option::<String>::try_get_by(child_row, "given_name").ok().flatten(),
+                    ..Default::default()
+                    });
+                }
+                items
+            };
+
+            let position_schedule_type_codes_rows = {
+                let stmt = Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "SELECT id, code FROM recruiting.candidate_position_schedule_type_codes WHERE candidate_id = $1 ORDER BY created_at",
+                    vec![row.id.into()],
+                );
+                let rows = db.query_all(stmt).await?;
+                let mut items = Vec::with_capacity(rows.len());
+                for child_row in &rows {
+                    use sea_orm::TryGetable;
+                    items.push(CandidatePositionScheduleTypeCodesResponse {
+                        code: String::try_get_by(child_row, "code").map_err(|e| format!("{e:?}"))?.parse().unwrap_or_default(),
+                    ..Default::default()
+                    });
+                }
+                items
+            };
+
+            let qualifications_rows = {
+                let stmt = Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "SELECT id, date_awarded, issuer, qualification_name FROM recruiting.candidate_qualifications WHERE candidate_id = $1 ORDER BY created_at",
+                    vec![row.id.into()],
+                );
+                let rows = db.query_all(stmt).await?;
+                let mut items = Vec::with_capacity(rows.len());
+                for child_row in &rows {
+                    use sea_orm::TryGetable;
+                    items.push(CandidateQualificationResponse {
+                        date_awarded: Option::<chrono::NaiveDate>::try_get_by(child_row, "date_awarded").ok().flatten(),
+                        issuer: Option::<String>::try_get_by(child_row, "issuer").ok().flatten(),
+                        qualification_name: String::try_get_by(child_row, "qualification_name").map_err(|e| format!("{e:?}"))?,
+                    ..Default::default()
+                    });
+                }
+                items
+            };
             result.entry(key).or_default().push(CandidateResponse {
                 id: row.id,
                 birth_date: row.birth_date,
@@ -227,6 +436,11 @@ impl ApplicationRepositoryImpl {
                 uri: row.uri,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                application_process_history: application_process_history_rows.into_iter().next(),
+                distribution_guidelines: distribution_guidelines_rows.into_iter().next(),
+                person_name: person_name_rows.into_iter().next(),
+                position_schedule_type_codes: position_schedule_type_codes_rows,
+                qualifications: qualifications_rows,
                 ..Default::default()
             });
         }

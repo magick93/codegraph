@@ -40,6 +40,12 @@ pub struct MockEngine {
     op_interaction: Mutex<HashMap<String, String>>,
     interaction_endpoint: Mutex<HashMap<String, String>>,
     resource_operations: Mutex<HashMap<String, Vec<String>>>,
+    namespaces: Mutex<HashMap<String, NamespaceNode>>,
+    lexicons: Mutex<HashMap<String, LexiconNode>>,
+    collections: Mutex<HashMap<String, CollectionNode>>,
+    repositories: Mutex<HashMap<String, RepositoryNode>>,
+    /// Maps schema_title -> lexicon nsid for get_lexicon_by_schema lookups.
+    schema_lexicons: Mutex<HashMap<String, String>>,
     api_resources: Mutex<HashMap<String, ApiResourceNode>>,
     api_operations: Mutex<HashMap<String, ApiOperationNode>>,
     interactions: Mutex<HashMap<String, InteractionNode>>,
@@ -85,6 +91,11 @@ impl MockEngine {
             op_interaction: Mutex::new(HashMap::new()),
             interaction_endpoint: Mutex::new(HashMap::new()),
             resource_operations: Mutex::new(HashMap::new()),
+            namespaces: Mutex::new(HashMap::new()),
+            lexicons: Mutex::new(HashMap::new()),
+            collections: Mutex::new(HashMap::new()),
+            repositories: Mutex::new(HashMap::new()),
+            schema_lexicons: Mutex::new(HashMap::new()),
             api_resources: Mutex::new(HashMap::new()),
             api_operations: Mutex::new(HashMap::new()),
             interactions: Mutex::new(HashMap::new()),
@@ -99,6 +110,13 @@ impl MockEngine {
             tenants: Mutex::new(HashMap::new()),
             start_time: Instant::now(),
         }
+    }
+
+    pub fn add_lexicon_mapping(&self, schema_title: &str, lexicon_nsid: &str) {
+        self.schema_lexicons
+            .lock()
+            .unwrap()
+            .insert(schema_title.to_string(), lexicon_nsid.to_string());
     }
 
     pub fn builder() -> MockEngineBuilder {
@@ -124,6 +142,8 @@ pub struct MockEngineBuilder {
     extends_map: HashMap<String, Vec<SchemaNode>>,
     allof_targets: HashMap<String, Vec<String>>,
     enum_values: HashMap<String, Vec<EnumValue>>,
+    /// (schema_title, lexicon_nsid) pairs for get_lexicon_by_schema lookups.
+    schema_lexicons: HashMap<String, String>,
 }
 
 impl MockEngineBuilder {
@@ -195,6 +215,12 @@ impl MockEngineBuilder {
 
     pub fn with_enum_values(mut self, schema_title: &str, values: Vec<EnumValue>) -> Self {
         self.enum_values.insert(schema_title.to_string(), values);
+        self
+    }
+
+    pub fn with_lexicon_mapping(mut self, schema_title: &str, lexicon_nsid: &str) -> Self {
+        self.schema_lexicons
+            .insert(schema_title.to_string(), lexicon_nsid.to_string());
         self
     }
 
@@ -278,6 +304,12 @@ impl MockEngineBuilder {
             let mut enum_values = engine.enum_values.lock().unwrap();
             for (k, v) in self.enum_values {
                 enum_values.insert(k, v);
+            }
+        }
+        {
+            let mut schema_lexicons = engine.schema_lexicons.lock().unwrap();
+            for (k, v) in self.schema_lexicons {
+                schema_lexicons.insert(k, v);
             }
         }
         engine
@@ -646,6 +678,42 @@ impl GraphIngestor for MockEngine {
             .unwrap()
             .insert(node.name.clone(), node.clone());
         Ok(id)
+    }
+
+    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError> {
+        let authority = node.authority.clone();
+        self.namespaces
+            .lock()
+            .unwrap()
+            .insert(authority.clone(), node.clone());
+        Ok(authority)
+    }
+
+    async fn ingest_lexicon(&self, node: &LexiconNode) -> Result<String, GraphError> {
+        let nsid = node.nsid.clone();
+        self.lexicons
+            .lock()
+            .unwrap()
+            .insert(nsid.clone(), node.clone());
+        Ok(nsid)
+    }
+
+    async fn ingest_collection(&self, node: &CollectionNode) -> Result<String, GraphError> {
+        let nsid = node.nsid.clone();
+        self.collections
+            .lock()
+            .unwrap()
+            .insert(nsid.clone(), node.clone());
+        Ok(nsid)
+    }
+
+    async fn ingest_repository(&self, node: &RepositoryNode) -> Result<String, GraphError> {
+        let did = node.did.clone();
+        self.repositories
+            .lock()
+            .unwrap()
+            .insert(did.clone(), node.clone());
+        Ok(did)
     }
 
     // ── API metamodel ingestion ───────────────────────────────────────
@@ -1211,6 +1279,65 @@ impl GraphQuerier for MockEngine {
         Ok(self.get_entity_names().await?)
     }
 
+    // ── AT Protocol query methods ─────────────────────────────────────
+
+    async fn get_lexicons(&self, domain: &str) -> Result<Vec<LexiconNode>, GraphError> {
+        Ok(self
+            .lexicons
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|l| domain.is_empty() || l.domain == domain)
+            .cloned()
+            .collect())
+    }
+
+    async fn get_lexicon_by_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Option<LexiconNode>, GraphError> {
+        let mapping = self.schema_lexicons.lock().unwrap();
+        if let Some(nsid) = mapping.get(schema_title) {
+            let lexicons = self.lexicons.lock().unwrap();
+            return Ok(lexicons.get(nsid).cloned());
+        }
+        Ok(None)
+    }
+
+    async fn get_collections(&self, domain: &str) -> Result<Vec<CollectionNode>, GraphError> {
+        Ok(self
+            .collections
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|c| domain.is_empty() || c.domain == domain)
+            .cloned()
+            .collect())
+    }
+
+    async fn get_repositories(&self) -> Result<Vec<RepositoryNode>, GraphError> {
+        Ok(self
+            .repositories
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    async fn get_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+        Ok(self.namespaces.lock().unwrap().values().cloned().collect())
+    }
+
+    #[allow(unused_variables)]
+    async fn get_lexicon_references(&self, nsid: &str) -> Result<Vec<LexiconNode>, GraphError> {
+        // TODO: look up via LexiconReferences edges.
+        // MockEngine doesn't store edges, so we can't resolve this relationship.
+        Ok(Vec::new())
+    }
+
+    // ── API metamodel query methods ────────────────────────────────────
+
     async fn get_api_resources(&self) -> Result<Vec<ApiResourceNode>, GraphError> {
         Ok(self
             .api_resources
@@ -1219,6 +1346,16 @@ impl GraphQuerier for MockEngine {
             .values()
             .cloned()
             .collect())
+    }
+
+    async fn get_api_resource(&self, name: &str) -> Result<Option<ApiResourceNode>, GraphError> {
+        Ok(self
+            .api_resources
+            .lock()
+            .unwrap()
+            .values()
+            .find(|r| r.name == name)
+            .cloned())
     }
 
     async fn get_api_operations(
@@ -1256,6 +1393,56 @@ impl GraphQuerier for MockEngine {
             return Ok(None);
         };
         Ok(self.http_endpoints.lock().unwrap().get(he_id).cloned())
+    }
+
+    async fn get_interactions(
+        &self,
+        operation_name: &str,
+    ) -> Result<Vec<InteractionNode>, GraphError> {
+        let _ = operation_name;
+        Ok(self
+            .interactions
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    async fn get_http_endpoints(&self) -> Result<Vec<HttpEndpointNode>, GraphError> {
+        Ok(self
+            .http_endpoints
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    async fn get_error_definitions(&self) -> Result<Vec<ErrorDefinitionNode>, GraphError> {
+        Ok(self
+            .error_definitions
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
+    async fn get_permissions(&self) -> Result<Vec<PermissionNode>, GraphError> {
+        Ok(self.permissions.lock().unwrap().values().cloned().collect())
+    }
+
+    async fn get_pipelines(&self) -> Result<Vec<PipelineNode>, GraphError> {
+        Ok(self.pipelines.lock().unwrap().values().cloned().collect())
+    }
+
+    async fn get_pipeline_for_endpoint(
+        &self,
+        endpoint_path: &str,
+    ) -> Result<Option<PipelineNode>, GraphError> {
+        let _ = endpoint_path;
+        Ok(None)
     }
 
     // ── Persistence metamodel queries ─────────────────────────────────

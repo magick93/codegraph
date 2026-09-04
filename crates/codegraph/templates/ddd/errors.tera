@@ -9,6 +9,10 @@ pub enum {{ domain | pascal_case }}Error {
     #[error("{{ error.code }}: {{ error.description }}")]
     {{ error.variant_name }},
 {% endfor %}
+    #[error("Conflict")]
+    Conflict,
+    #[error("Not found")]
+    NotFound,
     #[error("{0}")]
     InternalError(String),
 }
@@ -19,6 +23,8 @@ impl {{ domain | pascal_case }}Error {
 {% for error in errors %}
             Self::{{ error.variant_name }} => "{{ error.code }}",
 {% endfor %}
+            Self::Conflict => "CONFLICT",
+            Self::NotFound => "NOT_FOUND",
             Self::InternalError(_) => "INTERNAL_ERROR",
         }
     }
@@ -28,6 +34,8 @@ impl {{ domain | pascal_case }}Error {
 {% for error in errors %}
             Self::{{ error.variant_name }} => StatusCode::from_u16({{ error.http_status }}).unwrap(),
 {% endfor %}
+            Self::Conflict => StatusCode::CONFLICT,
+            Self::NotFound => StatusCode::NOT_FOUND,
             Self::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -42,6 +50,19 @@ impl From<sea_orm::DbErr> for {{ domain | pascal_case }}Error {
         Self::InternalError(e.to_string())
     }
 }
+
+impl From<Box<dyn std::error::Error>> for {{ domain | pascal_case }}Error {
+    fn from(e: Box<dyn std::error::Error>) -> Self {
+        Self::InternalError(e.to_string())
+    }
+}
+
+impl From<Box<dyn std::error::Error + Send + Sync>> for {{ domain | pascal_case }}Error {
+    fn from(e: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        Self::InternalError(e.to_string())
+    }
+}
+
 {% if project.persistence_provider == "cornucopia" %}
 
 impl From<tokio_postgres::Error> for {{ domain | pascal_case }}Error {
