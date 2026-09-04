@@ -2191,10 +2191,9 @@ impl RepositoryImplEmitter {
                     out: &mut Vec<String>,
                 ) {
                     if seen.insert(child.struct_name.clone()) {
-                        out.push(format!(
-                            "use {}{}::dto_response::{};",
-                            base, child.sql_table_name, child.struct_name
-                        ));
+                        // base already ends at the target entity's module —
+                        // every nested level is re-exported by its dto_response.
+                        out.push(format!("use {}dto_response::{};", base, child.struct_name));
                     }
                     for nested in &child.child_tables {
                         walk_child_imports(nested, base, seen, out);
