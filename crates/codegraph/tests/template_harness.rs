@@ -8569,7 +8569,8 @@ role = "root"
         "detail page must mount the extension component"
     );
     assert!(
-        page.content.contains("data-testid=\"ird-registration-panel\""),
+        page.content
+            .contains("data-testid=\"ird-registration-panel\""),
         "extension mount must carry the conventional testid"
     );
 
@@ -8582,7 +8583,9 @@ role = "root"
         .expect("plain detail page generation should not fail");
     let page_plain = files_plain
         .iter()
-        .find(|f| f.path.ends_with("+page.svelte") && f.path.to_string_lossy().contains("[worker_id]"))
+        .find(|f| {
+            f.path.ends_with("+page.svelte") && f.path.to_string_lossy().contains("[worker_id]")
+        })
         .expect("plain detail +page.svelte must be emitted");
     assert!(
         !page_plain.content.contains("components/extensions/"),
@@ -8602,7 +8605,9 @@ role = "root"
         .expect("empty-list detail page generation should not fail");
     let page_empty = files_empty
         .iter()
-        .find(|f| f.path.ends_with("+page.svelte") && f.path.to_string_lossy().contains("[worker_id]"))
+        .find(|f| {
+            f.path.ends_with("+page.svelte") && f.path.to_string_lossy().contains("[worker_id]")
+        })
         .expect("empty-list detail +page.svelte must be emitted");
     assert_eq!(
         page_plain.content, page_empty.content,

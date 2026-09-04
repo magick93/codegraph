@@ -42,6 +42,19 @@ pub struct UiPageContext {
     pub param_name: String,
     /// Set when this entity is a child nested under a parent.
     pub parent: Option<UiParentInfo>,
+    /// Config-driven extension points mounted on the detail page
+    /// (`ui_detail_extensions`, #162 phase 3). Empty = no extension blocks.
+    pub detail_extensions: Vec<UiDetailExtension>,
+}
+
+/// One consumer-owned panel mounted on a generated detail page.
+#[derive(Debug, Clone, Serialize)]
+pub struct UiDetailExtension {
+    /// kebab-case name from config (e.g. "ird-registration-panel") — used
+    /// for the conventional `data-testid`.
+    pub name: String,
+    /// PascalCase component name (e.g. "IrdRegistrationPanel").
+    pub component: String,
 }
 
 /// A sub-field definition for a StructuredWrapper type, embedded in UiField
@@ -353,6 +366,18 @@ impl EntityGenerator for UiPageGenerator {
             result
         };
 
+        let detail_extensions = entity_cfg
+            .map(|ec| {
+                ec.ui_detail_extensions
+                    .iter()
+                    .map(|name| UiDetailExtension {
+                        name: name.clone(),
+                        component: codegraph_naming::to_pascal_case(name),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let ctx = UiPageContext {
             entity_name,
             module_name,
@@ -375,6 +400,7 @@ impl EntityGenerator for UiPageGenerator {
             has_child_sections,
             param_name: crate::generate::api::router::param_name_from_path_segment(&path_segment),
             parent: parent.clone(),
+            detail_extensions,
         };
 
         let routes_base = self
