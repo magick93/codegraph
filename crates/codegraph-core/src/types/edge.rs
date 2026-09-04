@@ -29,6 +29,7 @@ pub enum EdgeType {
     HasDataBinding,
     BindsToEntity,
     BindsToProperty,
+    BindsToOperation,
     TriggersAction,
     ActionEvent,
     HasModuleDefinition,

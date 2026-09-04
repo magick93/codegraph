@@ -37,12 +37,15 @@ impl<'a> IfmlGraphQuerier<'a> {
                 properties.insert("mode".to_string(), mode.clone());
             }
 
+            let fields_with_types = self.resolve_field_types(comp).await?;
+
             components.push(IfmlComponent {
                 name: comp.name.clone(),
                 component_type: comp.component_type.clone(),
                 mode: comp.mode.clone(),
                 entity: comp.entity.clone(),
                 fields: comp.fields.clone().unwrap_or_default(),
+                fields_with_types,
                 filter: comp.filter.clone(),
                 properties,
                 events,
@@ -50,6 +53,37 @@ impl<'a> IfmlGraphQuerier<'a> {
             });
         }
         Ok(components)
+    }
+
+    async fn resolve_field_types(
+        &self,
+        comp: &codegraph_core::types::ViewComponentNode,
+    ) -> Result<Vec<(String, String)>, GraphError> {
+        let Some(ref entity) = comp.entity else {
+            return Ok(Vec::new());
+        };
+        let title = if self.db.get_schema(entity).await?.is_some() {
+            entity.clone()
+        } else {
+            let suffixed = format!("{entity}Type");
+            if self.db.get_schema(&suffixed).await?.is_some() {
+                suffixed
+            } else {
+                entity.clone()
+            }
+        };
+        let props = self.db.get_properties(&title).await?;
+        let props_by_name: HashMap<String, String> = props
+            .iter()
+            .map(|p| (p.name.clone(), p.rust_field_type.clone()))
+            .collect();
+        Ok(comp
+            .fields
+            .clone()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|f| props_by_name.get(f).map(|t| (f.clone(), t.clone())))
+            .collect())
     }
 
     async fn get_events_for(&self, parent_id: &str) -> Result<Vec<IfmlEvent>, GraphError> {

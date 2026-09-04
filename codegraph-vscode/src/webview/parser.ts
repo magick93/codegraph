@@ -69,6 +69,11 @@ function extractViewContainer(name: string, body: string): ViewContainerData {
 
   const labelMatch = /label\s*:\s*"([^"]+)"/.exec(body);
 
+  const positionMatch = /position\s*:\s*\{\s*x\s*:\s*([-+]?\d*\.?\d+)\s*;\s*y\s*:\s*([-+]?\d*\.?\d+)\s*;?\s*\}/.exec(body);
+  const position = positionMatch
+    ? { x: parseFloat(positionMatch[1]), y: parseFloat(positionMatch[2]) }
+    : undefined;
+
   return {
     name,
     label: labelMatch?.[1],
@@ -80,6 +85,7 @@ function extractViewContainer(name: string, body: string): ViewContainerData {
     components,
     events,
     containers: [],
+    position,
   };
 }
 

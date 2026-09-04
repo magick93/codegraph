@@ -1,9 +1,7 @@
 use codegraph_core::traits::GraphQuerier;
 
-/// Test that the IFML DSL parser correctly parses the full example.
-#[test]
-fn test_ifml_parse_full_example() {
-    let ifml_content = r#"
+/// Full multi-view IFML fixture used by round-trip tests.
+const FULL_IFML: &str = r#"
 domain "sales" {
     schema "sales";
 }
@@ -56,6 +54,11 @@ view "CustomerEdit" {
     }
 }
 "#;
+
+/// Test that the IFML DSL parser correctly parses the full example.
+#[test]
+fn test_ifml_parse_full_example() {
+    let ifml_content = FULL_IFML;
 
     let model = codegraph_ifml_dsl::parse_ifml(ifml_content).expect("Should parse valid IFML");
 
@@ -149,6 +152,68 @@ view "TestView" {
     let components = engine.get_ifml_view_components("TestView").await.unwrap();
     assert_eq!(components.len(), 1);
     assert_eq!(components[0].name, "grid");
+
+    let bindings = engine.get_data_bindings().await.unwrap();
+    assert_eq!(bindings.len(), 1);
+    let binding = &bindings[0];
+    assert_eq!(binding.component, "grid");
+    assert_eq!(binding.entity_title, "ItemType");
+    assert_eq!(binding.fields, vec!["name", "value"]);
+    assert_eq!(binding.api_operation, None);
+}
+
+/// Round-trip test: IFML DSL → Grafeo graph → GraphQuerier. Verifies that
+/// IFML edges (which are persisted with prefixed ids) resolve through the
+/// graph layer's prefix stripping.
+#[tokio::test]
+async fn test_ifml_grafeo_round_trip_edges() {
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
+    let model = codegraph_ifml_dsl::parse_ifml(FULL_IFML).expect("Should parse valid IFML");
+    codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
+        .await
+        .expect("Should ingest");
+
+    let containers = engine.get_ifml_view_containers().await.unwrap();
+    assert_eq!(containers.len(), 3);
+    let names: Vec<String> = containers.iter().map(|c| c.name.clone()).collect();
+    assert!(names.contains(&"CustomerList".to_string()));
+    assert!(names.contains(&"CustomerDetail".to_string()));
+    assert!(names.contains(&"CustomerEdit".to_string()));
+
+    let components = engine
+        .get_ifml_view_components("CustomerList")
+        .await
+        .unwrap();
+    assert_eq!(components.len(), 1);
+    assert_eq!(components[0].name, "grid");
+
+    let events = engine.get_ifml_events("comp:grid").await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].name, "comp_grid_select");
+
+    let flows = engine.get_ifml_navigation_flows().await.unwrap();
+    assert!(
+        flows.contains(&(
+            "grid".to_string(),
+            "comp_grid_select".to_string(),
+            "CustomerDetail".to_string()
+        )),
+        "missing grid->CustomerDetail flow: {flows:?}"
+    );
+    assert!(
+        flows.contains(&(
+            "info".to_string(),
+            "comp_info_edit".to_string(),
+            "CustomerEdit".to_string()
+        )),
+        "missing info->CustomerEdit flow: {flows:?}"
+    );
+
+    let actions = engine.get_ifml_actions().await.unwrap();
+    assert!(
+        actions.iter().any(|a| a.name == "UpdateCustomer"),
+        "UpdateCustomer action not found: {actions:?}"
+    );
 }
 
 /// Test IFML stale route cleanup

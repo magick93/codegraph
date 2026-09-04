@@ -47,7 +47,7 @@ pub async fn ingest_policies_and_relationships(
                     target_schema: schema_title.clone(),
                     domain: Some(domain_name.clone()),
                 };
-                ingestor.ingest_policy(&policy).await.map_err(|e| Error::Graph(e))?;
+                ingestor.ingest_policy(&policy).await.map_err(Error::Graph)?;
             }
 
             if let Some(tenant_isolation) = &policies.tenant_isolation {
@@ -81,7 +81,7 @@ pub async fn ingest_policies_and_relationships(
                     target_schema: schema_title.clone(),
                     domain: Some(domain_name.clone()),
                 };
-                ingestor.ingest_policy(&policy).await.map_err(|e| Error::Graph(e))?;
+                ingestor.ingest_policy(&policy).await.map_err(Error::Graph)?;
             }
 
             if let Some(audit) = &policies.audit {
@@ -95,7 +95,7 @@ pub async fn ingest_policies_and_relationships(
                     target_schema: schema_title.clone(),
                     domain: Some(domain_name.clone()),
                 };
-                ingestor.ingest_policy(&policy).await.map_err(|e| Error::Graph(e))?;
+                ingestor.ingest_policy(&policy).await.map_err(Error::Graph)?;
             }
 
             for rls in &policies.row_security {
@@ -119,7 +119,7 @@ pub async fn ingest_policies_and_relationships(
                     target_schema: schema_title.clone(),
                     domain: Some(domain_name.clone()),
                 };
-                ingestor.ingest_policy(&policy).await.map_err(|e| Error::Graph(e))?;
+                ingestor.ingest_policy(&policy).await.map_err(Error::Graph)?;
             }
 
             for (rel_name, rel_config) in &entity_config.relationships {
@@ -182,7 +182,7 @@ pub async fn ingest_policies_and_relationships(
                     propagation,
                     domain: Some(domain_name.clone()),
                 };
-                ingestor.ingest_relationship(&rel).await.map_err(|e| Error::Graph(e))?;
+                ingestor.ingest_relationship(&rel).await.map_err(Error::Graph)?;
             }
         }
     }

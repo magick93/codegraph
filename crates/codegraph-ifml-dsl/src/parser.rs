@@ -306,6 +306,25 @@ fn parse_value_expression(pair: Pair<Rule>) -> ValueExpression {
                 }
                 ValueExpression::Array(elems)
             }
+            Rule::object_literal => {
+                let mut members = Vec::new();
+                for child in inner.clone().into_inner() {
+                    if child.as_rule() != Rule::object_member {
+                        continue;
+                    }
+                    let mut member_inner = child.into_inner();
+                    let key = member_inner
+                        .next()
+                        .map(|p| p.as_str().to_string())
+                        .unwrap_or_default();
+                    let value = member_inner
+                        .next()
+                        .map(parse_value_expression)
+                        .unwrap_or(ValueExpression::Identifier("".to_string()));
+                    members.push(ObjectMember { key, value });
+                }
+                ValueExpression::Object(members)
+            }
             _ => convert_expression_to_value(inner),
         }
     } else {
@@ -323,7 +342,8 @@ fn parse_property_assignment(pair: Pair<Rule>) -> PropertyAssignment {
         .next()
         .map(parse_value_expression)
         .unwrap_or(ValueExpression::Identifier("".to_string()));
-    PropertyAssignment { key, value }
+    let span = Some((pair.as_span().start(), pair.as_span().end()));
+    PropertyAssignment { key, value, span }
 }
 
 fn parse_event_type(pair: Pair<Rule>) -> EventType {
@@ -822,6 +842,7 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
             properties: Vec::new(),
             components: Vec::new(),
             events: Vec::new(),
+            position: None,
         };
     };
 
@@ -839,6 +860,8 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
         })
         .unwrap_or(false);
 
+    let position = extract_position_property(&properties);
+
     ContainerDeclaration {
         name,
         is_default,
@@ -846,6 +869,7 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
         properties,
         components,
         events,
+        position,
     }
 }
 
@@ -861,6 +885,37 @@ fn extract_bool_property(properties: &[PropertyAssignment], key: &str) -> bool {
             }
         })
         .unwrap_or(false)
+}
+
+fn extract_position_property(properties: &[PropertyAssignment]) -> Option<Position> {
+    let prop = properties.iter().find(|p| p.key == "position")?;
+    let members = match &prop.value {
+        ValueExpression::Object(members) => members,
+        _ => return None,
+    };
+    let as_number = |v: &ValueExpression| -> Option<f64> {
+        match v {
+            ValueExpression::Number(n) => Some(*n),
+            ValueExpression::UnaryOp {
+                op: UnaryOp::Neg,
+                operand,
+            } => match operand.as_ref() {
+                ValueExpression::Number(n) => Some(-*n),
+                _ => None,
+            },
+            _ => None,
+        }
+    };
+    let get = |key: &str| {
+        members
+            .iter()
+            .find(|m| m.key == key)
+            .and_then(|m| as_number(&m.value))
+    };
+    match (get("x"), get("y")) {
+        (Some(x), Some(y)) => Some(Position { x, y }),
+        _ => None,
+    }
 }
 
 fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
@@ -880,6 +935,7 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
             containers: Vec::new(),
             components: Vec::new(),
             events: Vec::new(),
+            position: None,
         };
     };
 
@@ -888,6 +944,7 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
     let is_landmark = extract_bool_property(&properties, "landmark");
     let is_xor = extract_bool_property(&properties, "xor");
     let is_modal = extract_bool_property(&properties, "modal");
+    let position = extract_position_property(&properties);
 
     ViewDeclaration {
         name,
@@ -900,6 +957,7 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
         containers,
         components,
         events,
+        position,
     }
 }
 
@@ -1056,6 +1114,31 @@ view "Minimal" {
         assert_eq!(model.views[0].name, "Minimal");
         assert_eq!(model.views[0].components.len(), 1);
         assert_eq!(model.views[0].components[0].name, "grid");
+    }
+
+    #[test]
+    fn test_component_api_property() {
+        let input = r#"
+view "CustomerList" {
+    component "grid" {
+        type: list;
+        data: Customer;
+        api: list_customer;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(model.views.len(), 1);
+        let comp = &model.views[0].components[0];
+        let api_prop = comp
+            .properties
+            .iter()
+            .find(|p| p.key == "api")
+            .expect("api property should exist");
+        match &api_prop.value {
+            ValueExpression::Identifier(s) => assert_eq!(s, "list_customer"),
+            _ => panic!("Expected Identifier for api property"),
+        }
     }
 
     #[test]
@@ -1502,6 +1585,7 @@ domain "sales" {
 view "CustomerList" {
     label "Customer Management";
     landmark: true;
+    position: { x: 100; y: 200 };
 
     component "grid" {
         type: list;
@@ -1627,6 +1711,7 @@ view "DeleteConfirm" {
         assert!(cl.is_landmark);
         assert_eq!(cl.components.len(), 2);
         assert_eq!(cl.containers.len(), 0);
+        assert_eq!(cl.position, Some(Position { x: 100.0, y: 200.0 }));
 
         let cd = &model.views[1];
         assert_eq!(cd.name, "CustomerDetail");
@@ -1701,5 +1786,108 @@ domain "hr" {
         assert_eq!(model.domains.len(), 1);
         assert_eq!(model.domains[0].name, "hr");
         assert_eq!(model.domains[0].schema_name, "hr_schema");
+    }
+
+    #[test]
+    fn test_position_parses_float_and_negative() {
+        let input = r#"
+view "Pos" {
+    position: { x: -12.5; y: 240 };
+    component "c" {
+        type: list;
+        data: Item;
+    }
+}
+
+view "Pos2" {
+    container "c1" {
+        position: { x: 30.75; y: -5 };
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(model.views.len(), 2);
+
+        let view = &model.views[0];
+        assert_eq!(view.position, Some(Position { x: -12.5, y: 240.0 }));
+        assert_eq!(view.properties.len(), 1);
+        assert_eq!(view.properties[0].key, "position");
+
+        let container = &model.views[1].containers[0];
+        assert_eq!(container.position, Some(Position { x: 30.75, y: -5.0 }));
+    }
+
+    #[test]
+    fn test_position_missing_is_none() {
+        let input = r#"
+view "NoPos" {
+    landmark: true;
+    component "c" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(model.views[0].position, None);
+    }
+
+    #[test]
+    fn test_position_trailing_inner_semicolon() {
+        let input = r#"
+view "Pos" {
+    position: { x: 10; y: 20; };
+    component "c" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(model.views[0].position, Some(Position { x: 10.0, y: 20.0 }));
+    }
+
+    #[test]
+    fn test_nested_object_rejected() {
+        let input = r#"
+view "Nested" {
+    position: { x: 10; y: 20; nested: { a: 1 } };
+    component "c" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let result = parse_ifml(input);
+        assert!(result.is_err(), "nested object literal should be rejected");
+    }
+
+    #[test]
+    fn test_property_span_recorded() {
+        let input = r#"
+view "Span" {
+    position: { x: 1; y: 2 };
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let prop = &model.views[0].properties[0];
+        let span = prop.span.expect("span should be recorded");
+        assert_eq!(span.1 - span.0, "position: { x: 1; y: 2 };".len());
+        assert_eq!(&input[span.0..span.1], "position: { x: 1; y: 2 };");
+    }
+
+    #[test]
+    fn test_position_incomplete_is_none() {
+        let input = r#"
+view "Partial" {
+    position: { x: 10 };
+    component "c" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(model.views[0].position, None);
     }
 }

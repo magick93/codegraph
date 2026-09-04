@@ -7,6 +7,8 @@ use std::sync::Mutex;
 use std::time::Instant;
 use uuid::Uuid;
 
+type DataFlowKey = (String, String, Option<String>, Option<String>);
+
 pub struct MockEngine {
     schemas: Mutex<HashMap<String, SchemaNode>>,
     properties: Mutex<HashMap<String, Vec<PropertyNode>>>,
@@ -28,6 +30,16 @@ pub struct MockEngine {
     /// Written by the builder; no querier reads it yet.
     #[allow(dead_code)]
     data_bindings: Mutex<HashMap<String, DataBindingNode>>,
+    view_container_components: Mutex<HashMap<String, Vec<String>>>,
+    events_by_parent: Mutex<HashMap<String, Vec<String>>>,
+    navigation_flows: Mutex<Vec<(String, String, String)>>,
+    data_flows: Mutex<Vec<DataFlowKey>>,
+    data_binding_edges: Mutex<Vec<(String, String)>>,
+    binding_entity_edges: Mutex<Vec<(String, String)>>,
+    binding_property_edges: Mutex<Vec<(String, String)>>,
+    op_interaction: Mutex<HashMap<String, String>>,
+    interaction_endpoint: Mutex<HashMap<String, String>>,
+    resource_operations: Mutex<HashMap<String, Vec<String>>>,
     namespaces: Mutex<HashMap<String, NamespaceNode>>,
     lexicons: Mutex<HashMap<String, LexiconNode>>,
     collections: Mutex<HashMap<String, CollectionNode>>,
@@ -69,6 +81,16 @@ impl MockEngine {
             action_nodes: Mutex::new(HashMap::new()),
             parameter_definitions: Mutex::new(HashMap::new()),
             data_bindings: Mutex::new(HashMap::new()),
+            view_container_components: Mutex::new(HashMap::new()),
+            events_by_parent: Mutex::new(HashMap::new()),
+            navigation_flows: Mutex::new(Vec::new()),
+            data_flows: Mutex::new(Vec::new()),
+            data_binding_edges: Mutex::new(Vec::new()),
+            binding_entity_edges: Mutex::new(Vec::new()),
+            binding_property_edges: Mutex::new(Vec::new()),
+            op_interaction: Mutex::new(HashMap::new()),
+            interaction_endpoint: Mutex::new(HashMap::new()),
+            resource_operations: Mutex::new(HashMap::new()),
             namespaces: Mutex::new(HashMap::new()),
             lexicons: Mutex::new(HashMap::new()),
             collections: Mutex::new(HashMap::new()),
@@ -450,6 +472,17 @@ fn mock_ref_table(ref_target: &str) -> String {
     codegraph_naming::to_snake_case(&codegraph_naming::strip_suffix(stem, "Type"))
 }
 
+/// Strip a leading API-metamodel node prefix (`ar:` / `ao:` / `pl:` / `pm:` /
+/// `ed:`) from an id, if present.
+fn strip_api_prefix(id: &str) -> &str {
+    for prefix in ["ar:", "ao:", "pl:", "pm:", "ed:"] {
+        if let Some(rest) = id.strip_prefix(prefix) {
+            return rest;
+        }
+    }
+    id
+}
+
 #[async_trait]
 impl GraphIngestor for MockEngine {
     async fn ingest_schema(&self, node: &SchemaNode) -> Result<String, GraphError> {
@@ -512,11 +545,81 @@ impl GraphIngestor for MockEngine {
 
     async fn ingest_edge(
         &self,
-        _from_id: &str,
-        _to_id: &str,
-        _edge_type: EdgeType,
-        _props: Option<&EdgeProperties>,
+        from_id: &str,
+        to_id: &str,
+        edge_type: EdgeType,
+        props: Option<&EdgeProperties>,
     ) -> Result<(), GraphError> {
+        match edge_type {
+            EdgeType::ContainsViewContainer | EdgeType::ContainsViewComponent => {
+                let mut map = self.view_container_components.lock().unwrap();
+                map.entry(strip_ifml_prefix(from_id).to_string())
+                    .or_default()
+                    .push(strip_ifml_prefix(to_id).to_string());
+            }
+            EdgeType::HasEvent => {
+                let mut map = self.events_by_parent.lock().unwrap();
+                map.entry(from_id.to_string())
+                    .or_default()
+                    .push(strip_ifml_prefix(to_id).to_string());
+            }
+            EdgeType::NavigationFlow => {
+                self.navigation_flows.lock().unwrap().push((
+                    from_id.to_string(),
+                    to_id.to_string(),
+                    String::new(),
+                ));
+            }
+            EdgeType::DataFlow => {
+                let props = props.cloned().unwrap_or_default();
+                self.data_flows.lock().unwrap().push((
+                    from_id.to_string(),
+                    to_id.to_string(),
+                    props.source_param,
+                    props.target_param_binding,
+                ));
+            }
+            EdgeType::HasDataBinding => {
+                self.data_binding_edges.lock().unwrap().push((
+                    strip_ifml_prefix(from_id).to_string(),
+                    strip_ifml_prefix(to_id).to_string(),
+                ));
+            }
+            EdgeType::BindsToEntity => {
+                self.binding_entity_edges
+                    .lock()
+                    .unwrap()
+                    .push((strip_ifml_prefix(from_id).to_string(), to_id.to_string()));
+            }
+            EdgeType::BindsToProperty => {
+                let property = to_id.split_once("::").map(|(p, _)| p).unwrap_or(to_id);
+                self.binding_property_edges
+                    .lock()
+                    .unwrap()
+                    .push((strip_ifml_prefix(from_id).to_string(), property.to_string()));
+            }
+            EdgeType::HasInteraction => {
+                self.op_interaction
+                    .lock()
+                    .unwrap()
+                    .insert(strip_api_prefix(from_id).to_string(), to_id.to_string());
+            }
+            EdgeType::HasOperation => {
+                self.resource_operations
+                    .lock()
+                    .unwrap()
+                    .entry(strip_api_prefix(from_id).to_string())
+                    .or_default()
+                    .push(strip_api_prefix(to_id).to_string());
+            }
+            EdgeType::BindsHttpEndpoint => {
+                self.interaction_endpoint
+                    .lock()
+                    .unwrap()
+                    .insert(strip_ifml_prefix(from_id).to_string(), to_id.to_string());
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -568,8 +671,12 @@ impl GraphIngestor for MockEngine {
         Ok(id)
     }
 
-    async fn ingest_data_binding(&self, _node: &DataBindingNode) -> Result<String, GraphError> {
-        let id = format!("db:{}", Uuid::new_v4());
+    async fn ingest_data_binding(&self, node: &DataBindingNode) -> Result<String, GraphError> {
+        let id = format!("db:{}", node.name);
+        self.data_bindings
+            .lock()
+            .unwrap()
+            .insert(node.name.clone(), node.clone());
         Ok(id)
     }
 
@@ -1068,10 +1175,104 @@ impl GraphQuerier for MockEngine {
 
     async fn get_ifml_view_components(
         &self,
-        _container_name: &str,
+        container_name: &str,
     ) -> Result<Vec<ViewComponentNode>, GraphError> {
-        let map = self.view_components.lock().unwrap();
+        let components = self.view_components.lock().unwrap();
+        let map = self.view_container_components.lock().unwrap();
+        let names = map.get(container_name).cloned().unwrap_or_default();
+        Ok(names
+            .iter()
+            .filter_map(|n| components.get(n).cloned())
+            .collect())
+    }
+
+    async fn get_ifml_events(&self, parent_id: &str) -> Result<Vec<EventNode>, GraphError> {
+        let events = self.events.lock().unwrap();
+        let map = self.events_by_parent.lock().unwrap();
+        let names = map.get(parent_id).cloned().unwrap_or_default();
+        Ok(names
+            .iter()
+            .filter_map(|n| events.get(n).cloned())
+            .collect())
+    }
+
+    async fn get_ifml_navigation_flows(&self) -> Result<Vec<(String, String, String)>, GraphError> {
+        let events_by_parent = self.events_by_parent.lock().unwrap();
+        let flows = self.navigation_flows.lock().unwrap();
+        let mut result = Vec::new();
+        for (event_id, target_id, _) in flows.iter() {
+            let event_name = strip_ifml_prefix(event_id).to_string();
+            let parent = events_by_parent
+                .iter()
+                .find(|(_, evs)| evs.contains(&event_name))
+                .map(|(p, _)| p.clone())
+                .unwrap_or_default();
+            result.push((
+                strip_ifml_prefix(&parent).to_string(),
+                event_name,
+                strip_ifml_prefix(target_id).to_string(),
+            ));
+        }
+        Ok(result)
+    }
+
+    async fn get_ifml_data_flows(
+        &self,
+    ) -> Result<Vec<(String, String, Option<String>, Option<String>)>, GraphError> {
+        let flows = self.data_flows.lock().unwrap();
+        Ok(flows
+            .iter()
+            .map(|(source, target, source_param, target_param)| {
+                (
+                    strip_ifml_prefix(source).to_string(),
+                    strip_ifml_prefix(target).to_string(),
+                    source_param.clone(),
+                    target_param.clone(),
+                )
+            })
+            .collect())
+    }
+
+    async fn get_ifml_actions(&self) -> Result<Vec<ActionNode>, GraphError> {
+        let map = self.action_nodes.lock().unwrap();
         Ok(map.values().cloned().collect())
+    }
+
+    async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
+        let map = self.parameter_definitions.lock().unwrap();
+        Ok(map.values().cloned().collect())
+    }
+
+    async fn get_data_bindings(&self) -> Result<Vec<DataBindingResolution>, GraphError> {
+        let components = self.view_components.lock().unwrap();
+        let has_db = self.data_binding_edges.lock().unwrap();
+        let binds_entity = self.binding_entity_edges.lock().unwrap();
+        let binds_prop = self.binding_property_edges.lock().unwrap();
+        let mut result = Vec::new();
+        for (comp_name, binding_name) in has_db.iter() {
+            let Some(entity_title) = binds_entity
+                .iter()
+                .find(|(b, _)| b == binding_name)
+                .map(|(_, t)| t.clone())
+            else {
+                continue;
+            };
+            let fields: Vec<String> = binds_prop
+                .iter()
+                .filter(|(c, _)| c == comp_name)
+                .map(|(_, p)| p.clone())
+                .collect();
+            let api_operation = components
+                .get(comp_name)
+                .and_then(|c| c.api_operation.clone());
+            result.push(DataBindingResolution {
+                component: comp_name.clone(),
+                entity_title,
+                fields,
+                api_operation,
+            });
+        }
+        Ok(result)
     }
 
     async fn get_generation_order(&self) -> Result<Vec<String>, GraphError> {
@@ -1161,14 +1362,37 @@ impl GraphQuerier for MockEngine {
         &self,
         resource_name: &str,
     ) -> Result<Vec<ApiOperationNode>, GraphError> {
-        let _ = resource_name;
+        let ops = self.api_operations.lock().unwrap();
+        let edges = self.resource_operations.lock().unwrap();
+        let names = edges.get(resource_name).cloned().unwrap_or_default();
+        Ok(names
+            .iter()
+            .filter_map(|n| ops.get(&format!("ao:{}", n)).cloned())
+            .collect())
+    }
+
+    async fn get_api_operation(&self, name: &str) -> Result<Option<ApiOperationNode>, GraphError> {
         Ok(self
             .api_operations
             .lock()
             .unwrap()
-            .values()
-            .cloned()
-            .collect())
+            .get(&format!("ao:{}", name))
+            .cloned())
+    }
+
+    async fn get_http_endpoint_for_operation(
+        &self,
+        operation_name: &str,
+    ) -> Result<Option<HttpEndpointNode>, GraphError> {
+        let op_interaction = self.op_interaction.lock().unwrap();
+        let interaction_endpoint = self.interaction_endpoint.lock().unwrap();
+        let Some(ia_id) = op_interaction.get(operation_name) else {
+            return Ok(None);
+        };
+        let Some(he_id) = interaction_endpoint.get(ia_id) else {
+            return Ok(None);
+        };
+        Ok(self.http_endpoints.lock().unwrap().get(he_id).cloned())
     }
 
     async fn get_interactions(

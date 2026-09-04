@@ -61,6 +61,7 @@ async fn main() -> codegraph::error::Result<()> {
             no_post_gen,
             template_dir,
             ifml_files,
+            openapi_files,
             ifml_framework,
         } => {
             codegraph::driver::run(codegraph::driver::RunArgs {
@@ -75,8 +76,31 @@ async fn main() -> codegraph::error::Result<()> {
                 no_post_gen,
                 template_dir: &template_dir,
                 ifml_files: &ifml_files,
+                openapi_files: &openapi_files,
                 ifml_framework: &ifml_framework,
                 codegraph_rev: None,
+            })
+            .await
+        }
+        cli::Commands::IfmlGenerate {
+            config,
+            output,
+            ifml_files,
+            schemas,
+            classifier,
+            framework,
+            profiles_config,
+            template_dir,
+        } => {
+            codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+                config_path: &config,
+                output: &output,
+                ifml_files: &ifml_files,
+                schemas: schemas.as_deref(),
+                classifier: classifier.as_deref(),
+                frameworks: &framework,
+                profiles_config_path: profiles_config,
+                template_dir: &template_dir,
             })
             .await
         }
