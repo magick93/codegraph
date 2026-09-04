@@ -1,4 +1,5 @@
 mod api;
+mod atproto;
 mod codelist;
 mod composite;
 mod composition;
@@ -18,6 +19,7 @@ pub use api::{
     ApiOperationNode, ApiResourceNode, ErrorDefinitionNode, HttpEndpointNode, InteractionNode,
     PermissionNode, PipelineNode,
 };
+pub use atproto::{CollectionNode, LexiconNode, NamespaceNode, RepositoryNode};
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};

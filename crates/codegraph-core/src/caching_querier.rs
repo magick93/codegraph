@@ -6,10 +6,11 @@ use async_trait::async_trait;
 use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
-    CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension, HttpEndpointNode,
-    InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData, SchemaNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode, PolicyNode,
+    PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData, SchemaNode,
     SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
@@ -549,6 +550,35 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
         self.inner.get_ifml_parameters().await
+    }
+
+    // ── AT Protocol query delegation ───────────────────────────────────
+
+    async fn get_lexicons(&self, domain: &str) -> Result<Vec<LexiconNode>, GraphError> {
+        self.inner.get_lexicons(domain).await
+    }
+
+    async fn get_lexicon_by_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Option<LexiconNode>, GraphError> {
+        self.inner.get_lexicon_by_schema(schema_title).await
+    }
+
+    async fn get_collections(&self, domain: &str) -> Result<Vec<CollectionNode>, GraphError> {
+        self.inner.get_collections(domain).await
+    }
+
+    async fn get_repositories(&self) -> Result<Vec<RepositoryNode>, GraphError> {
+        self.inner.get_repositories().await
+    }
+
+    async fn get_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+        self.inner.get_namespaces().await
+    }
+
+    async fn get_lexicon_references(&self, nsid: &str) -> Result<Vec<LexiconNode>, GraphError> {
+        self.inner.get_lexicon_references(nsid).await
     }
 
     // ── API metamodel query delegation ──────────────────────────────────

@@ -1,9 +1,10 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CompositeColumn, CompositeRange,
-    CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension, HttpEndpointNode,
-    InteractionNode, MembershipNode, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, SchemaClassificationData, SchemaNode,
+    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, CompositionTree, EnumValue, ErrorDefinitionNode, EventNode, Extension,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode, PolicyNode,
+    PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData, SchemaNode,
     SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
@@ -204,6 +205,47 @@ pub trait GraphQuerier: Send + Sync {
 
     /// Get all ParameterDefinition nodes.
     async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    // ── AT Protocol query methods (default: no AT Protocol data) ────────
+
+    /// Get all Lexicon nodes for a domain.
+    #[allow(unused_variables)]
+    async fn get_lexicons(&self, domain: &str) -> Result<Vec<LexiconNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get the Lexicon projected from a schema.
+    #[allow(unused_variables)]
+    async fn get_lexicon_by_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Option<LexiconNode>, GraphError> {
+        Ok(None)
+    }
+
+    /// Get all Collection nodes for a domain.
+    #[allow(unused_variables)]
+    async fn get_collections(&self, domain: &str) -> Result<Vec<CollectionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get all Repository nodes.
+    #[allow(unused_variables)]
+    async fn get_repositories(&self) -> Result<Vec<RepositoryNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get all Namespace nodes.
+    #[allow(unused_variables)]
+    async fn get_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get Lexicons that this Lexicon references (for ref/union types).
+    #[allow(unused_variables)]
+    async fn get_lexicon_references(&self, nsid: &str) -> Result<Vec<LexiconNode>, GraphError> {
         Ok(Vec::new())
     }
 

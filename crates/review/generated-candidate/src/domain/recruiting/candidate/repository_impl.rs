@@ -141,6 +141,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 items.push(CandidateProcessHistoryResponse {
                     action_date: Option::<chrono::DateTime<chrono::Utc>>::try_get_by(child_row, "action_date").ok().flatten(),
                     descriptions: Option::<Vec<String>>::try_get_by(child_row, "descriptions").ok().flatten(),
+                ..Default::default()
                 });
             }
             items
@@ -162,6 +163,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     description: Option::<String>::try_get_by(child_row, "description").ok().flatten(),
                     end_date: Option::<chrono::NaiveDate>::try_get_by(child_row, "end_date").ok().flatten(),
                     start_date: chrono::NaiveDate::try_get_by(child_row, "start_date").map_err(|e| format!("{e:?}"))?,
+                ..Default::default()
                 });
             }
             items
@@ -181,6 +183,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     family_name: Option::<String>::try_get_by(child_row, "family_name").ok().flatten(),
                     formatted_name: Option::<String>::try_get_by(child_row, "formatted_name").ok().flatten(),
                     given_name: Option::<String>::try_get_by(child_row, "given_name").ok().flatten(),
+                ..Default::default()
                 });
             }
             items
@@ -198,6 +201,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 use sea_orm::TryGetable;
                 items.push(CandidatePositionScheduleTypeCodesResponse {
                     code: String::try_get_by(child_row, "code").map_err(|e| format!("{e:?}"))?.parse().unwrap_or_default(),
+                ..Default::default()
                 });
             }
             items
@@ -217,6 +221,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     date_awarded: Option::<chrono::NaiveDate>::try_get_by(child_row, "date_awarded").ok().flatten(),
                     issuer: Option::<String>::try_get_by(child_row, "issuer").ok().flatten(),
                     qualification_name: String::try_get_by(child_row, "qualification_name").map_err(|e| format!("{e:?}"))?,
+                ..Default::default()
                 });
             }
             items
@@ -244,6 +249,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             workflow_state: None,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            ..Default::default()
         }))
     }
 
@@ -366,7 +372,8 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             condition = condition.add(crate::entity::recruiting_candidate::Column::Gender.eq(val.clone()));
         }
         if let Some(val) = filters.get("referred_by_application_id") {
-            condition = condition.add(crate::entity::recruiting_candidate::Column::ReferredByApplicationId.eq(val.clone()));
+            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid UUID for filter 'referred_by_application_id': {e}")))?;
+            condition = condition.add(crate::entity::recruiting_candidate::Column::ReferredByApplicationId.eq(parsed));
         }
         if let Some(val) = filters.get("status") {
             condition = condition.add(crate::entity::recruiting_candidate::Column::Status.eq(val.clone()));
@@ -404,6 +411,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     items.push(CandidateProcessHistoryResponse {
                         action_date: Option::<chrono::DateTime<chrono::Utc>>::try_get_by(child_row, "action_date").ok().flatten(),
                         descriptions: Option::<Vec<String>>::try_get_by(child_row, "descriptions").ok().flatten(),
+                    ..Default::default()
                     });
                 }
                 items
@@ -425,6 +433,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                         description: Option::<String>::try_get_by(child_row, "description").ok().flatten(),
                         end_date: Option::<chrono::NaiveDate>::try_get_by(child_row, "end_date").ok().flatten(),
                         start_date: chrono::NaiveDate::try_get_by(child_row, "start_date").map_err(|e| format!("{e:?}"))?,
+                    ..Default::default()
                     });
                 }
                 items
@@ -444,6 +453,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                         family_name: Option::<String>::try_get_by(child_row, "family_name").ok().flatten(),
                         formatted_name: Option::<String>::try_get_by(child_row, "formatted_name").ok().flatten(),
                         given_name: Option::<String>::try_get_by(child_row, "given_name").ok().flatten(),
+                    ..Default::default()
                     });
                 }
                 items
@@ -461,6 +471,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     use sea_orm::TryGetable;
                     items.push(CandidatePositionScheduleTypeCodesResponse {
                         code: String::try_get_by(child_row, "code").map_err(|e| format!("{e:?}"))?.parse().unwrap_or_default(),
+                    ..Default::default()
                     });
                 }
                 items
@@ -480,6 +491,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                         date_awarded: Option::<chrono::NaiveDate>::try_get_by(child_row, "date_awarded").ok().flatten(),
                         issuer: Option::<String>::try_get_by(child_row, "issuer").ok().flatten(),
                         qualification_name: String::try_get_by(child_row, "qualification_name").map_err(|e| format!("{e:?}"))?,
+                    ..Default::default()
                     });
                 }
                 items
@@ -506,6 +518,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 workflow_state: None,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
+                ..Default::default()
             });
         }
 

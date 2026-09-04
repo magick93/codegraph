@@ -1,0 +1,45 @@
+{%- macro render_lexicon_type(type) -%}
+{%- if type.type == "string" -%}
+"type": "string"
+{%- elif type.type == "integer" -%}
+"type": "integer"
+{%- elif type.type == "number" -%}
+"type": "number"
+{%- elif type.type == "boolean" -%}
+"type": "boolean"
+{%- elif type.type == "bytes" -%}
+"type": "bytes"
+{%- elif type.type == "datetime" -%}
+"type": "string", "format": "datetime"
+{%- elif type.type == "uri" -%}
+"type": "string", "format": "uri"
+{%- elif type.type == "ref" -%}
+"type": "ref", "ref": "{{ type.ref_name }}"
+{%- elif type.type == "union" -%}
+"type": "union", "refs": [{% for r in type.refs %}"{{ r }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+{%- elif type.type == "array" -%}
+"type": "array", "items": { {{ self::render_lexicon_type(type=type.items) }} }
+{%- elif type.type == "object" -%}
+"type": "object"
+{%- elif type.type == "unknown" -%}
+"type": "unknown"
+{%- else -%}
+"type": "string"
+{%- endif -%}
+{%- endmacro render_lexicon_type -%}
+
+{%- macro render_key_strategy(ks) -%}
+{%- if ks == "Tid" -%}
+tid
+{%- elif ks == "LiteralSelf" -%}
+#self
+{%- elif ks == "Any" -%}
+*
+{%- elif ks == "Nsid" -%}
+nsid
+{%- elif ks == "Composite" -%}
+composite
+{%- else -%}
+{{ ks }}
+{%- endif -%}
+{%- endmacro render_key_strategy -%}

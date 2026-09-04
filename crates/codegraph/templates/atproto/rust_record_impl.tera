@@ -1,0 +1,7 @@
+impl {{ struct_name }} {
+    pub const NSID: &str = "{{ nsid }}";
+
+    pub fn type_default() -> String {
+        Self::NSID.to_string()
+    }
+}

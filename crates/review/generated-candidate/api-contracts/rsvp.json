@@ -1,0 +1,39 @@
+{
+  "domain": "rsvp",
+  "basePath": "/api/v1/rsvp",
+  "entities": {
+    "rsvp": {
+      "entity": "Rsvp",
+      "module": "rsvp",
+      "pathSegment": "rsvp",
+      "basePath": "/api/v1/rsvp/rsvp",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/rsvp/rsvp",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/rsvp/rsvp",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/rsvp/rsvp/{rsvp_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/rsvp/rsvp/{rsvp_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/rsvp/rsvp/{rsvp_id}",
+          "operation": "delete"
+        }
+      ]
+    }
+  }
+}

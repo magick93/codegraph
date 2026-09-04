@@ -5,6 +5,10 @@ use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;
 {% if project.hooks_api_crate %}use crate::hooks::HookRegistry;{% endif %}
+{% if has_atproto %}
+use cosmos_extensions::http::auth::AtprotoAuth;
+use cosmos_extensions::atproto_client::AtprotoClient;
+{% endif %}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -20,5 +24,18 @@ pub struct AppState {
     pub workflow_service: Arc<dyn codegraph_workflow::WorkflowService>,
 {% if project.hooks_api_crate %}
     pub registry: HookRegistry,
+{% endif %}
+{% if has_atproto %}
+    pub identity: Option<cosmos_extensions::http::identity::IdentityService>,
+
+    pub atproto_auth: AtprotoAuth,
+
+    pub atproto_client: Option<AtprotoClient>,
+
+    /// OAuth 2.0 with DPoP provider (issue #36). `None` when the OAUTH_* env
+    /// vars are not configured — the /oauth and /.well-known/oauth-* routes
+    /// then return a "not configured" error.
+    pub oauth_provider: Option<std::sync::Arc<rsky_oauth::OAuthProvider>>,
+
 {% endif %}
 }

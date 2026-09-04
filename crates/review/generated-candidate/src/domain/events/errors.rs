@@ -6,6 +6,10 @@ use axum::http::StatusCode;
 #[derive(Debug, thiserror::Error)]
 pub enum EventsError {
 
+    #[error("Conflict")]
+    Conflict,
+    #[error("Not found")]
+    NotFound,
     #[error("{0}")]
     InternalError(String),
 }
@@ -14,6 +18,8 @@ impl EventsError {
     pub fn code(&self) -> &'static str {
         match self {
 
+            Self::Conflict => "CONFLICT",
+            Self::NotFound => "NOT_FOUND",
             Self::InternalError(_) => "INTERNAL_ERROR",
         }
     }
@@ -21,6 +27,8 @@ impl EventsError {
     pub fn http_status(&self) -> StatusCode {
         match self {
 
+            Self::Conflict => StatusCode::CONFLICT,
+            Self::NotFound => StatusCode::NOT_FOUND,
             Self::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -35,4 +43,17 @@ impl From<sea_orm::DbErr> for EventsError {
         Self::InternalError(e.to_string())
     }
 }
+
+impl From<Box<dyn std::error::Error>> for EventsError {
+    fn from(e: Box<dyn std::error::Error>) -> Self {
+        Self::InternalError(e.to_string())
+    }
+}
+
+impl From<Box<dyn std::error::Error + Send + Sync>> for EventsError {
+    fn from(e: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        Self::InternalError(e.to_string())
+    }
+}
+
 

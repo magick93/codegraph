@@ -6,6 +6,7 @@ use std::sync::Arc;
 use sea_orm::DatabaseConnection;
 
 
+
 #[derive(Clone)]
 pub struct AppState {
 
@@ -86,5 +87,6 @@ pub struct AppState {
     pub db: DatabaseConnection,
     pub jwt_secret: String,
     pub workflow_service: Arc<dyn codegraph_workflow::WorkflowService>,
+
 
 }

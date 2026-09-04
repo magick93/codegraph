@@ -14,10 +14,12 @@ use crate::generate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
 const EXTENSIONS_SQL: &str = "\
---- Bootstrap: required PostgreSQL extensions for basejump / pg_tle
+-- Bootstrap: required PostgreSQL extensions for basejump / pg_tle
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS http WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS pg_tle;
---- Core crypto helpers (gen_random_bytes for API keys, pgcrypto functions)
+-- Core crypto helpers (gen_random_bytes for API keys, pgcrypto functions)
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 ";
 
@@ -75,23 +77,17 @@ impl GlobalGenerator for BasejumpSetupGenerator {
 
         Ok(vec![
             GeneratedFile {
-                path: self
-                    .output_dir
-                    .join("migrations")
+                path: crate::generate::db::migrations_root(&self.output_dir)
                     .join("0000_extensions.sql"),
                 content: EXTENSIONS_SQL.to_string(),
             },
             GeneratedFile {
-                path: self
-                    .output_dir
-                    .join("migrations")
+                path: crate::generate::db::migrations_root(&self.output_dir)
                     .join("0001_basejump_install.sql"),
                 content: BASEJUMP_INSTALL_SQL.to_string(),
             },
             GeneratedFile {
-                path: self
-                    .output_dir
-                    .join("migrations")
+                path: crate::generate::db::migrations_root(&self.output_dir)
                     .join("0004_rbac_roles.sql"),
                 content: rbac_roles,
             },

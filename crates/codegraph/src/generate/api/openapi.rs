@@ -126,11 +126,20 @@ impl GlobalGenerator for OpenApiGenerator {
                 .unwrap_or_default();
             let mut entities = Vec::new();
             for entity_name in &domain_entry.entities {
-                // Skip entities not generated for this specific domain
-                if !domain_entities.contains(entity_name.as_str()) {
+                // The generation-order titles may differ from the domains.toml
+                // entity names only by whitespace (e.g. title "Campaign Type"
+                // vs entity "CampaignType"). Match on a normalized key so every
+                // configured entity gets an OpenAPI spec, and resolve the schema
+                // by its real title (get_schema_in_domain is title-keyed).
+                let norm =
+                    |s: &str| -> String { s.chars().filter(|c| !c.is_whitespace()).collect() };
+                let Some(title) = domain_entities
+                    .iter()
+                    .find(|t| norm(t) == norm(entity_name.as_str()))
+                else {
                     continue;
-                }
-                if let Ok(Some(schema)) = db.get_schema_in_domain(entity_name, domain_name).await {
+                };
+                if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain_name).await {
                     let entity_cfg = domain_entry.get_entity_config(entity_name);
                     let operations =
                         resolve_entity_operations(db, config, domain_name, entity_name).await;

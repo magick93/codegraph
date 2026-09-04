@@ -1,0 +1,13 @@
+use utoipa::OpenApi;
+
+fn main() {
+    let api_doc = {{ project.lib_name }}::api::openapi::all::AllApiDoc::openapi();
+    let json = api_doc.to_json().expect("Failed to serialize OpenAPI spec");
+    let path = std::env::var("FERN_OPENAPI_PATH")
+        .unwrap_or_else(|_| "fern/openapi/openapi.json".to_string());
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        std::fs::create_dir_all(parent).expect("Failed to create fern/openapi directory");
+    }
+    std::fs::write(&path, &json).expect("Failed to write OpenAPI spec");
+    println!("OpenAPI spec written to {}", path);
+}

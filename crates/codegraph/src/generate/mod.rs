@@ -1,6 +1,8 @@
 pub mod codelist;
+pub mod domain_model;
 pub mod filter_fields;
 pub mod ifml;
+pub mod manifest;
 pub mod persistence;
 pub mod report;
 pub mod template_engine;
@@ -8,10 +10,12 @@ pub mod traits;
 pub mod type_registry;
 
 pub mod api;
+pub mod atproto;
 pub mod cli;
 pub mod db;
 pub mod ddd;
 pub mod domain_types;
+pub mod fern;
 pub mod grpc;
 pub mod hooks;
 pub mod integration;
@@ -198,6 +202,10 @@ use self::traits::{DomainGenerator, EntityGenerator, GeneratedFile, GlobalGenera
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProjectConfig {
     pub app_name: String,
+    /// Rust crate name of the generated library (the `[lib] name` in the
+    /// generated Cargo.toml). Test templates reference the crate by this name.
+    #[serde(default)]
+    pub lib_name: String,
     pub domain_types_crate: String,
     pub hooks_api_crate: String,
     pub api_title: String,
@@ -233,6 +241,36 @@ pub struct ProjectConfig {
     /// to reference codegraph-type-contracts as a git dependency.
     #[serde(default)]
     pub codegraph_rev: String,
+    /// Whether atproto generators are enabled via profile feature flag.
+    pub has_atproto: bool,
+    /// Whether Fern SDK generation is enabled via profile feature flag.
+    #[serde(default)]
+    pub has_fern: bool,
+    /// Fern SDK languages to generate (e.g. ["typescript", "rust"]).
+    #[serde(default)]
+    pub fern_sdk_languages: Vec<String>,
+    /// AT Protocol namespace authority (e.g. "nz.gravy").
+    /// Read from domain config or hard-coded default. Empty string = atproto disabled.
+    pub atproto_authority: String,
+    /// AT Protocol tenancy mode: "shared_pds" or "per_org_pds".
+    pub atproto_tenancy: String,
+    /// AT Protocol float policy: what to do with JSON Schema "number" types.
+    /// "reject", "string", "integer_scaled", or "unknown"
+    pub atproto_float_policy: String,
+    /// Raw `[patch.'https://github.com/magick93/codegraph.git']` entries emitted
+    /// into the generated Cargo.toml (dev environments pin the local codegraph
+    /// checkout via path overrides). Empty string = no patch section.
+    #[serde(default)]
+    pub cargo_patch: String,
+    /// Raw extra lines appended to the generated Cargo.toml [dependencies]
+    /// section (e.g. `url = "2"` or local path deps).
+    #[serde(default)]
+    pub extra_dependencies: String,
+    /// Whether the generated Cargo.toml declares a `[workspace]` with a `cli/`
+    /// member (hand-maintained CLI crates that are not emitted by the
+    /// `cli_scaffold` generator). Defaults to false.
+    #[serde(default)]
+    pub cargo_workspace: bool,
 }
 
 impl ProjectConfig {
@@ -271,6 +309,7 @@ impl Default for ProjectConfig {
     fn default() -> Self {
         Self {
             app_name: "app".into(),
+            lib_name: "cosmos".into(),
             domain_types_crate: "domain_types".into(),
             hooks_api_crate: String::new(),
             api_title: "HR Open API".into(),
@@ -287,6 +326,15 @@ impl Default for ProjectConfig {
             persistence_provider: "sea_orm".to_string(),
             deployment_topology: "monolith".to_string(),
             types_import_prefix: "codegraph_type_contracts".into(),
+            has_atproto: false,
+            has_fern: false,
+            fern_sdk_languages: vec!["typescript".into()],
+            atproto_authority: String::new(),
+            atproto_tenancy: "shared_pds".to_string(),
+            atproto_float_policy: "integer_scaled".to_string(),
+            cargo_patch: String::new(),
+            extra_dependencies: String::new(),
+            cargo_workspace: false,
             api_version: "v1".into(),
         }
     }
@@ -508,6 +556,23 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         ifml_frameworks,
         project_config,
     } = opts;
+
+    // Output roots for `.codegraph-manifest.json` emission: the main output
+    // dir plus any domain-types/hooks-api bases. `Option<&Path>` is `Copy`,
+    // so the values remain usable after this Vec is built. The repo-level
+    // `e2e-tests` root (home of the TypeScript Playwright harness) and the
+    // repo-level `migrations` root (hand-extended 0000–0009 + generated 0010+)
+    // get their own manifests so the guard can prove generated files are
+    // regenerated while the hand-written files stay excepted.
+    let e2e_manifest_root = playwright::e2e_tests_root(output_dir);
+    let migrations_manifest_root = db::migrations_root(output_dir);
+    let manifest_roots: Vec<&Path> = std::iter::once(output_dir)
+        .chain(domain_types_base.iter().copied())
+        .chain(hooks_base.iter().copied())
+        .chain(std::iter::once(e2e_manifest_root.as_path()))
+        .chain(std::iter::once(migrations_manifest_root.as_path()))
+        .collect();
+
     // Initialize global project config so generator helpers can access it.
     let default_project = ProjectConfig::default();
     let project = project_config.unwrap_or(&default_project);
@@ -596,10 +661,22 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             .unwrap_or_default()
             .join("reports.toml")
             .exists();
+    let has_atproto = build_plan
+        .map(|bp| {
+            bp.has_global_gen("atproto_identity")
+                || bp.has_entity_gen("lexicon")
+                || bp.has_global_gen("lexicon_scaffold")
+                || bp.has_entity_gen("atproto_client")
+                || bp.has_global_gen("atproto_client_scaffold")
+        })
+        .unwrap_or(false);
+    let has_fern = build_plan
+        .map(|bp| bp.has_global_gen("fern_config"))
+        .unwrap_or(false);
     let has_grpc = build_plan
         .map(|bp| bp.has_global_gen("grpc_scaffold"))
         .unwrap_or(false);
-    let has_cli = build_plan
+    let _has_cli = build_plan
         .map(|bp| bp.has_global_gen("cli_scaffold"))
         .unwrap_or(true);
     let has_ui = build_plan
@@ -609,10 +686,29 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         .and_then(|bp| bp.features.get("has_admin_cli"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let has_auth_rate_limit = build_plan
+        .and_then(|bp| bp.features.get("has_auth_rate_limit"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_labels = build_plan
+        .and_then(|bp| bp.features.get("has_labels"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let migration_strategy = build_plan
         .and_then(|bp| bp.features.get("migration_strategy"))
         .and_then(|v| v.as_str())
-        .unwrap_or("sea-orm");
+        .unwrap_or("sea-orm")
+        .to_string();
+    let has_cli = build_plan
+        .map(|bp| {
+            bp.has_global_gen("cli_scaffold")
+                || bp.has_entity_gen("cli_command")
+                || bp.has_domain_gen("cli_domain")
+        })
+        .unwrap_or(true);
+    let has_test_gen = build_plan
+        .map(|bp| bp.has_entity_gen("test"))
+        .unwrap_or(true);
 
     // Whether generated backend output routes into per-domain worker crates
     // under `workers/{domain}/`.  The build plan is authoritative; fall back
@@ -643,8 +739,16 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // may generate a different set of files (e.g. duplicates removed),
     // and stale numbered SQL files must not linger in the migrations directory.
     // Hand-written bootstrap migrations (0000–0009) are preserved.
-    let migrations_dir = output_dir.join("migrations");
-    if migrations_dir.is_dir() {
+    //
+    // Only runs when the active build plan includes the `ddl` generator (the
+    // entity migration emitter). Narrower profiles (e.g. e2e/playwright-only)
+    // must NOT delete migrations produced by a previous fullstack run — they
+    // would never be regenerated, corrupting the migration set.
+    let plan_emits_migrations = build_plan
+        .map(|bp| bp.has_entity_gen("ddl"))
+        .unwrap_or(true);
+    let migrations_dir = db::migrations_root(output_dir);
+    if plan_emits_migrations && migrations_dir.is_dir() {
         let mut removed = 0usize;
         for entry in fs::read_dir(&migrations_dir)
             .into_iter()
@@ -670,7 +774,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             }
         }
         if removed > 0 {
-            tracing::debug!("Removed {removed} stale generated migration files from migrations/");
+            tracing::debug!(
+                "Removed {removed} stale generated migration files from {}",
+                migrations_dir.display()
+            );
         }
     }
 
@@ -750,6 +857,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                     .with_parent_candidates(parent_candidates.clone()),
             ) as Box<dyn EntityGenerator>,
             Box::new(ui::form::UiFormGenerator::new(base("ui-form"))) as Box<dyn EntityGenerator>,
+            Box::new(ui::cosmos_entity_form::CosmosEntityFormGenerator::new(
+                base("ui-form"),
+            )) as Box<dyn EntityGenerator>,
             Box::new(
                 ui::store::UiStoreGenerator::new(base("ui-store"))
                     .with_parent_candidates(parent_candidates.clone()),
@@ -761,6 +871,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             Box::new(playwright::entity_gen::PlaywrightEntityGenerator::new(
                 base("playwright-entity"),
             )) as Box<dyn EntityGenerator>,
+            Box::new(playwright::ts_entity_gen::TsEntityGenerator::new(base(
+                "playwright-ts",
+            ))) as Box<dyn EntityGenerator>,
             Box::new(ui::descriptor::UiDescriptorGenerator::new(
                 base("ui-descriptor"),
                 ui_overrides.clone(),
@@ -796,6 +909,18 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             Box::new(grpc::service::GrpcServiceGenerator::new(base(
                 "grpc_service",
             ))) as Box<dyn EntityGenerator>,
+            // atproto entity generators
+            Box::new(atproto::lexicon_gen::LexiconEmitter::new(base("lexicon")))
+                as Box<dyn EntityGenerator>,
+            Box::new(atproto::types_gen::AtprotoTypesEmitter::new(base(
+                "atproto_types",
+            ))) as Box<dyn EntityGenerator>,
+            Box::new(atproto::client_gen::AtprotoClientEmitter::new(base(
+                "atproto_client",
+            ))) as Box<dyn EntityGenerator>,
+            Box::new(atproto::xrpc_gen::AtprotoXrpcEmitter::new(base(
+                "atproto_xrpc",
+            ))) as Box<dyn EntityGenerator>,
         ]
         .into_iter()
         .filter(|gen| plan_has_entity(gen.name()))
@@ -829,6 +954,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 api::router::RouterGenerator::new(base("router"))
                     .with_parent_candidates(parent_candidates.clone()),
             ) as Box<dyn DomainGenerator>,
+            Box::new(
+                api::contract::ApiContractGenerator::new(base("api_contract"))
+                    .with_parent_candidates(parent_candidates.clone()),
+            ) as Box<dyn DomainGenerator>,
             Box::new(api::links::LinksGenerator::new(base("links"))) as Box<dyn DomainGenerator>,
             Box::new(ui::domain_layout::UiDomainLayoutGenerator::new(base(
                 "ui-domain-layout",
@@ -838,6 +967,13 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             // gRPC domain generator
             Box::new(grpc::router::GrpcRouterGenerator::new(base("grpc_router")))
                 as Box<dyn DomainGenerator>,
+            // atproto domain generators
+            Box::new(atproto::appview_gen::AtprotoAppviewEmitter::new(base(
+                "atproto_appview",
+            ))) as Box<dyn DomainGenerator>,
+            Box::new(atproto::xrpc_gen::AtprotoXrpcEmitter::new(base(
+                "atproto_xrpc_router",
+            ))) as Box<dyn DomainGenerator>,
         ]
         .into_iter()
         .filter(|gen| plan_has_domain(gen.name()))
@@ -858,8 +994,18 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(
             db::event_trigger::PgmqSetupGenerator::new(output_dir).with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
+        Box::new(db::label_setup::LabelSetupGenerator::new(output_dir).with_dialect(make_dialect()))
+            as Box<dyn GlobalGenerator>,
+        Box::new(
+            db::service_tables::ServiceTablesGenerator::new(output_dir)
+                .with_dialect(make_dialect()),
+        ) as Box<dyn GlobalGenerator>,
         Box::new(
             db::platform_schema::PlatformSchemaGenerator::new(output_dir)
+                .with_dialect(make_dialect()),
+        ) as Box<dyn GlobalGenerator>,
+        Box::new(
+            db::platform_grants::PlatformGrantsGenerator::new(output_dir)
                 .with_dialect(make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(
@@ -869,6 +1015,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             output_dir,
         )) as Box<dyn GlobalGenerator>,
         Box::new(api::openapi::OpenApiGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
+        Box::new(api::contract::ApiContractIndexGenerator::new(output_dir))
+            as Box<dyn GlobalGenerator>,
     ];
 
     // The monolith scaffold (src/main.rs, src/server.rs, root Cargo.toml,
@@ -888,8 +1036,14 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             has_webhooks,
             has_reports,
             has_grpc,
+            has_atproto,
+            has_cli,
+            has_test_gen,
+            has_fern,
+            has_auth_rate_limit,
             has_admin_cli,
-            migration_strategy,
+            has_labels,
+            &migration_strategy,
         )) as Box<dyn GlobalGenerator>);
     }
 
@@ -933,6 +1087,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             output_dir,
         )) as Box<dyn GlobalGenerator>,
     );
+    global_gens.push(Box::new(playwright::ts_global_gen::TsGlobalGenerator::new(
+        output_dir,
+    )) as Box<dyn GlobalGenerator>);
     global_gens.push(
         Box::new(webhook::dispatch::WebhookDispatchGenerator::new(output_dir))
             as Box<dyn GlobalGenerator>,
@@ -947,6 +1104,31 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(grpc::scaffold::GrpcScaffoldGenerator::new(output_dir))
             as Box<dyn GlobalGenerator>,
     );
+    // atproto global generators
+    global_gens.push(Box::new(atproto::scaffold_gen::LexiconScaffoldEmitter::new(
+        output_dir,
+    )) as Box<dyn GlobalGenerator>);
+    global_gens.push(
+        Box::new(atproto::client_gen::AtprotoClientScaffoldEmitter::new(
+            output_dir,
+        )) as Box<dyn GlobalGenerator>,
+    );
+    global_gens.push(Box::new(atproto::identity_gen::AtprotoIdentityEmitter::new(
+        output_dir,
+    )) as Box<dyn GlobalGenerator>);
+    global_gens.push(
+        Box::new(atproto::types_gen::GeneratedTypesEmitter::new(output_dir))
+            as Box<dyn GlobalGenerator>,
+    );
+    global_gens.push(
+        Box::new(atproto::xrpc_merge_gen::AtprotoXrpcMergeEmitter::new(
+            output_dir,
+        )) as Box<dyn GlobalGenerator>,
+    );
+    // Fern SDK config generator
+    global_gens
+        .push(Box::new(fern::config::FernConfigGenerator::new(output_dir))
+            as Box<dyn GlobalGenerator>);
     // ops harness manifest + testkit crate
     global_gens.push(Box::new(ops::OpsManifestGenerator::new(
         output_dir,
@@ -1125,15 +1307,13 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         let codelist_sql_gen =
             db::codelist::CodelistGenerator::new(output_dir).with_dialect(make_dialect());
         for (idx, cl) in codelists.iter().enumerate() {
-            if let Ok(files) = codelist_sql_gen
+            let files = codelist_sql_gen
                 .generate(db, &cl.name, "common", config, tera, project)
-                .await
-            {
-                for file in files {
-                    let file = prefix_migration_path(file, idx + 10);
-                    write_output(&file)?;
-                    report.files.push(file);
-                }
+                .await?;
+            for file in files {
+                let file = prefix_migration_path(file, idx + 10);
+                write_output(&file)?;
+                report.files.push(file);
             }
         }
     }
@@ -1189,7 +1369,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // branch, keeping the root output byte-identical.
     if workers_topology {
         let worker_codelist_gen = codelist::rust_enum::RustCodelistGenerator::new(output_dir);
-        for (domain, _entity_titles) in group_by_domain(&order) {
+        for (domain, _entity_titles) in all_domains_for_generation(config, &order) {
             let worker_base = output_dir.join("workers").join(&domain);
             match worker_codelist_gen
                 .generate_reexport_mod_for(db, &worker_base)
@@ -1218,8 +1398,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // with `workers/{domain}/` as the base for routed generators, so
     // errors.rs / router.rs / links.rs land inside the worker crate.
     // In monolith topology a single generator set is built once with the
-    // root output dir, exactly as before.
-    let domains_with_entities = group_by_domain(&order);
+    // root output dir, exactly as before. Entity-less custom-routes domains
+    // are included with an empty entity list (see
+    // [`all_domains_for_generation`]).
+    let domains_with_entities = all_domains_for_generation(config, &order);
     let domain_results: Vec<_> = if workers_topology {
         let mut results = Vec::new();
         for (domain, entity_titles) in &domains_with_entities {
@@ -1327,6 +1509,12 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
+    // Emit a `.codegraph-manifest.json` at each output root listing every
+    // file written this run (report.files mirrors every `write_output` call),
+    // merged with any manifest already on disk. The pinned generator-source
+    // rev (`project.codegraph_rev`) is recorded so drift/CI can reproduce the
+    // exact checkout the committed tree was produced at.
+    manifest::emit_manifests(&manifest_roots, &report.files, &project.codegraph_rev)?;
     // Emit integration-test glue (tests/<domain>/mod.rs + tests/tests.rs) so
     // cargo actually compiles the generated entity tests under tests/.
     let test_mod_files = generate_test_mod_files(output_dir)?;
@@ -1365,6 +1553,27 @@ fn group_by_domain(entries: &[GenerationEntry]) -> Vec<(String, Vec<String>)> {
             (d, entities)
         })
         .collect()
+}
+
+/// Domains that receive domain-level generation (router/errors/links): every
+/// domain with entities in the generation order, plus entity-less domains
+/// flagged `custom_routes` (zero entities — only the domain scaffold).
+///
+/// Entity-less custom-routes domains get the per-domain router scaffold and,
+/// in workers topology, a per-domain worker crate + gateway upstream, even
+/// though they have no entities to route.
+pub fn all_domains_for_generation(
+    config: &DomainConfig,
+    entries: &[GenerationEntry],
+) -> Vec<(String, Vec<String>)> {
+    let mut result = group_by_domain(entries);
+    let present: HashSet<String> = result.iter().map(|(d, _)| d.clone()).collect();
+    for (name, entry) in &config.domains {
+        if entry.custom_routes && !present.contains(name) {
+            result.push((name.clone(), Vec::new()));
+        }
+    }
+    result
 }
 
 /// Compute the generation order using per-domain schema listing + domain order.
@@ -2105,6 +2314,12 @@ fn generate_mod_files_recursive(dir: &Path, out: &mut Vec<GeneratedFile>) -> Res
         return Ok(false);
     }
 
+    // Cargo treats `src/bin/mod.rs` as a binary target — never generate mod.rs
+    // inside a `bin` directory to avoid phantom binary targets with no `main()`.
+    if dir.file_name().is_some_and(|n| n == "bin") {
+        return Ok(false);
+    }
+
     let mut modules = BTreeSet::new();
     let mut has_content = false;
 
@@ -2595,6 +2810,79 @@ mod tests {
     }
 
     // ── Workers topology output routing ────────────────────────────────
+
+    #[test]
+    fn test_all_domains_for_generation_includes_entityless_custom_routes() {
+        use codegraph_config::config::parse_domain_config_str;
+        let config = parse_domain_config_str(
+            r#"
+[domains.crm]
+label = "CRM"
+schema_dir = "crm"
+postgres_schema = "crm"
+entities = ["PersonRecordType"]
+
+[domains.platform]
+label = "Platform"
+schema_dir = "platform"
+postgres_schema = "platform"
+entities = []
+auto_discover = false
+custom_routes = true
+"#,
+        )
+        .unwrap();
+
+        let entries = vec![GenerationEntry {
+            schema_title: "PersonRecordType".into(),
+            domain: "crm".into(),
+            pg_schema: "crm".into(),
+            is_cyclic: false,
+        }];
+
+        let grouped = all_domains_for_generation(&config, &entries);
+        let names: Vec<&str> = grouped.iter().map(|(d, _)| d.as_str()).collect();
+        assert!(names.contains(&"crm"));
+        // Entity-less custom-routes domain is included with an empty entity list.
+        assert!(names.contains(&"platform"));
+        let platform = grouped
+            .iter()
+            .find(|(d, _)| d == "platform")
+            .expect("platform should be present");
+        assert!(platform.1.is_empty());
+    }
+
+    #[test]
+    fn test_all_domains_for_generation_skips_entityless_without_flag() {
+        use codegraph_config::config::parse_domain_config_str;
+        let config = parse_domain_config_str(
+            r#"
+[domains.crm]
+label = "CRM"
+schema_dir = "crm"
+postgres_schema = "crm"
+entities = ["PersonRecordType"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = []
+"#,
+        )
+        .unwrap();
+
+        let entries = vec![GenerationEntry {
+            schema_title: "PersonRecordType".into(),
+            domain: "crm".into(),
+            pg_schema: "crm".into(),
+            is_cyclic: false,
+        }];
+
+        let grouped = all_domains_for_generation(&config, &entries);
+        let names: Vec<&str> = grouped.iter().map(|(d, _)| d.as_str()).collect();
+        assert_eq!(names, vec!["crm"]);
+    }
 
     #[test]
     fn test_worker_routed_generator_classification() {

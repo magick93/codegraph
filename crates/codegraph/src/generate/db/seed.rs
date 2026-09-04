@@ -284,9 +284,7 @@ impl GlobalGenerator for SeedDataGenerator {
             .map_err(|e| crate::error::Error::Template(e.to_string()))?;
 
         Ok(vec![GeneratedFile {
-            path: self
-                .output_dir
-                .join("migrations")
+            path: crate::generate::db::migrations_root(&self.output_dir)
                 // Demo data references entity tables across every domain, so it
                 // must apply AFTER all entity/codelist migrations (which can reach
                 // into the 8000s). A dedicated high band keeps it last.

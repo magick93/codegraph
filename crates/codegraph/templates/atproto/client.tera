@@ -1,0 +1,48 @@
+use std::sync::Arc;
+
+pub const COLLECTION: &str = "{{ collection_nsid }}";
+
+pub struct {{ entity_name }}Client {
+    repo: Arc<dyn RepoWriter>,
+    pds_endpoint: String,
+}
+
+impl {{ entity_name }}Client {
+    pub fn new(repo: Arc<dyn RepoWriter>, pds_endpoint: &str) -> Self {
+        Self { repo, pds_endpoint: pds_endpoint.to_string() }
+    }
+
+    pub async fn create(&self, record: &{{ record_type }}) -> Result<CreateRecordResponse, AtprotoError> {
+        self.repo.create_record(
+            &self.pds_endpoint,
+            "{{ collection_nsid }}",
+            record,
+        ).await
+    }
+
+    pub async fn get(&self, rkey: &str) -> Result<Option<{{ record_type }}>, AtprotoError> {
+        self.repo.get_record::<{{ record_type }}>(
+            &self.pds_endpoint,
+            "{{ collection_nsid }}",
+            rkey,
+        ).await
+    }
+
+    pub async fn delete(&self, rkey: &str) -> Result<(), AtprotoError> {
+        self.repo.delete_record(
+            &self.pds_endpoint,
+            "{{ collection_nsid }}",
+            rkey,
+        ).await
+    }
+
+    pub async fn list(&self, repo_did: &str, limit: Option<u32>, cursor: Option<&str>) -> Result<ListRecordsResponse<{{ record_type }}>, AtprotoError> {
+        self.repo.list_records::<{{ record_type }}>(
+            &self.pds_endpoint,
+            repo_did,
+            "{{ collection_nsid }}",
+            limit.unwrap_or(50),
+            cursor,
+        ).await
+    }
+}

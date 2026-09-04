@@ -91,7 +91,6 @@ impl PublicEventCommandHandler {
     pub async fn bulk_create(
         &self,
         items: Vec<CreatePublicEventRequest>,
-
         source: domain_types::SourceContext,
         correlation_id: Uuid,
         api_key_id: Uuid,

@@ -107,9 +107,21 @@ mod observability {
 /// (entity routes) wrapped in the worker-mode auth middleware, plus minimal
 /// `/version` and `/health` endpoints.
 pub fn router(state: AppState) -> Router<()> {
+{% if project.persistence_provider == "cornucopia" %}
+    let domain_routes = crate::api::{{ name }}::router::router()
+        // Inject the cornucopia client source so the generated per-route
+        // API-key scope guard (crate::api::scope::require_scope_for_request)
+        // can acquire a DB client without a State extractor (route-level
+        // layers cannot access router state).
+        .layer(axum::Extension(state.client_source.clone()))
+        .layer(
+            axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware),
+        );
+{% else %}
     let domain_routes = crate::api::{{ name }}::router::router().layer(
         axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware),
     );
+{% endif %}
     // `merge` instead of `nest("/", ...)`: axum 0.8 removed root nesting
     // ("Nesting at the root is no longer supported").
     let mut app = Router::new()

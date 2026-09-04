@@ -33,6 +33,7 @@ pub struct HookRegistry {
 {% endfor %}
 {% endfor %}
     pub media_storage: Option<Arc<dyn crate::MediaStorage>>,
+    pub authorization: Option<Arc<dyn crate::authorization::AuthorizationService>>,
     custom_routes: Vec<(String, axum::Router)>,
     adapters: HashMap<String, Arc<dyn crate::ExternalServiceAdapter>>,
 }
@@ -47,9 +48,14 @@ impl HookRegistry {
 {% endfor %}
 {% endfor %}
             media_storage: None,
+            authorization: None,
             custom_routes: Vec::new(),
             adapters: HashMap::new(),
         }
+    }
+
+    pub fn register_authorization(&mut self, svc: Arc<dyn crate::authorization::AuthorizationService>) {
+        self.authorization = Some(svc);
     }
 
     pub fn register_adapter(&mut self, name: impl Into<String>, adapter: Arc<dyn crate::ExternalServiceAdapter>) {

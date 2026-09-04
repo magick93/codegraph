@@ -1,0 +1,39 @@
+{
+  "domain": "compensation",
+  "basePath": "/api/v1/compensation",
+  "entities": {
+    "pay-runs": {
+      "entity": "PayRun",
+      "module": "pay_run",
+      "pathSegment": "pay-runs",
+      "basePath": "/api/v1/compensation/pay-runs",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/compensation/pay-runs",
+          "operation": "list"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/compensation/pay-runs",
+          "operation": "create"
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/compensation/pay-runs/{pay_run_id}",
+          "operation": "read"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/compensation/pay-runs/{pay_run_id}",
+          "operation": "update"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/compensation/pay-runs/{pay_run_id}",
+          "operation": "delete"
+        }
+      ]
+    }
+  }
+}

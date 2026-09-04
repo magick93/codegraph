@@ -205,6 +205,15 @@ pub struct DomainEntry {
     /// false (off — generated output stays byte-identical to pre-observability).
     #[serde(default)]
     pub observability: Option<bool>,
+    /// Entity-less domain whose router delegates to a hand-written
+    /// `handwritten_routes.rs` module. Such a domain generates NO entities,
+    /// DDL migrations, DTOs, handlers or lifecycle traits — only the
+    /// domain-level router scaffold (`src/api/{domain}/router.rs` for the
+    /// monolith) and, in workers topology, a per-domain worker crate plus a
+    /// gateway upstream/service binding. Typically paired with `entities = []`
+    /// and `auto_discover = false`. Defaults to false.
+    #[serde(default)]
+    pub custom_routes: bool,
 }
 
 fn default_tier() -> String {
@@ -495,6 +504,29 @@ pub struct EntityConfig {
     /// can host custom panels without client-side overlay hacks (#162).
     #[serde(default)]
     pub ui_detail_extensions: Vec<String>,
+    /// AT Protocol permission gating. When `scope` is set, the entity's API
+    /// routes run through the generated permission middleware.
+    #[serde(default)]
+    pub permissions: PermissionConfig,
+    /// Entity part of the API-key scope string (`{domain}.{entity}.read|write`)
+    /// enforced by the generated route-level scope guard. Defaults to the
+    /// entity's module name (snake_case table name) at codegen time; override
+    /// when the scope vocabulary differs from the module name (the hand-written
+    /// platform routes, for example, scope on `tenants` / `api_keys`).
+    #[serde(default)]
+    pub api_key_scope: Option<String>,
+}
+
+/// AT Protocol permission gating configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PermissionConfig {
+    /// Permission scope prefix, e.g. "support:support-plan". Ops are appended:
+    /// ":create", ":read", ":update", ":delete", ":list".
+    pub scope: Option<String>,
+    /// When true, read-by-id / update / delete require record-level authorization
+    /// (the AuthorizationService resolves the target record's owner DID).
+    #[serde(default)]
+    pub record_scoped: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -768,6 +800,32 @@ list_exclude = ["detailed_notes"]
         assert_eq!(candidate.role.as_deref(), Some("root"));
         assert_eq!(candidate.dto.immutable_fields, vec!["ssn"]);
         assert_eq!(candidate.dto.list_exclude, vec!["detailed_notes"]);
+        // api_key_scope defaults to None (module name fallback at codegen time).
+        assert!(candidate.api_key_scope.is_none());
+    }
+
+    #[test]
+    fn test_parse_api_key_scope_override() {
+        let toml = r#"
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting"
+postgres_schema = "recruiting"
+entities = ["CandidateType"]
+
+[domains.recruiting.entity_config.CandidateType]
+api_key_scope = "candidates"
+
+[domains.recruiting.entity_config.CandidateType.permissions]
+scope = "recruiting:candidate"
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        let candidate = &config.domains["recruiting"].entity_config["CandidateType"];
+        assert_eq!(candidate.api_key_scope.as_deref(), Some("candidates"));
+        assert_eq!(
+            candidate.permissions.scope.as_deref(),
+            Some("recruiting:candidate")
+        );
     }
 
     #[test]
@@ -1347,6 +1405,35 @@ allow_include = ["person"]
             worker.allow_include.as_deref(),
             Some(&["person".to_string()][..])
         );
+    }
+
+    #[test]
+    fn parse_custom_routes_flag() {
+        let toml = r#"
+[domains.platform]
+label = "Platform"
+schema_dir = "platform"
+postgres_schema = "platform"
+depends_on = []
+auditable = false
+entities = []
+auto_discover = false
+custom_routes = true
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        let platform = &config.domains["platform"];
+        assert!(platform.custom_routes);
+
+        // Absent key defaults to false.
+        let toml = r#"
+[domains.crm]
+label = "CRM"
+schema_dir = "crm"
+postgres_schema = "crm"
+entities = ["PersonRecordType"]
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        assert!(!config.domains["crm"].custom_routes);
     }
 
     #[test]
