@@ -117,7 +117,7 @@ templates under `templates/db/<target>/`.
 
 ```bash
 cargo test --workspace                      # full test suite
-cargo test -p codegraph-ops                 # ops harness tests (93)
+cargo test -p codegraph-ops                 # ops harness tests (103)
 cargo test -p codegraph --test init_tests   # project lifecycle integration tests
 cargo test -p codegraph-ops --test db_integration -- --ignored  # needs a running Postgres
 ```

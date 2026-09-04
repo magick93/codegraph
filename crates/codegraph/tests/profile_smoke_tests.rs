@@ -784,7 +784,7 @@ generation_mode = "ddd_only"
         let router_file = report
             .files
             .iter()
-            .find(|f| f.path.to_string_lossy().to_string() == *rp)
+            .find(|f| f.path.to_string_lossy() == *rp)
             .unwrap();
         let content = &router_file.content;
         assert!(

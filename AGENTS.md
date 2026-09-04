@@ -20,7 +20,12 @@ Workspace root `Cargo.toml` with 13 crates:
 | `ast-ifml` | auto-lsp AST definitions for IFML |
 | `codegraph-ops` | Rust test & deploy harness (see "Ops Harness" section) |
 
-## IFML Integration (feat/ifml-integration branch)
+The 13 members above are the workspace. The tree also carries
+non-workspace directories: `codegraph-vscode/` (IFML VS Code extension),
+`crates/tree-sitter-ifml/` (grammar), and `crates/review/` (regenerated
+fixture app exercised by `grafeo_e2e_tests`). None are workspace members.
+
+## IFML Integration
 
 ### Overview
 
@@ -329,7 +334,7 @@ cargo run -- lsp --schemas schemas/ --classifier classifier.toml --config domain
 
 ```bash
 # Rust tests
-cargo test --workspace                    # all tests (635+)
+cargo test --workspace                    # all tests (969+)
 cargo test -p codegraph-ifml-dsl          # 20 DSL parser tests
 cargo test -p codegraph -- lsp            # 5 LSP server tests
 cargo test -p codegraph --test ifml_e2e_tests  # 5 E2E tests
@@ -348,7 +353,7 @@ cargo test -p codegraph --test grpc_compile_tests   # Level 3: protoc compilatio
 cargo test -p codegraph --test profile_smoke_tests
 
 # Ops harness tests (codegraph-ops + ops generator)
-cargo test -p codegraph-ops            # 93 harness tests (suites, proc, db, migrate, ext, metrics)
+cargo test -p codegraph-ops            # 103 harness tests (suites, proc, db, migrate, ext, metrics)
 cargo test -p codegraph --test ops_generator_tests  # 7 tests + 1 ignored compile test (manifest + testkit emission, OpsConfig::load contract)
 cargo clippy -p codegraph-ops --all-targets         # must be warning-free
 
@@ -757,6 +762,9 @@ override (for monorepo sync setups), hooks, extensions.
    (`generate/ops.rs`); the codegraph binary stamps `project.codegraph_rev`
    from its own git rev (`main.rs`) so the testkit `Cargo.toml` pins the same
    rev (see `templates/scaffold/cargo_toml.tera`, `templates/ops/testkit_cargo.tera`).
+   Consumers on local path deps (no git rev) keep generated pins working with
+   a `post_generate` hook that rewrites the generated path-dep lines
+   (hr-specs' `repin-codegraph-path-deps` hook is the reference).
 3. Edit the manifest: `database.api`/`database.e2e`/`database.e2e_app` targets
    (+ `reset_sql`/`seed_sql`), `supabase` dir + keys, `hurl.dir`/`skip`/org
    ids, `ui_dir` override (monorepo sync setups), and — for e2e generation —
@@ -1067,6 +1075,61 @@ Cloudflare Workers Observability (decision #111) — no hand-rolled OTLP:
 - New DB generators (or modifications to existing ones) must use the `SqlDialect` trait (see `crates/codegraph/src/generate/db/dialect.rs`) for type mapping and feature gating instead of hardcoding PostgreSQL types.
 - When adding new template files for a dialect, place them in `templates/db/<dialect>/` and the generator selects the right template path based on `database_target`.
 - The `project.database_target` and `project.persistence_provider` variables are available in all Tera templates via `ProjectConfig`.
+
+## Include Path System (`?include=`)
+
+Generated list/GET handlers support `?include=` eager loading. Paths are
+resolved at generation time by
+`crates/codegraph/src/generate/api/include_path.rs`: `allow_include`
+entries in `domains.toml` are explicit paths; everything else comes from
+auto-discovery (config children with `parent`/`parent_ref`, graph
+entity-refs, parent candidates). Heaviest consumer: hr-specs (its
+~4,000-test e2e suite is the acceptance gate for include changes).
+
+### Resolution gates (evaluation order)
+
+- Junction arrays (array-of-entity-ref) are skipped — they materialize as
+  junction tables with neither a source FK nor a target back-ref, so fetch
+  helpers would reference nonexistent columns (the original #82 bug).
+- **Config-declared children are authoritative**: when the target is
+  `role = "child"` with `parent` + `parent_ref` matching the current
+  source, the parent_ref column (e.g. `worker_type_id`) is the reverse FK
+  and is exempt from the schema-property gate — the child's schema JSON
+  carries no such property (#143).
+- Force-VO, codelist, and non-entity targets are skipped.
+- A path whose segments were all skipped emits nothing; requesting it at
+  runtime is a 400 `Unknown include path` (the allow-list is exactly the
+  resolved paths).
+
+### Emitted code (repository_emitter + handler.tera)
+
+- One single fetch (GET-by-id) + one batch fetch (list) per single-segment
+  path; `emit_dot_fetch_method` (combined intermediate+leaf response) per
+  dot path.
+- LIST endpoints wire dot paths through `emit_dot_batch_fetch_method`
+  (per-source-id loop over the dot fetch) and merge each leaf field into
+  `included.<segments[0]>[<source_id]>` so sibling dot paths accumulate
+  (#155). Before #155, dot paths validated but were never fetched.
+- Target child tables hydrate when the include response type is
+  entity-native (`{Target}Response`); scoped responses (e.g.
+  `WorkerPersonLegalResponse` for `worker.person`) keep all-None children
+  — tree struct names don't align with scoped prefixes (#161).
+- Nested child response structs are imported from the target entity's
+  dto_response module (`use crate::domain::{dom}::{tbl}::dto_response::
+  {Struct}Response;`, #156–#160). Target trees are built before the import
+  block so these names reach `resolve_imports`' siblings.
+
+### Tests
+
+- `include_junction_tests` — junction skip (explicit + auto), parent_ref
+  gate, config-child fetchability.
+- `template_harness::dot_include_list_handler_wires_batch_and_merge` and
+  `template_harness::person_include_hydrates_target_child_tables`.
+
+Regenerating a real consumer (hr-specs: `cargo build -p hr-graph
+--release` then `hr-graph run ...`) is the compile gate for template
+changes — include-template errors only surface when the generated app
+builds.
 
 ## Cross-Domain Schema Deduplication
 
