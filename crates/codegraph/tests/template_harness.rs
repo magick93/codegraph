@@ -8627,6 +8627,7 @@ async fn person_include_hydrates_scoped_child_tables() {
             has_one_of: false,
             has_any_of: false,
             has_definitions: false,
+            custom_annotations: Default::default(),
         }
     }
 
@@ -8855,6 +8856,7 @@ async fn detail_page_emits_extension_points() {
             has_one_of: false,
             has_any_of: false,
             has_definitions: false,
+            custom_annotations: Default::default(),
         }
     }
 
