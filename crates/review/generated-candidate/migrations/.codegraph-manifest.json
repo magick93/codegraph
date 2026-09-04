@@ -1,5 +1,5 @@
 {
-  "root": "/home/anton/git/codegraph-ifml/crates/review/generated-candidate/migrations",
+  "root": "/home/anton/git/codegraph/crates/review/generated-candidate/migrations",
   "generated": [
     "000010_common_currency_code_list_codelist.sql",
     "000011_common_gender_code_list_codelist.sql",

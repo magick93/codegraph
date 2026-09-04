@@ -79,7 +79,15 @@ impl GlobalGenerator for UiScaffoldGenerator {
         for entry in generation_order {
             let stripped = config.defaults.strip_suffix(&entry.schema_title);
             let module_name = codegraph_naming::to_snake_case(&stripped);
-            let path_segment = codegraph_naming::to_kebab_case(&stripped);
+            // Respect the entity's configured path_segment override (e.g.
+            // "workers") so dashboard/nav links match the actual routes
+            // emitted by the page generator (#162 phase 4 route convention).
+            let path_segment = config
+                .domains
+                .get(&entry.domain)
+                .and_then(|d| d.get_entity_config(&entry.schema_title))
+                .and_then(|ec| ec.path_segment.clone())
+                .unwrap_or_else(|| codegraph_naming::to_kebab_case(&stripped));
             let label = codegraph_naming::to_display_name(&stripped);
 
             // Collect lightweight field names + labels for i18n message keys.

@@ -159,6 +159,7 @@ fn migration_dir() -> std::path::PathBuf {
         return manifest_relative;
     }
     Path::new("migrations").to_path_buf()
+}
 
 /// Split a SQL script into individual statements on `;` terminators,
 /// ignoring semicolons inside single-quoted strings, double-quoted

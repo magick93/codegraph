@@ -233,7 +233,7 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {% if project.hooks_api_crate %}
     // Hook registry — lifecycle hooks + authz service. Built before AppState so
     // command/query handlers receive their per-entity lifecycle hook.
-    let mut hooks_registry = crate::hooks::HookRegistry::default();
+    let mut hooks_registry = {{ project.hooks_api_crate | replace(from="_", to="-") }}::HookRegistry::default();
 {% if has_atproto %}
     hooks_registry.register_authorization(std::sync::Arc::new(
         cosmos_extensions::authorization::AuthorizationServiceImpl::new(db.clone()),
