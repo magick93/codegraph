@@ -1876,7 +1876,7 @@ impl EntityGenerator for DdlGenerator {
                     project,
                 )?;
                 files.push(GeneratedFile {
-                    path: self.output_dir.join("migrations").join(format!(
+                    path: crate::generate::db::migrations_root(&self.output_dir).join(format!(
                         "{}_{}_rls.sql",
                         child_ctx.schema_name, child_ctx.table_name
                     )),
