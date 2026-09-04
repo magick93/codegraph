@@ -2114,13 +2114,44 @@ impl RepositoryImplEmitter {
                 tree.module_name.clone(),
                 "repository_impl".into(),
             ];
-            let mut include_type_names: Vec<String> = Vec::new();
+
+            // Build the target entity trees so include-fetch responses hydrate
+            // the target's child tables (e.g. person.name) instead of emitting
+            // all-None sub-objects. Targets whose tree cannot be built simply
+            // skip child hydration. The trees also contribute their (nested)
+            // child response struct names to the import resolution below — the
+            // include-fetch child reads reference them.
+            let mut include_target_trees: Vec<Option<EntityTree>> = Vec::new();
             for path in &include_paths {
+                let last = path.segments.last().unwrap();
+                let ttree = self
+                    .query_entity_tree(db, &last.schema_title, &last.domain, config, None)
+                    .await
+                    .ok();
+                include_target_trees.push(ttree);
+            }
+
+            fn collect_child_struct_names(tree: &EntityTree, out: &mut Vec<String>) {
+                fn walk(child: &ChildTableInfo, out: &mut Vec<String>) {
+                    out.push(child.struct_name.clone());
+                    for nested in &child.child_tables {
+                        walk(nested, out);
+                    }
+                }
+                for child in &tree.child_tables {
+                    walk(child, out);
+                }
+            }
+            let mut include_type_names: Vec<String> = Vec::new();
+            for (idx, path) in include_paths.iter().enumerate() {
                 include_type_names.push(path.response_rust_type.clone());
                 if path.segments.len() > 1 {
                     if let Some(last_seg) = path.segments.last() {
                         include_type_names.push(format!("{}Response", last_seg.entity_name));
                     }
+                }
+                if let Some(Some(ttree)) = include_target_trees.get(idx) {
+                    collect_child_struct_names(ttree, &mut include_type_names);
                 }
             }
             // Deduplicate while preserving order.
@@ -2160,20 +2191,6 @@ impl RepositoryImplEmitter {
             }
 
             writeln!(code).unwrap();
-            // Build the target entity trees so include-fetch responses hydrate
-            // the target's child tables (e.g. person.name) instead of emitting
-            // all-None sub-objects. Targets whose tree cannot be built simply
-            // skip child hydration.
-            let mut include_target_trees: Vec<Option<EntityTree>> = Vec::new();
-            for path in &include_paths {
-                let last = path.segments.last().unwrap();
-                let ttree = self
-                    .query_entity_tree(db, &last.schema_title, &last.domain, config, None)
-                    .await
-                    .ok();
-                include_target_trees.push(ttree);
-            }
-
             writeln!(code, "impl {}RepositoryImpl {{", tree.entity_name).unwrap();
             self.emit_include_fetch_methods(
                 &tree,
