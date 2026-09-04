@@ -2193,7 +2193,11 @@ impl RepositoryImplEmitter {
                     if seen.insert(child.struct_name.clone()) {
                         // base already ends at the target entity's module —
                         // every nested level is re-exported by its dto_response.
-                        out.push(format!("use {}dto_response::{};", base, child.struct_name));
+                        // The hydration reads emit {Struct}Response types.
+                        out.push(format!(
+                            "use {}dto_response::{}Response;",
+                            base, child.struct_name
+                        ));
                     }
                     for nested in &child.child_tables {
                         walk_child_imports(nested, base, seen, out);
