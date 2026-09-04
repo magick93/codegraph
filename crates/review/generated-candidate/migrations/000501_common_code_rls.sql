@@ -82,3 +82,14 @@ CREATE POLICY "api_key_scoped_delete" ON common.code
     AND public.check_api_key_scope('code', id::text, 'delete')
   );
 
+
+-- Schema + table privileges for app_user and api_key (RLS policies only
+-- filter rows; these grants enable access). Idempotent, so it's safe to
+-- emit from every entity migration in a domain.
+-- ALL TABLES covers child tables (created by the entity migration before
+-- this file runs); ALTER DEFAULT PRIVILEGES covers tables created later.
+GRANT USAGE ON SCHEMA common TO app_user, api_key;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA common TO app_user, api_key;
+ALTER DEFAULT PRIVILEGES IN SCHEMA common
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user, api_key;
+

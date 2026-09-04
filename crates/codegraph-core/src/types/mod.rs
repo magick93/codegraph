@@ -30,8 +30,8 @@ pub use field_def::{
     FieldDefinition,
 };
 pub use ifml::{
-    ActionNode, DataBindingNode, DataFlowData, EventNode, NavigationFlowData,
-    ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
+    strip_ifml_prefix, ActionNode, DataBindingNode, DataBindingResolution, DataFlowData, EventNode,
+    NavigationFlowData, ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
 };
 pub use persistence::{
     AuditEffect, AuditTimestampKind, AuditUserKind, PersistenceChildTable, PersistenceColumn,

@@ -14,7 +14,7 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(codegenStatusBar);
 
     // Register commands FIRST so they exist even if LSP fails to start
-    registerCommands(context, lspClient);
+    registerCommands(context, () => lspClient);
 
     // Completion provider
     context.subscriptions.push(

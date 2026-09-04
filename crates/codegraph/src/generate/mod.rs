@@ -191,6 +191,7 @@ use codegraph_config::{DomainConfig, UiDomainConfig, UiOverrideConfig};
 use std::sync::OnceLock;
 
 use self::traits::{DomainGenerator, EntityGenerator, GeneratedFile, GlobalGenerator};
+use crate::generate::ifml::IfmlQuerier;
 
 // =============================================================================
 // Project-level configuration for template rendering.
@@ -732,8 +733,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         workers_topology,
     );
 
-    // Clean stale IFML route directories from previous runs.
-    clean_stale_ifml_routes(output_dir, &[]);
+    // Clean stale IFML route directories from previous runs.  The IFML-only
+    // path (`run_ifml_generators`) handles this per framework with the full
+    // set of active views from the current model; the monolithic pipeline
+    // regenerates routes in place, so nothing to clean here.
 
     // Clean generated migration files (seq >= 10) from previous runs.  New runs
     // may generate a different set of files (e.g. duplicates removed),
@@ -1526,6 +1529,80 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     Ok(report)
 }
 
+pub async fn run_ifml_generators(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    output_dir: &Path,
+    tera: &Tera,
+    ifml_frameworks: &[String],
+    build_plan: Option<&crate::profile::BuildPlan>,
+    project: &ProjectConfig,
+) -> Result<report::GenerationReport> {
+    init_project_config(project.clone());
+
+    let cached_db = CachingQuerier::new(db);
+    let db: &dyn GraphQuerier = &cached_db;
+
+    let querier = ifml::IfmlGraphQuerier::new(db);
+    let model = querier.get_ifml_model().await.map_err(Error::Graph)?;
+    if model.view_containers.is_empty() {
+        return Ok(report::GenerationReport::new());
+    }
+
+    // Active views are the complete set of view containers in the model —
+    // stale route cleaning below removes anything not in this list.
+    let active_views: Vec<String> = model
+        .view_containers
+        .iter()
+        .map(|vc| vc.name.clone())
+        .collect();
+
+    let frameworks = if ifml_frameworks.is_empty() {
+        vec!["svelte".to_string()]
+    } else {
+        ifml_frameworks.to_vec()
+    };
+
+    let plan_has_global =
+        |name: &str| build_plan.is_none_or(|bp| bp.has_global_gen(&name.replace('-', "_")));
+
+    let mut global_gens: Vec<Box<dyn GlobalGenerator>> = Vec::new();
+    for fw in &frameworks {
+        let fw_output = output_dir.join(fw);
+        clean_stale_ifml_routes(&fw_output, fw, &active_views);
+        if build_plan.is_none() || plan_has_global(&format!("ifml_route_{fw}")) {
+            global_gens.push(Box::new(ifml::route_generator::IfmlRouteGenerator::new(
+                &fw_output, fw,
+            )) as Box<dyn GlobalGenerator>);
+        }
+        if build_plan.is_none() || plan_has_global(&format!("ifml_navigation_{fw}")) {
+            global_gens.push(
+                Box::new(ifml::navigation_generator::IfmlNavigationGenerator::new(
+                    &fw_output, fw,
+                )) as Box<dyn GlobalGenerator>,
+            );
+        }
+    }
+
+    let global_results: Vec<_> = futures::future::join_all(
+        global_gens
+            .iter()
+            .map(|gen| gen.generate(db, config, &[], tera, project)),
+    )
+    .await;
+
+    let mut report = report::GenerationReport::new();
+    for result in global_results {
+        let files = result?;
+        for file in &files {
+            write_output(file)?;
+        }
+        report.files.extend(files);
+    }
+
+    Ok(report)
+}
+
 /// Group generation entries by domain, preserving order within each domain.
 fn group_by_domain(entries: &[GenerationEntry]) -> Vec<(String, Vec<String>)> {
     let mut seen = HashSet::new();
@@ -2236,44 +2313,117 @@ fn write_output(file: &GeneratedFile) -> Result<()> {
 }
 
 /// Clean stale IFML-generated route files that are no longer in the IFML model.
-/// IFML routes are generated at src/routes/{view_name}/+page.svelte and +page.ts.
-/// This removes routes for views that no longer exist in the current model.
-fn clean_stale_ifml_routes(output_dir: &Path, active_views: &[String]) {
-    let routes_dir = output_dir.join("src").join("routes");
-    if !routes_dir.exists() {
+///
+/// `fw_output` is the per-framework output root (e.g. `out/svelte`); the scan
+/// follows each framework's layout conventions from
+/// `ifml::output_paths::OutputPaths::for_framework`. Only files/directories
+/// matching the framework's page naming pattern are considered IFML-owned;
+/// everything else is left untouched.
+fn clean_stale_ifml_routes(fw_output: &Path, framework: &str, active_views: &[String]) {
+    match framework {
+        "svelte" => clean_svelte_routes(fw_output, active_views),
+        "react" => clean_react_routes(fw_output, active_views),
+        "vue" => clean_file_routes(&fw_output.join("pages"), active_views, |name| {
+            format!("{}.vue", codegraph_naming::to_kebab_case(name))
+        }),
+        "flutter" => clean_file_routes(
+            &fw_output.join("lib").join("screens"),
+            active_views,
+            |name| format!("{}_screen.dart", codegraph_naming::to_snake_case(name)),
+        ),
+        "swiftui" => clean_file_routes(&fw_output.join("Views"), active_views, |name| {
+            format!("{name}View.swift")
+        }),
+        _ => {}
+    }
+}
+
+/// SvelteKit: routes live in `src/routes/{view}/+page.svelte` directories.
+/// Directories starting with `_`, `(`, or `.` are SvelteKit conventions
+/// (private modules, route groups, hidden files) and are never touched.
+fn clean_svelte_routes(fw_output: &Path, active_views: &[String]) {
+    let routes_dir = fw_output.join("src").join("routes");
+    if !routes_dir.is_dir() {
         return;
     }
-
-    let entries = match std::fs::read_dir(&routes_dir) {
+    let entries = match fs::read_dir(&routes_dir) {
         Ok(e) => e,
         _ => return,
     };
-
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
             continue;
         }
-
-        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
+        let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
         };
-
-        // Skip non-IFML directories (they start with _, (, or contain other chars)
         if dir_name.starts_with('_') || dir_name.starts_with('(') || dir_name.starts_with('.') {
             continue;
         }
-
-        // If this directory name doesn't match any active view, it's stale
-        let is_active = active_views.iter().any(|v| v.to_lowercase() == dir_name);
-        if !is_active {
-            // Check if the directory contains IFML-generated files
-            let has_ifml_files = path.join("+page.svelte").exists();
-            if has_ifml_files {
+        if path.join("+page.svelte").exists() {
+            let is_active = active_views.iter().any(|v| v.to_lowercase() == dir_name);
+            if !is_active {
                 tracing::debug!("Removing stale IFML route: {}", path.display());
-                let _ = std::fs::remove_dir_all(&path);
+                let _ = fs::remove_dir_all(&path);
             }
+        }
+    }
+}
+
+/// Next.js: routes live in `app/{kebab-view}/page.tsx` directories.
+fn clean_react_routes(fw_output: &Path, active_views: &[String]) {
+    let app_dir = fw_output.join("app");
+    if !app_dir.is_dir() {
+        return;
+    }
+    let entries = match fs::read_dir(&app_dir) {
+        Ok(e) => e,
+        _ => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if path.join("page.tsx").exists() {
+            let is_active = active_views
+                .iter()
+                .any(|v| codegraph_naming::to_kebab_case(v) == dir_name);
+            if !is_active {
+                tracing::debug!("Removing stale IFML route: {}", path.display());
+                let _ = fs::remove_dir_all(&path);
+            }
+        }
+    }
+}
+
+/// Flat-file frameworks (vue/flutter/swiftui): each view is one file in a
+/// single directory, named via `file_name`. Only files matching the naming
+/// pattern are removed.
+fn clean_file_routes(dir: &Path, active_views: &[String], file_name: impl Fn(&str) -> String) {
+    if !dir.is_dir() {
+        return;
+    }
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        _ => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let is_active = active_views.iter().any(|v| file_name(v) == name);
+        if !is_active {
+            tracing::debug!("Removing stale IFML route file: {}", path.display());
+            let _ = fs::remove_file(&path);
         }
     }
 }

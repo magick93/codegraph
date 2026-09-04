@@ -9,13 +9,25 @@
     { type: 'event', label: 'Event', icon: '⚡' },
     { type: 'action', label: 'Action', icon: '🛠️' },
   ];
+
+  function onDragStart(event: DragEvent, item: (typeof items)[number]) {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.setData('application/ifml-node', JSON.stringify(item));
+    event.dataTransfer.effectAllowed = 'copy';
+  }
 </script>
 
 <div class="palette">
   <h3>Elements</h3>
   <div class="items">
     {#each items as item}
-      <div class="palette-item" draggable="true">
+      <div
+        class="palette-item"
+        role="button"
+        tabindex="0"
+        draggable="true"
+        ondragstart={(e) => onDragStart(e, item)}
+      >
         <span class="icon">{item.icon}</span>
         <span class="label">{item.label}</span>
       </div>

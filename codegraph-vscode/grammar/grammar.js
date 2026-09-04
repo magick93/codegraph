@@ -102,9 +102,22 @@ module.exports = grammar({
       field('key', $.identifier), ':', field('value', $.value_expression), ';',
     ),
 
-    value_expression: $ => choice($.expression, $.array_literal),
+    value_expression: $ => choice($.expression, $.array_literal, $.object_literal),
 
     array_literal: $ => seq('[', commaSep($.value_expression), ']'),
+
+    object_literal: $ => seq(
+      '{',
+      optional(seq($.object_member, repeat(seq(';', $.object_member)))),
+      optional(';'),
+      '}',
+    ),
+
+    object_member: $ => seq(
+      field('key', $.identifier), ':', field('value', $.object_member_value),
+    ),
+
+    object_member_value: $ => choice($.expression, $.array_literal),
 
     // ── Event handler ────────────────────────────────────────────
     event_handler: $ => seq(

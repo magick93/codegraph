@@ -382,6 +382,56 @@ impl BuildPlan {
         })
     }
 
+    /// Construct a minimal IFML-only build plan for the given frameworks.
+    ///
+    /// Used by the `ifml_generate` driver when no profiles.toml is provided
+    /// (or when the provided profile does not declare per-framework IFML
+    /// generators). Each framework gets `ifml_route_{fw}` and
+    /// `ifml_navigation_{fw}` in the global generator list, the
+    /// `ifml_backend` + `framework_{fw}` features, and a default
+    /// `IfmlFrameworkTarget`. Unknown framework names are rejected against
+    /// the capability registry.
+    pub fn ifml_only(frameworks: &[String]) -> Result<Self> {
+        let registry = CapabilityRegistry::new();
+        let mut features = toml::Table::new();
+        features.insert("ifml_backend".to_string(), toml::Value::Boolean(true));
+        let mut global_generators = Vec::new();
+        let mut ifml_frameworks = Vec::new();
+        for fw in frameworks {
+            let route_name = format!("ifml_route_{fw}");
+            if registry.get(&route_name).is_none() {
+                return Err(Error::Config(format!(
+                    "unknown IFML framework \"{fw}\"; known frameworks: \
+                     svelte, react, vue, flutter, swiftui"
+                )));
+            }
+            features.insert(format!("framework_{fw}"), toml::Value::Boolean(true));
+            global_generators.push(route_name);
+            global_generators.push(format!("ifml_navigation_{fw}"));
+            ifml_frameworks.push(IfmlFrameworkTarget {
+                name: fw.clone(),
+                output: None,
+                target: default_framework_target(),
+            });
+        }
+        Ok(BuildPlan {
+            entity_generators: Vec::new(),
+            domain_generators: Vec::new(),
+            global_generators,
+            post_gen_scripts: Vec::new(),
+            ifml_frameworks,
+            template_pack_path: None,
+            database_target: DatabaseTarget::default(),
+            has_atproto: false,
+            atproto_tenancy: "shared_pds".to_string(),
+            has_fern: false,
+            fern_sdk_languages: vec!["typescript".to_string()],
+            persistence_provider: PersistenceProvider::default(),
+            deployment_topology: DeploymentTopology::default(),
+            features,
+        })
+    }
+
     /// Expand IFML generators in sections based on configured frameworks.
     ///
     /// When `ifml_frameworks` is non-empty, each `ifml_route` generator is

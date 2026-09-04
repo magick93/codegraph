@@ -4,7 +4,7 @@ import { openDiagramPanel } from '../webview/panel';
 import { LspClient } from '../lsp/client';
 import { findBinaryPath } from '../binary';
 
-export function registerCommands(context: vscode.ExtensionContext, lspClient: LspClient | undefined): void {
+export function registerCommands(context: vscode.ExtensionContext, getLspClient: () => LspClient | undefined): void {
     context.subscriptions.push(
         vscode.commands.registerCommand('ifml.openDiagram', () => {
             const editor = vscode.window.activeTextEditor;
@@ -12,7 +12,7 @@ export function registerCommands(context: vscode.ExtensionContext, lspClient: Ls
                 vscode.window.showErrorMessage('Open an .ifml file first');
                 return;
             }
-            openDiagramPanel(context, editor.document.uri);
+            openDiagramPanel(context, editor.document.uri, getLspClient);
         })
     );
 
@@ -110,8 +110,9 @@ export function registerCommands(context: vscode.ExtensionContext, lspClient: Ls
 
     context.subscriptions.push(
         vscode.commands.registerCommand('ifml.refreshLsp', async () => {
-            if (lspClient?.restart) {
-                await lspClient.restart();
+            const client = getLspClient();
+            if (client?.restart) {
+                await client.restart();
                 vscode.window.showInformationMessage('IFML Language Server restarted');
             } else {
                 vscode.window.showErrorMessage('IFML Language Server not available');

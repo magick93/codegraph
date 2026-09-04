@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Shared test helpers for gRPC tests.
 //! Included via `mod helpers;` in other test files.
 
