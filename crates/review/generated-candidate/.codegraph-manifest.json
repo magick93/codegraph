@@ -1,5 +1,5 @@
 {
-  "root": "/home/anton/git/codegraph-repo-167/crates/review/generated-candidate",
+  "root": ".",
   "generated": [
     "Cargo.toml",
     "api-contracts/README.md",

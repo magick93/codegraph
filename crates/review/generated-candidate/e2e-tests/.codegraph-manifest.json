@@ -1,5 +1,5 @@
 {
-  "root": "/home/anton/git/codegraph-repo-167/crates/review/generated-candidate/e2e-tests",
+  "root": ".",
   "generated": [
     "api/common/common_amount.ts",
     "api/common/common_code.ts",
