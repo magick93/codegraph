@@ -12,6 +12,7 @@ use codegraph::generate::template_engine;
 #[allow(unused_imports)]
 use codegraph::generate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
 use codegraph::generate::GenerationEntry;
+use codegraph::generate::ProjectConfig;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{EnumValue, PropertyNode, SchemaNode};
 use std::path::Path;
@@ -5962,7 +5963,15 @@ operations = ["create", "read", "update", "list"]
 
         let emitter = RepositoryImplEmitter;
         let code = emitter
-            .emit(&mock, "WorkerType", "hr", &config, None, &[path])
+            .emit(
+                &mock,
+                "WorkerType",
+                "hr",
+                &config,
+                None,
+                &[path],
+                &ProjectConfig::default(),
+            )
             .await
             .unwrap();
 
@@ -6432,11 +6441,20 @@ operations = ["create", "read", "update", "list"]
                 &config,
                 None,
                 &include_paths,
+                &ProjectConfig::default(),
             )
             .await
             .unwrap();
         let repo_code_order = emitter
-            .emit(&mock, "OrderType", "test", &config, None, &include_paths)
+            .emit(
+                &mock,
+                "OrderType",
+                "test",
+                &config,
+                None,
+                &include_paths,
+                &ProjectConfig::default(),
+            )
             .await
             .unwrap();
         let repo_code = format!("{}\n{}", repo_code_test, repo_code_order);
@@ -6653,7 +6671,15 @@ parent_ref = "worker_type_id"
         .unwrap();
         let emitter = RepositoryImplEmitter;
         if let Ok(code) = emitter
-            .emit(&mock, "WorkerType", "hr", &config, None, &include_paths)
+            .emit(
+                &mock,
+                "WorkerType",
+                "hr",
+                &config,
+                None,
+                &include_paths,
+                &ProjectConfig::default(),
+            )
             .await
         {
             all_sources.push(("repository_impl.rs".to_string(), code));
@@ -7070,7 +7096,15 @@ async fn repository_emitter_produces_fetch_methods_with_include() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "WorkerType", "hr", &config, None, &include_paths)
+        .emit(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            None,
+            &include_paths,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -7116,7 +7150,15 @@ async fn repository_emitter_omits_fetch_methods_without_include() {
     let paths: &[ResolvedIncludePath] = &[];
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "WorkerType", "hr", &config, None, paths)
+        .emit(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            None,
+            paths,
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -8398,7 +8440,15 @@ parent_ref = "worker_type_id"
     // Repository: dot batch methods exist and parse.
     use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = RepositoryImplEmitter
-        .emit(&mock, "WorkerType", "hr", &config, None, &include_paths)
+        .emit(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            None,
+            &include_paths,
+            &ProjectConfig::default(),
+        )
         .await
         .expect("repository emission should not fail");
     assert!(
@@ -8566,7 +8616,15 @@ allow_include = ["person"]
 
     use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = RepositoryImplEmitter
-        .emit(&mock, "WorkerType", "hr", &config, None, &include_paths)
+        .emit(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            None,
+            &include_paths,
+            &ProjectConfig::default(),
+        )
         .await
         .expect("repository emission should not fail");
 
@@ -8779,7 +8837,15 @@ allow_include = ["person"]
 
     use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = RepositoryImplEmitter
-        .emit(&mock, "WorkerType", "hr", &config, None, &include_paths)
+        .emit(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            None,
+            &include_paths,
+            &ProjectConfig::default(),
+        )
         .await
         .expect("repository emission should not fail");
 

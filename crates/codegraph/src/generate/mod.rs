@@ -188,16 +188,14 @@ use crate::generate::db::dialect::{
 };
 use codegraph_config::{DomainConfig, UiDomainConfig, UiOverrideConfig};
 
-use std::sync::OnceLock;
-
 use self::traits::{DomainGenerator, EntityGenerator, GeneratedFile, GlobalGenerator};
 use crate::generate::ifml::IfmlQuerier;
 
 // =============================================================================
 // Project-level configuration for template rendering.
-// Set once at the start of the generation pipeline, then accessible from
-// any generator via `get_project_config()` — no need to thread through
-// every helper function.
+// Threaded explicitly: `run_generators_with_opts` receives a
+// `ProjectConfig` (from `GeneratorOpts.project_config` or the default)
+// and passes it to every generator and helper that needs it.
 // =============================================================================
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -339,23 +337,6 @@ impl Default for ProjectConfig {
             api_version: "v1".into(),
         }
     }
-}
-
-static PROJECT_CONFIG: OnceLock<ProjectConfig> = OnceLock::new();
-
-/// Initialize the global project config. Must be called before any generator runs.
-pub fn init_project_config(config: ProjectConfig) {
-    PROJECT_CONFIG.set(config).ok();
-}
-
-/// Get the current project config. Falls back to a box-leaked default if not initialized.
-pub fn get_project_config() -> &'static ProjectConfig {
-    PROJECT_CONFIG.get().unwrap_or_else(|| {
-        // Leak a default on first call as permanent fallback
-        let default: &'static ProjectConfig = Box::leak(Box::new(ProjectConfig::default()));
-        PROJECT_CONFIG.set(default.clone()).ok();
-        PROJECT_CONFIG.get().unwrap()
-    })
 }
 
 /// An entity in the generation order with its graph schema_id and domain.
@@ -574,10 +555,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         .chain(std::iter::once(migrations_manifest_root.as_path()))
         .collect();
 
-    // Initialize global project config so generator helpers can access it.
+    // Project config is threaded explicitly to every generator/helper that
+    // needs it (no global state).
     let default_project = ProjectConfig::default();
     let project = project_config.unwrap_or(&default_project);
-    init_project_config(project.clone());
     type_registry::init_type_registry();
 
     // Create the database dialect based on project config.
@@ -1357,7 +1338,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
 
     // Codelist Rust enum re-exports (generated app re-exports from hr_domain_types)
     match codelist::rust_enum::RustCodelistGenerator::new(output_dir)
-        .generate_reexport_mod(db)
+        .generate_reexport_mod(db, project)
         .await
     {
         Ok(files) => {
@@ -1387,7 +1368,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         for (domain, _entity_titles) in all_domains_for_generation(config, &order) {
             let worker_base = output_dir.join("workers").join(&domain);
             match worker_codelist_gen
-                .generate_reexport_mod_for(db, &worker_base)
+                .generate_reexport_mod_for(db, &worker_base, project)
                 .await
             {
                 Ok(files) => {
@@ -1551,8 +1532,6 @@ pub async fn run_ifml_generators(
     build_plan: Option<&crate::profile::BuildPlan>,
     project: &ProjectConfig,
 ) -> Result<report::GenerationReport> {
-    init_project_config(project.clone());
-
     let cached_db = CachingQuerier::new(db);
     let db: &dyn GraphQuerier = &cached_db;
 

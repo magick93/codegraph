@@ -1277,7 +1277,15 @@ entities = [{entities_list}]
             .unwrap();
 
         let code = crate::generate::ddd::repository_emitter::RepositoryImplEmitter
-            .emit(&engine, "JobType", "hr", &config, None, &paths)
+            .emit(
+                &engine,
+                "JobType",
+                "hr",
+                &config,
+                None,
+                &paths,
+                &crate::generate::ProjectConfig::default(),
+            )
             .await
             .unwrap();
 

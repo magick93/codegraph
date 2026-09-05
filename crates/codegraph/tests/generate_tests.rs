@@ -1,5 +1,6 @@
 use codegraph::generate;
 use codegraph::generate::traits::EntityGenerator;
+use codegraph::generate::ProjectConfig;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
@@ -550,7 +551,15 @@ async fn test_repository_emitter_produces_impl() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -579,7 +588,15 @@ async fn test_repository_emitter_uses_num_items() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -654,7 +671,15 @@ async fn snapshot_repository_emitter_simple_entity() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -713,7 +738,15 @@ async fn snapshot_repository_emitter_codelist_columns() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -794,7 +827,15 @@ async fn snapshot_repository_emitter_structured_wrapper() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -895,7 +936,15 @@ async fn snapshot_repository_emitter_child_tables() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -940,6 +989,7 @@ async fn snapshot_repository_emitter_with_parent_ref() {
             &config,
             Some("candidate_id"),
             &[],
+            &ProjectConfig::default(),
         )
         .await
         .unwrap();
@@ -1028,7 +1078,15 @@ async fn required_genuine_entity_ref_is_not_null_across_all_layers() {
     // 2. Repository emitter: required ref → Set(v).
     let emitter = generate::ddd::repository_emitter::RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&mock, "ApplicationType", "recruiting", &config, None, &[])
+        .emit(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     assert!(
@@ -1197,7 +1255,15 @@ async fn required_entity_ref_with_parent_candidate_is_not_null_across_all_layers
     // 2. Repository emitter: required ref → Set(v).
     let emitter = generate::ddd::repository_emitter::RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&mock, "ApplicationType", "recruiting", &config, None, &[])
+        .emit(
+            &mock,
+            "ApplicationType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     assert!(
@@ -1340,6 +1406,7 @@ async fn required_include_fk_emits_direct_lookup_not_option_patterns() {
             &config,
             None,
             &[required_path],
+            &ProjectConfig::default(),
         )
         .await
         .unwrap();
@@ -1443,6 +1510,7 @@ async fn optional_include_fk_keeps_option_patterns() {
             &config,
             None,
             &[optional_path],
+            &ProjectConfig::default(),
         )
         .await
         .unwrap();
@@ -1722,7 +1790,15 @@ async fn repository_emitter_codelist_dto_access_uses_stripped_names() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "DeploymentType", "recruiting", &config, None, &[])
+        .emit(
+            &mock,
+            "DeploymentType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1794,7 +1870,15 @@ async fn child_insert_uses_stripped_dto_field_names() {
     let config = test_domain_config();
     let emitter = codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "DeploymentType", "recruiting", &config, None, &[])
+        .emit(
+            &mock,
+            "DeploymentType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 

@@ -55,15 +55,7 @@ async fn setup_grafeo() -> (GrafeoEngine, codegraph_config::config::DomainConfig
     (engine, config)
 }
 
-/// Serializes the two full-app compile tests. Both install a global
-/// `ProjectConfig` (via `init_project_config` inside `run_generators`) and
-/// run concurrently with other tests in this binary; the lock keeps them
-/// from racing on the global config with each other.
-static COMPILE_GATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 async fn generate_full_app(output_dir: &std::path::Path) {
-    let _gate = COMPILE_GATE_LOCK.lock().await;
-
     let (engine, config) = setup_grafeo().await;
     let tera =
         create_tera(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
@@ -1239,7 +1231,15 @@ async fn grafeo_candidate_repository_impl_content() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1456,7 +1456,15 @@ async fn grafeo_cross_layer_repository_consistency() {
 
     let emitter = RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1905,7 +1913,15 @@ async fn grafeo_candidate_composite_wrapper_in_repository() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -2066,7 +2082,15 @@ async fn grafeo_composite_wrapper_cross_layer_consistency() {
     // Repository (RepositoryImplEmitter::emit() → String)
     let emitter = RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -2217,7 +2241,15 @@ async fn grafeo_repository_impl_includes_child_inserts() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -2323,7 +2355,15 @@ async fn grafeo_repository_entity_ref_uses_id_suffix() {
 
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -2391,7 +2431,15 @@ async fn grafeo_entity_ref_cross_layer_consistency() {
         .await
         .unwrap();
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -2462,7 +2510,15 @@ async fn grafeo_repository_dto_field_alignment() {
 
     let emitter = RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -2536,7 +2592,15 @@ async fn grafeo_candidate_inspect_output() {
     // Also write repository impl (not part of run_generators template flow)
     let emitter = RepositoryImplEmitter;
     let repo_code = emitter
-        .emit(&engine, "CandidateType", "recruiting", &config, None, &[])
+        .emit(
+            &engine,
+            "CandidateType",
+            "recruiting",
+            &config,
+            None,
+            &[],
+            &ProjectConfig::default(),
+        )
         .await
         .unwrap();
     let repo_dir = output_dir
@@ -3011,7 +3075,6 @@ async fn grafeo_e2e_include_validates_unknown_path() {
 
 #[tokio::test]
 async fn generated_app_compiles_cleanly() {
-    let _gate = COMPILE_GATE_LOCK.lock().await;
     let (engine, config) = setup_grafeo().await;
     let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
@@ -3032,8 +3095,6 @@ async fn generated_app_compiles_cleanly() {
         types_import_prefix: "codegraph_type_contracts".into(),
         ..Default::default()
     };
-
-    codegraph::generate::init_project_config(project_config.clone());
 
     let order = codegraph::generate::compute_generation_order(&engine, &config)
         .await
