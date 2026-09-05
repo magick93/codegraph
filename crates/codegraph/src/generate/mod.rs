@@ -2723,7 +2723,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn clean_generated_output_removes_stale_dto_included() {
+    fn clean_generated_output_preserves_dto_included_in_live_dirs() {
         let dir = tempfile::TempDir::new().unwrap();
         let entity_dir = dir
             .path()
@@ -2732,8 +2732,10 @@ mod tests {
             .join("hr")
             .join("worker");
         std::fs::create_dir_all(&entity_dir).unwrap();
-        // Stale dto_included.rs from a run where the entity had include
-        // paths; dto_response.rs is a regular per-run file.
+        // dto_included.rs left over from a fullstack run must survive a
+        // profile-scoped regen: handlers in the existing output still import
+        // it, and generate_mod_files only declares modules whose files exist
+        // on disk.
         std::fs::write(entity_dir.join("dto_included.rs"), "pub struct Stale;").unwrap();
         std::fs::write(entity_dir.join("dto_response.rs"), "pub struct Keep;").unwrap();
         // A stale entity directory (not in the generation order) that also
@@ -2756,8 +2758,8 @@ mod tests {
         clean_generated_output(dir.path(), &order, "Type", false);
 
         assert!(
-            !entity_dir.join("dto_included.rs").exists(),
-            "stale dto_included.rs must be removed so generate_mod_files cannot re-declare it"
+            entity_dir.join("dto_included.rs").exists(),
+            "dto_included.rs in a live entity dir must be preserved across regens"
         );
         assert!(entity_dir.join("dto_response.rs").exists());
         assert!(
