@@ -29,16 +29,16 @@ fn rsvp_routes() -> Router<AppState> {
 
         .route(
             "/",
-            axum::routing::get(rsvp_handler::list).guard("rsvp", "list")
-                .merge(axum::routing::post(rsvp_handler::create).guard("rsvp", "create")),
+            axum::routing::get(rsvp_handler::list).guard("rsvp:rsvp", "list")
+                .merge(axum::routing::post(rsvp_handler::create).guard("rsvp:rsvp", "create")),
         )
 
 
         .route(
             "/{rsvp_id}",
-            axum::routing::get(rsvp_handler::get_by_id).guard("rsvp", "read")
-                .merge(axum::routing::put(rsvp_handler::update).guard("rsvp", "update"))
-                .merge(axum::routing::delete(rsvp_handler::delete).guard("rsvp", "delete")),
+            axum::routing::get(rsvp_handler::get_by_id).guard("rsvp:rsvp", "read")
+                .merge(axum::routing::put(rsvp_handler::update).guard("rsvp:rsvp", "update"))
+                .merge(axum::routing::delete(rsvp_handler::delete).guard("rsvp:rsvp", "delete")),
         )
 
 

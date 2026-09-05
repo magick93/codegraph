@@ -9,7 +9,68 @@
 </svelte:head>
 
 {% for comp in components %}
-{% if comp.component_type == "list" %}
+{% if comp.table %}
+<h1>{{ label }}</h1>
+<table{% if comp.table.pagination %} data-pagination="true"{% endif %}>
+	<thead>
+		<tr>
+		{% for col in comp.table.columns %}
+			<th>{{ col.label }}</th>
+		{% endfor %}
+		</tr>
+	</thead>
+	<tbody>
+{% raw %}		{#each data.items as item}{% endraw %}
+			<tr>
+			{% for col in comp.table.columns %}
+				<td>{item.{{ col.binding }}}</td>
+			{% endfor %}
+			</tr>
+{% raw %}		{/each}{% endraw %}
+	</tbody>
+</table>
+
+{% elif comp.form %}
+<form method="POST">
+	{% for field in comp.form.fields %}
+	{% if field.is_select %}
+	<label>
+		{{ field.name }}
+		<select name="{{ field.name }}"{% if field.required %} required{% endif %}>
+			{% for value in field.values %}
+			<option value="{{ value }}">{{ value }}</option>
+			{% endfor %}
+		</select>
+	</label>
+	{% elif field.is_radio %}
+	<fieldset>
+		<legend>{{ field.name }}</legend>
+		{% for value in field.values %}
+		<label>
+			{{ value }}
+			<input type="radio" name="{{ field.name }}" value="{{ value }}" />
+		</label>
+		{% endfor %}
+	</fieldset>
+	{% elif field.is_textarea %}
+	<label>
+		{{ field.name }}
+		<textarea name="{{ field.name }}"{% if field.required %} required{% endif %}></textarea>
+	</label>
+	{% else %}
+	<label>
+		{{ field.name }}
+		<input name="{{ field.name }}" type="{{ field.input_type }}"{% if field.required %} required{% endif %} />
+	</label>
+	{% endif %}
+	{% endfor %}
+	<button type="submit">Submit</button>
+</form>
+
+{% elif comp.chart %}
+<div class="chart" data-chart-kind="{{ comp.chart.kind }}"{% if comp.chart.label_field %} data-label-field="{{ comp.chart.label_field }}"{% endif %}{% if comp.chart.value_fields %} data-value-fields="{{ comp.chart.value_fields | join(sep=',') }}"{% endif %}></div>
+
+{% elif comp.component_type == "list" %}
 <h1>{{ label }}</h1>
 <table>
 	<thead>

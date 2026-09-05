@@ -729,31 +729,313 @@ fn parse_event_handler(pair: Pair<Rule>) -> EventHandler {
 
 // ── Component / Container / View parsing ─────────────────────────
 
+fn empty_property_ref() -> PropertyRef {
+    PropertyRef {
+        entity: String::new(),
+        property: String::new(),
+    }
+}
+
+fn parse_property_ref(pair: Pair<Rule>) -> PropertyRef {
+    let mut inner = pair.into_inner();
+    let entity = inner
+        .next()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_default();
+    let property = inner
+        .next()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_default();
+    PropertyRef { entity, property }
+}
+
+fn parse_column_kind(pair: Pair<Rule>, label: String) -> ColumnDef {
+    match pair.as_rule() {
+        Rule::column_field => {
+            let field = pair
+                .into_inner()
+                .next()
+                .map(parse_property_ref)
+                .unwrap_or_else(empty_property_ref);
+            ColumnDef::Field { label, field }
+        }
+        Rule::column_lookup => {
+            let mut inner = pair.into_inner();
+            let field = inner
+                .next()
+                .map(parse_property_ref)
+                .unwrap_or_else(empty_property_ref);
+            let lookup = inner
+                .next()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_default();
+            ColumnDef::Lookup {
+                label,
+                field,
+                lookup,
+            }
+        }
+        Rule::column_expr => {
+            let expr = pair
+                .into_inner()
+                .next()
+                .map(parse_expression)
+                .unwrap_or(Expression::Ident(String::new()));
+            ColumnDef::Expression { label, expr }
+        }
+        _ => ColumnDef::Field {
+            label,
+            field: empty_property_ref(),
+        },
+    }
+}
+
+fn parse_column_decl(pair: Pair<Rule>) -> ColumnDef {
+    let mut inner = pair.into_inner();
+    let label = inner.next().map(|p| parse_string(&p)).unwrap_or_default();
+    match inner.next() {
+        Some(kind) => parse_column_kind(kind, label),
+        None => ColumnDef::Field {
+            label,
+            field: empty_property_ref(),
+        },
+    }
+}
+
+fn parse_input_body_property(
+    key: &str,
+    value: Option<Pair<Rule>>,
+    required: &mut bool,
+    validations: &mut Vec<Expression>,
+    values: &mut Vec<String>,
+) {
+    match (key, value) {
+        ("required", Some(value)) => {
+            if let ValueExpression::Bool(b) = parse_value_expression(value) {
+                *required = b;
+            }
+        }
+        ("validations", Some(value)) => {
+            validations.extend(extract_validation_expressions(value));
+        }
+        ("values", Some(value)) => {
+            if let ValueExpression::Array(items) = parse_value_expression(value) {
+                for item in items {
+                    match item {
+                        ValueExpression::String(s) => values.push(s),
+                        ValueExpression::Identifier(id) => values.push(id),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn extract_validation_expressions(value: Pair<Rule>) -> Vec<Expression> {
+    let mut exprs = Vec::new();
+    for array in value.into_inner() {
+        if array.as_rule() != Rule::array_literal {
+            continue;
+        }
+        for item in array.into_inner() {
+            if let Some(inner) = item.into_inner().next() {
+                exprs.push(parse_expression(inner));
+            }
+        }
+    }
+    exprs
+}
+
+fn parse_field_decl(pair: Pair<Rule>) -> Option<FieldDef> {
+    let mut inner = pair.into_inner();
+    let name = inner.next().map(|p| p.as_str().to_string())?;
+    let input = inner
+        .next()
+        .map(|p| InputFieldType::from(p.as_str()))
+        .unwrap_or(InputFieldType::Custom(String::new()));
+    let mut required = false;
+    let mut validations = Vec::new();
+    let mut values = Vec::new();
+    if let Some(body) = inner.next() {
+        for child in body.into_inner() {
+            if child.as_rule() != Rule::property_assignment {
+                continue;
+            }
+            let mut prop = child.into_inner();
+            let key = prop
+                .next()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_default();
+            parse_input_body_property(
+                &key,
+                prop.next(),
+                &mut required,
+                &mut validations,
+                &mut values,
+            );
+        }
+    }
+    Some(FieldDef {
+        name,
+        input,
+        required,
+        validations,
+        values,
+    })
+}
+
+fn parse_chart_kind(s: &str) -> ChartKind {
+    match s.to_ascii_lowercase().as_str() {
+        "line" => ChartKind::Line,
+        "pie" => ChartKind::Pie,
+        "radar" => ChartKind::Radar,
+        "metric" => ChartKind::Metric,
+        _ => ChartKind::Bar,
+    }
+}
+
+fn parse_chart_decl(pair: Pair<Rule>) -> Option<ChartSpec> {
+    let mut inner = pair.into_inner();
+    let kind = parse_chart_kind(inner.next()?.as_str());
+    let mut label_field = None;
+    let mut value_fields = Vec::new();
+    if let Some(body) = inner.next() {
+        for child in body.into_inner() {
+            if child.as_rule() != Rule::property_assignment {
+                continue;
+            }
+            let prop = parse_property_assignment(child);
+            match &prop.value {
+                ValueExpression::Identifier(id) if prop.key == "label" => {
+                    label_field = Some(id.clone());
+                }
+                ValueExpression::Array(items) if prop.key == "values" => {
+                    for item in items {
+                        if let ValueExpression::Identifier(id) = item {
+                            value_fields.push(id.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Some(ChartSpec {
+        kind,
+        label_field,
+        value_fields,
+    })
+}
+
+fn extract_component_type(properties: &mut Vec<PropertyAssignment>) -> Option<ComponentType> {
+    let mut component_type = None;
+    properties.retain(|p| {
+        if p.key == "type" && component_type.is_none() {
+            if let ValueExpression::Identifier(id) = &p.value {
+                component_type = Some(ComponentType::from(id.as_str()));
+                return false;
+            }
+        }
+        true
+    });
+    component_type
+}
+
+fn extract_pagination(properties: &mut Vec<PropertyAssignment>) -> bool {
+    let mut pagination = true;
+    properties.retain(|p| {
+        if p.key == "pagination" {
+            if let ValueExpression::Bool(b) = p.value {
+                pagination = b;
+                return false;
+            }
+        }
+        true
+    });
+    pagination
+}
+
 fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
     let mut inner = pair.clone().into_inner();
     let name = inner.next().map(|p| parse_string(&p)).unwrap_or_default();
-    let body = if let Some(b) = inner.next() {
-        b
-    } else {
-        return ComponentDeclaration {
-            name,
-            properties: Vec::new(),
-            events: Vec::new(),
-        };
+    let body = match inner.next() {
+        Some(b) => b,
+        None => {
+            return ComponentDeclaration {
+                name,
+                component_type: None,
+                spec: None,
+                properties: Vec::new(),
+                events: Vec::new(),
+            };
+        }
     };
 
     let mut properties = Vec::new();
+    let mut columns = Vec::new();
+    let mut fields = Vec::new();
+    let mut chart_spec = None;
     let mut events = Vec::new();
     for child in body.into_inner() {
         match child.as_rule() {
             Rule::property_assignment => properties.push(parse_property_assignment(child)),
+            Rule::column_decl => columns.push(parse_column_decl(child)),
+            Rule::field_decl => {
+                if let Some(field) = parse_field_decl(child) {
+                    fields.push(field);
+                }
+            }
+            Rule::chart_decl => {
+                if let Some(chart) = parse_chart_decl(child) {
+                    chart_spec = Some(chart);
+                }
+            }
             Rule::event_handler => events.push(parse_event_handler(child)),
             _ => {}
         }
     }
 
+    let mut component_type = extract_component_type(&mut properties);
+    let mut spec = None;
+
+    let columns_allowed = component_type.is_none() || component_type == Some(ComponentType::Table);
+    if !columns.is_empty() && columns_allowed {
+        if component_type.is_none() {
+            component_type = Some(ComponentType::Table);
+        }
+        let pagination = extract_pagination(&mut properties);
+        spec = Some(ComponentSpec::Table(TableSpec {
+            columns,
+            pagination,
+        }));
+    }
+
+    let fields_allowed = component_type.is_none() || component_type == Some(ComponentType::Form);
+    if spec.is_none() && !fields.is_empty() && fields_allowed {
+        if component_type.is_none() {
+            component_type = Some(ComponentType::Form);
+        }
+        spec = Some(ComponentSpec::Form(FormSpec { fields }));
+    }
+
+    let chart_allowed = component_type.is_none() || component_type == Some(ComponentType::Chart);
+    if spec.is_none() {
+        if let Some(chart) = chart_spec {
+            if chart_allowed {
+                if component_type.is_none() {
+                    component_type = Some(ComponentType::Chart);
+                }
+                spec = Some(ComponentSpec::Chart(chart));
+            }
+        }
+    }
+
     ComponentDeclaration {
         name,
+        component_type,
+        spec,
         properties,
         events,
     }
@@ -1342,7 +1624,7 @@ view "ExprTest" {
             }
         }
 
-        assert_eq!(grid.properties.len(), 4);
+        assert_eq!(grid.properties.len(), 3);
     }
 
     #[test]
@@ -1889,5 +2171,471 @@ view "Partial" {
 "#;
         let model = parse_ifml(input).unwrap();
         assert_eq!(model.views[0].position, None);
+    }
+
+    #[test]
+    fn test_table_columns_field_lookup_expr() {
+        let input = r#"
+view "Customers" {
+    component "CustomerTable" {
+        type: table;
+        data: Customer;
+
+        column "Name"   -> field Customer.name;
+        column "Status" -> lookup Customer.status via status_labels;
+        column "Tenure" -> expr tenure_years(Customer.hire_date);
+
+        on select(row) -> navigate("CustomerDetail", { customerId: row.id });
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        assert_eq!(comp.name, "CustomerTable");
+        assert_eq!(comp.component_type, Some(ComponentType::Table));
+        assert!(!comp.properties.iter().any(|p| p.key == "type"));
+        assert!(comp.properties.iter().any(|p| p.key == "data"));
+        assert_eq!(comp.events.len(), 1);
+
+        let spec = match &comp.spec {
+            Some(ComponentSpec::Table(spec)) => spec,
+            other => panic!("Expected Table spec, got {:?}", other),
+        };
+        assert!(spec.pagination);
+        assert_eq!(spec.columns.len(), 3);
+
+        match &spec.columns[0] {
+            ColumnDef::Field { label, field } => {
+                assert_eq!(label, "Name");
+                assert_eq!(field.entity, "Customer");
+                assert_eq!(field.property, "name");
+            }
+            other => panic!("Expected Field column, got {:?}", other),
+        }
+
+        match &spec.columns[1] {
+            ColumnDef::Lookup {
+                label,
+                field,
+                lookup,
+            } => {
+                assert_eq!(label, "Status");
+                assert_eq!(field.entity, "Customer");
+                assert_eq!(field.property, "status");
+                assert_eq!(lookup, "status_labels");
+            }
+            other => panic!("Expected Lookup column, got {:?}", other),
+        }
+
+        match &spec.columns[2] {
+            ColumnDef::Expression { label, expr } => {
+                assert_eq!(label, "Tenure");
+                match expr {
+                    Expression::Call { name, args } => {
+                        assert_eq!(name, "tenure_years");
+                        assert_eq!(args.len(), 1);
+                    }
+                    other => panic!("Expected Call expression, got {:?}", other),
+                }
+            }
+            other => panic!("Expected Expression column, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_columns_imply_table_type_and_expr_columns_parse() {
+        let input = r#"
+view "V" {
+    component "t" {
+        column "Age" -> expr Customer.age >= 18;
+        column "Birth" -> expr age_years(Customer.birth_date);
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        assert_eq!(comp.component_type, Some(ComponentType::Table));
+
+        let spec = match &comp.spec {
+            Some(ComponentSpec::Table(spec)) => spec,
+            other => panic!("Expected Table spec, got {:?}", other),
+        };
+        match &spec.columns[0] {
+            ColumnDef::Expression { expr, .. } => {
+                assert!(matches!(expr, Expression::BinOp { op: BinOp::Ge, .. }));
+            }
+            other => panic!("Expected Expression column, got {:?}", other),
+        }
+        match &spec.columns[1] {
+            ColumnDef::Expression { expr, .. } => {
+                assert!(matches!(
+                    expr,
+                    Expression::Call { name, .. } if name == "age_years"
+                ));
+            }
+            other => panic!("Expected Expression column, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_form_fields_required_validations_and_values() {
+        let input = r#"
+view "Edit" {
+    component "EditForm" {
+        type: form;
+        data: Customer;
+
+        field name   -> input text   { required: true; validations: [len(name) > 2]; }
+        field email  -> input email;
+        field status -> input dropdown { values: ["gold", "silver"]; }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        assert_eq!(comp.component_type, Some(ComponentType::Form));
+        assert!(!comp.properties.iter().any(|p| p.key == "type"));
+
+        let spec = match &comp.spec {
+            Some(ComponentSpec::Form(spec)) => spec,
+            other => panic!("Expected Form spec, got {:?}", other),
+        };
+        assert_eq!(spec.fields.len(), 3);
+
+        let name_field = &spec.fields[0];
+        assert_eq!(name_field.name, "name");
+        assert_eq!(name_field.input, InputFieldType::Text);
+        assert!(name_field.required);
+        assert!(name_field.values.is_empty());
+        assert!(matches!(
+            name_field.validations.first(),
+            Some(Expression::BinOp { op: BinOp::Gt, .. })
+        ));
+
+        let email_field = &spec.fields[1];
+        assert_eq!(email_field.name, "email");
+        assert_eq!(email_field.input, InputFieldType::Email);
+        assert!(!email_field.required);
+        assert!(email_field.validations.is_empty());
+        assert!(email_field.values.is_empty());
+
+        let status_field = &spec.fields[2];
+        assert_eq!(status_field.name, "status");
+        assert_eq!(status_field.input, InputFieldType::Dropdown);
+        assert_eq!(
+            status_field.values,
+            vec!["gold".to_string(), "silver".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_form_field_without_body_implies_form_type() {
+        let input = r#"
+view "F" {
+    component "f" {
+        field nickname -> input text;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        assert_eq!(comp.component_type, Some(ComponentType::Form));
+
+        let spec = match &comp.spec {
+            Some(ComponentSpec::Form(spec)) => spec,
+            other => panic!("Expected Form spec, got {:?}", other),
+        };
+        assert_eq!(spec.fields.len(), 1);
+        let field = &spec.fields[0];
+        assert_eq!(field.name, "nickname");
+        assert_eq!(field.input, InputFieldType::Text);
+        assert!(!field.required);
+        assert!(field.validations.is_empty());
+        assert!(field.values.is_empty());
+    }
+
+    #[test]
+    fn test_form_field_values_accept_identifiers_and_strings() {
+        let input = r#"
+view "F" {
+    component "f" {
+        field tier  -> input dropdown { values: [gold, silver]; }
+        field grade -> input dropdown { values: ["a", "b"]; }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        let spec = match &comp.spec {
+            Some(ComponentSpec::Form(spec)) => spec,
+            other => panic!("Expected Form spec, got {:?}", other),
+        };
+        assert_eq!(
+            spec.fields[0].values,
+            vec!["gold".to_string(), "silver".to_string()]
+        );
+        assert_eq!(
+            spec.fields[1].values,
+            vec!["a".to_string(), "b".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_input_type_unknown_identifier_becomes_custom() {
+        let input = r#"
+view "F" {
+    component "f" {
+        field rating -> input stars;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        let spec = match &comp.spec {
+            Some(ComponentSpec::Form(spec)) => spec,
+            other => panic!("Expected Form spec, got {:?}", other),
+        };
+        assert_eq!(
+            spec.fields[0].input,
+            InputFieldType::Custom("stars".to_string())
+        );
+    }
+
+    #[test]
+    fn test_chart_decl_all_kinds_and_optional_body() {
+        let input = r#"
+view "Charts" {
+    component "c1" {
+        type: chart;
+        chart bar { label: region; values: [revenue]; }
+    }
+
+    component "c2" {
+        type: chart;
+        chart line { label: month; values: [revenue, cost]; }
+    }
+
+    component "c3" {
+        type: chart;
+        chart pie;
+    }
+
+    component "c4" {
+        type: chart;
+        chart radar;
+    }
+
+    component "c5" {
+        type: chart;
+        chart metric;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let components = &model.views[0].components;
+        assert_eq!(components.len(), 5);
+
+        let expected_kinds = [
+            ChartKind::Bar,
+            ChartKind::Line,
+            ChartKind::Pie,
+            ChartKind::Radar,
+            ChartKind::Metric,
+        ];
+        for (comp, expected_kind) in components.iter().zip(expected_kinds.iter()) {
+            assert_eq!(comp.component_type, Some(ComponentType::Chart));
+            let spec = match &comp.spec {
+                Some(ComponentSpec::Chart(spec)) => spec,
+                other => panic!("Expected Chart spec, got {:?}", other),
+            };
+            assert_eq!(spec.kind, *expected_kind);
+        }
+
+        let bar = match &components[0].spec {
+            Some(ComponentSpec::Chart(spec)) => spec,
+            other => panic!("Expected Chart spec, got {:?}", other),
+        };
+        assert_eq!(bar.label_field, Some("region".to_string()));
+        assert_eq!(bar.value_fields, vec!["revenue".to_string()]);
+
+        let line = match &components[1].spec {
+            Some(ComponentSpec::Chart(spec)) => spec,
+            other => panic!("Expected Chart spec, got {:?}", other),
+        };
+        assert_eq!(line.label_field, Some("month".to_string()));
+        assert_eq!(
+            line.value_fields,
+            vec!["revenue".to_string(), "cost".to_string()]
+        );
+
+        let bodyless = match &components[2].spec {
+            Some(ComponentSpec::Chart(spec)) => spec,
+            other => panic!("Expected Chart spec, got {:?}", other),
+        };
+        assert_eq!(bodyless.label_field, None);
+        assert!(bodyless.value_fields.is_empty());
+    }
+
+    #[test]
+    fn test_chart_decl_without_type_implies_chart_type() {
+        let input = r#"
+view "V" {
+    component "spark" {
+        chart metric { label: kpi; }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        assert_eq!(comp.component_type, Some(ComponentType::Chart));
+
+        let spec = match &comp.spec {
+            Some(ComponentSpec::Chart(spec)) => spec,
+            other => panic!("Expected Chart spec, got {:?}", other),
+        };
+        assert_eq!(spec.kind, ChartKind::Metric);
+        assert_eq!(spec.label_field, Some("kpi".to_string()));
+        assert!(spec.value_fields.is_empty());
+    }
+
+    #[test]
+    fn test_unknown_component_type_becomes_custom_and_is_removed() {
+        let input = r#"
+view "Board" {
+    component "lane" {
+        type: kanban;
+        data: Card;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        assert_eq!(
+            comp.component_type,
+            Some(ComponentType::Custom("kanban".to_string()))
+        );
+        assert!(comp.spec.is_none());
+        assert!(!comp.properties.iter().any(|p| p.key == "type"));
+        assert!(comp.properties.iter().any(|p| p.key == "data"));
+    }
+
+    #[test]
+    fn test_non_identifier_type_property_stays_in_properties() {
+        let input = r#"
+view "V" {
+    component "c" {
+        type: "table";
+        data: Customer;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        assert_eq!(comp.component_type, None);
+        assert!(comp.spec.is_none());
+        let type_prop = comp
+            .properties
+            .iter()
+            .find(|p| p.key == "type")
+            .expect("type property should stay");
+        match &type_prop.value {
+            ValueExpression::String(s) => assert_eq!(s, "table"),
+            other => panic!("Expected String value, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_pagination_false_property_consumed_into_table_spec() {
+        let input = r#"
+view "V" {
+    component "t" {
+        type: table;
+        pagination: false;
+        column "A" -> field Customer.a;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        assert!(!comp.properties.iter().any(|p| p.key == "pagination"));
+
+        let spec = match &comp.spec {
+            Some(ComponentSpec::Table(spec)) => spec,
+            other => panic!("Expected Table spec, got {:?}", other),
+        };
+        assert!(!spec.pagination);
+    }
+
+    #[test]
+    fn test_legacy_property_bag_component_backward_compat() {
+        let input = r#"
+view "Legacy" {
+    component "grid" {
+        type: table;
+        data: Customer;
+        fields: [name, email];
+        sortable: true;
+        paginated: true;
+
+        on select(row) -> navigate("Detail", { id: row.id });
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        assert_eq!(comp.component_type, Some(ComponentType::Table));
+        assert!(comp.spec.is_none());
+        assert_eq!(comp.properties.len(), 4);
+        assert_eq!(comp.events.len(), 1);
+    }
+
+    #[test]
+    fn test_component_type_parse_is_case_insensitive() {
+        assert_eq!(ComponentType::from("list"), ComponentType::List);
+        assert_eq!(ComponentType::from("FORM"), ComponentType::Form);
+        assert_eq!(ComponentType::from("Details"), ComponentType::Details);
+        assert_eq!(ComponentType::from("Search"), ComponentType::Search);
+        assert_eq!(ComponentType::from("tree"), ComponentType::Tree);
+        assert_eq!(ComponentType::from("Chart"), ComponentType::Chart);
+        assert_eq!(ComponentType::from("TABLE"), ComponentType::Table);
+        assert_eq!(ComponentType::from("button"), ComponentType::Button);
+        assert_eq!(ComponentType::from("Link"), ComponentType::Link);
+        assert_eq!(ComponentType::from("menu"), ComponentType::Menu);
+        assert_eq!(ComponentType::from("Image"), ComponentType::Image);
+        assert_eq!(ComponentType::from("embedded"), ComponentType::Embedded);
+        assert_eq!(
+            ComponentType::from("kanban"),
+            ComponentType::Custom("kanban".to_string())
+        );
+        assert_eq!(ComponentType::List.as_str(), "list");
+        assert_eq!(ComponentType::Table.as_str(), "table");
+        assert_eq!(
+            ComponentType::Custom("kanban".to_string()).as_str(),
+            "kanban"
+        );
+    }
+
+    #[test]
+    fn test_bad_property_ref_fails_parse() {
+        let input = r#"
+view "Bad" {
+    component "t" {
+        column "X" -> field Customer;
+    }
+}
+"#;
+        assert!(parse_ifml(input).is_err());
+    }
+
+    #[test]
+    fn test_dangling_column_fails_parse() {
+        let input = r#"
+view "Bad" {
+    component "t" {
+        column "X" -> field Customer.name
+    }
+}
+"#;
+        assert!(parse_ifml(input).is_err());
     }
 }

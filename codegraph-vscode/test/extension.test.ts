@@ -96,6 +96,64 @@ export function run(): Promise<void> {
         });
     });
 
+    globalAny.suite('IFML typed component parsing', function () {
+        const text = [
+            'view "Customers" {',
+            '    component "grid" {',
+            '        type: list;',
+            '        data: Customer;',
+            '',
+            '        column "Name" -> field Customer.name;',
+            '        column "Status" -> lookup Customer.status via status_labels;',
+            '        column "Tenure" -> expr tenure_years(Customer.hire_date);',
+            '',
+            '        field name -> input text { required: true; validations: [len(name) > 2]; }',
+            '        field email -> input email;',
+            '        field status -> input dropdown { values: ["gold", "silver"]; }',
+            '',
+            '        chart bar { label: region; values: [revenue]; }',
+            '    }',
+            '}',
+        ].join('\n');
+
+        globalAny.test('extracts typed columns', () => {
+            const model = parseIfmlForDiagram(text);
+            const comp = model.viewContainers[0].components[0];
+            assert.deepStrictEqual(
+                comp.columns?.map(c => [c.kind, c.label, c.ref]),
+                [
+                    ['field', 'Name', 'Customer.name'],
+                    ['lookup', 'Status', 'Customer.status via status_labels'],
+                    ['expr', 'Tenure', 'tenure_years(Customer.hire_date)'],
+                ]
+            );
+        });
+
+        globalAny.test('extracts input fields with required flag', () => {
+            const model = parseIfmlForDiagram(text);
+            const comp = model.viewContainers[0].components[0];
+            assert.strictEqual(comp.inputFields?.length, 3);
+            assert.deepStrictEqual(comp.inputFields?.[0], { name: 'name', input: 'text', required: true });
+            assert.deepStrictEqual(comp.inputFields?.[1], { name: 'email', input: 'email' });
+            assert.strictEqual(comp.inputFields?.[2]?.input, 'dropdown');
+        });
+
+        globalAny.test('extracts chart kind', () => {
+            const model = parseIfmlForDiagram(text);
+            const comp = model.viewContainers[0].components[0];
+            assert.strictEqual(comp.chart, 'bar');
+        });
+
+        globalAny.test('components without typed statements stay unaffected', () => {
+            const model = parseIfmlForDiagram('view "V" { component "c" { type: list; fields: [a]; } }');
+            const comp = model.viewContainers[0].components[0];
+            assert.deepStrictEqual(comp.columns, []);
+            assert.deepStrictEqual(comp.inputFields, []);
+            assert.strictEqual(comp.chart, undefined);
+            assert.deepStrictEqual(comp.fields, ['a']);
+        });
+    });
+
     return new Promise<void>((resolve, reject) => {
         mocha.run((f: number) => f > 0 ? reject(Error(`${f} failed`)) : resolve());
     });

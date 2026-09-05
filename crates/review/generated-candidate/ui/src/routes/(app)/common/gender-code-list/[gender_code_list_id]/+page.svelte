@@ -11,6 +11,7 @@
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 
 
+
 	import { deleteGenderCodeList } from '#lib/stores/common_gender_code_list.ts';
 
 
@@ -148,6 +149,8 @@
 			</dl>
 		</Card.Content>
 	</Card.Root>
+
+
 
 
 </div>

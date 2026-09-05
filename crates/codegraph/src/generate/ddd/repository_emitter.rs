@@ -2620,7 +2620,12 @@ impl RepositoryImplEmitter {
         })
     }
 
-    fn emit_header(&self, tree: &EntityTree, include_paths: &[ResolvedIncludePath], code: &mut String) {
+    fn emit_header(
+        &self,
+        tree: &EntityTree,
+        include_paths: &[ResolvedIncludePath],
+        code: &mut String,
+    ) {
         writeln!(
             code,
             "//! Generated repository implementation for {}.",

@@ -29,16 +29,16 @@ fn public_event_routes() -> Router<AppState> {
 
         .route(
             "/",
-            axum::routing::get(public_event_handler::list).guard("public-event", "list")
-                .merge(axum::routing::post(public_event_handler::create).guard("public-event", "create")),
+            axum::routing::get(public_event_handler::list).guard("events:public-event", "list")
+                .merge(axum::routing::post(public_event_handler::create).guard("events:public-event", "create")),
         )
 
 
         .route(
             "/{public_event_id}",
-            axum::routing::get(public_event_handler::get_by_id).guard("public-event", "read")
-                .merge(axum::routing::put(public_event_handler::update).guard("public-event", "update"))
-                .merge(axum::routing::delete(public_event_handler::delete).guard("public-event", "delete")),
+            axum::routing::get(public_event_handler::get_by_id).guard("events:public-event", "read")
+                .merge(axum::routing::put(public_event_handler::update).guard("events:public-event", "update"))
+                .merge(axum::routing::delete(public_event_handler::delete).guard("events:public-event", "delete")),
         )
 
 

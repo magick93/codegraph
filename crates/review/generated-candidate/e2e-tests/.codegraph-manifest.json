@@ -1,5 +1,5 @@
 {
-  "root": "/home/anton/git/codegraph-ifml/crates/review/generated-candidate/e2e-tests",
+  "root": "/home/anton/git/codegraph-ifml-typed/crates/review/generated-candidate/e2e-tests",
   "generated": [
     "api/common/common_amount.ts",
     "api/common/common_code.ts",

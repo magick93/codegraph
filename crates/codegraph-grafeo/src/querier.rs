@@ -962,7 +962,7 @@ impl GraphQuerier for GrafeoEngine {
         let gql = format!(
             "MATCH (vc:ViewContainer {{name: '{escaped}'}})-[:ContainsViewComponent]->(comp:ViewComponent) \
              RETURN comp.name, comp.component_type, comp.mode, comp.entity, \
-             comp.fields, comp.filter, comp.api_operation, comp.domain ORDER BY comp.name"
+             comp.fields, comp.filter, comp.api_operation, comp.spec, comp.domain ORDER BY comp.name"
         );
         let result = query_gql(self, &gql)?;
         let reader = RowReader::from_columns(&result.columns);
@@ -979,6 +979,7 @@ impl GraphQuerier for GrafeoEngine {
                 fields,
                 filter: reader.get_opt_string(row, "comp.filter")?,
                 api_operation: reader.get_opt_string(row, "comp.api_operation")?,
+                spec: reader.get_opt_string(row, "comp.spec")?,
                 domain: reader.get_opt_string(row, "comp.domain")?,
             });
         }

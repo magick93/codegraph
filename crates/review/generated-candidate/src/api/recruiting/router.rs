@@ -33,16 +33,16 @@ fn application_routes() -> Router<AppState> {
 
         .route(
             "/",
-            axum::routing::get(application_handler::list).guard("applications", "list")
-                .merge(axum::routing::post(application_handler::create).guard("applications", "create")),
+            axum::routing::get(application_handler::list).guard("recruiting:applications", "list")
+                .merge(axum::routing::post(application_handler::create).guard("recruiting:applications", "create")),
         )
 
 
         .route(
             "/{application_id}",
-            axum::routing::get(application_handler::get_by_id).guard("applications", "read")
-                .merge(axum::routing::put(application_handler::update).guard("applications", "update"))
-                .merge(axum::routing::delete(application_handler::delete).guard("applications", "delete")),
+            axum::routing::get(application_handler::get_by_id).guard("recruiting:applications", "read")
+                .merge(axum::routing::put(application_handler::update).guard("recruiting:applications", "update"))
+                .merge(axum::routing::delete(application_handler::delete).guard("recruiting:applications", "delete")),
         )
 
 
@@ -86,25 +86,25 @@ fn candidate_routes() -> Router<AppState> {
 
         .route(
             "/",
-            axum::routing::get(candidate_handler::list).guard("candidate", "list")
-                .merge(axum::routing::post(candidate_handler::create).guard("candidate", "create")),
+            axum::routing::get(candidate_handler::list).guard("recruiting:candidate", "list")
+                .merge(axum::routing::post(candidate_handler::create).guard("recruiting:candidate", "create")),
         )
 
 
         .route(
             "/{candidate_id}",
-            axum::routing::get(candidate_handler::get_by_id).guard("candidate", "read")
-                .merge(axum::routing::put(candidate_handler::update).guard("candidate", "update")),
+            axum::routing::get(candidate_handler::get_by_id).guard("recruiting:candidate", "read")
+                .merge(axum::routing::put(candidate_handler::update).guard("recruiting:candidate", "update")),
         )
 
 
 
 
-        .route("/{candidate_id}/actions/transition", axum::routing::post(candidate_workflow::transition).guard("candidate", "update"))
+        .route("/{candidate_id}/actions/transition", axum::routing::post(candidate_workflow::transition).guard("recruiting:candidate", "update"))
 
-        .route("/{candidate_id}/actions/delegate", axum::routing::post(candidate_workflow::delegate).guard("candidate", "update"))
-        .route("/{candidate_id}/workflow", axum::routing::get(candidate_workflow::get_workflow_state).guard("candidate", "read"))
-        .route("/{candidate_id}/workflow/history", axum::routing::get(candidate_workflow::get_process_history).guard("candidate", "read"))
+        .route("/{candidate_id}/actions/delegate", axum::routing::post(candidate_workflow::delegate).guard("recruiting:candidate", "update"))
+        .route("/{candidate_id}/workflow", axum::routing::get(candidate_workflow::get_workflow_state).guard("recruiting:candidate", "read"))
+        .route("/{candidate_id}/workflow/history", axum::routing::get(candidate_workflow::get_process_history).guard("recruiting:candidate", "read"))
 
 
 

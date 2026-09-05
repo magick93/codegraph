@@ -15,6 +15,7 @@
 
 
 
+
 	import { onMount } from 'svelte';
 	import { entityNavigation, pushChild, popTo, resetNavigation, markDirty, clearDirty } from '#lib/stores/entity-navigation.ts';
 	import { apiGet, apiPost, apiDelete } from '#lib/api/client.ts';
@@ -416,6 +417,8 @@
 			</dl>
 		</Card.Content>
 	</Card.Root>
+
+
 
 
 	<!-- Child sections -->

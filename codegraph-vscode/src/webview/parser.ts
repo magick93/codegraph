@@ -1,10 +1,13 @@
 import type {
   IfmlModel, ViewContainerData, ViewComponentData,
-  EventData, ActionData, NavigationEdgeData, ParameterDef
+  EventData, ActionData, NavigationEdgeData, ParameterDef,
+  ChartKind, ColumnDef, FieldDef
 } from './sync';
 
 /// Lightweight IFML text extractor for diagram rendering.
 /// Uses a simple brace-depth parser to handle nested blocks.
+
+const CHART_KINDS: readonly ChartKind[] = ['bar', 'line', 'pie', 'radar', 'metric'];
 
 function extractBlock(text: string, start: number): { content: string; end: number } | null {
   if (text[start] !== '{') return null;
@@ -116,7 +119,42 @@ function extractComponent(name: string, body: string): ViewComponentData {
     properties: { ...(typeMatch && { type: typeMatch[1] }), ...(modeMatch && { mode: modeMatch[1] }) },
     events,
     parts: [],
+    columns: extractColumns(body),
+    inputFields: extractInputFields(body),
+    chart: extractChartKind(body),
   };
+}
+
+function extractColumns(body: string): ColumnDef[] {
+  const columns: ColumnDef[] = [];
+  const columnRe = /column\s+"([^"]+)"\s*->\s*(field|lookup|expr)\s+([^;]+);/g;
+  for (const m of body.matchAll(columnRe)) {
+    columns.push({ kind: m[2] as ColumnDef['kind'], label: m[1], ref: m[3].trim() });
+  }
+  return columns;
+}
+
+function extractInputFields(body: string): FieldDef[] {
+  const inputFields: FieldDef[] = [];
+  const fieldRe = /field\s+(\w+)\s*->\s*input\s+(\w+)\s*(\{)?/g;
+  for (const m of body.matchAll(fieldRe)) {
+    let required: boolean | undefined;
+    if (m[3]) {
+      const block = extractBlock(body, m.index + m[0].length - 1);
+      if (block && /\brequired\s*:\s*true\b/.test(block.content)) required = true;
+    }
+    inputFields.push({ name: m[1], input: m[2], ...(required !== undefined && { required }) });
+  }
+  return inputFields;
+}
+
+function extractChartKind(body: string): ChartKind | undefined {
+  const matches = [...body.matchAll(/chart\s+(\w+)\s*[;{]/g)];
+  const last = matches[matches.length - 1];
+  if (last && (CHART_KINDS as readonly string[]).includes(last[1])) {
+    return last[1] as ChartKind;
+  }
+  return undefined;
 }
 
 function makeEvent(m: RegExpExecArray | string[], parent: string, kind: string): EventData {

@@ -33,16 +33,16 @@ fn candidate_routes() -> Router<AppState> {
 
         .route(
             "/",
-            axum::routing::get(candidate_handler::list).guard("candidates", "list")
-                .merge(axum::routing::post(candidate_handler::create).guard("candidates", "create")),
+            axum::routing::get(candidate_handler::list).guard("recruiting:candidates", "list")
+                .merge(axum::routing::post(candidate_handler::create).guard("recruiting:candidates", "create")),
         )
 
 
         .route(
             "/{candidate_id}",
-            axum::routing::get(candidate_handler::get_by_id).guard("candidates", "read")
-                .merge(axum::routing::put(candidate_handler::update).guard("candidates", "update"))
-                .merge(axum::routing::delete(candidate_handler::delete).guard("candidates", "delete")),
+            axum::routing::get(candidate_handler::get_by_id).guard("recruiting:candidates", "read")
+                .merge(axum::routing::put(candidate_handler::update).guard("recruiting:candidates", "update"))
+                .merge(axum::routing::delete(candidate_handler::delete).guard("recruiting:candidates", "delete")),
         )
 
 
