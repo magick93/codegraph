@@ -11,6 +11,7 @@
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 
 
+
 	import { deletePublicEvent } from '#lib/stores/events_public_event.ts';
 
 
@@ -181,6 +182,8 @@
 			</dl>
 		</Card.Content>
 	</Card.Root>
+
+
 
 
 </div>

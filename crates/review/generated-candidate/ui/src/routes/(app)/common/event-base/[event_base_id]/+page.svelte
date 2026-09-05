@@ -11,6 +11,7 @@
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 
 
+
 	import { deleteEventBase } from '#lib/stores/common_event_base.ts';
 
 
@@ -166,6 +167,8 @@
 			</dl>
 		</Card.Content>
 	</Card.Root>
+
+
 
 
 </div>
