@@ -144,6 +144,21 @@ impl CapabilityRegistry {
         }
     }
 
+    /// True when this generator is gated behind a backend dependency flag
+    /// (`grpc_backend`, `atproto_backend`, `fern_sdk`) — i.e. its output
+    /// requires dependencies the scaffolded Cargo.toml only enables when the
+    /// corresponding profile feature is on. Such generators must not run
+    /// without an explicit [`BuildPlan`]: a plan-less run cannot know whether
+    /// the generated crate can compile their output (e.g. tonic references
+    /// without the `grpc` feature).
+    pub fn requires_build_plan(&self, name: &str) -> bool {
+        self.generators.get(name).is_some_and(|c| {
+            c.features_required
+                .iter()
+                .any(|f| matches!(f.as_str(), "grpc_backend" | "atproto_backend" | "fern_sdk"))
+        })
+    }
+
     pub fn get(&self, name: &str) -> Option<&GeneratorCapability> {
         self.generators.get(name)
     }

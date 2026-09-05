@@ -794,12 +794,24 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // Normalize generator name for build_plan comparison: some name() methods
     // return hyphens (e.g. "ui-page") while the build plan stores underscores
     // (e.g. "ui_page") from profile generator lists.
-    let plan_has_entity =
-        |name: &str| build_plan.is_none_or(|bp| bp.has_entity_gen(&name.replace('-', "_")));
-    let plan_has_domain =
-        |name: &str| build_plan.is_none_or(|bp| bp.has_domain_gen(&name.replace('-', "_")));
-    let plan_has_global =
-        |name: &str| build_plan.is_none_or(|bp| bp.has_global_gen(&name.replace('-', "_")));
+    //
+    // Without a BuildPlan (plan-less runs), feature-gated generators (gRPC,
+    // AT Protocol, Fern) are skipped: their output depends on dependencies
+    // the scaffolded Cargo.toml only enables via profile features, so
+    // emitting it unconditionally produced non-compiling apps.
+    let capability_registry = crate::profile::CapabilityRegistry::new();
+    let plan_has_entity = |name: &str| match build_plan {
+        Some(bp) => bp.has_entity_gen(&name.replace('-', "_")),
+        None => !capability_registry.requires_build_plan(&name.replace('-', "_")),
+    };
+    let plan_has_domain = |name: &str| match build_plan {
+        Some(bp) => bp.has_domain_gen(&name.replace('-', "_")),
+        None => !capability_registry.requires_build_plan(&name.replace('-', "_")),
+    };
+    let plan_has_global = |name: &str| match build_plan {
+        Some(bp) => bp.has_global_gen(&name.replace('-', "_")),
+        None => !capability_registry.requires_build_plan(&name.replace('-', "_")),
+    };
 
     let entity_gens_factory = |worker_base: Option<&Path>| -> Vec<Box<dyn EntityGenerator>> {
         // Routed generators (backend Rust source for one domain) get the

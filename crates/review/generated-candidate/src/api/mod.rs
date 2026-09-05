@@ -1,7 +1,6 @@
 pub mod common;
 pub mod compensation;
 pub mod events;
-pub mod grpc;
 pub mod links;
 pub mod meta;
 pub mod openapi;
