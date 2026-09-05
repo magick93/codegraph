@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use codegraph_ifml_dsl::ComponentSpec;
 use serde::Serialize;
 
 /// Complete IFML model resolved from the graph, with dependencies
@@ -44,6 +45,9 @@ pub struct IfmlComponent {
     pub properties: HashMap<String, String>,
     pub events: Vec<IfmlEvent>,
     pub parts: Vec<ComponentPart>,
+    /// Typed component spec (Table/Form/Chart) parsed from the graph node's
+    /// serialized spec; `None` when absent or unparseable
+    pub spec: Option<ComponentSpec>,
 }
 
 #[derive(Debug, Clone, Serialize)]

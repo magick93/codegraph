@@ -54,6 +54,9 @@ export function modelToFlow(
           fields: c.fields,
           filter: c.filter,
           events: c.events,
+          columns: c.columns,
+          inputFields: c.inputFields,
+          chart: c.chart,
         })),
       },
     });
@@ -74,6 +77,9 @@ export function modelToFlow(
           fields: comp.fields,
           filter: comp.filter,
           events: comp.events,
+          columns: comp.columns,
+          inputFields: comp.inputFields,
+          chart: comp.chart,
         },
       });
     }

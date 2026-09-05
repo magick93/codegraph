@@ -167,14 +167,17 @@ async fn ingest_view_component(
     parent_id: &str,
 ) -> Result<String> {
     let component_type = comp
-        .properties
-        .iter()
-        .find(|p| p.key == "type")
-        .map(|p| match &p.value {
-            ValueExpression::Identifier(s) => s.clone(),
-            _ => "unknown".to_string(),
-        })
+        .component_type
+        .as_ref()
+        .map(|t| t.as_str().to_string())
         .unwrap_or_else(|| "unknown".to_string());
+
+    let spec = comp
+        .spec
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(Error::Json)?;
 
     let entity = comp
         .properties
@@ -237,6 +240,7 @@ async fn ingest_view_component(
         fields,
         filter,
         api_operation,
+        spec,
         domain: None,
     };
 

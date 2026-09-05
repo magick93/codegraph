@@ -3,9 +3,25 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_ifml_dsl::ComponentSpec;
 
 use super::context::*;
 use super::dependency_graph;
+
+/// Parse a `ViewComponentNode.spec` JSON string into a typed spec.
+///
+/// Returns `None` when the raw value is absent or fails to deserialize —
+/// a malformed spec never fails generation.
+fn parse_component_spec(raw: Option<&str>) -> Option<ComponentSpec> {
+    let raw = raw?;
+    match serde_json::from_str::<ComponentSpec>(raw) {
+        Ok(spec) => Some(spec),
+        Err(err) => {
+            tracing::warn!(%err, "ignoring unparseable IFML component spec");
+            None
+        }
+    }
+}
 
 /// Trait for querying the IFML model from the graph
 #[async_trait]
@@ -50,6 +66,7 @@ impl<'a> IfmlGraphQuerier<'a> {
                 properties,
                 events,
                 parts: Vec::new(),
+                spec: parse_component_spec(comp.spec.as_deref()),
             });
         }
         Ok(components)
@@ -217,5 +234,63 @@ impl<'a> IfmlQuerier for IfmlGraphQuerier<'a> {
         let mut names: Vec<String> = containers.into_iter().map(|c| c.name).collect();
         names.sort();
         Ok(names)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codegraph_ifml_dsl::{ChartKind, ColumnDef, InputFieldType};
+
+    #[test]
+    fn parse_component_spec_none_when_absent() {
+        assert!(parse_component_spec(None).is_none());
+        assert!(parse_component_spec(Some("")).is_none());
+    }
+
+    #[test]
+    fn parse_component_spec_none_on_garbage() {
+        assert!(parse_component_spec(Some("not json")).is_none());
+        assert!(parse_component_spec(Some("{\"Unknown\": {}}")).is_none());
+    }
+
+    #[test]
+    fn parse_component_spec_table() {
+        let raw = r#"{"Table":{"columns":[
+            {"Field":{"label":"Name","field":{"entity":"Customer","property":"name"}}},
+            {"Lookup":{"label":"Status","field":{"entity":"Customer","property":"status"},"lookup":"status_labels"}},
+            {"Expression":{"label":"Tenure","expr":{"Call":{"name":"tenure_years","args":[{"FieldExpr":{"object":{"Ident":"Customer"},"field":"hire_date"}}]}}}}
+        ],"pagination":true}}"#;
+        let spec = parse_component_spec(Some(raw)).expect("table spec should parse");
+        let ComponentSpec::Table(table) = spec else {
+            panic!("expected table spec, got {spec:?}");
+        };
+        assert!(table.pagination);
+        assert_eq!(table.columns.len(), 3);
+        assert!(matches!(table.columns[0], ColumnDef::Field { .. }));
+        assert!(matches!(table.columns[1], ColumnDef::Lookup { .. }));
+        assert!(matches!(table.columns[2], ColumnDef::Expression { .. }));
+    }
+
+    #[test]
+    fn parse_component_spec_form_and_chart() {
+        let form_raw = r#"{"Form":{"fields":[
+            {"name":"email","input":"Email","required":true,"validations":[],"values":[]}
+        ]}}"#;
+        let spec = parse_component_spec(Some(form_raw)).expect("form spec should parse");
+        let ComponentSpec::Form(form) = spec else {
+            panic!("expected form spec, got {spec:?}");
+        };
+        assert_eq!(form.fields[0].input, InputFieldType::Email);
+        assert!(form.fields[0].required);
+
+        let chart_raw =
+            r#"{"Chart":{"kind":"Bar","label_field":"region","value_fields":["revenue"]}}"#;
+        let spec = parse_component_spec(Some(chart_raw)).expect("chart spec should parse");
+        let ComponentSpec::Chart(chart) = spec else {
+            panic!("expected chart spec, got {spec:?}");
+        };
+        assert_eq!(chart.kind, ChartKind::Bar);
+        assert_eq!(chart.label_field.as_deref(), Some("region"));
     }
 }

@@ -814,7 +814,8 @@ impl GraphIngestor for GrafeoEngine {
         let gql = format!(
             "INSERT (:ViewComponent {{ \
                 name: '{}', component_type: '{}', mode: {}, \
-                entity: {}, fields: {}, filter: {}, api_operation: {}, domain: {} \
+                entity: {}, fields: {}, filter: {}, api_operation: {}, \
+                spec: {}, domain: {} \
             }})",
             escape_gql(&node.name),
             escape_gql(&node.component_type),
@@ -823,6 +824,7 @@ impl GraphIngestor for GrafeoEngine {
             opt_str(&fields_json),
             opt_str(&node.filter),
             opt_str(&node.api_operation),
+            opt_str(&node.spec),
             opt_str(&node.domain),
         );
         session

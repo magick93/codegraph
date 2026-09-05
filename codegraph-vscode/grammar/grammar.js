@@ -71,8 +71,67 @@ module.exports = grammar({
       '{',
       repeat(choice(
         $.property_assignment,
+        $.column_decl,
+        $.field_decl,
+        $.chart_decl,
         $.event_handler,
       )),
+      '}',
+    ),
+
+    // ── Typed component statements ───────────────────────────────
+    column_decl: $ => seq(
+      'column', $.string, '->',
+      choice($.field_ref, $.lookup_ref, $.expr_ref),
+      ';',
+    ),
+
+    field_ref: $ => seq(
+      'field', $.identifier, '.', $.identifier,
+    ),
+
+    lookup_ref: $ => seq(
+      'lookup', $.identifier, '.', $.identifier, 'via', $.identifier,
+    ),
+
+    expr_ref: $ => seq(
+      'expr', $.expression,
+    ),
+
+    field_decl: $ => seq(
+      'field', $.identifier, '->', 'input', $.input_type,
+      choice(
+        ';',
+        seq($.input_body, optional(';')),
+      ),
+    ),
+
+    input_type: $ => choice(
+      'text', 'textarea', 'password', 'email', 'number', 'date', 'time',
+      'datetime', 'dropdown', 'radio', 'checkbox', 'toggle', 'file', 'hidden',
+    ),
+
+    input_body: $ => seq(
+      '{',
+      repeat($.property_assignment),
+      '}',
+    ),
+
+    chart_decl: $ => seq(
+      'chart', $.chart_kind,
+      choice(
+        ';',
+        seq($.chart_body, optional(';')),
+      ),
+    ),
+
+    chart_kind: $ => choice(
+      'bar', 'line', 'pie', 'radar', 'metric',
+    ),
+
+    chart_body: $ => seq(
+      '{',
+      repeat($.property_assignment),
       '}',
     ),
 

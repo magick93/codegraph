@@ -33,6 +33,7 @@ pub struct ViewComponentNode {
     pub fields: Option<Vec<String>>,
     pub filter: Option<String>,
     pub api_operation: Option<String>,
+    pub spec: Option<String>,
     pub domain: Option<String>,
 }
 

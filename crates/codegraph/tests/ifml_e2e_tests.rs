@@ -216,6 +216,164 @@ async fn test_ifml_grafeo_round_trip_edges() {
     );
 }
 
+/// Typed component taxonomy fixture: table (field/lookup/expr columns),
+/// form (required + validations + values), and chart specs.
+const TYPED_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "Reports" {
+    label "Typed Components";
+
+    component "CustomerTable" {
+        type: table;
+        data: Customer;
+
+        column "Name"   -> field Customer.name;
+        column "Status" -> lookup Customer.status via status_labels;
+        column "Tenure" -> expr tenure_years(Customer.hire_date);
+    }
+
+    component "EditForm" {
+        type: form;
+        data: Customer;
+
+        field name   -> input text   { required: true; validations: [len(name) > 2]; }
+        field email  -> input email;
+        field status -> input dropdown { values: ["gold", "silver"]; }
+    }
+
+    component "RevenueChart" {
+        type: chart;
+
+        chart bar { label: region; values: [revenue]; }
+    }
+}
+"#;
+
+/// Round-trip test for typed component specs: IFML DSL → Grafeo graph →
+/// spec JSON → ComponentSpec. Also verifies the full ifml_generate path
+/// accepts the fixture.
+#[tokio::test]
+async fn typed_component_specs_round_trip_through_graph() {
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
+    let model = codegraph_ifml_dsl::parse_ifml(TYPED_IFML).expect("Should parse typed IFML");
+    codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
+        .await
+        .expect("Should ingest");
+
+    let components = engine.get_ifml_view_components("Reports").await.unwrap();
+    assert_eq!(components.len(), 3);
+    let find = |name: &str| {
+        components
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("component {name} not found"))
+    };
+
+    let table = find("CustomerTable");
+    assert_eq!(table.component_type, "table");
+    let table_spec: codegraph_ifml_dsl::ComponentSpec = serde_json::from_str(
+        table
+            .spec
+            .as_deref()
+            .expect("table spec should be persisted"),
+    )
+    .expect("table spec should deserialize");
+    match table_spec {
+        codegraph_ifml_dsl::ComponentSpec::Table(t) => {
+            assert!(t.pagination);
+            assert_eq!(t.columns.len(), 3);
+            assert!(matches!(
+                &t.columns[0],
+                codegraph_ifml_dsl::ColumnDef::Field { label, field }
+                    if label == "Name" && field.entity == "Customer" && field.property == "name"
+            ));
+            assert!(matches!(
+                &t.columns[1],
+                codegraph_ifml_dsl::ColumnDef::Lookup { lookup, .. } if lookup == "status_labels"
+            ));
+            assert!(matches!(
+                &t.columns[2],
+                codegraph_ifml_dsl::ColumnDef::Expression { .. }
+            ));
+        }
+        other => panic!("Expected Table spec, got {other:?}"),
+    }
+
+    let form = find("EditForm");
+    assert_eq!(form.component_type, "form");
+    let form_spec: codegraph_ifml_dsl::ComponentSpec =
+        serde_json::from_str(form.spec.as_deref().expect("form spec should be persisted"))
+            .expect("form spec should deserialize");
+    match form_spec {
+        codegraph_ifml_dsl::ComponentSpec::Form(f) => {
+            assert_eq!(f.fields.len(), 3);
+            assert_eq!(f.fields[0].name, "name");
+            assert_eq!(f.fields[0].input, codegraph_ifml_dsl::InputFieldType::Text);
+            assert!(f.fields[0].required);
+            assert_eq!(f.fields[0].validations.len(), 1);
+            assert_eq!(f.fields[1].name, "email");
+            assert!(!f.fields[1].required);
+            assert_eq!(
+                f.fields[2].values,
+                vec!["gold".to_string(), "silver".to_string()]
+            );
+        }
+        other => panic!("Expected Form spec, got {other:?}"),
+    }
+
+    let chart = find("RevenueChart");
+    assert_eq!(chart.component_type, "chart");
+    let chart_spec: codegraph_ifml_dsl::ComponentSpec = serde_json::from_str(
+        chart
+            .spec
+            .as_deref()
+            .expect("chart spec should be persisted"),
+    )
+    .expect("chart spec should deserialize");
+    match chart_spec {
+        codegraph_ifml_dsl::ComponentSpec::Chart(c) => {
+            assert_eq!(c.kind, codegraph_ifml_dsl::ChartKind::Bar);
+            assert_eq!(c.label_field.as_deref(), Some("region"));
+            assert_eq!(c.value_fields, vec!["revenue".to_string()]);
+        }
+        other => panic!("Expected Chart spec, got {other:?}"),
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("domains.toml"),
+        r#"
+[defaults]
+api_version = "v1"
+
+[domains.sales]
+label = "Sales"
+schema_dir = "sales"
+postgres_schema = "sales"
+entities = ["CustomerType"]
+"#,
+    )
+    .unwrap();
+    let ifml_path = dir.path().join("typed.ifml");
+    std::fs::write(&ifml_path, TYPED_IFML).unwrap();
+
+    codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+        config_path: &dir.path().join("domains.toml"),
+        output: &dir.path().join("out"),
+        ifml_files: &[ifml_path],
+        schemas: None,
+        classifier: None,
+        frameworks: &["svelte".to_string()],
+        profiles_config_path: None,
+        template_dir: &[],
+    })
+    .await
+    .expect("ifml_generate should succeed for typed components");
+}
+
 /// Test IFML stale route cleanup
 #[test]
 fn test_ifml_clean_stale_routes() {

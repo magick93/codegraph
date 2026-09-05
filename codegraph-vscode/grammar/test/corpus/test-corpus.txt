@@ -610,3 +610,179 @@ view "Dashboard" {
             value: (value_expression
               (expression
                 (identifier)))))))))
+
+==================
+Field declarations
+==================
+
+view "CustomerForm" {
+    component "form" {
+        mode: edit;
+
+        field name -> input text { required: true; validations: [len(name) > 2]; }
+        field email -> input email;
+        field status -> input dropdown { values: ["gold", "silver"]; }
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (field_decl
+            (identifier)
+            (input_type)
+            (input_body
+              (property_assignment
+                key: (identifier)
+                value: (value_expression
+                  (expression
+                    (boolean))))
+              (property_assignment
+                key: (identifier)
+                value: (value_expression
+                  (array_literal
+                    (value_expression
+                      (expression
+                        (call_expr
+                          (identifier)
+                          (expression
+                            (identifier)))
+                        (number))))))))
+          (field_decl
+            (identifier)
+            (input_type))
+          (field_decl
+            (identifier)
+            (input_type)
+            (input_body
+              (property_assignment
+                key: (identifier)
+                value: (value_expression
+                  (array_literal
+                    (value_expression
+                      (expression
+                        (string)))
+                    (value_expression
+                      (expression
+                        (string)))))))))))))
+
+==================
+Column declarations
+==================
+
+view "CustomerGrid" {
+    component "grid" {
+        type: list;
+        data: Customer;
+
+        column "Name" -> field Customer.name;
+        column "Status" -> lookup Customer.status via status_labels;
+        column "Tenure" -> expr tenure_years(Customer.hire_date);
+        column "Age" -> expr Customer.age >= 18;
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (column_decl
+            (string)
+            (field_ref
+              (identifier)
+              (identifier)))
+          (column_decl
+            (string)
+            (lookup_ref
+              (identifier)
+              (identifier)
+              (identifier)))
+          (column_decl
+            (string)
+            (expr_ref
+              (expression
+                (call_expr
+                  (identifier)
+                  (expression
+                    (field_expr
+                      (identifier)
+                      (identifier)))))))
+          (column_decl
+            (string)
+            (expr_ref
+              (expression
+                (field_expr
+                  (identifier)
+                  (identifier))
+                (number)))))))))
+
+==================
+Chart declarations
+==================
+
+view "Dashboard" {
+    component "revenue" {
+        type: list;
+
+        chart bar;
+        chart line { label: region; values: [revenue]; }
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (chart_decl
+            (chart_kind))
+          (chart_decl
+            (chart_kind)
+            (chart_body
+              (property_assignment
+                key: (identifier)
+                value: (value_expression
+                  (expression
+                    (identifier))))
+              (property_assignment
+                key: (identifier)
+                value: (value_expression
+                  (array_literal
+                    (value_expression
+                      (expression
+                        (identifier)))))))))))))

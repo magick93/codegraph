@@ -48,10 +48,176 @@ pub struct ContainerDeclaration {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ComponentType {
+    List,
+    Form,
+    Details,
+    Search,
+    Tree,
+    Chart,
+    Table,
+    Button,
+    Link,
+    Menu,
+    Image,
+    Embedded,
+    Custom(String),
+}
+
+impl ComponentType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            ComponentType::List => "list",
+            ComponentType::Form => "form",
+            ComponentType::Details => "details",
+            ComponentType::Search => "search",
+            ComponentType::Tree => "tree",
+            ComponentType::Chart => "chart",
+            ComponentType::Table => "table",
+            ComponentType::Button => "button",
+            ComponentType::Link => "link",
+            ComponentType::Menu => "menu",
+            ComponentType::Image => "image",
+            ComponentType::Embedded => "embedded",
+            ComponentType::Custom(s) => s.as_str(),
+        }
+    }
+}
+
+impl From<&str> for ComponentType {
+    fn from(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "list" => ComponentType::List,
+            "form" => ComponentType::Form,
+            "details" => ComponentType::Details,
+            "search" => ComponentType::Search,
+            "tree" => ComponentType::Tree,
+            "chart" => ComponentType::Chart,
+            "table" => ComponentType::Table,
+            "button" => ComponentType::Button,
+            "link" => ComponentType::Link,
+            "menu" => ComponentType::Menu,
+            "image" => ComponentType::Image,
+            "embedded" => ComponentType::Embedded,
+            _ => ComponentType::Custom(s.to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ComponentDeclaration {
     pub name: String,
+    pub component_type: Option<ComponentType>,
+    pub spec: Option<ComponentSpec>,
     pub properties: Vec<PropertyAssignment>,
     pub events: Vec<EventHandler>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ComponentSpec {
+    Table(TableSpec),
+    Form(FormSpec),
+    Chart(ChartSpec),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TableSpec {
+    pub columns: Vec<ColumnDef>,
+    pub pagination: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ColumnDef {
+    Field {
+        label: String,
+        field: PropertyRef,
+    },
+    Lookup {
+        label: String,
+        field: PropertyRef,
+        lookup: String,
+    },
+    Expression {
+        label: String,
+        expr: Expression,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PropertyRef {
+    pub entity: String,
+    pub property: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FormSpec {
+    pub fields: Vec<FieldDef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FieldDef {
+    pub name: String,
+    pub input: InputFieldType,
+    pub required: bool,
+    pub validations: Vec<Expression>,
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum InputFieldType {
+    Text,
+    TextArea,
+    Password,
+    Email,
+    Number,
+    Date,
+    Time,
+    DateTime,
+    Dropdown,
+    RadioGroup,
+    Checkbox,
+    Toggle,
+    File,
+    Hidden,
+    Custom(String),
+}
+
+impl From<&str> for InputFieldType {
+    fn from(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "text" => InputFieldType::Text,
+            "textarea" => InputFieldType::TextArea,
+            "password" => InputFieldType::Password,
+            "email" => InputFieldType::Email,
+            "number" => InputFieldType::Number,
+            "date" => InputFieldType::Date,
+            "time" => InputFieldType::Time,
+            "datetime" => InputFieldType::DateTime,
+            "dropdown" => InputFieldType::Dropdown,
+            "radio" => InputFieldType::RadioGroup,
+            "checkbox" => InputFieldType::Checkbox,
+            "toggle" => InputFieldType::Toggle,
+            "file" => InputFieldType::File,
+            "hidden" => InputFieldType::Hidden,
+            _ => InputFieldType::Custom(s.to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChartSpec {
+    pub kind: ChartKind,
+    pub label_field: Option<String>,
+    pub value_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ChartKind {
+    Bar,
+    Line,
+    Pie,
+    Radar,
+    Metric,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

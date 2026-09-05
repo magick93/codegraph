@@ -31,6 +31,23 @@ export interface ViewComponentData {
   events: EventData[];
   parts: ComponentPartData[];
   position?: { x: number; y: number };
+  columns?: ColumnDef[];
+  inputFields?: FieldDef[];
+  chart?: ChartKind;
+}
+
+export type ChartKind = 'bar' | 'line' | 'pie' | 'radar' | 'metric';
+
+export interface ColumnDef {
+  kind: 'field' | 'lookup' | 'expr';
+  label: string;
+  ref: string;
+}
+
+export interface FieldDef {
+  name: string;
+  input: string;
+  required?: boolean;
 }
 
 export interface ComponentPartData {
