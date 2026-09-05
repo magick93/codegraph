@@ -55,31 +55,92 @@ async fn setup_grafeo() -> (GrafeoEngine, codegraph_config::config::DomainConfig
     (engine, config)
 }
 
-#[cfg(feature = "e2e")]
+/// Serializes the two full-app compile tests. Both install a global
+/// `ProjectConfig` (via `init_project_config` inside `run_generators`) and
+/// run concurrently with other tests in this binary; the lock keeps them
+/// from racing on the global config with each other.
+static COMPILE_GATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn generate_full_app(output_dir: &std::path::Path) {
+    let _gate = COMPILE_GATE_LOCK.lock().await;
+
     let (engine, config) = setup_grafeo().await;
     let tera =
         create_tera(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
 
-    // Run all generators (DDL, entities, codelists, DTOs, repos, commands,
-    // queries, events, handlers, tests, routers, openapi, scaffold).
-    // Domain-types and hooks output is redirected to temp dirs to avoid
-    // corrupting the workspace source when running with fixture schemas.
-    let domain_types_tmp = tempfile::TempDir::new().unwrap();
+    // Absolute paths to workspace crates so the generated Cargo.toml can use
+    // path deps (production wires these via profiles.toml meta).
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let type_contracts_path = workspace_root
+        .join("crates")
+        .join("codegraph-type-contracts");
+    let workflow_path = workspace_root.join("crates").join("codegraph-workflow");
+    let profiles_path = workspace_root.join("profiles.toml");
+
+    // Build a BuildPlan like the driver does, minus the gRPC generators:
+    // their output is compiled through tonic-build (needs protoc) and has
+    // its own compile coverage in grpc_compile_tests.rs, which skips
+    // gracefully when protoc is absent. The repository emitter is the
+    // target of this gate, not the gRPC stack.
+    let registry = codegraph::profile::CapabilityRegistry::new();
+    let mut resolved =
+        codegraph::profile::load_and_resolve_profile(&profiles_path, "default", None).unwrap();
+    for section in resolved.sections.values_mut() {
+        section.generators.retain(|g| !g.starts_with("grpc_"));
+    }
+    let plan = codegraph::profile::BuildPlan::from_profile(&resolved, &registry).unwrap();
+
+    // The domain-types crate is generated INSIDE the app output so the
+    // scaffolded `domain-types = { path = "domain-types" }` dependency
+    // resolves (it auto-joins the generated workspace as a path-dep member).
+    // Production redirects it via profiles meta `domain_types_base`.
+    let domain_types_dir = output_dir.join("domain-types");
     let hooks_tmp = tempfile::TempDir::new().unwrap();
-    let report = codegraph::generate::run_generators_with_domain_types_base(
-        &engine,
-        &config,
-        output_dir,
-        &tera,
-        &Default::default(),
-        &Default::default(),
-        std::path::Path::new(""),
-        domain_types_tmp.path(),
-        hooks_tmp.path(),
-    )
-    .await
-    .unwrap();
+
+    let project_config = codegraph::generate::ProjectConfig {
+        app_name: "test-app".into(),
+        domain_types_crate: "domain_types".into(),
+        generator_name: "codegraph-test".into(),
+        type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
+        codegraph_workflow_base: workflow_path.to_string_lossy().to_string(),
+        domain_types_base: "domain-types".into(),
+        types_import_prefix: config.defaults.types_import_prefix.clone(),
+        // The scaffold only emits codegraph-workflow / type-contracts deps as
+        // git+rev deps gated on `codegraph_rev`; with the rev left empty they
+        // are omitted. Inject them as local path deps instead (rendered raw
+        // into [dependencies] by extra_dependencies) so `cargo check` never
+        // touches the network.
+        extra_dependencies: format!(
+            "codegraph-workflow = {{ path = \"{}\" }}\n\
+             codegraph-type-contracts = {{ path = \"{}\" }}",
+            workflow_path.display(),
+            type_contracts_path.display(),
+        ),
+        ..Default::default()
+    };
+
+    let ui_overrides = codegraph_config::UiOverrideConfig::default();
+    let ui_domains = codegraph_config::UiDomainConfig::default();
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: &engine,
+            config: &config,
+            output_dir,
+            tera: &tera,
+            ui_overrides: &ui_overrides,
+            ui_domains: &ui_domains,
+            schema_base_dir: std::path::Path::new(""),
+            seed_config: None,
+            domain_types_base: Some(&domain_types_dir),
+            hooks_base: Some(hooks_tmp.path()),
+            ext_points: None,
+            build_plan: Some(&plan),
+            ifml_frameworks: vec![],
+            project_config: Some(&project_config),
+        })
+        .await
+        .unwrap();
 
     assert!(
         !report.has_errors(),
@@ -91,29 +152,19 @@ async fn generate_full_app(output_dir: &std::path::Path) {
             .collect::<Vec<_>>()
     );
 
-    // Generate repository impls (not part of run_generators)
-    let emitter = RepositoryImplEmitter;
-    let entity_names = engine.get_entity_names().await.unwrap();
-
-    for entity_title in &entity_names {
-        let schema = engine.get_schema(entity_title).await.unwrap();
-        if let Some(schema) = schema {
-            let domain = schema.domain.as_deref().unwrap_or("unknown");
-            let module = &schema.pg_table_name;
-
-            let code = emitter
-                .emit(&engine, entity_title, domain, &config, None, &[])
-                .await
-                .unwrap();
-            let repo_dir = output_dir
-                .join("src")
-                .join("domain")
-                .join(domain)
-                .join(module);
-            std::fs::create_dir_all(&repo_dir).unwrap();
-            std::fs::write(repo_dir.join("repository_impl.rs"), &code).unwrap();
-        }
-    }
+    // The `repository` generator (part of the default plan) emits
+    // `repository_impl.rs` for every entity via RepositoryImplEmitter::emit,
+    // including the include-path fetch methods resolved for each handler.
+    // Assert the gate actually covers the emitter — if the generator stops
+    // producing these files, this test would silently stop compiling
+    // repository output.
+    let repository_impl_count =
+        count_files_named(&output_dir.join("src").join("domain"), "repository_impl.rs");
+    assert!(
+        repository_impl_count > 0,
+        "compile gate must emit at least one repository_impl.rs, \
+         otherwise it no longer covers the repository emitter"
+    );
 
     // Generate mod.rs files for all directories under src/
     generate_mod_files_recursive(&output_dir.join("src"));
@@ -146,9 +197,24 @@ async fn generate_full_app(output_dir: &std::path::Path) {
     }
 }
 
+/// Recursively count files with the given name under `dir`.
+fn count_files_named(dir: &std::path::Path, name: &str) -> usize {
+    let mut count = 0;
+    if !dir.is_dir() {
+        return 0;
+    }
+    for entry in std::fs::read_dir(dir).unwrap().flatten() {
+        if entry.file_type().unwrap().is_dir() {
+            count += count_files_named(&entry.path(), name);
+        } else if entry.file_name().to_string_lossy() == name {
+            count += 1;
+        }
+    }
+    count
+}
+
 /// Recursively generate `mod.rs` files for directories that need them.
 /// Skips directories that already contain `main.rs` (crate root).
-#[cfg(feature = "e2e")]
 fn generate_mod_files_recursive(dir: &std::path::Path) {
     if !dir.is_dir() {
         return;
@@ -2494,7 +2560,10 @@ async fn grafeo_candidate_inspect_output() {
     );
 }
 
-#[cfg(feature = "e2e")]
+/// Compile gate for the full generated app, including the emitted
+/// `repository_impl.rs` files (written by `generate_full_app` for every
+/// entity). Runs in the default `cargo test --workspace` so that changes to
+/// the repository emitter cannot merge without the generated code compiling.
 #[tokio::test]
 async fn grafeo_generated_code_compiles() {
     use std::time::Duration;
@@ -2942,6 +3011,7 @@ async fn grafeo_e2e_include_validates_unknown_path() {
 
 #[tokio::test]
 async fn generated_app_compiles_cleanly() {
+    let _gate = COMPILE_GATE_LOCK.lock().await;
     let (engine, config) = setup_grafeo().await;
     let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
     let tmp = tempfile::TempDir::new().unwrap();

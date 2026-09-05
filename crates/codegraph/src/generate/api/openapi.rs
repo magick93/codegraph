@@ -125,20 +125,21 @@ impl GlobalGenerator for OpenApiGenerator {
                 .cloned()
                 .unwrap_or_default();
             let mut entities = Vec::new();
+            let norm = |s: &str| -> String { s.chars().filter(|c| !c.is_whitespace()).collect() };
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             for entity_name in &domain_entry.entities {
                 // The generation-order titles may differ from the domains.toml
                 // entity names only by whitespace (e.g. title "Campaign Type"
                 // vs entity "CampaignType"). Match on a normalized key so every
                 // configured entity gets an OpenAPI spec, and resolve the schema
                 // by its real title (get_schema_in_domain is title-keyed).
-                let norm =
-                    |s: &str| -> String { s.chars().filter(|c| !c.is_whitespace()).collect() };
                 let Some(title) = domain_entities
                     .iter()
                     .find(|t| norm(t) == norm(entity_name.as_str()))
                 else {
                     continue;
                 };
+                seen.insert(norm(title));
                 if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain_name).await {
                     let entity_cfg = domain_entry.get_entity_config(entity_name);
                     let operations =
@@ -189,6 +190,41 @@ impl GlobalGenerator for OpenApiGenerator {
                         parent_domain,
                     });
                 }
+            }
+
+            // Domains whose schemas are not listed in domains.toml `entities`
+            // (e.g. VO/codelist-only domains like a `common` domain with
+            // `entities = []`) still get scaffold routes, handlers and — per
+            // server.tera's per-domain loop — an OpenAPI doc reference. Emit
+            // entities for them from the generation order so the referenced
+            // `{Domain}ApiDoc` actually exists; they run with default
+            // entity config, mirroring how their handlers are generated.
+            let mut unlisted: Vec<&str> = domain_entities
+                .iter()
+                .filter(|t| !seen.contains(&norm(t)))
+                .copied()
+                .collect();
+            unlisted.sort_unstable();
+            for title in unlisted {
+                let Ok(Some(schema)) = db.get_schema_in_domain(title, domain_name).await else {
+                    continue;
+                };
+                let operations = resolve_entity_operations(db, config, domain_name, title).await;
+                entities.push(OpenApiEntity {
+                    entity_name: schema.rust_type_name.clone(),
+                    module_name: schema.pg_table_name.clone(),
+                    path_segment: resolve_path_segment(None, &schema),
+                    tag: schema.rust_type_name.clone(),
+                    has_create: operations.contains(&"create".to_string()),
+                    has_read: operations.contains(&"read".to_string()),
+                    has_update: operations.contains(&"update".to_string()),
+                    has_delete: operations.contains(&"delete".to_string()),
+                    has_list: operations.contains(&"list".to_string()),
+                    role: "root".to_string(),
+                    parent_path_segment: None,
+                    parent_entity: None,
+                    parent_domain: None,
+                });
             }
 
             if !entities.is_empty() {

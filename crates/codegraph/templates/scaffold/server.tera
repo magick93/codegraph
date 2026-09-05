@@ -288,8 +288,6 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             db.clone(),
 {% if project.hooks_api_crate %}
             hooks_registry.{{ domain.name }}_{{ entity.module_name }}.clone(),
-{% else %}
-            None,
 {% endif %}
         ),
         {{ domain.name }}_{{ entity.module_name }}_queries: crate::domain::{{ domain.name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler::new(
@@ -297,8 +295,6 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             db.clone(),
 {% if project.hooks_api_crate %}
             hooks_registry.{{ domain.name }}_{{ entity.module_name }}.clone(),
-{% else %}
-            None,
 {% endif %}
         ),
 {% endfor %}

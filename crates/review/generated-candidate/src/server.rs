@@ -222,14 +222,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::code::repository_impl::CodeRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_code_queries: crate::domain::common::code::query::CodeQueryHandler::new(
             Arc::new(crate::domain::common::code::repository_impl::CodeRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -237,14 +233,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::currency_code_list::repository_impl::CurrencyCodeListRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_currency_code_list_queries: crate::domain::common::currency_code_list::query::CurrencyCodeListQueryHandler::new(
             Arc::new(crate::domain::common::currency_code_list::repository_impl::CurrencyCodeListRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -252,14 +244,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::date::repository_impl::DateRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_date_queries: crate::domain::common::date::query::DateQueryHandler::new(
             Arc::new(crate::domain::common::date::repository_impl::DateRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -267,14 +255,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::distribution_base::repository_impl::DistributionBaseRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_distribution_base_queries: crate::domain::common::distribution_base::query::DistributionBaseQueryHandler::new(
             Arc::new(crate::domain::common::distribution_base::repository_impl::DistributionBaseRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -282,14 +266,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::effective_date::repository_impl::EffectiveDateRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_effective_date_queries: crate::domain::common::effective_date::query::EffectiveDateQueryHandler::new(
             Arc::new(crate::domain::common::effective_date::repository_impl::EffectiveDateRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -297,14 +277,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::event_base::repository_impl::EventBaseRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_event_base_queries: crate::domain::common::event_base::query::EventBaseQueryHandler::new(
             Arc::new(crate::domain::common::event_base::repository_impl::EventBaseRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -312,14 +288,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::formatted_date_time::repository_impl::FormattedDateTimeRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_formatted_date_time_queries: crate::domain::common::formatted_date_time::query::FormattedDateTimeQueryHandler::new(
             Arc::new(crate::domain::common::formatted_date_time::repository_impl::FormattedDateTimeRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -327,14 +299,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::gender_code_list::repository_impl::GenderCodeListRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_gender_code_list_queries: crate::domain::common::gender_code_list::query::GenderCodeListQueryHandler::new(
             Arc::new(crate::domain::common::gender_code_list::repository_impl::GenderCodeListRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -342,14 +310,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::identifier::repository_impl::IdentifierRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_identifier_queries: crate::domain::common::identifier::query::IdentifierQueryHandler::new(
             Arc::new(crate::domain::common::identifier::repository_impl::IdentifierRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -357,14 +321,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::name::repository_impl::NameRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_name_queries: crate::domain::common::name::query::NameQueryHandler::new(
             Arc::new(crate::domain::common::name::repository_impl::NameRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -372,14 +332,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::person_base::repository_impl::PersonBaseRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_person_base_queries: crate::domain::common::person_base::query::PersonBaseQueryHandler::new(
             Arc::new(crate::domain::common::person_base::repository_impl::PersonBaseRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -387,14 +343,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::position_schedule_type_code_list::repository_impl::PositionScheduleTypeCodeListRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_position_schedule_type_code_list_queries: crate::domain::common::position_schedule_type_code_list::query::PositionScheduleTypeCodeListQueryHandler::new(
             Arc::new(crate::domain::common::position_schedule_type_code_list::repository_impl::PositionScheduleTypeCodeListRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -402,14 +354,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::string_type_array::repository_impl::StringTypeArrayRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_string_type_array_queries: crate::domain::common::string_type_array::query::StringTypeArrayQueryHandler::new(
             Arc::new(crate::domain::common::string_type_array::repository_impl::StringTypeArrayRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -417,14 +365,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::amount::repository_impl::AmountRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_amount_queries: crate::domain::common::amount::query::AmountQueryHandler::new(
             Arc::new(crate::domain::common::amount::repository_impl::AmountRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -432,14 +376,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::process_history_item::repository_impl::ProcessHistoryItemRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_process_history_item_queries: crate::domain::common::process_history_item::query::ProcessHistoryItemQueryHandler::new(
             Arc::new(crate::domain::common::process_history_item::repository_impl::ProcessHistoryItemRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -447,14 +387,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::common::process_history::repository_impl::ProcessHistoryRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         common_process_history_queries: crate::domain::common::process_history::query::ProcessHistoryQueryHandler::new(
             Arc::new(crate::domain::common::process_history::repository_impl::ProcessHistoryRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -464,14 +400,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::compensation::pay_run::repository_impl::PayRunRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         compensation_pay_run_queries: crate::domain::compensation::pay_run::query::PayRunQueryHandler::new(
             Arc::new(crate::domain::compensation::pay_run::repository_impl::PayRunRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -481,14 +413,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::events::public_event::repository_impl::PublicEventRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         events_public_event_queries: crate::domain::events::public_event::query::PublicEventQueryHandler::new(
             Arc::new(crate::domain::events::public_event::repository_impl::PublicEventRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -498,14 +426,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::recruiting::application::repository_impl::ApplicationRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         recruiting_application_queries: crate::domain::recruiting::application::query::ApplicationQueryHandler::new(
             Arc::new(crate::domain::recruiting::application::repository_impl::ApplicationRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -513,14 +437,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::recruiting::candidate::repository_impl::CandidateRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         recruiting_candidate_queries: crate::domain::recruiting::candidate::query::CandidateQueryHandler::new(
             Arc::new(crate::domain::recruiting::candidate::repository_impl::CandidateRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 
@@ -530,14 +450,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(crate::domain::rsvp::rsvp::repository_impl::RsvpRepositoryImpl),
             db.clone(),
 
-            None,
-
         ),
         rsvp_rsvp_queries: crate::domain::rsvp::rsvp::query::RsvpQueryHandler::new(
             Arc::new(crate::domain::rsvp::rsvp::repository_impl::RsvpRepositoryImpl),
             db.clone(),
-
-            None,
 
         ),
 

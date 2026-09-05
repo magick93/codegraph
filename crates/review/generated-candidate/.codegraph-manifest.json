@@ -1,5 +1,5 @@
 {
-  "root": "/home/anton/git/codegraph-ifml-typed/crates/review/generated-candidate",
+  "root": "/home/anton/git/codegraph-repo-167/crates/review/generated-candidate",
   "generated": [
     "Cargo.toml",
     "api-contracts/README.md",
@@ -390,6 +390,7 @@
     "src/api/mod.rs",
     "src/api/openapi/all.rs",
     "src/api/openapi/catalog.rs",
+    "src/api/openapi/common.rs",
     "src/api/openapi/compensation.rs",
     "src/api/openapi/events.rs",
     "src/api/openapi/mod.rs",
