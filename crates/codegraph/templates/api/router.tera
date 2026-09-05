@@ -105,13 +105,17 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 {% endfor %}
 {% if entity.has_pipeline_layer %}
         // Pipeline: {{ entity.pipeline_middleware | join(sep=", ") }}
+        // NOTE: auth is applied once at the server/worker boundary via
+        // from_fn_with_state (route-level layers cannot access router state
+        // in axum 0.8 — S collapses to ()); the per-router auth entry is
+        // therefore emitted as a no-op here.
 {% for mw in entity.pipeline_middleware %}
 {% if mw == "auth" %}
-        .route_layer(axum::middleware::from_fn(crate::middleware::auth_middleware))
+        // auth: applied by the server's global from_fn_with_state layer
 {% elif mw == "permission" %}
         .route_layer(axum::middleware::from_fn(crate::middleware::permission::require_permission))
 {% elif mw == "metrics" %}
-        .route_layer(axum::middleware::from_fn(crate::middleware::metrics_middleware::track_metrics))
+        .route_layer(axum::middleware::from_fn(crate::metrics_middleware::track_metrics))
 {% endif %}
 {% endfor %}
 {% endif %}

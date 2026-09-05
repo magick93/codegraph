@@ -227,6 +227,9 @@ pub struct ProjectConfig {
     /// Persistence provider for entity/repository code generation ("sea_orm" or "cornucopia").
     /// Used by templates to select provider-specific rendering paths.
     pub persistence_provider: String,
+    /// DTO serde key casing for domain-types DTOs: "snake" (default — keys stay
+    /// at the Rust field names) or "camel" (`rename_all = "camelCase"`).
+    pub dto_key_casing: String,
     /// Deployment topology for the generated application ("monolith" or "workers").
     /// Used by templates to select topology-specific rendering paths.
     pub deployment_topology: String,
@@ -325,6 +328,7 @@ impl Default for ProjectConfig {
             codegraph_rev: String::new(),
             database_target: "postgres".to_string(),
             persistence_provider: "sea_orm".to_string(),
+            dto_key_casing: "snake".to_string(),
             deployment_topology: "monolith".to_string(),
             types_import_prefix: "codegraph_type_contracts".into(),
             has_atproto: false,
@@ -2757,6 +2761,11 @@ mod tests {
         }];
         clean_generated_output(dir.path(), &order, "Type", false);
 
+        // In-expected entity directories are preserved whole: dto_included.rs
+        // is deliberately NOT deleted (an e2e-only regen after a fullstack run
+        // must not destroy the fullstack-emitted file while handlers still
+        // import it); generate_mod_files re-declares the module only while the
+        // file exists.
         assert!(
             entity_dir.join("dto_included.rs").exists(),
             "dto_included.rs in a live entity dir must be preserved across regens"

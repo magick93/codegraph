@@ -57,6 +57,10 @@ impl DomainGenerator for ErrorGenerator {
         })?;
 
         let mut seen_codes: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // Variants the template always emits itself — graph-seeded built-ins
+        // (e.g. domain="common" Conflict/NotFound from the metamodel ingest)
+        // must not duplicate them (E0428).
+        const TEMPLATE_BUILTIN_VARIANTS: [&str; 3] = ["Conflict", "NotFound", "InternalError"];
         let domain_errors: Vec<ErrorDef> = all_errors
             .iter()
             .filter(|e| {
@@ -65,6 +69,9 @@ impl DomainGenerator for ErrorGenerator {
             .filter_map(|e| {
                 let normalized = e.code.replace(['-', ' '], "_");
                 let variant_name = codegraph_naming::to_pascal_case(&normalized);
+                if TEMPLATE_BUILTIN_VARIANTS.contains(&variant_name.as_str()) {
+                    return None;
+                }
                 if seen_codes.insert(variant_name.clone()) {
                     Some(ErrorDef {
                         code: e.code.clone(),

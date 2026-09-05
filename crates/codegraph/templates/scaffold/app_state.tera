@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use sea_orm::DatabaseConnection;
-{% if project.hooks_api_crate %}use crate::hooks::HookRegistry;{% endif %}
+{% if project.hooks_api_crate %}use {{ project.hooks_api_crate | replace(from="_", to="-") }}::HookRegistry;{% endif %}
 {% if has_atproto %}
 use cosmos_extensions::http::auth::AtprotoAuth;
 use cosmos_extensions::atproto_client::AtprotoClient;

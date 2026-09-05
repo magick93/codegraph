@@ -929,6 +929,7 @@ async fn run_routing_generators(
         has_fern: false,
         fern_sdk_languages: vec!["typescript".to_string()],
         persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
+        dto_key_casing: "snake".to_string(),
         deployment_topology: topology,
         features: toml::Table::new(),
     };
@@ -1269,6 +1270,7 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
         has_fern: false,
         fern_sdk_languages: vec!["typescript".to_string()],
         persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
+        dto_key_casing: "snake".to_string(),
         deployment_topology: codegraph::profile::DeploymentTopology::Workers,
         features: toml::Table::new(),
     };
@@ -1841,6 +1843,7 @@ async fn run_routing_generators_with_parts(
         has_fern: false,
         fern_sdk_languages: vec!["typescript".to_string()],
         persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
+        dto_key_casing: "snake".to_string(),
         deployment_topology: topology,
         features: toml::Table::new(),
     };
