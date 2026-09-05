@@ -49,6 +49,40 @@ static IFML_LANG: LazyLock<tree_sitter::Language> = LazyLock::new(tree_sitter_if
 
 const VALID_COMPONENT_TYPES: &[&str] = &["list", "form", "details", "search", "tree", "chart"];
 
+/// Statement snippets offered inside component bodies (typed component taxonomy).
+const COMPONENT_STATEMENT_SNIPPETS: &[(&str, &str, &str)] = &[
+    (
+        "column",
+        "column \"${1:Label}\" -> field ${2:Entity}.${3:property};",
+        "Typed column bound to an entity property",
+    ),
+    (
+        "column lookup",
+        "column \"${1:Label}\" -> lookup ${2:Entity}.${3:property} via ${4:map};",
+        "Typed column with a codelist lookup mapping",
+    ),
+    (
+        "column expr",
+        "column \"${1:Label}\" -> expr ${2:expression};",
+        "Computed column expression",
+    ),
+    (
+        "field",
+        "field ${1:name} -> input ${2|text,textarea,password,email,number,date,time,datetime,dropdown,radio,checkbox,toggle,file,hidden|};",
+        "Input field declaration",
+    ),
+    (
+        "chart",
+        "chart ${1|bar,line,pie,radar,metric|};",
+        "Chart declaration",
+    ),
+    (
+        "chart body",
+        "chart ${1|bar,line,pie,radar,metric|} {\n\tlabel: ${2:region};\n\tvalues: [${3:revenue}];\n}",
+        "Chart declaration with label and values",
+    ),
+];
+
 static VIEW_DECL_QUERY: LazyLock<Query> = LazyLock::new(|| {
     Query::new(&IFML_LANG, r"(view_declaration (string) @view-name)")
         .expect("Failed to create view declaration query")
@@ -268,6 +302,18 @@ pub fn handle_completion(
                 ..Default::default()
             });
         }
+
+        if in_component_body(&root, position) {
+            for (label, insert_text, detail) in COMPONENT_STATEMENT_SNIPPETS {
+                items.push(CompletionItem {
+                    label: (*label).to_string(),
+                    kind: Some(CompletionItemKind::SNIPPET),
+                    insert_text: Some((*insert_text).to_string()),
+                    detail: Some((*detail).to_string()),
+                    ..Default::default()
+                });
+            }
+        }
     }
 
     if items.is_empty() {
@@ -277,6 +323,32 @@ pub fn handle_completion(
             is_incomplete: false,
             items,
         })))
+    }
+}
+
+/// True when the position sits inside a component body (typed statements
+/// like column/field/chart are only valid there).
+fn in_component_body(root: &tree_sitter::Node, pos: Position) -> bool {
+    let point = tree_sitter::Point {
+        row: pos.line as usize,
+        column: pos.character as usize,
+    };
+
+    let mut node = match root.descendant_for_point_range(point, point) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    loop {
+        match node.kind() {
+            "component_body" => return true,
+            "view_body" | "source_file" => return false,
+            _ => {}
+        }
+        match node.parent() {
+            Some(parent) => node = parent,
+            None => return false,
+        }
     }
 }
 
@@ -823,7 +895,7 @@ fn walk_semantic(
 
         "view" | "component" | "container" | "module" | "domain" | "schema" | "on" | "navigate"
         | "refresh" | "action" | "params" | "label" | "stay_statement" | "input" | "output"
-        | "true" | "false" => {
+        | "true" | "false" | "column" | "field" | "chart" | "lookup" | "via" | "expr" => {
             add_semantic_token(node, tokens, 8, 0);
         }
 
@@ -832,7 +904,8 @@ fn walk_semantic(
             add_semantic_token(node, tokens, 10, 0);
         }
 
-        "Boolean" | "DateTime" | "Float" | "Int" | "String" | "Uuid" => {
+        "Boolean" | "DateTime" | "Float" | "Int" | "String" | "Uuid" | "input_type"
+        | "chart_kind" => {
             add_semantic_token(node, tokens, 1, 0);
         }
 

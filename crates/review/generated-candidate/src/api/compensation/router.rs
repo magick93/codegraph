@@ -29,16 +29,16 @@ fn pay_run_routes() -> Router<AppState> {
 
         .route(
             "/",
-            axum::routing::get(pay_run_handler::list).guard("pay-runs", "list")
-                .merge(axum::routing::post(pay_run_handler::create).guard("pay-runs", "create")),
+            axum::routing::get(pay_run_handler::list).guard("compensation:pay-runs", "list")
+                .merge(axum::routing::post(pay_run_handler::create).guard("compensation:pay-runs", "create")),
         )
 
 
         .route(
             "/{pay_run_id}",
-            axum::routing::get(pay_run_handler::get_by_id).guard("pay-runs", "read")
-                .merge(axum::routing::put(pay_run_handler::update).guard("pay-runs", "update"))
-                .merge(axum::routing::delete(pay_run_handler::delete).guard("pay-runs", "delete")),
+            axum::routing::get(pay_run_handler::get_by_id).guard("compensation:pay-runs", "read")
+                .merge(axum::routing::put(pay_run_handler::update).guard("compensation:pay-runs", "update"))
+                .merge(axum::routing::delete(pay_run_handler::delete).guard("compensation:pay-runs", "delete")),
         )
 
 

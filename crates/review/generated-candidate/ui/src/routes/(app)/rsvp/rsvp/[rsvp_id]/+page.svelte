@@ -11,6 +11,7 @@
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 
 
+
 	import { deleteRsvp } from '#lib/stores/rsvp_rsvp.ts';
 
 
@@ -154,6 +155,8 @@
 			</dl>
 		</Card.Content>
 	</Card.Root>
+
+
 
 
 </div>

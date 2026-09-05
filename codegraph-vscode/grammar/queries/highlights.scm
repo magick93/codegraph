@@ -29,8 +29,18 @@
 "refresh" @keyword.control
 (stay_statement) @keyword.control
 
+; Typed component statement keywords
+"column" @keyword
+"field" @keyword
+"chart" @keyword
+"lookup" @keyword
+"via" @keyword
+"expr" @keyword
+
 ; Types
 (type_ref) @type
+(input_type) @type
+(chart_kind) @type
 
 ; Strings
 (string) @string

@@ -37,7 +37,7 @@
 			label: 'Compensation',
 			entityCount: 1,
 			entities: [
-				{ name: 'PayRun', path: '/compensation/pay-runs', label: 'Pay Run' },
+				{ name: 'PayRun', path: '/compensation/pay-run', label: 'Pay Run' },
 			]
 		},
 
@@ -55,7 +55,7 @@
 			label: 'Recruiting',
 			entityCount: 2,
 			entities: [
-				{ name: 'Application', path: '/recruiting/applications', label: 'Application' },
+				{ name: 'Application', path: '/recruiting/application', label: 'Application' },
 				{ name: 'Candidate', path: '/recruiting/candidate', label: 'Candidate' },
 			]
 		},

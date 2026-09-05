@@ -92,7 +92,7 @@
 			tier: 'extended',
 			entities: [
 
-				{ path: '/compensation/pay-runs', label: 'Pay Run' },
+				{ path: '/compensation/pay-run', label: 'Pay Run' },
 
 			],
 		},
@@ -114,7 +114,7 @@
 			tier: 'extended',
 			entities: [
 
-				{ path: '/recruiting/applications', label: 'Application' },
+				{ path: '/recruiting/application', label: 'Application' },
 
 				{ path: '/recruiting/candidate', label: 'Candidate' },
 

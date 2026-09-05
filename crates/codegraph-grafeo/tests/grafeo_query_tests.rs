@@ -688,3 +688,94 @@ async fn test_get_composition_tree_simple() {
     assert!(!tree.root.columns.is_empty());
     assert!(tree.root.children.is_empty());
 }
+
+// --- IFML view components ---
+
+#[tokio::test]
+async fn test_view_component_spec_round_trip() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    let container = ViewContainerNode {
+        name: "CustomerList".to_string(),
+        label: Some("Customers".to_string()),
+        is_xor: false,
+        is_default: false,
+        is_landmark: true,
+        is_modal: false,
+        domain: Some("sales".to_string()),
+    };
+    engine.ingest_view_container(&container).await.unwrap();
+
+    let component = ViewComponentNode {
+        name: "grid".to_string(),
+        component_type: "list".to_string(),
+        mode: None,
+        entity: Some("Customer".to_string()),
+        fields: Some(vec!["name".to_string(), "email".to_string()]),
+        filter: None,
+        api_operation: None,
+        spec: Some(r#"{"columns":[{"field":"name","sortable":true}]}"#.to_string()),
+        domain: Some("sales".to_string()),
+    };
+    engine.ingest_view_component(&component).await.unwrap();
+
+    engine
+        .ingest_edge(
+            "vc:CustomerList",
+            "comp:grid",
+            EdgeType::ContainsViewComponent,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let loaded = engine
+        .get_ifml_view_components("CustomerList")
+        .await
+        .unwrap();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0], component);
+}
+
+#[tokio::test]
+async fn test_view_component_spec_absent_round_trip() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    let container = ViewContainerNode {
+        name: "CustomerList".to_string(),
+        label: None,
+        is_xor: false,
+        is_default: false,
+        is_landmark: false,
+        is_modal: false,
+        domain: None,
+    };
+    engine.ingest_view_container(&container).await.unwrap();
+
+    let component = ViewComponentNode {
+        name: "grid".to_string(),
+        component_type: "form".to_string(),
+        mode: None,
+        entity: None,
+        fields: None,
+        filter: None,
+        api_operation: None,
+        spec: None,
+        domain: None,
+    };
+    engine.ingest_view_component(&component).await.unwrap();
+
+    engine
+        .ingest_edge(
+            "vc:CustomerList",
+            "comp:grid",
+            EdgeType::ContainsViewComponent,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let loaded = engine
+        .get_ifml_view_components("CustomerList")
+        .await
+        .unwrap();
+    assert_eq!(loaded, vec![component]);
+}

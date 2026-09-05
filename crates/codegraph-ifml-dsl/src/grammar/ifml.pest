@@ -60,9 +60,41 @@ component_declaration = {
 component_body = {
     "{" ~
         property_assignment* ~
+        (column_decl | field_decl | chart_decl)* ~
         event_handler* ~
     "}"
 }
+
+// ── Typed component declarations ──────────────────────────────────
+column_decl = {
+    "column" ~ string ~ "->" ~ (column_lookup | column_field | column_expr) ~ ";"
+}
+
+column_lookup = { "lookup" ~ property_ref ~ "via" ~ identifier }
+
+column_field = { "field" ~ property_ref }
+
+column_expr = { "expr" ~ expression }
+
+property_ref = { identifier ~ "." ~ identifier }
+
+field_decl = {
+    "field" ~ identifier ~ "->" ~ "input" ~ input_type ~ (input_body | ";")
+}
+
+input_type = {
+    "textarea" | "password" | "email" | "number" | "datetime" | "dropdown" |
+    "checkbox" | "radio" | "toggle" | "hidden" | "text" | "date" | "time" |
+    "file" | identifier
+}
+
+input_body = { "{" ~ property_assignment* ~ "}" }
+
+chart_decl = { "chart" ~ chart_kind ~ (chart_body | ";") }
+
+chart_kind = { "bar" | "line" | "pie" | "radar" | "metric" }
+
+chart_body = { "{" ~ property_assignment* ~ "}" }
 
 // ── Properties ────────────────────────────────────────────────────
 property_assignment = {
@@ -165,7 +197,7 @@ comparison = {
     addition ~ (comparison_op ~ addition)*
 }
 
-comparison_op = { "==" | "!=" | "<" | "<=" | ">" | ">=" | "~=" | "!~" }
+comparison_op = { "<=" | ">=" | "==" | "!=" | "~=" | "!~" | "<" | ">" }
 
 addition = {
     multiplication ~ (add_op ~ multiplication)*

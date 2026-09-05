@@ -504,6 +504,143 @@ fn test_lsp_completion_with_entity_data() {
 }
 
 #[test]
+fn test_lsp_completion_component_body_statements() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    open_document(
+        &client_conn,
+        "file:///test.ifml",
+        "view \"Hello\" {\n    component \"g\" {\n        type: list;\n\n    }\n}",
+    );
+
+    let _ = recv_diagnostics(&client_conn, "file:///test.ifml");
+
+    // Completion on the empty line inside the component body (line 3)
+    client_conn
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2i32),
+            method: "textDocument/completion".to_string(),
+            params: serde_json::json!({
+                "textDocument": { "uri": "file:///test.ifml" },
+                "position": { "line": 3, "character": 0 }
+            }),
+        }))
+        .unwrap();
+
+    let msg = client_conn.receiver.recv().unwrap();
+    match msg {
+        Message::Response(resp) => {
+            let result = resp.result.unwrap_or(serde_json::Value::Null);
+            assert!(!result.is_null(), "completion should return results");
+            let completion: CompletionResponse = serde_json::from_value(result).unwrap();
+            match completion {
+                CompletionResponse::List(list) => {
+                    let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
+                    for expected in [
+                        "column",
+                        "column lookup",
+                        "column expr",
+                        "field",
+                        "chart",
+                        "chart body",
+                    ] {
+                        assert!(
+                            labels.contains(&expected),
+                            "should suggest '{expected}', got labels: {labels:?}"
+                        );
+                    }
+                    assert!(
+                        labels.contains(&"type:"),
+                        "property completions should still be offered"
+                    );
+                    let column = list
+                        .items
+                        .iter()
+                        .find(|i| i.label == "column")
+                        .expect("column item present");
+                    assert!(
+                        column
+                            .insert_text
+                            .as_deref()
+                            .is_some_and(|t| t.contains("-> field")),
+                        "column snippet should insert a typed column, got {column:?}"
+                    );
+                }
+                _ => panic!("Expected completion list"),
+            }
+        }
+        _ => panic!("Expected completion response"),
+    }
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_completion_no_statements_outside_component() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    open_document(
+        &client_conn,
+        "file:///test.ifml",
+        "view \"Hello\" {\n    component \"g\" {\n        type: list;\n    }\n\n}",
+    );
+
+    let _ = recv_diagnostics(&client_conn, "file:///test.ifml");
+
+    // Empty line inside the view body (line 4), NOT inside a component
+    client_conn
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2i32),
+            method: "textDocument/completion".to_string(),
+            params: serde_json::json!({
+                "textDocument": { "uri": "file:///test.ifml" },
+                "position": { "line": 4, "character": 0 }
+            }),
+        }))
+        .unwrap();
+
+    let msg = client_conn.receiver.recv().unwrap();
+    match msg {
+        Message::Response(resp) => {
+            let result = resp.result.unwrap_or(serde_json::Value::Null);
+            if result.is_null() {
+                // no completions at all is acceptable outside components
+            } else {
+                let completion: CompletionResponse = serde_json::from_value(result).unwrap();
+                if let CompletionResponse::List(list) = completion {
+                    assert!(
+                        list.items.iter().all(|i| {
+                            !i.label.starts_with("column") && !i.label.starts_with("chart")
+                        }),
+                        "statement snippets must not appear in view body, got: {:?}",
+                        list.items.iter().map(|i| &i.label).collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+        _ => panic!("Expected completion response"),
+    }
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
 fn test_lsp_goto_definition_view() {
     let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();

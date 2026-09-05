@@ -163,6 +163,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             fields STRING,
             filter STRING,
             api_operation STRING,
+            spec STRING,
             domain STRING
         )",
         // Event — IFML

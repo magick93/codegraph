@@ -4,9 +4,12 @@
     "fileTypes": ["ifml"],
     "patterns": [
         { "include": "#comments" },
+        { "include": "#chartKinds" },
+        { "include": "#inputTypes" },
         { "include": "#keywords" },
         { "include": "#eventKeywords" },
         { "include": "#controlKeywords" },
+        { "include": "#statementKeywords" },
         { "include": "#propertyKeys" },
         { "include": "#booleanLiterals" },
         { "include": "#typeRefs" },
@@ -22,6 +25,16 @@
                 { "match": "//.*", "name": "comment.line.double-slash.ifml" }
             ]
         },
+        "chartKinds": {
+            "patterns": [
+                { "match": "\\b(chart)(\\s+(bar|line|pie|radar|metric))\\b", "captures": { "1": { "name": "keyword.control.ifml" }, "3": { "name": "support.constant.chart-kind.ifml" } } }
+            ]
+        },
+        "inputTypes": {
+            "patterns": [
+                { "match": "\\b(input)(\\s+(text|textarea|password|email|number|date|time|datetime|dropdown|radio|checkbox|toggle|file|hidden))\\b", "captures": { "1": { "name": "keyword.control.ifml" }, "3": { "name": "support.type.ifml" } } }
+            ]
+        },
         "keywords": {
             "patterns": [
                 { "match": "\\b(view|container|component|action|module|domain|schema|params|input|output|xor|default|modal|landmark)\\b", "name": "keyword.control.ifml" }
@@ -35,6 +48,11 @@
         "controlKeywords": {
             "patterns": [
                 { "match": "\\b(navigate|refresh|stay)\\b", "name": "keyword.control.ifml" }
+            ]
+        },
+        "statementKeywords": {
+            "patterns": [
+                { "match": "\\b(column|field|lookup|via|expr)\\b", "name": "keyword.control.ifml" }
             ]
         },
         "propertyKeys": {
