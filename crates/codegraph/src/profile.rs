@@ -233,6 +233,11 @@ pub struct BuildPlan {
     pub fern_sdk_languages: Vec<String>,
     /// Persistence provider for entity/repository code generation (default: SeaOrm).
     pub persistence_provider: PersistenceProvider,
+    /// DTO serde key casing for domain-types DTOs (default: "snake").
+    /// "camel" emits `#[serde(rename_all = "camelCase")]` on create/update/response
+    /// DTOs (community-os wire contract); "snake" leaves keys at the Rust field
+    /// names (hr-specs wire contract).
+    pub dto_key_casing: String,
     /// Deployment topology for the generated application (default: Monolith).
     pub deployment_topology: DeploymentTopology,
     /// Feature flags from the profile (e.g., has_admin_cli, auth, etc.).
@@ -364,6 +369,17 @@ impl BuildPlan {
             )));
         }
 
+        // Parse dto_key_casing from features (default: "snake").
+        // Unknown values fall back to "snake" — worst case the wire keys
+        // stay at the Rust field names (the historical contract).
+        let dto_key_casing = match profile.features.get("dto_key_casing") {
+            Some(v) => match v.as_str() {
+                Some("camel") => "camel".to_string(),
+                _ => "snake".to_string(),
+            },
+            None => "snake".to_string(),
+        };
+
         Ok(BuildPlan {
             entity_generators: entity_gens,
             domain_generators: domain_gens,
@@ -377,6 +393,7 @@ impl BuildPlan {
             has_fern,
             fern_sdk_languages,
             persistence_provider,
+            dto_key_casing,
             deployment_topology,
             features: profile.features.clone(),
         })
@@ -427,6 +444,7 @@ impl BuildPlan {
             has_fern: false,
             fern_sdk_languages: vec!["typescript".to_string()],
             persistence_provider: PersistenceProvider::default(),
+            dto_key_casing: "snake".to_string(),
             deployment_topology: DeploymentTopology::default(),
             features,
         })
@@ -1318,6 +1336,66 @@ scripts.post_gen = ["cargo check"]
         let resolved = load_and_resolve_profile(&path, "smoke", None).unwrap();
         assert_eq!(resolved.meta.name, "smoke");
         assert_eq!(resolved.sections["api"].generators, vec!["api_server"]);
+    }
+
+    #[test]
+    fn dto_key_casing_defaults_to_snake() {
+        let registry = CapabilityRegistry::new();
+        let toml = r#"
+[profiles.default.meta]
+name = "default"
+version = "1.0.0"
+description = "Default"
+
+[profiles.default.api]
+generators = ["ddl", "dto", "handler"]
+"#;
+        let config: ProfilesConfig = toml::from_str(toml).unwrap();
+        let resolved = resolve_profile(&config.profiles["default"], None).unwrap();
+        let plan = BuildPlan::from_profile(&resolved, &registry).unwrap();
+        assert_eq!(plan.dto_key_casing, "snake");
+    }
+
+    #[test]
+    fn dto_key_casing_camel_feature() {
+        let registry = CapabilityRegistry::new();
+        let toml = r#"
+[profiles.default.meta]
+name = "default"
+version = "1.0.0"
+description = "Default"
+
+[profiles.default.features]
+dto_key_casing = "camel"
+
+[profiles.default.api]
+generators = ["ddl", "dto", "handler"]
+"#;
+        let config: ProfilesConfig = toml::from_str(toml).unwrap();
+        let resolved = resolve_profile(&config.profiles["default"], None).unwrap();
+        let plan = BuildPlan::from_profile(&resolved, &registry).unwrap();
+        assert_eq!(plan.dto_key_casing, "camel");
+    }
+
+    #[test]
+    fn dto_key_casing_unknown_value_falls_back_to_snake() {
+        let registry = CapabilityRegistry::new();
+        let toml = r#"
+[profiles.default.meta]
+name = "default"
+version = "1.0.0"
+description = "Default"
+
+[profiles.default.features]
+dto_key_casing = "pascal"
+
+[profiles.default.api]
+generators = ["ddl", "dto", "handler"]
+"#;
+        let config: ProfilesConfig = toml::from_str(toml).unwrap();
+        let resolved = resolve_profile(&config.profiles["default"], None).unwrap();
+        let plan = BuildPlan::from_profile(&resolved, &registry).unwrap();
+        assert_eq!(plan.dto_key_casing, "snake");
     }
 
     #[test]

@@ -12,7 +12,7 @@ pub use crate::codelist::{{ import }};
 
 /// Request body for creating a new {{ entity_name }}.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema{% if has_validate %}, garde::Validate{% endif %})]
-#[serde(rename_all = "camelCase")]
+{% if project.dto_key_casing == "camel" %}#[serde(rename_all = "camelCase")]{% endif %}
 pub struct Create{{ entity_name }}Request {
 {%- for field in fields %}
 {%- if field.name == "id" %}{% continue %}{%- endif %}
@@ -93,7 +93,7 @@ pub struct Create{{ entity_name }}Request {
 {%- for child in all_child_dtos %}
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema{% if has_validate %}, garde::Validate{% endif %})]
-#[serde(rename_all = "camelCase")]
+{% if project.dto_key_casing == "camel" %}#[serde(rename_all = "camelCase")]{% endif %}
 pub struct Create{{ child.struct_name }}Request {
 {%- for field in child.fields %}
 {%- if field.name != "id" %}
