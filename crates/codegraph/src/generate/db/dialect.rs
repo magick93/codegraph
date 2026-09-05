@@ -12,7 +12,7 @@
 
 use std::fmt;
 
-use codegraph_naming::PG_RESERVED;
+use codegraph_naming::{is_pg_reserved, quote_pg_column, truncate_pg_identifier_with_limit};
 
 /// Supported database targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -210,15 +210,7 @@ pub trait SqlDialect: fmt::Debug + Send + Sync {
 
     /// Generate a constraint/index name, truncated to the dialect's max length.
     fn truncate_identifier(&self, name: &str) -> String {
-        if name.len() <= self.max_identifier_length() {
-            name.to_string()
-        } else {
-            let hash = fnv1a_64(name.as_bytes());
-            let suffix = format!("_{:07x}", hash & 0x0FFF_FFFF);
-            let prefix_len = self.max_identifier_length() - suffix.len();
-            let prefix = name[..prefix_len].trim_end_matches('_');
-            format!("{}{}", prefix, suffix)
-        }
+        truncate_pg_identifier_with_limit(name, self.max_identifier_length())
     }
 
     // ── Trigger syntax ───────────────────────────────────────────────────
@@ -303,15 +295,11 @@ impl SqlDialect for PostgresDialect {
     }
 
     fn needs_quoting(&self, name: &str) -> bool {
-        PG_RESERVED.contains(&name.to_ascii_lowercase().as_str())
+        is_pg_reserved(name)
     }
 
     fn quote_identifier(&self, name: &str) -> String {
-        if self.needs_quoting(name) {
-            format!("\"{}\"", name)
-        } else {
-            name.to_string()
-        }
+        quote_pg_column(name)
     }
 }
 
@@ -505,19 +493,6 @@ impl SqlDialect for SqliteDialect {
             _ => cleaned.to_string(),
         }
     }
-
-    fn truncate_identifier(&self, name: &str) -> String {
-        // SQLite has a much higher limit, but still truncate to keep things readable
-        if name.len() <= self.max_identifier_length() {
-            name.to_string()
-        } else {
-            let hash = fnv1a_64(name.as_bytes());
-            let suffix = format!("_{:07x}", hash & 0x0FFF_FFFF);
-            let prefix_len = self.max_identifier_length() - suffix.len();
-            let prefix = name[..prefix_len].trim_end_matches('_');
-            format!("{}{}", prefix, suffix)
-        }
-    }
 }
 
 impl Default for SqliteDialect {
@@ -550,16 +525,6 @@ pub fn db_template_for(dialect: &dyn SqlDialect, name: &str) -> String {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/// FNV-1a 64-bit hash for deterministic identifier truncation.
-fn fnv1a_64(data: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for &byte in data {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
-}
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
