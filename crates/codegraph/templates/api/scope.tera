@@ -24,7 +24,7 @@ use crate::middleware::{AuthInfo, AuthMode};
 /// where `op` is derived from the HTTP method (GET/HEAD -> read, else write).
 /// Non-API-key callers always pass.
 pub async fn require_scope(
-    db: &DatabaseConnection,
+    _db: &DatabaseConnection,
     auth: &AuthInfo,
     domain: &str,
     entity: &str,
@@ -34,7 +34,9 @@ pub async fn require_scope(
         return Ok(());
     }
 
-    let scopes = fetch_scopes(db, auth.api_key_id).await;
+    // Scopes ride the auth payload (verify_api_key -> AuthInfo) — no second
+    // query against api_keys_private, which the app role cannot read.
+    let scopes = &auth.scopes;
     let operation = match method.as_str() {
         "GET" | "HEAD" => "read",
         _ => "write",
@@ -51,28 +53,6 @@ pub async fn require_scope(
         details: None,
         correlation_id: None,
     })
-}
-
-/// Fetch the API key's scopes by key id. A missing row or DB error is treated
-/// as "no scopes".
-async fn fetch_scopes(db: &DatabaseConnection, api_key_id: Uuid) -> Vec<String> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT scopes FROM api_keys_private.api_keys WHERE id = $1",
-            vec![api_key_id.into()],
-        ))
-        .await;
-    match row {
-        Ok(Some(row)) => {
-            let value: Result<serde_json::Value, _> = row.try_get_by_index(0);
-            match value {
-                Ok(v) => parse_scopes(v),
-                Err(_) => Vec::new(),
-            }
-        }
-        _ => Vec::new(),
-    }
 }
 
 /// Parse the `api_keys_private.api_keys.scopes` JSONB column.
@@ -243,7 +223,7 @@ use crate::middleware::{AuthInfo, AuthMode};
 /// where `op` is derived from the HTTP method (GET/HEAD -> read, else write).
 /// Non-API-key callers always pass.
 pub async fn require_scope(
-    client: &impl GenericClient,
+    _client: &impl GenericClient,
     auth: &AuthInfo,
     domain: &str,
     entity: &str,
@@ -253,7 +233,9 @@ pub async fn require_scope(
         return Ok(());
     }
 
-    let scopes = fetch_scopes(client, auth.api_key_id).await;
+    // Scopes ride the auth payload (verify_api_key -> AuthInfo) — no second
+    // query against api_keys_private, which the app role cannot read.
+    let scopes = &auth.scopes;
     let operation = match method.as_str() {
         "GET" | "HEAD" => "read",
         _ => "write",
@@ -270,27 +252,6 @@ pub async fn require_scope(
         details: None,
         correlation_id: None,
     })
-}
-
-/// Fetch the API key's scopes by key id. A missing row or DB error is treated
-/// as "no scopes".
-async fn fetch_scopes(client: &impl GenericClient, api_key_id: Uuid) -> Vec<String> {
-    let row = platform::get_api_key_scopes()
-        .bind(client, &api_key_id)
-        .opt()
-        .await;
-    match row {
-        Ok(Some(value)) => value
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    }
 }
 
 /// Scope matcher shared with the platform guard: exact match, `{domain}.*`
