@@ -78,6 +78,11 @@ impl DomainGenerator for ErrorGenerator {
             })
             .collect();
 
+        // Deterministic output: the graph query's row order is not guaranteed,
+        // so sort after dedup (keeping the first-wins semantics above).
+        let mut domain_errors = domain_errors;
+        domain_errors.sort_by(|a, b| a.code.cmp(&b.code));
+
         // Always emit errors.rs — command/handler templates import the domain
         // error enum unconditionally. With no definitions the enum only
         // carries InternalError, which still compiles.

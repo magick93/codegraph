@@ -338,7 +338,10 @@ impl EntityGenerator for UiDescriptorGenerator {
             .unwrap_or_default();
         let workflow_transitions: Vec<WorkflowTransitionDef> = workflow_config
             .map(|w| {
-                w.transitions
+                // `transitions` is a TOML map (HashMap): iterate deterministically
+                // so generated descriptors are byte-stable for identical config.
+                let mut transitions: Vec<WorkflowTransitionDef> = w
+                    .transitions
                     .iter()
                     .flat_map(|(from, tos)| {
                         tos.iter().map(move |to| WorkflowTransitionDef {
@@ -348,7 +351,9 @@ impl EntityGenerator for UiDescriptorGenerator {
                             confirm: true,
                         })
                     })
-                    .collect()
+                    .collect();
+                transitions.sort_by(|a, b| (&a.from, &a.to).cmp(&(&b.from, &b.to)));
+                transitions
             })
             .unwrap_or_default();
 
