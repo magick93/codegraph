@@ -91,6 +91,7 @@ impl ApplicationCommandHandler {
     pub async fn bulk_create(
         &self,
         items: Vec<CreateApplicationRequest>,
+
         source: domain_types::SourceContext,
         correlation_id: Uuid,
         api_key_id: Uuid,
