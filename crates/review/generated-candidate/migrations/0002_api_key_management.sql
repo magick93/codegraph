@@ -109,7 +109,7 @@ BEGIN
     v_key_prefix := substring(p_api_key, 1, 7);
 
     FOR v_key_record IN
-        SELECT id, key_hash, organization_id, is_active, expires_at
+        SELECT id, key_hash, organization_id, is_active, expires_at, scopes
         FROM api_keys_private.api_keys
         WHERE key_prefix = v_key_prefix AND is_active = TRUE
     LOOP
@@ -117,7 +117,11 @@ BEGIN
             IF v_key_record.expires_at IS NOT NULL AND v_key_record.expires_at < now() THEN
                 RETURN jsonb_build_object('valid', FALSE, 'error', 'API key has expired');
             END IF;
-            RETURN jsonb_build_object('valid', TRUE, 'api_key_id', v_key_record.id, 'organization_id', v_key_record.organization_id);
+            -- Scopes ride the auth payload: the scope guard checks them
+            -- in-process instead of re-querying api_keys_private (which the
+            -- app role cannot read — the table is only exposed through this
+            -- SECURITY DEFINER function).
+            RETURN jsonb_build_object('valid', TRUE, 'api_key_id', v_key_record.id, 'organization_id', v_key_record.organization_id, 'scopes', coalesce(v_key_record.scopes, '[]'::jsonb));
         END IF;
     END LOOP;
 

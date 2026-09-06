@@ -11,7 +11,6 @@
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 
 
-
 	import { deletePositionScheduleTypeCodeList } from '#lib/stores/common_position_schedule_type_code_list.ts';
 
 
@@ -149,8 +148,6 @@
 			</dl>
 		</Card.Content>
 	</Card.Root>
-
-
 
 
 </div>

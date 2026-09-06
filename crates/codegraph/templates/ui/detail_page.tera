@@ -13,9 +13,9 @@
 	import WorkflowPanel from '#lib/components/ui/WorkflowPanel.svelte';
 	import { transition{{ entity_name }} } from '#lib/stores/{{ domain }}_{{ module_name }}.ts';
 {% endif %}
-{% for ext in detail_extensions %}
+{%- for ext in detail_extensions %}
 	import {{ ext.component }} from '#lib/components/extensions/{{ ext.component }}.svelte';
-{% endfor %}
+{%- endfor %}
 {% if has_delete %}
 	import { delete{{ entity_name }} } from '#lib/stores/{{ domain }}_{{ module_name }}.ts';
 {% endif %}
@@ -318,13 +318,12 @@
 			</dl>
 		</Card.Content>
 	</Card.Root>
-
-{% for ext in detail_extensions %}
+{%- for ext in detail_extensions %}
 	<!-- Extension point: {{ ext.name }} (consumer-owned, non-synced) -->
 	<div data-testid="{{ ext.name }}" class="space-y-4">
 		<{{ ext.component }} entityId={item.id} />
 	</div>
-{% endfor %}
+{%- endfor %}
 
 {% if has_child_sections %}
 	<!-- Child sections -->

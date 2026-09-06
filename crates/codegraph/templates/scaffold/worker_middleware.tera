@@ -37,6 +37,8 @@ pub struct AuthInfo {
     pub auth_mode: AuthMode,
     /// Basejump account role: "owner", "member", "manager", or "employee".
     pub role: String,
+    /// Scopes returned by `verify_api_key()` (API-key auth only).
+    pub scopes: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -54,6 +56,8 @@ struct VerifyResult {
     valid: bool,
     api_key_id: Option<Uuid>,
     organization_id: Option<Uuid>,
+    #[serde(default)]
+    scopes: Option<serde_json::Value>,
     error: Option<String>,
 }
 
@@ -165,6 +169,9 @@ async fn verify_api_key(
             raw_key: token.to_string(),
         },
         role: "api_key".to_string(),
+        scopes: crate::api::scope::parse_scopes(
+            verify.scopes.unwrap_or(serde_json::Value::Array(vec![])),
+        ),
     })
 }
 
@@ -268,6 +275,7 @@ async fn verify_jwt(
         user_id,
         auth_mode: AuthMode::Jwt { user_id },
         role,
+        scopes: Vec::new(),
     })
 }
 

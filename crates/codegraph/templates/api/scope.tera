@@ -24,7 +24,7 @@ use crate::middleware::{AuthInfo, AuthMode};
 /// where `op` is derived from the HTTP method (GET/HEAD -> read, else write).
 /// Non-API-key callers always pass.
 pub async fn require_scope(
-    db: &DatabaseConnection,
+    _db: &DatabaseConnection,
     auth: &AuthInfo,
     domain: &str,
     entity: &str,
@@ -34,7 +34,9 @@ pub async fn require_scope(
         return Ok(());
     }
 
-    let scopes = fetch_scopes(db, auth.api_key_id).await;
+    // Scopes ride the auth payload (verify_api_key -> AuthInfo) — no second
+    // query against api_keys_private, which the app role cannot read.
+    let scopes = &auth.scopes;
     let operation = match method.as_str() {
         "GET" | "HEAD" => "read",
         _ => "write",
@@ -53,34 +55,36 @@ pub async fn require_scope(
     })
 }
 
-/// Fetch the API key's scopes by key id. A missing row or DB error is treated
-/// as "no scopes".
-async fn fetch_scopes(db: &DatabaseConnection, api_key_id: Uuid) -> Vec<String> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT scopes FROM api_keys_private.api_keys WHERE id = $1",
-            vec![api_key_id.into()],
-        ))
-        .await;
-    match row {
-        Ok(Some(row)) => {
-            let value: Result<serde_json::Value, _> = row.try_get_by_index(0);
-            match value {
-                Ok(v) => v
-                    .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|item| item.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                Err(_) => Vec::new(),
-            }
-        }
-        _ => Vec::new(),
-    }
+/// Parse the `api_keys_private.api_keys.scopes` JSONB column.
+///
+/// Two provisioning formats are understood:
+/// - string scopes: the current model ("{domain}.{entity}.{op}", "*", "admin")
+/// - legacy object scopes (pre-string-scope provisioning):
+///   `[{"entity_type":"*","entity_id":"*","action":"*"}]`. A wildcard action
+///   on a wildcard entity type grants everything; narrower entries are not
+///   expressible in the string model and are ignored.
+pub fn parse_scopes(value: serde_json::Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    if let Some(s) = item.as_str() {
+                        return Some(s.to_string());
+                    }
+                    let obj = item.as_object()?;
+                    let entity_type = obj.get("entity_type").and_then(|v| v.as_str())?;
+                    let action = obj.get("action").and_then(|v| v.as_str())?;
+                    if entity_type == "*" && action == "*" {
+                        Some("*".to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Scope matcher shared with the platform guard: exact match, `{domain}.*`
@@ -129,7 +133,7 @@ pub async fn require_scope_for_request(
 
 #[cfg(test)]
 mod tests {
-    use super::has_scope;
+    use super::{has_scope, parse_scopes};
 
     fn scopes(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
@@ -177,6 +181,33 @@ mod tests {
         assert!(!has_scope(&scopes(&[]), "events", "public_event", "read"));
         assert!(!has_scope(&scopes(&[]), "events", "public_event", "write"));
     }
+
+    #[test]
+    fn parse_scopes_accepts_string_model() {
+        let value = serde_json::json!(["payroll.pay_run.write", "*"]);
+        let parsed = parse_scopes(value);
+        assert!(parsed.contains(&"payroll.pay_run.write".to_string()));
+        assert!(parsed.contains(&"*".to_string()));
+    }
+
+    #[test]
+    fn parse_scopes_translates_legacy_wildcard_objects() {
+        // Pre-string-scope provisioning format (e.g. hr-specs global-setup):
+        let value = serde_json::json!([
+            {"entity_type": "*", "entity_id": "*", "action": "*"}
+        ]);
+        let parsed = parse_scopes(value);
+        assert_eq!(parsed, vec!["*".to_string()]);
+        assert!(has_scope(&parsed, "payroll", "pay_run", "write"));
+    }
+
+    #[test]
+    fn parse_scopes_ignores_narrow_legacy_objects() {
+        let value = serde_json::json!([
+            {"entity_type": "pay_run", "entity_id": "*", "action": "write"}
+        ]);
+        assert!(parse_scopes(value).is_empty());
+    }
 }
 
 {% else %}
@@ -192,7 +223,7 @@ use crate::middleware::{AuthInfo, AuthMode};
 /// where `op` is derived from the HTTP method (GET/HEAD -> read, else write).
 /// Non-API-key callers always pass.
 pub async fn require_scope(
-    client: &impl GenericClient,
+    _client: &impl GenericClient,
     auth: &AuthInfo,
     domain: &str,
     entity: &str,
@@ -202,7 +233,9 @@ pub async fn require_scope(
         return Ok(());
     }
 
-    let scopes = fetch_scopes(client, auth.api_key_id).await;
+    // Scopes ride the auth payload (verify_api_key -> AuthInfo) — no second
+    // query against api_keys_private, which the app role cannot read.
+    let scopes = &auth.scopes;
     let operation = match method.as_str() {
         "GET" | "HEAD" => "read",
         _ => "write",
@@ -219,27 +252,6 @@ pub async fn require_scope(
         details: None,
         correlation_id: None,
     })
-}
-
-/// Fetch the API key's scopes by key id. A missing row or DB error is treated
-/// as "no scopes".
-async fn fetch_scopes(client: &impl GenericClient, api_key_id: Uuid) -> Vec<String> {
-    let row = platform::get_api_key_scopes()
-        .bind(client, &api_key_id)
-        .opt()
-        .await;
-    match row {
-        Ok(Some(value)) => value
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    }
 }
 
 /// Scope matcher shared with the platform guard: exact match, `{domain}.*`

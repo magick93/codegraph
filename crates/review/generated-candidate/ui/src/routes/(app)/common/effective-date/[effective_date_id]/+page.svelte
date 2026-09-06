@@ -11,7 +11,6 @@
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 
 
-
 	import { deleteEffectiveDate } from '#lib/stores/common_effective_date.ts';
 
 
@@ -140,8 +139,6 @@
 			</dl>
 		</Card.Content>
 	</Card.Root>
-
-
 
 
 </div>

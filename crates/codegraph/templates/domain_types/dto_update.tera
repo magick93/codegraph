@@ -15,7 +15,7 @@ use super::dto_create::Create{{ child.struct_name }}Request;
 
 /// Request body for updating an existing {{ entity_name }}.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema{% if has_validate %}, garde::Validate{% endif %})]
-#[serde(rename_all = "camelCase")]
+{% if project.dto_key_casing == "camel" %}#[serde(rename_all = "camelCase")]{% endif %}
 pub struct Update{{ entity_name }}Request {
 {%- for field in fields %}
 {%- if field.name == "id" %}{% continue %}{%- endif %}

@@ -11,7 +11,6 @@
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 
 
-
 	import { deleteStringTypeArray } from '#lib/stores/common_string_type_array.ts';
 
 
@@ -122,8 +121,6 @@
 			</dl>
 		</Card.Content>
 	</Card.Root>
-
-
 
 
 </div>

@@ -1,5 +1,6 @@
 ---
 source: crates/codegraph/tests/rest_snapshot_tests.rs
+assertion_line: 73
 expression: "&f.content"
 ---
 //! Router for recruiting domain.

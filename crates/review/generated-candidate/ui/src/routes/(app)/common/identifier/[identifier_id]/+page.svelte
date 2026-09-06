@@ -11,7 +11,6 @@
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 
 
-
 	import { deleteIdentifier } from '#lib/stores/common_identifier.ts';
 
 
@@ -158,8 +157,6 @@
 			</dl>
 		</Card.Content>
 	</Card.Root>
-
-
 
 
 </div>
