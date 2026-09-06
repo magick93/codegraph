@@ -90,7 +90,7 @@ impl GlobalGenerator for CliScaffoldGenerator {
         domains.sort_by(|a, b| a.name.cmp(&b.name));
 
         let ctx = CliScaffoldContext {
-            app_name: crate::generate::get_project_config().app_name.clone(),
+            app_name: project.app_name.clone(),
             domains,
         };
 

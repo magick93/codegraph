@@ -24,6 +24,14 @@ pub async fn api_catalog() -> Json<Vec<ApiCatalogEntry>> {
     Json(vec![
 
         ApiCatalogEntry {
+            name: "common".to_string(),
+            label: "Common".to_string(),
+            spec_url: "/api-docs/common/openapi.json".to_string(),
+            docs_url: "/swagger-ui/?urls.primaryName=Common".to_string(),
+            entity_count: 16,
+        },
+
+        ApiCatalogEntry {
             name: "compensation".to_string(),
             label: "Compensation".to_string(),
             spec_url: "/api-docs/compensation/openapi.json".to_string(),

@@ -27,7 +27,11 @@ pub const MANIFEST_FILENAME: &str = ".codegraph-manifest.json";
 /// A file-ownership manifest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
-    /// Human-readable root this manifest describes (normalized absolute path).
+    /// The root this manifest describes. Always `.`: the manifest describes
+    /// the directory containing it. (Historically this held a normalized
+    /// absolute path, which made committed manifests diff across machines
+    /// and worktrees; the `generated` paths were always self-relative, so
+    /// nothing needs the absolute form.)
     pub root: String,
     /// Files codegen owns under `root`, relative to `root`, forward-slash
     /// separated, sorted, deduped. Never includes `MANIFEST_FILENAME`.
@@ -42,9 +46,9 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    fn new(root: &Path, generated: Vec<String>, codegraph_rev: &str) -> Self {
+    fn new(_root: &Path, generated: Vec<String>, codegraph_rev: &str) -> Self {
         Self {
-            root: root.to_string_lossy().into_owned(),
+            root: ".".to_string(),
             generated,
             generated_by: format!("codegraph v{}", env!("CARGO_PKG_VERSION")),
             codegraph_commit: codegraph_rev.to_string(),
@@ -176,7 +180,7 @@ mod tests {
         );
         assert!(m.generated_by.starts_with("codegraph v"));
         assert_eq!(m.codegraph_commit, "abcdef0123456789");
-        assert_eq!(m.root, absolutize(root).to_string_lossy());
+        assert_eq!(m.root, ".");
     }
 
     #[test]
