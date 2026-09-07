@@ -586,6 +586,7 @@ async fn generation_with_api_profile_produces_fewer_files_than_full() {
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: None,
+            domain_config_dir: None,
         })
         .await
         .unwrap();
@@ -659,6 +660,7 @@ async fn generation_with_ui_profile_produces_only_ui_files() {
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: None,
+            domain_config_dir: None,
         })
         .await
         .unwrap();
@@ -702,6 +704,7 @@ async fn generation_with_cli_profile_produces_only_cli_files() {
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: None,
+            domain_config_dir: None,
         })
         .await
         .unwrap();
@@ -747,6 +750,7 @@ async fn generation_with_lite_variant_produces_fewer_files_than_full_api() {
             build_plan: Some(&full_plan),
             ifml_frameworks: vec![],
             project_config: None,
+            domain_config_dir: None,
         })
         .await
         .unwrap();
@@ -776,6 +780,7 @@ async fn generation_with_lite_variant_produces_fewer_files_than_full_api() {
             build_plan: Some(&lite_plan),
             ifml_frameworks: vec![],
             project_config: None,
+            domain_config_dir: None,
         })
         .await
         .unwrap();
@@ -829,6 +834,7 @@ generation_mode = "ddd_only"
             build_plan: None,
             ifml_frameworks: vec![],
             project_config: None,
+            domain_config_dir: None,
         })
         .await
         .unwrap();
@@ -957,6 +963,7 @@ async fn run_routing_generators(
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: Some(&project),
+            domain_config_dir: None,
         })
         .await
         .expect("routing generator run should succeed");
@@ -1296,6 +1303,7 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: Some(&project),
+            domain_config_dir: None,
         })
         .await
         .expect("workers scaffold run should succeed");
@@ -1864,6 +1872,7 @@ async fn run_routing_generators_with_parts(
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: Some(&project),
+            domain_config_dir: None,
         })
         .await
         .expect("routing generator run should succeed");

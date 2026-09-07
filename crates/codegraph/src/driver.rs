@@ -337,6 +337,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         build_plan: build_plan.as_ref(),
         ifml_frameworks: ifml_framework.to_vec(),
         project_config: project_config.as_ref(),
+        domain_config_dir: config_path.parent(),
     })
     .await?;
 
@@ -685,6 +686,7 @@ pub async fn generate(
         build_plan: None,
         ifml_frameworks: ifml_frameworks.to_vec(),
         project_config: None,
+        domain_config_dir: config_path.parent(),
     })
     .await?;
     print!("{}", report.summary());
