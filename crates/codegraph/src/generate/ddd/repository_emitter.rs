@@ -9,6 +9,7 @@ use codegraph_type_contracts::RefClassificationKind;
 
 use crate::error::Result;
 use crate::generate::api::api_model::resolve_entity_operations;
+use crate::generate::api::include_path::resolve_include_paths_gated;
 use crate::generate::api::include_path::ResolvedIncludePath;
 use crate::generate::filter_fields::{
     resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
@@ -1930,6 +1931,29 @@ impl RepositoryImplEmitter {
             .query_entity_tree(db, schema_title, domain, config, parent_ref)
             .await?;
         let mut code = String::with_capacity(4096);
+
+        // Cross-generator contract: the handler's hydration block calls
+        // `repo.fetch_{alias}_for_{module}(...)` for every include path it
+        // resolves, so the emitted impl must provide exactly those methods.
+        // Pipeline callers pass their pre-resolved paths; when a caller
+        // supplies none, resolve them here with the same entity gate the
+        // handler applies. Trusting an empty caller-supplied list verbatim
+        // silently stripped the hydration methods from the emitted impl and
+        // broke the generated app's compilation (E0599 on
+        // `fetch_{alias}_for_{module}`) whenever `emit` was invoked outside
+        // the pipeline without paths.
+        let include_paths: Vec<ResolvedIncludePath> = if include_paths.is_empty() {
+            resolve_include_paths_gated(
+                db,
+                config,
+                domain,
+                schema_title,
+                crate::generate::get_project_config().is_workers_topology(),
+            )
+            .await?
+        } else {
+            include_paths.to_vec()
+        };
 
         // Deduplicate include paths by alias to prevent duplicate struct field
         // emissions (auto-discover can produce the same child entity through
