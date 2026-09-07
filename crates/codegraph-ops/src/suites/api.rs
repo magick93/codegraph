@@ -174,6 +174,19 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         ));
         return Err(OpsError::TestFailure("binary missing".into()));
     }
+    // Stale-binary guard: a binary older than the newest source file means
+    // the suite would silently test an app that doesn't match the current
+    // generator output (this is exactly how mixed-profile trees produced
+    // baffling "intermittent" failures). Fail fast with an actionable hint.
+    let newest_src = newest_mtime(&config.app_dir.join("src"));
+    let binary_mtime = binary.metadata().and_then(|m| m.modified()).ok();
+    let stale = matches!((binary_mtime, newest_src), (Some(b), Some(s)) if b < s);
+    if stale {
+        counters.fail_test(
+            "binary is older than src/ — the suite would test stale code; rebuild (drop --skip-build) first",
+        );
+        return Err(OpsError::TestFailure("stale binary".into()));
+    }
     counters.pass(format!("Binary built ({})", binary.display()));
 
     if config.manifest.capabilities.has_admin_cli {
@@ -885,6 +898,29 @@ fn is_release_binary(config: &OpsConfig) -> bool {
         .join("target/release")
         .join(config.app_binary_name());
     release.is_file()
+}
+
+/// Newest `modified` timestamp across the app's `src/` tree (None when the
+/// tree is missing or unreadable). Used by the stale-binary preflight.
+fn newest_mtime(src_dir: &Path) -> Option<std::time::SystemTime> {
+    fn walk(dir: &Path, newest: &mut Option<std::time::SystemTime>) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, newest)?;
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let mtime = entry.metadata()?.modified()?;
+                if newest.is_none_or(|n| mtime > n) {
+                    *newest = Some(mtime);
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut newest = None;
+    walk(src_dir, &mut newest).ok()?;
+    newest
 }
 
 /// Provision an API key via public.create_api_key(org, name, permissions).
