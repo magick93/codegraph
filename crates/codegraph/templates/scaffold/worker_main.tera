@@ -13,6 +13,10 @@ mod workflow_client;
 {% endif %}mod domain;
 mod error;
 mod middleware;
+// Routers reference the metrics middleware at the crate root (monolith
+// layout); bind the nested worker module so both paths resolve.
+#[allow(unused_imports)]
+use middleware::metrics_middleware;
 mod qs_query;
 mod worker;
 {% if has_webhooks %}mod webhook_api;
