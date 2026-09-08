@@ -155,6 +155,7 @@ pub async fn create(
 /// Get Candidate by ID.
 #[utoipa::path(
     get,
+    operation_id = "recruiting_candidate_get_by_id",
 
     path = "/api/v1/recruiting/candidates/{candidate_id}",
 
