@@ -57,8 +57,12 @@ fn test_basic_gql_insert_and_query() {
         .execute("MATCH (s:Schema {title: 'Foo'}) RETURN s.schema_id")
         .expect("MATCH should succeed");
 
-    assert_eq!(result.rows.len(), 1, "Should find exactly one schema node");
-    let schema_id = result.rows[0][0]
+    assert_eq!(
+        result.rows().len(),
+        1,
+        "Should find exactly one schema node"
+    );
+    let schema_id = result.rows()[0][0]
         .as_str()
         .expect("schema_id should be a string");
     assert_eq!(schema_id, "test/Foo");
