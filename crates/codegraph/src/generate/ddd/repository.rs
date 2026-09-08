@@ -255,6 +255,7 @@ impl EntityGenerator for RepositoryTraitGenerator {
                     config,
                     parent_ref.as_deref(),
                     &include_paths,
+                    project,
                 )
                 .await?;
             files.push(GeneratedFile {

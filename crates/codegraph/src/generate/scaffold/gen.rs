@@ -288,7 +288,7 @@ impl GlobalGenerator for ScaffoldGenerator {
         grant_schemas.dedup();
 
         let ctx = ScaffoldContext {
-            app_name: crate::generate::get_project_config().app_name.clone(),
+            app_name: project.app_name.clone(),
             domains,
             grant_schemas,
             codegraph_workflow_path,

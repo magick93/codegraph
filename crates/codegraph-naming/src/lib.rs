@@ -231,26 +231,40 @@ const PG_MAX_IDENT: usize = 63;
 /// assert!(result.starts_with("candidate_distribution_guidelines_distribute_to_communi"));
 /// ```
 pub fn truncate_pg_identifier(name: &str) -> String {
-    if name.len() <= PG_MAX_IDENT {
+    truncate_pg_identifier_with_limit(name, PG_MAX_IDENT)
+}
+
+/// Truncate a PostgreSQL identifier to `max_len` characters.
+///
+/// Shared implementation behind [`truncate_pg_identifier`]: dialects with a
+/// different identifier budget (e.g. SQLite) use the same deterministic
+/// FNV-1a-hash-suffix scheme with their own limit.
+pub fn truncate_pg_identifier_with_limit(name: &str, max_len: usize) -> String {
+    if name.len() <= max_len {
         return name.to_string();
     }
     // FNV-1a 64-bit hash of the full name for deterministic uniqueness
     let hash = fnv1a_64(name.as_bytes());
     let suffix = format!("_{:07x}", hash & 0x0FFF_FFFF); // 7 hex chars + underscore = 8
-    let prefix_len = PG_MAX_IDENT - suffix.len();
+    let prefix_len = max_len - suffix.len();
     // Trim trailing underscores from the prefix to keep names clean
     let prefix = name[..prefix_len].trim_end_matches('_');
     format!("{}{}", prefix, suffix)
 }
 
 /// FNV-1a 64-bit hash (no external dependencies).
-fn fnv1a_64(data: &[u8]) -> u64 {
+pub fn fnv1a_64(data: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
     for &byte in data {
         hash ^= byte as u64;
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+/// Whether a PostgreSQL identifier is a reserved word (and thus needs quoting).
+pub fn is_pg_reserved(name: &str) -> bool {
+    PG_RESERVED.contains(&name.to_ascii_lowercase().as_str())
 }
 
 /// Derive a display name from a CamelCase type name.
