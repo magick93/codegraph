@@ -175,31 +175,76 @@ impl GraphIngestor for GrafeoEngine {
             has_any_of: $has_any_of, has_definitions: $has_definitions, \
             custom_annotations: $custom_annotations\
         })";
-        let custom_annotations_str = serde_json::to_string(&node.custom_annotations)
-            .unwrap_or_else(|_| "{}".to_string());
+        let custom_annotations_str =
+            serde_json::to_string(&node.custom_annotations).unwrap_or_else(|_| "{}".to_string());
         let params = HashMap::from([
-            ("schema_id".into(), grafeo::Value::String(node.schema_id.clone().into())),
-            ("title".into(), grafeo::Value::String(node.title.clone().into())),
+            (
+                "schema_id".into(),
+                grafeo::Value::String(node.schema_id.clone().into()),
+            ),
+            (
+                "title".into(),
+                grafeo::Value::String(node.title.clone().into()),
+            ),
             ("description".into(), opt_to_grafeo_value(&node.description)),
-            ("schema_type".into(), grafeo::Value::String(node.schema_type.clone().into())),
-            ("classification".into(), grafeo::Value::String(node.classification.clone().into())),
-            ("pg_type".into(), grafeo::Value::String(node.pg_type.clone().into())),
-            ("rust_type".into(), grafeo::Value::String(node.rust_type.clone().into())),
-            ("sea_orm_type".into(), grafeo::Value::String(node.sea_orm_type.clone().into())),
+            (
+                "schema_type".into(),
+                grafeo::Value::String(node.schema_type.clone().into()),
+            ),
+            (
+                "classification".into(),
+                grafeo::Value::String(node.classification.clone().into()),
+            ),
+            (
+                "pg_type".into(),
+                grafeo::Value::String(node.pg_type.clone().into()),
+            ),
+            (
+                "rust_type".into(),
+                grafeo::Value::String(node.rust_type.clone().into()),
+            ),
+            (
+                "sea_orm_type".into(),
+                grafeo::Value::String(node.sea_orm_type.clone().into()),
+            ),
             ("domain".into(), opt_to_grafeo_value(&node.domain)),
-            ("rel_path".into(), grafeo::Value::String(node.rel_path.clone().into())),
-            ("rust_type_name".into(), grafeo::Value::String(node.rust_type_name.clone().into())),
-            ("pg_table_name".into(), grafeo::Value::String(node.pg_table_name.clone().into())),
-            ("api_path_segment".into(), grafeo::Value::String(node.api_path_segment.clone().into())),
-            ("parent_schema".into(), opt_to_grafeo_value(&node.parent_schema)),
+            (
+                "rel_path".into(),
+                grafeo::Value::String(node.rel_path.clone().into()),
+            ),
+            (
+                "rust_type_name".into(),
+                grafeo::Value::String(node.rust_type_name.clone().into()),
+            ),
+            (
+                "pg_table_name".into(),
+                grafeo::Value::String(node.pg_table_name.clone().into()),
+            ),
+            (
+                "api_path_segment".into(),
+                grafeo::Value::String(node.api_path_segment.clone().into()),
+            ),
+            (
+                "parent_schema".into(),
+                opt_to_grafeo_value(&node.parent_schema),
+            ),
             ("is_entity".into(), bool_to_grafeo_value(node.is_entity)),
             ("is_codelist".into(), bool_to_grafeo_value(node.is_codelist)),
-            ("is_primitive_wrapper".into(), bool_to_grafeo_value(node.is_primitive_wrapper)),
+            (
+                "is_primitive_wrapper".into(),
+                bool_to_grafeo_value(node.is_primitive_wrapper),
+            ),
             ("has_all_of".into(), bool_to_grafeo_value(node.has_all_of)),
             ("has_one_of".into(), bool_to_grafeo_value(node.has_one_of)),
             ("has_any_of".into(), bool_to_grafeo_value(node.has_any_of)),
-            ("has_definitions".into(), bool_to_grafeo_value(node.has_definitions)),
-            ("custom_annotations".into(), grafeo::Value::String(custom_annotations_str.into())),
+            (
+                "has_definitions".into(),
+                bool_to_grafeo_value(node.has_definitions),
+            ),
+            (
+                "custom_annotations".into(),
+                grafeo::Value::String(custom_annotations_str.into()),
+            ),
         ]);
         session
             .execute_with_params(gql, params)
@@ -231,40 +276,76 @@ impl GraphIngestor for GrafeoEngine {
             .as_ref()
             .map(classification_kind_to_str);
         let params = HashMap::from([
-            ("name".into(), grafeo::Value::String(prop.name.clone().into())),
-            ("prop_type".into(), grafeo::Value::String(prop.prop_type.clone().into())),
+            (
+                "name".into(),
+                grafeo::Value::String(prop.name.clone().into()),
+            ),
+            (
+                "prop_type".into(),
+                grafeo::Value::String(prop.prop_type.clone().into()),
+            ),
             ("description".into(), opt_to_grafeo_value(&prop.description)),
             ("format".into(), opt_to_grafeo_value(&prop.format)),
             ("is_required".into(), bool_to_grafeo_value(prop.is_required)),
             ("is_nullable".into(), bool_to_grafeo_value(prop.is_nullable)),
             ("is_array".into(), bool_to_grafeo_value(prop.is_array)),
             ("pattern".into(), opt_to_grafeo_value(&prop.pattern)),
-            ("pg_column_name".into(), grafeo::Value::String(prop.pg_column_name.clone().into())),
-            ("pg_column_type".into(), grafeo::Value::String(prop.pg_column_type.clone().into())),
-            ("rust_field_name".into(), grafeo::Value::String(prop.rust_field_name.clone().into())),
-            ("rust_field_type".into(), grafeo::Value::String(prop.rust_field_type.clone().into())),
-            ("sea_orm_type".into(), grafeo::Value::String(prop.sea_orm_type.clone().into())),
-            ("render_strategy".into(), grafeo::Value::String(prop.render_strategy.clone().into())),
+            (
+                "pg_column_name".into(),
+                grafeo::Value::String(prop.pg_column_name.clone().into()),
+            ),
+            (
+                "pg_column_type".into(),
+                grafeo::Value::String(prop.pg_column_type.clone().into()),
+            ),
+            (
+                "rust_field_name".into(),
+                grafeo::Value::String(prop.rust_field_name.clone().into()),
+            ),
+            (
+                "rust_field_type".into(),
+                grafeo::Value::String(prop.rust_field_type.clone().into()),
+            ),
+            (
+                "sea_orm_type".into(),
+                grafeo::Value::String(prop.sea_orm_type.clone().into()),
+            ),
+            (
+                "render_strategy".into(),
+                grafeo::Value::String(prop.render_strategy.clone().into()),
+            ),
             ("ref_target".into(), opt_to_grafeo_value(&prop.ref_target)),
-            ("classification".into(), opt_to_grafeo_value(&prop.classification)),
-            ("classification_kind".into(), opt_to_grafeo_value(&classification_kind_str)),
-            ("schema_title".into(), grafeo::Value::String(schema_title.into())),
+            (
+                "classification".into(),
+                opt_to_grafeo_value(&prop.classification),
+            ),
+            (
+                "classification_kind".into(),
+                opt_to_grafeo_value(&classification_kind_str),
+            ),
+            (
+                "schema_title".into(),
+                grafeo::Value::String(schema_title.into()),
+            ),
             ("schema_id".into(), grafeo::Value::String(schema_id.into())),
         ]);
         session
             .execute_with_params(gql, params)
             .map_err(|e| GraphError::Ingest(format!("ingest_property INSERT failed: {e}")))?;
 
-        let edge_gql = "MATCH (s:Schema {title: $st}), (p:Property {name: $pn, _schema_title: $st2}) \
+        let edge_gql =
+            "MATCH (s:Schema {title: $st}), (p:Property {name: $pn, _schema_title: $st2}) \
              INSERT (s)-[:HasProperty]->(p)";
         let edge_params = HashMap::from([
             ("st".into(), grafeo::Value::String(schema_title.into())),
             ("st2".into(), grafeo::Value::String(schema_title.into())),
             ("pn".into(), grafeo::Value::String(prop.name.clone().into())),
         ]);
-        session.execute_with_params(edge_gql, edge_params).map_err(|e| {
-            GraphError::Ingest(format!("ingest_property HasProperty edge failed: {e}"))
-        })?;
+        session
+            .execute_with_params(edge_gql, edge_params)
+            .map_err(|e| {
+                GraphError::Ingest(format!("ingest_property HasProperty edge failed: {e}"))
+            })?;
         Ok(())
     }
 
@@ -383,11 +464,14 @@ impl GraphIngestor for GrafeoEngine {
                 let params = HashMap::from([
                     ("from_title".into(), grafeo::Value::String(from_id.into())),
                     ("prop_name".into(), grafeo::Value::String(prop_name.into())),
-                    ("prop_schema_title".into(), grafeo::Value::String(schema_title.into())),
+                    (
+                        "prop_schema_title".into(),
+                        grafeo::Value::String(schema_title.into()),
+                    ),
                 ]);
-                session
-                    .execute_with_params(gql, params)
-                    .map_err(|e| GraphError::Ingest(format!("ingest_edge HasProperty failed: {e}")))?;
+                session.execute_with_params(gql, params).map_err(|e| {
+                    GraphError::Ingest(format!("ingest_edge HasProperty failed: {e}"))
+                })?;
                 return Ok(());
             }
             EdgeType::ReferencesSchema => {
@@ -396,12 +480,15 @@ impl GraphIngestor for GrafeoEngine {
                      INSERT (a)-[:ReferencesSchema]->(b)";
                 let params = HashMap::from([
                     ("prop_name".into(), grafeo::Value::String(prop_name.into())),
-                    ("prop_schema_title".into(), grafeo::Value::String(schema_title.into())),
+                    (
+                        "prop_schema_title".into(),
+                        grafeo::Value::String(schema_title.into()),
+                    ),
                     ("schema_id".into(), grafeo::Value::String(to_id.into())),
                 ]);
-                session
-                    .execute_with_params(gql, params)
-                    .map_err(|e| GraphError::Ingest(format!("ingest_edge ReferencesSchema failed: {e}")))?;
+                session.execute_with_params(gql, params).map_err(|e| {
+                    GraphError::Ingest(format!("ingest_edge ReferencesSchema failed: {e}"))
+                })?;
                 return Ok(());
             }
             EdgeType::ItemsOf => {
@@ -410,7 +497,10 @@ impl GraphIngestor for GrafeoEngine {
                      INSERT (a)-[:ItemsOf]->(b)";
                 let params = HashMap::from([
                     ("prop_name".into(), grafeo::Value::String(prop_name.into())),
-                    ("prop_schema_title".into(), grafeo::Value::String(schema_title.into())),
+                    (
+                        "prop_schema_title".into(),
+                        grafeo::Value::String(schema_title.into()),
+                    ),
                     ("schema_id".into(), grafeo::Value::String(to_id.into())),
                 ]);
                 session
@@ -433,9 +523,9 @@ impl GraphIngestor for GrafeoEngine {
                     ("from_title".into(), grafeo::Value::String(from_id.into())),
                     ("to_title".into(), grafeo::Value::String(to_id.into())),
                 ]);
-                session
-                    .execute_with_params(&gql, params)
-                    .map_err(|e| GraphError::Ingest(format!("ingest_edge {label_str} failed: {e}")))?;
+                session.execute_with_params(&gql, params).map_err(|e| {
+                    GraphError::Ingest(format!("ingest_edge {label_str} failed: {e}"))
+                })?;
                 return Ok(());
             }
             _ => {}

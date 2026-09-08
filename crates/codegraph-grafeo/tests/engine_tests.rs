@@ -59,8 +59,6 @@ fn test_basic_gql_insert_and_query() {
 
     let rows = result.rows();
     assert_eq!(rows.len(), 1, "Should find exactly one schema node");
-    let schema_id = rows[0][0]
-        .as_str()
-        .expect("schema_id should be a string");
+    let schema_id = rows[0][0].as_str().expect("schema_id should be a string");
     assert_eq!(schema_id, "test/Foo");
 }

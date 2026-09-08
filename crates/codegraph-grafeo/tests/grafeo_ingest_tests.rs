@@ -91,11 +91,7 @@ async fn test_ingest_property() {
         .execute("MATCH (:Schema {title: 'PersonType'})-[:HasProperty]->(p:Property) RETURN p.name")
         .unwrap();
     let rows = result.rows();
-    assert_eq!(
-        rows.len(),
-        1,
-        "Property not found via HasProperty edge"
-    );
+    assert_eq!(rows.len(), 1, "Property not found via HasProperty edge");
     assert_eq!(rows[0][0].as_str().unwrap(), "givenName");
 }
 
@@ -148,11 +144,7 @@ async fn test_ingest_enum_value() {
         )
         .unwrap();
     let rows = result.rows();
-    assert_eq!(
-        rows.len(),
-        1,
-        "EnumValue not found via HasEnumValue edge"
-    );
+    assert_eq!(rows.len(), 1, "EnumValue not found via HasEnumValue edge");
 }
 
 #[tokio::test]
@@ -186,11 +178,7 @@ async fn test_ingest_edge() {
         )
         .unwrap();
     let rows = result.rows();
-    assert_eq!(
-        rows.len(),
-        1,
-        "DependsOn edge not found after ingest_edge"
-    );
+    assert_eq!(rows.len(), 1, "DependsOn edge not found after ingest_edge");
     assert_eq!(rows[0][0].as_str().unwrap(), "ref");
 }
 
