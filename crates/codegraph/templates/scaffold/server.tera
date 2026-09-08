@@ -248,7 +248,7 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         // Trust attestation verification (issue #43): cryptographically verify
         // the attestation signature before the row is created. Rejects
         // tampered signatures and unresolvable issuers with 422.
-        hooks_registry.community_graph_trust_attestation = Some(std::sync::Arc::new(
+        hooks_registry.crm_trust_attestation = Some(std::sync::Arc::new(
             cosmos_extensions::trust_lifecycle::TrustAttestationLifecycleHook::from_app_context(
                 app_ctx.as_ref(),
             ),
