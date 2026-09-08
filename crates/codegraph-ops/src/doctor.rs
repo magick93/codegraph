@@ -162,18 +162,35 @@ pub async fn run_doctor(config: &OpsConfig) -> OpsResult<()> {
     output::section("3. Binaries");
     let src_dir = config.app_dir.join("src");
     if let Some(graph) = &manifest.graph_binary {
-        output::info(format!("graph binary: {graph}"));
+        output::info(format!(
+            "graph binary: {graph} (regen runs `cargo run -p {graph}` — cargo rebuilds as needed)"
+        ));
+        // Presence + age only: the graph binary is the *generator*, so
+        // comparing it against generated-candidate/src would label every
+        // post-generation rebuild "stale" — meaningless for cargo-managed
+        // rebuilds.
         for profile in ["debug", "release"] {
             let path = config
                 .workspace_root
                 .join("target")
                 .join(profile)
                 .join(graph);
-            report_binary(&path, &src_dir);
+            match std::fs::metadata(&path).and_then(|m| m.modified()) {
+                Ok(mtime) => {
+                    let age = mtime
+                        .elapsed()
+                        .map(|d| format!("{}s ago", d.as_secs()))
+                        .unwrap_or_else(|_| "age unknown".to_string());
+                    output::ok(format!("{} — present ({})", path.display(), age));
+                }
+                Err(_) => output::warn(format!("{} — missing", path.display())),
+            }
         }
     } else {
         output::warn("no graph_binary configured — suites will skip regeneration");
     }
+    // The app binary is what suites boot and what ensure_binary_fresh
+    // guards, so here the staleness comparison is the point.
     let app_name = config.app_binary_name();
     for profile in ["debug", "release"] {
         let path = config.app_dir.join("target").join(profile).join(&app_name);
