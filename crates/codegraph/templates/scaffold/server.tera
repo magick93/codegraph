@@ -4,7 +4,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use migration::MigratorTrait;
 use tokio_util::sync::CancellationToken;
 
 use tracing_subscriber::layer::SubscriberExt;
@@ -212,10 +211,14 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     let db = sea_orm::Database::connect(&db_url).await?;
 
-    // Apply pending migrations on startup (idempotent — applied files are
-    // tracked in the seaql_migrations table). Manual runs:
-    //   DATABASE_URL=... sea-orm-cli migrate up
-    if let Err(e) = migration::Migrator::up(&db, None).await {
+    // Apply pending migrations on startup via the SAME engine the
+    // `cosmos-app migrate` CLI uses (src/migration.rs: raw SQL files,
+    // statement-splitting, tracked in schema_migrations). Sharing one engine
+    // and one tracking table keeps boot idempotent against CLI runs — running
+    // the SeaORM Migrator here instead would re-apply every file a CLI run
+    // already applied (its seaql_migrations tracking is invisible to this
+    // runner) and die on the first seeded codelist.
+    if let Err(e) = crate::migration::run_migrations().await {
         tracing::error!("Failed to apply database migrations: {e}");
         return Err(e.into());
     }
