@@ -14,7 +14,7 @@
 //! ```
 //!
 //! Subcommands: `api`, `cli`, `e2e`, `ui`, `full`, `workers`, `clean`,
-//! `smoke`, `quality`, `ext <name>`.
+//! `smoke`, `quality`, `ext <name>`, `doctor`.
 //!
 //! External integrations (Xero, Stripe, IRD, ...) plug in via the
 //! [`ext::TestExtension`] trait or manifest `[[extensions]]` exec entries —
@@ -23,6 +23,7 @@
 pub mod cli;
 pub mod config;
 pub mod db;
+pub mod doctor;
 pub mod env;
 pub mod error;
 pub mod ext;

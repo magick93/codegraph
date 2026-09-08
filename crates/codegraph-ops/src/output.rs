@@ -33,6 +33,17 @@ pub fn section(title: impl AsRef<str>) {
     println!("\n{BOLD}{}{NC}", title.as_ref());
 }
 
+/// Print the last `n` lines of `text`, indented — failure diagnostics for
+/// captured command output (regen, cargo check). Always shown, so a failed
+/// stage explains itself without a --verbose rerun.
+pub fn print_tail(text: &str, n: usize) {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(n);
+    for line in &lines[start..] {
+        println!("    {line}");
+    }
+}
+
 pub fn bold(msg: impl AsRef<str>) -> String {
     format!("{BOLD}{}{NC}", msg.as_ref())
 }

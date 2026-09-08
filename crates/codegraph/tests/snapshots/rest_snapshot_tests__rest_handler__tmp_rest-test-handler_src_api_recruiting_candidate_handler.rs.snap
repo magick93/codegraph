@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/recruiting/candidates",
 
     tag = "Candidate",
+    operation_id = "recruiting_candidate_create",
     request_body(
         content = CreateCandidateBody,
         description = "A single Candidate object or an array of Candidate objects",
@@ -206,6 +207,7 @@ pub async fn get_by_id(
     params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
 
     tag = "Candidate",
+    operation_id = "recruiting_candidate_update",
     request_body = UpdateCandidateRequest,
     responses(
         (status = 200, description = "Updated", body = CandidateResponse),
@@ -263,6 +265,7 @@ pub async fn update(
     params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
 
     tag = "Candidate",
+    operation_id = "recruiting_candidate_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -333,6 +336,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "Candidate",
+    operation_id = "recruiting_candidate_list",
     responses(
         (status = 200, description = "OK", body = Vec<CandidateResponse>),
     )
