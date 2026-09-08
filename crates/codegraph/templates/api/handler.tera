@@ -52,6 +52,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}",
 {% endif %}
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_create",
     request_body(
         content = Create{{ entity_name }}Body,
         description = "A single {{ entity_name }} object or an array of {{ entity_name }} objects",
@@ -372,6 +373,7 @@ pub async fn get_by_id(
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_update",
     request_body = Update{{ entity_name }}Request,
     responses(
         (status = 200, description = "Updated", body = {{ entity_name }}Response),
@@ -448,6 +450,7 @@ pub async fn update(
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -560,6 +563,7 @@ const ALLOWED_INCLUDE_KEYS: &[&str] = &[
     params(ListParams),
 {% endif %}
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_list",
     responses(
         (status = 200, description = "OK", body = Vec<{{ entity_name }}Response>),
     )
@@ -801,6 +805,7 @@ fn default_semantic_limit() -> u64 { 10 }
     post,
     path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/semantic-search",
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_semantic_search",
     request_body = SemanticSearchRequest,
     responses(
         (status = 200, description = "OK", body = Vec<{{ entity_name }}Response>),
@@ -841,6 +846,7 @@ pub struct TreeParams {
     path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/tree",
 {% endif %}
     tag = "{{ tag }}",
+    operation_id = "{{ domain }}_{{ module_name }}_tree",
     params(
         ("{{ param_name }}" = Uuid, Path, description = "Root {{ entity_name }} ID"),
         TreeParams,
