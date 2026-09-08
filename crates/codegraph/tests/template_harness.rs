@@ -7207,7 +7207,15 @@ operations = ["create", "read", "update", "list"]
     let paths: &[ResolvedIncludePath] = &[];
     let emitter = RepositoryImplEmitter;
     let code = emitter
-        .emit(&mock, "WorkerType", "hr", &config, None, paths)
+        .emit(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            None,
+            paths,
+            &codegraph::generate::ProjectConfig::default(),
+        )
         .await
         .unwrap();
 

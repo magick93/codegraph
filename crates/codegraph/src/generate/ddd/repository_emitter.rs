@@ -1953,7 +1953,7 @@ impl RepositoryImplEmitter {
                 config,
                 domain,
                 schema_title,
-                crate::generate::get_project_config().is_workers_topology(),
+                project.is_workers_topology(),
             )
             .await?
         } else {
