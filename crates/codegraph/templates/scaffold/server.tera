@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
-{% if not project.has_admin_cli %}use migration::MigratorTrait;
+{% if not has_admin_cli %}use migration::MigratorTrait;
 {% endif %}use utoipa::OpenApi;
 use utoipa_swagger_ui::{SwaggerUi, Url};
 use tower_http::cors::{Any, CorsLayer};
@@ -221,7 +221,7 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     // seaql_migrations tracking is invisible to this runner) and die on the
     // first seeded codelist. Without the CLI module, fall back to the
     // always-generated SeaORM migration crate.
-    {% if project.has_admin_cli %}
+    {% if has_admin_cli %}
     if let Err(e) = crate::migration::run_migrations().await {
         tracing::error!("Failed to apply database migrations: {e}");
         return Err(e.into());
