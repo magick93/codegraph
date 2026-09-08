@@ -8,11 +8,11 @@ description = "Grafeo graph database adapter for codegraph-core traits"
 codegraph-core = { path = "../codegraph-core" }
 codegraph-naming = { path = "../codegraph-naming" }
 codegraph-type-contracts = { path = "../codegraph-type-contracts" }
-grafeo = "=0.5.33"
-grafeo-engine = "=0.5.33"
-grafeo-core = "=0.5.33"
-grafeo-common = "=0.5.33"
-grafeo-adapters = "=0.5.33"
+grafeo = "=0.5.42"
+grafeo-engine = "=0.5.42"
+grafeo-core = "=0.5.42"
+grafeo-common = "=0.5.42"
+grafeo-adapters = "=0.5.42"
 async-trait = "0.1"
 rust_decimal = { version = "1", features = ["serde-with-str"] }
 uuid.workspace = true

@@ -133,10 +133,11 @@ fn count_from_gql(engine: &GrafeoEngine, gql: &str) -> Result<usize, GraphError>
     let result = session
         .execute(gql)
         .map_err(|e| GraphError::Query(e.to_string()))?;
-    if result.rows.is_empty() {
+    let rows = result.rows();
+    if rows.is_empty() {
         return Ok(0);
     }
-    result.rows[0][0]
+    rows[0][0]
         .as_int64()
         .map(|v| v as usize)
         .ok_or_else(|| GraphError::Query("count query did not return an integer".into()))
