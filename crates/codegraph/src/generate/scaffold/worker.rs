@@ -1161,11 +1161,6 @@ entities = ["CodeType"]
     #[test]
     fn hook_registry_references_use_the_identifier_not_the_package_name() {
         let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-        let tera = crate::generate::template_engine::create_tera(&template_dir).unwrap();
-        let project = ProjectConfig {
-            hooks_api_crate: "hr_hooks_api".to_string(),
-            ..Default::default()
-        };
         // These monolith templates need a full run context to render here, so
         // assert on their sources: the HookRegistry references must use the
         // identifier verbatim, never the `replace("_" -> "-")` package-name
