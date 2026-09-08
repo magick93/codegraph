@@ -1153,4 +1153,28 @@ entities = ["CodeType"]
             );
         }
     }
+
+    /// Regression: `hooks_api_crate` is a Rust identifier (underscores).
+    /// Code contexts must reference it verbatim — `hr_hooks_api::HookRegistry`
+    /// — never the hyphenated package name (invalid as a Rust path). Hyphens
+    /// belong only in Cargo.toml dependency tables, where cargo normalizes.
+    #[test]
+    fn hook_registry_references_use_the_identifier_not_the_package_name() {
+        let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        // These monolith templates need a full run context to render here, so
+        // assert on their sources: the HookRegistry references must use the
+        // identifier verbatim, never the `replace("_" -> "-")` package-name
+        // form (invalid as a Rust path).
+        for template in ["scaffold/server.tera", "scaffold/app_state.tera"] {
+            let src = std::fs::read_to_string(template_dir.join(template)).unwrap();
+            assert!(
+                src.contains("{{ project.hooks_api_crate }}::HookRegistry"),
+                "{template} must reference the crate identifier verbatim in code position"
+            );
+            assert!(
+                !src.contains("replace(from=\"_\", to=\"-\") }}::HookRegistry"),
+                "{template} must not hyphenate the crate identifier in code position"
+            );
+        }
+    }
 }
