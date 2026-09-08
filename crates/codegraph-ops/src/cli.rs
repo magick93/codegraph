@@ -127,6 +127,8 @@ enum Cmd {
     Workers,
     /// Stop services and remove generated output.
     Clean,
+    /// One-shot state report: generated tree, binaries, databases, ports.
+    Doctor,
     /// Smoke-test a remote deployment.
     Smoke {
         #[arg(long, default_value = "http://localhost:3000")]
@@ -274,6 +276,10 @@ pub async fn main() -> i32 {
             cmd_clean(&config).await;
             Ok(())
         }
+        Cmd::Doctor => {
+            output::bold("Running doctor (workspace state report)");
+            crate::doctor::run_doctor(&config).await
+        }
         Cmd::Smoke {
             api_url,
             web_url,
@@ -396,6 +402,7 @@ fn subcommand_name(cmd: &Cmd) -> &'static str {
         Cmd::Full => "full",
         Cmd::Workers => "workers",
         Cmd::Clean => "clean",
+        Cmd::Doctor => "doctor",
         Cmd::Smoke { .. } => "smoke",
         Cmd::Quality { .. } => "quality",
         Cmd::Ext { .. } => "ext",

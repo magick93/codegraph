@@ -169,6 +169,15 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     }
     counters.pass(format!("Port {} free", config.manifest.servers.api_port));
 
+    // Output-tree completeness: a wiped/partial generated dir (interrupted
+    // regen) used to surface only as baffling auth/migration failures deep
+    // in the suite while a stale binary booted happily. Fail in seconds.
+    if let Err(e) = crate::preflight::ensure_output_tree(&config.app_dir) {
+        counters.fail_test(e.to_string());
+        return Err(e);
+    }
+    counters.pass("Generated output tree complete (src/, migrations/)");
+
     // Binary smoke tests (only when the admin CLI exists in the scaffold).
     let bin_dir = if args.release || args.skip_build && is_release_binary(config) {
         config.app_dir.join("target/release")
@@ -863,19 +872,20 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
             // dirty tree left stale files behind and broke the compile check
             // with 290 errors in a real incident.
             crate::ext::run_hooks(config, "pre_generate").await?;
-            let run_out = regenerate(config, graph);
-            if run_out.contains("error") {
-                counters.fail_test("Regeneration failed");
-                for line in run_out.lines().filter(|l| l.contains("error")).take(5) {
-                    println!("    {line}");
+            match regenerate(config, graph) {
+                Ok(_) => {
+                    counters.pass("Templates regenerated");
+                    match cargo_check_in(config) {
+                        Ok(()) => counters.pass("Regenerated code compiles"),
+                        Err(tail) => {
+                            counters.fail_test("Regenerated code does not compile");
+                            output::print_tail(&tail, 20);
+                        }
+                    }
                 }
-            } else {
-                counters.pass("Templates regenerated");
-                let check_out = cargo_check_in(config);
-                if check_out.contains("^error") {
-                    counters.fail_test("Regenerated code does not compile");
-                } else {
-                    counters.pass("Regenerated code compiles");
+                Err(e) => {
+                    counters.fail_test("Regeneration failed");
+                    output::fail(e.to_string());
                 }
             }
         } else {
@@ -1270,31 +1280,60 @@ fn regenerate_args(config: &OpsConfig, graph_binary: &str) -> Vec<String> {
 }
 
 /// Regenerate the app via the graph binary; returns captured combined output.
-fn regenerate(config: &OpsConfig, graph_binary: &str) -> String {
+///
+/// The child's exit status is the success signal — a substring scan used to
+/// stand in for it and reported SIGKILLed/panicked regens as "✓ Templates
+/// regenerated" (no literal "error" anywhere) while "0 errors" read as a
+/// failure. On non-zero exit the error carries the output tail.
+fn regenerate(config: &OpsConfig, graph_binary: &str) -> OpsResult<String> {
     let args = regenerate_args(config, graph_binary);
-    Command::new("cargo")
+    let out = Command::new("cargo")
         .args(&args)
         .current_dir(&config.root_dir)
         .output()
-        .map(|o| {
-            format!(
-                "{}{}",
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
-            )
-        })
-        .unwrap_or_default()
+        .map_err(|e| OpsError::Command(format!("failed to spawn cargo: {e}")))?;
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if !out.status.success() {
+        return Err(OpsError::Command(format!(
+            "`cargo run -p {graph_binary} -- run` failed with {}: \n{}",
+            out.status,
+            tail_lines(&combined, 20)
+        )));
+    }
+    Ok(combined)
 }
 
-fn cargo_check_in(config: &OpsConfig) -> String {
+/// `cargo check` inside the generated app. `Ok` only when the check exits
+/// successfully without a `^error` diagnostic; `Err` carries the output tail.
+fn cargo_check_in(config: &OpsConfig) -> Result<(), String> {
     let mut cmd = Command::new("cargo");
     cmd.arg("check").current_dir(&config.app_dir);
     if let Some((key, value)) = cornucopia_db_env(config) {
         cmd.env(key, value);
     }
-    cmd.output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default()
+    match cmd.output() {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout).into_owned();
+            if out.status.success() && !text.contains("^error") {
+                Ok(())
+            } else {
+                Err(tail_lines(&text, 20))
+            }
+        }
+        Err(e) => Err(format!("failed to spawn cargo: {e}")),
+    }
+}
+
+/// Last `n` lines of `text` joined with newlines — failure diagnostics for
+/// captured command output.
+fn tail_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(n);
+    lines[start..].join("\n")
 }
 
 #[cfg(test)]
