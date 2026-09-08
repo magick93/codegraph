@@ -12,6 +12,7 @@ use codegraph_core::types::{
 };
 
 use codegraph_type_contracts::RefClassificationKind;
+use std::collections::HashMap;
 
 use crate::engine::GrafeoEngine;
 
@@ -128,6 +129,19 @@ fn split_compound_id<'a>(id: &'a str, edge_label: &str) -> Result<(&'a str, &'a 
     })
 }
 
+/// Convert an Option<String> to a grafeo::Value for parameterized queries.
+fn opt_to_grafeo_value(s: &Option<String>) -> grafeo::Value {
+    match s {
+        Some(v) => grafeo::Value::String(v.clone().into()),
+        None => grafeo::Value::Null,
+    }
+}
+
+/// Convert a bool to the grafeo::Value representation Grafeo expects.
+fn bool_to_grafeo_value(b: bool) -> grafeo::Value {
+    grafeo::Value::Bool(b)
+}
+
 fn count_from_gql(engine: &GrafeoEngine, gql: &str) -> Result<usize, GraphError> {
     let session = engine.db().session();
     let result = session
@@ -147,49 +161,48 @@ fn count_from_gql(engine: &GrafeoEngine, gql: &str) -> Result<usize, GraphError>
 impl GraphIngestor for GrafeoEngine {
     async fn ingest_schema(&self, node: &SchemaNode) -> Result<String, GraphError> {
         let session = self.db().session();
-        let gql = format!(
-            "INSERT (:Schema {{\
-                schema_id: '{schema_id}', title: '{title}', description: {description}, \
-                schema_type: '{schema_type}', classification: '{classification}', \
-                pg_type: '{pg_type}', rust_type: '{rust_type}', sea_orm_type: '{sea_orm_type}', \
-                domain: {domain}, rel_path: '{rel_path}', \
-                rust_type_name: '{rust_type_name}', pg_table_name: '{pg_table_name}', \
-                api_path_segment: '{api_path_segment}', \
-                parent_schema: {parent_schema}, \
-                is_entity: {is_entity}, is_codelist: {is_codelist}, \
-                is_primitive_wrapper: {is_primitive_wrapper}, \
-                has_all_of: {has_all_of}, has_one_of: {has_one_of}, \
-                has_any_of: {has_any_of}, has_definitions: {has_definitions}, \
-                custom_annotations: '{custom_annotations}'\
-            }})",
-            schema_id = escape_gql(&node.schema_id),
-            title = escape_gql(&node.title),
-            description = opt_str(&node.description),
-            schema_type = escape_gql(&node.schema_type),
-            classification = escape_gql(&node.classification),
-            pg_type = escape_gql(&node.pg_type),
-            rust_type = escape_gql(&node.rust_type),
-            sea_orm_type = escape_gql(&node.sea_orm_type),
-            domain = opt_str(&node.domain),
-            rel_path = escape_gql(&node.rel_path),
-            rust_type_name = escape_gql(&node.rust_type_name),
-            pg_table_name = escape_gql(&node.pg_table_name),
-            api_path_segment = escape_gql(&node.api_path_segment),
-            parent_schema = opt_str(&node.parent_schema),
-            is_entity = node.is_entity,
-            is_codelist = node.is_codelist,
-            is_primitive_wrapper = node.is_primitive_wrapper,
-            has_all_of = node.has_all_of,
-            has_one_of = node.has_one_of,
-            has_any_of = node.has_any_of,
-            has_definitions = node.has_definitions,
-            custom_annotations = escape_gql(
-                &serde_json::to_string(&node.custom_annotations)
-                    .unwrap_or_else(|_| "{}".to_string()),
-            ),
-        );
+        let gql = "INSERT (:Schema {\
+            schema_id: $schema_id, title: $title, description: $description, \
+            schema_type: $schema_type, classification: $classification, \
+            pg_type: $pg_type, rust_type: $rust_type, sea_orm_type: $sea_orm_type, \
+            domain: $domain, rel_path: $rel_path, \
+            rust_type_name: $rust_type_name, pg_table_name: $pg_table_name, \
+            api_path_segment: $api_path_segment, \
+            parent_schema: $parent_schema, \
+            is_entity: $is_entity, is_codelist: $is_codelist, \
+            is_primitive_wrapper: $is_primitive_wrapper, \
+            has_all_of: $has_all_of, has_one_of: $has_one_of, \
+            has_any_of: $has_any_of, has_definitions: $has_definitions, \
+            custom_annotations: $custom_annotations\
+        })";
+        let custom_annotations_str = serde_json::to_string(&node.custom_annotations)
+            .unwrap_or_else(|_| "{}".to_string());
+        let params = HashMap::from([
+            ("schema_id".into(), grafeo::Value::String(node.schema_id.clone().into())),
+            ("title".into(), grafeo::Value::String(node.title.clone().into())),
+            ("description".into(), opt_to_grafeo_value(&node.description)),
+            ("schema_type".into(), grafeo::Value::String(node.schema_type.clone().into())),
+            ("classification".into(), grafeo::Value::String(node.classification.clone().into())),
+            ("pg_type".into(), grafeo::Value::String(node.pg_type.clone().into())),
+            ("rust_type".into(), grafeo::Value::String(node.rust_type.clone().into())),
+            ("sea_orm_type".into(), grafeo::Value::String(node.sea_orm_type.clone().into())),
+            ("domain".into(), opt_to_grafeo_value(&node.domain)),
+            ("rel_path".into(), grafeo::Value::String(node.rel_path.clone().into())),
+            ("rust_type_name".into(), grafeo::Value::String(node.rust_type_name.clone().into())),
+            ("pg_table_name".into(), grafeo::Value::String(node.pg_table_name.clone().into())),
+            ("api_path_segment".into(), grafeo::Value::String(node.api_path_segment.clone().into())),
+            ("parent_schema".into(), opt_to_grafeo_value(&node.parent_schema)),
+            ("is_entity".into(), bool_to_grafeo_value(node.is_entity)),
+            ("is_codelist".into(), bool_to_grafeo_value(node.is_codelist)),
+            ("is_primitive_wrapper".into(), bool_to_grafeo_value(node.is_primitive_wrapper)),
+            ("has_all_of".into(), bool_to_grafeo_value(node.has_all_of)),
+            ("has_one_of".into(), bool_to_grafeo_value(node.has_one_of)),
+            ("has_any_of".into(), bool_to_grafeo_value(node.has_any_of)),
+            ("has_definitions".into(), bool_to_grafeo_value(node.has_definitions)),
+            ("custom_annotations".into(), grafeo::Value::String(custom_annotations_str.into())),
+        ]);
         session
-            .execute(&gql)
+            .execute_with_params(gql, params)
             .map_err(|e| GraphError::Ingest(format!("ingest_schema failed: {e}")))?;
         Ok(node.schema_id.clone())
     }
@@ -201,56 +214,55 @@ impl GraphIngestor for GrafeoEngine {
         prop: &PropertyNode,
     ) -> Result<(), GraphError> {
         let session = self.db().session();
-        let gql = format!(
-            "INSERT (:Property {{\
-                name: '{name}', prop_type: '{prop_type}', description: {description}, \
-                format: {format}, \
-                is_required: {is_required}, is_nullable: {is_nullable}, \
-                is_array: {is_array}, pattern: {pattern}, \
-                pg_column_name: '{pg_column_name}', pg_column_type: '{pg_column_type}', \
-                rust_field_name: '{rust_field_name}', rust_field_type: '{rust_field_type}', \
-                sea_orm_type: '{sea_orm_type}', render_strategy: '{render_strategy}', \
-                ref_target: {ref_target}, classification: {classification}, \
-                classification_kind: {classification_kind}, \
-                _schema_title: '{schema_title}', _schema_id: '{schema_id}'\
-            }})",
-            name = escape_gql(&prop.name),
-            prop_type = escape_gql(&prop.prop_type),
-            description = opt_str(&prop.description),
-            format = opt_str(&prop.format),
-            is_required = prop.is_required,
-            is_nullable = prop.is_nullable,
-            is_array = prop.is_array,
-            pattern = opt_str(&prop.pattern),
-            pg_column_name = escape_gql(&prop.pg_column_name),
-            pg_column_type = escape_gql(&prop.pg_column_type),
-            rust_field_name = escape_gql(&prop.rust_field_name),
-            rust_field_type = escape_gql(&prop.rust_field_type),
-            sea_orm_type = escape_gql(&prop.sea_orm_type),
-            render_strategy = escape_gql(&prop.render_strategy),
-            ref_target = opt_str(&prop.ref_target),
-            classification = opt_str(&prop.classification),
-            classification_kind = opt_str(
-                &prop
-                    .classification_kind
-                    .as_ref()
-                    .map(classification_kind_to_str)
-            ),
-            schema_title = escape_gql(schema_title),
-            schema_id = escape_gql(schema_id),
-        );
+        let gql = "INSERT (:Property {\
+            name: $name, prop_type: $prop_type, description: $description, \
+            format: $format, \
+            is_required: $is_required, is_nullable: $is_nullable, \
+            is_array: $is_array, pattern: $pattern, \
+            pg_column_name: $pg_column_name, pg_column_type: $pg_column_type, \
+            rust_field_name: $rust_field_name, rust_field_type: $rust_field_type, \
+            sea_orm_type: $sea_orm_type, render_strategy: $render_strategy, \
+            ref_target: $ref_target, classification: $classification, \
+            classification_kind: $classification_kind, \
+            _schema_title: $schema_title, _schema_id: $schema_id\
+        })";
+        let classification_kind_str = prop
+            .classification_kind
+            .as_ref()
+            .map(classification_kind_to_str);
+        let params = HashMap::from([
+            ("name".into(), grafeo::Value::String(prop.name.clone().into())),
+            ("prop_type".into(), grafeo::Value::String(prop.prop_type.clone().into())),
+            ("description".into(), opt_to_grafeo_value(&prop.description)),
+            ("format".into(), opt_to_grafeo_value(&prop.format)),
+            ("is_required".into(), bool_to_grafeo_value(prop.is_required)),
+            ("is_nullable".into(), bool_to_grafeo_value(prop.is_nullable)),
+            ("is_array".into(), bool_to_grafeo_value(prop.is_array)),
+            ("pattern".into(), opt_to_grafeo_value(&prop.pattern)),
+            ("pg_column_name".into(), grafeo::Value::String(prop.pg_column_name.clone().into())),
+            ("pg_column_type".into(), grafeo::Value::String(prop.pg_column_type.clone().into())),
+            ("rust_field_name".into(), grafeo::Value::String(prop.rust_field_name.clone().into())),
+            ("rust_field_type".into(), grafeo::Value::String(prop.rust_field_type.clone().into())),
+            ("sea_orm_type".into(), grafeo::Value::String(prop.sea_orm_type.clone().into())),
+            ("render_strategy".into(), grafeo::Value::String(prop.render_strategy.clone().into())),
+            ("ref_target".into(), opt_to_grafeo_value(&prop.ref_target)),
+            ("classification".into(), opt_to_grafeo_value(&prop.classification)),
+            ("classification_kind".into(), opt_to_grafeo_value(&classification_kind_str)),
+            ("schema_title".into(), grafeo::Value::String(schema_title.into())),
+            ("schema_id".into(), grafeo::Value::String(schema_id.into())),
+        ]);
         session
-            .execute(&gql)
+            .execute_with_params(gql, params)
             .map_err(|e| GraphError::Ingest(format!("ingest_property INSERT failed: {e}")))?;
 
-        let edge_gql = format!(
-            "MATCH (s:Schema {{title: '{st}'}}), (p:Property {{name: '{pn}', _schema_title: '{st2}'}}) \
-             INSERT (s)-[:HasProperty]->(p)",
-            st = escape_gql(schema_title),
-            st2 = escape_gql(schema_title),
-            pn = escape_gql(&prop.name),
-        );
-        session.execute(&edge_gql).map_err(|e| {
+        let edge_gql = "MATCH (s:Schema {title: $st}), (p:Property {name: $pn, _schema_title: $st2}) \
+             INSERT (s)-[:HasProperty]->(p)";
+        let edge_params = HashMap::from([
+            ("st".into(), grafeo::Value::String(schema_title.into())),
+            ("st2".into(), grafeo::Value::String(schema_title.into())),
+            ("pn".into(), grafeo::Value::String(prop.name.clone().into())),
+        ]);
+        session.execute_with_params(edge_gql, edge_params).map_err(|e| {
             GraphError::Ingest(format!("ingest_property HasProperty edge failed: {e}"))
         })?;
         Ok(())
@@ -361,6 +373,74 @@ impl GraphIngestor for GrafeoEngine {
         props: Option<&EdgeProperties>,
     ) -> Result<(), GraphError> {
         let session = self.db().session();
+
+        // ── Hot-path edge types: parameterized queries for plan caching ──
+        match &edge_type {
+            EdgeType::HasProperty => {
+                let (prop_name, schema_title) = split_compound_id(to_id, "HasProperty")?;
+                let gql = "MATCH (a:Schema {title: $from_title}), (b:Property {name: $prop_name, _schema_title: $prop_schema_title}) \
+                     INSERT (a)-[:HasProperty]->(b)";
+                let params = HashMap::from([
+                    ("from_title".into(), grafeo::Value::String(from_id.into())),
+                    ("prop_name".into(), grafeo::Value::String(prop_name.into())),
+                    ("prop_schema_title".into(), grafeo::Value::String(schema_title.into())),
+                ]);
+                session
+                    .execute_with_params(gql, params)
+                    .map_err(|e| GraphError::Ingest(format!("ingest_edge HasProperty failed: {e}")))?;
+                return Ok(());
+            }
+            EdgeType::ReferencesSchema => {
+                let (prop_name, schema_title) = split_compound_id(from_id, "ReferencesSchema")?;
+                let gql = "MATCH (a:Property {name: $prop_name, _schema_title: $prop_schema_title}), (b:Schema {schema_id: $schema_id}) \
+                     INSERT (a)-[:ReferencesSchema]->(b)";
+                let params = HashMap::from([
+                    ("prop_name".into(), grafeo::Value::String(prop_name.into())),
+                    ("prop_schema_title".into(), grafeo::Value::String(schema_title.into())),
+                    ("schema_id".into(), grafeo::Value::String(to_id.into())),
+                ]);
+                session
+                    .execute_with_params(gql, params)
+                    .map_err(|e| GraphError::Ingest(format!("ingest_edge ReferencesSchema failed: {e}")))?;
+                return Ok(());
+            }
+            EdgeType::ItemsOf => {
+                let (prop_name, schema_title) = split_compound_id(from_id, "ItemsOf")?;
+                let gql = "MATCH (a:Property {name: $prop_name, _schema_title: $prop_schema_title}), (b:Schema {schema_id: $schema_id}) \
+                     INSERT (a)-[:ItemsOf]->(b)";
+                let params = HashMap::from([
+                    ("prop_name".into(), grafeo::Value::String(prop_name.into())),
+                    ("prop_schema_title".into(), grafeo::Value::String(schema_title.into())),
+                    ("schema_id".into(), grafeo::Value::String(to_id.into())),
+                ]);
+                session
+                    .execute_with_params(gql, params)
+                    .map_err(|e| GraphError::Ingest(format!("ingest_edge ItemsOf failed: {e}")))?;
+                return Ok(());
+            }
+            EdgeType::ExtendsSchema | EdgeType::DependsOn => {
+                let label_str = match &edge_type {
+                    EdgeType::ExtendsSchema => "ExtendsSchema",
+                    _ => "DependsOn",
+                };
+                let gql = format!(
+                    "MATCH (a:Schema {{title: $from_title}}), (b:Schema {{title: $to_title}}) \
+                     INSERT (a)-[:{}]->(b)",
+                    label_str,
+                );
+                let params = HashMap::from([
+                    ("from_title".into(), grafeo::Value::String(from_id.into())),
+                    ("to_title".into(), grafeo::Value::String(to_id.into())),
+                ]);
+                session
+                    .execute_with_params(&gql, params)
+                    .map_err(|e| GraphError::Ingest(format!("ingest_edge {label_str} failed: {e}")))?;
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        // ── Remaining edge types: format!()-based (lower frequency) ──
         let label = match &edge_type {
             EdgeType::HasProperty => "HasProperty",
             EdgeType::ReferencesSchema => "ReferencesSchema",
@@ -421,24 +501,6 @@ impl GraphIngestor for GrafeoEngine {
         };
 
         let match_clause = match &edge_type {
-            EdgeType::HasProperty => {
-                let (prop_name, schema_title) = split_compound_id(to_id, "HasProperty")?;
-                format!(
-                    "MATCH (a:Schema {{title: '{}'}}), (b:Property {{name: '{}', _schema_title: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(prop_name),
-                    escape_gql(schema_title),
-                )
-            }
-            EdgeType::ReferencesSchema => {
-                let (prop_name, schema_title) = split_compound_id(from_id, "ReferencesSchema")?;
-                format!(
-                    "MATCH (a:Property {{name: '{}', _schema_title: '{}'}}), (b:Schema {{schema_id: '{}'}})",
-                    escape_gql(prop_name),
-                    escape_gql(schema_title),
-                    escape_gql(to_id),
-                )
-            }
             EdgeType::HasEnumValue => {
                 let (value, codelist) = split_compound_id(to_id, "HasEnumValue")?;
                 format!(
@@ -446,22 +508,6 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(from_id),
                     escape_gql(value),
                     escape_gql(codelist),
-                )
-            }
-            EdgeType::ItemsOf => {
-                let (prop_name, schema_title) = split_compound_id(from_id, "ItemsOf")?;
-                format!(
-                    "MATCH (a:Property {{name: '{}', _schema_title: '{}'}}), (b:Schema {{schema_id: '{}'}})",
-                    escape_gql(prop_name),
-                    escape_gql(schema_title),
-                    escape_gql(to_id),
-                )
-            }
-            EdgeType::ExtendsSchema | EdgeType::DependsOn => {
-                format!(
-                    "MATCH (a:Schema {{title: '{}'}}), (b:Schema {{title: '{}'}})",
-                    escape_gql(from_id),
-                    escape_gql(to_id),
                 )
             }
             EdgeType::UsesCodeList => {
@@ -773,6 +819,13 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(strip_api_prefix(to_id)),
                 )
             }
+            // These edge types are handled by the early-return above but must
+            // be listed to satisfy the exhaustive match. They are unreachable.
+            EdgeType::HasProperty
+            | EdgeType::ReferencesSchema
+            | EdgeType::ItemsOf
+            | EdgeType::ExtendsSchema
+            | EdgeType::DependsOn => unreachable!(),
         };
 
         let props_str = build_edge_props_string(props);
