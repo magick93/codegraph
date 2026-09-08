@@ -160,6 +160,15 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         output::warn("no smoke entity configured — skipping python checks");
     }
 
+    // Port preflight: the api server binds `{api_port}` later in the suite;
+    // an unrelated process holding it used to fail the run ten minutes in
+    // with the real error buried in the app log. Fail in seconds instead.
+    if let Err(e) = crate::preflight::ensure_port_free(config.manifest.servers.api_port) {
+        counters.fail_test(e.to_string());
+        return Err(e);
+    }
+    counters.pass(format!("Port {} free", config.manifest.servers.api_port));
+
     // Binary smoke tests (only when the admin CLI exists in the scaffold).
     let bin_dir = if args.release || args.skip_build && is_release_binary(config) {
         config.app_dir.join("target/release")
@@ -167,25 +176,12 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         config.app_dir.join("target/debug")
     };
     let binary = bin_dir.join(config.app_binary_name());
-    if !binary.is_file() {
-        counters.fail_test(format!(
-            "no binary at {} — run with build or --rebuild",
-            binary.display()
-        ));
-        return Err(OpsError::TestFailure("binary missing".into()));
-    }
     // Stale-binary guard: a binary older than the newest source file means
     // the suite would silently test an app that doesn't match the current
-    // generator output (this is exactly how mixed-profile trees produced
-    // baffling "intermittent" failures). Fail fast with an actionable hint.
-    let newest_src = newest_mtime(&config.app_dir.join("src"));
-    let binary_mtime = binary.metadata().and_then(|m| m.modified()).ok();
-    let stale = matches!((binary_mtime, newest_src), (Some(b), Some(s)) if b < s);
-    if stale {
-        counters.fail_test(
-            "binary is older than src/ — the suite would test stale code; rebuild (drop --skip-build) first",
-        );
-        return Err(OpsError::TestFailure("stale binary".into()));
+    // generator output. Fail fast with an actionable hint.
+    if let Err(e) = crate::preflight::ensure_binary_fresh(&config.app_dir, &binary) {
+        counters.fail_test(e.to_string());
+        return Err(e);
     }
     counters.pass(format!("Binary built ({})", binary.display()));
 
@@ -295,6 +291,9 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
             .current_dir(&config.root_dir)
             .env("DATABASE_URL", config.api_db.url())
             .env("SUPABASE_JWT_SECRET", config.jwt_secret.clone());
+        if let Some((key, value)) = cornucopia_db_env(config) {
+            start_cmd.env(key, value);
+        }
         let mut probe = ManagedProcess::spawn(start_cmd, "app-probe", &config.log_file)?;
         let mut waited = 0;
         while waited < 10 && !pid_file.is_file() {
@@ -445,6 +444,9 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         .arg(config.api_db.url())
         .env("DATABASE_URL", config.api_db.url())
         .env("SUPABASE_JWT_SECRET", config.jwt_secret.clone());
+    if let Some((key, value)) = cornucopia_db_env(config) {
+        server_cmd.env(key, value);
+    }
     let api_proc = ManagedProcess::spawn(server_cmd, "Axum (API)", &config.log_file)?;
     supervisor.add(api_proc);
 
@@ -508,29 +510,30 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
                         cmd.arg("--variable").arg(format!("api_key={key}"));
                     }
                     cmd.arg(&f);
-                    let (passed, reqs, error_lines) = match cmd.output() {
+                    let (passed, reqs, output_text) = match cmd.output() {
                         Ok(out) => {
-                            let stdout = format!(
+                            let text = format!(
                                 "{}{}",
                                 String::from_utf8_lossy(&out.stdout),
                                 String::from_utf8_lossy(&out.stderr)
                             );
-                            if hurl_suite_passed(&stdout) {
-                                (true, parse_requests(&stdout), Vec::new())
+                            // Save the full combined output for EVERY hurl
+                            // file (pass or fail): debugging failures needs
+                            // the assert context, not just the error lines.
+                            let log_path = hurl_log_path(config, &name);
+                            if let Err(e) = write_hurl_log(&log_path, &text) {
+                                output::warn(format!(
+                                    "could not write hurl log {}: {e}",
+                                    log_path.display()
+                                ));
+                            }
+                            if hurl_suite_passed(&text) {
+                                (true, parse_requests(&text), String::new())
                             } else {
-                                (
-                                    false,
-                                    0,
-                                    stdout
-                                        .lines()
-                                        .filter(|l| l.contains("error:") || l.contains("Error"))
-                                        .map(|l| l.to_string())
-                                        .take(8)
-                                        .collect(),
-                                )
+                                (false, 0, text)
                             }
                         }
-                        Err(e) => (false, 0, vec![e.to_string()]),
+                        Err(e) => (false, 0, e.to_string()),
                     };
                     if passed {
                         total_requests += reqs;
@@ -538,8 +541,11 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
                         break;
                     }
                     if !should_retry(attempts_used, args.retry) {
-                        counters.fail_test(name);
-                        for line in &error_lines {
+                        counters.fail_test(format!(
+                            "{name} — full output: {}",
+                            hurl_log_path(config, &name).display()
+                        ));
+                        for line in hurl_error_excerpt(&output_text) {
                             println!("    {line}");
                         }
                         break;
@@ -852,6 +858,11 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         output::section("11. Regeneration validation");
         config.metrics.begin("Regenerate + cargo check");
         if let Some(graph) = &config.manifest.graph_binary {
+            // e2e parity: pre_generate hooks (e.g. clean-generated) must run
+            // before regeneration — switching persistence providers with a
+            // dirty tree left stale files behind and broke the compile check
+            // with 290 errors in a real incident.
+            crate::ext::run_hooks(config, "pre_generate").await?;
             let run_out = regenerate(config, graph);
             if run_out.contains("error") {
                 counters.fail_test("Regeneration failed");
@@ -860,7 +871,7 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
                 }
             } else {
                 counters.pass("Templates regenerated");
-                let check_out = cargo_check_in(&config.app_dir);
+                let check_out = cargo_check_in(config);
                 if check_out.contains("^error") {
                     counters.fail_test("Regenerated code does not compile");
                 } else {
@@ -900,27 +911,17 @@ fn is_release_binary(config: &OpsConfig) -> bool {
     release.is_file()
 }
 
-/// Newest `modified` timestamp across the app's `src/` tree (None when the
-/// tree is missing or unreadable). Used by the stale-binary preflight.
-fn newest_mtime(src_dir: &Path) -> Option<std::time::SystemTime> {
-    fn walk(dir: &Path, newest: &mut Option<std::time::SystemTime>) -> std::io::Result<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, newest)?;
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                let mtime = entry.metadata()?.modified()?;
-                if newest.is_none_or(|n| mtime > n) {
-                    *newest = Some(mtime);
-                }
-            }
-        }
-        Ok(())
+/// Build/runtime env for the cornucopia persistence provider: the generated
+/// app's `cornucopia-queries/build.rs` connects to Postgres at BUILD time via
+/// `CORNUCOPIA_DATABASE_URL`, so every cargo invocation touching the app
+/// workspace and every app-binary spawn must carry it. Returns `None` (sets
+/// nothing) for other providers — harmless for sea_orm.
+fn cornucopia_db_env(config: &OpsConfig) -> Option<(String, String)> {
+    if config.manifest.capabilities.persistence_provider == "cornucopia" {
+        Some(("CORNUCOPIA_DATABASE_URL".to_string(), config.api_db.url()))
+    } else {
+        None
     }
-    let mut newest = None;
-    walk(src_dir, &mut newest).ok()?;
-    newest
 }
 
 /// Provision an API key via public.create_api_key(org, name, permissions).
@@ -1050,6 +1051,41 @@ fn hurl_suite_passed(stdout: &str) -> bool {
     }
     // No `Failed files:` summary at all (unexpected output) — never claim pass.
     false
+}
+
+/// Full-output log path for one hurl file: `{root_dir}/test-results/hurl/{name}.log`.
+fn hurl_log_path(config: &OpsConfig, name: &str) -> std::path::PathBuf {
+    config
+        .root_dir
+        .join("test-results")
+        .join("hurl")
+        .join(format!("{name}.log"))
+}
+
+/// Persist a hurl run's combined stdout+stderr to `path` (parent created).
+fn write_hurl_log(path: &Path, contents: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, contents)
+}
+
+/// Interesting excerpt of a failed hurl run: every line containing `error:`,
+/// plus up to 10 following lines each — that's where hurl prints the
+/// `actual:` / `expected:` / locator context that makes failures debuggable.
+fn hurl_error_excerpt(output: &str) -> Vec<String> {
+    let mut excerpt = Vec::new();
+    let mut keep = 0usize;
+    for line in output.lines() {
+        if line.contains("error:") {
+            excerpt.push(line.to_string());
+            keep = 10;
+        } else if keep > 0 {
+            excerpt.push(line.to_string());
+            keep -= 1;
+        }
+    }
+    excerpt
 }
 
 /// Pluralize the last path segment of a smoke entity route using the same
@@ -1193,26 +1229,46 @@ fn parse_requests(hurl_output: &str) -> usize {
         .unwrap_or(0)
 }
 
-/// Regenerate the app via the graph binary; returns captured combined output.
-fn regenerate(config: &OpsConfig, graph_binary: &str) -> String {
-    let mut cmd = Command::new("cargo");
-    cmd.arg("run")
-        .arg("-p")
-        .arg(graph_binary)
-        .arg("--")
-        .arg("run")
-        .current_dir(&config.root_dir);
+/// Build the `cargo run -p {graph} -- run ...` argument vector for the regen
+/// stage. Only manifest flags whose values are `Some` are passed — including
+/// the manifest `profile`, without which regeneration could never exercise a
+/// non-default provider.
+fn regenerate_args(config: &OpsConfig, graph_binary: &str) -> Vec<String> {
+    let mut args = vec![
+        "run".to_string(),
+        "-p".to_string(),
+        graph_binary.to_string(),
+        "--".to_string(),
+        "run".to_string(),
+    ];
     if let Some(schemas) = &config.manifest.schemas_dir {
-        cmd.arg("--schemas").arg(schemas);
+        args.push("--schemas".to_string());
+        args.push(schemas.to_string_lossy().into_owned());
     }
     if let Some(classifier) = &config.manifest.classifier {
-        cmd.arg("--classifier").arg(classifier);
+        args.push("--classifier".to_string());
+        args.push(classifier.to_string_lossy().into_owned());
     }
     if let Some(cfg) = &config.manifest.domain_config {
-        cmd.arg("--config").arg(cfg);
+        args.push("--config".to_string());
+        args.push(cfg.to_string_lossy().into_owned());
     }
-    cmd.arg("--output").arg(&config.app_dir);
-    cmd.output()
+    if let Some(profile) = &config.manifest.profile {
+        args.push("--profile".to_string());
+        args.push(profile.clone());
+    }
+    args.push("--output".to_string());
+    args.push(config.app_dir.to_string_lossy().into_owned());
+    args
+}
+
+/// Regenerate the app via the graph binary; returns captured combined output.
+fn regenerate(config: &OpsConfig, graph_binary: &str) -> String {
+    let args = regenerate_args(config, graph_binary);
+    Command::new("cargo")
+        .args(&args)
+        .current_dir(&config.root_dir)
+        .output()
         .map(|o| {
             format!(
                 "{}{}",
@@ -1223,11 +1279,13 @@ fn regenerate(config: &OpsConfig, graph_binary: &str) -> String {
         .unwrap_or_default()
 }
 
-fn cargo_check_in(dir: &Path) -> String {
-    Command::new("cargo")
-        .arg("check")
-        .current_dir(dir)
-        .output()
+fn cargo_check_in(config: &OpsConfig) -> String {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("check").current_dir(&config.app_dir);
+    if let Some((key, value)) = cornucopia_db_env(config) {
+        cmd.env(key, value);
+    }
+    cmd.output()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default()
 }
@@ -1235,6 +1293,50 @@ fn cargo_check_in(dir: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codegraph_config::{OpsCapabilities, OpsDatabase, OpsDbTarget, OpsManifest};
+
+    fn manifest_with(profile: Option<&str>, provider: &str) -> OpsManifest {
+        OpsManifest {
+            app_name: "demo-app".into(),
+            graph_binary: Some("hr-graph".into()),
+            schemas_dir: Some("schemas".into()),
+            classifier: Some("classifier.toml".into()),
+            domain_config: None,
+            profile: profile.map(String::from),
+            output_dir: "generated-app".into(),
+            ui_dir: None,
+            smoke: None,
+            api_version: "v1".to_string(),
+            servers: Default::default(),
+            database: OpsDatabase {
+                api: OpsDbTarget {
+                    host: "localhost".into(),
+                    port: 5432,
+                    user: "u".into(),
+                    password: "p".into(),
+                    database: "postgres".into(),
+                    reset_sql: None,
+                    seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
+                },
+                e2e: None,
+                e2e_app: None,
+            },
+            supabase: None,
+            capabilities: OpsCapabilities {
+                persistence_provider: provider.into(),
+                ..Default::default()
+            },
+            hurl: None,
+            hooks: vec![],
+            extensions: vec![],
+        }
+    }
+
+    fn config_for(manifest: OpsManifest) -> OpsConfig {
+        OpsConfig::from_manifest(manifest, std::path::PathBuf::from("/tmp/repo")).unwrap()
+    }
 
     #[test]
     fn strips_ansi_codes() {
@@ -1348,5 +1450,102 @@ mod tests {
         assert!(!should_retry(4, 3));
         // Overflow-safe: max value still allows the documented total.
         assert!(should_retry(1, u32::MAX));
+    }
+
+    #[test]
+    fn regenerate_args_pass_the_manifest_profile() {
+        let cfg = config_for(manifest_with(Some("default"), "sea_orm"));
+        let args = regenerate_args(&cfg, "hr-graph");
+        let profile_pos = args
+            .iter()
+            .position(|a| a == "--profile")
+            .expect("--profile must be present");
+        assert_eq!(args[profile_pos + 1], "default");
+        // The other flags stay in place around it.
+        assert!(args.contains(&"--schemas".to_string()));
+        assert!(args.contains(&"--classifier".to_string()));
+        assert!(args.contains(&"--output".to_string()));
+        assert!(args.contains(&"run".to_string()));
+    }
+
+    #[test]
+    fn regenerate_args_omit_profile_when_unset() {
+        let cfg = config_for(manifest_with(None, "sea_orm"));
+        let args = regenerate_args(&cfg, "hr-graph");
+        assert!(!args.contains(&"--profile".to_string()));
+    }
+
+    #[test]
+    fn cornucopia_env_only_for_cornucopia_provider() {
+        let cfg = config_for(manifest_with(Some("default"), "cornucopia"));
+        let (key, value) = cornucopia_db_env(&cfg).expect("cornucopia needs the env");
+        assert_eq!(key, "CORNUCOPIA_DATABASE_URL");
+        assert_eq!(value, cfg.api_db.url());
+        let cfg = config_for(manifest_with(Some("default"), "sea_orm"));
+        assert!(cornucopia_db_env(&cfg).is_none());
+    }
+
+    #[test]
+    fn hurl_error_excerpt_keeps_context_after_error_lines() {
+        let output = "\
+1 | GET http://x/missing
+   \u{2022} 01_candidate_crud.hurl:12:3
+error: Assert status code
+  actual:   500
+  expected: 201
+  locator: 2
+detail 1
+detail 2
+detail 3
+detail 4
+detail 5
+detail 6
+detail 7
+detail 8
+detail 9
+detail 10 (window now exhausted)
+2 | GET http://x/ok
+   \u{2022} succeeded
+error: second failure
+  actual:   b
+  expected: a
+trailing context line
+";
+        let excerpt = hurl_error_excerpt(output);
+        let joined = excerpt.join("\n");
+        // The `error:` lines and their following context survive...
+        assert!(joined.contains("error: Assert status code"));
+        assert!(joined.contains("actual:   500"));
+        assert!(joined.contains("expected: 201"));
+        assert!(joined.contains("locator: 2"));
+        assert!(joined.contains("error: second failure"));
+        assert!(joined.contains("actual:   b"));
+        // ...while blocks outside every 10-line context window do not.
+        assert!(!joined.contains("succeeded"));
+        assert!(!joined.contains("window now exhausted"));
+    }
+
+    #[test]
+    fn hurl_error_excerpt_empty_for_clean_output() {
+        assert!(hurl_error_excerpt("all good\nnothing to see").is_empty());
+        assert!(hurl_error_excerpt("").is_empty());
+    }
+
+    #[test]
+    fn hurl_log_lands_in_test_results_dir() {
+        let cfg = config_for(manifest_with(None, "sea_orm"));
+        let path = hurl_log_path(&cfg, "01_candidate_crud.hurl");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/tmp/repo/test-results/hurl/01_candidate_crud.hurl.log")
+        );
+    }
+
+    #[test]
+    fn write_hurl_log_creates_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a/b/c/run.log");
+        write_hurl_log(&path, "combined output").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "combined output");
     }
 }

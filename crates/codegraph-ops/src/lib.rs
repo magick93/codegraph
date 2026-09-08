@@ -30,6 +30,7 @@ pub mod metrics;
 pub mod migrate;
 pub mod output;
 pub mod pg;
+pub mod preflight;
 pub mod proc;
 pub mod suites;
 pub mod wait;

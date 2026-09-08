@@ -3,7 +3,8 @@
 //! Subcommands: `api`, `cli`, `e2e`, `ui`, `full`, `clean`, `smoke`,
 //! `quality`, `ext <name>`. Global flags: `--config`, `--keep`,
 //! `--skip-build`, `--skip-generate`, `--release`, `--verbose`, `--metrics`,
-//! `--metrics-format`, `--retry`, `--headed`, `--grep`.
+//! `--metrics-format`, `--retry`, `--headed`, `--grep`. The `e2e`
+//! subcommand additionally takes `--skip-ui-build`.
 //!
 //! The generated `testkit` binary wraps `codegraph_ops::cli::main()`.
 
@@ -104,6 +105,10 @@ enum Cmd {
     Cli,
     /// Full E2E: Supabase -> generate -> build -> Playwright.
     E2e {
+        /// Skip the SvelteKit production build (preview may serve a stale
+        /// bundle — normally the build failure is fatal).
+        #[arg(long)]
+        skip_ui_build: bool,
         /// Extra args passed through to Playwright.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra: Vec<String>,
@@ -222,13 +227,17 @@ pub async fn main() -> i32 {
             };
             run_cli(&config, &args).await
         }
-        Cmd::E2e { extra } => {
+        Cmd::E2e {
+            skip_ui_build,
+            extra,
+        } => {
             let args = E2eArgs {
                 keep: cli.keep,
                 skip_build: cli.skip_build,
                 skip_generate: cli.skip_generate,
                 release: cli.release,
                 headed: cli.headed,
+                skip_ui_build: *skip_ui_build,
                 playwright_args: build_playwright_args(&cli, extra),
             };
             output::bold("Running end-to-end tests");
@@ -324,6 +333,7 @@ async fn run_full(cli: &Cli, config: &OpsConfig) -> i32 {
         skip_generate: cli.skip_generate,
         release: cli.release,
         headed: cli.headed,
+        skip_ui_build: false,
         playwright_args: build_playwright_args(cli, &[]),
     };
     let e2e_code = match run_e2e(config, &e2e_args).await {
