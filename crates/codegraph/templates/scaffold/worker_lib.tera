@@ -13,6 +13,9 @@ pub mod workflow_client;
 {% endif %}pub mod domain;
 pub mod error;
 pub mod middleware;
+// Routers reference the metrics middleware at the crate root (monolith
+// layout); re-export the nested worker module so both paths resolve.
+pub use middleware::metrics_middleware;
 pub mod qs_query;
 pub mod worker;
 {% if has_webhooks %}pub mod webhook_api;

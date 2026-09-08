@@ -534,10 +534,18 @@ fn emit_adapter_delete(tree: &EntityTree, code: &mut String) {
          \x20   ) -> Result<(), Box<dyn std::error::Error>> {{"
     )
     .unwrap();
+    // Surface the rows-affected count: under RLS a cross-tenant (or already
+    // deleted) row matches zero rows, which the handler maps to NotFound
+    // (404) instead of a silent 204.
     writeln!(
         code,
-        "        {qmod}::delete_{snake}().bind(tx, &id).await.map_err(|e| e.to_string())?;",
+        "        let deleted = {qmod}::delete_{snake}().bind(tx, &id).await.map_err(|e| e.to_string())?;",
         snake = tree.table_name
+    )
+    .unwrap();
+    writeln!(
+        code,
+        "        if deleted == 0 {{\n            return Err(\"not found\".into());\n        }}"
     )
     .unwrap();
     writeln!(code, "        Ok(())").unwrap();
@@ -1046,6 +1054,9 @@ fn emit_response_expr(
     }
     writeln!(code, "{pad}    created_at: {row_var}.created_at,").unwrap();
     writeln!(code, "{pad}    updated_at: {row_var}.updated_at,").unwrap();
+    // DTO fields the tree does not load (e.g. base-inherited junction arrays
+    // under nested composition nodes) default to None instead of failing E0063.
+    writeln!(code, "{pad}    ..Default::default()").unwrap();
     writeln!(code, "{pad}}}").unwrap();
 }
 
@@ -1110,6 +1121,9 @@ fn emit_child_reads_cornucopia(
             emit_child_col_read_value_cornucopia(code, col, &format!("{pad}            "));
         }
         emit_child_field_population(code, &child.child_tables, &format!("{pad}            "));
+        // Child DTO fields the cornucopia read does not load (nested junction
+        // arrays etc.) default to None instead of failing E0063.
+        writeln!(code, "{pad}            ..Default::default()").unwrap();
         writeln!(code, "{pad}        }});").unwrap();
         writeln!(code, "{pad}    }}").unwrap();
         writeln!(code, "{pad}    items").unwrap();

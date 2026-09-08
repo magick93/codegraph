@@ -525,3 +525,64 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         Ok((results, total))
     }
 }
+use crate::domain::recruiting::application::dto_response::ApplicationResponse;
+
+impl CandidateRepositoryImpl {
+
+    pub(crate) async fn fetch_application_for_candidate(
+        &self,
+        db: &DatabaseTransaction,
+        source_id: Uuid,
+    ) -> Result<Vec<ApplicationResponse>, Box<dyn std::error::Error>> {
+        let rows = crate::entity::recruiting_application::Entity::find()
+            .filter(crate::entity::recruiting_application::Column::CandidateId.eq(source_id))
+            .all(db)
+            .await?;
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            results.push(ApplicationResponse {
+                id: row.id,
+                application_id: row.application_id,
+                applied_date: row.applied_date,
+                candidate_id: row.candidate_id,
+                status: row.status.and_then(|v| v.parse().ok()),
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                ..Default::default()
+            });
+        }
+        Ok(results)
+    }
+
+    pub(crate) async fn fetch_application_batch_for_candidate(
+        &self,
+        db: &DatabaseTransaction,
+        source_ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<ApplicationResponse>>, Box<dyn std::error::Error>> {
+        let rows = crate::entity::recruiting_application::Entity::find()
+            .filter(crate::entity::recruiting_application::Column::CandidateId.is_in(source_ids.to_vec()))
+            .all(db)
+            .await?;
+        let mut result: std::collections::HashMap<Uuid, Vec<ApplicationResponse>> = std::collections::HashMap::new();
+        for id in source_ids {
+            result.entry(*id).or_insert_with(Vec::new);
+        }
+        for row in rows {
+            let key = match row.candidate_id {
+                Some(v) => v,
+                None => continue,
+            };
+            result.entry(key).or_default().push(ApplicationResponse {
+                id: row.id,
+                application_id: row.application_id,
+                applied_date: row.applied_date,
+                candidate_id: row.candidate_id,
+                status: row.status.and_then(|v| v.parse().ok()),
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                ..Default::default()
+            });
+        }
+        Ok(result)
+    }
+}

@@ -62,6 +62,43 @@ pub async fn psql_exec_file_ok(target: &PgTarget, path: &Path) -> OpsResult<()> 
     }
 }
 
+/// Run `psql -q -f <path>` with `-v name=value` psql variables — for seed
+/// scripts that reference `:'var'` placeholders. Returns Err if psql exits
+/// non-zero or the file is missing.
+pub async fn psql_exec_file_with_vars(
+    target: &PgTarget,
+    path: &Path,
+    vars: &[(&str, &str)],
+) -> OpsResult<()> {
+    if !path.is_file() {
+        return Err(OpsError::PathNotFound(path.to_path_buf()));
+    }
+    let file_arg = path.to_string_lossy().into_owned();
+    let assignments: Vec<String> = vars
+        .iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect();
+    let mut extra: Vec<&str> = Vec::with_capacity(assignments.len() * 2 + 3);
+    for assignment in &assignments {
+        extra.push("-v");
+        extra.push(assignment);
+    }
+    extra.push("-q");
+    extra.push("-f");
+    extra.push(&file_arg);
+    let cmd = psql_command(target, &extra)?;
+    let out = run_psql(cmd).await?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(command_failure(
+            &format!("psql -f {}", path.display()),
+            "",
+            &out,
+        ))
+    }
+}
+
 /// Scan `<migration_dir>/*.sql` for `CREATE EXTENSION IF NOT EXISTS <name>`
 /// statements and return the names missing from the target database
 /// (`pg_available_extensions`). Names deduplicated, extension name parsed

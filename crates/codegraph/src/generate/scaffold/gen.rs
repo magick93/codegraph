@@ -374,6 +374,28 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: lib_rs,
         });
 
+        // Cornucopia client plumbing for the monolith: the per-domain worker
+        // scaffold emits its own `db_client.rs` (see worker.rs); the monolith
+        // needs the same ClientSource/DbTx abstraction at the crate root when
+        // the cornucopia repositories are selected. `db_client.tera` only
+        // interpolates `worker_name` / `name` in comments, so a synthetic
+        // context is sufficient.
+        if project.is_cornucopia() {
+            let db_client = render_template_with_project(
+                tera,
+                "scaffold/db_client.tera",
+                &serde_json::json!({
+                    "worker_name": project.app_name,
+                    "name": "monolith",
+                }),
+                project,
+            )?;
+            files.push(GeneratedFile {
+                path: self.output_dir.join("src").join("db_client.rs"),
+                content: db_client,
+            });
+        }
+
         let error_rs = render_template_with_project(tera, "scaffold/error.tera", &ctx, project)?;
         files.push(GeneratedFile {
             path: self.output_dir.join("src").join("error.rs"),

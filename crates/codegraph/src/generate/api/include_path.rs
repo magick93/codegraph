@@ -158,6 +158,50 @@ pub async fn resolve_include_paths_for_topology(
     }
 }
 
+/// [`resolve_include_paths_for_topology`] with the standard entity gate
+/// applied: non-root entities (`role != "root"`) are skipped unless they
+/// declare an explicit non-empty `allow_include`.
+///
+/// This is the gate the handler, DTO, and repository generators all apply
+/// before resolving paths. Exposing it here lets emitters that are invoked
+/// without pre-resolved paths (e.g. [`crate::generate::ddd::
+/// repository_emitter::RepositoryImplEmitter::emit`] called outside the
+/// pipeline) derive the exact same include surface the handler hydrates —
+/// keeping the handler↔repository fetch-method contract intact regardless
+/// of caller.
+pub async fn resolve_include_paths_gated(
+    db: &dyn GraphQuerier,
+    config: &codegraph_config::DomainConfig,
+    domain: &str,
+    schema_title: &str,
+    workers_topology: bool,
+) -> Result<Vec<ResolvedIncludePath>> {
+    let entity_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(schema_title));
+    let has_explicit_include = entity_cfg
+        .and_then(|ec| ec.allow_include.as_ref())
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    let is_root = entity_cfg
+        .and_then(|ec| ec.role.as_deref())
+        .map(|r| r == "root")
+        .unwrap_or(true);
+    if !(has_explicit_include || is_root) {
+        return Ok(Vec::new());
+    }
+    resolve_include_paths_for_topology(
+        db,
+        config,
+        domain,
+        schema_title,
+        entity_cfg.and_then(|ec| ec.allow_include.as_ref()),
+        workers_topology,
+    )
+    .await
+}
+
 /// Drop include paths with cross-domain segments when `workers_topology` is
 /// set; monolith keeps them.
 fn filter_cross_domain_paths(

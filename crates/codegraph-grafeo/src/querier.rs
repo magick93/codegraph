@@ -48,9 +48,10 @@ fn query_gql(engine: &GrafeoEngine, gql: &str) -> Result<QResult, GraphError> {
     let result = session
         .execute(gql)
         .map_err(|e| GraphError::Query(format!("{e}")))?;
+    let rows = result.rows().to_vec();
     Ok(QResult {
         columns: result.columns,
-        rows: result.rows,
+        rows,
     })
 }
 
@@ -65,9 +66,10 @@ fn query_gql_params(
         .db()
         .execute_with_params(gql, params)
         .map_err(|e| GraphError::Query(format!("{e}")))?;
+    let rows = result.rows().to_vec();
     Ok(QResult {
         columns: result.columns,
-        rows: result.rows,
+        rows,
     })
 }
 

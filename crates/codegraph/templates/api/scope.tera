@@ -213,11 +213,42 @@ mod tests {
 {% else %}
 use axum::http::{Method, StatusCode};
 use cornucopia_queries::client::GenericClient;
-use cornucopia_queries::queries::platform::platform;
 use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::middleware::{AuthInfo, AuthMode};
+
+/// Parse the `api_keys_private.api_keys.scopes` JSONB column.
+///
+/// Two provisioning formats are understood:
+/// - string scopes: the current model ("{domain}.{entity}.{op}", "*", "admin")
+/// - legacy object scopes (pre-string-scope provisioning):
+///   `[{"entity_type":"*","entity_id":"*","action":"*"}]`. A wildcard action
+///   on a wildcard entity type grants everything; narrower entries are not
+///   expressible in the string model and are ignored.
+pub fn parse_scopes(value: serde_json::Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    if let Some(s) = item.as_str() {
+                        return Some(s.to_string());
+                    }
+                    let obj = item.as_object()?;
+                    let entity_type = obj.get("entity_type").and_then(|v| v.as_str())?;
+                    let action = obj.get("action").and_then(|v| v.as_str())?;
+                    if entity_type == "*" && action == "*" {
+                        Some("*".to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 /// Enforce that the API key backing this request holds `{domain}.{entity}.{op}`
 /// where `op` is derived from the HTTP method (GET/HEAD -> read, else write).

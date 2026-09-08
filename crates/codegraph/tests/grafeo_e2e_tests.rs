@@ -130,6 +130,7 @@ async fn generate_full_app(output_dir: &std::path::Path) {
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: Some(&project_config),
+            domain_config_dir: None,
         })
         .await
         .unwrap();

@@ -48,6 +48,7 @@ impl<'a> GeneratorTest<'a> {
                 build_plan: None,
                 ifml_frameworks: Vec::new(),
                 project_config: Some(&project),
+                domain_config_dir: None,
             }))
             .map_err(|e| vec![e.to_string()])?;
 

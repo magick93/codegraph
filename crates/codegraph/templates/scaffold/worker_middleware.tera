@@ -508,6 +508,28 @@ pub mod permission {
     #[derive(Clone)]
     pub struct RequiredPermission(pub String);
 
+    /// Extension-trait guard mirroring the monolith
+    /// `middleware/permission.rs`; routers import it as
+    /// `crate::middleware::permission::PermissionGuard as _`.
+    #[allow(dead_code)]
+    pub trait PermissionGuard<S> {
+        fn guard(self, resource: &'static str, action: &'static str) -> Self;
+    }
+
+    #[allow(dead_code)]
+    impl<S: Clone + 'static> PermissionGuard<S> for axum::routing::MethodRouter<S> {
+        fn guard(self, resource: &'static str, action: &'static str) -> Self {
+            self
+                // from_fn first (inner), Extension second (outer): the
+                // extension must insert the permission BEFORE the middleware
+                // reads it.
+                .route_layer(axum::middleware::from_fn(require_permission))
+                .route_layer(Extension(RequiredPermission(format!(
+                    "{resource}:{action}"
+                ))))
+        }
+    }
+
     fn has_permission(_auth_info: &AuthInfo, _required: &str) -> bool {
         true
     }

@@ -21,6 +21,9 @@ pub struct E2eArgs {
     pub skip_generate: bool,
     pub release: bool,
     pub headed: bool,
+    /// Skip the SvelteKit production build. DANGEROUS: `vite preview` will
+    /// then serve whatever stale bundle happens to be in `dist/`.
+    pub skip_ui_build: bool,
     pub playwright_args: Vec<String>,
 }
 
@@ -57,6 +60,11 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
             "supabase.dir did not resolve to a path".to_string(),
         ));
     };
+
+    // Port preflight: the suite binds both ports itself, and a leftover dev
+    // server must fail the run in seconds instead of after supabase/build.
+    crate::preflight::ensure_port_free(config.manifest.servers.api_port)?;
+    crate::preflight::ensure_port_free(config.manifest.servers.ui_port)?;
 
     let mut supervisor = Supervisor::new(args.keep);
 
@@ -176,6 +184,7 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
                 config.app_dir.join("target").display()
             ))
         })?;
+    crate::preflight::ensure_binary_fresh(&config.app_dir, &binary)?;
     output::ok(format!("Using binary {}", binary.display()));
 
     // 6. Services.
@@ -220,11 +229,19 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
             output::warn(format!("pnpm install failed (continuing): {e}"));
         }
     }
-    output::info("Building SvelteKit production bundle (best-effort)...");
-    if let Err(e) = run_blocking("pnpm", &["run", "build"], &config.ui_dir) {
-        output::warn(format!(
-            "pnpm run build failed (preview may serve a stale bundle): {e}"
-        ));
+    if args.skip_ui_build {
+        output::warn(
+            "--skip-ui-build: skipping SvelteKit build — preview may serve a STALE bundle",
+        );
+    } else {
+        output::info("Building SvelteKit production bundle...");
+        // A failed build is fatal: a stale UI bundle produces baffling test
+        // failures far removed from the real cause.
+        run_blocking("pnpm", &["run", "build"], &config.ui_dir).map_err(|e| {
+            OpsError::TestFailure(format!(
+                "SvelteKit build failed (use --skip-ui-build to override): {e}"
+            ))
+        })?;
     }
     let ui_url = config.ui_url();
     {
@@ -281,13 +298,24 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         cmd.env("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", chromium);
     }
     cmd.current_dir(&config.ui_dir);
-    let status = cmd
-        .status()
+    let out = cmd
+        .output()
         .map_err(|e| OpsError::Command(format!("failed to spawn playwright: {e}")))?;
-    let passed = status.success();
+    // stdout/stderr are captured (needed for the per-project tally); print
+    // them through after completion so the full run log stays visible.
+    print!("{}", String::from_utf8_lossy(&out.stdout));
+    eprint!("{}", String::from_utf8_lossy(&out.stderr));
+    let passed = out.status.success();
+    let tallies = tally_playwright_projects(&String::from_utf8_lossy(&out.stdout));
 
     // 8. Summary.
     output::section("=== E2E Summary ===");
+    if !tallies.is_empty() {
+        output::info("Per-project Playwright results:");
+        for t in &tallies {
+            println!("  {}: {} passed, {} failed", t.project, t.passed, t.failed);
+        }
+    }
     if passed {
         output::ok("ALL E2E TESTS PASSED");
     } else {
@@ -301,6 +329,65 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
             "Playwright E2E suite failed".to_string(),
         ))
     }
+}
+
+/// Per-project Playwright pass/fail tally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectTally {
+    pub project: String,
+    pub passed: usize,
+    pub failed: usize,
+}
+
+/// Tally Playwright's list-format result lines, `✓/✗ <n> [<project>] › ...`,
+/// into per-project pass/fail counts (first-seen project order). Lines that
+/// don't match the format (summaries, retry banners, failure re-prints) are
+/// ignored. The run index `<n>` is optional (varies by Playwright version).
+pub fn tally_playwright_projects(output: &str) -> Vec<ProjectTally> {
+    let mut tallies: Vec<ProjectTally> = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim_start();
+        let (failed, rest) = if let Some(rest) = trimmed.strip_prefix('✓') {
+            (false, rest)
+        } else if let Some(rest) = trimmed
+            .strip_prefix('✗')
+            .or_else(|| trimmed.strip_prefix('✘'))
+        {
+            (true, rest)
+        } else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        // Optional run index: `✓ 12 [chromium] › ...`.
+        let rest = match rest.split_once(' ') {
+            Some((index, remainder)) if index.parse::<u32>().is_ok() => remainder.trim_start(),
+            _ => rest,
+        };
+        let Some(rest) = rest.strip_prefix('[') else {
+            continue;
+        };
+        let Some((project, rest)) = rest.split_once(']') else {
+            continue;
+        };
+        if project.is_empty() || !rest.trim_start().starts_with('›') {
+            continue;
+        }
+        match tallies.iter_mut().find(|t| t.project == project) {
+            Some(t) => {
+                if failed {
+                    t.failed += 1;
+                } else {
+                    t.passed += 1;
+                }
+            }
+            None => tallies.push(ProjectTally {
+                project: project.to_string(),
+                passed: usize::from(!failed),
+                failed: usize::from(failed),
+            }),
+        }
+    }
+    tallies
 }
 
 /// Build the graph-binary `run ...` argument vector. Only manifest flags
@@ -601,5 +688,68 @@ mod tests {
         std::fs::write(app.join("main.rs"), "fn main() {}").unwrap();
         let cfg = OpsConfig::from_manifest(manifest_with(None), dir.path().to_path_buf()).unwrap();
         assert!(generation_outputs(&cfg));
+    }
+
+    #[test]
+    fn tallies_parse_playwright_list_output() {
+        let sample = "\
+Running 5 tests using 2 workers
+
+  ✓  1 [chromium] › tests/generated/candidate.spec.ts:14:5 › create (1.2s)
+  ✓  2 [chromium] › tests/generated/candidate.spec.ts:30:5 › list (0.9s)
+  ✘  3 [firefox] › tests/generated/candidate.spec.ts:14:5 › create (2.0s)
+  ✓  4 [firefox] › tests/generated/candidate.spec.ts:30:5 › list (0.8s)
+  -    5 skipped (not counted)
+
+  ✘  6 [webkit] › tests/generated/other.spec.ts:5:3 › broken (0.3s)
+
+1 failed
+    1) [chromium] › tests/generated/candidate.spec.ts:14:5 › create › error text
+";
+        let tallies = tally_playwright_projects(sample);
+        assert_eq!(
+            tallies,
+            vec![
+                ProjectTally {
+                    project: "chromium".into(),
+                    passed: 2,
+                    failed: 0
+                },
+                ProjectTally {
+                    project: "firefox".into(),
+                    passed: 1,
+                    failed: 1
+                },
+                ProjectTally {
+                    project: "webkit".into(),
+                    passed: 0,
+                    failed: 1
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn tallies_tolerate_missing_run_index_and_alt_fail_marker() {
+        // Some Playwright versions print `✓ [project] › ...` without the
+        // index, and `✘` as the failure marker.
+        let sample = "\
+  ✓ [chromium] › a.spec.ts:1:1 › ok
+  ✘ [chromium] › b.spec.ts:2:2 › bad
+";
+        let tallies = tally_playwright_projects(sample);
+        assert_eq!(tallies.len(), 1);
+        assert_eq!(tallies[0].project, "chromium");
+        assert_eq!(tallies[0].passed, 1);
+        assert_eq!(tallies[0].failed, 1);
+    }
+
+    #[test]
+    fn tallies_ignore_non_result_lines() {
+        assert!(tally_playwright_projects("").is_empty());
+        assert!(tally_playwright_projects("2 passed (5.1s)\n1 failed").is_empty());
+        assert!(tally_playwright_projects("  ➤ SRV log line").is_empty());
+        // `✓` without the `[project] ›` shape is not a result line.
+        assert!(tally_playwright_projects("✓ all good").is_empty());
     }
 }

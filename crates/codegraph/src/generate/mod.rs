@@ -176,7 +176,7 @@ pub async fn resolve_parent_fk_column_same_domain(
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use codegraph_core::caching_querier::CachingQuerier;
 use codegraph_core::traits::GraphQuerier;
@@ -460,6 +460,21 @@ pub struct GeneratorOpts<'a> {
     pub ifml_frameworks: Vec<String>,
     /// Project-level config injected into all template contexts.
     pub project_config: Option<&'a ProjectConfig>,
+    /// Directory of the `domains.toml` config used for this run. Optional
+    /// sibling configs (`reports.toml`) are discovered relative to this
+    /// directory instead of the process current directory, so server
+    /// composition no longer depends on the invoking shell's cwd.
+    /// `None` falls back to the current directory (legacy behavior).
+    pub domain_config_dir: Option<&'a Path>,
+}
+
+/// Resolves the directory in which the optional `reports.toml` config is
+/// looked up: the domain config directory when supplied, else the process
+/// current directory (legacy behavior).
+fn reports_config_dir(domain_config_dir: Option<&Path>) -> PathBuf {
+    domain_config_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
 }
 
 /// Run all generators for all entities in topological order.
@@ -487,6 +502,7 @@ pub async fn run_generators(
         build_plan: None,
         ifml_frameworks: vec![],
         project_config: None,
+        domain_config_dir: None,
     })
     .await
 }
@@ -520,6 +536,7 @@ pub async fn run_generators_with_domain_types_base(
         build_plan: None,
         ifml_frameworks: vec![],
         project_config: None,
+        domain_config_dir: None,
     })
     .await
 }
@@ -541,6 +558,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         build_plan, // used for has_webhooks / profile-based filter
         ifml_frameworks,
         project_config,
+        domain_config_dir,
     } = opts;
 
     // Output roots for `.codegraph-manifest.json` emission: the main output
@@ -643,8 +661,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let has_reports = build_plan
         .map(|bp| bp.has_global_gen("report_views"))
         .unwrap_or(true)
-        && std::env::current_dir()
-            .unwrap_or_default()
+        && reports_config_dir(domain_config_dir)
             .join("reports.toml")
             .exists();
     let has_atproto = build_plan
@@ -1076,7 +1093,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         Box::new(cli::scaffold::CliScaffoldGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
     );
     global_gens.push(Box::new(
-        db::report_view::ReportViewGenerator::new(output_dir).with_dialect(make_dialect()),
+        db::report_view::ReportViewGenerator::new(output_dir)
+            .with_reports_dir(domain_config_dir)
+            .with_dialect(make_dialect()),
     ) as Box<dyn GlobalGenerator>);
     global_gens.push(Box::new(
         db::seed::SeedDataGenerator::new(output_dir, seed_config.map(|p| p.to_path_buf()))
@@ -2716,6 +2735,24 @@ fn prune_entity_mod(src_dir: &Path) -> Result<Option<GeneratedFile>> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_reports_config_dir_prefers_domain_config_dir_over_cwd() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("reports.toml"), "[[reports]]").unwrap();
+
+        // Supplied dir wins over cwd, so generation composition does not
+        // depend on the invoking shell's cwd.
+        assert!(reports_config_dir(Some(dir.path()))
+            .join("reports.toml")
+            .exists());
+
+        // None falls back to the process current directory (legacy behavior).
+        assert_eq!(
+            reports_config_dir(None),
+            std::env::current_dir().unwrap_or_default()
+        );
+    }
 
     #[test]
     fn clean_generated_output_preserves_dto_included_in_live_dirs() {

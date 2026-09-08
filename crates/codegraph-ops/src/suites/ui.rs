@@ -52,6 +52,12 @@ pub async fn run_ui(config: &OpsConfig, args: &UiArgs) -> OpsResult<()> {
         )));
     }
 
+    // Port preflight: the preview server binds the UI port below (the API
+    // port is intentionally occupied — the running API is this suite's
+    // precondition), and a stale process holding the port must fail fast.
+    crate::preflight::ensure_port_free(config.manifest.servers.ui_port)?;
+    output::ok(format!("Port {} free", config.manifest.servers.ui_port));
+
     // 3. Install dependencies if needed (best-effort).
     if !config.ui_dir.join("node_modules").is_dir() {
         output::info("Installing UI dependencies (pnpm install)...");

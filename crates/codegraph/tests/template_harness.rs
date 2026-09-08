@@ -7140,11 +7140,17 @@ async fn repository_emitter_produces_fetch_methods_with_include() {
 }
 
 #[tokio::test]
-async fn repository_emitter_omits_fetch_methods_without_include() {
+async fn repository_emitter_resolves_include_paths_when_none_provided() {
     use codegraph::generate::api::include_path::ResolvedIncludePath;
     use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
 
-    let mock = setup_include_mock();
+    // Cross-generator contract: the handler's hydration block calls
+    // `repo.fetch_{alias}_for_{module}(...)` for every include path it
+    // resolves. When `emit` is invoked without pre-resolved paths (e.g.
+    // from test harnesses or tooling outside the pipeline), it must derive
+    // the same include surface itself — an empty caller-supplied list must
+    // not silently strip the hydration methods the handler emits.
+    let mock = setup_include_mock_with_refs();
     let config = include_domain_config();
 
     let paths: &[ResolvedIncludePath] = &[];
@@ -7163,12 +7169,60 @@ async fn repository_emitter_omits_fetch_methods_without_include() {
         .unwrap();
 
     assert!(
-        !code.contains("fetch_person_for_worker"),
-        "Should NOT emit fetch_person_for_worker without include paths. Got:\n{code}"
+        code.contains("pub(crate) async fn fetch_person_for_worker"),
+        "Should self-resolve and emit fetch_person_for_worker when the caller \
+         supplies no paths (handler hydration expects it). Got:\n{code}"
     );
     assert!(
-        !code.contains("fetch_person_batch_for_worker"),
-        "Should NOT emit fetch_person_batch_for_worker without include paths. Got:\n{code}"
+        code.contains("pub(crate) async fn fetch_person_batch_for_worker"),
+        "Should self-resolve and emit the batch variant too. Got:\n{code}"
+    );
+}
+
+#[tokio::test]
+async fn repository_emitter_self_resolution_respects_entity_gate() {
+    use codegraph::generate::api::include_path::ResolvedIncludePath;
+    use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
+
+    // The internal resolution must apply the same gate as the handler/DTO/
+    // repository generators: a non-root entity without explicit
+    // `allow_include` gets no include paths, so no fetch methods are emitted.
+    let mock = setup_include_mock_with_refs();
+    let toml_str = r#"
+[defaults]
+operations = ["create", "read", "update", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["WorkerType", "PersonType"]
+
+[domains.hr.entity_config.WorkerType]
+role = "child"
+operations = ["create", "read", "update", "list"]
+"#;
+    let config = codegraph_config::config::parse_domain_config_str(toml_str).unwrap();
+
+    let paths: &[ResolvedIncludePath] = &[];
+    let emitter = RepositoryImplEmitter;
+    let code = emitter
+        .emit(
+            &mock,
+            "WorkerType",
+            "hr",
+            &config,
+            None,
+            paths,
+            &codegraph::generate::ProjectConfig::default(),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        !code.contains("fetch_person_for_worker"),
+        "Child entity without allow_include must NOT gain fetch methods from \
+         self-resolution. Got:\n{code}"
     );
 }
 

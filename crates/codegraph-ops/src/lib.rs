@@ -13,8 +13,8 @@
 //! cargo run -p testkit -- smoke
 //! ```
 //!
-//! Subcommands: `api`, `cli`, `e2e`, `ui`, `full`, `clean`, `smoke`,
-//! `quality`, `ext <name>`.
+//! Subcommands: `api`, `cli`, `e2e`, `ui`, `full`, `workers`, `clean`,
+//! `smoke`, `quality`, `ext <name>`.
 //!
 //! External integrations (Xero, Stripe, IRD, ...) plug in via the
 //! [`ext::TestExtension`] trait or manifest `[[extensions]]` exec entries —
@@ -30,6 +30,7 @@ pub mod metrics;
 pub mod migrate;
 pub mod output;
 pub mod pg;
+pub mod preflight;
 pub mod proc;
 pub mod suites;
 pub mod wait;
