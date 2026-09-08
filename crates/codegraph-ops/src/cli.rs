@@ -1,7 +1,7 @@
 //! CLI entry point for the ops harness (clap).
 //!
-//! Subcommands: `api`, `cli`, `e2e`, `ui`, `full`, `clean`, `smoke`,
-//! `quality`, `ext <name>`. Global flags: `--config`, `--keep`,
+//! Subcommands: `api`, `cli`, `e2e`, `ui`, `full`, `workers`, `clean`,
+//! `smoke`, `quality`, `ext <name>`. Global flags: `--config`, `--keep`,
 //! `--skip-build`, `--skip-generate`, `--release`, `--verbose`, `--metrics`,
 //! `--metrics-format`, `--retry`, `--headed`, `--grep`. The `e2e`
 //! subcommand additionally takes `--skip-ui-build`.
@@ -21,6 +21,7 @@ use crate::suites::e2e::{run_e2e, E2eArgs};
 use crate::suites::quality::run_quality;
 use crate::suites::smoke::{run_smoke, SmokeArgs};
 use crate::suites::ui::{run_ui, UiArgs};
+use crate::suites::workers::{run_workers, WorkersArgs};
 
 const DEFAULT_MANIFEST: &str = "codegraph-ops.toml";
 
@@ -121,6 +122,9 @@ enum Cmd {
     },
     /// Run the API suite then the E2E suite.
     Full,
+    /// Workers topology (per-domain workers + gateway, cornucopia):
+    /// regenerate -> migrate plain Postgres -> build -> boot -> smoke + hurl.
+    Workers,
     /// Stop services and remove generated output.
     Clean,
     /// Smoke-test a remote deployment.
@@ -257,6 +261,15 @@ pub async fn main() -> i32 {
             // accumulates exit codes.
             return run_full(&cli, &config).await;
         }
+        Cmd::Workers => {
+            let args = WorkersArgs {
+                keep: cli.keep,
+                skip_generate: cli.skip_generate,
+                release: cli.release,
+            };
+            output::bold("Running workers-topology tests");
+            run_workers(&config, &args).await
+        }
         Cmd::Clean => {
             cmd_clean(&config).await;
             Ok(())
@@ -381,6 +394,7 @@ fn subcommand_name(cmd: &Cmd) -> &'static str {
         Cmd::E2e { .. } => "e2e",
         Cmd::Ui { .. } => "ui",
         Cmd::Full => "full",
+        Cmd::Workers => "workers",
         Cmd::Clean => "clean",
         Cmd::Smoke { .. } => "smoke",
         Cmd::Quality { .. } => "quality",

@@ -925,7 +925,11 @@ fn cornucopia_db_env(config: &OpsConfig) -> Option<(String, String)> {
 }
 
 /// Provision an API key via public.create_api_key(org, name, permissions).
-async fn provision_api_key(config: &OpsConfig, org_id: &str, name: &str) -> OpsResult<String> {
+pub(crate) async fn provision_api_key(
+    config: &OpsConfig,
+    org_id: &str,
+    name: &str,
+) -> OpsResult<String> {
     let sql = format!(
         "SELECT public.create_api_key('{org_id}'::uuid, '{name}', \
          '[{{\"entity_type\":\"*\",\"entity_id\":\"*\",\"action\":\"*\"}}]'::jsonb);"
@@ -934,7 +938,7 @@ async fn provision_api_key(config: &OpsConfig, org_id: &str, name: &str) -> OpsR
     parse_api_key_json(&out).ok_or_else(|| OpsError::TestFailure("could not parse API key".into()))
 }
 
-fn parse_api_key_json(out: &str) -> Option<String> {
+pub(crate) fn parse_api_key_json(out: &str) -> Option<String> {
     let trimmed = out.trim();
     if trimmed.is_empty() {
         return None;
@@ -1037,7 +1041,7 @@ fn run_capture_env(
 /// A naive `contains("100.0%")` check is a false positive: a fully-failed run
 /// prints `Failed files: 2 (100.0%)`. The authoritative signal is the
 /// `Failed files:` count — the suite passed iff it is 0.
-fn hurl_suite_passed(stdout: &str) -> bool {
+pub(crate) fn hurl_suite_passed(stdout: &str) -> bool {
     for line in stdout.lines() {
         let t = line.trim();
         let Some(rest) = t.strip_prefix("Failed files:") else {
@@ -1054,7 +1058,7 @@ fn hurl_suite_passed(stdout: &str) -> bool {
 }
 
 /// Full-output log path for one hurl file: `{root_dir}/test-results/hurl/{name}.log`.
-fn hurl_log_path(config: &OpsConfig, name: &str) -> std::path::PathBuf {
+pub(crate) fn hurl_log_path(config: &OpsConfig, name: &str) -> std::path::PathBuf {
     config
         .root_dir
         .join("test-results")
@@ -1063,7 +1067,7 @@ fn hurl_log_path(config: &OpsConfig, name: &str) -> std::path::PathBuf {
 }
 
 /// Persist a hurl run's combined stdout+stderr to `path` (parent created).
-fn write_hurl_log(path: &Path, contents: &str) -> std::io::Result<()> {
+pub(crate) fn write_hurl_log(path: &Path, contents: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -1073,7 +1077,7 @@ fn write_hurl_log(path: &Path, contents: &str) -> std::io::Result<()> {
 /// Interesting excerpt of a failed hurl run: every line containing `error:`,
 /// plus up to 10 following lines each — that's where hurl prints the
 /// `actual:` / `expected:` / locator context that makes failures debuggable.
-fn hurl_error_excerpt(output: &str) -> Vec<String> {
+pub(crate) fn hurl_error_excerpt(output: &str) -> Vec<String> {
     let mut excerpt = Vec::new();
     let mut keep = 0usize;
     for line in output.lines() {
@@ -1092,7 +1096,7 @@ fn hurl_error_excerpt(output: &str) -> Vec<String> {
 /// simple rules as the codegen `pluralize` Tera filter (append `s`; `s`-final
 /// → `es`; `y`-final not preceded by ey/ay/oy → `ies`). Used when the
 /// manifest doesn't carry the resolved plural route.
-fn pluralize_entity_route(entity: &str) -> String {
+pub(crate) fn pluralize_entity_route(entity: &str) -> String {
     let (prefix, seg) = match entity.rsplit_once('/') {
         Some((p, s)) => (Some(p), s),
         None => (None, entity),
@@ -1125,7 +1129,10 @@ fn split_status_body(text: &str) -> (String, String) {
 }
 
 /// GET an HTTP URL, returning (status, body). Body excludes the status tail.
-async fn http_get_body(url: &str, headers: &[(&str, &str)]) -> OpsResult<(String, String)> {
+pub(crate) async fn http_get_body(
+    url: &str,
+    headers: &[(&str, &str)],
+) -> OpsResult<(String, String)> {
     let mut cmd = Command::new("curl");
     cmd.arg("-s").arg("-w").arg("\n%{http_code}");
     for (k, v) in headers {
@@ -1139,7 +1146,7 @@ async fn http_get_body(url: &str, headers: &[(&str, &str)]) -> OpsResult<(String
 }
 
 /// POST an HTTP URL with a JSON body, returning (status, body).
-async fn http_post_body(
+pub(crate) async fn http_post_body(
     url: &str,
     data: &str,
     headers: &[(&str, &str)],
@@ -1161,7 +1168,7 @@ async fn http_post_body(
 }
 
 /// GET an HTTP URL, returning just the status code.
-async fn http_status(url: &str, headers: &[(&str, &str)]) -> OpsResult<u16> {
+pub(crate) async fn http_status(url: &str, headers: &[(&str, &str)]) -> OpsResult<u16> {
     let mut cmd = Command::new("curl");
     cmd.arg("-s")
         .arg("-o")
@@ -1211,7 +1218,7 @@ fn count_files_with_suffix(dir: &Path, suffix: &str) -> usize {
         .count()
 }
 
-fn parse_requests(hurl_output: &str) -> usize {
+pub(crate) fn parse_requests(hurl_output: &str) -> usize {
     hurl_output
         .lines()
         .find_map(|l| {
