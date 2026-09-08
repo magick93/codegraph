@@ -423,10 +423,11 @@ impl GraphIngestor for GrafeoEngine {
                     EdgeType::ExtendsSchema => "ExtendsSchema",
                     _ => "DependsOn",
                 };
+                let props_str = build_edge_props_string(props);
                 let gql = format!(
                     "MATCH (a:Schema {{title: $from_title}}), (b:Schema {{title: $to_title}}) \
-                     INSERT (a)-[:{}]->(b)",
-                    label_str,
+                     INSERT (a)-[:{}{}]->(b)",
+                    label_str, props_str,
                 );
                 let params = HashMap::from([
                     ("from_title".into(), grafeo::Value::String(from_id.into())),

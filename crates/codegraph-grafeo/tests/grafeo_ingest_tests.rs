@@ -71,8 +71,9 @@ async fn test_ingest_schema() {
     let result = session
         .execute("MATCH (s:Schema {title: 'PersonType'}) RETURN s.schema_id")
         .unwrap();
-    assert_eq!(result.rows.len(), 1, "Schema node not found after ingest");
-    assert_eq!(result.rows[0][0].as_str().unwrap(), "common/PersonType");
+    let rows = result.rows();
+    assert_eq!(rows.len(), 1, "Schema node not found after ingest");
+    assert_eq!(rows[0][0].as_str().unwrap(), "common/PersonType");
 }
 
 #[tokio::test]
@@ -89,12 +90,13 @@ async fn test_ingest_property() {
     let result = session
         .execute("MATCH (:Schema {title: 'PersonType'})-[:HasProperty]->(p:Property) RETURN p.name")
         .unwrap();
+    let rows = result.rows();
     assert_eq!(
-        result.rows.len(),
+        rows.len(),
         1,
         "Property not found via HasProperty edge"
     );
-    assert_eq!(result.rows[0][0].as_str().unwrap(), "givenName");
+    assert_eq!(rows[0][0].as_str().unwrap(), "givenName");
 }
 
 #[tokio::test]
@@ -113,7 +115,8 @@ async fn test_ingest_codelist() {
     let result = session
         .execute("MATCH (c:CodeList {name: 'GenderCodeList'}) RETURN c.name")
         .unwrap();
-    assert_eq!(result.rows.len(), 1, "CodeList not found after ingest");
+    let rows = result.rows();
+    assert_eq!(rows.len(), 1, "CodeList not found after ingest");
 }
 
 #[tokio::test]
@@ -144,8 +147,9 @@ async fn test_ingest_enum_value() {
             "MATCH (:CodeList {name: 'GenderCodeList'})-[:HasEnumValue]->(v:EnumValue) RETURN v.value",
         )
         .unwrap();
+    let rows = result.rows();
     assert_eq!(
-        result.rows.len(),
+        rows.len(),
         1,
         "EnumValue not found via HasEnumValue edge"
     );
@@ -181,12 +185,13 @@ async fn test_ingest_edge() {
             "MATCH (:Schema {title: 'PersonType'})-[r:DependsOn]->(:Schema {title: 'AddressType'}) RETURN r.dependency_type",
         )
         .unwrap();
+    let rows = result.rows();
     assert_eq!(
-        result.rows.len(),
+        rows.len(),
         1,
         "DependsOn edge not found after ingest_edge"
     );
-    assert_eq!(result.rows[0][0].as_str().unwrap(), "ref");
+    assert_eq!(rows[0][0].as_str().unwrap(), "ref");
 }
 
 #[tokio::test]
