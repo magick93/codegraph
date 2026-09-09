@@ -183,6 +183,7 @@ impl CapabilityRegistry {
                 let section_target = match section_name.as_str() {
                     "api" => GeneratorTarget::Api,
                     "ui" => GeneratorTarget::Ui,
+                    "emdash" => GeneratorTarget::Ui,
                     "cli" => GeneratorTarget::Cli,
                     "mobile" => GeneratorTarget::Mobile,
                     _ => GeneratorTarget::Common,

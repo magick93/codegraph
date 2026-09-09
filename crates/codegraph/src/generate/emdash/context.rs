@@ -816,7 +816,10 @@ pub fn build_entity_context(
         form_fields,
         auto_fields,
         detail_fields,
-        has_create: ops.create,
+        // `suppress_create` removes the generic create form when the entity's
+        // payload needs bespoke shaping (nested value objects, derivations);
+        // a custom action + bespoke form replaces it.
+        has_create: ops.create && !cfg.suppress_create,
         has_read: ops.read,
         has_update: ops.update,
         has_delete: ops.delete,
