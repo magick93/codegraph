@@ -522,7 +522,8 @@ pub fn build_entity_context(
     // label collides, re-derive each colliding field's label from its full
     // key ("Person Name", "Person Did", …).
     {
-        let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        let mut counts: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
         for f in &form_fields {
             *counts.entry(f.label.clone()).or_insert(0) += 1;
         }
