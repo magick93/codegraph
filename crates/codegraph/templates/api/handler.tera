@@ -162,6 +162,7 @@ pub async fn create(
 /// Get {{ entity_name }} by ID.
 #[utoipa::path(
     get,
+    operation_id = "{{ domain }}_{{ module_name }}_get_by_id",
 {% if role == "child" %}
     path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }",
     params(
