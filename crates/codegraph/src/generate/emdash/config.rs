@@ -195,6 +195,11 @@ pub struct FormFieldOverride {
 #[serde(rename_all = "snake_case")]
 pub struct PublicListConfig {
     pub route: String,
+    /// Mark this entity's list as the domain's home page
+    /// (`{domain-kebab}.astro`). Required when several entities declare
+    /// public_list; otherwise the first (alphabetical) wins.
+    #[serde(default)]
+    pub home: Option<bool>,
     #[serde(default)]
     pub filter: Option<PublicFilterConfig>,
 }

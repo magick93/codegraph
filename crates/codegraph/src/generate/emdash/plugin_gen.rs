@@ -301,7 +301,8 @@ impl DomainGenerator for EmdashPluginGenerator {
             let list_entity = ctx
                 .entities
                 .iter()
-                .find(|e| e.public_list.is_some())
+                .find(|e| e.public_list.as_ref().and_then(|pl| pl.home).unwrap_or(false))
+                .or_else(|| ctx.entities.iter().find(|e| e.public_list.is_some()))
                 .unwrap_or(&ctx.entities[0]);
             files.push(GeneratedFile {
                 path: pages_root.join(format!("{}.astro", ctx.domain_kebab)),
