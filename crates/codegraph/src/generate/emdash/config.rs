@@ -121,6 +121,10 @@ pub struct EmdashEntityConfig {
     pub public_submit: Option<PublicSubmitConfig>,
     #[serde(default)]
     pub suppress_create: bool,
+    /// Expose the record `did` field with a minted placeholder value
+    /// (backend requires `did` on create; matches the hand-written package).
+    #[serde(default)]
+    pub mint_did: bool,
     #[serde(default)]
     pub bespoke: Vec<String>,
     #[serde(default)]

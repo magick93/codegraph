@@ -236,6 +236,7 @@ pub struct EntityCtx {
     pub auto_fields: Vec<AutoFieldCtx>,
     pub detail_fields: Vec<ColumnCtx>,
     pub has_create: bool,
+    pub mint_did: bool,
     pub has_read: bool,
     pub has_update: bool,
     pub has_delete: bool,
@@ -823,6 +824,7 @@ pub fn build_entity_context(
         // payload needs bespoke shaping (nested value objects, derivations);
         // a custom action + bespoke form replaces it.
         has_create: ops.create && !cfg.suppress_create,
+        mint_did: cfg.mint_did,
         has_read: ops.read,
         has_update: ops.update,
         has_delete: ops.delete,

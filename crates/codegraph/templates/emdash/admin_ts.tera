@@ -146,8 +146,20 @@ const {{ e.pascal | upper }}_FIELD_LABELS: Record<string, string> = {
 {%- endfor %}
 };
 {%- if e.has_create or e.has_update %}
+{%- if e.mint_did %}
+/** Generate a plausible placeholder DID for a newly-authored record. */
+function placeholder{{ e.pascal }}Did(): string {
+  return `did:plc:{{ e.module }}-${Math.random().toString(36).slice(2, 10)}`;
+}
+{%- endif %}
 function {{ e.camel }}FormFields(existing?: unknown) {
   return [
+{%- if e.mint_did %}
+    adminTextInput("did", "DID", {
+      placeholder: "did:plc:…",
+      initialValue: strOf(existing, "did") || placeholder{{ e.pascal }}Did(),
+    }),
+{%- endif %}
 {%- for f in e.form_fields %}
 {%- if f.control == "number" %}
     adminNumberInput("{{ f.name }}", "{{ f.label }}", { initialValue: numOf(existing, "{{ f.name }}") }),
@@ -196,6 +208,9 @@ function build{{ e.pascal }}Payload(values: Record<string, unknown>): Record<str
   }
 {%- endif %}
 {%- endfor %}
+{%- if e.mint_did %}
+  if (!payload.did) payload.did = placeholder{{ e.pascal }}Did();
+{%- endif %}
   return payload;
 }
 {% endif %}
