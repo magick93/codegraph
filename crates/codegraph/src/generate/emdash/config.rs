@@ -120,8 +120,8 @@ pub struct EmdashEntityConfig {
     #[serde(default)]
     pub public_submit: Option<PublicSubmitConfig>,
     #[serde(default)]
-    #[serde(default)]
     pub suppress_create: bool,
+    #[serde(default)]
     pub bespoke: Vec<String>,
     #[serde(default)]
     pub custom_actions: Option<Vec<CustomActionConfig>>,
