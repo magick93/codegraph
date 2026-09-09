@@ -153,9 +153,12 @@ impl CapabilityRegistry {
     /// without the `grpc` feature).
     pub fn requires_build_plan(&self, name: &str) -> bool {
         self.generators.get(name).is_some_and(|c| {
-            c.features_required
-                .iter()
-                .any(|f| matches!(f.as_str(), "grpc_backend" | "atproto_backend" | "fern_sdk"))
+            c.features_required.iter().any(|f| {
+                matches!(
+                    f.as_str(),
+                    "grpc_backend" | "atproto_backend" | "fern_sdk" | "emdash_plugins"
+                )
+            })
         })
     }
 
@@ -180,6 +183,7 @@ impl CapabilityRegistry {
                 let section_target = match section_name.as_str() {
                     "api" => GeneratorTarget::Api,
                     "ui" => GeneratorTarget::Ui,
+                    "emdash" => GeneratorTarget::Ui,
                     "cli" => GeneratorTarget::Cli,
                     "mobile" => GeneratorTarget::Mobile,
                     _ => GeneratorTarget::Common,
@@ -246,6 +250,8 @@ pub struct BuildPlan {
     pub has_fern: bool,
     /// Fern SDK languages to generate (from `fern_sdk_languages` feature, defaults to ["typescript"]).
     pub fern_sdk_languages: Vec<String>,
+    /// Whether EmDash plugin generation is enabled (from `emdash_plugins` feature).
+    pub has_emdash: bool,
     /// Persistence provider for entity/repository code generation (default: SeaOrm).
     pub persistence_provider: PersistenceProvider,
     /// DTO serde key casing for domain-types DTOs (default: "snake").
@@ -349,6 +355,13 @@ impl BuildPlan {
             })
             .unwrap_or_else(|| vec!["typescript".to_string()]);
 
+        // Parse emdash plugin feature
+        let has_emdash = profile
+            .features
+            .get("emdash_plugins")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         // Parse persistence_provider from features (default: SeaOrm)
         let persistence_provider = profile
             .features
@@ -407,6 +420,7 @@ impl BuildPlan {
             atproto_tenancy,
             has_fern,
             fern_sdk_languages,
+            has_emdash,
             persistence_provider,
             dto_key_casing,
             deployment_topology,
@@ -458,6 +472,7 @@ impl BuildPlan {
             atproto_tenancy: "shared_pds".to_string(),
             has_fern: false,
             fern_sdk_languages: vec!["typescript".to_string()],
+            has_emdash: false,
             persistence_provider: PersistenceProvider::default(),
             dto_key_casing: "snake".to_string(),
             deployment_topology: DeploymentTopology::default(),
@@ -652,6 +667,10 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
 
         // ── Fern SDK generators ─────────────────────────────────────────
         cap("fern_config",          Global, Api,   &["fern_sdk"], &[]),
+
+        // ── EmDash plugin generators ────────────────────────────────────
+        cap("emdash_plugin",          Domain, Ui,  &["emdash_plugins"], &[]),
+        cap("emdash_plugin_scaffold", Global, Ui,  &["emdash_plugins"], &[]),
 
         // ── AT Protocol generators ─────────────────────────────────────
         cap("lexicon",              Entity, Common, &["atproto_backend"], &[]),
