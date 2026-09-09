@@ -911,6 +911,30 @@ fn emit_adapter_tree(tree: &EntityTree, code: &mut String) {
         snake = tree.table_name
     )
     .unwrap();
+    if as_json {
+        // Deployed-worker map (deployments ⨝ workers ⨝ person ⨝ name),
+        // keyed by position id — parity with the SeaORM find_tree merge.
+        writeln!(
+            code,
+            "        let pos_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();"
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "        let worker_rows = {qmod}::tree_{snake}_workers().bind(db, &pos_ids).all().await.map_err(|e| e.to_string())?;",
+            snake = tree.table_name
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "        let mut worker_map: std::collections::HashMap<Uuid, serde_json::Value> = std::collections::HashMap::new();"
+        )
+        .unwrap();
+        writeln!(code, "        for wr in worker_rows {{").unwrap();
+        writeln!(code, "            worker_map.insert(wr.position_id, wr.deployed_worker);").unwrap();
+        writeln!(code, "        }}").unwrap();
+        writeln!(code).unwrap();
+    }
     writeln!(
         code,
         "        let mut items = Vec::with_capacity(rows.len());"
@@ -922,9 +946,22 @@ fn emit_adapter_tree(tree: &EntityTree, code: &mut String) {
     if as_json {
         writeln!(
             code,
-            "            items.push(serde_json::to_value(resp).map_err(|e| e.to_string())?);"
+            "            let mut val = serde_json::to_value(resp).map_err(|e| e.to_string())?;"
         )
         .unwrap();
+        for inc in &tree.tree_include {
+            writeln!(code, "            if let Some(worker) = worker_map.get(&row.id) {{").unwrap();
+            writeln!(code, "            if let Some(obj) = val.as_object_mut() {{").unwrap();
+            writeln!(
+                code,
+                "                obj.insert(\"{}\".to_string(), worker.clone());",
+                inc.alias
+            )
+            .unwrap();
+            writeln!(code, "            }}").unwrap();
+            writeln!(code, "            }}").unwrap();
+        }
+        writeln!(code, "            items.push(val);").unwrap();
     } else {
         writeln!(code, "            items.push(resp);").unwrap();
     }
