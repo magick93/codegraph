@@ -499,6 +499,16 @@ function handleFormSubmit(
 {%- endif %}
 {%- endfor %}
     default:
+{%- if p.admin_bespoke_imports %}
+      // Bespoke form flows prefix their action ids with "bespoke:" and may
+      // export an optional handleFormSubmit — the escape hatch for flows the
+      // generic create/update forms cannot express (e.g. derived fields).
+      if (interaction.action_id.startsWith("bespoke:")) {
+        const h = (bespoke as { handleFormSubmit?: typeof handleFormSubmit })
+          .handleFormSubmit;
+        if (h) return h(interaction, ctx);
+      }
+{%- endif %}
       return Promise.resolve(listErrorPage());
   }
 }
