@@ -8,6 +8,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::generate::api::api_model::resolve_entity_operations;
+use crate::generate::ddd::repository_emitter::RepositoryImplEmitter;
 use crate::generate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
 use crate::generate::render_template_with_project;
 use crate::generate::traits::{EntityGenerator, GeneratedFile};
@@ -29,6 +30,14 @@ pub struct QueryContext {
     /// Whether this entity supports soft-delete/audit.
     #[serde(default)]
     pub is_auditable: bool,
+    /// Hierarchy parent field configured — emits `find_tree` on the query
+    /// handler so the tree endpoint works on every persistence provider.
+    #[serde(default)]
+    pub hierarchy_field: bool,
+    /// Whether the tree query returns JOINed `serde_json::Value` rows
+    /// (tree_include configured) versus typed `{Entity}Response` rows.
+    #[serde(default)]
+    pub tree_include: bool,
 }
 
 pub struct QueryGenerator {
@@ -114,6 +123,19 @@ impl EntityGenerator for QueryGenerator {
         )
         .await;
 
+        // Tree support mirrors the handler/repository emitters: entities with
+        // a hierarchy_field get a `find_tree` query-handler method so the
+        // tree endpoint can route through it on every persistence provider.
+        let hierarchy_field = entity_cfg.and_then(|ec| ec.hierarchy_field.as_ref()).is_some();
+        let tree_include = if hierarchy_field {
+            RepositoryImplEmitter
+                .resolve_tree_include(db, schema_title, &domain, config, parent_ref.as_deref())
+                .await
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
         let policies = db.get_policies_for_schema(schema_title).await?;
         let is_auditable = if policies.is_empty() {
             config
@@ -139,6 +161,8 @@ impl EntityGenerator for QueryGenerator {
             module_name: module_name.clone(),
             domain: domain.clone(),
             is_auditable,
+            hierarchy_field,
+            tree_include,
         };
 
         let content = render_template_with_project(tera, "ddd/query.tera", &ctx, project)?;
