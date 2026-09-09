@@ -159,6 +159,8 @@ pub struct CustomActionCtx {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PublicListCtx {
     pub route: String,
+    /// Pins this entity's list as the domain's home page (site `{domain}.astro`).
+    pub home: bool,
     pub filter_field: Option<String>,
     /// JS literal for the equality filter (`true`, `"x"`, `3`, ...).
     pub filter_value: Option<String>,
@@ -662,6 +664,7 @@ pub fn build_entity_context(
             };
             PublicListCtx {
                 route: p.route.clone(),
+                home: p.home.unwrap_or(false),
                 filter_field,
                 filter_value,
             }
