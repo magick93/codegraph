@@ -86,6 +86,21 @@ pub struct Cli {
     /// Filter Playwright tests by pattern (repeatable).
     #[arg(long, global = true, value_name = "PATTERN")]
     grep: Vec<String>,
+
+    /// Write a machine-readable JSON results report to FILE (api, e2e,
+    /// workers): pass/fail counts, failing titles, stage timings, exit code.
+    #[arg(long, global = true, value_name = "FILE")]
+    results: Option<PathBuf>,
+
+    /// Playwright retry count for the e2e suite (passed through as
+    /// `--retries=N`).
+    #[arg(long, global = true, value_name = "N")]
+    pw_retries: Option<u32>,
+
+    /// Override the codegraph checkout root; exported as `CODEGRAPH_ROOT`
+    /// for hooks and generated path-dep normalization.
+    #[arg(long, global = true, value_name = "PATH")]
+    codegraph_root: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -110,6 +125,11 @@ enum Cmd {
         /// bundle — normally the build failure is fatal).
         #[arg(long)]
         skip_ui_build: bool,
+        /// When the main Playwright run fails, rerun only the failed tests
+        /// (`--last-failed`) in the same session; a green retry counts as
+        /// transient and passes the suite.
+        #[arg(long)]
+        retry_failed: bool,
         /// Extra args passed through to Playwright.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra: Vec<String>,
@@ -165,6 +185,13 @@ enum Cmd {
 pub async fn main() -> i32 {
     let cli = Cli::parse();
     output::set_verbose(cli.verbose);
+    if let Some(root) = &cli.codegraph_root {
+        // Child processes (hooks, cargo, the generated app) inherit this, so
+        // generated manifests and hooks can reference the checkout via
+        // `{env:CODEGRAPH_ROOT}` instead of a hardcoded absolute path.
+        std::env::set_var("CODEGRAPH_ROOT", root);
+        output::info(format!("CODEGRAPH_ROOT={}", root.display()));
+    }
 
     let manifest_path = match cli.config.clone() {
         Some(path) => path,
@@ -204,6 +231,7 @@ pub async fn main() -> i32 {
                 release: cli.release,
                 metrics_file: cli.metrics.as_ref().map(|p| p.display().to_string()),
                 retry: cli.retry,
+                results_file: cli.results.as_ref().map(|p| p.display().to_string()),
             };
             output::bold("Running API integration tests");
             run_api(&config, &args).await
@@ -222,6 +250,7 @@ pub async fn main() -> i32 {
                     release: cli.release,
                     metrics_file: None,
                     retry: cli.retry,
+                    results_file: cli.results.as_ref().map(|p| p.display().to_string()),
                 };
                 if let Err(e) = run_api(&config, &args).await {
                     return report_error("api", e);
@@ -235,6 +264,7 @@ pub async fn main() -> i32 {
         }
         Cmd::E2e {
             skip_ui_build,
+            retry_failed,
             extra,
         } => {
             let args = E2eArgs {
@@ -244,6 +274,8 @@ pub async fn main() -> i32 {
                 release: cli.release,
                 headed: cli.headed,
                 skip_ui_build: *skip_ui_build,
+                retry_failed: *retry_failed,
+                results_file: cli.results.as_ref().map(|p| p.display().to_string()),
                 playwright_args: build_playwright_args(&cli, extra),
             };
             output::bold("Running end-to-end tests");
@@ -268,6 +300,7 @@ pub async fn main() -> i32 {
                 keep: cli.keep,
                 skip_generate: cli.skip_generate,
                 release: cli.release,
+                results_file: cli.results.as_ref().map(|p| p.display().to_string()),
             };
             output::bold("Running workers-topology tests");
             run_workers(&config, &args).await
@@ -338,6 +371,7 @@ async fn run_full(cli: &Cli, config: &OpsConfig) -> i32 {
         release: cli.release,
         metrics_file: cli.metrics.as_ref().map(|p| p.display().to_string()),
         retry: cli.retry,
+        results_file: cli.results.as_ref().map(|p| p.display().to_string()),
     };
     let api_code = match run_api(config, &api_args).await {
         Ok(()) => None,
@@ -353,6 +387,8 @@ async fn run_full(cli: &Cli, config: &OpsConfig) -> i32 {
         release: cli.release,
         headed: cli.headed,
         skip_ui_build: false,
+        retry_failed: false,
+        results_file: cli.results.as_ref().map(|p| p.display().to_string()),
         playwright_args: build_playwright_args(cli, &[]),
     };
     let e2e_code = match run_e2e(config, &e2e_args).await {
@@ -417,6 +453,9 @@ fn build_playwright_args(cli: &Cli, extra: &[String]) -> Vec<String> {
     for pattern in &cli.grep {
         args.push("--grep".to_string());
         args.push(pattern.clone());
+    }
+    if let Some(retries) = cli.pw_retries {
+        args.push(format!("--retries={retries}"));
     }
     args.extend(extra.iter().cloned());
     args

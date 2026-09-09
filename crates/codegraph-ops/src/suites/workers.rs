@@ -118,6 +118,8 @@ pub struct WorkersArgs {
     pub keep: bool,
     pub skip_generate: bool,
     pub release: bool,
+    /// Write a machine-readable `--results` JSON report to this path.
+    pub results_file: Option<String>,
 }
 
 /// Port for the worker at 0-based index `i`: `3001 + i`.
@@ -348,6 +350,19 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
 
     // ---- Summary ----
     let ok = summarize(&counters);
+    if let Some(results_file) = &args.results_file {
+        let mut report = crate::results::ResultsReport::new(
+            "workers",
+            &config.manifest_path,
+            config.manifest.profile.as_deref(),
+            &config.metrics,
+        );
+        report.passed = counters.passes;
+        report.failed = counters.failures;
+        report.failures = counters.failure_log.clone();
+        report.exit = i32::from(!ok);
+        let _ = report.write(std::path::Path::new(results_file));
+    }
     if ok {
         Ok(())
     } else {

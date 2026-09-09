@@ -8,6 +8,7 @@ use crate::config::OpsConfig;
 use crate::error::{OpsError, OpsResult};
 use crate::output;
 use crate::proc::{ManagedProcess, Supervisor};
+use crate::results::{ResultsReport, SuiteFailure};
 use crate::wait::wait_for_url;
 
 /// Logs for the e2e services.
@@ -24,6 +25,12 @@ pub struct E2eArgs {
     /// Skip the SvelteKit production build. DANGEROUS: `vite preview` will
     /// then serve whatever stale bundle happens to be in `dist/`.
     pub skip_ui_build: bool,
+    /// When the main Playwright run fails, immediately rerun only the failed
+    /// tests (`--last-failed`) in the same session; a green retry counts as
+    /// transient and the suite passes.
+    pub retry_failed: bool,
+    /// Write a machine-readable `--results` JSON report to this path.
+    pub results_file: Option<String>,
     pub playwright_args: Vec<String>,
 }
 
@@ -301,12 +308,60 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     let out = cmd
         .output()
         .map_err(|e| OpsError::Command(format!("failed to spawn playwright: {e}")))?;
-    // stdout/stderr are captured (needed for the per-project tally); print
-    // them through after completion so the full run log stays visible.
-    print!("{}", String::from_utf8_lossy(&out.stdout));
+    // stdout/stderr are captured (needed for the per-project tally and the
+    // failed-test titles); print them through after completion so the full
+    // run log stays visible.
+    let stdout_text = String::from_utf8_lossy(&out.stdout).into_owned();
+    print!("{stdout_text}");
     eprint!("{}", String::from_utf8_lossy(&out.stderr));
-    let passed = out.status.success();
-    let tallies = tally_playwright_projects(&String::from_utf8_lossy(&out.stdout));
+    let mut passed = out.status.success();
+    let tallies = tally_playwright_projects(&stdout_text);
+    let mut failed_titles = failed_test_titles(&stdout_text);
+    let mut transient_resolved = 0usize;
+
+    // Retry just the failures, in-session: `--last-failed` reuses
+    // Playwright's own record of what failed, so the caller doesn't have to
+    // reconstruct grep patterns. Known-transient flakes (a server hiccup
+    // closing a socket mid-run) then don't fail an otherwise-green suite.
+    if !passed && args.retry_failed && !failed_titles.is_empty() {
+        output::section("E2E 7. Retry failed tests");
+        output::info(format!(
+            "rerunning {} failed test(s) via --last-failed...",
+            failed_titles.len()
+        ));
+        let mut retry_cmd = Command::new("npx");
+        retry_cmd.arg("playwright").arg("test").arg("--last-failed");
+        if args.headed {
+            retry_cmd.arg("--headed");
+        }
+        retry_cmd.args(&args.playwright_args);
+        for (key, value) in super::ui::playwright_env(config, api_key.as_deref()) {
+            retry_cmd.env(key, value);
+        }
+        if let Some(chromium) = find_chromium(&[
+            Path::new("/snap/bin/chromium"),
+            Path::new("/usr/bin/chromium-browser"),
+        ]) {
+            retry_cmd.env("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", chromium);
+        }
+        retry_cmd.current_dir(&config.ui_dir);
+        match retry_cmd.output() {
+            Ok(retry_out) => {
+                let retry_text = String::from_utf8_lossy(&retry_out.stdout).into_owned();
+                print!("{retry_text}");
+                eprint!("{}", String::from_utf8_lossy(&retry_out.stderr));
+                failed_titles = failed_test_titles(&retry_text);
+                if retry_out.status.success() {
+                    transient_resolved = failed_titles.len().max(1);
+                    passed = true;
+                    output::ok(format!(
+                        "{transient_resolved} failed test(s) passed on retry — transient"
+                    ));
+                }
+            }
+            Err(e) => output::warn(format!("retry run could not start: {e}")),
+        }
+    }
 
     // 8. Summary.
     output::section("=== E2E Summary ===");
@@ -317,9 +372,55 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         }
     }
     if passed {
-        output::ok("ALL E2E TESTS PASSED");
+        if transient_resolved > 0 {
+            output::ok(format!(
+                "ALL E2E TESTS PASSED ({transient_resolved} transient, passed on retry)"
+            ));
+        } else {
+            output::ok("ALL E2E TESTS PASSED");
+        }
     } else {
         output::fail("SOME E2E TESTS FAILED");
+        if !failed_titles.is_empty() {
+            output::info("Failed tests:");
+            for title in failed_titles.iter().take(20) {
+                println!("  - {title}");
+            }
+            if failed_titles.len() > 20 {
+                println!("  … and {} more", failed_titles.len() - 20);
+            }
+            output::info("Retry just the failures (same session state):");
+            let manifest = config.manifest_path.display();
+            println!("  testkit --config {manifest} e2e -- --last-failed");
+            let greps: Vec<String> = failed_titles
+                .iter()
+                .take(8)
+                .map(|t| format!("--grep \"{t}\""))
+                .collect();
+            if !greps.is_empty() {
+                println!("  testkit --config {manifest} e2e -- {}", greps.join(" "));
+            }
+        }
+    }
+    if let Some(results_file) = &args.results_file {
+        let mut report = ResultsReport::new(
+            "e2e",
+            &config.manifest_path,
+            config.manifest.profile.as_deref(),
+            &config.metrics,
+        );
+        report.passed = tallies.iter().map(|t| t.passed).sum();
+        report.failed = tallies.iter().map(|t| t.failed).sum();
+        report.failures = failed_titles
+            .iter()
+            .map(|title| SuiteFailure {
+                context: String::new(),
+                title: title.clone(),
+            })
+            .collect();
+        report.transient_resolved = transient_resolved;
+        report.exit = i32::from(!passed);
+        let _ = report.write(Path::new(results_file));
     }
     supervisor.shutdown_all().await;
     if passed {
@@ -388,6 +489,64 @@ pub fn tally_playwright_projects(output: &str) -> Vec<ProjectTally> {
         }
     }
     tallies
+}
+
+/// Extract the grep-able title path from Playwright failure result lines:
+///
+/// ```text
+/// ✘  3 [crud] › tests/x.owner.crud.test.ts:95:3 › Owner CRUD › owner can edit X (453ms)
+/// ```
+///
+/// → `Owner CRUD › owner can edit X`.
+///
+/// The `file:line:col` prefix and the trailing `(duration)` are stripped —
+/// `--grep` matches against the title path only, which is exactly why
+/// grepping hyphenated *file names* never matches anything.
+pub fn failed_test_titles(output: &str) -> Vec<String> {
+    let mut titles: Vec<String> = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed
+            .strip_prefix('✗')
+            .or_else(|| trimmed.strip_prefix('✘'))
+        else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        // Optional run index: `✘ 12 [project] › ...`.
+        let rest = match rest.split_once(' ') {
+            Some((index, remainder)) if index.parse::<u32>().is_ok() => remainder.trim_start(),
+            _ => rest,
+        };
+        let Some(rest) = rest.strip_prefix('[') else {
+            continue;
+        };
+        let Some((_, rest)) = rest.split_once(']') else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('›').map(str::trim_start) else {
+            continue;
+        };
+        // `file:line:col › Title path (duration)` — drop the first segment
+        // when a second one exists, then drop a trailing `(duration)`.
+        let mut segments = rest.split(" › ").peekable();
+        let _file = segments.next();
+        let title_parts: Vec<&str> = segments.collect();
+        if title_parts.is_empty() {
+            continue;
+        }
+        let mut title = title_parts.join(" › ");
+        if let Some(open) = title.rfind(" (") {
+            if title.ends_with(')') {
+                title.truncate(open);
+            }
+        }
+        let title = title.trim().to_string();
+        if !title.is_empty() && !titles.contains(&title) {
+            titles.push(title);
+        }
+    }
+    titles
 }
 
 /// Build the graph-binary `run ...` argument vector. Only manifest flags
@@ -751,5 +910,33 @@ Running 5 tests using 2 workers
         assert!(tally_playwright_projects("  ➤ SRV log line").is_empty());
         // `✓` without the `[project] ›` shape is not a result line.
         assert!(tally_playwright_projects("✓ all good").is_empty());
+    }
+
+    #[test]
+    fn failed_titles_strip_file_location_and_duration() {
+        let sample = "\
+  ✓  1 [crud] › tests/generated/a.spec.ts:14:5 › Owner CRUD › create (1.2s)
+  ✘  2 [crud] › tests/generated/x.owner.crud.test.ts:95:3 › Owner CRUD › owner can edit X (453ms)
+  ✘  3 [api] › tests/generated/y.api.crud.test.ts:184:3 › detail page shows all fields (16.4s)
+";
+        assert_eq!(
+            failed_test_titles(sample),
+            vec![
+                "Owner CRUD › owner can edit X",
+                "detail page shows all fields",
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_titles_dedupe_and_ignore_non_failures() {
+        let sample = "\
+  ✘ [crud] › tests/a.spec.ts:1:1 › duplicated title (1s)
+  ✘ [crud] › tests/a.spec.ts:1:1 › duplicated title (1s)
+2 passed (5.1s)
+1 failed
+  ✘ no project bracket here
+";
+        assert_eq!(failed_test_titles(sample), vec!["duplicated title"]);
     }
 }

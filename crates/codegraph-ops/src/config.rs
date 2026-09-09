@@ -16,6 +16,9 @@ use crate::pg::PgTarget;
 /// Resolved runtime config for one harness invocation.
 #[derive(Debug)]
 pub struct OpsConfig {
+    /// Path of the manifest this config was loaded from (best-effort:
+    /// `{root_dir}/codegraph-ops.toml` when built from an in-memory manifest).
+    pub manifest_path: PathBuf,
     pub manifest: OpsManifest,
     /// Directory containing `codegraph-ops.toml` — the base for manifest-relative
     /// paths (schemas, classifier, domains, ui, supabase, hurl, sql, hooks).
@@ -68,7 +71,9 @@ impl OpsConfig {
             .filter(|p| !p.as_os_str().is_empty())
             .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        Self::from_manifest(manifest, root_dir)
+        let mut config = Self::from_manifest(manifest, root_dir)?;
+        config.manifest_path = manifest_path.to_path_buf();
+        Ok(config)
     }
 
     /// Build a config from an already-parsed manifest.
@@ -114,6 +119,7 @@ impl OpsConfig {
         let metrics = Metrics::new();
 
         Ok(Self {
+            manifest_path: root_dir.join("codegraph-ops.toml"),
             hooks: manifest.hooks.clone(),
             manifest,
             root_dir,

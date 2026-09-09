@@ -14,6 +14,7 @@ use crate::ext::run_hooks;
 use crate::migrate::run_api_migrations_with_options;
 use crate::output;
 use crate::proc::{ManagedProcess, Supervisor};
+use crate::results::{ResultsReport, SuiteFailure};
 use crate::wait::wait_for_url;
 
 #[derive(Debug, Clone)]
@@ -28,6 +29,8 @@ pub struct ApiArgs {
     pub metrics_file: Option<String>,
     /// Retry failed hurl files up to this many times (0 = no retries).
     pub retry: u32,
+    /// Write a machine-readable `--results` JSON report to this path.
+    pub results_file: Option<String>,
 }
 
 /// True when a failed hurl file may be retried: the number of attempts used
@@ -37,11 +40,15 @@ pub fn should_retry(attempts_used: u32, max_retries: u32) -> bool {
     attempts_used < max_retries.saturating_add(1)
 }
 
-/// Pass/fail counters with verbose log-tail support.
+/// Pass/fail counters with failure diagnostics.
 #[derive(Debug, Default)]
 pub struct TestCounters {
     pub passes: usize,
     pub failures: usize,
+    /// Every failed check, in order — surfaced in the summary and the
+    /// `--results` JSON so consumers see *what* failed without re-parsing
+    /// styled output.
+    pub failure_log: Vec<SuiteFailure>,
 }
 
 impl TestCounters {
@@ -55,12 +62,19 @@ impl TestCounters {
     }
 
     pub fn fail_test(&mut self, msg: impl AsRef<str>) {
-        output::fail(format!("  FAIL {}", msg.as_ref()));
+        let msg = msg.as_ref();
+        output::fail(format!("  FAIL {msg}"));
         self.failures += 1;
-        if output::is_verbose() {
-            let log = "/tmp/codegraph-ops-app.log";
-            if let Ok(content) = std::fs::read_to_string(log) {
-                let tail: Vec<&str> = content.lines().rev().take(5).collect();
+        self.failure_log.push(SuiteFailure {
+            context: String::new(),
+            title: msg.to_string(),
+        });
+        // Failure context is attached ALWAYS (not only under --verbose): a
+        // failed check explains itself, removing a --verbose rerun.
+        let log = "/tmp/codegraph-ops-app.log";
+        if let Ok(content) = std::fs::read_to_string(log) {
+            let tail: Vec<&str> = content.lines().rev().take(5).collect();
+            if tail.iter().any(|l| !l.trim().is_empty()) {
                 output::warn("--- server log tail ---");
                 for line in tail.iter().rev() {
                     println!("    {line}");
@@ -106,6 +120,40 @@ pub async fn run_api(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
 
 async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     let mut counters = TestCounters::new();
+
+    // ---- 0. Generate + build ----
+    // By default the suite regenerates from the manifest's profile and
+    // rebuilds the app, so `testkit api` alone is generate → build → test
+    // (provider parity: the cornucopia manifest gets its profile passed to
+    // the graph binary and CORNUCOPIA_DATABASE_URL exported for the build).
+    // --skip-build skips both; --skip-generate skips only generation.
+    if !args.skip_build {
+        output::section("0. Generate + build");
+        config.metrics.begin("Generate + build");
+        if !args.skip_generate {
+            match (&config.manifest.graph_binary, &config.manifest.schemas_dir) {
+                (Some(graph), Some(_)) => {
+                    run_hooks(config, "pre_generate").await?;
+                    if let Err(e) = regenerate(config, graph) {
+                        output::fail(e.to_string());
+                        return Err(e);
+                    }
+                    run_hooks(config, "post_generate").await?;
+                    output::ok("Templates regenerated");
+                }
+                (Some(_), None) => output::warn("schemas_dir not configured — skipping generation"),
+                (None, _) => output::warn("no graph_binary configured — skipping generation"),
+            }
+        } else {
+            output::warn("generation skipped (--skip-generate)");
+        }
+        cargo_build_in(config, args.release).map_err(|e| {
+            output::fail(&e);
+            OpsError::TestFailure(format!("app build failed: {e}"))
+        })?;
+        output::ok("App built");
+        config.metrics.end();
+    }
 
     // ---- 1. Preflight ----
     output::section("1. Preflight");
@@ -899,6 +947,19 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     if let Some(metrics_file) = &args.metrics_file {
         let _ = config.metrics.append_tsv(Path::new(metrics_file), "api");
     }
+    if let Some(results_file) = &args.results_file {
+        let mut report = ResultsReport::new(
+            "api",
+            &config.manifest_path,
+            config.manifest.profile.as_deref(),
+            &config.metrics,
+        );
+        report.passed = counters.passes;
+        report.failed = counters.failures;
+        report.failures = counters.failure_log.clone();
+        report.exit = i32::from(!ok);
+        let _ = report.write(Path::new(results_file));
+    }
     supervisor.shutdown_all().await;
 
     if ok {
@@ -1305,6 +1366,32 @@ fn regenerate(config: &OpsConfig, graph_binary: &str) -> OpsResult<String> {
         )));
     }
     Ok(combined)
+}
+
+/// `cargo build` inside the generated app. Exports `CORNUCOPIA_DATABASE_URL`
+/// for the cornucopia provider (its `build.rs` connects to Postgres at build
+/// time). `Ok` only on a clean exit; `Err` carries the output tail.
+fn cargo_build_in(config: &OpsConfig, release: bool) -> Result<(), String> {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build");
+    if release {
+        cmd.arg("--release");
+    }
+    if let Some((key, value)) = cornucopia_db_env(config) {
+        cmd.env(key, value);
+    }
+    match cmd.current_dir(&config.app_dir).output() {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => {
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            Err(tail_lines(&text, 20))
+        }
+        Err(e) => Err(format!("failed to spawn cargo: {e}")),
+    }
 }
 
 /// `cargo check` inside the generated app. `Ok` only when the check exits
