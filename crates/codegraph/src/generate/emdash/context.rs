@@ -516,6 +516,23 @@ pub fn build_entity_context(
         });
     }
 
+    // Flattened value-object fields (e.g. personDid/personName/
+    // personRelationship from PersonReferenceType) inherit the VO's single
+    // label ("Person") — ambiguous in forms and validation messages. When a
+    // label collides, re-derive each colliding field's label from its full
+    // key ("Person Name", "Person Did", …).
+    {
+        let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for f in &form_fields {
+            *counts.entry(f.label.clone()).or_insert(0) += 1;
+        }
+        for f in &mut form_fields {
+            if counts.get(&f.label).copied().unwrap_or(0) > 1 {
+                f.label = humanize_key(&f.name);
+            }
+        }
+    }
+
     let title_field = cfg
         .title_field
         .clone()
