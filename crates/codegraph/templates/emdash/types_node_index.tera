@@ -1,0 +1,34 @@
+/**
+ * Minimal `@types/node` stub for the emdash-common type-check program.
+ *
+ * The generated Fern SDK (`@community-os/sdk`) ships as TypeScript sources,
+ * so `tsc --noEmit` type-checks its files as part of this package's program.
+ * The real `@types/node` breaks that program: its `compatibility/iterators.d.ts`
+ * plus undici's global `Headers` declarations union with the DOM lib's
+ * `Headers` inside the SDK's `core/fetcher/Headers.ts` and fail assignability
+ * (vite's `/// <reference types="node" />` drags the real @types/node in
+ * transitively via the emdash/astro type graph).
+ *
+ * This stub resolves the same `types="node"` references (via `typeRoots`) to
+ * just the Node-isms the SDK and this package actually use — `process` and
+ * `Error.captureStackTrace` — keeping undici/vite iterator globals out.
+ * Runtime Node APIs are irrelevant here: plugins execute in the EmDash
+ * sandbox (Workers), and `gateway.ts` already guards every `process` access
+ * with `typeof process === "undefined"`.
+ */
+
+declare var process: {
+  env: Record<string, string | undefined>;
+  versions: { node: string } & Record<string, string | undefined>;
+  platform: string;
+  arch: string;
+};
+
+declare var Buffer: {
+  from(input: string, encoding?: string): { toString(encoding?: string): string };
+  isBuffer(value: unknown): boolean;
+};
+
+declare interface ErrorConstructor {
+  captureStackTrace(targetObject: object, constructorOpt?: Function): void;
+}

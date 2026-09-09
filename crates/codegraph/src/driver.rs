@@ -136,6 +136,9 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
             has_atproto: plan.has_atproto,
             has_fern: plan.has_fern,
             fern_sdk_languages: plan.fern_sdk_languages.clone(),
+            has_emdash: plan.has_emdash,
+            emdash_site_pages_base: String::new(),
+            emdash_site_e2e_base: String::new(),
             atproto_authority: String::new(),
             atproto_tenancy: plan.atproto_tenancy.clone(),
             atproto_float_policy: resolved
@@ -337,6 +340,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         build_plan: build_plan.as_ref(),
         ifml_frameworks: ifml_framework.to_vec(),
         project_config: project_config.as_ref(),
+        emdash_plugins: None,
         domain_config_dir: config_path.parent(),
     })
     .await?;
@@ -686,6 +690,7 @@ pub async fn generate(
         build_plan: None,
         ifml_frameworks: ifml_frameworks.to_vec(),
         project_config: None,
+        emdash_plugins: None,
         domain_config_dir: config_path.parent(),
     })
     .await?;
