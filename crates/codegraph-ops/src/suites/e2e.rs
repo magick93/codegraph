@@ -321,9 +321,9 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     // closing a socket mid-run) then don't fail an otherwise-green suite.
     if !passed && args.retry_failed && !failed_titles.is_empty() {
         output::section("E2E 7. Retry failed tests");
+        let raw_failure_count = failed_titles.len();
         output::info(format!(
-            "rerunning {} failed test(s) via --last-failed...",
-            failed_titles.len()
+            "rerunning {raw_failure_count} failed test(s) via --last-failed..."
         ));
         let mut retry_cmd = Command::new("npx");
         retry_cmd.arg("playwright").arg("test").arg("--last-failed");
@@ -348,7 +348,7 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
                 eprint!("{}", String::from_utf8_lossy(&retry_out.stderr));
                 failed_titles = failed_test_titles(&retry_text);
                 if retry_out.status.success() {
-                    transient_resolved = failed_titles.len().max(1);
+                    transient_resolved = raw_failure_count;
                     passed = true;
                     output::ok(format!(
                         "{transient_resolved} failed test(s) passed on retry — transient"
