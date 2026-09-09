@@ -931,7 +931,11 @@ fn emit_adapter_tree(tree: &EntityTree, code: &mut String) {
         )
         .unwrap();
         writeln!(code, "        for wr in worker_rows {{").unwrap();
-        writeln!(code, "            worker_map.insert(wr.position_id, wr.deployed_worker);").unwrap();
+        writeln!(
+            code,
+            "            worker_map.insert(wr.position_id, wr.deployed_worker);"
+        )
+        .unwrap();
         writeln!(code, "        }}").unwrap();
         writeln!(code).unwrap();
     }
@@ -950,8 +954,16 @@ fn emit_adapter_tree(tree: &EntityTree, code: &mut String) {
         )
         .unwrap();
         for inc in &tree.tree_include {
-            writeln!(code, "            if let Some(worker) = worker_map.get(&row.id) {{").unwrap();
-            writeln!(code, "            if let Some(obj) = val.as_object_mut() {{").unwrap();
+            writeln!(
+                code,
+                "            if let Some(worker) = worker_map.get(&row.id) {{"
+            )
+            .unwrap();
+            writeln!(
+                code,
+                "            if let Some(obj) = val.as_object_mut() {{"
+            )
+            .unwrap();
             writeln!(
                 code,
                 "                obj.insert(\"{}\".to_string(), worker.clone());",

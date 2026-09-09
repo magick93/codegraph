@@ -126,7 +126,9 @@ impl EntityGenerator for QueryGenerator {
         // Tree support mirrors the handler/repository emitters: entities with
         // a hierarchy_field get a `find_tree` query-handler method so the
         // tree endpoint can route through it on every persistence provider.
-        let hierarchy_field = entity_cfg.and_then(|ec| ec.hierarchy_field.as_ref()).is_some();
+        let hierarchy_field = entity_cfg
+            .and_then(|ec| ec.hierarchy_field.as_ref())
+            .is_some();
         let tree_include = if hierarchy_field {
             RepositoryImplEmitter
                 .resolve_tree_include(db, schema_title, &domain, config, parent_ref.as_deref())
