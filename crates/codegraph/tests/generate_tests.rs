@@ -31,7 +31,7 @@ fn mock_schema(
         pg_type: "UUID".to_string(),
         rust_type: "Uuid".to_string(),
         sea_orm_type: "Uuid".to_string(),
-        rust_type_name: rust_type_name.clone(),
+        rust_type_name,
         pg_table_name: table_name.to_string(),
         api_path_segment: table_name.replace('_', "-"),
         parent_schema: None,

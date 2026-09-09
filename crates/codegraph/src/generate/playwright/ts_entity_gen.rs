@@ -241,7 +241,7 @@ async fn resolve_fk_target_meta(
         target.domain.as_deref().unwrap_or("public"),
         target.pg_table_name
     );
-    Some((domain, path, module, target.rust_type_name.clone()))
+    Some((domain, path, module, target.rust_type_name))
 }
 
 impl TsEntityGenerator {
@@ -473,7 +473,7 @@ impl EntityGenerator for TsEntityGenerator {
             has_fts,
             fts_search_field: fts_search_field.clone(),
             fts_search_field_required,
-            fts_secondary_field: fts_secondary_field.clone(),
+            fts_secondary_field,
             use_persona_token,
             permission_record_scoped,
             persona_did,

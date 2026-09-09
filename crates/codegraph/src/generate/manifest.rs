@@ -213,7 +213,7 @@ mod tests {
         std::fs::write(&path, b"x").unwrap();
         let files = vec![
             GeneratedFile {
-                path: path.clone(),
+                path,
                 content: String::new(),
             },
             write(root, "src/main.rs"),

@@ -60,7 +60,7 @@ impl Metrics {
     pub fn end(&self) {
         if let Some(active) = self.current.borrow_mut().take() {
             let duration_secs = active.start.elapsed().as_secs();
-            let name = active.name.clone();
+            let name = active.name;
             self.stages.borrow_mut().push(Stage {
                 name: name.clone(),
                 duration_secs,
@@ -75,7 +75,7 @@ impl Metrics {
     /// End the current stage with a skip reason (records 0s).
     pub fn skip(&self, reason: impl Into<String>) {
         if let Some(active) = self.current.borrow_mut().take() {
-            let name = active.name.clone();
+            let name = active.name;
             let reason = reason.into();
             self.stages.borrow_mut().push(Stage {
                 name: name.clone(),
@@ -88,7 +88,7 @@ impl Metrics {
     /// Mark the current stage as complete with an explicit label.
     pub fn end_with(&self, label: impl Into<String>) {
         if let Some(active) = self.current.borrow_mut().take() {
-            let name = active.name.clone();
+            let name = active.name;
             let label = label.into();
             self.stages.borrow_mut().push(Stage {
                 name: name.clone(),

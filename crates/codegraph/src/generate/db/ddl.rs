@@ -662,7 +662,7 @@ pub(crate) fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<D
             if col.is_array {
                 return None;
             }
-            let col_name = prop_name.clone();
+            let col_name = prop_name;
             if !description.is_empty() {
                 comments.push(ColumnComment {
                     column: col_name.clone(),

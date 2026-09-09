@@ -214,7 +214,7 @@ pub async fn build_entity_model(
     Ok(EntityModel {
         name: schema.rust_type_name.clone(),
         table_name: schema.pg_table_name.clone(),
-        entity_module: entity_module.clone(),
+        entity_module,
         domain: domain.to_string(),
         api_path: schema.api_path_segment.clone(),
         nsid,

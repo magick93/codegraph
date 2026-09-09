@@ -292,7 +292,7 @@ fn fullstack_variant_lite_strips_to_minimal() {
 
     assert_eq!(plan.domain_generators, vec!["router"]);
 
-    let mut global_gens = plan.global_generators.clone();
+    let mut global_gens = plan.global_generators;
     global_gens.sort();
     assert_eq!(global_gens, vec!["openapi", "scaffold", "ui_scaffold"]);
 

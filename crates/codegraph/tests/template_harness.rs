@@ -5879,8 +5879,8 @@ operations = ["create", "read", "update", "list"]
             )
             .with_extending_schema("PersonBaseType", legal_type.clone())
             .with_extending_schema("PersonBaseType", person_type.clone())
-            .with_extending_schema("PersonLegalInclusion", legal_type.clone())
-            .with_extending_schema("PersonLegalInclusion", person_type.clone())
+            .with_extending_schema("PersonLegalInclusion", legal_type)
+            .with_extending_schema("PersonLegalInclusion", person_type)
             .build()
     }
 

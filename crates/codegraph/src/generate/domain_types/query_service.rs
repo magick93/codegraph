@@ -56,7 +56,7 @@ impl EntityGenerator for QueryServiceGenerator {
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
         let entity_name = schema.rust_type_name.clone();
-        let module_name = schema.pg_table_name.clone();
+        let module_name = schema.pg_table_name;
 
         if module_name.is_empty() {
             return Ok(Vec::new());

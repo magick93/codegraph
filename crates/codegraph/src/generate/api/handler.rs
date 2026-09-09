@@ -218,10 +218,7 @@ impl EntityGenerator for HandlerGenerator {
                         {
                             Some(domain.clone())
                         } else {
-                            parent_schema
-                                .domain
-                                .clone()
-                                .or_else(|| Some(domain.clone()))
+                            parent_schema.domain.or_else(|| Some(domain.clone()))
                         };
                     } else {
                         resolved_parent_path_segment =
@@ -279,7 +276,7 @@ impl EntityGenerator for HandlerGenerator {
                     {
                         resolved_parent_path_segment =
                             Some(resolve_path_segment(None, &parent_schema));
-                        resolved_parent_module_name = Some(parent_schema.pg_table_name.clone());
+                        resolved_parent_module_name = Some(parent_schema.pg_table_name);
                         resolved_parent_domain = Some(domain.clone());
                     } else {
                         resolved_parent_path_segment =

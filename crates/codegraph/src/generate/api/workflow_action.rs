@@ -263,10 +263,7 @@ impl EntityGenerator for WorkflowActionGenerator {
                 if let Ok(Some(parent_schema)) = db.get_schema_in_domain(pt, &domain).await {
                     let seg = resolve_path_segment(None, &parent_schema);
                     let param = super::router::param_name_from_path_segment(&seg);
-                    let pdomain = parent_schema
-                        .domain
-                        .clone()
-                        .unwrap_or_else(|| domain.clone());
+                    let pdomain = parent_schema.domain.unwrap_or_else(|| domain.clone());
                     (Some(param), Some(seg), Some(pdomain))
                 } else {
                     let pn = super::router::strip_suffix(pt, &config.defaults.type_suffix);

@@ -141,7 +141,7 @@ async fn build_child_dto(
     // Add composite range field to child DTO (e.g. affiliation_period: String)
     if let Ok(Some(range)) = db.get_composite_range(&target_schema.title).await {
         child_fields.push(DtoField {
-            name: range.pg_column_name.clone(),
+            name: range.pg_column_name,
             rust_type: "String".to_string(),
             is_required: false,
             is_array: false,
@@ -1336,7 +1336,7 @@ impl DtoGenerator {
             &format!("{}WithIncludeResponse", entity_name),
             module_path.clone(),
         );
-        type_registry::register_type(&format!("{}IncludedData", entity_name), module_path.clone());
+        type_registry::register_type(&format!("{}IncludedData", entity_name), module_path);
         for path in include_paths {
             let type_name = if path.segments.len() > 1 {
                 format!("{}CombinedResponse", path.segments[0].entity_name)

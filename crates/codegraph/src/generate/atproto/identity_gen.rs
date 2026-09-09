@@ -97,7 +97,7 @@ impl GlobalGenerator for AtprotoIdentityEmitter {
         let handle_ctx = HandleContext {
             primary_did: did.clone(),
             handles: vec![HandleEntry {
-                domain: host.clone(),
+                domain: host,
                 did: did.clone(),
             }],
         };
@@ -111,9 +111,9 @@ impl GlobalGenerator for AtprotoIdentityEmitter {
         });
 
         let auth_ctx = AuthContext {
-            server_did: did.clone(),
+            server_did: did,
             signing_key_placeholder,
-            pds_endpoint: pds_url.clone(),
+            pds_endpoint: pds_url,
         };
 
         let auth_content =
