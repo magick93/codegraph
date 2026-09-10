@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
+
+  "slug": "{{ p.plugin_id }}",
+  "publisher": "did:plc:community-os",
+
+  "license": "MIT",
+  "author": { "name": "Community OS" },
+  "security": { "email": "security@example.com" },
+  "name": "Community {{ p.plugin_label }}",
+  "description": "{{ p.description }}",
+
+  "capabilities": ["content:read", "network:request"],
+  "allowedHosts": ["localhost", "127.0.0.1", "api.yourara.network"],
+
+  "storage": {
+{%- for s in p.storages %}
+    "{{ s.name }}": {
+      "indexes": {{ s.indexes_js }}
+    }{% if not loop.last %},{% endif %}
+{%- endfor %}
+  },
+
+  "admin": {
+    "pages": [
+{%- for e in p.entities %}
+      { "path": "{{ e.page_path }}", "label": "{{ e.page_label }}" {%- if e.page_icon %}, "icon": "{{ e.page_icon }}" {%- endif %} }{% if not loop.last %},{% endif %}
+{%- endfor %}
+    ]
+  }
+}

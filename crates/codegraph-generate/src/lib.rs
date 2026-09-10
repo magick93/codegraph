@@ -18,6 +18,7 @@ pub mod cli;
 pub mod db;
 pub mod ddd;
 pub mod domain_types;
+pub mod emdash;
 pub mod fern;
 pub mod grpc;
 pub mod hooks;
@@ -253,6 +254,17 @@ pub struct ProjectConfig {
     /// Fern SDK languages to generate (e.g. ["typescript", "rust"]).
     #[serde(default)]
     pub fern_sdk_languages: Vec<String>,
+    /// Whether EmDash plugin generation is enabled via profile feature flag.
+    #[serde(default)]
+    pub has_emdash: bool,
+    /// Repo-relative base path for the community site's public pages
+    /// (emdash plugin generator). Default: "apps/community-site/src/pages".
+    #[serde(default = "default_emdash_site_pages_base")]
+    pub emdash_site_pages_base: String,
+    /// Repo-relative base path for the community site's e2e suite
+    /// (emdash plugin generator). Default: "apps/community-site/e2e".
+    #[serde(default = "default_emdash_site_e2e_base")]
+    pub emdash_site_e2e_base: String,
     /// AT Protocol namespace authority (e.g. "nz.gravy").
     /// Read from domain config or hard-coded default. Empty string = atproto disabled.
     pub atproto_authority: String,
@@ -275,6 +287,14 @@ pub struct ProjectConfig {
     /// `cli_scaffold` generator). Defaults to false.
     #[serde(default)]
     pub cargo_workspace: bool,
+}
+
+fn default_emdash_site_pages_base() -> String {
+    emdash::DEFAULT_SITE_PAGES_BASE.to_string()
+}
+
+fn default_emdash_site_e2e_base() -> String {
+    emdash::DEFAULT_SITE_E2E_BASE.to_string()
 }
 
 impl ProjectConfig {
@@ -334,6 +354,9 @@ impl Default for ProjectConfig {
             has_atproto: false,
             has_fern: false,
             fern_sdk_languages: vec!["typescript".into()],
+            has_emdash: false,
+            emdash_site_pages_base: default_emdash_site_pages_base(),
+            emdash_site_e2e_base: default_emdash_site_e2e_base(),
             atproto_authority: String::new(),
             atproto_tenancy: "shared_pds".to_string(),
             atproto_float_policy: "integer_scaled".to_string(),
@@ -462,6 +485,10 @@ pub struct GeneratorOpts<'a> {
     pub ifml_frameworks: Vec<String>,
     /// Project-level config injected into all template contexts.
     pub project_config: Option<&'a ProjectConfig>,
+    /// EmDash plugin packages config (plugins.toml), loaded by the CLI
+    /// wrapper when the profile enables the `emdash_plugins` feature.
+    /// `None` (or an empty map) disables the emdash generators.
+    pub emdash_plugins: Option<crate::emdash::EmdashPluginsConfig>,
     /// Directory of the `domains.toml` config used for this run. Optional
     /// sibling configs (`reports.toml`) are discovered relative to this
     /// directory instead of the process current directory, so server
@@ -504,6 +531,7 @@ pub async fn run_generators(
         build_plan: None,
         ifml_frameworks: vec![],
         project_config: None,
+        emdash_plugins: None,
         domain_config_dir: None,
     })
     .await
@@ -538,6 +566,7 @@ pub async fn run_generators_with_domain_types_base(
         build_plan: None,
         ifml_frameworks: vec![],
         project_config: None,
+        emdash_plugins: None,
         domain_config_dir: None,
     })
     .await
@@ -644,6 +673,10 @@ struct GeneratorContext<'a> {
     ui_domains: &'a UiDomainConfig,
     /// Resolved project config: `project_config.unwrap_or(&default)`.
     project: &'a ProjectConfig,
+    /// The original optional project config. Kept alongside `project` because
+    /// `None` and `Some(default)` genuinely differ for the emdash site bases
+    /// (None ⇒ empty base vs Some ⇒ profile-provided path).
+    project_config: Option<&'a ProjectConfig>,
     current_target: DatabaseTarget,
     schema_base_dir: &'a Path,
     seed_config: Option<&'a Path>,
@@ -662,6 +695,8 @@ struct GeneratorContext<'a> {
     /// IFML framework targets (e.g. "svelte", "react"); empty defaults to
     /// `["svelte"]` when building the global generator set.
     ifml_frameworks: Vec<String>,
+    has_emdash: bool,
+    emdash_plugins: Option<crate::emdash::EmdashPluginsConfig>,
     has_seed: bool,
     has_webhooks: bool,
     has_reports: bool,
@@ -754,7 +789,8 @@ async fn build_generator_context<'a>(
         ext_points,
         build_plan, // used for has_webhooks / profile-based filter
         ifml_frameworks,
-        project_config: _project_config,
+        project_config,
+        emdash_plugins,
         domain_config_dir,
     } = opts;
 
@@ -779,6 +815,7 @@ async fn build_generator_context<'a>(
     // include DTOs) are resolvable when earlier entities process their imports.
     register_entity_types(config);
 
+    let has_emdash = build_plan.map(|bp| bp.has_emdash).unwrap_or(false);
     // Seed-provisioning (hr-seed sink + CLI) is strictly opt-in: unlike
     // webhooks it introduces a workspace-relative path dependency
     // (`../../hr-seed`), so plan-less runs and profiles that do not list
@@ -862,6 +899,9 @@ async fn build_generator_context<'a>(
         ui_overrides,
         ui_domains,
         project,
+        project_config,
+        has_emdash,
+        emdash_plugins,
         current_target,
         schema_base_dir,
         seed_config,
@@ -960,6 +1000,32 @@ fn build_manifest_roots(ctx: &GeneratorContext<'_>) -> Vec<PathBuf> {
     roots.extend(ctx.hooks_base.map(Path::to_path_buf));
     roots.push(e2e_manifest_root);
     roots.push(migrations_manifest_root);
+
+    // EmDash plugin packages: per-package roots (only for domains the
+    // plugins config declares) plus the site pages/e2e roots, so
+    // `emit_manifests` writes per-package + per-site `.codegraph-manifest.json`
+    // files the guard can consume.
+    if ctx.has_emdash {
+        if let Some(ref plugins) = ctx.emdash_plugins {
+            for domain_key in plugins.plugins.keys() {
+                roots.push(crate::emdash::emdash_package_root(output_dir, domain_key));
+            }
+            if !plugins.plugins.is_empty() {
+                roots.push(crate::emdash::emdash_site_pages_root_with_base(
+                    output_dir,
+                    &ctx.project_config
+                        .map(|p| p.emdash_site_pages_base.clone())
+                        .unwrap_or_default(),
+                ));
+                roots.push(crate::emdash::emdash_site_e2e_root_with_base(
+                    output_dir,
+                    &ctx.project_config
+                        .map(|p| p.emdash_site_e2e_base.clone())
+                        .unwrap_or_default(),
+                ));
+            }
+        }
+    }
 
     roots
 }
@@ -1119,7 +1185,7 @@ fn build_domain_generators(
             is_worker_routed_domain_generator(name),
         )
     };
-    let gens: Vec<Box<dyn DomainGenerator>> = vec![
+    let mut gens: Vec<Box<dyn DomainGenerator>> = vec![
         Box::new(ddd::errors::ErrorGenerator::new(base("errors"))) as Box<dyn DomainGenerator>,
         Box::new(
             api::router::RouterGenerator::new(base("router"))
@@ -1146,6 +1212,16 @@ fn build_domain_generators(
             "atproto_xrpc_router",
         ))) as Box<dyn DomainGenerator>,
     ];
+    // EmDash plugin packages — only when the profile enables the feature
+    // AND the plugins.toml config was loaded by the CLI wrapper.
+    if ctx.has_emdash {
+        if let Some(ref plugins) = ctx.emdash_plugins {
+            gens.push(Box::new(emdash::plugin_gen::EmdashPluginGenerator::new(
+                output_dir.to_path_buf(),
+                plugins.clone(),
+            )) as Box<dyn DomainGenerator>);
+        }
+    }
     gens.into_iter()
         .filter(|gen| ctx.plan_has_domain(gen.name()))
         .collect::<Vec<_>>()
@@ -1313,6 +1389,18 @@ fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn GlobalGene
     global_gens
         .push(Box::new(fern::config::FernConfigGenerator::new(output_dir))
             as Box<dyn GlobalGenerator>);
+    // EmDash plugin family scaffold — only when the profile enables the
+    // feature AND the plugins.toml config was loaded by the CLI wrapper.
+    if ctx.has_emdash {
+        if let Some(ref plugins) = ctx.emdash_plugins {
+            global_gens.push(
+                Box::new(emdash::scaffold_gen::EmdashPluginScaffoldGenerator::new(
+                    output_dir.to_path_buf(),
+                    plugins.clone(),
+                )) as Box<dyn GlobalGenerator>,
+            );
+        }
+    }
     // ops harness manifest + testkit crate
     global_gens.push(Box::new(ops::OpsManifestGenerator::new(
         output_dir,

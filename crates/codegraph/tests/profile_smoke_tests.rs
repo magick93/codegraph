@@ -586,6 +586,7 @@ async fn generation_with_api_profile_produces_fewer_files_than_full() {
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: None,
+            emdash_plugins: None,
             domain_config_dir: None,
         })
         .await
@@ -660,6 +661,7 @@ async fn generation_with_ui_profile_produces_only_ui_files() {
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: None,
+            emdash_plugins: None,
             domain_config_dir: None,
         })
         .await
@@ -704,6 +706,7 @@ async fn generation_with_cli_profile_produces_only_cli_files() {
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: None,
+            emdash_plugins: None,
             domain_config_dir: None,
         })
         .await
@@ -750,6 +753,7 @@ async fn generation_with_lite_variant_produces_fewer_files_than_full_api() {
             build_plan: Some(&full_plan),
             ifml_frameworks: vec![],
             project_config: None,
+            emdash_plugins: None,
             domain_config_dir: None,
         })
         .await
@@ -780,6 +784,7 @@ async fn generation_with_lite_variant_produces_fewer_files_than_full_api() {
             build_plan: Some(&lite_plan),
             ifml_frameworks: vec![],
             project_config: None,
+            emdash_plugins: None,
             domain_config_dir: None,
         })
         .await
@@ -834,6 +839,7 @@ generation_mode = "ddd_only"
             build_plan: None,
             ifml_frameworks: vec![],
             project_config: None,
+            emdash_plugins: None,
             domain_config_dir: None,
         })
         .await
@@ -933,6 +939,7 @@ async fn run_routing_generators(
         has_atproto: false,
         atproto_tenancy: "shared_pds".to_string(),
         has_fern: false,
+        has_emdash: false,
         fern_sdk_languages: vec!["typescript".to_string()],
         persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
         dto_key_casing: "snake".to_string(),
@@ -963,6 +970,7 @@ async fn run_routing_generators(
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: Some(&project),
+            emdash_plugins: None,
             domain_config_dir: None,
         })
         .await
@@ -1275,6 +1283,7 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
         has_atproto: false,
         atproto_tenancy: "shared_pds".to_string(),
         has_fern: false,
+        has_emdash: false,
         fern_sdk_languages: vec!["typescript".to_string()],
         persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
         dto_key_casing: "snake".to_string(),
@@ -1303,6 +1312,7 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: Some(&project),
+            emdash_plugins: None,
             domain_config_dir: None,
         })
         .await
@@ -1849,6 +1859,7 @@ async fn run_routing_generators_with_parts(
         has_atproto: false,
         atproto_tenancy: "shared_pds".to_string(),
         has_fern: false,
+        has_emdash: false,
         fern_sdk_languages: vec!["typescript".to_string()],
         persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
         dto_key_casing: "snake".to_string(),
@@ -1872,6 +1883,7 @@ async fn run_routing_generators_with_parts(
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             project_config: Some(&project),
+            emdash_plugins: None,
             domain_config_dir: None,
         })
         .await

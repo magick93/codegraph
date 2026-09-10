@@ -22,7 +22,7 @@ use crate::traits::{EntityGenerator, GeneratedFile};
 /// mirrors this). The canonical entity model keeps them as single child-table
 /// fields, so the playwright fixtures/specs expand them into their DTO-shaped
 /// flat columns here — without affecting other generators (xrpc, ui, ...).
-async fn expand_vo_fields(
+pub(crate) async fn expand_vo_fields(
     db: &dyn GraphQuerier,
     schema_title: &str,
     model_fields: &[EntityField],

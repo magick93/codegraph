@@ -1,0 +1,30 @@
+{
+  "name": "{{ p.package_name }}",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./sandbox": "./src/plugin.ts"
+  },
+  "files": [
+    "src",
+    "emdash-plugin.jsonc"
+  ],
+  "dependencies": {
+    "@community-os/emdash-common": "workspace:*",
+    "@community-os/sdk": "workspace:*"
+  },
+  "scripts": {
+    "validate": "emdash-plugin validate",
+    "check": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "emdash": "^0.34.0"
+  },
+  "devDependencies": {
+    "@emdash-cms/plugin-cli": "0.8.1",
+    "emdash": "^0.34.0",
+    "typescript": "^5.6.0"
+  }
+}
