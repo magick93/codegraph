@@ -471,35 +471,39 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                     // or through an allOf composition chain), emit an FK column on
                     // this entity model. Uses the shared resolve_fk_column_name utility
                     // — single source of truth for FK column naming across layers.
+                    // The resolver returns None for non-resolving props; emitting
+                    // from the raw names would hallucinate columns for fields that
+                    // merely end in `_id` (e.g. screening."order".subject_id).
                     if !prop.is_array => {
-                        let (fk_field, fk_col) = codegraph_core::types::resolve_fk_column_name(
+                        let Some((fk_field, fk_col)) = codegraph_core::types::resolve_fk_column_name(
                             db,
                             prop,
                             schema_title,
                             &entity_titles,
                         )
-                        .await?;
-                        if fk_field.ends_with("_id") {
-                            // VO→entity FK columns are always nullable in the DDL
-                            // (the DTO/repository model the VO as a nested child
-                            // table and never populate the FK), so the model field
-                            // must be Option<Uuid> regardless of schema required.
-                            let is_nullable = true;
-                            columns.push(EntityColumn {
-                                field_name: fk_field,
-                                rust_type: if is_nullable {
-                                    "Option<Uuid>".to_string()
-                                } else {
-                                    "Uuid".to_string()
-                                },
-                                sea_orm_type: "Uuid".to_string(),
-                                column_name: fk_col,
-                                is_primary_key: false,
-                                is_nullable,
-                                pg_cast: None,
-                                sea_orm_attr: None,
-                            });
-                        }
+                        .await?
+                        else {
+                            continue;
+                        };
+                        // VO→entity FK columns are always nullable in the DDL
+                        // (the DTO/repository model the VO as a nested child
+                        // table and never populate the FK), so the model field
+                        // must be Option<Uuid> regardless of schema required.
+                        let is_nullable = true;
+                        columns.push(EntityColumn {
+                            field_name: fk_field,
+                            rust_type: if is_nullable {
+                                "Option<Uuid>".to_string()
+                            } else {
+                                "Uuid".to_string()
+                            },
+                            sea_orm_type: "Uuid".to_string(),
+                            column_name: fk_col,
+                            is_primary_key: false,
+                            is_nullable,
+                            pg_cast: None,
+                            sea_orm_attr: None,
+                        });
                     }
                     // Child tables for non-entity VO targets are generated below
                 _ => {}
