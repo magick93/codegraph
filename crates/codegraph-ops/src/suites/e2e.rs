@@ -177,11 +177,7 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     // 5. Build.
     output::section("E2E 4. Build");
     if !args.skip_build {
-        let mut build_args = vec!["build"];
-        if args.release {
-            build_args.push("--release");
-        }
-        run_blocking("cargo", &build_args, &config.app_dir)
+        cargo_build_app(config, args.release)
             .map_err(|e| OpsError::TestFailure(format!("app build failed: {e}")))?;
     }
     let binary =
@@ -325,9 +321,9 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     // closing a socket mid-run) then don't fail an otherwise-green suite.
     if !passed && args.retry_failed && !failed_titles.is_empty() {
         output::section("E2E 7. Retry failed tests");
+        let raw_failure_count = failed_titles.len();
         output::info(format!(
-            "rerunning {} failed test(s) via --last-failed...",
-            failed_titles.len()
+            "rerunning {raw_failure_count} failed test(s) via --last-failed..."
         ));
         let mut retry_cmd = Command::new("npx");
         retry_cmd.arg("playwright").arg("test").arg("--last-failed");
@@ -352,7 +348,7 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
                 eprint!("{}", String::from_utf8_lossy(&retry_out.stderr));
                 failed_titles = failed_test_titles(&retry_text);
                 if retry_out.status.success() {
-                    transient_resolved = failed_titles.len().max(1);
+                    transient_resolved = raw_failure_count;
                     passed = true;
                     output::ok(format!(
                         "{transient_resolved} failed test(s) passed on retry — transient"
@@ -645,6 +641,33 @@ async fn http_ok(url: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+/// `cargo build` inside the generated app, exporting `CORNUCOPIA_DATABASE_URL`
+/// when the manifest selects the cornucopia persistence provider — its
+/// `build.rs` connects to Postgres at build time to compile the SQL-first
+/// repositories (the api and workers suites export the same env).
+fn cargo_build_app(config: &OpsConfig, release: bool) -> Result<(), String> {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build");
+    if release {
+        cmd.arg("--release");
+    }
+    if let Some((key, value)) = super::api::cornucopia_db_env(config) {
+        cmd.env(key, value);
+    }
+    match cmd.current_dir(&config.app_dir).output() {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => {
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            Err(tail(&text, 800))
+        }
+        Err(e) => Err(format!("failed to spawn cargo: {e}")),
+    }
 }
 
 /// Run a blocking command to completion, returning Err(Command) with a

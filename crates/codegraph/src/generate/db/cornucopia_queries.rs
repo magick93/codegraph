@@ -101,7 +101,19 @@ impl EntityGenerator for CornucopiaQueryGenerator {
             .map(|c| (c.column_name.clone(), c.pg_type.clone()))
             .collect();
 
-        let sql = render_entity_sql(schema_title, domain, config, &tree, &pg_types);
+        let mut sql = render_entity_sql(schema_title, domain, config, &tree, &pg_types);
+
+        // Deployed-worker query for tree_include entities: the resolution
+        // needs the repository emitter's graph walk (the persistence tree
+        // leaves tree_include empty), so it happens here in the async caller.
+        if tree.hierarchy_field.is_some() {
+            let resolved = RepositoryImplEmitter
+                .query_entity_tree(db, schema_title, domain, config, None)
+                .await?;
+            if !resolved.tree_include.is_empty() {
+                write_tree_workers_query(&mut sql, &resolved);
+            }
+        }
 
         let rel_path = format!("queries/{}/{}.sql", domain, tree.table_name);
         Ok(vec![GeneratedFile {
@@ -943,5 +955,39 @@ fn write_tree_query(
          )\n\
          SELECT {cols} FROM tree ORDER BY _tree_depth, \"created_at\";\n\n",
         prefixed = prefixed.join(", "),
+    ));
+}
+
+/// Worker-map query for `tree_include` hydration: deployments ⨝ workers ⨝
+/// person ⨝ person-name, keyed by position id — the cornucopia counterpart
+/// of the SeaORM find_tree's `deployed_worker` fetch, so both persistence
+/// providers return identical tree rows.
+fn write_tree_workers_query(sql: &mut String, tree: &EntityTree) {
+    let Some(inc) = tree.tree_include.first() else {
+        return;
+    };
+    let mut from_clause = format!(
+        "{} d JOIN {} w ON w.\"id\" = d.\"{}\" AND w.deleted_at IS NULL",
+        inc.via_table, inc.parent_table, inc.parent_ref_column
+    );
+    for (i, (table, fk_col, parent_alias)) in inc.worker_detail_joins.iter().enumerate() {
+        let alias = if i == 0 { "wp" } else { "wpn" };
+        from_clause.push_str(&format!(
+            " JOIN {table} {alias} ON {alias}.\"{fk_col}\" = {parent_alias}.\"id\""
+        ));
+    }
+    let worker_json = if inc.worker_detail_joins.is_empty() {
+        "jsonb_build_object('id', w.\"id\")".to_string()
+    } else {
+        "jsonb_build_object('id', w.\"id\", 'given_name', wpn.given, 'family_name', wpn.family, 'avatar_url', wp.avatar_url)".to_string()
+    };
+    sql.push_str(&format!(
+        "--! tree_{snake}_workers (position_ids) : (position_id, deployed_worker)\n\
+         --- Deployed-worker map for tree rows, keyed by position id.\n\
+         SELECT d.\"{fk}\" AS \"position_id\", {worker_json} AS \"deployed_worker\"\n\
+         FROM {from_clause}\n\
+         WHERE d.\"{fk}\" = ANY(:position_ids::uuid[]) AND d.deleted_at IS NULL;\n\n",
+        snake = tree.table_name,
+        fk = inc.via_fk_column,
     ));
 }

@@ -56,40 +56,42 @@ pub fn resolve_field(prop: &PropertyNode) -> FieldDefinition {
 /// include-path FK resolver use this function so they always agree on the column
 /// identifiers.
 ///
-/// - `EntityReference` or VO→entity → returns names with `_id` suffix
-/// - Otherwise → returns names as-is (child table, no FK column on the parent)
+/// Returns `Ok(None)` when the property does not resolve to a configured entity —
+/// callers must not derive an FK column from the raw names in that case (a raw
+/// field that already ends in `_id` would otherwise be mistaken for a resolved
+/// reference).
 pub async fn resolve_fk_column_name(
     db: &dyn GraphQuerier,
     prop: &PropertyNode,
     source_title: &str,
     entity_titles: &HashSet<String>,
-) -> Result<(String, String), GraphError> {
+) -> Result<Option<(String, String)>, GraphError> {
     // Array-of-entity-ref properties are junction tables, not FK columns —
     // the raw names are the junction field/table identity (see resolve_field).
     if prop.is_array {
-        return Ok((prop.rust_field_name.clone(), prop.pg_column_name.clone()));
+        return Ok(None);
     }
     // Direct $ref target is a known entity.
     if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, source_title).await {
         if entity_titles.contains(&target.title) {
-            return Ok((
+            return Ok(Some((
                 ensure_id_suffix(&prop.rust_field_name),
                 ensure_id_suffix(&prop.pg_column_name),
-            ));
+            )));
         }
         // ValueObject whose allOf chain reaches an entity.
         if let Ok(Some(entity)) = crate::traits::find_entity_extended_by_vo(db, &target.title).await
         {
             if entity_titles.contains(&entity.title) {
-                return Ok((
+                return Ok(Some((
                     ensure_id_suffix(&prop.rust_field_name),
                     ensure_id_suffix(&prop.pg_column_name),
-                ));
+                )));
             }
         }
     }
-    // Not an entity reference — return as-is (child table, no parent FK column).
-    Ok((prop.rust_field_name.clone(), prop.pg_column_name.clone()))
+    // Not an entity reference — no FK column on the parent.
+    Ok(None)
 }
 
 /// Append `_id` suffix to a field/column name if not already present.

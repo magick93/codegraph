@@ -15,6 +15,12 @@ edition = "2021"
 name = "{{ project.lib_name }}"
 path = "src/lib.rs"
 
+{% if has_seed %}
+[[bin]]
+name = "seed"
+path = "src/bin/seed.rs"
+
+{% endif %}
 {% if has_fern %}
 [[bin]]
 name = "dump-openapi"
@@ -102,6 +108,10 @@ serde_cbor = "0.11"
 {% if domain_types_path %}{{ project.domain_types_crate | replace(from="_", to="-") }} = { path = "{{ domain_types_path }}" }{% endif %}
 {% if hooks_api_path %}{{ project.hooks_api_crate | replace(from="_", to="-") }} = { path = "{{ hooks_api_path }}" }{% endif %}
 migration = { path = "migration" }
+{% if has_seed %}
+hr-seed = { path = "{{ seed_crate_path }}" }
+{% if not has_admin_cli %}clap = { version = "4", features = ["derive", "env"] }
+{% endif %}{% endif %}
 {% if has_grpc %}
 tonic = { version = "0.14", optional = true }
 prost = { version = "0.13", optional = true }

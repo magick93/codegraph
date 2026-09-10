@@ -297,4 +297,31 @@ impl {{ entity_name }}QueryHandler {
         Ok(results)
     }
 {% endif %}
+{% if hierarchy_field %}
+
+    /// Fetch the subtree rooted at the given entity. The SQL-first
+    /// (cornucopia) repository compiles the recursive CTE; the SeaORM
+    /// repository runs it as a raw statement — both through one tx with the
+    /// RLS session vars applied.
+    pub async fn find_tree(&self, id: Uuid, max_depth: Option<i32>, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Vec<{% if tree_include %}serde_json::Value{% else %}{{ entity_name }}Response{% endif %}>, {{ domain | pascal_case }}Error> {
+{% if project.persistence_provider == "cornucopia" %}
+        let mut client = self.client_source.client().await
+            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+        let tx = client.transaction().await
+            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
+        let rows = self.repo.find_tree(&tx, id, max_depth).await
+            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+        tx.commit().await
+            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+{% else %}
+        let tx = self.db.begin().await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
+        let rows = self.repo.find_tree(&tx, id, max_depth).await
+            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+        tx.commit().await?;
+{% endif %}
+        Ok(rows)
+    }
+{% endif %}
 }

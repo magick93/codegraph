@@ -23,6 +23,7 @@ pub mod integration;
 pub mod ops;
 pub mod playwright;
 pub mod scaffold;
+pub mod seed;
 pub mod test;
 pub mod ui;
 pub mod webhook;
@@ -720,6 +721,13 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let has_webhooks = build_plan
         .map(|bp| bp.has_global_gen("webhook_dispatch"))
         .unwrap_or(true);
+    // Seed-provisioning (hr-seed sink + CLI) is strictly opt-in: unlike
+    // webhooks it introduces a workspace-relative path dependency
+    // (`../../hr-seed`), so plan-less runs and profiles that do not list
+    // `seed_provision` must not emit the seed module or `[[bin]]` entry.
+    let has_seed = build_plan
+        .map(|bp| bp.has_global_gen("seed_provision"))
+        .unwrap_or(false);
     let has_reports = build_plan
         .map(|bp| bp.has_global_gen("report_views"))
         .unwrap_or(true)
@@ -1120,20 +1128,23 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                 as Box<dyn GlobalGenerator>,
         );
     } else {
-        global_gens.push(Box::new(scaffold::gen::ScaffoldGenerator::new(
-            output_dir,
-            has_webhooks,
-            has_reports,
-            has_grpc,
-            has_atproto,
-            has_cli,
-            has_test_gen,
-            has_fern,
-            has_auth_rate_limit,
-            has_admin_cli,
-            has_labels,
-            &migration_strategy,
-        )) as Box<dyn GlobalGenerator>);
+        global_gens.push(Box::new(
+            scaffold::gen::ScaffoldGenerator::new(
+                output_dir,
+                has_webhooks,
+                has_reports,
+                has_grpc,
+                has_atproto,
+                has_cli,
+                has_test_gen,
+                has_fern,
+                has_auth_rate_limit,
+                has_admin_cli,
+                has_labels,
+                &migration_strategy,
+            )
+            .with_seed(has_seed),
+        ) as Box<dyn GlobalGenerator>);
     }
 
     global_gens.push(Box::new(ui::scaffold::UiScaffoldGenerator::new(
@@ -1190,6 +1201,13 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             output_dir,
         )) as Box<dyn GlobalGenerator>,
     );
+    // Demo-data seed module + CLI (opt-in via the `seed_provision` capability).
+    if has_seed {
+        global_gens.push(
+            Box::new(seed::provision::SeedProvisionGenerator::new(output_dir))
+                as Box<dyn GlobalGenerator>,
+        );
+    }
     // gRPC global generator
     global_gens.push(
         Box::new(grpc::scaffold::GrpcScaffoldGenerator::new(output_dir))

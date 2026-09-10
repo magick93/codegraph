@@ -946,10 +946,20 @@ async fn build_child_table_info(
         }
     }
 
-    // Deduplicate child_columns by field_name
+    // Deduplicate child_columns by field_name, then by physical column name.
+    // A DTO column can collide with the parent-FK column (e.g. a notification
+    // DTO carrying its own `interview_id` next to the parent binding); the
+    // table has that column once, bound to the parent FK, so DTO duplicates
+    // are dropped and the first occurrence of any repeated column wins.
+    let parent_fk_column =
+        codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name));
     {
         let mut seen_fields = std::collections::HashSet::new();
         child_columns.retain(|c| seen_fields.insert(c.field_name.clone()));
+        let mut seen_columns = std::collections::HashSet::new();
+        child_columns.retain(|c| {
+            c.pg_column_name != parent_fk_column && seen_columns.insert(c.pg_column_name.clone())
+        });
     }
 
     Some(ChildTableInfo {
@@ -957,10 +967,7 @@ async fn build_child_table_info(
         struct_name: child_struct_name,
         sql_table_name: child_table_name,
         sql_schema_name: schema_name.to_string(),
-        parent_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
-            "{}_id",
-            parent_table_name
-        )),
+        parent_fk_column,
         is_array: prop.is_array,
         columns: child_columns,
         child_tables: nested_child_tables,

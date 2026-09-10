@@ -290,29 +290,30 @@ pub async fn build_persistence_entity(
                 }
             }
             Some(RefClassificationKind::ValueObject) if !prop.is_array => {
-                let (fk_field, fk_col) = codegraph_core::types::resolve_fk_column_name(
+                let Some((fk_field, fk_col)) = codegraph_core::types::resolve_fk_column_name(
                     db,
                     prop,
                     schema_title,
                     &entity_titles,
                 )
-                .await?;
-                if fk_field.ends_with("_id") {
-                    columns.push(PersistenceColumn {
-                        field_name: fk_field,
-                        column_name: fk_col,
-                        rust_type: "Option<Uuid>".into(),
-                        pg_type: "UUID".into(),
-                        is_primary_key: false,
-                        is_nullable: true,
-                        is_jsonb: false,
-                        is_range: false,
-                        pg_cast: None,
-                        role: PersistenceColumnRole::ForeignKey {
-                            ref_entity: String::new(),
-                        },
-                    });
-                }
+                .await?
+                else {
+                    continue;
+                };
+                columns.push(PersistenceColumn {
+                    field_name: fk_field,
+                    column_name: fk_col,
+                    rust_type: "Option<Uuid>".into(),
+                    pg_type: "UUID".into(),
+                    is_primary_key: false,
+                    is_nullable: true,
+                    is_jsonb: false,
+                    is_range: false,
+                    pg_cast: None,
+                    role: PersistenceColumnRole::ForeignKey {
+                        ref_entity: String::new(),
+                    },
+                });
             }
             _ => {}
         }

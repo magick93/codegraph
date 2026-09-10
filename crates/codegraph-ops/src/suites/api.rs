@@ -987,7 +987,10 @@ fn is_release_binary(config: &OpsConfig) -> bool {
 /// `CORNUCOPIA_DATABASE_URL`, so every cargo invocation touching the app
 /// workspace and every app-binary spawn must carry it. Returns `None` (sets
 /// nothing) for other providers — harmless for sea_orm.
-fn cornucopia_db_env(config: &OpsConfig) -> Option<(String, String)> {
+/// Build-time env for the cornucopia persistence provider: its `build.rs`
+/// connects to Postgres to compile the SQL-first repositories. `(key, value)`
+/// is empty when the provider isn't cornucopia.
+pub(crate) fn cornucopia_db_env(config: &OpsConfig) -> Option<(String, String)> {
     if config.manifest.capabilities.persistence_provider == "cornucopia" {
         Some(("CORNUCOPIA_DATABASE_URL".to_string(), config.api_db.url()))
     } else {

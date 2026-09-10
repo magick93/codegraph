@@ -39,6 +39,14 @@ pub struct ScaffoldContext {
     /// Whether the labels substrate (atproto.label table + SubscribeLabels
     /// consumer + selfLabels bridge) is enabled (issue #33).
     pub has_labels: bool,
+    /// Whether the `seed_provision` capability is active — gates the
+    /// `hr-seed` dependency and the `seed` `[[bin]]` entry in Cargo.toml
+    /// plus `pub mod seed;` in lib.rs.
+    pub has_seed: bool,
+    /// Resolved path (relative to the output dir when possible) of the
+    /// `hr-seed` crate, discovered by walking up from the output dir and
+    /// CWD looking for a sibling `hr-seed` directory.
+    pub seed_crate_path: String,
     pub migration_strategy: String,
 }
 
@@ -90,6 +98,7 @@ pub struct ScaffoldGenerator {
     has_auth_rate_limit: bool,
     has_admin_cli: bool,
     has_labels: bool,
+    has_seed: bool,
     migration_strategy: String,
 }
 
@@ -121,8 +130,16 @@ impl ScaffoldGenerator {
             has_auth_rate_limit,
             has_admin_cli,
             has_labels,
+            has_seed: false,
             migration_strategy: migration_strategy.to_string(),
         }
+    }
+
+    /// Enable seed-provisioning output (hr-seed dependency, `seed` `[[bin]]`,
+    /// `pub mod seed;`). Opt-in via the `seed_provision` capability.
+    pub fn with_seed(mut self, has_seed: bool) -> Self {
+        self.has_seed = has_seed;
+        self
     }
 }
 
@@ -137,6 +154,38 @@ pub(crate) fn resolve_path(base: &str, abs_output: &Path) -> String {
         .unwrap_or_else(|| PathBuf::from(base))
         .to_string_lossy()
         .into_owned()
+}
+
+/// Locate the `hr-seed` crate for the `seed_provision` capability: walk up
+/// from the output directory (then from CWD) looking for a sibling `hr-seed`
+/// directory with a Cargo.toml, and express it relative to the output when
+/// possible. Falls back to the hr-specs workspace layout convention
+/// (`../../hr-seed`) when nothing is found.
+pub(crate) fn resolve_seed_crate_path(abs_output: &Path) -> String {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    for start in [abs_output.to_path_buf(), cwd] {
+        let mut dir: Option<&Path> = Some(start.as_path());
+        while let Some(d) = dir {
+            let candidate = d.join("hr-seed");
+            if candidate.join("Cargo.toml").exists() {
+                if let Some(rel) = pathdiff::diff_paths(&candidate, abs_output) {
+                    let rel_str = rel.to_string_lossy().into_owned();
+                    // Deep `../` climbs resolve but produce unreadable
+                    // manifests (e.g. /tmp outputs) — prefer absolute there.
+                    let ups = rel
+                        .components()
+                        .take_while(|c| c.as_os_str() == "..")
+                        .count();
+                    if ups <= 2 {
+                        return rel_str;
+                    }
+                }
+                return candidate.to_string_lossy().into_owned();
+            }
+            dir = d.parent();
+        }
+    }
+    "../../hr-seed".to_string()
 }
 
 /// Group the generation order into per-domain scaffold domains (entities with
@@ -275,6 +324,7 @@ impl GlobalGenerator for ScaffoldGenerator {
         let extensions_path = resolve_path(&project.extensions_base, &abs_output);
         let app_config_path = resolve_path(&project.app_config_base, &abs_output);
         let decision_engine_path = resolve_path(&project.decision_engine_base, &abs_output);
+        let seed_crate_path = resolve_seed_crate_path(&abs_output);
 
         // Physical Postgres schemas that need app_user grants: every domain
         // schema plus "common" (codelists) and the platform infra schema.
@@ -308,6 +358,8 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_auth_rate_limit: self.has_auth_rate_limit,
             has_admin_cli: self.has_admin_cli,
             has_labels: self.has_labels,
+            has_seed: self.has_seed,
+            seed_crate_path,
             migration_strategy: self.migration_strategy.clone(),
         };
 
@@ -614,6 +666,8 @@ mod tests {
             has_auth_rate_limit: false,
             has_admin_cli: false,
             has_labels: false,
+            has_seed: false,
+            seed_crate_path: String::new(),
             migration_strategy: "sea-orm".to_string(),
         }
     }
