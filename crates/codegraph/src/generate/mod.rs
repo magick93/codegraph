@@ -545,6 +545,206 @@ pub async fn run_generators_with_domain_types_base(
 
 /// Run generators with full configuration via [`GeneratorOpts`].
 pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report::GenerationReport> {
+    // Project config is threaded explicitly to every generator/helper that
+    // needs it (no global state).
+    let default_project = ProjectConfig::default();
+    let project = opts.project_config.unwrap_or(&default_project);
+
+    let ctx = build_generator_context(opts, project).await?;
+    let manifest_root_paths = build_manifest_roots(&ctx);
+    let manifest_roots: Vec<&Path> = manifest_root_paths.iter().map(|p| p.as_path()).collect();
+
+    let order = compute_generation_order(ctx.db(), ctx.config).await?;
+    let mut report = report::GenerationReport::new();
+
+    // Clean stale generated files from the output directory before generators
+    // run.  Previous pipeline runs may have produced files for entities that
+    // are no longer in the generation order (e.g. reclassified as VOs).
+    // The filesystem-scanning `generate_mod_files` pass would otherwise pick
+    // them up and emit broken `pub mod` declarations.
+    clean_generated_output(
+        ctx.output_dir,
+        &order,
+        &ctx.config.defaults.type_suffix,
+        ctx.workers_topology,
+    );
+
+    // Clean stale IFML route directories from previous runs.  The IFML-only
+    // path (`run_ifml_generators`) handles this per framework with the full
+    // set of active views from the current model; the monolithic pipeline
+    // regenerates routes in place, so nothing to clean here.
+
+    // Clean generated migration files (seq >= 10) left by previous runs.
+    clean_stale_migrations(&ctx);
+
+    // Fetch parent-child relationship candidates from the graph for
+    // router and handler generators to populate nested route information.
+    let parent_candidates = ctx
+        .db()
+        .get_parent_candidates()
+        .await
+        .map_err(|e| Error::Config(e.to_string()))?;
+
+    let mut entity_gens: Vec<Box<dyn EntityGenerator>> = if ctx.workers_topology {
+        Vec::new()
+    } else {
+        build_entity_generators(&ctx, &parent_candidates, None)
+    };
+    let monolith_domain_gens: Vec<Box<dyn DomainGenerator>> = if ctx.workers_topology {
+        Vec::new()
+    } else {
+        build_domain_generators(&ctx, &parent_candidates, None)
+    };
+    let global_gens: Vec<Box<dyn GlobalGenerator>> = build_global_generators(&ctx);
+
+    // Per-entity generators — run entities sequentially to ensure TypeRegistry
+    // is populated for earlier entities before later entities reference their types.
+    let entity_results = run_entity_phase(&ctx, &mut entity_gens, &parent_candidates, &order).await;
+    write_entity_results(entity_results, &mut report)?;
+
+    // Codelists are not entities — SQL migrations + Rust enums run separately.
+    run_codelist_generators(&ctx, &order, &mut report).await?;
+
+    let domains_with_entities = all_domains_for_generation(ctx.config, &order);
+    run_domain_phase(
+        &ctx,
+        &monolith_domain_gens,
+        &parent_candidates,
+        &domains_with_entities,
+        &mut report,
+    )
+    .await?;
+
+    run_global_phase(&ctx, &global_gens, &order, &mut report).await?;
+
+    // Validate that every entity in the generation order has entity-specific files
+    report.validate_consistency(&order, &ctx.config.defaults.type_suffix);
+
+    // Generate mod.rs files for all directories under src/.
+    write_mod_files(&ctx, &domains_with_entities, &mut report)?;
+
+    // Emit integration-test glue + `.codegraph-manifest.json` at each output root.
+    emit_run_manifests(&ctx, &manifest_roots, &mut report)?;
+
+    Ok(report)
+}
+
+/// Shared, immutable setup for one generator run.
+///
+/// Built once by [`build_generator_context`] and threaded explicitly through
+/// the generator factory helpers and phase runners (previously captured by
+/// large closures inside [`run_generators_with_opts`]).
+struct GeneratorContext<'a> {
+    /// Cache-wrapping view over the graph querier, pre-warmed at build time.
+    cached_db: CachingQuerier<'a>,
+    config: &'a DomainConfig,
+    output_dir: &'a Path,
+    tera: &'a Tera,
+    ui_overrides: &'a UiOverrideConfig,
+    ui_domains: &'a UiDomainConfig,
+    /// Resolved project config: `project_config.unwrap_or(&default)`.
+    project: &'a ProjectConfig,
+    /// The original optional project config. Kept alongside `project` because
+    /// `None` and `Some(default)` genuinely differ for a few fields (e.g. the
+    /// emdash site bases default to empty vs. a non-empty path).
+    project_config: Option<&'a ProjectConfig>,
+    current_target: DatabaseTarget,
+    schema_base_dir: &'a Path,
+    seed_config: Option<&'a Path>,
+    /// Override target dir for domain-types crate generators (`None` defaults
+    /// to the main output directory).
+    domain_types_base: Option<&'a Path>,
+    /// Override target dir for hooks generators.
+    hooks_base: Option<&'a Path>,
+    /// Extension points config for integration infrastructure generators.
+    ext_points: Option<&'a codegraph_ext_points::ExtensionPointsConfig>,
+    /// Build profile plan controlling which generators to run.
+    build_plan: Option<&'a crate::profile::BuildPlan>,
+    /// Directory of the `domains.toml` config used for this run; sibling
+    /// configs (`reports.toml`) are discovered relative to it.
+    domain_config_dir: Option<&'a Path>,
+    /// EmDash plugin packages config (plugins.toml). `None` (or an empty map)
+    /// IFML framework targets (e.g. "svelte", "react"); empty defaults to
+    /// `["svelte"]` when building the global generator set.
+    ifml_frameworks: Vec<String>,
+    has_seed: bool,
+    has_webhooks: bool,
+    has_reports: bool,
+    has_atproto: bool,
+    has_fern: bool,
+    has_grpc: bool,
+    has_ui: bool,
+    has_admin_cli: bool,
+    has_auth_rate_limit: bool,
+    has_labels: bool,
+    migration_strategy: String,
+    has_cli: bool,
+    has_test_gen: bool,
+    /// Whether generated backend output routes into per-domain worker crates
+    /// under `workers/{domain}/`. The build plan is authoritative; falls back
+    /// to the project config (default: monolith) when no plan is provided.
+    workers_topology: bool,
+    capability_registry: crate::profile::CapabilityRegistry,
+}
+
+impl GeneratorContext<'_> {
+    /// The (cached) graph querier handed to every generator.
+    fn db(&self) -> &dyn GraphQuerier {
+        &self.cached_db
+    }
+
+    /// A fresh dialect instance for the configured database target.
+    fn make_dialect(&self) -> Box<dyn SqlDialect> {
+        dialect_for_target(self.current_target)
+    }
+
+    /// Whether the entity generator `name` runs for this build plan.
+    ///
+    /// Normalizes generator name for build_plan comparison: some name()
+    /// methods return hyphens (e.g. "ui-page") while the build plan stores
+    /// underscores (e.g. "ui_page") from profile generator lists.
+    ///
+    /// Without a BuildPlan (plan-less runs), feature-gated generators (gRPC,
+    /// AT Protocol, Fern) are skipped: their output depends on dependencies
+    /// the scaffolded Cargo.toml only enables via profile features, so
+    /// emitting it unconditionally produced non-compiling apps.
+    fn plan_has_entity(&self, name: &str) -> bool {
+        match self.build_plan {
+            Some(bp) => bp.has_entity_gen(&name.replace('-', "_")),
+            None => !self
+                .capability_registry
+                .requires_build_plan(&name.replace('-', "_")),
+        }
+    }
+
+    /// Whether the domain generator `name` runs for this build plan.
+    fn plan_has_domain(&self, name: &str) -> bool {
+        match self.build_plan {
+            Some(bp) => bp.has_domain_gen(&name.replace('-', "_")),
+            None => !self
+                .capability_registry
+                .requires_build_plan(&name.replace('-', "_")),
+        }
+    }
+
+    /// Whether the global generator `name` runs for this build plan.
+    fn plan_has_global(&self, name: &str) -> bool {
+        match self.build_plan {
+            Some(bp) => bp.has_global_gen(&name.replace('-', "_")),
+            None => !self
+                .capability_registry
+                .requires_build_plan(&name.replace('-', "_")),
+        }
+    }
+}
+
+/// Build the shared [`GeneratorContext`]: wrap the querier in the caching
+/// layer, pre-warm the cache, register types, and derive the per-run feature
+/// flags from the build plan.
+async fn build_generator_context<'a>(
+    opts: GeneratorOpts<'a>,
+    project: &'a ProjectConfig,
+) -> Result<GeneratorContext<'a>> {
     let GeneratorOpts {
         db,
         config,
@@ -563,36 +763,14 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         domain_config_dir,
     } = opts;
 
-    // Output roots for `.codegraph-manifest.json` emission: the main output
-    // dir plus any domain-types/hooks-api bases. `Option<&Path>` is `Copy`,
-    // so the values remain usable after this Vec is built. The repo-level
-    // `e2e-tests` root (home of the TypeScript Playwright harness) and the
-    // repo-level `migrations` root (hand-extended 0000–0009 + generated 0010+)
-    // get their own manifests so the guard can prove generated files are
-    // regenerated while the hand-written files stay excepted.
-    let e2e_manifest_root = playwright::e2e_tests_root(output_dir);
-    let migrations_manifest_root = db::migrations_root(output_dir);
-    let manifest_roots: Vec<&Path> = std::iter::once(output_dir)
-        .chain(domain_types_base.iter().copied())
-        .chain(hooks_base.iter().copied())
-        .chain(std::iter::once(e2e_manifest_root.as_path()))
-        .chain(std::iter::once(migrations_manifest_root.as_path()))
-        .collect();
-
-    // Project config is threaded explicitly to every generator/helper that
-    // needs it (no global state).
-    let default_project = ProjectConfig::default();
-    let project = project_config.unwrap_or(&default_project);
     type_registry::init_type_registry();
 
     // Create the database dialect based on project config.
     let current_target = DatabaseTarget::from_config(&project.database_target);
-    let make_dialect = || dialect_for_target(current_target);
 
     // Wrap the querier in a caching layer to avoid redundant graph queries
     // across the 15+ generators that each independently query the same schemas.
     let cached_db = CachingQuerier::new(db);
-    let db: &dyn GraphQuerier = &cached_db;
 
     // Pre-warm the cache with bulk queries to avoid hundreds of individual
     // graph queries during generation.
@@ -604,6 +782,123 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // Pre-register all expected entity types so types from entities later in
     // the generation order (e.g. CertificationResponse referenced by Person's
     // include DTOs) are resolvable when earlier entities process their imports.
+    register_entity_types(config);
+
+    // Seed-provisioning (hr-seed sink + CLI) is strictly opt-in: unlike
+    // webhooks it introduces a workspace-relative path dependency
+    // (`../../hr-seed`), so plan-less runs and profiles that do not list
+    // `seed_provision` must not emit the seed module or `[[bin]]` entry.
+    let has_seed = build_plan
+        .map(|bp| bp.has_global_gen("seed_provision"))
+        .unwrap_or(false);
+
+    // Whether webhook generators are active.  Derived from build_plan when available;
+    // defaults to true for backward compatibility (all existing profiles include
+    // webhook_dispatch and webhook_endpoint_api).
+    let has_webhooks = build_plan
+        .map(|bp| bp.has_global_gen("webhook_dispatch"))
+        .unwrap_or(true);
+    let has_reports = build_plan
+        .map(|bp| bp.has_global_gen("report_views"))
+        .unwrap_or(true)
+        && reports_config_dir(domain_config_dir)
+            .join("reports.toml")
+            .exists();
+    let has_atproto = build_plan
+        .map(|bp| {
+            bp.has_global_gen("atproto_identity")
+                || bp.has_entity_gen("lexicon")
+                || bp.has_global_gen("lexicon_scaffold")
+                || bp.has_entity_gen("atproto_client")
+                || bp.has_global_gen("atproto_client_scaffold")
+        })
+        .unwrap_or(false);
+    let has_fern = build_plan
+        .map(|bp| bp.has_global_gen("fern_config"))
+        .unwrap_or(false);
+    let has_grpc = build_plan
+        .map(|bp| bp.has_global_gen("grpc_scaffold"))
+        .unwrap_or(false);
+    let has_ui = build_plan
+        .map(|bp| bp.has_global_gen("ui_scaffold"))
+        .unwrap_or(true);
+    let has_admin_cli = build_plan
+        .and_then(|bp| bp.features.get("has_admin_cli"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_auth_rate_limit = build_plan
+        .and_then(|bp| bp.features.get("has_auth_rate_limit"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_labels = build_plan
+        .and_then(|bp| bp.features.get("has_labels"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let migration_strategy = build_plan
+        .and_then(|bp| bp.features.get("migration_strategy"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("sea-orm")
+        .to_string();
+    let has_cli = build_plan
+        .map(|bp| {
+            bp.has_global_gen("cli_scaffold")
+                || bp.has_entity_gen("cli_command")
+                || bp.has_domain_gen("cli_domain")
+        })
+        .unwrap_or(true);
+    let has_test_gen = build_plan
+        .map(|bp| bp.has_entity_gen("test"))
+        .unwrap_or(true);
+
+    // Whether generated backend output routes into per-domain worker crates
+    // under `workers/{domain}/`.  The build plan is authoritative; fall back
+    // to the project config (default: monolith) when no plan is provided.
+    let workers_topology = build_plan
+        .map(|bp| bp.deployment_topology() == crate::profile::DeploymentTopology::Workers)
+        .unwrap_or_else(|| project.is_workers_topology());
+
+    let capability_registry = crate::profile::CapabilityRegistry::new();
+
+    Ok(GeneratorContext {
+        cached_db,
+        config,
+        output_dir,
+        tera,
+        ui_overrides,
+        ui_domains,
+        project,
+        project_config,
+        current_target,
+        schema_base_dir,
+        seed_config,
+        domain_types_base,
+        hooks_base,
+        ext_points,
+        build_plan,
+        domain_config_dir,
+        ifml_frameworks,
+        has_seed,
+        has_webhooks,
+        has_reports,
+        has_atproto,
+        has_fern,
+        has_grpc,
+        has_ui,
+        has_admin_cli,
+        has_auth_rate_limit,
+        has_labels,
+        migration_strategy,
+        has_cli,
+        has_test_gen,
+        workers_topology,
+        capability_registry,
+    })
+}
+
+/// Pre-register all expected entity types so types from entities later in
+/// the generation order (e.g. CertificationResponse referenced by Person's
+/// include DTOs) are resolvable when earlier entities process their imports.
+fn register_entity_types(config: &DomainConfig) {
     let suffix = &config.defaults.type_suffix;
     for (domain_name, domain_entry) in &config.domains {
         for entity_title in &domain_entry.entities {
@@ -653,389 +948,246 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             );
         }
     }
+}
 
-    // Whether webhook generators are active.  Derived from build_plan when available;
-    // defaults to true for backward compatibility (all existing profiles include
-    // webhook_dispatch and webhook_endpoint_api).
-    let has_webhooks = build_plan
-        .map(|bp| bp.has_global_gen("webhook_dispatch"))
-        .unwrap_or(true);
-    // Seed-provisioning (hr-seed sink + CLI) is strictly opt-in: unlike
-    // webhooks it introduces a workspace-relative path dependency
-    // (`../../hr-seed`), so plan-less runs and profiles that do not list
-    // `seed_provision` must not emit the seed module or `[[bin]]` entry.
-    let has_seed = build_plan
-        .map(|bp| bp.has_global_gen("seed_provision"))
-        .unwrap_or(false);
-    let has_reports = build_plan
-        .map(|bp| bp.has_global_gen("report_views"))
-        .unwrap_or(true)
-        && reports_config_dir(domain_config_dir)
-            .join("reports.toml")
-            .exists();
-    let has_atproto = build_plan
-        .map(|bp| {
-            bp.has_global_gen("atproto_identity")
-                || bp.has_entity_gen("lexicon")
-                || bp.has_global_gen("lexicon_scaffold")
-                || bp.has_entity_gen("atproto_client")
-                || bp.has_global_gen("atproto_client_scaffold")
-        })
-        .unwrap_or(false);
-    let has_fern = build_plan
-        .map(|bp| bp.has_global_gen("fern_config"))
-        .unwrap_or(false);
-    let has_grpc = build_plan
-        .map(|bp| bp.has_global_gen("grpc_scaffold"))
-        .unwrap_or(false);
-    let _has_cli = build_plan
-        .map(|bp| bp.has_global_gen("cli_scaffold"))
-        .unwrap_or(true);
-    let has_ui = build_plan
-        .map(|bp| bp.has_global_gen("ui_scaffold"))
-        .unwrap_or(true);
-    let has_admin_cli = build_plan
-        .and_then(|bp| bp.features.get("has_admin_cli"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let has_auth_rate_limit = build_plan
-        .and_then(|bp| bp.features.get("has_auth_rate_limit"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let has_labels = build_plan
-        .and_then(|bp| bp.features.get("has_labels"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let migration_strategy = build_plan
-        .and_then(|bp| bp.features.get("migration_strategy"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("sea-orm")
-        .to_string();
-    let has_cli = build_plan
-        .map(|bp| {
-            bp.has_global_gen("cli_scaffold")
-                || bp.has_entity_gen("cli_command")
-                || bp.has_domain_gen("cli_domain")
-        })
-        .unwrap_or(true);
-    let has_test_gen = build_plan
-        .map(|bp| bp.has_entity_gen("test"))
-        .unwrap_or(true);
+/// Compute the output roots for `.codegraph-manifest.json` emission: the main
+/// output dir plus any domain-types/hooks-api bases. The repo-level
+/// `e2e-tests` root (home of the TypeScript Playwright harness) and the
+/// repo-level `migrations` root (hand-extended 0000–0009 + generated 0010+)
+/// get their own manifests so the guard can prove generated files are
+/// regenerated while the hand-written files stay excepted.
+fn build_manifest_roots(ctx: &GeneratorContext<'_>) -> Vec<PathBuf> {
+    let output_dir = ctx.output_dir;
+    let e2e_manifest_root = playwright::e2e_tests_root(output_dir);
+    let migrations_manifest_root = db::migrations_root(output_dir);
 
-    // Whether generated backend output routes into per-domain worker crates
-    // under `workers/{domain}/`.  The build plan is authoritative; fall back
-    // to the project config (default: monolith) when no plan is provided.
-    let workers_topology = build_plan
-        .map(|bp| bp.deployment_topology() == crate::profile::DeploymentTopology::Workers)
-        .unwrap_or_else(|| project.is_workers_topology());
+    let mut roots: Vec<PathBuf> = vec![output_dir.to_path_buf()];
+    roots.extend(ctx.domain_types_base.map(Path::to_path_buf));
+    roots.extend(ctx.hooks_base.map(Path::to_path_buf));
+    roots.push(e2e_manifest_root);
+    roots.push(migrations_manifest_root);
 
-    let order = compute_generation_order(db, config).await?;
-    let mut report = report::GenerationReport::new();
+    roots
+}
 
-    // Clean stale generated files from the output directory before generators
-    // run.  Previous pipeline runs may have produced files for entities that
-    // are no longer in the generation order (e.g. reclassified as VOs).
-    // The filesystem-scanning `generate_mod_files` pass would otherwise pick
-    // them up and emit broken `pub mod` declarations.
-    clean_generated_output(
-        output_dir,
-        &order,
-        &config.defaults.type_suffix,
-        workers_topology,
-    );
-
-    // Clean stale IFML route directories from previous runs.  The IFML-only
-    // path (`run_ifml_generators`) handles this per framework with the full
-    // set of active views from the current model; the monolithic pipeline
-    // regenerates routes in place, so nothing to clean here.
-
-    // Clean generated migration files (seq >= 10) from previous runs.  New runs
-    // may generate a different set of files (e.g. duplicates removed),
-    // and stale numbered SQL files must not linger in the migrations directory.
-    // Hand-written bootstrap migrations (0000–0009) are preserved.
-    //
-    // Only runs when the active build plan includes the `ddl` generator (the
-    // entity migration emitter). Narrower profiles (e.g. e2e/playwright-only)
-    // must NOT delete migrations produced by a previous fullstack run — they
-    // would never be regenerated, corrupting the migration set.
-    let plan_emits_migrations = build_plan
-        .map(|bp| bp.has_entity_gen("ddl"))
-        .unwrap_or(true);
-    let migrations_dir = db::migrations_root(output_dir);
-    if plan_emits_migrations && migrations_dir.is_dir() {
-        let mut removed = 0usize;
-        for entry in fs::read_dir(&migrations_dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("sql") {
-                continue;
-            }
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                // Parse leading numeric prefix.
-                let prefix_end = stem
-                    .find(|c: char| !c.is_ascii_digit())
-                    .unwrap_or(stem.len());
-                if let Ok(seq) = stem[..prefix_end].parse::<usize>() {
-                    // Generated migrations start at seq 10 (codelist, integration, entity).
-                    if seq >= 10 {
-                        let _ = fs::remove_file(&path);
-                        removed += 1;
-                    }
-                }
-            }
-        }
-        if removed > 0 {
-            tracing::debug!(
-                "Removed {removed} stale generated migration files from {}",
-                migrations_dir.display()
-            );
-        }
-    }
-
-    // Fetch parent-child relationship candidates from the graph for
-    // router and handler generators to populate nested route information.
-    let parent_candidates = db
-        .get_parent_candidates()
-        .await
-        .map_err(|e| Error::Config(e.to_string()))?;
-
-    // Normalize generator name for build_plan comparison: some name() methods
-    // return hyphens (e.g. "ui-page") while the build plan stores underscores
-    // (e.g. "ui_page") from profile generator lists.
-    //
-    // Without a BuildPlan (plan-less runs), feature-gated generators (gRPC,
-    // AT Protocol, Fern) are skipped: their output depends on dependencies
-    // the scaffolded Cargo.toml only enables via profile features, so
-    // emitting it unconditionally produced non-compiling apps.
-    let capability_registry = crate::profile::CapabilityRegistry::new();
-    let plan_has_entity = |name: &str| match build_plan {
-        Some(bp) => bp.has_entity_gen(&name.replace('-', "_")),
-        None => !capability_registry.requires_build_plan(&name.replace('-', "_")),
+/// Build the per-entity generator set.
+fn build_entity_generators(
+    ctx: &GeneratorContext<'_>,
+    parent_candidates: &[codegraph_core::types::ParentCandidate],
+    worker_base: Option<&Path>,
+) -> Vec<Box<dyn EntityGenerator>> {
+    let output_dir = ctx.output_dir;
+    // Routed generators (backend Rust source for one domain) get the
+    // per-domain worker crate directory; all others stay at the root.
+    let base = |name: &str| {
+        generator_base(
+            output_dir,
+            worker_base,
+            is_worker_routed_entity_generator(name),
+        )
     };
-    let plan_has_domain = |name: &str| match build_plan {
-        Some(bp) => bp.has_domain_gen(&name.replace('-', "_")),
-        None => !capability_registry.requires_build_plan(&name.replace('-', "_")),
-    };
-    let plan_has_global = |name: &str| match build_plan {
-        Some(bp) => bp.has_global_gen(&name.replace('-', "_")),
-        None => !capability_registry.requires_build_plan(&name.replace('-', "_")),
-    };
-
-    let entity_gens_factory = |worker_base: Option<&Path>| -> Vec<Box<dyn EntityGenerator>> {
-        // Routed generators (backend Rust source for one domain) get the
-        // per-domain worker crate directory; all others stay at the root.
-        let base = |name: &str| {
-            generator_base(
-                output_dir,
-                worker_base,
-                is_worker_routed_entity_generator(name),
-            )
-        };
-        vec![
-            Box::new(
-                db::ddl::DdlGenerator::new(base("ddl"))
-                    .with_dialect(make_dialect())
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(
-                db::entity::SeaOrmEntityGenerator::new(base("sea_orm_entity"))
-                    .with_dialect(make_dialect())
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(
-                db::cornucopia_queries::CornucopiaQueryGenerator::new(base("cornucopia_queries"))
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(
-                ddd::cornucopia_repo::CornucopiaRepoGenerator::new(base("cornucopia_repo"))
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(
-                ddd::repository::RepositoryTraitGenerator::new(base("repository"))
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(
-                ddd::command::CommandGenerator::new(base("command"))
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(
-                ddd::query::QueryGenerator::new(base("query"))
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(ddd::event::EventGenerator::new(base("event"))) as Box<dyn EntityGenerator>,
-            Box::new(ddd::dto::DtoGenerator::new(base("dto"))) as Box<dyn EntityGenerator>,
-            Box::new(
-                api::handler::HandlerGenerator::new(base("handler"))
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(
-                api::workflow_action::WorkflowActionGenerator::new(base("workflow_action"))
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(api::media::MediaRouteGenerator::new(base("media_route")))
-                as Box<dyn EntityGenerator>,
-            Box::new(test::test_gen::TestGenerator::new(base("test"))) as Box<dyn EntityGenerator>,
-            Box::new(
-                ui::page::UiPageGenerator::new(base("ui-page"))
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(ui::form::UiFormGenerator::new(base("ui-form"))) as Box<dyn EntityGenerator>,
-            Box::new(ui::cosmos_entity_form::CosmosEntityFormGenerator::new(
-                base("ui-form"),
-            )) as Box<dyn EntityGenerator>,
-            Box::new(
-                ui::store::UiStoreGenerator::new(base("ui-store"))
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(
-                ui::e2e_test::UiE2eTestGenerator::new(base("ui-e2e-test"))
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(playwright::entity_gen::PlaywrightEntityGenerator::new(
-                base("playwright-entity"),
-            )) as Box<dyn EntityGenerator>,
-            Box::new(playwright::ts_entity_gen::TsEntityGenerator::new(base(
-                "playwright-ts",
-            ))) as Box<dyn EntityGenerator>,
-            Box::new(ui::descriptor::UiDescriptorGenerator::new(
-                base("ui-descriptor"),
-                ui_overrides.clone(),
-                ui_domains.clone(),
-            )) as Box<dyn EntityGenerator>,
-            Box::new(ui::shell::UiShellGenerator::new(base("ui-shell")))
-                as Box<dyn EntityGenerator>,
-            Box::new(
-                hooks::lifecycle_trait::LifecycleTraitGenerator::new_with_base(
-                    hooks_base
-                        .map(|b| b.to_path_buf())
-                        .unwrap_or_else(|| output_dir.to_path_buf()),
-                ),
-            ) as Box<dyn EntityGenerator>,
-            // domain_types generators: use the provided base override, defaulting to output_dir.
-            Box::new(domain_types::dto::DomainTypesDtoGenerator::new_with_base(
-                domain_types_base
+    vec![
+        Box::new(
+            db::ddl::DdlGenerator::new(base("ddl"))
+                .with_dialect(ctx.make_dialect())
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(
+            db::entity::SeaOrmEntityGenerator::new(base("sea_orm_entity"))
+                .with_dialect(ctx.make_dialect())
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(
+            db::cornucopia_queries::CornucopiaQueryGenerator::new(base("cornucopia_queries"))
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(
+            ddd::cornucopia_repo::CornucopiaRepoGenerator::new(base("cornucopia_repo"))
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(
+            ddd::repository::RepositoryTraitGenerator::new(base("repository"))
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(
+            ddd::command::CommandGenerator::new(base("command"))
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(
+            ddd::query::QueryGenerator::new(base("query"))
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(ddd::event::EventGenerator::new(base("event"))) as Box<dyn EntityGenerator>,
+        Box::new(ddd::dto::DtoGenerator::new(base("dto"))) as Box<dyn EntityGenerator>,
+        Box::new(
+            api::handler::HandlerGenerator::new(base("handler"))
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(
+            api::workflow_action::WorkflowActionGenerator::new(base("workflow_action"))
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(api::media::MediaRouteGenerator::new(base("media_route")))
+            as Box<dyn EntityGenerator>,
+        Box::new(test::test_gen::TestGenerator::new(base("test"))) as Box<dyn EntityGenerator>,
+        Box::new(
+            ui::page::UiPageGenerator::new(base("ui-page"))
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(ui::form::UiFormGenerator::new(base("ui-form"))) as Box<dyn EntityGenerator>,
+        Box::new(ui::cosmos_entity_form::CosmosEntityFormGenerator::new(
+            base("ui-form"),
+        )) as Box<dyn EntityGenerator>,
+        Box::new(
+            ui::store::UiStoreGenerator::new(base("ui-store"))
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(
+            ui::e2e_test::UiE2eTestGenerator::new(base("ui-e2e-test"))
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(playwright::entity_gen::PlaywrightEntityGenerator::new(
+            base("playwright-entity"),
+        )) as Box<dyn EntityGenerator>,
+        Box::new(playwright::ts_entity_gen::TsEntityGenerator::new(base(
+            "playwright-ts",
+        ))) as Box<dyn EntityGenerator>,
+        Box::new(ui::descriptor::UiDescriptorGenerator::new(
+            base("ui-descriptor"),
+            ctx.ui_overrides.clone(),
+            ctx.ui_domains.clone(),
+        )) as Box<dyn EntityGenerator>,
+        Box::new(ui::shell::UiShellGenerator::new(base("ui-shell"))) as Box<dyn EntityGenerator>,
+        Box::new(
+            hooks::lifecycle_trait::LifecycleTraitGenerator::new_with_base(
+                ctx.hooks_base
                     .map(|b| b.to_path_buf())
                     .unwrap_or_else(|| output_dir.to_path_buf()),
-            )) as Box<dyn EntityGenerator>,
-            Box::new(
-                domain_types::query_service::QueryServiceGenerator::new_with_base(
-                    domain_types_base
-                        .map(|b| b.to_path_buf())
-                        .unwrap_or_else(|| output_dir.to_path_buf()),
-                ),
-            ) as Box<dyn EntityGenerator>,
-            Box::new(cli::command::CliCommandGenerator::new(base("cli_command")))
-                as Box<dyn EntityGenerator>,
-            // gRPC entity generators
-            Box::new(grpc::proto::GrpcProtoGenerator::new(base("grpc_proto")))
-                as Box<dyn EntityGenerator>,
-            Box::new(grpc::service::GrpcServiceGenerator::new(base(
-                "grpc_service",
-            ))) as Box<dyn EntityGenerator>,
-            // atproto entity generators
-            Box::new(atproto::lexicon_gen::LexiconEmitter::new(base("lexicon")))
-                as Box<dyn EntityGenerator>,
-            Box::new(atproto::types_gen::AtprotoTypesEmitter::new(base(
-                "atproto_types",
-            ))) as Box<dyn EntityGenerator>,
-            Box::new(atproto::client_gen::AtprotoClientEmitter::new(base(
-                "atproto_client",
-            ))) as Box<dyn EntityGenerator>,
-            Box::new(atproto::xrpc_gen::AtprotoXrpcEmitter::new(base(
-                "atproto_xrpc",
-            ))) as Box<dyn EntityGenerator>,
-        ]
-        .into_iter()
-        .filter(|gen| plan_has_entity(gen.name()))
-        .filter(|gen| {
-            gen.supported_targets()
-                .map(|targets| targets.contains(&current_target))
-                .unwrap_or(true)
-        })
+            ),
+        ) as Box<dyn EntityGenerator>,
+        // domain_types generators: use the provided base override, defaulting to output_dir.
+        Box::new(domain_types::dto::DomainTypesDtoGenerator::new_with_base(
+            ctx.domain_types_base
+                .map(|b| b.to_path_buf())
+                .unwrap_or_else(|| output_dir.to_path_buf()),
+        )) as Box<dyn EntityGenerator>,
+        Box::new(
+            domain_types::query_service::QueryServiceGenerator::new_with_base(
+                ctx.domain_types_base
+                    .map(|b| b.to_path_buf())
+                    .unwrap_or_else(|| output_dir.to_path_buf()),
+            ),
+        ) as Box<dyn EntityGenerator>,
+        Box::new(cli::command::CliCommandGenerator::new(base("cli_command")))
+            as Box<dyn EntityGenerator>,
+        // gRPC entity generators
+        Box::new(grpc::proto::GrpcProtoGenerator::new(base("grpc_proto")))
+            as Box<dyn EntityGenerator>,
+        Box::new(grpc::service::GrpcServiceGenerator::new(base(
+            "grpc_service",
+        ))) as Box<dyn EntityGenerator>,
+        // atproto entity generators
+        Box::new(atproto::lexicon_gen::LexiconEmitter::new(base("lexicon")))
+            as Box<dyn EntityGenerator>,
+        Box::new(atproto::types_gen::AtprotoTypesEmitter::new(base(
+            "atproto_types",
+        ))) as Box<dyn EntityGenerator>,
+        Box::new(atproto::client_gen::AtprotoClientEmitter::new(base(
+            "atproto_client",
+        ))) as Box<dyn EntityGenerator>,
+        Box::new(atproto::xrpc_gen::AtprotoXrpcEmitter::new(base(
+            "atproto_xrpc",
+        ))) as Box<dyn EntityGenerator>,
+    ]
+    .into_iter()
+    .filter(|gen| ctx.plan_has_entity(gen.name()))
+    .filter(|gen| {
+        gen.supported_targets()
+            .map(|targets| targets.contains(&ctx.current_target))
+            .unwrap_or(true)
+    })
+    .collect::<Vec<_>>()
+}
+
+/// Build the per-domain generator set.
+fn build_domain_generators(
+    ctx: &GeneratorContext<'_>,
+    parent_candidates: &[codegraph_core::types::ParentCandidate],
+    worker_base: Option<&Path>,
+) -> Vec<Box<dyn DomainGenerator>> {
+    let output_dir = ctx.output_dir;
+    // Routed domain generators (backend source for one domain) get the
+    // per-domain worker crate directory; all others stay at the root.
+    let base = |name: &str| {
+        generator_base(
+            output_dir,
+            worker_base,
+            is_worker_routed_domain_generator(name),
+        )
+    };
+    let mut gens: Vec<Box<dyn DomainGenerator>> = vec![
+        Box::new(ddd::errors::ErrorGenerator::new(base("errors"))) as Box<dyn DomainGenerator>,
+        Box::new(
+            api::router::RouterGenerator::new(base("router"))
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn DomainGenerator>,
+        Box::new(
+            api::contract::ApiContractGenerator::new(base("api_contract"))
+                .with_parent_candidates(parent_candidates.to_vec()),
+        ) as Box<dyn DomainGenerator>,
+        Box::new(api::links::LinksGenerator::new(base("links"))) as Box<dyn DomainGenerator>,
+        Box::new(ui::domain_layout::UiDomainLayoutGenerator::new(base(
+            "ui-domain-layout",
+        ))) as Box<dyn DomainGenerator>,
+        Box::new(cli::domain::CliDomainGenerator::new(base("cli_domain")))
+            as Box<dyn DomainGenerator>,
+        // gRPC domain generator
+        Box::new(grpc::router::GrpcRouterGenerator::new(base("grpc_router")))
+            as Box<dyn DomainGenerator>,
+        // atproto domain generators
+        Box::new(atproto::appview_gen::AtprotoAppviewEmitter::new(base(
+            "atproto_appview",
+        ))) as Box<dyn DomainGenerator>,
+        Box::new(atproto::xrpc_gen::AtprotoXrpcEmitter::new(base(
+            "atproto_xrpc_router",
+        ))) as Box<dyn DomainGenerator>,
+    ];
+    gens.into_iter()
+        .filter(|gen| ctx.plan_has_domain(gen.name()))
         .collect::<Vec<_>>()
-    };
+}
 
-    let mut entity_gens: Vec<Box<dyn EntityGenerator>> = if workers_topology {
-        Vec::new()
-    } else {
-        entity_gens_factory(None)
-    };
-
-    let domain_gens_factory = |worker_base: Option<&Path>| -> Vec<Box<dyn DomainGenerator>> {
-        // Routed domain generators (backend source for one domain) get the
-        // per-domain worker crate directory; all others stay at the root.
-        let base = |name: &str| {
-            generator_base(
-                output_dir,
-                worker_base,
-                is_worker_routed_domain_generator(name),
-            )
-        };
-        vec![
-            Box::new(ddd::errors::ErrorGenerator::new(base("errors"))) as Box<dyn DomainGenerator>,
-            Box::new(
-                api::router::RouterGenerator::new(base("router"))
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn DomainGenerator>,
-            Box::new(
-                api::contract::ApiContractGenerator::new(base("api_contract"))
-                    .with_parent_candidates(parent_candidates.clone()),
-            ) as Box<dyn DomainGenerator>,
-            Box::new(api::links::LinksGenerator::new(base("links"))) as Box<dyn DomainGenerator>,
-            Box::new(ui::domain_layout::UiDomainLayoutGenerator::new(base(
-                "ui-domain-layout",
-            ))) as Box<dyn DomainGenerator>,
-            Box::new(cli::domain::CliDomainGenerator::new(base("cli_domain")))
-                as Box<dyn DomainGenerator>,
-            // gRPC domain generator
-            Box::new(grpc::router::GrpcRouterGenerator::new(base("grpc_router")))
-                as Box<dyn DomainGenerator>,
-            // atproto domain generators
-            Box::new(atproto::appview_gen::AtprotoAppviewEmitter::new(base(
-                "atproto_appview",
-            ))) as Box<dyn DomainGenerator>,
-            Box::new(atproto::xrpc_gen::AtprotoXrpcEmitter::new(base(
-                "atproto_xrpc_router",
-            ))) as Box<dyn DomainGenerator>,
-        ]
-        .into_iter()
-        .filter(|gen| plan_has_domain(gen.name()))
-        .collect::<Vec<_>>()
-    };
-
-    let monolith_domain_gens: Vec<Box<dyn DomainGenerator>> = if workers_topology {
-        Vec::new()
-    } else {
-        domain_gens_factory(None)
-    };
-
+/// Build the global generator set: fixed core generators, the topology-
+/// dependent scaffold, feature-gated extras, IFML generators per framework,
+/// and integration generators when extension points are configured.
+fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn GlobalGenerator>> {
+    let output_dir = ctx.output_dir;
     let mut global_gens: Vec<Box<dyn GlobalGenerator>> = vec![
         Box::new(
             db::basejump_setup::BasejumpSetupGenerator::new(output_dir)
-                .with_dialect(make_dialect()),
+                .with_dialect(ctx.make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(
-            db::event_trigger::PgmqSetupGenerator::new(output_dir).with_dialect(make_dialect()),
+            db::event_trigger::PgmqSetupGenerator::new(output_dir).with_dialect(ctx.make_dialect()),
         ) as Box<dyn GlobalGenerator>,
-        Box::new(db::label_setup::LabelSetupGenerator::new(output_dir).with_dialect(make_dialect()))
-            as Box<dyn GlobalGenerator>,
+        Box::new(
+            db::label_setup::LabelSetupGenerator::new(output_dir).with_dialect(ctx.make_dialect()),
+        ) as Box<dyn GlobalGenerator>,
         Box::new(
             db::service_tables::ServiceTablesGenerator::new(output_dir)
-                .with_dialect(make_dialect()),
+                .with_dialect(ctx.make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(
             db::platform_schema::PlatformSchemaGenerator::new(output_dir)
-                .with_dialect(make_dialect()),
+                .with_dialect(ctx.make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(
             db::platform_grants::PlatformGrantsGenerator::new(output_dir)
-                .with_dialect(make_dialect()),
+                .with_dialect(ctx.make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(
-            db::workflow_seed::WorkflowSeedGenerator::new(output_dir).with_dialect(make_dialect()),
+            db::workflow_seed::WorkflowSeedGenerator::new(output_dir)
+                .with_dialect(ctx.make_dialect()),
         ) as Box<dyn GlobalGenerator>,
         Box::new(db::cornucopia_config::CornucopiaConfigGenerator::new(
             output_dir,
@@ -1051,7 +1203,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // workspace Cargo.toml, and a root-level monolith Cargo.toml / src/ would
     // collide with them.  In monolith topology it keeps its original position
     // in the generator list so monolith output stays byte-identical.
-    if workers_topology {
+    if ctx.workers_topology {
         global_gens.push(
             Box::new(scaffold::worker::WorkerScaffoldGenerator::new(output_dir))
                 as Box<dyn GlobalGenerator>,
@@ -1060,43 +1212,43 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         global_gens.push(Box::new(
             scaffold::gen::ScaffoldGenerator::new(
                 output_dir,
-                has_webhooks,
-                has_reports,
-                has_grpc,
-                has_atproto,
-                has_cli,
-                has_test_gen,
-                has_fern,
-                has_auth_rate_limit,
-                has_admin_cli,
-                has_labels,
-                &migration_strategy,
+                ctx.has_webhooks,
+                ctx.has_reports,
+                ctx.has_grpc,
+                ctx.has_atproto,
+                ctx.has_cli,
+                ctx.has_test_gen,
+                ctx.has_fern,
+                ctx.has_auth_rate_limit,
+                ctx.has_admin_cli,
+                ctx.has_labels,
+                &ctx.migration_strategy,
             )
-            .with_seed(has_seed),
+            .with_seed(ctx.has_seed),
         ) as Box<dyn GlobalGenerator>);
     }
 
     global_gens.push(Box::new(ui::scaffold::UiScaffoldGenerator::new(
         output_dir,
-        ext_points.is_some(),
-        has_webhooks,
+        ctx.ext_points.is_some(),
+        ctx.has_webhooks,
     )) as Box<dyn GlobalGenerator>);
     global_gens
         .push(Box::new(ui::types::UiTypeGenerator::new(output_dir)) as Box<dyn GlobalGenerator>);
     global_gens.push(Box::new(ui::codelist::UiCodelistGenerator::new(
         output_dir,
-        schema_base_dir,
+        ctx.schema_base_dir,
     )) as Box<dyn GlobalGenerator>);
     global_gens.push(
         Box::new(hooks::registry::HookRegistryGenerator::new_with_base(
-            hooks_base
+            ctx.hooks_base
                 .map(|b| b.to_path_buf())
                 .unwrap_or_else(|| output_dir.to_path_buf()),
         )) as Box<dyn GlobalGenerator>,
     );
     global_gens.push(Box::new(
         domain_types::scaffold::DomainTypesScaffoldGenerator::new_with_base(
-            domain_types_base
+            ctx.domain_types_base
                 .map(|b| b.to_path_buf())
                 .unwrap_or_else(|| output_dir.to_path_buf()),
         ),
@@ -1106,12 +1258,12 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     );
     global_gens.push(Box::new(
         db::report_view::ReportViewGenerator::new(output_dir)
-            .with_reports_dir(domain_config_dir)
-            .with_dialect(make_dialect()),
+            .with_reports_dir(ctx.domain_config_dir)
+            .with_dialect(ctx.make_dialect()),
     ) as Box<dyn GlobalGenerator>);
     global_gens.push(Box::new(
-        db::seed::SeedDataGenerator::new(output_dir, seed_config.map(|p| p.to_path_buf()))
-            .with_dialect(make_dialect()),
+        db::seed::SeedDataGenerator::new(output_dir, ctx.seed_config.map(|p| p.to_path_buf()))
+            .with_dialect(ctx.make_dialect()),
     ) as Box<dyn GlobalGenerator>);
     global_gens.push(
         Box::new(playwright::global_gen::PlaywrightGlobalGenerator::new(
@@ -1131,7 +1283,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         )) as Box<dyn GlobalGenerator>,
     );
     // Demo-data seed module + CLI (opt-in via the `seed_provision` capability).
-    if has_seed {
+    if ctx.has_seed {
         global_gens.push(
             Box::new(seed::provision::SeedProvisionGenerator::new(output_dir))
                 as Box<dyn GlobalGenerator>,
@@ -1170,36 +1322,36 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // ops harness manifest + testkit crate
     global_gens.push(Box::new(ops::OpsManifestGenerator::new(
         output_dir,
-        has_cli,
-        has_ui,
-        has_admin_cli,
-        has_grpc,
+        ctx.has_cli,
+        ctx.has_ui,
+        ctx.has_admin_cli,
+        ctx.has_grpc,
     )) as Box<dyn GlobalGenerator>);
 
     let mut global_gens: Vec<Box<dyn GlobalGenerator>> = global_gens
         .into_iter()
-        .filter(|gen| plan_has_global(gen.name()))
+        .filter(|gen| ctx.plan_has_global(gen.name()))
         .filter(|gen| {
             gen.supported_targets()
-                .map(|targets| targets.contains(&current_target))
+                .map(|targets| targets.contains(&ctx.current_target))
                 .unwrap_or(true)
         })
         .collect::<Vec<_>>();
 
     // Add IFML generators per framework
-    let ifml_frameworks = if ifml_frameworks.is_empty() {
+    let ifml_frameworks = if ctx.ifml_frameworks.is_empty() {
         vec!["svelte".to_string()]
     } else {
-        ifml_frameworks.clone()
+        ctx.ifml_frameworks.clone()
     };
     for fw in &ifml_frameworks {
         let fw_output = output_dir.join(fw);
-        if build_plan.is_none() || plan_has_global(&format!("ifml_route_{}", fw)) {
+        if ctx.build_plan.is_none() || ctx.plan_has_global(&format!("ifml_route_{}", fw)) {
             global_gens.push(Box::new(ifml::route_generator::IfmlRouteGenerator::new(
                 &fw_output, fw,
             )) as Box<dyn GlobalGenerator>);
         }
-        if build_plan.is_none() || plan_has_global(&format!("ifml_navigation_{}", fw)) {
+        if ctx.build_plan.is_none() || ctx.plan_has_global(&format!("ifml_navigation_{}", fw)) {
             global_gens.push(
                 Box::new(ifml::navigation_generator::IfmlNavigationGenerator::new(
                     &fw_output, fw,
@@ -1208,7 +1360,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
-    if let Some(ext) = ext_points {
+    if let Some(ext) = ctx.ext_points {
         let integration_gens: [Box<dyn GlobalGenerator>; 4] = [
             Box::new(integration::tables::IntegrationTablesGenerator::new(
                 output_dir,
@@ -1226,37 +1378,98 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             )),
         ];
         for gen in integration_gens {
-            if plan_has_global(gen.name()) {
+            if ctx.plan_has_global(gen.name()) {
                 global_gens.push(gen);
             }
         }
     }
 
-    // Per-entity generators — run entities sequentially to ensure TypeRegistry
-    // is populated for earlier entities before later entities reference their types.
-    // Within each entity, generators run sequentially.
-    //
-    // The generation order is already grouped by domain (see
-    // `compute_generation_order`), so in workers topology we rebuild the
-    // entity generator set each time the domain changes, constructing
-    // routed generators with `workers/{domain}/` as their base so their
-    // output lands inside the per-domain worker crate.  In monolith topology
-    // the generator set is built exactly once with the root output dir.
+    global_gens
+}
+
+/// Clean generated migration files (seq >= 10) from previous runs.  New runs
+/// may generate a different set of files (e.g. duplicates removed),
+/// and stale numbered SQL files must not linger in the migrations directory.
+/// Hand-written bootstrap migrations (0000–0009) are preserved.
+///
+/// Only runs when the active build plan includes the `ddl` generator (the
+/// entity migration emitter). Narrower profiles (e.g. e2e/playwright-only)
+/// must NOT delete migrations produced by a previous fullstack run — they
+/// would never be regenerated, corrupting the migration set.
+fn clean_stale_migrations(ctx: &GeneratorContext<'_>) {
+    let plan_emits_migrations = ctx
+        .build_plan
+        .map(|bp| bp.has_entity_gen("ddl"))
+        .unwrap_or(true);
+    let migrations_dir = db::migrations_root(ctx.output_dir);
+    if plan_emits_migrations && migrations_dir.is_dir() {
+        let mut removed = 0usize;
+        for entry in fs::read_dir(&migrations_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("sql") {
+                continue;
+            }
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                // Parse leading numeric prefix.
+                let prefix_end = stem
+                    .find(|c: char| !c.is_ascii_digit())
+                    .unwrap_or(stem.len());
+                if let Ok(seq) = stem[..prefix_end].parse::<usize>() {
+                    // Generated migrations start at seq 10 (codelist, integration, entity).
+                    if seq >= 10 {
+                        let _ = fs::remove_file(&path);
+                        removed += 1;
+                    }
+                }
+            }
+        }
+        if removed > 0 {
+            tracing::debug!(
+                "Removed {removed} stale generated migration files from {}",
+                migrations_dir.display()
+            );
+        }
+    }
+}
+
+/// Run every per-entity generator for every entity in the generation order.
+///
+/// Entities run sequentially to ensure TypeRegistry is populated for earlier
+/// entities before later entities reference their types. Within each entity,
+/// generators run sequentially.
+///
+/// The generation order is already grouped by domain (see
+/// `compute_generation_order`), so in workers topology we rebuild the
+/// entity generator set each time the domain changes, constructing
+/// routed generators with `workers/{domain}/` as their base so their
+/// output lands inside the per-domain worker crate.  In monolith topology
+/// the generator set is built exactly once with the root output dir.
+async fn run_entity_phase(
+    ctx: &GeneratorContext<'_>,
+    entity_gens: &mut Vec<Box<dyn EntityGenerator>>,
+    parent_candidates: &[codegraph_core::types::ParentCandidate],
+    order: &[GenerationEntry],
+) -> Vec<(Vec<GeneratedFile>, Vec<report::GenerationError>)> {
     let mut entity_results: Vec<(Vec<GeneratedFile>, Vec<report::GenerationError>)> = Vec::new();
     let mut current_worker_domain: Option<String> = None;
-    for entry in &order {
-        if workers_topology && current_worker_domain.as_deref() != Some(entry.domain.as_str()) {
-            let worker_dir = output_dir.join("workers").join(&entry.domain);
-            entity_gens = entity_gens_factory(Some(&worker_dir));
+    for entry in order {
+        if ctx.workers_topology && current_worker_domain.as_deref() != Some(entry.domain.as_str()) {
+            let worker_dir = ctx.output_dir.join("workers").join(&entry.domain);
+            *entity_gens = build_entity_generators(ctx, parent_candidates, Some(&worker_dir));
             current_worker_domain = Some(entry.domain.clone());
         }
 
-        let generation_mode = config
+        let generation_mode = ctx
+            .config
             .domains
             .get(&entry.domain)
             .and_then(|d| d.get_entity_config(&entry.schema_title))
             .and_then(|ec| ec.generation_mode.as_deref())
-            .unwrap_or(&config.defaults.generation_mode);
+            .unwrap_or(&ctx.config.defaults.generation_mode);
 
         if generation_mode == "none" {
             continue;
@@ -1270,12 +1483,12 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             }
             match gen
                 .generate(
-                    db,
+                    ctx.db(),
                     &entry.schema_title,
                     &entry.domain,
-                    config,
-                    tera,
-                    project,
+                    ctx.config,
+                    ctx.tera,
+                    ctx.project,
                 )
                 .await
             {
@@ -1291,7 +1504,15 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
         entity_results.push((entity_files, errors));
     }
+    entity_results
+}
 
+/// Write per-entity output: migrations get sequential prefixes (starting at
+/// 500) and files sharing an unprefixed base name are deduplicated.
+fn write_entity_results(
+    entity_results: Vec<(Vec<GeneratedFile>, Vec<report::GenerationError>)>,
+    report: &mut report::GenerationReport,
+) -> Result<()> {
     // Entity migrations start at 500 to avoid overlap with codelist range (10..200).
     // Deduplicate migration files by their unprefixed base name: two different schema
     // titles can produce the same pg_table_name (e.g. "AssessmentAccessType" and a
@@ -1335,18 +1556,37 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
         report.errors.extend(errors);
     }
+    Ok(())
+}
 
+/// Run the codelist generators: SQL migrations (codelists are not entities,
+/// so they run separately), Rust enums into the domain-types crate, the
+/// generated-app re-export module, and — in workers topology — per-worker
+/// codelist re-export modules.
+async fn run_codelist_generators(
+    ctx: &GeneratorContext<'_>,
+    order: &[GenerationEntry],
+    report: &mut report::GenerationReport,
+) -> Result<()> {
     // Codelist SQL migration generators (codelists are not entities, run separately)
     {
-        let codelists = db
+        let codelists = ctx
+            .db()
             .list_codelists()
             .await
             .map_err(|e| Error::Config(e.to_string()))?;
         let codelist_sql_gen =
-            db::codelist::CodelistGenerator::new(output_dir).with_dialect(make_dialect());
+            db::codelist::CodelistGenerator::new(ctx.output_dir).with_dialect(ctx.make_dialect());
         for (idx, cl) in codelists.iter().enumerate() {
             let files = codelist_sql_gen
-                .generate(db, &cl.name, "common", config, tera, project)
+                .generate(
+                    ctx.db(),
+                    &cl.name,
+                    "common",
+                    ctx.config,
+                    ctx.tera,
+                    ctx.project,
+                )
                 .await?;
             for file in files {
                 let file = prefix_migration_path(file, idx + 10);
@@ -1358,11 +1598,14 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
 
     // Codelist Rust enums into domain-types crate (source-of-truth for DTOs)
     let codelist_gen = domain_types::codelist::DomainTypesCodelistGenerator::new_with_base(
-        domain_types_base
+        ctx.domain_types_base
             .map(|b| b.to_path_buf())
-            .unwrap_or_else(|| output_dir.to_path_buf()),
+            .unwrap_or_else(|| ctx.output_dir.to_path_buf()),
     );
-    match codelist_gen.generate_all(db, tera, project).await {
+    match codelist_gen
+        .generate_all(ctx.db(), ctx.tera, ctx.project)
+        .await
+    {
         Ok(files) => {
             for file in &files {
                 write_output(file)?;
@@ -1379,8 +1622,8 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     }
 
     // Codelist Rust enum re-exports (generated app re-exports from hr_domain_types)
-    match codelist::rust_enum::RustCodelistGenerator::new(output_dir)
-        .generate_reexport_mod(db, project)
+    match codelist::rust_enum::RustCodelistGenerator::new(ctx.output_dir)
+        .generate_reexport_mod(ctx.db(), ctx.project)
         .await
     {
         Ok(files) => {
@@ -1405,12 +1648,12 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // `workers/{domain}/src/`), so the worker `lib.rs`'s `pub mod codelist;`
     // would otherwise not compile.  Monolith topology never enters this
     // branch, keeping the root output byte-identical.
-    if workers_topology {
-        let worker_codelist_gen = codelist::rust_enum::RustCodelistGenerator::new(output_dir);
-        for (domain, _entity_titles) in all_domains_for_generation(config, &order) {
-            let worker_base = output_dir.join("workers").join(&domain);
+    if ctx.workers_topology {
+        let worker_codelist_gen = codelist::rust_enum::RustCodelistGenerator::new(ctx.output_dir);
+        for (domain, _entity_titles) in all_domains_for_generation(ctx.config, order) {
+            let worker_base = ctx.output_dir.join("workers").join(&domain);
             match worker_codelist_gen
-                .generate_reexport_mod_for(db, &worker_base, project)
+                .generate_reexport_mod_for(ctx.db(), &worker_base, ctx.project)
                 .await
             {
                 Ok(files) => {
@@ -1430,26 +1673,43 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
-    // Per-domain generators — run all (domain, generator) pairs in parallel.
-    //
-    // In workers topology the domain generator set is constructed per domain
-    // with `workers/{domain}/` as the base for routed generators, so
-    // errors.rs / router.rs / links.rs land inside the worker crate.
-    // In monolith topology a single generator set is built once with the
-    // root output dir, exactly as before. Entity-less custom-routes domains
-    // are included with an empty entity list (see
-    // [`all_domains_for_generation`]).
-    let domains_with_entities = all_domains_for_generation(config, &order);
-    let domain_results: Vec<_> = if workers_topology {
+    Ok(())
+}
+
+/// Run all (domain, generator) pairs, writing files and collecting errors
+/// into the report.
+///
+/// In workers topology the domain generator set is constructed per domain
+/// with `workers/{domain}/` as the base for routed generators, so
+/// errors.rs / router.rs / links.rs land inside the worker crate.
+/// In monolith topology a single generator set is built once with the
+/// root output dir, exactly as before. Entity-less custom-routes domains
+/// are included with an empty entity list (see
+/// [`all_domains_for_generation`]).
+async fn run_domain_phase(
+    ctx: &GeneratorContext<'_>,
+    monolith_domain_gens: &[Box<dyn DomainGenerator>],
+    parent_candidates: &[codegraph_core::types::ParentCandidate],
+    domains_with_entities: &[(String, Vec<String>)],
+    report: &mut report::GenerationReport,
+) -> Result<()> {
+    let domain_results: Vec<_> = if ctx.workers_topology {
         let mut results = Vec::new();
-        for (domain, entity_titles) in &domains_with_entities {
-            let worker_dir = output_dir.join("workers").join(domain);
-            let domain_gens = domain_gens_factory(Some(&worker_dir));
+        for (domain, entity_titles) in domains_with_entities {
+            let worker_dir = ctx.output_dir.join("workers").join(domain);
+            let domain_gens = build_domain_generators(ctx, parent_candidates, Some(&worker_dir));
             let per_domain: Vec<_> = futures::future::join_all(domain_gens.iter().map(|gen| {
                 let domain = domain.clone();
                 async move {
                     let result = gen
-                        .generate(db, &domain, entity_titles, config, tera, project)
+                        .generate(
+                            ctx.db(),
+                            &domain,
+                            entity_titles,
+                            ctx.config,
+                            ctx.tera,
+                            ctx.project,
+                        )
                         .await;
                     (domain, gen.name().to_string(), result)
                 }
@@ -1465,7 +1725,14 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
                     let domain = domain.clone();
                     async move {
                         let result = gen
-                            .generate(db, &domain, entity_titles, config, tera, project)
+                            .generate(
+                                ctx.db(),
+                                &domain,
+                                entity_titles,
+                                ctx.config,
+                                ctx.tera,
+                                ctx.project,
+                            )
                             .await;
                         (domain, gen.name().to_string(), result)
                     }
@@ -1493,11 +1760,20 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
-    // Global generators — run in parallel, fatal on failure
+    Ok(())
+}
+
+/// Run global generators in parallel; any failure is fatal.
+async fn run_global_phase(
+    ctx: &GeneratorContext<'_>,
+    global_gens: &[Box<dyn GlobalGenerator>],
+    order: &[GenerationEntry],
+    report: &mut report::GenerationReport,
+) -> Result<()> {
     let global_results: Vec<_> = futures::future::join_all(
         global_gens
             .iter()
-            .map(|gen| gen.generate(db, config, &order, tera, project)),
+            .map(|gen| gen.generate(ctx.db(), ctx.config, order, ctx.tera, ctx.project)),
     )
     .await;
 
@@ -1509,26 +1785,31 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         report.files.extend(files);
     }
 
-    // Validate that every entity in the generation order has entity-specific files
-    report.validate_consistency(&order, &config.defaults.type_suffix);
+    Ok(())
+}
 
-    // Generate mod.rs files for all directories under src/.
-    // Collects all .rs files and subdirs, writes `pub mod` declarations.
-    // Always overwrites existing mod.rs UNLESS it contains `pub use`
-    // (indicating it was written by a specialised generator like codelist).
-    //
-    // In workers topology this runs per worker crate (workers/{domain}/src),
-    // plus once on the root src/ tree for any root-anchored src output
-    // (e.g. gRPC service code).  Monolith mode keeps the single root pass.
-    let mod_file_dirs: Vec<std::path::PathBuf> = if workers_topology {
+/// Generate mod.rs files for all directories under src/.
+/// Collects all .rs files and subdirs, writes `pub mod` declarations.
+/// Always overwrites existing mod.rs UNLESS it contains `pub use`
+/// (indicating it was written by a specialised generator like codelist).
+///
+/// In workers topology this runs per worker crate (workers/{domain}/src),
+/// plus once on the root src/ tree for any root-anchored src output
+/// (e.g. gRPC service code).  Monolith mode keeps the single root pass.
+fn write_mod_files(
+    ctx: &GeneratorContext<'_>,
+    domains_with_entities: &[(String, Vec<String>)],
+    report: &mut report::GenerationReport,
+) -> Result<()> {
+    let mod_file_dirs: Vec<std::path::PathBuf> = if ctx.workers_topology {
         let mut dirs: Vec<std::path::PathBuf> = domains_with_entities
             .iter()
-            .map(|(domain, _)| output_dir.join("workers").join(domain).join("src"))
+            .map(|(domain, _)| ctx.output_dir.join("workers").join(domain).join("src"))
             .collect();
-        dirs.push(output_dir.join("src"));
+        dirs.push(ctx.output_dir.join("src"));
         dirs
     } else {
-        vec![output_dir.join("src")]
+        vec![ctx.output_dir.join("src")]
     };
     for src_dir in &mod_file_dirs {
         let mod_files = generate_mod_files(src_dir)?;
@@ -1546,23 +1827,30 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             report.files.push(file);
         }
     }
+    Ok(())
+}
 
-    // Emit a `.codegraph-manifest.json` at each output root listing every
-    // file written this run (report.files mirrors every `write_output` call),
-    // merged with any manifest already on disk. The pinned generator-source
-    // rev (`project.codegraph_rev`) is recorded so drift/CI can reproduce the
-    // exact checkout the committed tree was produced at.
-    // Emit integration-test glue (tests/<domain>/mod.rs + tests/tests.rs) so
-    // cargo actually compiles the generated entity tests under tests/.
-    let test_mod_files = generate_test_mod_files(output_dir)?;
+/// Emit integration-test glue (tests/<domain>/mod.rs + tests/tests.rs) so
+/// cargo actually compiles the generated entity tests under tests/, then a
+/// `.codegraph-manifest.json` at each output root listing every file written
+/// this run (report.files mirrors every `write_output` call), merged with
+/// any manifest already on disk. The pinned generator-source rev
+/// (`project.codegraph_rev`) is recorded so drift/CI can reproduce the exact
+/// checkout the committed tree was produced at.
+fn emit_run_manifests(
+    ctx: &GeneratorContext<'_>,
+    manifest_roots: &[&Path],
+    report: &mut report::GenerationReport,
+) -> Result<()> {
+    let test_mod_files = generate_test_mod_files(ctx.output_dir)?;
     for file in &test_mod_files {
         write_output(file)?;
     }
     report.files.extend(test_mod_files);
 
-    manifest::emit_manifests(&manifest_roots, &report.files, &project.codegraph_rev)?;
+    manifest::emit_manifests(manifest_roots, &report.files, &ctx.project.codegraph_rev)?;
 
-    Ok(report)
+    Ok(())
 }
 
 pub async fn run_ifml_generators(
