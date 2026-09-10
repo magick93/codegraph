@@ -1,5 +1,3 @@
-use std::fmt::Write;
-
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
     AuditPolicy, DeletionPropagation, PolicyKind, SoftDeleteMarker, SoftDeleteVisibility,
@@ -11,6 +9,7 @@ use crate::error::Result;
 use crate::generate::api::api_model::resolve_entity_operations;
 use crate::generate::api::include_path::resolve_include_paths_gated;
 use crate::generate::api::include_path::ResolvedIncludePath;
+use crate::generate::code_writer::{w, wln, CodeWriter};
 use crate::generate::filter_fields::{
     resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
 };
@@ -184,7 +183,7 @@ impl TreeColumn {
 /// `pad` is the indentation prefix (e.g. `"            "`).
 /// `row_var` is the variable name holding the entity row (e.g. `"row"`).
 pub(crate) fn emit_entity_to_dto_field(
-    code: &mut String,
+    code: &mut CodeWriter,
     col: &TreeColumn,
     row_var: &str,
     pad: &str,
@@ -196,44 +195,42 @@ pub(crate) fn emit_entity_to_dto_field(
     if col.is_structured_wrapper {
         // Both array and scalar StructuredWrapper use the same serde_json conversion.
         if col.is_nullable {
-            writeln!(
+            wln!(
                 code,
                 "{pad}{dto_field}: {row_var}.{entity_field}.and_then(|v| serde_json::from_value(v).ok()),",
-            ).unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "{pad}{dto_field}: serde_json::from_value({row_var}.{entity_field}).unwrap_or_default(),",
-            ).unwrap();
+            );
         }
     } else if col.dto_rust_type.is_some() {
         if col.is_array {
             if col.is_nullable {
-                writeln!(
+                wln!(
                     code,
                     "{pad}{dto_field}: {row_var}.{entity_field}.map(|v| v.into_iter().filter_map(|x| x.parse().ok()).collect()),",
-                ).unwrap();
+                );
             } else {
-                writeln!(
+                wln!(
                     code,
                     "{pad}{dto_field}: {row_var}.{entity_field}.into_iter().filter_map(|v| v.parse().ok()).collect(),",
-                ).unwrap();
+                );
             }
         } else if col.is_nullable {
-            writeln!(
+            wln!(
                 code,
                 "{pad}{dto_field}: {row_var}.{entity_field}.and_then(|v| v.parse().ok()),",
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "{pad}{dto_field}: {row_var}.{entity_field}.parse().unwrap_or_default(),",
-            )
-            .unwrap();
+            );
         }
     } else {
-        writeln!(code, "{pad}{dto_field}: {row_var}.{entity_field},").unwrap();
+        wln!(code, "{pad}{dto_field}: {row_var}.{entity_field},");
     }
 }
 
@@ -242,36 +239,34 @@ pub(crate) fn emit_entity_to_dto_field(
 /// For array children: `field: field_rows,`
 /// For single children: `field: field_rows.into_iter().next(),`
 pub(crate) fn emit_child_field_population(
-    code: &mut String,
+    code: &mut CodeWriter,
     children: &[ChildTableInfo],
     pad: &str,
 ) {
     for child in children {
         if child.is_array {
-            writeln!(
+            wln!(
                 code,
                 "{pad}{field}: {field}_rows,",
                 field = child.field_name
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "{pad}{field}: {field}_rows.into_iter().next(),",
                 field = child.field_name
-            )
-            .unwrap();
+            );
         }
     }
 }
 
 /// Emit the response struct construction shared by `find_by_id` and `find_by_id_scoped`.
-fn emit_response_construction(code: &mut String, tree: &EntityTree) {
+fn emit_response_construction(code: &mut CodeWriter, tree: &EntityTree) {
     emit_child_reads(code, &tree.child_tables, "id", 2);
     emit_junction_reads(code, &tree.junction_tables, "id", 2);
-    writeln!(code).unwrap();
-    writeln!(code, "        Ok(Some({}Response {{", tree.entity_name).unwrap();
-    writeln!(code, "            id: row.id,").unwrap();
+    wln!(code);
+    wln!(code, "        Ok(Some({}Response {{", tree.entity_name);
+    wln!(code, "            id: row.id,");
     for col in &tree.direct_columns {
         if col.is_composite_range {
             continue;
@@ -286,15 +281,15 @@ fn emit_response_construction(code: &mut String, tree: &EntityTree) {
     emit_child_field_population(code, &tree.child_tables, "            ");
     emit_junction_field_population(code, &tree.junction_tables, "            ");
     if tree.has_workflow {
-        writeln!(code, "            workflow_state: None,").unwrap();
+        wln!(code, "            workflow_state: None,");
     }
-    writeln!(code, "            created_at: row.created_at,").unwrap();
-    writeln!(code, "            updated_at: row.updated_at,").unwrap();
+    wln!(code, "            created_at: row.created_at,");
+    wln!(code, "            updated_at: row.updated_at,");
     // DTO fields the tree does not load (e.g. base-inherited junction arrays
     // under nested composition nodes) default to None instead of failing E0063.
-    writeln!(code, "            ..Default::default()").unwrap();
-    writeln!(code, "        }}))").unwrap();
-    writeln!(code, "    }}").unwrap();
+    wln!(code, "            ..Default::default()");
+    wln!(code, "        }}))");
+    wln!(code, "    }}");
 }
 
 /// Tracks a child (value object) table that the repository must persist and read.
@@ -504,7 +499,7 @@ fn typed_value_expr(rust_type: &str, value_expr: &str) -> String {
 ///
 /// Covers the same type surface as `typed_value_expr()` used for direct-column filters:
 /// Uuid, i32, i64, f32, f64, bool, Decimal, NaiveDate, DateTime<Utc>, and String fallback.
-fn emit_nested_filter_parse(code: &mut String, nf: &NestedFilterFieldInfo) -> &'static str {
+fn emit_nested_filter_parse(code: &mut CodeWriter, nf: &NestedFilterFieldInfo) -> &'static str {
     let key = &nf.filter_key;
     // Strip Option<> wrapper for type matching — all FK columns are nullable.
     let rust_type = nf.rust_type.as_str();
@@ -514,84 +509,74 @@ fn emit_nested_filter_parse(code: &mut String, nf: &NestedFilterFieldInfo) -> &'
         .unwrap_or(rust_type);
     match base_type {
         "Uuid" | "uuid::Uuid" => {
-            writeln!(
+            wln!(
                 code,
                 "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{key}': {{e}}\")))?;",
-            )
-            .unwrap();
+            );
             "parsed"
         }
         // Entity reference types (e.g. "OrganizationType") — always UUID FK columns.
         ty if ty.ends_with("Type") && ty.chars().next().is_some_and(|c| c.is_uppercase()) => {
-            writeln!(
+            wln!(
                 code,
                 "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{key}': {{e}}\")))?;",
-            )
-            .unwrap();
+            );
             "parsed"
         }
         "i32" => {
-            writeln!(
+            wln!(
                 code,
                 "            let parsed: i32 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i32 for filter '{key}': {{e}}\")))?;",
-            )
-            .unwrap();
+            );
             "parsed"
         }
         "i64" => {
-            writeln!(
+            wln!(
                 code,
                 "            let parsed: i64 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i64 for filter '{key}': {{e}}\")))?;",
-            )
-            .unwrap();
+            );
             "parsed"
         }
         "f32" => {
-            writeln!(
+            wln!(
                 code,
                 "            let parsed: f32 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid f32 for filter '{key}': {{e}}\")))?;",
-            )
-            .unwrap();
+            );
             "parsed"
         }
         "f64" => {
-            writeln!(
+            wln!(
                 code,
                 "            let parsed: f64 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid f64 for filter '{key}': {{e}}\")))?;",
-            )
-            .unwrap();
+            );
             "parsed"
         }
         "bool" => {
-            writeln!(
+            wln!(
                 code,
                 "            let parsed: bool = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid bool for filter '{key}': {{e}}\")))?;",
-            )
-            .unwrap();
+            );
             "parsed"
         }
         "Decimal" | "rust_decimal::Decimal" => {
-            writeln!(
+            wln!(
                 code,
                 "            let parsed: rust_decimal::Decimal = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid Decimal for filter '{key}': {{e}}\")))?;",
-            )
-            .unwrap();
+            );
             "parsed"
         }
         "NaiveDate" | "chrono::NaiveDate" => {
-            writeln!(
+            wln!(
                 code,
                 "            let parsed = chrono::NaiveDate::parse_from_str(val, \"%Y-%m-%d\").map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid date for filter '{key}': {{e}}\")))?;",
-            )
-            .unwrap();
+            );
             "parsed"
         }
         "DateTime<Utc>" | "chrono::DateTime<chrono::Utc>" => {
-            writeln!(
+            wln!(
                 code,
                 "            let parsed = val.parse::<chrono::DateTime<chrono::Utc>>().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid datetime for filter '{key}': {{e}}\")))?;",
-            )
-            .unwrap();
+            );
             "parsed"
         }
         _ => {
@@ -605,7 +590,7 @@ fn emit_nested_filter_parse(code: &mut String, nf: &NestedFilterFieldInfo) -> &'
 ///
 /// When `dto_rust_type` is set, the DTO field is a codelist enum that needs
 /// `.to_string()` before being stored as a String column.
-fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
+fn emit_child_col_write_value(code: &mut CodeWriter, col: &ChildColumn) {
     let clone_suffix = if is_copy_type(&col.rust_type) {
         ""
     } else {
@@ -621,41 +606,37 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
             } else {
                 "s.to_string()"
             };
-            write!(
+            w!(
                 code,
                 ", item.{field}.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))).unwrap_or({null})",
                 field = col.field_name,
                 null = null_value_for_type("Vec<String>"),
-            )
-            .unwrap();
+            );
         } else if is_vec_type(&col.rust_type) {
             // Vec<NaiveDate> or other non-string Vec — use typed array
             let (array_type, value_ctor) = vec_array_type_and_ctor(&col.rust_type);
-            write!(
+            w!(
                 code,
                 ", item.{field}.clone().map(|v| sea_orm::Value::Array({array_type}, Some(Box::new(v.into_iter().map(|s| {value_ctor}).collect())))).unwrap_or(sea_orm::Value::Array({array_type}, None))",
                 field = col.field_name,
-            )
-            .unwrap();
+            );
         } else if has_enum {
-            write!(
+            w!(
                 code,
                 ", item.{field}.as_ref().map(|v| sea_orm::Value::String(Some(Box::new(v.to_string())))).unwrap_or({null})",
                 field = col.field_name,
                 null = null_value_for_type(&col.rust_type),
-            )
-            .unwrap();
+            );
         } else {
             let typed_value = typed_value_expr(&col.rust_type, "v");
-            write!(
+            w!(
                 code,
                 ", item.{field}{clone}.map(|v| {typed_value}).unwrap_or({null})",
                 field = col.field_name,
                 clone = clone_suffix,
                 typed_value = typed_value,
                 null = null_value_for_type(&col.rust_type),
-            )
-            .unwrap();
+            );
         }
     } else if is_vec_string(&col.rust_type) || (is_vec_type(&col.rust_type) && has_enum) {
         let map_fn = if is_vec_string(&col.rust_type) {
@@ -663,31 +644,28 @@ fn emit_child_col_write_value(code: &mut String, col: &ChildColumn) {
         } else {
             "s.to_string()"
         };
-        write!(
+        w!(
             code,
             ", sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(item.{field}.clone().into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))",
             field = col.field_name,
-        )
-        .unwrap();
+        );
     } else if is_vec_type(&col.rust_type) {
         let (array_type, value_ctor) = vec_array_type_and_ctor(&col.rust_type);
-        write!(
+        w!(
             code,
             ", sea_orm::Value::Array({array_type}, Some(Box::new(item.{field}.clone().into_iter().map(|s| {value_ctor}).collect())))",
             field = col.field_name,
-        )
-        .unwrap();
+        );
     } else if has_enum {
-        write!(
+        w!(
             code,
             ", sea_orm::Value::String(Some(Box::new(item.{field}.to_string())))",
             field = col.field_name,
-        )
-        .unwrap();
+        );
     } else {
         let item_expr = format!("item.{}{}", col.field_name, clone_suffix);
         let typed_value = typed_value_expr(&col.rust_type, &item_expr);
-        write!(code, ", {}", typed_value).unwrap();
+        w!(code, ", {}", typed_value);
     }
 }
 
@@ -991,7 +969,7 @@ pub(crate) fn flatten_child_tables(children: &[ChildTableInfo]) -> Vec<&ChildTab
 /// * `item_accessor` — DTO access prefix (e.g. `"cmd"`, `"item"`)
 /// * `indent` — indentation level (number of 4-space units)
 fn emit_child_inserts(
-    code: &mut String,
+    code: &mut CodeWriter,
     children: &[ChildTableInfo],
     parent_id_var: &str,
     item_accessor: &str,
@@ -1004,7 +982,7 @@ fn emit_child_inserts(
             continue;
         }
 
-        writeln!(code).unwrap();
+        wln!(code);
         let col_names: Vec<String> = child.columns.iter().map(|c| q(&c.pg_column_name)).collect();
         let placeholders: Vec<String> = child
             .columns
@@ -1045,75 +1023,71 @@ fn emit_child_inserts(
         let row_id_var = format!("child_id_{}", child.sql_table_name.replace('.', "_"));
 
         if child.is_array {
-            writeln!(
+            wln!(
                 code,
                 "{pad}// Insert child rows: {}.{}",
-                child.sql_schema_name, child.sql_table_name
-            )
-            .unwrap();
+                child.sql_schema_name,
+                child.sql_table_name
+            );
             let item_var = if child.columns.is_empty() && child.child_tables.is_empty() {
                 "_item"
             } else {
                 "item"
             };
-            writeln!(
+            wln!(
                 code,
                 "{pad}for {item_var} in &{item_accessor}.{field} {{",
                 field = child.field_name
-            )
-            .unwrap();
-            writeln!(code, "{pad}    let {row_id_var} = Uuid::new_v4();").unwrap();
-            writeln!(code, "{pad}    let stmt = Statement::from_sql_and_values(").unwrap();
-            writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
-            writeln!(code, "{pad}        \"{sql}\",").unwrap();
-            write!(
+            );
+            wln!(code, "{pad}    let {row_id_var} = Uuid::new_v4();");
+            wln!(code, "{pad}    let stmt = Statement::from_sql_and_values(");
+            wln!(code, "{pad}        DatabaseBackend::Postgres,");
+            wln!(code, "{pad}        \"{sql}\",");
+            w!(
                 code,
                 "{pad}        vec![{row_id_var}.into(), {parent_id_var}.into()"
-            )
-            .unwrap();
+            );
             for col in &child.columns {
                 emit_child_col_write_value(code, col);
             }
-            writeln!(code, "],").unwrap();
-            writeln!(code, "{pad}    );").unwrap();
-            writeln!(code, "{pad}    tx.execute(stmt).await?;").unwrap();
+            wln!(code, "],");
+            wln!(code, "{pad}    );");
+            wln!(code, "{pad}    tx.execute(stmt).await?;");
             emit_child_inserts(code, &child.child_tables, &row_id_var, "item", indent + 1);
-            writeln!(code, "{pad}}}").unwrap();
+            wln!(code, "{pad}}}");
         } else {
-            writeln!(
+            wln!(
                 code,
                 "{pad}// Insert optional child row: {}.{}",
-                child.sql_schema_name, child.sql_table_name
-            )
-            .unwrap();
+                child.sql_schema_name,
+                child.sql_table_name
+            );
             let item_var = if child.columns.is_empty() && child.child_tables.is_empty() {
                 "_item"
             } else {
                 "item"
             };
-            writeln!(
+            wln!(
                 code,
                 "{pad}if let Some(ref {item_var}) = {item_accessor}.{field} {{",
                 field = child.field_name
-            )
-            .unwrap();
-            writeln!(code, "{pad}    let {row_id_var} = Uuid::new_v4();").unwrap();
-            writeln!(code, "{pad}    let stmt = Statement::from_sql_and_values(").unwrap();
-            writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
-            writeln!(code, "{pad}        \"{sql}\",").unwrap();
-            write!(
+            );
+            wln!(code, "{pad}    let {row_id_var} = Uuid::new_v4();");
+            wln!(code, "{pad}    let stmt = Statement::from_sql_and_values(");
+            wln!(code, "{pad}        DatabaseBackend::Postgres,");
+            wln!(code, "{pad}        \"{sql}\",");
+            w!(
                 code,
                 "{pad}        vec![{row_id_var}.into(), {parent_id_var}.into()"
-            )
-            .unwrap();
+            );
             for col in &child.columns {
                 emit_child_col_write_value(code, col);
             }
-            writeln!(code, "],").unwrap();
-            writeln!(code, "{pad}    );").unwrap();
-            writeln!(code, "{pad}    tx.execute(stmt).await?;").unwrap();
+            wln!(code, "],");
+            wln!(code, "{pad}    );");
+            wln!(code, "{pad}    tx.execute(stmt).await?;");
             emit_child_inserts(code, &child.child_tables, &row_id_var, "item", indent + 1);
-            writeln!(code, "{pad}}}").unwrap();
+            wln!(code, "{pad}}}");
         }
     }
 }
@@ -1122,7 +1096,7 @@ fn emit_child_inserts(
 /// properties. The DTO carries `Vec<uuid::Uuid>` (required) or
 /// `Option<Vec<uuid::Uuid>>` (optional).
 fn emit_junction_inserts(
-    code: &mut String,
+    code: &mut CodeWriter,
     junctions: &[JunctionTableInfo],
     parent_id_var: &str,
     item_accessor: &str,
@@ -1130,13 +1104,13 @@ fn emit_junction_inserts(
 ) {
     let pad = "    ".repeat(indent);
     for j in junctions {
-        writeln!(code).unwrap();
-        writeln!(
+        wln!(code);
+        wln!(
             code,
             "{pad}// Insert junction rows: {}.{}",
-            j.sql_schema_name, j.sql_table_name
-        )
-        .unwrap();
+            j.sql_schema_name,
+            j.sql_table_name
+        );
         let sql = format!(
             "INSERT INTO {}.{} ({}, {}) VALUES ($1, $2)",
             j.sql_schema_name,
@@ -1145,81 +1119,75 @@ fn emit_junction_inserts(
             q(&j.child_fk_column),
         );
         if j.is_required {
-            writeln!(
+            wln!(
                 code,
                 "{pad}for item in &{item_accessor}.{field} {{",
                 field = j.field_name
-            )
-            .unwrap();
-            writeln!(code, "{pad}    let stmt = Statement::from_sql_and_values(").unwrap();
-            writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
-            writeln!(code, "{pad}        \"{sql}\",").unwrap();
-            writeln!(
+            );
+            wln!(code, "{pad}    let stmt = Statement::from_sql_and_values(");
+            wln!(code, "{pad}        DatabaseBackend::Postgres,");
+            wln!(code, "{pad}        \"{sql}\",");
+            wln!(
                 code,
                 "{pad}        vec![{parent_id_var}.into(), (*item).into()],"
-            )
-            .unwrap();
-            writeln!(code, "{pad}    );").unwrap();
-            writeln!(code, "{pad}    tx.execute(stmt).await?;").unwrap();
-            writeln!(code, "{pad}}}").unwrap();
+            );
+            wln!(code, "{pad}    );");
+            wln!(code, "{pad}    tx.execute(stmt).await?;");
+            wln!(code, "{pad}}}");
         } else {
-            writeln!(
+            wln!(
                 code,
                 "{pad}if let Some(ref ids) = {item_accessor}.{field} {{",
                 field = j.field_name
-            )
-            .unwrap();
-            writeln!(code, "{pad}    for item in ids {{").unwrap();
-            writeln!(
+            );
+            wln!(code, "{pad}    for item in ids {{");
+            wln!(
                 code,
                 "{pad}        let stmt = Statement::from_sql_and_values("
-            )
-            .unwrap();
-            writeln!(code, "{pad}            DatabaseBackend::Postgres,").unwrap();
-            writeln!(code, "{pad}            \"{sql}\",").unwrap();
-            writeln!(
+            );
+            wln!(code, "{pad}            DatabaseBackend::Postgres,");
+            wln!(code, "{pad}            \"{sql}\",");
+            wln!(
                 code,
                 "{pad}            vec![{parent_id_var}.into(), (*item).into()],"
-            )
-            .unwrap();
-            writeln!(code, "{pad}        );").unwrap();
-            writeln!(code, "{pad}        tx.execute(stmt).await?;").unwrap();
-            writeln!(code, "{pad}    }}").unwrap();
-            writeln!(code, "{pad}}}").unwrap();
+            );
+            wln!(code, "{pad}        );");
+            wln!(code, "{pad}        tx.execute(stmt).await?;");
+            wln!(code, "{pad}    }}");
+            wln!(code, "{pad}}}");
         }
     }
 }
 
 /// Emit junction replace logic for UPDATE: when the update request carries the
 /// field, delete existing junction rows and re-insert the supplied ids.
-fn emit_junction_replace(code: &mut String, junctions: &[JunctionTableInfo], indent: usize) {
+fn emit_junction_replace(code: &mut CodeWriter, junctions: &[JunctionTableInfo], indent: usize) {
     let pad = "    ".repeat(indent);
     for j in junctions {
-        writeln!(code).unwrap();
-        writeln!(
+        wln!(code);
+        wln!(
             code,
             "{pad}// Replace junction rows: {}.{}",
-            j.sql_schema_name, j.sql_table_name
-        )
-        .unwrap();
-        writeln!(
+            j.sql_schema_name,
+            j.sql_table_name
+        );
+        wln!(
             code,
             "{pad}if let Some(ref ids) = cmd.{field} {{",
             field = j.field_name
-        )
-        .unwrap();
+        );
         let del_sql = format!(
             "DELETE FROM {}.{} WHERE {} = $1",
             j.sql_schema_name,
             q(&j.sql_table_name),
             q(&j.parent_fk_column),
         );
-        writeln!(code, "{pad}    let stmt = Statement::from_sql_and_values(").unwrap();
-        writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
-        writeln!(code, "{pad}        \"{del_sql}\",").unwrap();
-        writeln!(code, "{pad}        vec![id.into()],").unwrap();
-        writeln!(code, "{pad}    );").unwrap();
-        writeln!(code, "{pad}    tx.execute(stmt).await?;").unwrap();
+        wln!(code, "{pad}    let stmt = Statement::from_sql_and_values(");
+        wln!(code, "{pad}        DatabaseBackend::Postgres,");
+        wln!(code, "{pad}        \"{del_sql}\",");
+        wln!(code, "{pad}        vec![id.into()],");
+        wln!(code, "{pad}    );");
+        wln!(code, "{pad}    tx.execute(stmt).await?;");
         let ins_sql = format!(
             "INSERT INTO {}.{} ({}, {}) VALUES ($1, $2)",
             j.sql_schema_name,
@@ -1227,19 +1195,18 @@ fn emit_junction_replace(code: &mut String, junctions: &[JunctionTableInfo], ind
             q(&j.parent_fk_column),
             q(&j.child_fk_column),
         );
-        writeln!(code, "{pad}    for item in ids {{").unwrap();
-        writeln!(
+        wln!(code, "{pad}    for item in ids {{");
+        wln!(
             code,
             "{pad}        let stmt = Statement::from_sql_and_values("
-        )
-        .unwrap();
-        writeln!(code, "{pad}            DatabaseBackend::Postgres,").unwrap();
-        writeln!(code, "{pad}            \"{ins_sql}\",").unwrap();
-        writeln!(code, "{pad}            vec![id.into(), (*item).into()],").unwrap();
-        writeln!(code, "{pad}        );").unwrap();
-        writeln!(code, "{pad}        tx.execute(stmt).await?;").unwrap();
-        writeln!(code, "{pad}    }}").unwrap();
-        writeln!(code, "{pad}}}").unwrap();
+        );
+        wln!(code, "{pad}            DatabaseBackend::Postgres,");
+        wln!(code, "{pad}            \"{ins_sql}\",");
+        wln!(code, "{pad}            vec![id.into(), (*item).into()],");
+        wln!(code, "{pad}        );");
+        wln!(code, "{pad}        tx.execute(stmt).await?;");
+        wln!(code, "{pad}    }}");
+        wln!(code, "{pad}}}");
     }
 }
 
@@ -1247,14 +1214,14 @@ fn emit_junction_replace(code: &mut String, junctions: &[JunctionTableInfo], ind
 /// for the parent row and expose them as `Vec<Uuid>` variables named
 /// `<field>_rows`.
 fn emit_junction_reads(
-    code: &mut String,
+    code: &mut CodeWriter,
     junctions: &[JunctionTableInfo],
     parent_id_expr: &str,
     indent: usize,
 ) {
     let pad = "    ".repeat(indent);
     for j in junctions {
-        writeln!(code).unwrap();
+        wln!(code);
         let select_sql = format!(
             "SELECT {} FROM {}.{} WHERE {} = $1 ORDER BY created_at",
             q(&j.child_fk_column),
@@ -1262,45 +1229,46 @@ fn emit_junction_reads(
             q(&j.sql_table_name),
             q(&j.parent_fk_column),
         );
-        writeln!(code, "{pad}let {field}_rows = {{", field = j.field_name).unwrap();
-        writeln!(code, "{pad}    let stmt = Statement::from_sql_and_values(").unwrap();
-        writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
-        writeln!(code, "{pad}        \"{select_sql}\",").unwrap();
-        writeln!(code, "{pad}        vec![{parent_id_expr}.into()],").unwrap();
-        writeln!(code, "{pad}    );").unwrap();
-        writeln!(code, "{pad}    let rows = db.query_all(stmt).await?;").unwrap();
-        writeln!(
+        wln!(code, "{pad}let {field}_rows = {{", field = j.field_name);
+        wln!(code, "{pad}    let stmt = Statement::from_sql_and_values(");
+        wln!(code, "{pad}        DatabaseBackend::Postgres,");
+        wln!(code, "{pad}        \"{select_sql}\",");
+        wln!(code, "{pad}        vec![{parent_id_expr}.into()],");
+        wln!(code, "{pad}    );");
+        wln!(code, "{pad}    let rows = db.query_all(stmt).await?;");
+        wln!(
             code,
             "{pad}    let mut items = Vec::with_capacity(rows.len());"
-        )
-        .unwrap();
-        writeln!(code, "{pad}    for row in &rows {{").unwrap();
-        writeln!(code, "{pad}        use sea_orm::TryGetable;").unwrap();
-        writeln!(
+        );
+        wln!(code, "{pad}    for row in &rows {{");
+        wln!(code, "{pad}        use sea_orm::TryGetable;");
+        wln!(
             code,
             "{pad}        let v: Uuid = Uuid::try_get_by(row, \"{}\").map_err(|e| format!(\"{{e:?}}\"))?;",
             j.child_fk_column
-        )
-        .unwrap();
-        writeln!(code, "{pad}        items.push(v);").unwrap();
-        writeln!(code, "{pad}    }}").unwrap();
-        writeln!(code, "{pad}    items").unwrap();
-        writeln!(code, "{pad}}};").unwrap();
+        );
+        wln!(code, "{pad}        items.push(v);");
+        wln!(code, "{pad}    }}");
+        wln!(code, "{pad}    items");
+        wln!(code, "{pad}}};");
     }
 }
 
 /// Populate junction fields into the response struct construction.
-fn emit_junction_field_population(code: &mut String, junctions: &[JunctionTableInfo], pad: &str) {
+fn emit_junction_field_population(
+    code: &mut CodeWriter,
+    junctions: &[JunctionTableInfo],
+    pad: &str,
+) {
     for j in junctions {
         if j.is_required {
-            writeln!(code, "{pad}{field}: {field}_rows,", field = j.field_name).unwrap();
+            wln!(code, "{pad}{field}: {field}_rows,", field = j.field_name);
         } else {
-            writeln!(
+            wln!(
                 code,
                 "{pad}{field}: Some({field}_rows),",
                 field = j.field_name
-            )
-            .unwrap();
+            );
         }
     }
 }
@@ -1315,24 +1283,23 @@ fn emit_junction_field_population(code: &mut String, junctions: &[JunctionTableI
 /// * `parent_id_expr` — Rust expression for the parent row's ID (e.g. `"id"`, `"row.id"`)
 /// * `indent` — indentation level (number of 4-space units)
 fn emit_child_reads(
-    code: &mut String,
+    code: &mut CodeWriter,
     children: &[ChildTableInfo],
     parent_id_expr: &str,
     indent: usize,
 ) {
     let pad = "    ".repeat(indent);
     for child in children {
-        writeln!(code).unwrap();
+        wln!(code);
 
         // Child tables with no data columns and no nested children — emit empty vec.
         if child.columns.is_empty() && child.child_tables.is_empty() {
-            writeln!(
+            wln!(
                 code,
                 "{pad}let {field}_rows: Vec<{struct_name}Response> = Vec::new();",
                 field = child.field_name,
                 struct_name = child.struct_name,
-            )
-            .unwrap();
+            );
             continue;
         }
 
@@ -1375,26 +1342,25 @@ fn emit_child_reads(
             child.parent_fk_column,
         );
 
-        writeln!(code, "{pad}let {field}_rows = {{", field = child.field_name).unwrap();
-        writeln!(code, "{pad}    let stmt = Statement::from_sql_and_values(").unwrap();
-        writeln!(code, "{pad}        DatabaseBackend::Postgres,").unwrap();
-        writeln!(code, "{pad}        \"{}\",", select_sql).unwrap();
-        writeln!(code, "{pad}        vec![{parent_id_expr}.into()],").unwrap();
-        writeln!(code, "{pad}    );").unwrap();
-        writeln!(code, "{pad}    let rows = db.query_all(stmt).await?;").unwrap();
-        writeln!(
+        wln!(code, "{pad}let {field}_rows = {{", field = child.field_name);
+        wln!(code, "{pad}    let stmt = Statement::from_sql_and_values(");
+        wln!(code, "{pad}        DatabaseBackend::Postgres,");
+        wln!(code, "{pad}        \"{}\",", select_sql);
+        wln!(code, "{pad}        vec![{parent_id_expr}.into()],");
+        wln!(code, "{pad}    );");
+        wln!(code, "{pad}    let rows = db.query_all(stmt).await?;");
+        wln!(
             code,
             "{pad}    let mut items = Vec::with_capacity(rows.len());"
-        )
-        .unwrap();
+        );
         let child_row_var = if child.columns.is_empty() && child.child_tables.is_empty() {
             "_child_row"
         } else {
             "child_row"
         };
-        writeln!(code, "{pad}    for {} in &rows {{", child_row_var).unwrap();
+        wln!(code, "{pad}    for {} in &rows {{", child_row_var);
         if !child.columns.is_empty() || !child.child_tables.is_empty() {
-            writeln!(code, "{pad}        use sea_orm::TryGetable;").unwrap();
+            wln!(code, "{pad}        use sea_orm::TryGetable;");
         }
 
         // If there are nested children, extract the child row's id for sub-queries.
@@ -1407,22 +1373,20 @@ fn emit_child_reads(
                 .iter()
                 .any(|gc| !gc.columns.is_empty() || !gc.child_tables.is_empty());
             if needs_id {
-                writeln!(
+                wln!(
                     code,
                     "{pad}        let child_row_id: Uuid = Uuid::try_get_by(child_row, \"id\").map_err(|e| format!(\"{{e:?}}\"))?;"
-                )
-                .unwrap();
+                );
             }
             // Recursively query nested grandchild tables using child_row_id.
             emit_child_reads(code, &child.child_tables, "child_row_id", indent + 2);
         }
 
-        writeln!(
+        wln!(
             code,
             "{pad}        items.push({}Response {{",
             child.struct_name
-        )
-        .unwrap();
+        );
         for col in &child.columns {
             emit_child_col_read_value(code, col, &format!("{pad}            "));
         }
@@ -1431,11 +1395,11 @@ fn emit_child_reads(
         // DTO fields the child columns do not cover (e.g. scalar `*_id` mirrors
         // of array entity-ref properties that the DDL stores as junction
         // tables) default to None instead of failing E0063.
-        writeln!(code, "{pad}        ..Default::default()").unwrap();
-        writeln!(code, "{pad}        }});").unwrap();
-        writeln!(code, "{pad}    }}").unwrap();
-        writeln!(code, "{pad}    items").unwrap();
-        writeln!(code, "{pad}}};").unwrap();
+        wln!(code, "{pad}        ..Default::default()");
+        wln!(code, "{pad}        }});");
+        wln!(code, "{pad}    }}");
+        wln!(code, "{pad}    items");
+        wln!(code, "{pad}}};");
     }
 }
 
@@ -1483,43 +1447,39 @@ fn include_hydration_children<'a>(
 }
 
 /// Emit a single child column read expression for response struct construction.
-fn emit_child_col_read_value(code: &mut String, col: &ChildColumn, pad: &str) {
+fn emit_child_col_read_value(code: &mut CodeWriter, col: &ChildColumn, pad: &str) {
     if col.dto_rust_type.is_some() {
         if col.is_nullable {
-            writeln!(
+            wln!(
                 code,
                 "{pad}{field}: Option::<String>::try_get_by(child_row, \"{pg}\").ok().flatten().and_then(|v| v.parse().ok()),",
                 field = col.field_name,
                 pg = col.pg_column_name,
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "{pad}{field}: String::try_get_by(child_row, \"{pg}\").map_err(|e| format!(\"{{e:?}}\"))?.parse().unwrap_or_default(),",
                 field = col.field_name,
                 pg = col.pg_column_name,
-            )
-            .unwrap();
+            );
         }
     } else if col.is_nullable {
-        writeln!(
+        wln!(
             code,
             "{pad}{field}: Option::<{typ}>::try_get_by(child_row, \"{pg}\").ok().flatten(),",
             field = col.field_name,
             typ = col.rust_type,
             pg = col.pg_column_name,
-        )
-        .unwrap();
+        );
     } else {
-        writeln!(
+        wln!(
             code,
             "{pad}{field}: {typ}::try_get_by(child_row, \"{pg}\").map_err(|e| format!(\"{{e:?}}\"))?,",
             field = col.field_name,
             typ = turbofish(&col.rust_type),
             pg = col.pg_column_name,
-        )
-        .unwrap();
+        );
     }
 }
 
@@ -1942,7 +1902,7 @@ impl RepositoryImplEmitter {
         let tree = self
             .query_entity_tree(db, schema_title, domain, config, parent_ref)
             .await?;
-        let mut code = String::with_capacity(4096);
+        let mut code = CodeWriter::new();
 
         // Cross-generator contract: the handler's hydration block calls
         // `repo.fetch_{alias}_for_{module}(...)` for every include path it
@@ -2228,7 +2188,7 @@ impl RepositoryImplEmitter {
             include_type_names.retain(|n| seen.insert(n.clone()));
             let imports = type_registry::resolve_imports(&include_type_names, &caller_base);
             for import in &imports {
-                writeln!(code, "{}", import).unwrap();
+                wln!(code, "{}", import);
             }
             // Also add direct imports for enriched types from dto_included module.
             // These types (e.g. DeploymentCombinedResponse) are generated in the
@@ -2250,12 +2210,11 @@ impl RepositoryImplEmitter {
                     if already_imported {
                         continue;
                     }
-                    writeln!(
+                    wln!(
                         code,
                         "use super::dto_included::{};",
                         path.response_rust_type
-                    )
-                    .unwrap();
+                    );
                 }
             }
 
@@ -2305,12 +2264,12 @@ impl RepositoryImplEmitter {
                     }
                 }
                 for line in child_import_lines {
-                    writeln!(code, "{}", line).unwrap();
+                    wln!(code, "{}", line);
                 }
             }
 
-            writeln!(code).unwrap();
-            writeln!(code, "impl {}RepositoryImpl {{", tree.entity_name).unwrap();
+            wln!(code);
+            wln!(code, "impl {}RepositoryImpl {{", tree.entity_name);
             self.emit_include_fetch_methods(
                 &tree,
                 &mut code,
@@ -2323,10 +2282,10 @@ impl RepositoryImplEmitter {
                 &include_segment_dto_rust_types,
                 &include_segment_is_nullable,
             );
-            writeln!(code, "}}").unwrap();
+            wln!(code, "}}");
         }
 
-        Ok(code)
+        Ok(code.into_string())
     }
 
     pub async fn query_entity_tree(
@@ -2661,23 +2620,21 @@ impl RepositoryImplEmitter {
         tree: &EntityTree,
         include_paths: &[ResolvedIncludePath],
         project: &ProjectConfig,
-        code: &mut String,
+        code: &mut CodeWriter,
     ) {
-        writeln!(
+        wln!(
             code,
             "//! Generated repository implementation for {}.",
             tree.entity_name
-        )
-        .unwrap();
-        writeln!(
+        );
+        wln!(
             code,
             "//! DO NOT EDIT — generated by {}.",
             project.generator_name
-        )
-        .unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "use async_trait::async_trait;").unwrap();
-        writeln!(code, "use sea_orm::{{").unwrap();
+        );
+        wln!(code);
+        wln!(code, "use async_trait::async_trait;");
+        wln!(code, "use sea_orm::{{");
         let has_range_cols = tree
             .direct_columns
             .iter()
@@ -2721,67 +2678,62 @@ impl RepositoryImplEmitter {
             sea_orm_items.push("DatabaseBackend");
             sea_orm_items.push("Statement");
         }
-        writeln!(code, "    {},", sea_orm_items.join(", ")).unwrap();
-        writeln!(code, "}};").unwrap();
-        writeln!(code, "use uuid::Uuid;").unwrap();
-        writeln!(code).unwrap();
-        writeln!(
+        wln!(code, "    {},", sea_orm_items.join(", "));
+        wln!(code, "}};");
+        wln!(code, "use uuid::Uuid;");
+        wln!(code);
+        wln!(
             code,
             "use super::repository::{}Repository;",
             tree.entity_name
-        )
-        .unwrap();
+        );
         if tree.has_create {
-            writeln!(
+            wln!(
                 code,
                 "use super::dto_create::Create{}Request;",
                 tree.entity_name
-            )
-            .unwrap();
+            );
         }
         if tree.has_update {
-            writeln!(
+            wln!(
                 code,
                 "use super::dto_update::Update{}Request;",
                 tree.entity_name
-            )
-            .unwrap();
+            );
         }
-        writeln!(
+        wln!(
             code,
             "use super::dto_response::{}Response;",
             tree.entity_name
-        )
-        .unwrap();
+        );
         // Import child DTO response types (including nested children)
         let all_children = flatten_child_tables(&tree.child_tables);
         let mut imported = std::collections::HashSet::new();
         for child in &all_children {
             if imported.insert(child.struct_name.clone()) {
-                writeln!(
+                wln!(
                     code,
                     "use super::dto_response::{}Response;",
                     child.struct_name
-                )
-                .unwrap();
+                );
             }
         }
-        writeln!(code).unwrap();
-        writeln!(code, "pub struct {}RepositoryImpl;", tree.entity_name).unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "#[async_trait]").unwrap();
-        writeln!(
+        wln!(code);
+        wln!(code, "pub struct {}RepositoryImpl;", tree.entity_name);
+        wln!(code);
+        wln!(code, "#[async_trait]");
+        wln!(
             code,
             "impl {}Repository<sea_orm::DatabaseTransaction> for {}RepositoryImpl {{",
-            tree.entity_name, tree.entity_name
-        )
-        .unwrap();
+            tree.entity_name,
+            tree.entity_name
+        );
     }
 
-    fn emit_create_fn(&self, tree: &EntityTree, code: &mut String) {
+    fn emit_create_fn(&self, tree: &EntityTree, code: &mut CodeWriter) {
         // Build the body first so we can detect whether the request parameter
         // is actually referenced (flat entities emit an insert that ignores it).
-        let mut body = String::new();
+        let mut body = CodeWriter::new();
         let has_range_cols = tree
             .direct_columns
             .iter()
@@ -2802,53 +2754,54 @@ impl RepositoryImplEmitter {
         // Insert junction rows (many-to-many array-of-entity-ref fields).
         emit_junction_inserts(&mut body, &tree.junction_tables, "id", "cmd", 2);
 
-        let cmd_ident = if body.contains("cmd.") { "cmd" } else { "_cmd" };
+        let cmd_ident = if body.as_str().contains("cmd.") {
+            "cmd"
+        } else {
+            "_cmd"
+        };
 
-        writeln!(
+        wln!(
             code,
             "    #[tracing::instrument(skip(self, tx), fields(db.operation = \"insert\", db.table = \"{}.{}\"))]",
             tree.schema_name, tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "    async fn create(").unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        tx: &DatabaseTransaction,").unwrap();
-        writeln!(
+        );
+        wln!(code, "    async fn create(");
+        wln!(code, "        &self,");
+        wln!(code, "        tx: &DatabaseTransaction,");
+        wln!(
             code,
             "        {cmd_ident}: Create{}Request,",
             tree.entity_name
-        )
-        .unwrap();
+        );
         if tree.parent_ref.is_some() {
-            writeln!(code, "        parent_id: Uuid,").unwrap();
+            wln!(code, "        parent_id: Uuid,");
         }
-        writeln!(code, "    ) -> Result<Uuid, Box<dyn std::error::Error>> {{").unwrap();
-        writeln!(code, "        let id = Uuid::new_v4();").unwrap();
-        writeln!(code).unwrap();
-        code.push_str(&body);
-        writeln!(code).unwrap();
-        writeln!(code, "        Ok(id)").unwrap();
-        writeln!(code, "    }}").unwrap();
+        wln!(code, "    ) -> Result<Uuid, Box<dyn std::error::Error>> {{");
+        wln!(code, "        let id = Uuid::new_v4();");
+        wln!(code);
+        code.push_str(body.as_str());
+        wln!(code);
+        wln!(code, "        Ok(id)");
+        wln!(code, "    }}");
     }
 
     /// Emit parent entity INSERT using SeaORM ActiveModel (no range columns).
-    fn emit_create_active_model(&self, tree: &EntityTree, code: &mut String) {
-        writeln!(
+    fn emit_create_active_model(&self, tree: &EntityTree, code: &mut CodeWriter) {
+        wln!(
             code,
             "        // Insert into {}.{} (direct columns)",
-            tree.schema_name, tree.table_name
-        )
-        .unwrap();
-        writeln!(
+            tree.schema_name,
+            tree.table_name
+        );
+        wln!(
             code,
             "        let model = crate::entity::{}::ActiveModel {{",
             tree.entity_module
-        )
-        .unwrap();
-        writeln!(code, "            id: Set(id),").unwrap();
+        );
+        wln!(code, "            id: Set(id),");
         if let Some(ref parent_ref) = tree.parent_ref {
             let fk_field = codegraph_naming::to_snake_case(parent_ref);
-            writeln!(code, "            {fk_field}: Set(Some(parent_id)),").unwrap();
+            wln!(code, "            {fk_field}: Set(Some(parent_id)),");
         }
         let op = CrudOp::CreateActiveModel;
         for col in op.columns(tree) {
@@ -2859,73 +2812,69 @@ impl RepositoryImplEmitter {
                 // StructuredWrapper (scalar or array): DTO has typed struct/Vec, entity needs JSONB.
                 if col.is_nullable {
                     if col.is_array {
-                        writeln!(
+                        wln!(
                             code,
                             "            {entity_field}: Set(cmd.{dto_field}.map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))),",
-                        ).unwrap();
+                        );
                     } else {
-                        writeln!(
+                        wln!(
                             code,
                             "            {entity_field}: Set(cmd.{dto_field}.as_ref().and_then(|v| serde_json::to_value(v).ok())),",
-                        ).unwrap();
+                        );
                     }
                 } else {
-                    writeln!(
+                    wln!(
                         code,
                         "            {entity_field}: Set(serde_json::to_value(cmd.{dto_field}).unwrap_or(serde_json::Value::Null)),",
-                    ).unwrap();
+                    );
                 }
             } else if col.dto_rust_type.is_some() {
                 if col.is_array {
                     // Vec<CodelistEnum> → Vec<String>
                     if col.is_nullable {
-                        writeln!(
+                        wln!(
                             code,
                             "            {entity_field}: Set(cmd.{dto_field}.map(|v| v.into_iter().map(|x| x.to_string()).collect())),",
-                        )
-                        .unwrap();
+                        );
                     } else {
-                        writeln!(
+                        wln!(
                             code,
                             "            {entity_field}: Set(cmd.{dto_field}.into_iter().map(|v| v.to_string()).collect()),",
-                        )
-                        .unwrap();
+                        );
                     }
                 } else if col.is_nullable {
-                    writeln!(
+                    wln!(
                         code,
                         "            {entity_field}: Set(cmd.{dto_field}.map(|v| v.to_string())),",
-                    )
-                    .unwrap();
+                    );
                 } else {
-                    writeln!(
+                    wln!(
                         code,
                         "            {entity_field}: Set(cmd.{dto_field}.to_string()),",
-                    )
-                    .unwrap();
+                    );
                 }
             } else {
-                writeln!(
+                wln!(
                     code,
                     "            {}: Set(cmd.{}),",
-                    entity_field, dto_field
-                )
-                .unwrap();
+                    entity_field,
+                    dto_field
+                );
             }
         }
-        writeln!(code, "            ..Default::default()").unwrap();
-        writeln!(code, "        }};").unwrap();
-        writeln!(code, "        model.insert(tx).await?;").unwrap();
+        wln!(code, "            ..Default::default()");
+        wln!(code, "        }};");
+        wln!(code, "        model.insert(tx).await?;");
     }
 
     /// Emit parent entity INSERT using raw SQL with explicit range casts.
-    fn emit_create_raw_sql(&self, tree: &EntityTree, code: &mut String) {
-        writeln!(
+    fn emit_create_raw_sql(&self, tree: &EntityTree, code: &mut CodeWriter) {
+        wln!(
             code,
             "        // Insert into {}.{} via raw SQL (range columns need explicit casts)",
-            tree.schema_name, tree.table_name
-        )
-        .unwrap();
+            tree.schema_name,
+            tree.table_name
+        );
 
         // Collect non-workflow columns for the INSERT (exclude composite range
         // columns which exist in DDL but not on DTOs, and exclude parent FK
@@ -2968,12 +2917,12 @@ impl RepositoryImplEmitter {
             placeholders.join(", "),
         );
 
-        writeln!(code, "        let stmt = Statement::from_sql_and_values(").unwrap();
-        writeln!(code, "            DatabaseBackend::Postgres,").unwrap();
-        writeln!(code, "            \"{}\",", sql).unwrap();
-        write!(code, "            vec![id.into()").unwrap();
+        wln!(code, "        let stmt = Statement::from_sql_and_values(");
+        wln!(code, "            DatabaseBackend::Postgres,");
+        wln!(code, "            \"{}\",", sql);
+        w!(code, "            vec![id.into()");
         if tree.parent_ref.is_some() {
-            write!(code, ", parent_id.into()").unwrap();
+            w!(code, ", parent_id.into()");
         }
 
         for col in &insert_cols {
@@ -2988,17 +2937,15 @@ impl RepositoryImplEmitter {
             if col.is_structured_wrapper {
                 // StructuredWrapper (scalar or array): serialize to JSONB Value.
                 if col.is_nullable {
-                    write!(
+                    w!(
                         code,
                         ", cmd.{dto_field}.as_ref().and_then(|v| serde_json::to_value(v).ok().map(|j| sea_orm::Value::Json(Some(Box::new(j))))).unwrap_or(sea_orm::Value::Json(None))",
-                    )
-                    .unwrap();
+                    );
                 } else {
-                    write!(
+                    w!(
                         code,
                         ", sea_orm::Value::Json(Some(Box::new(serde_json::to_value(&cmd.{dto_field}).unwrap_or_default())))",
-                    )
-                    .unwrap();
+                    );
                 }
             } else if col.is_nullable {
                 if is_vec_string(&col.rust_type) || (is_vec_type(&col.rust_type) && has_enum) {
@@ -3007,34 +2954,30 @@ impl RepositoryImplEmitter {
                     } else {
                         "s.to_string()"
                     };
-                    write!(
+                    w!(
                         code,
                         ", cmd.{dto_field}.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))).unwrap_or({null})",
                         null = null_value_for_type("Vec<String>"),
-                    )
-                    .unwrap();
+                    );
                 } else if is_vec_type(&col.rust_type) {
                     let (array_type, value_ctor) = vec_array_type_and_ctor(&col.rust_type);
-                    write!(
+                    w!(
                         code,
                         ", cmd.{dto_field}.clone().map(|v| sea_orm::Value::Array({array_type}, Some(Box::new(v.into_iter().map(|s| {value_ctor}).collect())))).unwrap_or(sea_orm::Value::Array({array_type}, None))",
-                    )
-                    .unwrap();
+                    );
                 } else if has_enum {
-                    write!(
+                    w!(
                         code,
                         ", cmd.{dto_field}.as_ref().map(|v| sea_orm::Value::String(Some(Box::new(v.to_string())))).unwrap_or({null})",
                         null = null_value_for_type(&col.rust_type),
-                    )
-                    .unwrap();
+                    );
                 } else {
                     let typed_value = typed_value_expr(&col.rust_type, "v");
-                    write!(
+                    w!(
                         code,
                         ", cmd.{dto_field}{clone_suffix}.map(|v| {typed_value}).unwrap_or({null})",
                         null = null_value_for_type(&col.rust_type),
-                    )
-                    .unwrap();
+                    );
                 }
             } else if is_vec_string(&col.rust_type) || (is_vec_type(&col.rust_type) && has_enum) {
                 let map_fn = if is_vec_string(&col.rust_type) {
@@ -3042,247 +2985,232 @@ impl RepositoryImplEmitter {
                 } else {
                     "s.to_string()"
                 };
-                write!(
+                w!(
                     code,
                     ", sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(cmd.{dto_field}.clone().into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))",
-                )
-                .unwrap();
+                );
             } else if is_vec_type(&col.rust_type) {
                 let (array_type, value_ctor) = vec_array_type_and_ctor(&col.rust_type);
-                write!(
+                w!(
                     code,
                     ", sea_orm::Value::Array({array_type}, Some(Box::new(cmd.{dto_field}.clone().into_iter().map(|s| {value_ctor}).collect())))",
-                )
-                .unwrap();
+                );
             } else if has_enum {
-                write!(
+                w!(
                     code,
                     ", sea_orm::Value::String(Some(Box::new(cmd.{dto_field}.to_string())))",
-                )
-                .unwrap();
+                );
             } else {
                 let item_expr = format!("cmd.{dto_field}{clone_suffix}");
                 let typed_value = typed_value_expr(&col.rust_type, &item_expr);
-                write!(code, ", {typed_value}").unwrap();
+                w!(code, ", {typed_value}");
             }
         }
 
-        writeln!(code, "],").unwrap();
-        writeln!(code, "        );").unwrap();
-        writeln!(code, "        tx.execute(stmt).await?;").unwrap();
+        wln!(code, "],");
+        wln!(code, "        );");
+        wln!(code, "        tx.execute(stmt).await?;");
     }
 
-    fn emit_find_by_id_fn(&self, tree: &EntityTree, code: &mut String) {
-        writeln!(code).unwrap();
-        writeln!(
+    fn emit_find_by_id_fn(&self, tree: &EntityTree, code: &mut CodeWriter) {
+        wln!(code);
+        wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"select\", db.table = \"{}.{}\"))]",
             tree.schema_name, tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "    async fn find_by_id(").unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        id: Uuid,").unwrap();
+        );
+        wln!(code, "    async fn find_by_id(");
+        wln!(code, "        &self,");
+        wln!(code, "        db: &DatabaseTransaction,");
+        wln!(code, "        id: Uuid,");
         if tree.is_auditable {
-            writeln!(code, "        include_deleted: bool,").unwrap();
+            wln!(code, "        include_deleted: bool,");
         }
-        writeln!(
+        wln!(
             code,
             "    ) -> Result<Option<{}Response>, Box<dyn std::error::Error>> {{",
             tree.entity_name
-        )
-        .unwrap();
+        );
         if tree.is_auditable {
-            writeln!(
+            wln!(
                 code,
                 "        let mut query = crate::entity::{}::Entity::find()",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::Id.eq(id));",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(code).unwrap();
-            writeln!(code, "        if !include_deleted {{").unwrap();
-            writeln!(
+            );
+            wln!(code);
+            wln!(code, "        if !include_deleted {{");
+            wln!(
                 code,
                 "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(code, "        }}").unwrap();
-            writeln!(code).unwrap();
-            writeln!(code, "        let row = query.one(db)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
+            );
+            wln!(code, "        }}");
+            wln!(code);
+            wln!(code, "        let row = query.one(db)");
+            wln!(code, "            .await?;");
         } else {
-            writeln!(
+            wln!(
                 code,
                 // Use find().filter() instead of find_by_id() because SeaORM's
                 // find_by_id() requires the primary key type to impl Into<Value>,
                 // which fails for composite keys and custom ID wrappers.
                 "        let row = crate::entity::{}::Entity::find()",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::Id.eq(id))",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(code, "            .one(db)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
+            );
+            wln!(code, "            .one(db)");
+            wln!(code, "            .await?;");
         }
-        writeln!(code).unwrap();
-        writeln!(code, "        let row = match row {{").unwrap();
-        writeln!(code, "            Some(r) => r,").unwrap();
-        writeln!(code, "            None => return Ok(None),").unwrap();
-        writeln!(code, "        }};").unwrap();
+        wln!(code);
+        wln!(code, "        let row = match row {{");
+        wln!(code, "            Some(r) => r,");
+        wln!(code, "            None => return Ok(None),");
+        wln!(code, "        }};");
         emit_response_construction(code, tree);
     }
 
     /// Emit `find_by_id_scoped` — same as `find_by_id` but adds a parent FK filter.
-    fn emit_find_by_id_scoped_fn(&self, tree: &EntityTree, code: &mut String) {
+    fn emit_find_by_id_scoped_fn(&self, tree: &EntityTree, code: &mut CodeWriter) {
         let parent_ref = tree.parent_ref.as_deref().unwrap();
         let pascal_col = codegraph_naming::to_pascal_case(parent_ref);
-        writeln!(code).unwrap();
-        writeln!(
+        wln!(code);
+        wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"select_scoped\", db.table = \"{}.{}\"))]",
             tree.schema_name, tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "    async fn find_by_id_scoped(").unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        id: Uuid,").unwrap();
-        writeln!(code, "        parent_id: Uuid,").unwrap();
+        );
+        wln!(code, "    async fn find_by_id_scoped(");
+        wln!(code, "        &self,");
+        wln!(code, "        db: &DatabaseTransaction,");
+        wln!(code, "        id: Uuid,");
+        wln!(code, "        parent_id: Uuid,");
         if tree.is_auditable {
-            writeln!(code, "        include_deleted: bool,").unwrap();
+            wln!(code, "        include_deleted: bool,");
         }
-        writeln!(
+        wln!(
             code,
             "    ) -> Result<Option<{}Response>, Box<dyn std::error::Error>> {{",
             tree.entity_name
-        )
-        .unwrap();
+        );
         if tree.is_auditable {
-            writeln!(
+            wln!(
                 code,
                 "        let mut query = crate::entity::{}::Entity::find()",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::Id.eq(id))",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::{}.eq(parent_id));",
-                tree.entity_module, pascal_col
-            )
-            .unwrap();
-            writeln!(code).unwrap();
-            writeln!(code, "        if !include_deleted {{").unwrap();
-            writeln!(
+                tree.entity_module,
+                pascal_col
+            );
+            wln!(code);
+            wln!(code, "        if !include_deleted {{");
+            wln!(
                 code,
                 "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(code, "        }}").unwrap();
-            writeln!(code).unwrap();
-            writeln!(code, "        let row = query.one(db)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
+            );
+            wln!(code, "        }}");
+            wln!(code);
+            wln!(code, "        let row = query.one(db)");
+            wln!(code, "            .await?;");
         } else {
-            writeln!(
+            wln!(
                 code,
                 "        let row = crate::entity::{}::Entity::find()",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::Id.eq(id))",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::{}.eq(parent_id))",
-                tree.entity_module, pascal_col
-            )
-            .unwrap();
-            writeln!(code, "            .one(db)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
+                tree.entity_module,
+                pascal_col
+            );
+            wln!(code, "            .one(db)");
+            wln!(code, "            .await?;");
         }
-        writeln!(code).unwrap();
-        writeln!(code, "        let row = match row {{").unwrap();
-        writeln!(code, "            Some(r) => r,").unwrap();
-        writeln!(code, "            None => return Ok(None),").unwrap();
-        writeln!(code, "        }};").unwrap();
+        wln!(code);
+        wln!(code, "        let row = match row {{");
+        wln!(code, "            Some(r) => r,");
+        wln!(code, "            None => return Ok(None),");
+        wln!(code, "        }};");
 
         emit_response_construction(code, tree);
     }
 
-    fn emit_update_fn(&self, tree: &EntityTree, code: &mut String) {
+    fn emit_update_fn(&self, tree: &EntityTree, code: &mut CodeWriter) {
         // Build the body first so we can detect whether the request parameter
         // is actually referenced (flat entities emit an update that ignores it).
-        let mut body = String::new();
+        let mut body = CodeWriter::new();
         self.emit_update_body(tree, &mut body);
-        let cmd_ident = if body.contains("cmd.") { "cmd" } else { "_cmd" };
+        let cmd_ident = if body.as_str().contains("cmd.") {
+            "cmd"
+        } else {
+            "_cmd"
+        };
 
-        writeln!(code).unwrap();
-        writeln!(
+        wln!(code);
+        wln!(
             code,
             "    #[tracing::instrument(skip(self, tx), fields(db.operation = \"update\", db.table = \"{}.{}\"))]",
             tree.schema_name, tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "    async fn update(").unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        tx: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        id: Uuid,").unwrap();
-        writeln!(
+        );
+        wln!(code, "    async fn update(");
+        wln!(code, "        &self,");
+        wln!(code, "        tx: &DatabaseTransaction,");
+        wln!(code, "        id: Uuid,");
+        wln!(
             code,
             "        {cmd_ident}: Update{}Request,",
             tree.entity_name
-        )
-        .unwrap();
-        writeln!(code, "    ) -> Result<(), Box<dyn std::error::Error>> {{").unwrap();
-        code.push_str(&body);
-        writeln!(code).unwrap();
-        writeln!(code, "        Ok(())").unwrap();
-        writeln!(code, "    }}").unwrap();
+        );
+        wln!(code, "    ) -> Result<(), Box<dyn std::error::Error>> {{");
+        code.push_str(body.as_str());
+        wln!(code);
+        wln!(code, "        Ok(())");
+        wln!(code, "    }}");
     }
 
-    fn emit_update_body(&self, tree: &EntityTree, code: &mut String) {
-        writeln!(
+    fn emit_update_body(&self, tree: &EntityTree, code: &mut CodeWriter) {
+        wln!(
             code,
             "        // Update {}.{} — only set fields present in the update request",
-            tree.schema_name, tree.table_name
-        )
-        .unwrap();
+            tree.schema_name,
+            tree.table_name
+        );
         let has_updatable_cols = tree.direct_columns.iter().any(|c| {
             !c.is_workflow_managed && !c.is_composite_range && !c.is_media && c.pg_cast.is_none()
         });
         let mut_kw = if has_updatable_cols { "mut " } else { "" };
-        writeln!(
+        wln!(
             code,
             "        let {}model = crate::entity::{}::ActiveModel {{",
-            mut_kw, tree.entity_module
-        )
-        .unwrap();
-        writeln!(code, "            id: Set(id),").unwrap();
-        writeln!(code, "            ..Default::default()").unwrap();
-        writeln!(code, "        }};").unwrap();
+            mut_kw,
+            tree.entity_module
+        );
+        wln!(code, "            id: Set(id),");
+        wln!(code, "            ..Default::default()");
+        wln!(code, "        }};");
         let op = CrudOp::Update;
         for col in op.columns(tree) {
             let entity_field = &col.field_name;
@@ -3290,21 +3218,21 @@ impl RepositoryImplEmitter {
                 // StructuredWrapper (scalar or array): serialize to JSONB.
                 if col.is_nullable {
                     if col.is_array {
-                        writeln!(
+                        wln!(
                             code,
                             "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set(Some(serde_json::to_value(v).unwrap_or(serde_json::Value::Null))); }}",
-                        ).unwrap();
+                        );
                     } else {
-                        writeln!(
+                        wln!(
                             code,
                             "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set(serde_json::to_value(v).ok()); }}",
-                        ).unwrap();
+                        );
                     }
                 } else {
-                    writeln!(
+                    wln!(
                         code,
                         "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set(serde_json::to_value(v).unwrap_or(serde_json::Value::Null)); }}",
-                    ).unwrap();
+                    );
                 }
             } else {
                 let value_expr = if col.dto_rust_type.is_some() && col.is_array {
@@ -3315,25 +3243,23 @@ impl RepositoryImplEmitter {
                     "v"
                 };
                 if col.is_nullable {
-                    writeln!(
+                    wln!(
                         code,
                         "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set(Some({value_expr})); }}",
-                    )
-                    .unwrap();
+                    );
                 } else {
-                    writeln!(
+                    wln!(
                         code,
                         "        if let Some(v) = cmd.{entity_field} {{ model.{entity_field} = Set({value_expr}); }}",
-                    )
-                    .unwrap();
+                    );
                 }
             }
         }
-        writeln!(code, "        match model.update(tx).await {{").unwrap();
-        writeln!(code, "            Ok(_) => {{}}").unwrap();
-        writeln!(code, "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}").unwrap();
-        writeln!(code, "            Err(e) => return Err(e.into()),").unwrap();
-        writeln!(code, "        }}").unwrap();
+        wln!(code, "        match model.update(tx).await {{");
+        wln!(code, "            Ok(_) => {{}}");
+        wln!(code, "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}");
+        wln!(code, "            Err(e) => return Err(e.into()),");
+        wln!(code, "        }}");
 
         // Replace junction rows when the update request carries the field.
         emit_junction_replace(code, &tree.junction_tables, 2);
@@ -3353,64 +3279,57 @@ impl RepositoryImplEmitter {
         if !range_cols.is_empty() {
             // All update DTO fields are Option<T>, so we only emit the UPDATE when at
             // least one range field is present. Build the SET clause and values dynamically.
-            writeln!(code).unwrap();
-            writeln!(
+            wln!(code);
+            wln!(
                 code,
                 "        // Range columns need explicit casts — build a single UPDATE"
-            )
-            .unwrap();
-            writeln!(code, "        {{").unwrap();
-            writeln!(
+            );
+            wln!(code, "        {{");
+            wln!(
                 code,
                 "            let mut set_clauses: Vec<String> = Vec::new();"
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            let mut values: Vec<sea_orm::Value> = Vec::new();"
-            )
-            .unwrap();
+            );
             for col in &range_cols {
                 let cast = col.pg_cast.as_deref().unwrap();
                 let dto_field = col.dto_name();
                 let pg_col = q(&col.pg_column_name);
                 let typed_value = typed_value_expr(&col.rust_type, "v");
-                writeln!(code, "            if let Some(v) = cmd.{dto_field} {{").unwrap();
+                wln!(code, "            if let Some(v) = cmd.{dto_field} {{");
                 let set_expr = if crate::generate::is_geometry_cast(cast) {
                     format!("                set_clauses.push(format!(\"{pg_col} = ST_GeomFromGeoJSON(${{}})\", values.len() + 1));")
                 } else {
                     format!("                set_clauses.push(format!(\"{pg_col} = ${{}}::{cast}\", values.len() + 1));")
                 };
-                writeln!(code, "{set_expr}").unwrap();
-                writeln!(code, "                values.push({typed_value});").unwrap();
-                writeln!(code, "            }}").unwrap();
+                wln!(code, "{set_expr}");
+                wln!(code, "                values.push({typed_value});");
+                wln!(code, "            }}");
             }
-            writeln!(code, "            if !set_clauses.is_empty() {{").unwrap();
-            writeln!(
+            wln!(code, "            if !set_clauses.is_empty() {{");
+            wln!(
                 code,
                 "                let id_placeholder = format!(\"${{}}\", values.len() + 1);"
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "                let sql = format!(\"UPDATE {schema}.{table} SET {{}} WHERE id = {{}}\", set_clauses.join(\", \"), id_placeholder);",
                 schema = tree.schema_name,
                 table = q(&tree.table_name),
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "                values.push(sea_orm::Value::Uuid(Some(Box::new(id))));"
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "                let stmt = Statement::from_sql_and_values(DatabaseBackend::Postgres, &sql, values);"
-            )
-            .unwrap();
-            writeln!(code, "                tx.execute(stmt).await?;").unwrap();
-            writeln!(code, "            }}").unwrap();
-            writeln!(code, "        }}").unwrap();
+            );
+            wln!(code, "                tx.execute(stmt).await?;");
+            wln!(code, "            }}");
+            wln!(code, "        }}");
         }
 
         // Update child tables: delete existing + re-insert when field is present
@@ -3458,210 +3377,193 @@ impl RepositoryImplEmitter {
                 child.parent_fk_column,
             );
 
-            writeln!(code).unwrap();
+            wln!(code);
             if child.is_array {
-                writeln!(
+                wln!(
                     code,
                     "        // Replace child rows: {}.{}",
-                    child.sql_schema_name, child.sql_table_name
-                )
-                .unwrap();
-                writeln!(
+                    child.sql_schema_name,
+                    child.sql_table_name
+                );
+                wln!(
                     code,
                     "        if let Some(ref items) = cmd.{} {{",
                     child.field_name
-                )
-                .unwrap();
-                writeln!(
+                );
+                wln!(
                     code,
                     "            let del = Statement::from_sql_and_values(DatabaseBackend::Postgres, \"{}\", vec![id.into()]);",
                     delete_sql
-                )
-                .unwrap();
-                writeln!(code, "            tx.execute(del).await?;").unwrap();
+                );
+                wln!(code, "            tx.execute(del).await?;");
                 let item_var = if child.columns.is_empty() && child.child_tables.is_empty() {
                     "_item"
                 } else {
                     "item"
                 };
-                writeln!(code, "            for {} in items {{", item_var).unwrap();
-                writeln!(code, "                let child_id = Uuid::new_v4();").unwrap();
-                writeln!(
+                wln!(code, "            for {} in items {{", item_var);
+                wln!(code, "                let child_id = Uuid::new_v4();");
+                wln!(
                     code,
                     "                let stmt = Statement::from_sql_and_values("
-                )
-                .unwrap();
-                writeln!(code, "                    DatabaseBackend::Postgres,").unwrap();
-                writeln!(code, "                    \"{}\",", insert_sql).unwrap();
-                write!(code, "                    vec![child_id.into(), id.into()").unwrap();
+                );
+                wln!(code, "                    DatabaseBackend::Postgres,");
+                wln!(code, "                    \"{}\",", insert_sql);
+                w!(code, "                    vec![child_id.into(), id.into()");
                 for col in &child.columns {
                     emit_child_col_write_value(code, col);
                 }
-                writeln!(code, "],").unwrap();
-                writeln!(code, "                );").unwrap();
-                writeln!(code, "                tx.execute(stmt).await?;").unwrap();
+                wln!(code, "],");
+                wln!(code, "                );");
+                wln!(code, "                tx.execute(stmt).await?;");
                 emit_child_inserts(code, &child.child_tables, "child_id", "item", 4);
-                writeln!(code, "            }}").unwrap();
-                writeln!(code, "        }}").unwrap();
+                wln!(code, "            }}");
+                wln!(code, "        }}");
             } else {
-                writeln!(
+                wln!(
                     code,
                     "        // Replace optional child row: {}.{}",
-                    child.sql_schema_name, child.sql_table_name
-                )
-                .unwrap();
+                    child.sql_schema_name,
+                    child.sql_table_name
+                );
                 let item_var = if child.columns.is_empty() && child.child_tables.is_empty() {
                     "_item"
                 } else {
                     "item"
                 };
-                writeln!(
+                wln!(
                     code,
                     "        if let Some(ref {}) = cmd.{} {{",
-                    item_var, child.field_name
-                )
-                .unwrap();
-                writeln!(
+                    item_var,
+                    child.field_name
+                );
+                wln!(
                     code,
                     "            let del = Statement::from_sql_and_values(DatabaseBackend::Postgres, \"{}\", vec![id.into()]);",
                     delete_sql
-                )
-                .unwrap();
-                writeln!(code, "            tx.execute(del).await?;").unwrap();
-                writeln!(code, "            let child_id = Uuid::new_v4();").unwrap();
-                writeln!(
+                );
+                wln!(code, "            tx.execute(del).await?;");
+                wln!(code, "            let child_id = Uuid::new_v4();");
+                wln!(
                     code,
                     "            let stmt = Statement::from_sql_and_values("
-                )
-                .unwrap();
-                writeln!(code, "                DatabaseBackend::Postgres,").unwrap();
-                writeln!(code, "                \"{}\",", insert_sql).unwrap();
-                write!(code, "                vec![child_id.into(), id.into()").unwrap();
+                );
+                wln!(code, "                DatabaseBackend::Postgres,");
+                wln!(code, "                \"{}\",", insert_sql);
+                w!(code, "                vec![child_id.into(), id.into()");
                 for col in &child.columns {
                     emit_child_col_write_value(code, col);
                 }
-                writeln!(code, "],").unwrap();
-                writeln!(code, "            );").unwrap();
-                writeln!(code, "            tx.execute(stmt).await?;").unwrap();
+                wln!(code, "],");
+                wln!(code, "            );");
+                wln!(code, "            tx.execute(stmt).await?;");
                 emit_child_inserts(code, &child.child_tables, "child_id", "item", 3);
-                writeln!(code, "        }}").unwrap();
+                wln!(code, "        }}");
             }
         }
     }
 
-    fn emit_delete_fn(&self, tree: &EntityTree, code: &mut String) {
-        writeln!(code).unwrap();
-        writeln!(
+    fn emit_delete_fn(&self, tree: &EntityTree, code: &mut CodeWriter) {
+        wln!(code);
+        wln!(
             code,
             "    #[tracing::instrument(skip(self, tx), fields(db.operation = \"delete\", db.table = \"{}.{}\"))]",
             tree.schema_name, tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "    async fn delete(").unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        tx: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        id: Uuid,").unwrap();
-        writeln!(code, "    ) -> Result<(), Box<dyn std::error::Error>> {{").unwrap();
+        );
+        wln!(code, "    async fn delete(");
+        wln!(code, "        &self,");
+        wln!(code, "        tx: &DatabaseTransaction,");
+        wln!(code, "        id: Uuid,");
+        wln!(code, "    ) -> Result<(), Box<dyn std::error::Error>> {{");
         if tree.is_auditable {
-            writeln!(
+            wln!(
                 code,
                 "        let model = crate::entity::{}::Entity::find()",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::Id.eq(id))",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::DeletedAt.is_null())",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(code, "            .one(tx)").unwrap();
-            writeln!(code, "            .await?").unwrap();
-            writeln!(
+            );
+            wln!(code, "            .one(tx)");
+            wln!(code, "            .await?");
+            wln!(
                 code,
                 "            .ok_or_else(|| Box::<dyn std::error::Error>::from(\"Entity not found or already deleted\"))?;"
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "        let mut active: crate::entity::{}::ActiveModel = model.into();",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "        active.deleted_at = sea_orm::ActiveValue::Set(Some(chrono::Utc::now().into()));"
-            )
-            .unwrap();
-            writeln!(code, "        match active.update(tx).await {{").unwrap();
-            writeln!(code, "            Ok(_) => {{}}").unwrap();
-            writeln!(code, "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}").unwrap();
-            writeln!(code, "            Err(e) => return Err(e.into()),").unwrap();
-            writeln!(code, "        }}").unwrap();
+            );
+            wln!(code, "        match active.update(tx).await {{");
+            wln!(code, "            Ok(_) => {{}}");
+            wln!(code, "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}");
+            wln!(code, "            Err(e) => return Err(e.into()),");
+            wln!(code, "        }}");
         } else {
-            writeln!(
+            wln!(
                 code,
                 "        // CASCADE handles child cleanup for {}.{}",
-                tree.schema_name, tree.table_name
-            )
-            .unwrap();
-            writeln!(
+                tree.schema_name,
+                tree.table_name
+            );
+            wln!(
                 code,
                 "        crate::entity::{}::Entity::delete_by_id(id)",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(code, "            .exec(tx)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
+            );
+            wln!(code, "            .exec(tx)");
+            wln!(code, "            .await?;");
         }
-        writeln!(code, "        Ok(())").unwrap();
-        writeln!(code, "    }}").unwrap();
+        wln!(code, "        Ok(())");
+        wln!(code, "    }}");
     }
 
-    fn emit_list_fn(&self, tree: &EntityTree, code: &mut String) {
-        writeln!(code).unwrap();
-        writeln!(
+    fn emit_list_fn(&self, tree: &EntityTree, code: &mut CodeWriter) {
+        wln!(code);
+        wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"select_list\", db.table = \"{}.{}\"))]",
             tree.schema_name, tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "    async fn list(").unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        page: u64,").unwrap();
-        writeln!(code, "        page_size: u64,").unwrap();
-        writeln!(
+        );
+        wln!(code, "    async fn list(");
+        wln!(code, "        &self,");
+        wln!(code, "        db: &DatabaseTransaction,");
+        wln!(code, "        page: u64,");
+        wln!(code, "        page_size: u64,");
+        wln!(
             code,
             "        filters: &std::collections::HashMap<String, String>,"
-        )
-        .unwrap();
+        );
         if tree.is_auditable {
-            writeln!(code, "        include_deleted: bool,").unwrap();
+            wln!(code, "        include_deleted: bool,");
         }
-        writeln!(
+        wln!(
             code,
             "    ) -> Result<(Vec<{}Response>, u64), Box<dyn std::error::Error>> {{",
             tree.entity_name
-        )
-        .unwrap();
+        );
 
         // Build filter condition from JSON:API filter params.
         let has_any_filters = !tree.filter_fields.is_empty()
             || !tree.nested_filter_fields.is_empty()
             || tree.parent_ref.is_some();
         if has_any_filters {
-            writeln!(
+            wln!(
                 code,
                 "        let mut condition = sea_orm::Condition::all();"
-            )
-            .unwrap();
+            );
 
             // --- Direct column filters ---
             for ff in &tree.filter_fields {
@@ -3669,12 +3571,11 @@ impl RepositoryImplEmitter {
                 // SeaORM Column variants use the bare name (e.g. `Type`, not `RType`).
                 let bare_name = ff.field_name.strip_prefix("r#").unwrap_or(&ff.field_name);
                 let pascal_col = codegraph_naming::to_pascal_case(bare_name);
-                writeln!(
+                wln!(
                     code,
                     "        if let Some(val) = filters.get(\"{}\") {{",
                     ff.field_name
-                )
-                .unwrap();
+                );
                 // Generate type-appropriate parsing. Optional (`Option<T>`) types
                 // are handled via their base type — the column still stores a
                 // concrete value, and filter values are never null.
@@ -3685,60 +3586,58 @@ impl RepositoryImplEmitter {
                     .to_string();
                 match base_type.as_str() {
                     "Uuid" | "uuid::Uuid" => {
-                        writeln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\", )))?;", ff.field_name).unwrap();
-                        writeln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col).unwrap();
+                        wln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\", )))?;", ff.field_name);
+                        wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col);
                     }
                     "i32" => {
-                        writeln!(code, "            let parsed: i32 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i32 for filter '{}': {{e}}\")))?;", ff.field_name).unwrap();
-                        writeln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col).unwrap();
+                        wln!(code, "            let parsed: i32 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i32 for filter '{}': {{e}}\")))?;", ff.field_name);
+                        wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col);
                     }
                     "i64" => {
-                        writeln!(code, "            let parsed: i64 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i64 for filter '{}': {{e}}\")))?;", ff.field_name).unwrap();
-                        writeln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col).unwrap();
+                        wln!(code, "            let parsed: i64 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i64 for filter '{}': {{e}}\")))?;", ff.field_name);
+                        wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col);
                     }
                     "bool" => {
-                        writeln!(code, "            let parsed: bool = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid bool for filter '{}': {{e}}\")))?;", ff.field_name).unwrap();
-                        writeln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col).unwrap();
+                        wln!(code, "            let parsed: bool = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid bool for filter '{}': {{e}}\")))?;", ff.field_name);
+                        wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col);
                     }
                     // Entity reference types (e.g. "ConsultationType") — FK columns
                     // are always UUIDs, even when the DTO wraps them in Option<>.
                     ty if ty.ends_with("Type")
                         && ty.chars().next().is_some_and(|c| c.is_uppercase()) =>
                     {
-                        writeln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\")))?;", ff.field_name).unwrap();
-                        writeln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col).unwrap();
+                        wln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\")))?;", ff.field_name);
+                        wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col);
                     }
                     _ => {
                         // String and everything else — exact match.
-                        writeln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(val.clone()));", tree.entity_module, pascal_col).unwrap();
+                        wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(val.clone()));", tree.entity_module, pascal_col);
                     }
                 }
-                writeln!(code, "        }}").unwrap();
+                wln!(code, "        }}");
             }
 
             // --- Parent ref filter (child entity scoped to a parent) ---
             if let Some(ref parent_ref) = tree.parent_ref {
                 let pascal_col = codegraph_naming::to_pascal_case(parent_ref);
-                writeln!(
+                wln!(
                     code,
                     "        if let Some(val) = filters.get(\"{parent_ref}\") {{"
-                )
-                .unwrap();
-                writeln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{parent_ref}': {{e}}\")))?;").unwrap();
-                writeln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col).unwrap();
-                writeln!(code, "        }}").unwrap();
+                );
+                wln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{parent_ref}': {{e}}\")))?;");
+                wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col);
+                wln!(code, "        }}");
             }
 
             // --- Nested (child / grandchild) filters via EXISTS subqueries ---
             // All identifiers (schema, table, column) are always double-quoted in the
             // generated SQL to guard against future names that match PG reserved words.
             for nf in &tree.nested_filter_fields {
-                writeln!(
+                wln!(
                     code,
                     "        if let Some(val) = filters.get(\"{}\") {{",
                     nf.filter_key
-                )
-                .unwrap();
+                );
 
                 // Type-safe value parsing — same patterns as direct filters.
                 let val_expr = emit_nested_filter_parse(code, nf);
@@ -3748,11 +3647,11 @@ impl RepositoryImplEmitter {
                     //   EXISTS (SELECT 1 FROM intermediate WHERE intermediate.parent_fk = parent.id
                     //     AND EXISTS (SELECT 1 FROM grandchild WHERE grandchild.child_fk = intermediate.id
                     //       AND grandchild.column = $value))
-                    writeln!(
+                    wln!(
                         code,
                         "            condition = condition.add(sea_orm::Condition::any().add(sea_orm::sea_query::Expr::cust_with_values("
-                    ).unwrap();
-                    writeln!(
+                    );
+                    wln!(
                         code,
                         "                \"EXISTS (SELECT 1 FROM \\\"{}\\\".\\\"{}\\\" _intermediate WHERE _intermediate.\\\"{}\\\" = \\\"{}\\\".\\\"{}\\\".\\\"id\\\" AND EXISTS (SELECT 1 FROM \\\"{}\\\".\\\"{}\\\" _gc WHERE _gc.\\\"{}\\\" = _intermediate.\\\"id\\\" AND _gc.\\\"{}\\\" = $1))\",",
                         ij.sql_schema,
@@ -3764,21 +3663,20 @@ impl RepositoryImplEmitter {
                         nf.sql_table_name,
                         nf.parent_fk_column,
                         nf.pg_column_name,
-                    ).unwrap();
-                    writeln!(
+                    );
+                    wln!(
                         code,
                         "                vec![sea_orm::Value::from({val_expr})],"
-                    )
-                    .unwrap();
-                    writeln!(code, "            )));").unwrap();
+                    );
+                    wln!(code, "            )));");
                 } else {
                     // Direct child: single EXISTS subquery.
                     //   EXISTS (SELECT 1 FROM child WHERE child.parent_fk = parent.id AND child.column = $value)
-                    writeln!(
+                    wln!(
                         code,
                         "            condition = condition.add(sea_orm::Condition::any().add(sea_orm::sea_query::Expr::cust_with_values("
-                    ).unwrap();
-                    writeln!(
+                    );
+                    wln!(
                         code,
                         "                \"EXISTS (SELECT 1 FROM \\\"{}\\\".\\\"{}\\\" _child WHERE _child.\\\"{}\\\" = \\\"{}\\\".\\\"{}\\\".\\\"id\\\" AND _child.\\\"{}\\\" = $1)\",",
                         nf.sql_schema,
@@ -3787,89 +3685,80 @@ impl RepositoryImplEmitter {
                         tree.schema_name,
                         tree.table_name,
                         nf.pg_column_name,
-                    ).unwrap();
-                    writeln!(
+                    );
+                    wln!(
                         code,
                         "                vec![sea_orm::Value::from({val_expr})],"
-                    )
-                    .unwrap();
-                    writeln!(code, "            )));").unwrap();
+                    );
+                    wln!(code, "            )));");
                 }
 
-                writeln!(code, "        }}").unwrap();
+                wln!(code, "        }}");
             }
         }
 
-        writeln!(
+        wln!(
             code,
             "        let{} query = crate::entity::{}::Entity::find()",
             if tree.is_auditable { " mut" } else { "" },
             tree.entity_module
-        )
-        .unwrap();
+        );
         if has_any_filters {
             if tree.is_auditable {
-                writeln!(code, "            .filter(condition);").unwrap();
+                wln!(code, "            .filter(condition);");
             } else {
-                writeln!(code, "            .filter(condition)").unwrap();
+                wln!(code, "            .filter(condition)");
             }
         } else if tree.is_auditable {
-            writeln!(code, ";").unwrap();
+            wln!(code, ";");
         }
         if tree.is_auditable {
-            writeln!(code, "        if !include_deleted {{").unwrap();
-            writeln!(
+            wln!(code, "        if !include_deleted {{");
+            wln!(
                 code,
                 "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
                 tree.entity_module
-            )
-            .unwrap();
-            writeln!(code, "        }}").unwrap();
-            writeln!(
+            );
+            wln!(code, "        }}");
+            wln!(
                 code,
                 "        let query = query.order_by_desc(crate::entity::{}::Column::CreatedAt);",
                 tree.entity_module
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "            .order_by_desc(crate::entity::{}::Column::CreatedAt);",
                 tree.entity_module
-            )
-            .unwrap();
+            );
         }
-        writeln!(
+        wln!(
             code,
             "        let paginator = query.paginate(db, page_size);"
-        )
-        .unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "        let total = paginator.num_items().await?;").unwrap();
-        writeln!(
+        );
+        wln!(code);
+        wln!(code, "        let total = paginator.num_items().await?;");
+        wln!(
             code,
             "        let rows = paginator.fetch_page(page).await?;"
-        )
-        .unwrap();
-        writeln!(code).unwrap();
-        writeln!(
+        );
+        wln!(code);
+        wln!(
             code,
             "        let mut results = Vec::with_capacity(rows.len());"
-        )
-        .unwrap();
-        writeln!(code, "        for row in rows {{").unwrap();
+        );
+        wln!(code, "        for row in rows {{");
 
         // Query child tables for each parent row (recursively handles nested children).
         emit_child_reads(code, &tree.child_tables, "row.id", 3);
         emit_junction_reads(code, &tree.junction_tables, "row.id", 3);
 
-        writeln!(
+        wln!(
             code,
             "            results.push({}Response {{",
             tree.entity_name
-        )
-        .unwrap();
-        writeln!(code, "                id: row.id,").unwrap();
+        );
+        wln!(code, "                id: row.id,");
         for col in &tree.direct_columns {
             if col.is_composite_range {
                 continue;
@@ -3882,257 +3771,231 @@ impl RepositoryImplEmitter {
         emit_child_field_population(code, &tree.child_tables, "                ");
         emit_junction_field_population(code, &tree.junction_tables, "                ");
         if tree.has_workflow {
-            writeln!(code, "                workflow_state: None,").unwrap();
+            wln!(code, "                workflow_state: None,");
         }
-        writeln!(code, "                created_at: row.created_at,").unwrap();
-        writeln!(code, "                updated_at: row.updated_at,").unwrap();
-        writeln!(code, "                ..Default::default()").unwrap();
-        writeln!(code, "            }});").unwrap();
-        writeln!(code, "        }}").unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "        Ok((results, total))").unwrap();
-        writeln!(code, "    }}").unwrap();
+        wln!(code, "                created_at: row.created_at,");
+        wln!(code, "                updated_at: row.updated_at,");
+        wln!(code, "                ..Default::default()");
+        wln!(code, "            }});");
+        wln!(code, "        }}");
+        wln!(code);
+        wln!(code, "        Ok((results, total))");
+        wln!(code, "    }}");
     }
 
     /// Emit full-text search that returns ranked IDs and total count.
-    fn emit_search_fn(&self, tree: &EntityTree, code: &mut String) {
-        writeln!(code).unwrap();
-        writeln!(
+    fn emit_search_fn(&self, tree: &EntityTree, code: &mut CodeWriter) {
+        wln!(code);
+        wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"search_ids\", db.table = \"{}.{}\"  ))]",
             tree.schema_name, tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "    async fn search_ids(").unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        query: &str,").unwrap();
-        writeln!(code, "        page: u64,").unwrap();
-        writeln!(code, "        page_size: u64,").unwrap();
+        );
+        wln!(code, "    async fn search_ids(");
+        wln!(code, "        &self,");
+        wln!(code, "        db: &DatabaseTransaction,");
+        wln!(code, "        query: &str,");
+        wln!(code, "        page: u64,");
+        wln!(code, "        page_size: u64,");
         if tree.is_auditable {
-            writeln!(code, "        include_deleted: bool,").unwrap();
+            wln!(code, "        include_deleted: bool,");
         }
-        writeln!(
+        wln!(
             code,
             "    ) -> Result<(Vec<uuid::Uuid>, u64), Box<dyn std::error::Error>> {{"
-        )
-        .unwrap();
-        writeln!(
+        );
+        wln!(
             code,
             "        let count_stmt = Statement::from_sql_and_values("
-        )
-        .unwrap();
-        writeln!(code, "            DatabaseBackend::Postgres,").unwrap();
+        );
+        wln!(code, "            DatabaseBackend::Postgres,");
         if tree.is_auditable {
-            writeln!(
+            wln!(
                 code,
                 "            if include_deleted {{ \"SELECT COUNT(*) AS count FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1)\" }} else {{ \"SELECT COUNT(*) AS count FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) AND deleted_at IS NULL\" }},",
                 tree.schema_name, q(&tree.table_name), tree.fts_language,
                 tree.schema_name, q(&tree.table_name), tree.fts_language,
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "            \"SELECT COUNT(*) AS count FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1)\",",
                 tree.schema_name, q(&tree.table_name), tree.fts_language
-            )
-            .unwrap();
+            );
         }
-        writeln!(code, "            vec![query.into()],").unwrap();
-        writeln!(code, "        );").unwrap();
-        writeln!(
+        wln!(code, "            vec![query.into()],");
+        wln!(code, "        );");
+        wln!(
             code,
             "        let count_row = db.query_one(count_stmt).await?"
-        )
-        .unwrap();
-        writeln!(
+        );
+        wln!(
             code,
             "            .ok_or(\"count query returned no rows\")?;"
-        )
-        .unwrap();
-        writeln!(
+        );
+        wln!(
             code,
             "        let total: i64 = count_row.try_get(\"\", \"count\")?;"
-        )
-        .unwrap();
-        writeln!(code, "        let total = total as u64;").unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "        let offset = page * page_size;").unwrap();
-        writeln!(code, "        let stmt = Statement::from_sql_and_values(").unwrap();
-        writeln!(code, "            DatabaseBackend::Postgres,").unwrap();
+        );
+        wln!(code, "        let total = total as u64;");
+        wln!(code);
+        wln!(code, "        let offset = page * page_size;");
+        wln!(code, "        let stmt = Statement::from_sql_and_values(");
+        wln!(code, "            DatabaseBackend::Postgres,");
         if tree.is_auditable {
-            writeln!(
+            wln!(
                 code,
                 "            if include_deleted {{ \"SELECT id FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) ORDER BY ts_rank(search_tsv, websearch_to_tsquery('{}', $1)) DESC LIMIT $2 OFFSET $3\" }} else {{ \"SELECT id FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) AND deleted_at IS NULL ORDER BY ts_rank(search_tsv, websearch_to_tsquery('{}', $1)) DESC LIMIT $2 OFFSET $3\" }},",
                 tree.schema_name, q(&tree.table_name), tree.fts_language, tree.fts_language,
                 tree.schema_name, q(&tree.table_name), tree.fts_language, tree.fts_language,
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "            \"SELECT id FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) ORDER BY ts_rank(search_tsv, websearch_to_tsquery('{}', $1)) DESC LIMIT $2 OFFSET $3\",",
                 tree.schema_name, q(&tree.table_name), tree.fts_language, tree.fts_language
-            )
-            .unwrap();
+            );
         }
-        writeln!(
+        wln!(
             code,
             "            vec![query.into(), (page_size as i64).into(), (offset as i64).into()],"
-        )
-        .unwrap();
-        writeln!(code, "        );").unwrap();
-        writeln!(code, "        let rows = db.query_all(stmt).await?;").unwrap();
-        writeln!(code, "        let ids: Vec<uuid::Uuid> = rows.iter()").unwrap();
-        writeln!(
+        );
+        wln!(code, "        );");
+        wln!(code, "        let rows = db.query_all(stmt).await?;");
+        wln!(code, "        let ids: Vec<uuid::Uuid> = rows.iter()");
+        wln!(
             code,
             "            .filter_map(|r| r.try_get::<uuid::Uuid>(\"\", \"id\").ok())"
-        )
-        .unwrap();
-        writeln!(code, "            .collect();").unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "        Ok((ids, total))").unwrap();
-        writeln!(code, "    }}").unwrap();
+        );
+        wln!(code, "            .collect();");
+        wln!(code);
+        wln!(code, "        Ok((ids, total))");
+        wln!(code, "    }}");
     }
 
     /// Emit semantic similarity search that returns IDs ordered by cosine similarity.
-    fn emit_semantic_search_fn(&self, tree: &EntityTree, code: &mut String) {
-        writeln!(code).unwrap();
-        writeln!(
+    fn emit_semantic_search_fn(&self, tree: &EntityTree, code: &mut CodeWriter) {
+        wln!(code);
+        wln!(
             code,
             "    #[tracing::instrument(skip(self, db, embedding), fields(db.operation = \"semantic_search_ids\", db.table = \"{}.{}\"  ))]",
             tree.schema_name, tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "    async fn semantic_search_ids(").unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        embedding: &[f32],").unwrap();
-        writeln!(code, "        limit: u64,").unwrap();
+        );
+        wln!(code, "    async fn semantic_search_ids(");
+        wln!(code, "        &self,");
+        wln!(code, "        db: &DatabaseTransaction,");
+        wln!(code, "        embedding: &[f32],");
+        wln!(code, "        limit: u64,");
         if tree.is_auditable {
-            writeln!(code, "        include_deleted: bool,").unwrap();
+            wln!(code, "        include_deleted: bool,");
         }
-        writeln!(
+        wln!(
             code,
             "    ) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error>> {{"
-        )
-        .unwrap();
-        writeln!(code, "        let vec_str = format!(\"[{{}}]\", embedding.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(\",\"));").unwrap();
-        writeln!(code, "        let stmt = Statement::from_sql_and_values(").unwrap();
-        writeln!(code, "            DatabaseBackend::Postgres,").unwrap();
+        );
+        wln!(code, "        let vec_str = format!(\"[{{}}]\", embedding.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(\",\"));");
+        wln!(code, "        let stmt = Statement::from_sql_and_values(");
+        wln!(code, "            DatabaseBackend::Postgres,");
         let emb_col = format!("{}_embedding", tree.table_name);
         if tree.is_auditable {
-            writeln!(
+            wln!(
                 code,
                 "            if include_deleted {{ \"SELECT id FROM {schema}.{table} ORDER BY {col} <=> $1::vector LIMIT $2\" }} else {{ \"SELECT id FROM {schema}.{table} WHERE deleted_at IS NULL ORDER BY {col} <=> $1::vector LIMIT $2\" }},",
                 schema = tree.schema_name,
                 table = q(&tree.table_name),
                 col = emb_col
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "            \"SELECT id FROM {schema}.{table} ORDER BY {col} <=> $1::vector LIMIT $2\",",
                 schema = tree.schema_name,
                 table = q(&tree.table_name),
                 col = emb_col
-            )
-            .unwrap();
+            );
         }
-        writeln!(
+        wln!(
             code,
             "            vec![vec_str.into(), (limit as i64).into()],"
-        )
-        .unwrap();
-        writeln!(code, "        );").unwrap();
-        writeln!(code, "        let rows = db.query_all(stmt).await?;").unwrap();
-        writeln!(code, "        let ids: Vec<uuid::Uuid> = rows.iter()").unwrap();
-        writeln!(
+        );
+        wln!(code, "        );");
+        wln!(code, "        let rows = db.query_all(stmt).await?;");
+        wln!(code, "        let ids: Vec<uuid::Uuid> = rows.iter()");
+        wln!(
             code,
             "            .filter_map(|r| r.try_get::<uuid::Uuid>(\"\", \"id\").ok())"
-        )
-        .unwrap();
-        writeln!(code, "            .collect();").unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "        Ok(ids)").unwrap();
-        writeln!(code, "    }}").unwrap();
+        );
+        wln!(code, "            .collect();");
+        wln!(code);
+        wln!(code, "        Ok(ids)");
+        wln!(code, "    }}");
     }
 
     /// Emit `find_tree` — recursive CTE fetching the subtree rooted at `root_id`.
-    fn emit_find_tree_fn(&self, tree: &EntityTree, code: &mut String) {
+    fn emit_find_tree_fn(&self, tree: &EntityTree, code: &mut CodeWriter) {
         let hf = tree.hierarchy_field.as_deref().unwrap();
         let has_tree_include = !tree.tree_include.is_empty();
-        writeln!(code).unwrap();
-        writeln!(
+        wln!(code);
+        wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"find_tree\", db.table = \"{}.{}\"))]",
             tree.schema_name, tree.table_name
-        )
-        .unwrap();
-        writeln!(code, "    async fn find_tree(").unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        root_id: Uuid,").unwrap();
-        writeln!(code, "        max_depth: Option<i32>,").unwrap();
+        );
+        wln!(code, "    async fn find_tree(");
+        wln!(code, "        &self,");
+        wln!(code, "        db: &DatabaseTransaction,");
+        wln!(code, "        root_id: Uuid,");
+        wln!(code, "        max_depth: Option<i32>,");
         if has_tree_include {
-            writeln!(
+            wln!(
                 code,
                 "    ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {{"
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "    ) -> Result<Vec<{}Response>, Box<dyn std::error::Error>> {{",
                 tree.entity_name
-            )
-            .unwrap();
+            );
         }
-        writeln!(code, "        let sql = if let Some(_depth) = max_depth {{").unwrap();
-        writeln!(
+        wln!(code, "        let sql = if let Some(_depth) = max_depth {{");
+        wln!(
             code,
             "            format!(\"WITH RECURSIVE tree AS (SELECT *, 0 AS _tree_depth FROM {schema}.{table} WHERE id = $1 UNION ALL SELECT c.*, t._tree_depth + 1 AS _tree_depth FROM {schema}.{table} c JOIN tree t ON c.{hf} = t.id WHERE t._tree_depth < $2) SELECT * FROM tree ORDER BY _tree_depth, created_at\",)",
             schema = tree.schema_name,
             table = q(&tree.table_name),
             hf = hf
-        )
-        .unwrap();
-        writeln!(code, "        }} else {{").unwrap();
-        writeln!(
+        );
+        wln!(code, "        }} else {{");
+        wln!(
             code,
             "            format!(\"WITH RECURSIVE tree AS (SELECT *, 0 AS _tree_depth FROM {schema}.{table} WHERE id = $1 UNION ALL SELECT c.*, t._tree_depth + 1 AS _tree_depth FROM {schema}.{table} c JOIN tree t ON c.{hf} = t.id) SELECT * FROM tree ORDER BY _tree_depth, created_at\",)",
             schema = tree.schema_name,
             table = q(&tree.table_name),
             hf = hf
-        )
-        .unwrap();
-        writeln!(code, "        }};").unwrap();
-        writeln!(
+        );
+        wln!(code, "        }};");
+        wln!(
             code,
             "        let values = if let Some(depth) = max_depth {{"
-        )
-        .unwrap();
-        writeln!(code, "            vec![root_id.into(), depth.into()]").unwrap();
-        writeln!(code, "        }} else {{").unwrap();
-        writeln!(code, "            vec![root_id.into()]").unwrap();
-        writeln!(code, "        }};").unwrap();
-        writeln!(
+        );
+        wln!(code, "            vec![root_id.into(), depth.into()]");
+        wln!(code, "        }} else {{");
+        wln!(code, "            vec![root_id.into()]");
+        wln!(code, "        }};");
+        wln!(
             code,
             "        let stmt = Statement::from_sql_and_values(DatabaseBackend::Postgres, sql, values);"
-        )
-        .unwrap();
-        writeln!(
+        );
+        wln!(
             code,
             "        let rows = crate::entity::{}::Entity::find()",
             tree.entity_module
-        )
-        .unwrap();
-        writeln!(code, "            .from_raw_sql(stmt)").unwrap();
-        writeln!(code, "            .all(db)").unwrap();
-        writeln!(code, "            .await?;").unwrap();
-        writeln!(code).unwrap();
+        );
+        wln!(code, "            .from_raw_sql(stmt)");
+        wln!(code, "            .all(db)");
+        wln!(code, "            .await?;");
+        wln!(code);
 
         if has_tree_include {
             // Emit worker map query
@@ -4140,30 +4003,27 @@ impl RepositoryImplEmitter {
         }
 
         // Emit result construction (Vec<Response> or Vec<Value>)
-        writeln!(
+        wln!(
             code,
             "        let mut results = Vec::with_capacity(rows.len());"
-        )
-        .unwrap();
-        writeln!(code, "        for row in rows {{").unwrap();
+        );
+        wln!(code, "        for row in rows {{");
         emit_child_reads(code, &tree.child_tables, "row.id", 3);
         emit_junction_reads(code, &tree.junction_tables, "row.id", 3);
         if has_tree_include {
-            writeln!(
+            wln!(
                 code,
                 "            let mut val = serde_json::to_value({}Response {{",
                 tree.entity_name
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "            results.push({}Response {{",
                 tree.entity_name
-            )
-            .unwrap();
+            );
         }
-        writeln!(code, "                id: row.id,").unwrap();
+        wln!(code, "                id: row.id,");
         for col in &tree.direct_columns {
             if col.is_composite_range {
                 continue;
@@ -4176,51 +4036,47 @@ impl RepositoryImplEmitter {
         emit_child_field_population(code, &tree.child_tables, "                ");
         emit_junction_field_population(code, &tree.junction_tables, "                ");
         if tree.has_workflow {
-            writeln!(code, "                workflow_state: None,").unwrap();
+            wln!(code, "                workflow_state: None,");
         }
-        writeln!(code, "                created_at: row.created_at,").unwrap();
-        writeln!(code, "                updated_at: row.updated_at,").unwrap();
-        writeln!(code, "                ..Default::default()").unwrap();
+        wln!(code, "                created_at: row.created_at,");
+        wln!(code, "                updated_at: row.updated_at,");
+        wln!(code, "                ..Default::default()");
         if has_tree_include {
-            writeln!(code, "            }}).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Serialization error: {{e}}\").into() }})?;").unwrap();
+            wln!(code, "            }}).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Serialization error: {{e}}\").into() }})?;");
             // Emit worker merge block
             for inc in &tree.tree_include {
-                writeln!(
+                wln!(
                     code,
                     "            if let Some(worker) = worker_map.get(&row.id) {{"
-                )
-                .unwrap();
-                writeln!(
+                );
+                wln!(
                     code,
                     "                val.as_object_mut().unwrap().insert(\"{}\".to_string(), worker.clone());",
                     inc.alias
-                )
-                .unwrap();
-                writeln!(code, "            }}").unwrap();
+                );
+                wln!(code, "            }}");
             }
-            writeln!(code, "            results.push(val);").unwrap();
+            wln!(code, "            results.push(val);");
         } else {
-            writeln!(code, "            }});").unwrap();
+            wln!(code, "            }});");
         }
-        writeln!(code, "        }}").unwrap();
-        writeln!(code).unwrap();
-        writeln!(code, "        Ok(results)").unwrap();
-        writeln!(code, "    }}").unwrap();
+        wln!(code, "        }}");
+        wln!(code);
+        wln!(code, "        Ok(results)");
+        wln!(code, "    }}");
     }
 
     /// Emit code that fetches tree_include worker data into a position_id→Value map.
-    fn emit_tree_include_worker_fetch(&self, tree: &EntityTree, code: &mut String) {
-        writeln!(
+    fn emit_tree_include_worker_fetch(&self, tree: &EntityTree, code: &mut CodeWriter) {
+        wln!(
             code,
             "        let mut worker_map: std::collections::HashMap<Uuid, serde_json::Value> = std::collections::HashMap::new();"
-        )
-        .unwrap();
-        writeln!(
+        );
+        wln!(
             code,
             "        let pos_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();"
-        )
-        .unwrap();
-        writeln!(code).unwrap();
+        );
+        wln!(code);
         for inc in &tree.tree_include {
             // Build JOIN chain from parent table through worker detail tables.
             // The composition tree tells us: WorkerType → WorkerPersonType → WorkerPersonNameType.
@@ -4244,39 +4100,35 @@ impl RepositoryImplEmitter {
             if has_person {
                 // Escape double-quotes in from_clause for embedding in Rust string literals
                 let escaped_from = from_clause.replace('"', "\\\"");
-                writeln!(
+                wln!(
                     code,
                     "        let worker_sql = format!(\"SELECT d.\\\"{fk}\\\" AS position_id, jsonb_build_object('id', w.id, 'given_name', wpn.given, 'family_name', wpn.family, 'avatar_url', wp.avatar_url) AS deployed_worker FROM {from} WHERE d.\\\"{fk}\\\" = ANY($1) AND d.deleted_at IS NULL\");",
                     fk = inc.via_fk_column,
                     from = escaped_from,
-                )
-                .unwrap();
+                );
             } else {
                 // Fallback: no person chain, just return worker ID
-                writeln!(
+                wln!(
                     code,
                     "        let worker_sql = format!(\"SELECT d.\\\"{fk}\\\" AS position_id, jsonb_build_object('id', w.id) AS deployed_worker FROM {from} WHERE d.\\\"{fk}\\\" = ANY($1) AND d.deleted_at IS NULL\");",
                     fk = inc.via_fk_column,
                     from = from_clause,
-                )
-                .unwrap();
+                );
             }
-            writeln!(
+            wln!(
                 code,
                 "        let worker_stmt = Statement::from_sql_and_values(DatabaseBackend::Postgres, worker_sql, vec![pos_ids.clone().into()]);"
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "        let worker_rows = db.query_all(worker_stmt).await?;"
-            )
-            .unwrap();
-            writeln!(code, "        for wr in &worker_rows {{").unwrap();
-            writeln!(code, "            let pos_id: Uuid = wr.try_get_by_index(0).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Missing position_id: {{e}}\").into() }})?;").unwrap();
-            writeln!(code, "            let worker_json: serde_json::Value = wr.try_get_by_index(1).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Missing deployed_worker: {{e}}\").into() }})?;").unwrap();
-            writeln!(code, "            worker_map.insert(pos_id, worker_json);").unwrap();
-            writeln!(code, "        }}").unwrap();
-            writeln!(code).unwrap();
+            );
+            wln!(code, "        for wr in &worker_rows {{");
+            wln!(code, "            let pos_id: Uuid = wr.try_get_by_index(0).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Missing position_id: {{e}}\").into() }})?;");
+            wln!(code, "            let worker_json: serde_json::Value = wr.try_get_by_index(1).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Missing deployed_worker: {{e}}\").into() }})?;");
+            wln!(code, "            worker_map.insert(pos_id, worker_json);");
+            wln!(code, "        }}");
+            wln!(code);
         }
     }
 
@@ -4285,7 +4137,7 @@ impl RepositoryImplEmitter {
     fn emit_include_fetch_methods(
         &self,
         tree: &EntityTree,
-        code: &mut String,
+        code: &mut CodeWriter,
         include_paths: &[ResolvedIncludePath],
         include_target_trees: &[Option<EntityTree>],
         include_segment_dto_fields: &[Vec<Vec<String>>],
@@ -4425,7 +4277,7 @@ impl RepositoryImplEmitter {
     /// emit_entity_to_dto_field — serde_json::from_value() for structured
     /// wrappers, .parse() for codelists, direct assignment otherwise.
     fn emit_field_assignments_typed(
-        code: &mut String,
+        code: &mut CodeWriter,
         row_var: &str,
         dto_fields: &[String],
         col_fields: &[String],
@@ -4440,15 +4292,15 @@ impl RepositoryImplEmitter {
             if i < is_structured.len() && is_structured[i] {
                 // StructuredWrapper: serde_json::from_value() or .and_then() for nullable
                 if i < is_nullable.len() && is_nullable[i] {
-                    writeln!(
+                    wln!(
                         code,
                         "                {dto_name}: {row_var}.{col_name}.and_then(|v| serde_json::from_value(v).ok()),",
-                    ).unwrap();
+                    );
                 } else {
-                    writeln!(
+                    wln!(
                         code,
                         "                {dto_name}: serde_json::from_value({row_var}.{col_name}).unwrap_or_default(),",
-                    ).unwrap();
+                    );
                 }
             } else if i < is_codelist.len()
                 && is_codelist[i]
@@ -4456,12 +4308,12 @@ impl RepositoryImplEmitter {
                 && dto_rust_types[i].is_some()
             {
                 // Codelist: .parse()
-                writeln!(
+                wln!(
                     code,
                     "                {dto_name}: {row_var}.{col_name}.and_then(|v| v.parse().ok()),",
-                ).unwrap();
+                );
             } else {
-                writeln!(code, "                {dto_name}: {row_var}.{col_name},").unwrap();
+                wln!(code, "                {dto_name}: {row_var}.{col_name},");
             }
         }
     }
@@ -4471,7 +4323,7 @@ impl RepositoryImplEmitter {
     fn emit_single_fetch_method(
         &self,
         tree: &EntityTree,
-        code: &mut String,
+        code: &mut CodeWriter,
         path: &ResolvedIncludePath,
         target_tree: Option<&EntityTree>,
         dto_fields: &[String],
@@ -4486,25 +4338,23 @@ impl RepositoryImplEmitter {
         let resp_type = &path.response_rust_type;
         let target_module = format!("{}_{}", seg.domain, seg.module_name);
 
-        writeln!(code).unwrap();
-        writeln!(code, "    pub(crate) async fn {}(", path.fetch_method).unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        source_id: Uuid,").unwrap();
+        wln!(code);
+        wln!(code, "    pub(crate) async fn {}(", path.fetch_method);
+        wln!(code, "        &self,");
+        wln!(code, "        db: &DatabaseTransaction,");
+        wln!(code, "        source_id: Uuid,");
         if seg.is_array {
-            writeln!(
+            wln!(
                 code,
                 "    ) -> Result<Vec<{}>, Box<dyn std::error::Error>> {{",
                 resp_type
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
                 resp_type
-            )
-            .unwrap();
+            );
         }
 
         // Which child tables the response hydrates: the override subtree's
@@ -4515,28 +4365,27 @@ impl RepositoryImplEmitter {
         if let Some(ref over) = seg.child_table_override {
             // VO→entity: query child table directly by parent FK
             let over_fk_pascal = codegraph_naming::to_pascal_case(&over.parent_fk_column);
-            writeln!(
+            wln!(
                 code,
                 "        let target = crate::entity::{}::Entity::find()",
                 over.child_module,
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::{}.eq(source_id))",
-                over.child_module, over_fk_pascal,
-            )
-            .unwrap();
-            writeln!(code, "            .one(db)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
-            writeln!(code, "        let target = match target {{").unwrap();
-            writeln!(code, "            Some(t) => t,").unwrap();
-            writeln!(code, "            None => return Ok(None),").unwrap();
-            writeln!(code, "        }};").unwrap();
+                over.child_module,
+                over_fk_pascal,
+            );
+            wln!(code, "            .one(db)");
+            wln!(code, "            .await?;");
+            wln!(code, "        let target = match target {{");
+            wln!(code, "            Some(t) => t,");
+            wln!(code, "            None => return Ok(None),");
+            wln!(code, "        }};");
             if !hydration_children.is_empty() {
                 emit_child_reads(code, hydration_children, "target.id", 2);
             }
-            writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
+            wln!(code, "        Ok(Some({} {{", resp_type);
             Self::emit_field_assignments_typed(
                 code,
                 "target",
@@ -4550,35 +4399,33 @@ impl RepositoryImplEmitter {
             if !hydration_children.is_empty() {
                 emit_child_field_population(code, hydration_children, "            ");
             }
-            writeln!(code, "            ..Default::default()").unwrap();
-            writeln!(code, "        }}))").unwrap();
+            wln!(code, "            ..Default::default()");
+            wln!(code, "        }}))");
         } else if seg.is_array {
             let reverse_fk_pascal = codegraph_naming::to_pascal_case(&seg.reverse_fk_column);
-            writeln!(
+            wln!(
                 code,
                 "        let rows = crate::entity::{}::Entity::find()",
                 target_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::{}.eq(source_id))",
-                target_module, reverse_fk_pascal
-            )
-            .unwrap();
-            writeln!(code, "            .all(db)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
-            writeln!(
+                target_module,
+                reverse_fk_pascal
+            );
+            wln!(code, "            .all(db)");
+            wln!(code, "            .await?;");
+            wln!(
                 code,
                 "        let mut results = Vec::with_capacity(rows.len());"
-            )
-            .unwrap();
-            writeln!(code, "        for row in rows {{").unwrap();
+            );
+            wln!(code, "        for row in rows {{");
             if !hydration_children.is_empty() {
                 emit_child_reads(code, hydration_children, "row.id", 3);
             }
-            writeln!(code, "            results.push({} {{", resp_type).unwrap();
-            writeln!(code, "                id: row.id,").unwrap();
+            wln!(code, "            results.push({} {{", resp_type);
+            wln!(code, "                id: row.id,");
             Self::emit_field_assignments_typed(
                 code,
                 "row",
@@ -4589,71 +4436,66 @@ impl RepositoryImplEmitter {
                 dto_rust_types,
                 is_nullable,
             );
-            writeln!(code, "                created_at: row.created_at,").unwrap();
-            writeln!(code, "                updated_at: row.updated_at,").unwrap();
+            wln!(code, "                created_at: row.created_at,");
+            wln!(code, "                updated_at: row.updated_at,");
             if !hydration_children.is_empty() {
                 emit_child_field_population(code, hydration_children, "                ");
             }
-            writeln!(code, "                ..Default::default()").unwrap();
-            writeln!(code, "            }});").unwrap();
-            writeln!(code, "        }}").unwrap();
-            writeln!(code, "        Ok(results)").unwrap();
+            wln!(code, "                ..Default::default()");
+            wln!(code, "            }});");
+            wln!(code, "        }}");
+            wln!(code, "        Ok(results)");
         } else {
-            writeln!(
+            wln!(
                 code,
                 "        let source = crate::entity::{}::Entity::find()",
                 src_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::Id.eq(source_id))",
                 src_module
-            )
-            .unwrap();
-            writeln!(code, "            .one(db)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
-            writeln!(code, "        let source = match source {{").unwrap();
-            writeln!(code, "            Some(s) => s,").unwrap();
-            writeln!(code, "            None => return Ok(None),").unwrap();
-            writeln!(code, "        }};").unwrap();
+            );
+            wln!(code, "            .one(db)");
+            wln!(code, "            .await?;");
+            wln!(code, "        let source = match source {{");
+            wln!(code, "            Some(s) => s,");
+            wln!(code, "            None => return Ok(None),");
+            wln!(code, "        }};");
             if seg.fk_is_required {
                 // Required genuine EntityReference: the FK field is a plain Uuid.
-                writeln!(code, "        let fk_value = source.{};", seg.fk_column).unwrap();
+                wln!(code, "        let fk_value = source.{};", seg.fk_column);
             } else {
-                writeln!(
+                wln!(
                     code,
                     "        let fk_value = match source.{} {{",
                     seg.fk_column
-                )
-                .unwrap();
-                writeln!(code, "            Some(v) => v,").unwrap();
-                writeln!(code, "            None => return Ok(None),").unwrap();
-                writeln!(code, "        }};").unwrap();
+                );
+                wln!(code, "            Some(v) => v,");
+                wln!(code, "            None => return Ok(None),");
+                wln!(code, "        }};");
             }
-            writeln!(
+            wln!(
                 code,
                 "        let target = crate::entity::{}::Entity::find()",
                 target_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::Id.eq(fk_value))",
                 target_module
-            )
-            .unwrap();
-            writeln!(code, "            .one(db)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
-            writeln!(code, "        let target = match target {{").unwrap();
-            writeln!(code, "            Some(t) => t,").unwrap();
-            writeln!(code, "            None => return Ok(None),").unwrap();
-            writeln!(code, "        }};").unwrap();
+            );
+            wln!(code, "            .one(db)");
+            wln!(code, "            .await?;");
+            wln!(code, "        let target = match target {{");
+            wln!(code, "            Some(t) => t,");
+            wln!(code, "            None => return Ok(None),");
+            wln!(code, "        }};");
             if !hydration_children.is_empty() {
                 emit_child_reads(code, hydration_children, "target.id", 2);
             }
-            writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
-            writeln!(code, "            id: target.id,").unwrap();
+            wln!(code, "        Ok(Some({} {{", resp_type);
+            wln!(code, "            id: target.id,");
             Self::emit_field_assignments_typed(
                 code,
                 "target",
@@ -4664,16 +4506,16 @@ impl RepositoryImplEmitter {
                 dto_rust_types,
                 is_nullable,
             );
-            writeln!(code, "            created_at: target.created_at,").unwrap();
-            writeln!(code, "            updated_at: target.updated_at,").unwrap();
+            wln!(code, "            created_at: target.created_at,");
+            wln!(code, "            updated_at: target.updated_at,");
             if !hydration_children.is_empty() {
                 emit_child_field_population(code, hydration_children, "            ");
             }
-            writeln!(code, "            ..Default::default()").unwrap();
-            writeln!(code, "        }}))").unwrap();
+            wln!(code, "            ..Default::default()");
+            wln!(code, "        }}))");
         }
 
-        writeln!(code, "    }}").unwrap();
+        wln!(code, "    }}");
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4681,7 +4523,7 @@ impl RepositoryImplEmitter {
     fn emit_batch_fetch_method(
         &self,
         tree: &EntityTree,
-        code: &mut String,
+        code: &mut CodeWriter,
         path: &ResolvedIncludePath,
         target_tree: Option<&EntityTree>,
         dto_fields: &[String],
@@ -4698,62 +4540,58 @@ impl RepositoryImplEmitter {
         // Which child tables the response hydrates (see single fetch, #162).
         let hydration_children = include_hydration_children(tree, path, target_tree);
 
-        writeln!(code).unwrap();
-        writeln!(code, "    pub(crate) async fn {}(", path.batch_fetch_method).unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        source_ids: &[Uuid],").unwrap();
+        wln!(code);
+        wln!(code, "    pub(crate) async fn {}(", path.batch_fetch_method);
+        wln!(code, "        &self,");
+        wln!(code, "        db: &DatabaseTransaction,");
+        wln!(code, "        source_ids: &[Uuid],");
         if seg.is_array {
-            writeln!(
+            wln!(
                 code,
                 "    ) -> Result<std::collections::HashMap<Uuid, Vec<{}>>, Box<dyn std::error::Error>> {{",
                 resp_type
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "    ) -> Result<std::collections::HashMap<Uuid, Option<{}>>, Box<dyn std::error::Error>> {{",
                 resp_type
-            )
-            .unwrap();
+            );
         }
 
         if let Some(ref over) = seg.child_table_override {
             let over_fk_pascal = codegraph_naming::to_pascal_case(&over.parent_fk_column);
-            writeln!(
+            wln!(
                 code,
                 "        let rows = crate::entity::{}::Entity::find()",
                 over.child_module,
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::{}.is_in(source_ids.to_vec()))",
-                over.child_module, over_fk_pascal,
-            )
-            .unwrap();
-            writeln!(code, "            .all(db)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
-            writeln!(
+                over.child_module,
+                over_fk_pascal,
+            );
+            wln!(code, "            .all(db)");
+            wln!(code, "            .await?;");
+            wln!(
                 code,
                 "        let mut result: std::collections::HashMap<Uuid, Option<{}>> = std::collections::HashMap::new();",
                 resp_type
-            )
-            .unwrap();
-            writeln!(code, "        for id in source_ids {{").unwrap();
-            writeln!(code, "            result.entry(*id).or_insert(None);").unwrap();
-            writeln!(code, "        }}").unwrap();
-            writeln!(code, "        for row in rows {{").unwrap();
+            );
+            wln!(code, "        for id in source_ids {{");
+            wln!(code, "            result.entry(*id).or_insert(None);");
+            wln!(code, "        }}");
+            wln!(code, "        for row in rows {{");
             if !hydration_children.is_empty() {
                 emit_child_reads(code, hydration_children, "row.id", 3);
             }
-            writeln!(
+            wln!(
                 code,
                 "            result.insert(row.{}, Some({} {{",
-                over.parent_fk_column, resp_type,
-            )
-            .unwrap();
+                over.parent_fk_column,
+                resp_type,
+            );
             Self::emit_field_assignments_typed(
                 code,
                 "row",
@@ -4767,63 +4605,58 @@ impl RepositoryImplEmitter {
             if !hydration_children.is_empty() {
                 emit_child_field_population(code, hydration_children, "                ");
             }
-            writeln!(code, "                ..Default::default()").unwrap();
-            writeln!(code, "            }}));").unwrap();
-            writeln!(code, "        }}").unwrap();
+            wln!(code, "                ..Default::default()");
+            wln!(code, "            }}));");
+            wln!(code, "        }}");
         } else if seg.is_array {
             let reverse_fk_pascal = codegraph_naming::to_pascal_case(&seg.reverse_fk_column);
-            writeln!(
+            wln!(
                 code,
                 "        let rows = crate::entity::{}::Entity::find()",
                 target_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::{}.is_in(source_ids.to_vec()))",
-                target_module, reverse_fk_pascal
-            )
-            .unwrap();
-            writeln!(code, "            .all(db)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
-            writeln!(
+                target_module,
+                reverse_fk_pascal
+            );
+            wln!(code, "            .all(db)");
+            wln!(code, "            .await?;");
+            wln!(
                 code,
                 "        let mut result: std::collections::HashMap<Uuid, Vec<{}>> = std::collections::HashMap::new();",
                 resp_type
-            )
-            .unwrap();
-            writeln!(code, "        for id in source_ids {{").unwrap();
-            writeln!(
+            );
+            wln!(code, "        for id in source_ids {{");
+            wln!(
                 code,
                 "            result.entry(*id).or_insert_with(Vec::new);"
-            )
-            .unwrap();
-            writeln!(code, "        }}").unwrap();
-            writeln!(code, "        for row in rows {{").unwrap();
+            );
+            wln!(code, "        }}");
+            wln!(code, "        for row in rows {{");
             if seg.reverse_fk_is_required {
                 // Required reverse FK (genuine EntityReference): plain Uuid.
-                writeln!(code, "            let key = row.{};", seg.reverse_fk_column).unwrap();
+                wln!(code, "            let key = row.{};", seg.reverse_fk_column);
             } else {
-                writeln!(
+                wln!(
                     code,
                     "            let key = match row.{} {{",
                     seg.reverse_fk_column
-                )
-                .unwrap();
-                writeln!(code, "                Some(v) => v,").unwrap();
-                writeln!(code, "                None => continue,").unwrap();
-                writeln!(code, "            }};").unwrap();
+                );
+                wln!(code, "                Some(v) => v,");
+                wln!(code, "                None => continue,");
+                wln!(code, "            }};");
             }
             if !hydration_children.is_empty() {
                 emit_child_reads(code, hydration_children, "row.id", 3);
             }
-            writeln!(
+            wln!(
                 code,
                 "            result.entry(key).or_default().push({} {{",
                 resp_type
-            )
-            .unwrap();
-            writeln!(code, "                id: row.id,").unwrap();
+            );
+            wln!(code, "                id: row.id,");
             Self::emit_field_assignments_typed(
                 code,
                 "row",
@@ -4834,83 +4667,75 @@ impl RepositoryImplEmitter {
                 dto_rust_types,
                 is_nullable,
             );
-            writeln!(code, "                created_at: row.created_at,").unwrap();
-            writeln!(code, "                updated_at: row.updated_at,").unwrap();
+            wln!(code, "                created_at: row.created_at,");
+            wln!(code, "                updated_at: row.updated_at,");
             if !hydration_children.is_empty() {
                 emit_child_field_population(code, hydration_children, "                ");
             }
-            writeln!(code, "                ..Default::default()").unwrap();
-            writeln!(code, "            }});").unwrap();
-            writeln!(code, "        }}").unwrap();
+            wln!(code, "                ..Default::default()");
+            wln!(code, "            }});");
+            wln!(code, "        }}");
         } else {
-            writeln!(
+            wln!(
                 code,
                 "        let sources = crate::entity::{}::Entity::find()",
                 src_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::Id.is_in(source_ids.to_vec()))",
                 src_module
-            )
-            .unwrap();
-            writeln!(code, "            .all(db)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
-            writeln!(code, "        let mut fk_values: Vec<Uuid> = Vec::new();").unwrap();
-            writeln!(code, "        for source in &sources {{").unwrap();
+            );
+            wln!(code, "            .all(db)");
+            wln!(code, "            .await?;");
+            wln!(code, "        let mut fk_values: Vec<Uuid> = Vec::new();");
+            wln!(code, "        for source in &sources {{");
             if seg.fk_is_required {
                 // Required genuine EntityReference: FK field is a plain Uuid.
-                writeln!(
+                wln!(
                     code,
                     "            fk_values.push(source.{});",
                     seg.fk_column
-                )
-                .unwrap();
+                );
             } else {
-                writeln!(
+                wln!(
                     code,
                     "            if let Some(fk) = source.{} {{",
                     seg.fk_column
-                )
-                .unwrap();
-                writeln!(code, "                fk_values.push(fk);").unwrap();
-                writeln!(code, "            }}").unwrap();
+                );
+                wln!(code, "                fk_values.push(fk);");
+                wln!(code, "            }}");
             }
-            writeln!(code, "        }}").unwrap();
-            writeln!(
+            wln!(code, "        }}");
+            wln!(
                 code,
                 "        let targets = crate::entity::{}::Entity::find()",
                 target_module
-            )
-            .unwrap();
-            writeln!(
+            );
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::Id.is_in(fk_values))",
                 target_module
-            )
-            .unwrap();
-            writeln!(code, "            .all(db)").unwrap();
-            writeln!(code, "            .await?;").unwrap();
+            );
+            wln!(code, "            .all(db)");
+            wln!(code, "            .await?;");
             // A plain for-loop (not .map) so target child-table hydration can
             // await inside the body.
-            writeln!(
+            wln!(
                 code,
                 "        let mut target_by_id: std::collections::HashMap<Uuid, {}> = std::collections::HashMap::new();",
                 resp_type
-            )
-            .unwrap();
-            writeln!(code, "        for t in targets {{").unwrap();
+            );
+            wln!(code, "        for t in targets {{");
             if !hydration_children.is_empty() {
                 emit_child_reads(code, hydration_children, "t.id", 3);
             }
-            writeln!(
+            wln!(
                 code,
                 "            target_by_id.insert(t.id, {} {{",
                 resp_type
-            )
-            .unwrap();
-            writeln!(code, "                id: t.id,").unwrap();
+            );
+            wln!(code, "                id: t.id,");
             Self::emit_field_assignments_typed(
                 code,
                 "t",
@@ -4921,51 +4746,48 @@ impl RepositoryImplEmitter {
                 dto_rust_types,
                 is_nullable,
             );
-            writeln!(code, "                created_at: t.created_at,").unwrap();
-            writeln!(code, "                updated_at: t.updated_at,").unwrap();
+            wln!(code, "                created_at: t.created_at,");
+            wln!(code, "                updated_at: t.updated_at,");
             if !hydration_children.is_empty() {
                 emit_child_field_population(code, hydration_children, "                ");
             }
-            writeln!(code, "                ..Default::default()").unwrap();
-            writeln!(code, "            }});").unwrap();
-            writeln!(code, "        }}").unwrap();
-            writeln!(
+            wln!(code, "                ..Default::default()");
+            wln!(code, "            }});");
+            wln!(code, "        }}");
+            wln!(
                 code,
                 "        let mut result: std::collections::HashMap<Uuid, Option<{}>> = std::collections::HashMap::new();",
                 resp_type
-            )
-            .unwrap();
-            writeln!(code, "        for id in source_ids {{").unwrap();
+            );
+            wln!(code, "        for id in source_ids {{");
             if seg.fk_is_required {
                 // Required genuine EntityReference: FK field is a plain Uuid,
                 // so look up the target directly (the outer find is still Option).
-                writeln!(
+                wln!(
                     code,
                     "            let found = sources.iter().find(|s| s.id == *id).and_then(|s| target_by_id.get(&s.{}).cloned());",
                     seg.fk_column
-                )
-                .unwrap();
+                );
             } else {
-                writeln!(
+                wln!(
                     code,
                     "            let found = sources.iter().find(|s| s.id == *id).and_then(|s| s.{}.and_then(|fk| target_by_id.get(&fk).cloned()));",
                     seg.fk_column
-                )
-                .unwrap();
+                );
             }
-            writeln!(code, "            result.insert(*id, found);").unwrap();
-            writeln!(code, "        }}").unwrap();
+            wln!(code, "            result.insert(*id, found);");
+            wln!(code, "        }}");
         }
 
-        writeln!(code, "        Ok(result)").unwrap();
-        writeln!(code, "    }}").unwrap();
+        wln!(code, "        Ok(result)");
+        wln!(code, "    }}");
     }
 
     #[allow(clippy::too_many_arguments)]
     fn emit_dot_fetch_method(
         &self,
         _tree: &EntityTree,
-        code: &mut String,
+        code: &mut CodeWriter,
         path: &ResolvedIncludePath,
         intermediate_dto: &[String],
         intermediate_col: &[String],
@@ -4991,89 +4813,81 @@ impl RepositoryImplEmitter {
         let intermediate_module = format!("{}_{}", seg0.domain, seg0.module_name);
         let leaf_module = format!("{}_{}", seg1.domain, seg1.module_name);
 
-        writeln!(code).unwrap();
-        writeln!(code, "    pub(crate) async fn {}(", path.fetch_method).unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        source_id: Uuid,").unwrap();
-        writeln!(
+        wln!(code);
+        wln!(code, "    pub(crate) async fn {}(", path.fetch_method);
+        wln!(code, "        &self,");
+        wln!(code, "        db: &DatabaseTransaction,");
+        wln!(code, "        source_id: Uuid,");
+        wln!(
             code,
             "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
             resp_type
-        )
-        .unwrap();
+        );
 
-        writeln!(
+        wln!(
             code,
             "        let intermediate = crate::entity::{}::Entity::find()",
             intermediate_module
-        )
-        .unwrap();
+        );
         if seg0.is_array {
             let rev_fk_pascal = codegraph_naming::to_pascal_case(&seg0.reverse_fk_column);
-            writeln!(
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::{}.eq(source_id))",
-                intermediate_module, rev_fk_pascal
-            )
-            .unwrap();
-            writeln!(code, "            .one(db)").unwrap();
+                intermediate_module,
+                rev_fk_pascal
+            );
+            wln!(code, "            .one(db)");
         } else {
-            writeln!(
+            wln!(
                 code,
                 "            .filter(crate::entity::{}::Column::Id.eq(source_id))",
                 intermediate_module
-            )
-            .unwrap();
-            writeln!(code, "            .one(db)").unwrap();
+            );
+            wln!(code, "            .one(db)");
         }
-        writeln!(code, "            .await?;").unwrap();
-        writeln!(code, "        let intermediate = match intermediate {{").unwrap();
-        writeln!(code, "            Some(s) => s,").unwrap();
-        writeln!(code, "            None => return Ok(None),").unwrap();
-        writeln!(code, "        }};").unwrap();
+        wln!(code, "            .await?;");
+        wln!(code, "        let intermediate = match intermediate {{");
+        wln!(code, "            Some(s) => s,");
+        wln!(code, "            None => return Ok(None),");
+        wln!(code, "        }};");
         if seg1.fk_is_required {
             // Required genuine EntityReference: FK field is a plain Uuid.
-            writeln!(
+            wln!(
                 code,
                 "        let fk_value = intermediate.{};",
                 seg1.fk_column
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            wln!(
                 code,
                 "        let fk_value = match intermediate.{} {{",
                 seg1.fk_column
-            )
-            .unwrap();
-            writeln!(code, "            Some(v) => v,").unwrap();
-            writeln!(code, "            None => return Ok(None),").unwrap();
-            writeln!(code, "        }};").unwrap();
+            );
+            wln!(code, "            Some(v) => v,");
+            wln!(code, "            None => return Ok(None),");
+            wln!(code, "        }};");
         }
-        writeln!(
+        wln!(
             code,
             "        let leaf = crate::entity::{}::Entity::find()",
             leaf_module
-        )
-        .unwrap();
-        writeln!(
+        );
+        wln!(
             code,
             "            .filter(crate::entity::{}::Column::Id.eq(fk_value))",
             leaf_module
-        )
-        .unwrap();
-        writeln!(code, "            .one(db)").unwrap();
-        writeln!(code, "            .await?;").unwrap();
+        );
+        wln!(code, "            .one(db)");
+        wln!(code, "            .await?;");
 
         // Build enriched response: base fields from intermediate, nested leaf from leaf
-        writeln!(
+        wln!(
             code,
             "        let leaf_dto = leaf.map(|l| {} {{",
             leaf_resp_type
-        )
-        .unwrap();
-        writeln!(code, "            id: l.id,").unwrap();
+        );
+        wln!(code, "            id: l.id,");
         Self::emit_field_assignments_typed(
             code,
             "l",
@@ -5084,13 +4898,13 @@ impl RepositoryImplEmitter {
             leaf_dto_types,
             leaf_nullable,
         );
-        writeln!(code, "            created_at: l.created_at,").unwrap();
-        writeln!(code, "            updated_at: l.updated_at,").unwrap();
-        writeln!(code, "            ..Default::default()").unwrap();
-        writeln!(code, "        }});").unwrap();
+        wln!(code, "            created_at: l.created_at,");
+        wln!(code, "            updated_at: l.updated_at,");
+        wln!(code, "            ..Default::default()");
+        wln!(code, "        }});");
 
-        writeln!(code, "        Ok(Some({} {{", resp_type).unwrap();
-        writeln!(code, "            id: intermediate.id,").unwrap();
+        wln!(code, "        Ok(Some({} {{", resp_type);
+        wln!(code, "            id: intermediate.id,");
         // Intermediate entity fields go into the enriched struct base
         Self::emit_field_assignments_typed(
             code,
@@ -5102,13 +4916,13 @@ impl RepositoryImplEmitter {
             intermediate_dto_types,
             intermediate_nullable,
         );
-        writeln!(code, "            created_at: intermediate.created_at,").unwrap();
-        writeln!(code, "            updated_at: intermediate.updated_at,").unwrap();
-        writeln!(code, "            {}: leaf_dto,", seg1.module_name).unwrap();
-        writeln!(code, "            ..Default::default()").unwrap();
-        writeln!(code, "        }}))").unwrap();
+        wln!(code, "            created_at: intermediate.created_at,");
+        wln!(code, "            updated_at: intermediate.updated_at,");
+        wln!(code, "            {}: leaf_dto,", seg1.module_name);
+        wln!(code, "            ..Default::default()");
+        wln!(code, "        }}))");
 
-        writeln!(code, "    }}").unwrap();
+        wln!(code, "    }}");
     }
 
     /// Batch variant of [`Self::emit_dot_fetch_method`] for list endpoints:
@@ -5119,41 +4933,38 @@ impl RepositoryImplEmitter {
     fn emit_dot_batch_fetch_method(
         &self,
         _tree: &EntityTree,
-        code: &mut String,
+        code: &mut CodeWriter,
         path: &ResolvedIncludePath,
     ) {
         let resp_type = &path.response_rust_type;
-        writeln!(code).unwrap();
-        writeln!(code, "    pub(crate) async fn {}(", path.batch_fetch_method).unwrap();
-        writeln!(code, "        &self,").unwrap();
-        writeln!(code, "        db: &DatabaseTransaction,").unwrap();
-        writeln!(code, "        source_ids: &[Uuid],").unwrap();
-        writeln!(
+        wln!(code);
+        wln!(code, "    pub(crate) async fn {}(", path.batch_fetch_method);
+        wln!(code, "        &self,");
+        wln!(code, "        db: &DatabaseTransaction,");
+        wln!(code, "        source_ids: &[Uuid],");
+        wln!(
             code,
             "    ) -> Result<std::collections::HashMap<Uuid, {resp_type}>, Box<dyn std::error::Error>> {{"
-        )
-        .unwrap();
-        writeln!(
+        );
+        wln!(
             code,
             "        let mut result = std::collections::HashMap::new();"
-        )
-        .unwrap();
-        writeln!(code, "        for source_id in source_ids {{").unwrap();
-        writeln!(
+        );
+        wln!(code, "        for source_id in source_ids {{");
+        wln!(
             code,
             "            if let Some(combined) = self.{}(db, *source_id).await? {{",
             path.fetch_method
-        )
-        .unwrap();
-        writeln!(code, "                result.insert(*source_id, combined);").unwrap();
-        writeln!(code, "            }}").unwrap();
-        writeln!(code, "        }}").unwrap();
-        writeln!(code, "        Ok(result)").unwrap();
-        writeln!(code, "    }}").unwrap();
+        );
+        wln!(code, "                result.insert(*source_id, combined);");
+        wln!(code, "            }}");
+        wln!(code, "        }}");
+        wln!(code, "        Ok(result)");
+        wln!(code, "    }}");
     }
 
-    fn emit_footer(&self, code: &mut String) {
-        writeln!(code, "}}").unwrap();
+    fn emit_footer(&self, code: &mut CodeWriter) {
+        wln!(code, "}}");
     }
 }
 
@@ -5191,9 +5002,9 @@ mod tests {
     #[test]
     fn entity_to_dto_plain_required() {
         let col = make_column("given_name", "String", false, None, false, false);
-        let mut code = String::new();
+        let mut code = CodeWriter::new();
         emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-        assert_eq!(code, "    given_name: row.given_name,\n");
+        assert_eq!(code.as_str(), "    given_name: row.given_name,\n");
     }
 
     #[test]
@@ -5206,9 +5017,9 @@ mod tests {
             false,
             false,
         );
-        let mut code = String::new();
+        let mut code = CodeWriter::new();
         emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-        assert!(code.contains(".parse().unwrap_or_default()"));
+        assert!(code.as_str().contains(".parse().unwrap_or_default()"));
     }
 
     #[test]
@@ -5221,9 +5032,9 @@ mod tests {
             false,
             false,
         );
-        let mut code = String::new();
+        let mut code = CodeWriter::new();
         emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-        assert!(code.contains(".and_then(|v| v.parse().ok())"));
+        assert!(code.as_str().contains(".and_then(|v| v.parse().ok())"));
     }
 
     #[test]
@@ -5236,10 +5047,10 @@ mod tests {
             true,
             false,
         );
-        let mut code = String::new();
+        let mut code = CodeWriter::new();
         emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-        assert!(code.contains("filter_map"));
-        assert!(!code.contains(".map(|v|"));
+        assert!(code.as_str().contains("filter_map"));
+        assert!(!code.as_str().contains(".map(|v|"));
     }
 
     #[test]
@@ -5252,41 +5063,49 @@ mod tests {
             true,
             false,
         );
-        let mut code = String::new();
+        let mut code = CodeWriter::new();
         emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-        assert!(code.contains(".map(|v| v.into_iter()"));
+        assert!(code.as_str().contains(".map(|v| v.into_iter()"));
     }
 
     #[test]
     fn entity_to_dto_jsonb_required() {
         let col = make_column("address", "serde_json::Value", false, None, false, true);
-        let mut code = String::new();
+        let mut code = CodeWriter::new();
         emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-        assert!(code.contains("serde_json::from_value(row.address).unwrap_or_default()"));
+        assert!(code
+            .as_str()
+            .contains("serde_json::from_value(row.address).unwrap_or_default()"));
     }
 
     #[test]
     fn entity_to_dto_jsonb_nullable() {
         let col = make_column("metadata", "serde_json::Value", true, None, false, true);
-        let mut code = String::new();
+        let mut code = CodeWriter::new();
         emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-        assert!(code.contains(".and_then(|v| serde_json::from_value(v).ok())"));
+        assert!(code
+            .as_str()
+            .contains(".and_then(|v| serde_json::from_value(v).ok())"));
     }
 
     #[test]
     fn entity_to_dto_jsonb_array_required() {
         let col = make_column("tags", "serde_json::Value", false, None, true, true);
-        let mut code = String::new();
+        let mut code = CodeWriter::new();
         emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-        assert!(code.contains("serde_json::from_value(row.tags).unwrap_or_default()"));
+        assert!(code
+            .as_str()
+            .contains("serde_json::from_value(row.tags).unwrap_or_default()"));
     }
 
     #[test]
     fn entity_to_dto_jsonb_array_nullable() {
         let col = make_column("prefs", "serde_json::Value", true, None, true, true);
-        let mut code = String::new();
+        let mut code = CodeWriter::new();
         emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-        assert!(code.contains(".and_then(|v| serde_json::from_value(v).ok())"));
+        assert!(code
+            .as_str()
+            .contains(".and_then(|v| serde_json::from_value(v).ok())"));
     }
 
     // --- emit_child_field_population tests ---
@@ -5303,9 +5122,9 @@ mod tests {
             columns: vec![],
             child_tables: vec![],
         }];
-        let mut code = String::new();
+        let mut code = CodeWriter::new();
         emit_child_field_population(&mut code, &children, "    ");
-        assert_eq!(code, "    addresses: addresses_rows,\n");
+        assert_eq!(code.as_str(), "    addresses: addresses_rows,\n");
     }
 
     #[test]
@@ -5320,15 +5139,18 @@ mod tests {
             columns: vec![],
             child_tables: vec![],
         }];
-        let mut code = String::new();
+        let mut code = CodeWriter::new();
         emit_child_field_population(&mut code, &children, "    ");
-        assert_eq!(code, "    profile: profile_rows.into_iter().next(),\n");
+        assert_eq!(
+            code.as_str(),
+            "    profile: profile_rows.into_iter().next(),\n"
+        );
     }
 
     #[test]
     fn child_population_empty() {
-        let mut code = String::new();
+        let mut code = CodeWriter::new();
         emit_child_field_population(&mut code, &[], "    ");
-        assert_eq!(code, "");
+        assert_eq!(code.as_str(), "");
     }
 }
