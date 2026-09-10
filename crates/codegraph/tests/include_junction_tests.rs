@@ -137,9 +137,9 @@ fn explicit_include_through_junction_array_is_skipped() {
     let worker = schema_for("WorkerType", "worker", "Worker");
     let party = schema_for("PartyType", "party", "Party");
     let engine = MockEngine::builder()
-        .with_schema(worker.clone())
+        .with_schema(worker)
         .with_schema(party.clone())
-        .with_ref_target("parties", "WorkerType", party.clone())
+        .with_ref_target("parties", "WorkerType", party)
         .with_properties(
             "WorkerType",
             vec![prop(
@@ -176,9 +176,9 @@ fn auto_discovery_skips_junction_array_relationship() {
     let worker = schema_for("WorkerType", "worker", "Worker");
     let party = schema_for("PartyType", "party", "Party");
     let engine = MockEngine::builder()
-        .with_schema(worker.clone())
+        .with_schema(worker)
         .with_schema(party.clone())
-        .with_ref_target("parties", "WorkerType", party.clone())
+        .with_ref_target("parties", "WorkerType", party)
         .with_properties(
             "WorkerType",
             vec![prop(
@@ -220,9 +220,9 @@ fn auto_discovery_skips_children_without_parent_fk() {
     let trust = schema_for("TrustType", "trust", "Trust");
     let party = schema_for("PartyType", "party", "Party");
     let engine = MockEngine::builder()
-        .with_schema(trust.clone())
+        .with_schema(trust)
         .with_schema(party.clone())
-        .with_ref_target("settlor_ids", "TrustType", party.clone())
+        .with_ref_target("settlor_ids", "TrustType", party)
         .with_properties(
             "TrustType",
             vec![prop(
@@ -267,9 +267,9 @@ fn space_titled_include_imports_target_module() {
     let worker = schema_for("WorkerType", "worker", "Worker");
     let review = schema_for("Review Decision", "review_decision", "ReviewDecision");
     let engine = MockEngine::builder()
-        .with_schema(worker.clone())
+        .with_schema(worker)
         .with_schema(review.clone())
-        .with_ref_target("review_decision", "WorkerType", review.clone())
+        .with_ref_target("review_decision", "WorkerType", review)
         .with_properties(
             "WorkerType",
             vec![prop(
@@ -348,11 +348,11 @@ fn config_child_parent_ref_include_is_fetchable() {
     let deployment = schema_for("DeploymentType", "deployment", "Deployment");
     let position = schema_for("PositionType", "position", "Position");
     let engine = MockEngine::builder()
-        .with_schema(worker.clone())
+        .with_schema(worker)
         .with_schema(deployment.clone())
         .with_schema(position.clone())
-        .with_ref_target("deployments", "WorkerType", deployment.clone())
-        .with_ref_target("position", "DeploymentType", position.clone())
+        .with_ref_target("deployments", "WorkerType", deployment)
+        .with_ref_target("position", "DeploymentType", position)
         .with_properties(
             "WorkerType",
             vec![prop(

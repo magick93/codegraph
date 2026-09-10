@@ -7,6 +7,7 @@ edition = "2021"
 e2e = []
 
 [dependencies]
+codegraph-generate = { path = "../codegraph-generate" }
 codegraph-naming = { path = "../codegraph-naming" }
 codegraph-classifier = { path = "../codegraph-classifier" }
 codegraph-type-contracts = { path = "../codegraph-type-contracts" }

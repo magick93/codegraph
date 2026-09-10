@@ -3,7 +3,7 @@ fn test_descriptor_template_renders_minimal() {
     let mut tera = tera::Tera::default();
     tera.add_raw_template(
         "ui/descriptor.tera",
-        include_str!("../templates/ui/descriptor.tera"),
+        include_str!("../../codegraph-generate/templates/ui/descriptor.tera"),
     )
     .unwrap();
 
@@ -36,7 +36,7 @@ fn test_shell_list_template_renders() {
     let mut tera = tera::Tera::default();
     tera.add_raw_template(
         "ui/shell_list.tera",
-        include_str!("../templates/ui/shell_list.tera"),
+        include_str!("../../codegraph-generate/templates/ui/shell_list.tera"),
     )
     .unwrap();
 
@@ -56,7 +56,7 @@ fn test_shell_detail_template_renders() {
     let mut tera = tera::Tera::default();
     tera.add_raw_template(
         "ui/shell_detail.tera",
-        include_str!("../templates/ui/shell_detail.tera"),
+        include_str!("../../codegraph-generate/templates/ui/shell_detail.tera"),
     )
     .unwrap();
 
@@ -76,7 +76,7 @@ fn test_shell_create_template_renders() {
     let mut tera = tera::Tera::default();
     tera.add_raw_template(
         "ui/shell_create.tera",
-        include_str!("../templates/ui/shell_create.tera"),
+        include_str!("../../codegraph-generate/templates/ui/shell_create.tera"),
     )
     .unwrap();
 
@@ -96,7 +96,7 @@ fn test_shell_edit_template_renders() {
     let mut tera = tera::Tera::default();
     tera.add_raw_template(
         "ui/shell_edit.tera",
-        include_str!("../templates/ui/shell_edit.tera"),
+        include_str!("../../codegraph-generate/templates/ui/shell_edit.tera"),
     )
     .unwrap();
 

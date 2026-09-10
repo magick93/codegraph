@@ -1,0 +1,269 @@
+use crate::ProjectConfig;
+use std::path::{Path, PathBuf};
+
+use async_trait::async_trait;
+use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::{ParentCandidate, PolicyKind, SoftDeleteVisibility};
+use serde::Serialize;
+
+use crate::api::api_model::resolve_entity_operations;
+use crate::api::include_path::resolve_include_paths_for_topology;
+use crate::error::Result;
+use crate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
+use crate::render_template_with_project;
+use crate::traits::{EntityGenerator, GeneratedFile};
+use codegraph_config::DomainConfig;
+
+use super::repository_emitter::RepositoryImplEmitter;
+
+#[derive(Debug, Serialize)]
+pub struct RepositoryContext {
+    pub entity_name: String,
+    pub module_name: String,
+    pub domain: String,
+    pub operations: Vec<String>,
+    pub has_create: bool,
+    pub has_read: bool,
+    pub has_update: bool,
+    pub has_delete: bool,
+    pub has_list: bool,
+    pub has_fts: bool,
+    pub has_embeddings: bool,
+    pub filter_fields: Vec<FilterFieldInfo>,
+    /// FK column for parent-scoped lookups (child entities only).
+    pub parent_ref: Option<String>,
+    /// Self-referential FK column for tree/hierarchy queries (e.g. "parent_id").
+    pub hierarchy_field: Option<String>,
+    /// Whether tree_include is configured (changes find_tree return type).
+    #[serde(default)]
+    pub tree_include: bool,
+    /// Whether this entity has soft-delete / audit tracking enabled.
+    #[serde(default)]
+    pub is_auditable: bool,
+    /// The soft-delete visibility mode: "exclude_by_default", "include_by_default", or "explicit_only".
+    #[serde(default)]
+    pub soft_delete_visibility: String,
+}
+
+pub struct RepositoryTraitGenerator {
+    output_dir: PathBuf,
+    parent_candidates: Vec<ParentCandidate>,
+}
+
+impl RepositoryTraitGenerator {
+    pub fn new(output_dir: &Path) -> Self {
+        Self {
+            output_dir: output_dir.to_path_buf(),
+            parent_candidates: Vec::new(),
+        }
+    }
+
+    pub fn with_parent_candidates(mut self, candidates: Vec<ParentCandidate>) -> Self {
+        self.parent_candidates = candidates;
+        self
+    }
+}
+
+#[async_trait]
+impl EntityGenerator for RepositoryTraitGenerator {
+    fn name(&self) -> &str {
+        "repository"
+    }
+
+    async fn generate(
+        &self,
+        db: &dyn GraphQuerier,
+        schema_title: &str,
+        domain: &str,
+        config: &DomainConfig,
+        tera: &tera::Tera,
+        project: &ProjectConfig,
+    ) -> Result<Vec<GeneratedFile>> {
+        let schema = db
+            .get_schema_in_domain(schema_title, domain)
+            .await?
+            .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
+
+        let entity_name = schema.rust_type_name.clone();
+        let module_name = schema.pg_table_name.clone();
+        let domain = domain.to_string();
+
+        if module_name.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let entity_cfg = config
+            .domains
+            .get(&domain)
+            .and_then(|d| d.get_entity_config(schema_title));
+
+        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
+
+        let search = entity_cfg.map(|ec| &ec.search);
+        let has_fts = search
+            .and_then(|s| s.fts_columns.as_ref())
+            .map(|cols| !cols.is_empty())
+            .unwrap_or(false);
+        let has_embeddings = search
+            .map(|s| !s.embedding_columns.is_empty())
+            .unwrap_or(false);
+
+        let filter_fields = resolve_filter_fields(
+            db,
+            schema_title,
+            entity_cfg
+                .and_then(|ec| ec.filter_fields.as_ref())
+                .map(|v| v.as_slice()),
+        )
+        .await?;
+
+        // Resolve parent_ref for child entities (graph-detected or manual config)
+        let parent_ref = crate::resolve_parent_fk_column_same_domain(
+            schema_title,
+            &self.parent_candidates,
+            entity_cfg,
+            &domain,
+            config,
+            db,
+        )
+        .await;
+
+        let hierarchy_field = entity_cfg
+            .and_then(|ec| ec.hierarchy_field.as_ref())
+            .cloned();
+
+        // Derive tree_include from the emitter's resolved state rather than the
+        // raw config. The emitter's resolution loop silently drops entries that
+        // fail its FK/parent-ref guard, so checking the raw config can leave the
+        // trait's `find_tree` return type (serde_json::Value vs typed Response)
+        // out of sync with the emitted impl. Resolving via the emitter keeps both
+        // sides agreeing on the same boolean.
+        let tree_include = RepositoryImplEmitter
+            .resolve_tree_include(db, schema_title, &domain, config, parent_ref.as_deref())
+            .await?;
+
+        // Skip non-root entities unless they have explicit allow_include.
+        let has_explicit_include = entity_cfg
+            .and_then(|ec| ec.allow_include.as_ref())
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let is_root = entity_cfg
+            .and_then(|ec| ec.role.as_deref())
+            .map(|r| r == "root")
+            .unwrap_or(true);
+        let include_paths = if has_explicit_include || is_root {
+            resolve_include_paths_for_topology(
+                db,
+                config,
+                &domain,
+                schema_title,
+                entity_cfg.and_then(|ec| ec.allow_include.as_ref()),
+                project.is_workers_topology(),
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+
+        // Query policies to determine audit and soft-delete behavior.
+        let policies = db.get_policies_for_schema(schema_title).await?;
+        let has_audit_policy = policies
+            .iter()
+            .any(|p| matches!(p.kind, PolicyKind::Audit(_)));
+        let is_auditable = if has_audit_policy {
+            policies
+                .iter()
+                .find_map(|p| {
+                    if let PolicyKind::Audit(ref a) = p.kind {
+                        Some(a.track_deleted)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false)
+        } else {
+            config
+                .domains
+                .get(&domain)
+                .and_then(|d| d.auditable)
+                .unwrap_or(true)
+        };
+        let soft_delete_visibility = policies
+            .iter()
+            .find_map(|p| {
+                if let PolicyKind::SoftDelete(ref sd) = p.kind {
+                    Some(match sd.visibility {
+                        SoftDeleteVisibility::ExcludeByDefault => "exclude_by_default".to_string(),
+                        SoftDeleteVisibility::IncludeByDefault => "include_by_default".to_string(),
+                        SoftDeleteVisibility::ExplicitOnly => "explicit_only".to_string(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "exclude_by_default".to_string());
+
+        let ctx = RepositoryContext {
+            has_create: operations.contains(&"create".to_string()),
+            has_read: operations.contains(&"read".to_string()),
+            has_update: operations.contains(&"update".to_string()),
+            has_delete: operations.contains(&"delete".to_string()),
+            has_list: operations.contains(&"list".to_string()),
+            has_fts,
+            has_embeddings,
+            filter_fields,
+            parent_ref: parent_ref.clone(),
+            hierarchy_field,
+            tree_include,
+            is_auditable,
+            soft_delete_visibility,
+            entity_name,
+            module_name: module_name.clone(),
+            domain: domain.clone(),
+            operations,
+        };
+
+        let base_dir = self
+            .output_dir
+            .join("src")
+            .join("domain")
+            .join(&domain)
+            .join(&module_name);
+
+        let mut files = Vec::new();
+
+        // Repository trait (Tera template) — provider-agnostic: both the
+        // SeaORM and cornucopia impls target the same generic trait.
+        let trait_content =
+            render_template_with_project(tera, "ddd/repository.tera", &ctx, project)?;
+        files.push(GeneratedFile {
+            path: base_dir.join("repository.rs"),
+            content: trait_content,
+        });
+
+        // The SeaORM repository implementation (Rust emitter) is only
+        // emitted for the SeaORM provider; cornucopia builds get
+        // `cornucopia_repository_impl.rs` from the cornucopia_repo generator
+        // instead.
+        if !project.is_cornucopia() {
+            let emitter = RepositoryImplEmitter;
+            let impl_content = emitter
+                .emit(
+                    db,
+                    schema_title,
+                    &domain,
+                    config,
+                    parent_ref.as_deref(),
+                    &include_paths,
+                    project,
+                )
+                .await?;
+            files.push(GeneratedFile {
+                path: base_dir.join("repository_impl.rs"),
+                content: impl_content,
+            });
+        }
+
+        Ok(files)
+    }
+}

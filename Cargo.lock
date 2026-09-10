@@ -725,6 +725,7 @@ dependencies = [
  "codegraph-config",
  "codegraph-core",
  "codegraph-ext-points",
+ "codegraph-generate",
  "codegraph-grafeo",
  "codegraph-ifml-dsl",
  "codegraph-naming",
@@ -804,6 +805,32 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "toml",
+]
+
+[[package]]
+name = "codegraph-generate"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "codegraph-config",
+ "codegraph-core",
+ "codegraph-ext-points",
+ "codegraph-ifml-dsl",
+ "codegraph-naming",
+ "codegraph-type-contracts",
+ "futures",
+ "heck 0.5.0",
+ "pathdiff",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tera",
+ "tokio",
+ "toml",
+ "tracing",
+ "uuid",
+ "walkdir",
 ]
 
 [[package]]

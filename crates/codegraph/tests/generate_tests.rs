@@ -31,7 +31,7 @@ fn mock_schema(
         pg_type: "UUID".to_string(),
         rust_type: "Uuid".to_string(),
         sea_orm_type: "Uuid".to_string(),
-        rust_type_name: rust_type_name.clone(),
+        rust_type_name,
         pg_table_name: table_name.to_string(),
         api_path_segment: table_name.replace('_', "-"),
         parent_schema: None,
@@ -1633,7 +1633,7 @@ async fn test_domain_types_codelist_generates_enum_not_string_alias() {
     let mut tera = tera::Tera::default();
     tera.add_raw_template(
         "codelist/enum.tera",
-        include_str!("../templates/codelist/enum.tera"),
+        include_str!("../../codegraph-generate/templates/codelist/enum.tera"),
     )
     .unwrap();
 

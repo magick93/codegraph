@@ -1651,6 +1651,68 @@ impl GraphQuerier for GrafeoEngine {
 /// Maximum nesting depth for recursive composition tree building.
 const MAX_COMPOSITION_DEPTH: usize = 10;
 
+/// Build the synthetic codelist-array child node (single "code" column) for a
+/// codelist array property and push it onto `children`.
+fn push_codelist_array_child(
+    prop: &PropertyNode,
+    col: &ColumnInfo,
+    schema: &SchemaNode,
+    default_schema: &str,
+    children: &mut Vec<CompositionNode>,
+) {
+    let child_table = codegraph_naming::truncate_pg_identifier(&format!(
+        "{}_{}",
+        schema.pg_table_name, prop.pg_column_name
+    ));
+    let child_fk_col = format!(
+        "{}_id",
+        codegraph_naming::truncate_pg_identifier(&schema.pg_table_name)
+    );
+
+    let codelist_title = prop
+        .ref_target
+        .as_deref()
+        .map(|r| {
+            r.rsplit('/')
+                .next()
+                .unwrap_or(r)
+                .trim_end_matches(".json#")
+                .trim_end_matches(".json")
+                .to_string()
+        })
+        .unwrap_or_else(|| prop.name.clone());
+
+    let code_col = ColumnInfo {
+        name: "code".to_string(),
+        description: col.description.clone(),
+        rust_type: "String".to_string(),
+        postgres_type: "TEXT".to_string(),
+        is_optional: false,
+        is_codelist_fk: true,
+        composite_columns: vec![],
+        is_array: false,
+        classification: col.classification.clone(),
+        fk_target: col.fk_target.clone(),
+        check_values: col.check_values.clone(),
+    };
+
+    children.push(CompositionNode {
+        field_name: prop.pg_column_name.clone(),
+        schema_title: codelist_title,
+        table_schema: default_schema.to_string(),
+        table_name: child_table,
+        fk: Some(FkDirection::OnChild {
+            column: child_fk_col,
+        }),
+        is_collection: true,
+        columns: vec![code_col],
+        jsonb_columns: vec![],
+        children: vec![],
+        composite_range: None,
+        consumed_fields: vec![],
+    });
+}
+
 impl GrafeoEngine {
     async fn build_composition_node(
         &self,
@@ -1703,56 +1765,14 @@ impl GrafeoEngine {
             let classification = prop.effective_kind();
 
             // Resolve FK target for reference columns
-            let fk_target = match classification {
-                Some(codegraph_type_contracts::RefClassificationKind::CodelistReference) => {
-                    // Resolve FK for both scalar and array codelists —
-                    // array codelists need the FK target for their child table's code column.
-                    self.resolve_fk_target(
-                        &prop.name,
-                        schema_title,
-                        &default_schema,
-                        prop.ref_target.as_deref(),
-                        "code",
-                        "RESTRICT",
-                    )
-                    .await
-                }
-                Some(codegraph_type_contracts::RefClassificationKind::EntityReference) => {
-                    if !prop.is_array {
-                        self.resolve_fk_target(
-                            &prop.name,
-                            schema_title,
-                            &default_schema,
-                            prop.ref_target.as_deref(),
-                            "id",
-                            "SET NULL",
-                        )
-                        .await
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
+            let fk_target = self
+                .resolve_property_fk_target(prop, schema_title, &default_schema, &classification)
+                .await;
 
             // Resolve enum values for check-constraint columns
-            let check_values = match classification {
-                Some(codegraph_type_contracts::RefClassificationKind::CodelistCheck)
-                | Some(codegraph_type_contracts::RefClassificationKind::InlineEnum)
-                    if !prop.is_array =>
-                {
-                    if let Some(ref codelist_name) = prop.ref_target {
-                        self.get_enum_values(codelist_name)
-                            .await
-                            .ok()
-                            .map(|vals| vals.into_iter().map(|v| v.value).collect())
-                            .unwrap_or_default()
-                    } else {
-                        vec![]
-                    }
-                }
-                _ => vec![],
-            };
+            let check_values = self
+                .resolve_property_check_values(prop, &classification)
+                .await;
 
             let col = ColumnInfo {
                 name: prop.pg_column_name.clone(),
@@ -1773,103 +1793,18 @@ impl GrafeoEngine {
             // hierarchy: each ValueObject becomes a separate SQL table.
             if classification == Some(codegraph_type_contracts::RefClassificationKind::ValueObject)
             {
-                if depth < MAX_COMPOSITION_DEPTH {
-                    // Resolve target schema
-                    let target = if prop.is_array {
-                        self.get_array_item_schema(&prop.name, schema_title)
-                            .await
-                            .ok()
-                            .flatten()
-                    } else {
-                        self.get_property_ref_target(&prop.name, schema_title)
-                            .await
-                            .ok()
-                            .flatten()
-                    };
-
-                    if let Some(target_schema) = target {
-                        // Non-array entity targets get a FK column on this node.
-                        // Array entity targets are SKIPPED — a one-to-many relationship
-                        // cannot be represented by a single UUID FK on the parent. The FK
-                        // lives on the child entity's table instead (configured via
-                        // parent_ref in domains.toml).
-                        let vo_entity = if !target_schema.is_entity {
-                            codegraph_core::traits::find_entity_extended_by_vo(
-                                self,
-                                &target_schema.title,
-                            )
-                            .await
-                            .ok()
-                            .flatten()
-                        } else {
-                            None
-                        };
-
-                        if (target_schema.is_entity || vo_entity.is_some()) && !prop.is_array {
-                            let mut entity_col = col;
-                            entity_col.classification = Some(
-                                codegraph_type_contracts::RefClassificationKind::EntityReference,
-                            );
-                            // VO→entity synthetic FK columns are always nullable: the
-                            // DTO and repository generators model the VO as a nested
-                            // child table, so no create command ever supplies a value
-                            // for this column. Genuine EntityReference columns honor
-                            // the schema's `required` (is_optional was already derived
-                            // from !prop.is_required above).
-                            if vo_entity.is_some() {
-                                entity_col.is_optional = true;
-                            }
-                            if let Some(entity) = &vo_entity {
-                                entity_col.fk_target = Some(FkTarget {
-                                    schema: entity
-                                        .domain
-                                        .clone()
-                                        .unwrap_or_else(|| default_schema.to_string()),
-                                    table: entity.pg_table_name.clone(),
-                                    column: "id".to_string(),
-                                    on_delete: "SET NULL".to_string(),
-                                });
-                            } else {
-                                entity_col.fk_target = self
-                                    .resolve_fk_target(
-                                        &prop.name,
-                                        schema_title,
-                                        &default_schema,
-                                        prop.ref_target.as_deref(),
-                                        "id",
-                                        "SET NULL",
-                                    )
-                                    .await;
-                            }
-                            columns.push(entity_col);
-                        }
-                        if !target_schema.is_entity && !visited.contains(&target_schema.title) {
-                            // Recurse into ValueObject as a child node.
-                            // Use a fresh visited set (seeded with the current
-                            // path) so sibling VO properties referencing the same
-                            // schema type each get their own child table — matching
-                            // the entity generator's per-property visited approach.
-                            let mut child_visited = visited.clone();
-                            child_visited.insert(target_schema.title.clone());
-                            let child_fk = Some(FkDirection::OnChild {
-                                column: format!(
-                                    "{}_id",
-                                    codegraph_naming::truncate_pg_identifier(&schema.pg_table_name)
-                                ),
-                            });
-                            let child_node = Box::pin(self.build_composition_node(
-                                &target_schema.title,
-                                &prop.pg_column_name,
-                                child_fk,
-                                prop.is_array,
-                                &mut child_visited,
-                                depth + 1,
-                            ))
-                            .await?;
-                            children.push(child_node);
-                        }
-                    }
-                }
+                self.push_value_object_child(
+                    prop,
+                    col,
+                    schema_title,
+                    &schema,
+                    &default_schema,
+                    visited,
+                    depth,
+                    &mut columns,
+                    &mut children,
+                )
+                .await?;
                 continue;
             }
 
@@ -1884,57 +1819,7 @@ impl GrafeoEngine {
                         | Some(codegraph_type_contracts::RefClassificationKind::CodelistCheck)
                 )
             {
-                let child_table = codegraph_naming::truncate_pg_identifier(&format!(
-                    "{}_{}",
-                    schema.pg_table_name, prop.pg_column_name
-                ));
-                let child_fk_col = format!(
-                    "{}_id",
-                    codegraph_naming::truncate_pg_identifier(&schema.pg_table_name)
-                );
-
-                let codelist_title = prop
-                    .ref_target
-                    .as_deref()
-                    .map(|r| {
-                        r.rsplit('/')
-                            .next()
-                            .unwrap_or(r)
-                            .trim_end_matches(".json#")
-                            .trim_end_matches(".json")
-                            .to_string()
-                    })
-                    .unwrap_or_else(|| prop.name.clone());
-
-                let code_col = ColumnInfo {
-                    name: "code".to_string(),
-                    description: col.description.clone(),
-                    rust_type: "String".to_string(),
-                    postgres_type: "TEXT".to_string(),
-                    is_optional: false,
-                    is_codelist_fk: true,
-                    composite_columns: vec![],
-                    is_array: false,
-                    classification: col.classification.clone(),
-                    fk_target: col.fk_target.clone(),
-                    check_values: col.check_values.clone(),
-                };
-
-                children.push(CompositionNode {
-                    field_name: prop.pg_column_name.clone(),
-                    schema_title: codelist_title,
-                    table_schema: default_schema.clone(),
-                    table_name: child_table,
-                    fk: Some(FkDirection::OnChild {
-                        column: child_fk_col,
-                    }),
-                    is_collection: true,
-                    columns: vec![code_col],
-                    jsonb_columns: vec![],
-                    children: vec![],
-                    composite_range: None,
-                    consumed_fields: vec![],
-                });
+                push_codelist_array_child(prop, &col, &schema, &default_schema, &mut children);
                 continue;
             }
 
@@ -1951,97 +1836,14 @@ impl GrafeoEngine {
                 && classification
                     == Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
             {
-                let target_title = self
-                    .get_array_item_schema(&prop.name, schema_title)
-                    .await
-                    .ok()
-                    .flatten();
-                let has_back_ref = match &target_title {
-                    Some(target_schema) => {
-                        let back_ref = format!(
-                            "{}_id",
-                            codegraph_naming::truncate_pg_identifier(&schema.pg_table_name)
-                        );
-                        self.get_properties(&target_schema.title)
-                            .await
-                            .map(|ps| {
-                                ps.iter().any(|p| {
-                                    p.pg_column_name == back_ref
-                                        || p.pg_column_name
-                                            == format!(
-                                                "{}_id",
-                                                codegraph_naming::to_snake_case(&schema.title)
-                                            )
-                                })
-                            })
-                            .unwrap_or(false)
-                    }
-                    None => false,
-                };
-
-                if !has_back_ref {
-                    if let Some(target_schema) = target_title {
-                        let child_table = codegraph_naming::truncate_pg_identifier(&format!(
-                            "{}_{}",
-                            schema.pg_table_name, prop.pg_column_name
-                        ));
-                        let child_fk_col = codegraph_naming::truncate_pg_identifier(&format!(
-                            "{}_id",
-                            schema.pg_table_name
-                        ));
-                        let child_id_col = codegraph_naming::truncate_pg_identifier(&format!(
-                            "{}_id",
-                            target_schema.pg_table_name
-                        ));
-
-                        let child_col = ColumnInfo {
-                            name: child_id_col.clone(),
-                            description: Some(format!(
-                                "FK to {}.{}",
-                                target_schema
-                                    .domain
-                                    .clone()
-                                    .unwrap_or_else(|| default_schema.clone()),
-                                target_schema.pg_table_name
-                            )),
-                            rust_type: "uuid::Uuid".to_string(),
-                            postgres_type: "UUID".to_string(),
-                            is_optional: false,
-                            is_codelist_fk: false,
-                            composite_columns: vec![],
-                            is_array: false,
-                            classification: Some(
-                                codegraph_type_contracts::RefClassificationKind::EntityReference,
-                            ),
-                            fk_target: Some(FkTarget {
-                                schema: target_schema
-                                    .domain
-                                    .clone()
-                                    .unwrap_or_else(|| default_schema.clone()),
-                                table: target_schema.pg_table_name.clone(),
-                                column: "id".to_string(),
-                                on_delete: "CASCADE".to_string(),
-                            }),
-                            check_values: vec![],
-                        };
-
-                        children.push(CompositionNode {
-                            field_name: prop.pg_column_name.clone(),
-                            schema_title: target_schema.title.clone(),
-                            table_schema: default_schema.clone(),
-                            table_name: child_table,
-                            fk: Some(FkDirection::OnChild {
-                                column: child_fk_col,
-                            }),
-                            is_collection: true,
-                            columns: vec![child_col],
-                            jsonb_columns: vec![],
-                            children: vec![],
-                            composite_range: None,
-                            consumed_fields: vec![],
-                        });
-                    }
-                }
+                self.push_junction_array_child(
+                    prop,
+                    schema_title,
+                    &schema,
+                    &default_schema,
+                    &mut children,
+                )
+                .await?;
                 continue;
             }
 
@@ -2060,6 +1862,306 @@ impl GrafeoEngine {
         }
 
         // Query ExtendsSchema edges for children (allOf composition)
+        self.push_allof_children(schema_title, visited, depth, &mut children)
+            .await?;
+
+        Ok(CompositionNode {
+            field_name: field_name.to_string(),
+            schema_title: schema_title.to_string(),
+            table_schema: default_schema,
+            table_name: schema.pg_table_name.clone(),
+            fk,
+            is_collection,
+            columns,
+            jsonb_columns,
+            children,
+            composite_range,
+            consumed_fields: consumed_field_names,
+        })
+    }
+
+    async fn resolve_property_fk_target(
+        &self,
+        prop: &PropertyNode,
+        schema_title: &str,
+        default_schema: &str,
+        classification: &Option<codegraph_type_contracts::RefClassificationKind>,
+    ) -> Option<FkTarget> {
+        match classification {
+            Some(codegraph_type_contracts::RefClassificationKind::CodelistReference) => {
+                // Resolve FK for both scalar and array codelists —
+                // array codelists need the FK target for their child table's code column.
+                self.resolve_fk_target(
+                    &prop.name,
+                    schema_title,
+                    default_schema,
+                    prop.ref_target.as_deref(),
+                    "code",
+                    "RESTRICT",
+                )
+                .await
+            }
+            Some(codegraph_type_contracts::RefClassificationKind::EntityReference) => {
+                if !prop.is_array {
+                    self.resolve_fk_target(
+                        &prop.name,
+                        schema_title,
+                        default_schema,
+                        prop.ref_target.as_deref(),
+                        "id",
+                        "SET NULL",
+                    )
+                    .await
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    async fn resolve_property_check_values(
+        &self,
+        prop: &PropertyNode,
+        classification: &Option<codegraph_type_contracts::RefClassificationKind>,
+    ) -> Vec<String> {
+        match classification {
+            Some(codegraph_type_contracts::RefClassificationKind::CodelistCheck)
+            | Some(codegraph_type_contracts::RefClassificationKind::InlineEnum)
+                if !prop.is_array =>
+            {
+                if let Some(ref codelist_name) = prop.ref_target {
+                    self.get_enum_values(codelist_name)
+                        .await
+                        .ok()
+                        .map(|vals| vals.into_iter().map(|v| v.value).collect())
+                        .unwrap_or_default()
+                } else {
+                    vec![]
+                }
+            }
+            _ => vec![],
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn push_value_object_child(
+        &self,
+        prop: &PropertyNode,
+        col: ColumnInfo,
+        schema_title: &str,
+        schema: &SchemaNode,
+        default_schema: &str,
+        visited: &mut std::collections::HashSet<String>,
+        depth: usize,
+        columns: &mut Vec<ColumnInfo>,
+        children: &mut Vec<CompositionNode>,
+    ) -> Result<(), GraphError> {
+        if depth < MAX_COMPOSITION_DEPTH {
+            // Resolve target schema
+            let target = if prop.is_array {
+                self.get_array_item_schema(&prop.name, schema_title)
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                self.get_property_ref_target(&prop.name, schema_title)
+                    .await
+                    .ok()
+                    .flatten()
+            };
+
+            if let Some(target_schema) = target {
+                // Non-array entity targets get a FK column on this node.
+                // Array entity targets are SKIPPED — a one-to-many relationship
+                // cannot be represented by a single UUID FK on the parent. The FK
+                // lives on the child entity's table instead (configured via
+                // parent_ref in domains.toml).
+                let vo_entity = if !target_schema.is_entity {
+                    codegraph_core::traits::find_entity_extended_by_vo(self, &target_schema.title)
+                        .await
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                };
+
+                if (target_schema.is_entity || vo_entity.is_some()) && !prop.is_array {
+                    let mut entity_col = col;
+                    entity_col.classification =
+                        Some(codegraph_type_contracts::RefClassificationKind::EntityReference);
+                    // VO→entity synthetic FK columns are always nullable: the
+                    // DTO and repository generators model the VO as a nested
+                    // child table, so no create command ever supplies a value
+                    // for this column. Genuine EntityReference columns honor
+                    // the schema's `required` (is_optional was already derived
+                    // from !prop.is_required above).
+                    if vo_entity.is_some() {
+                        entity_col.is_optional = true;
+                    }
+                    if let Some(entity) = &vo_entity {
+                        entity_col.fk_target = Some(FkTarget {
+                            schema: entity
+                                .domain
+                                .clone()
+                                .unwrap_or_else(|| default_schema.to_string()),
+                            table: entity.pg_table_name.clone(),
+                            column: "id".to_string(),
+                            on_delete: "SET NULL".to_string(),
+                        });
+                    } else {
+                        entity_col.fk_target = self
+                            .resolve_fk_target(
+                                &prop.name,
+                                schema_title,
+                                default_schema,
+                                prop.ref_target.as_deref(),
+                                "id",
+                                "SET NULL",
+                            )
+                            .await;
+                    }
+                    columns.push(entity_col);
+                }
+                if !target_schema.is_entity && !visited.contains(&target_schema.title) {
+                    // Recurse into ValueObject as a child node.
+                    // Use a fresh visited set (seeded with the current
+                    // path) so sibling VO properties referencing the same
+                    // schema type each get their own child table — matching
+                    // the entity generator's per-property visited approach.
+                    let mut child_visited = visited.clone();
+                    child_visited.insert(target_schema.title.clone());
+                    let child_fk = Some(FkDirection::OnChild {
+                        column: format!(
+                            "{}_id",
+                            codegraph_naming::truncate_pg_identifier(&schema.pg_table_name)
+                        ),
+                    });
+                    let child_node = Box::pin(self.build_composition_node(
+                        &target_schema.title,
+                        &prop.pg_column_name,
+                        child_fk,
+                        prop.is_array,
+                        &mut child_visited,
+                        depth + 1,
+                    ))
+                    .await?;
+                    children.push(child_node);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn push_junction_array_child(
+        &self,
+        prop: &PropertyNode,
+        schema_title: &str,
+        schema: &SchemaNode,
+        default_schema: &str,
+        children: &mut Vec<CompositionNode>,
+    ) -> Result<(), GraphError> {
+        let target_title = self
+            .get_array_item_schema(&prop.name, schema_title)
+            .await
+            .ok()
+            .flatten();
+        let has_back_ref = match &target_title {
+            Some(target_schema) => {
+                let back_ref = format!(
+                    "{}_id",
+                    codegraph_naming::truncate_pg_identifier(&schema.pg_table_name)
+                );
+                self.get_properties(&target_schema.title)
+                    .await
+                    .map(|ps| {
+                        ps.iter().any(|p| {
+                            p.pg_column_name == back_ref
+                                || p.pg_column_name
+                                    == format!(
+                                        "{}_id",
+                                        codegraph_naming::to_snake_case(&schema.title)
+                                    )
+                        })
+                    })
+                    .unwrap_or(false)
+            }
+            None => false,
+        };
+
+        if !has_back_ref {
+            if let Some(target_schema) = target_title {
+                let child_table = codegraph_naming::truncate_pg_identifier(&format!(
+                    "{}_{}",
+                    schema.pg_table_name, prop.pg_column_name
+                ));
+                let child_fk_col = codegraph_naming::truncate_pg_identifier(&format!(
+                    "{}_id",
+                    schema.pg_table_name
+                ));
+                let child_id_col = codegraph_naming::truncate_pg_identifier(&format!(
+                    "{}_id",
+                    target_schema.pg_table_name
+                ));
+
+                let child_col = ColumnInfo {
+                    name: child_id_col.clone(),
+                    description: Some(format!(
+                        "FK to {}.{}",
+                        target_schema
+                            .domain
+                            .clone()
+                            .unwrap_or_else(|| default_schema.to_string()),
+                        target_schema.pg_table_name
+                    )),
+                    rust_type: "uuid::Uuid".to_string(),
+                    postgres_type: "UUID".to_string(),
+                    is_optional: false,
+                    is_codelist_fk: false,
+                    composite_columns: vec![],
+                    is_array: false,
+                    classification: Some(
+                        codegraph_type_contracts::RefClassificationKind::EntityReference,
+                    ),
+                    fk_target: Some(FkTarget {
+                        schema: target_schema
+                            .domain
+                            .clone()
+                            .unwrap_or_else(|| default_schema.to_string()),
+                        table: target_schema.pg_table_name.clone(),
+                        column: "id".to_string(),
+                        on_delete: "CASCADE".to_string(),
+                    }),
+                    check_values: vec![],
+                };
+
+                children.push(CompositionNode {
+                    field_name: prop.pg_column_name.clone(),
+                    schema_title: target_schema.title.clone(),
+                    table_schema: default_schema.to_string(),
+                    table_name: child_table,
+                    fk: Some(FkDirection::OnChild {
+                        column: child_fk_col,
+                    }),
+                    is_collection: true,
+                    columns: vec![child_col],
+                    jsonb_columns: vec![],
+                    children: vec![],
+                    composite_range: None,
+                    consumed_fields: vec![],
+                });
+            }
+        }
+        Ok(())
+    }
+
+    async fn push_allof_children(
+        &self,
+        schema_title: &str,
+        visited: &mut std::collections::HashSet<String>,
+        depth: usize,
+        children: &mut Vec<CompositionNode>,
+    ) -> Result<(), GraphError> {
         let params = HashMap::from([(
             "title".to_string(),
             grafeo::Value::String(schema_title.into()),
@@ -2100,20 +2202,7 @@ impl GrafeoEngine {
                 children.push(child_node);
             }
         }
-
-        Ok(CompositionNode {
-            field_name: field_name.to_string(),
-            schema_title: schema_title.to_string(),
-            table_schema: default_schema,
-            table_name: schema.pg_table_name.clone(),
-            fk,
-            is_collection,
-            columns,
-            jsonb_columns,
-            children,
-            composite_range,
-            consumed_fields: consumed_field_names,
-        })
+        Ok(())
     }
 
     /// Resolve a property's FK target to (schema, table, column, on_delete) using graph edges.
