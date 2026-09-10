@@ -106,11 +106,11 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         include_deleted: bool,
     ) -> Result<(Vec<CandidateResponse>, u64), Box<dyn std::error::Error>> {
         let mut condition = sea_orm::Condition::all();
-        if let Some(val) = filters.get("gender_code") {
-            condition = condition.add(crate::entity::recruiting_candidate::Column::GenderCode.eq(val.clone()));
-        }
         if let Some(val) = filters.get("currency_code") {
             condition = condition.add(crate::entity::recruiting_candidate::Column::CurrencyCode.eq(val.clone()));
+        }
+        if let Some(val) = filters.get("gender_code") {
+            condition = condition.add(crate::entity::recruiting_candidate::Column::GenderCode.eq(val.clone()));
         }
         let mut query = crate::entity::recruiting_candidate::Entity::find()
             .filter(condition);

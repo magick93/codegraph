@@ -84,6 +84,10 @@ pub async fn resolve_filter_fields(
         }
     }
 
+    // Graph row order is not guaranteed stable across processes; sort so the
+    // emitted CLI lists, ALLOWED_FIELDS arrays and doc comments are
+    // byte-identical between runs.
+    fields.sort_by(|a, b| a.field_name.cmp(&b.field_name));
     Ok(fields)
 }
 
@@ -400,6 +404,8 @@ pub async fn resolve_nested_filter_fields(
         true
     });
 
+    // Deterministic emission order (see resolve_filter_fields).
+    nested.sort_by(|a, b| a.filter_key.cmp(&b.filter_key));
     Ok(nested)
 }
 
