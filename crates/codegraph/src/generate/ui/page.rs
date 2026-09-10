@@ -233,138 +233,8 @@ impl EntityGenerator for UiPageGenerator {
 
         // Resolve parent info for child entities.
         // Manual config takes priority over graph detection.
-        let parent = {
-            let stripped = crate::generate::api::router::strip_suffix(
-                schema_title,
-                &config.defaults.type_suffix,
-            );
-            let mut result = None;
-
-            // 1. Check manual config first
-            if let Some(ec) = config
-                .domains
-                .get(&domain)
-                .and_then(|d| d.get_entity_config(schema_title))
-            {
-                if ec.role.as_deref() == Some("child") {
-                    if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) =
-                            db.get_schema_in_domain(parent_title, &domain).await
-                        {
-                            let parent_domain = if config
-                                .domains
-                                .get(&domain)
-                                .map(|d| d.entities.contains(parent_title))
-                                .unwrap_or(false)
-                            {
-                                domain.clone()
-                            } else {
-                                parent_schema
-                                    .domain
-                                    .clone()
-                                    .unwrap_or_else(|| domain.clone())
-                            };
-                            let gp = super::store::resolve_grandparent(
-                                parent_title,
-                                &domain,
-                                config,
-                                &self.parent_candidates,
-                                db,
-                            )
-                            .await
-                            .map(Box::new);
-                            result = Some(UiParentInfo {
-                                param_name:
-                                    crate::generate::api::router::param_name_from_path_segment(
-                                        &resolve_path_segment_with_config(
-                                            None,
-                                            &parent_schema,
-                                            config,
-                                        ),
-                                    ),
-                                domain: parent_domain,
-                                path_segment: resolve_path_segment_with_config(
-                                    None,
-                                    &parent_schema,
-                                    config,
-                                ),
-                                module_name: parent_schema.pg_table_name.clone(),
-                                entity_name: parent_schema.rust_type_name.clone(),
-                                grandparent: gp,
-                            });
-                        }
-                    }
-                }
-            }
-
-            // 2. Fall back to graph parent_candidates (only if entity is not explicitly root)
-            let page_effective_role = config
-                .domains
-                .get(&domain)
-                .and_then(|d| d.get_entity_config(schema_title))
-                .and_then(|ec| ec.role.as_deref())
-                .unwrap_or("root");
-            if result.is_none() && page_effective_role != "root" {
-                for pc in &self.parent_candidates {
-                    let child_name = crate::generate::api::router::strip_suffix(
-                        &pc.child_title,
-                        &config.defaults.type_suffix,
-                    );
-                    if child_name == stripped {
-                        let in_explicit = config
-                            .domains
-                            .get(&domain)
-                            .map(|d| d.entities.contains(&pc.parent_title))
-                            .unwrap_or(false);
-                        let parent_in_domain = in_explicit
-                            || db
-                                .get_schema_in_domain(&pc.parent_title, &domain)
-                                .await
-                                .ok()
-                                .flatten()
-                                .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
-                                .unwrap_or(false);
-                        if !parent_in_domain {
-                            break;
-                        }
-                        if let Ok(Some(parent_schema)) =
-                            db.get_schema_in_domain(&pc.parent_title, &domain).await
-                        {
-                            let gp = super::store::resolve_grandparent(
-                                &pc.parent_title,
-                                &domain,
-                                config,
-                                &self.parent_candidates,
-                                db,
-                            )
-                            .await
-                            .map(Box::new);
-                            result = Some(UiParentInfo {
-                                param_name:
-                                    crate::generate::api::router::param_name_from_path_segment(
-                                        &resolve_path_segment_with_config(
-                                            None,
-                                            &parent_schema,
-                                            config,
-                                        ),
-                                    ),
-                                domain: domain.clone(),
-                                path_segment: resolve_path_segment_with_config(
-                                    None,
-                                    &parent_schema,
-                                    config,
-                                ),
-                                module_name: parent_schema.pg_table_name.clone(),
-                                entity_name: parent_schema.rust_type_name.clone(),
-                                grandparent: gp,
-                            });
-                        }
-                        break;
-                    }
-                }
-            }
-            result
-        };
+        let parent =
+            resolve_parent_info(&self.parent_candidates, db, config, &domain, schema_title).await;
 
         let detail_extensions = entity_cfg
             .map(|ec| {
@@ -409,90 +279,234 @@ impl EntityGenerator for UiPageGenerator {
             .join("src")
             .join("routes")
             .join("(app)");
-        let routes_dir = if let Some(ref p) = parent {
-            if let Some(ref gp) = p.grandparent {
-                // Depth-2: grandparent/[gp_param]/parent/[parent_param]/child
-                routes_base
-                    .join(&gp.domain)
-                    .join(&gp.path_segment)
-                    .join(format!("[{}]", gp.param_name))
-                    .join(&p.path_segment)
-                    .join(format!("[{}]", p.param_name))
-                    .join(&path_segment)
-            } else {
-                routes_base
-                    .join(&p.domain)
-                    .join(&p.path_segment)
-                    .join(format!("[{}]", p.param_name))
-                    .join(&path_segment)
-            }
-        } else {
-            routes_base.join(&domain).join(&path_segment)
-        };
+        let routes_dir = routes_dir_for(&routes_base, parent.as_ref(), &domain, &path_segment);
 
-        let mut files = Vec::new();
-
-        // List page
-        if ctx.has_list {
-            let content = render_template_with_project(tera, "ui/list_page.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: routes_dir.join("+page.svelte"),
-                content,
-            });
-            let load = render_template_with_project(tera, "ui/list_load.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: routes_dir.join("+page.server.ts"),
-                content: load,
-            });
-        }
-
-        // Detail page
-        if ctx.has_read {
-            let content = render_template_with_project(tera, "ui/detail_page.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: routes_dir
-                    .join(format!("[{}]", ctx.param_name))
-                    .join("+page.svelte"),
-                content,
-            });
-            let load = render_template_with_project(tera, "ui/detail_load.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: routes_dir
-                    .join(format!("[{}]", ctx.param_name))
-                    .join("+page.server.ts"),
-                content: load,
-            });
-        }
-
-        // Create page
-        if ctx.has_create {
-            let content = render_template_with_project(tera, "ui/form_page.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: routes_dir.join("new").join("+page.svelte"),
-                content,
-            });
-        }
-
-        // Edit page
-        if ctx.has_update {
-            let content = render_template_with_project(tera, "ui/edit_page.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: routes_dir
-                    .join(format!("[{}]", ctx.param_name))
-                    .join("edit")
-                    .join("+page.svelte"),
-                content,
-            });
-            let load = render_template_with_project(tera, "ui/edit_load.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: routes_dir
-                    .join(format!("[{}]", ctx.param_name))
-                    .join("edit")
-                    .join("+page.server.ts"),
-                content: load,
-            });
-        }
-
-        Ok(files)
+        emit_ui_pages(tera, &ctx, project, &routes_dir)
     }
+}
+
+async fn resolve_parent_info(
+    parent_candidates: &[codegraph_core::types::ParentCandidate],
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    schema_title: &str,
+) -> Option<UiParentInfo> {
+    let stripped =
+        crate::generate::api::router::strip_suffix(schema_title, &config.defaults.type_suffix);
+    let mut result = None;
+
+    // 1. Check manual config first
+    if let Some(ec) = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(schema_title))
+    {
+        if ec.role.as_deref() == Some("child") {
+            if let Some(ref parent_title) = ec.parent {
+                if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, domain).await
+                {
+                    let parent_domain = if config
+                        .domains
+                        .get(domain)
+                        .map(|d| d.entities.contains(parent_title))
+                        .unwrap_or(false)
+                    {
+                        domain.to_string()
+                    } else {
+                        parent_schema
+                            .domain
+                            .clone()
+                            .unwrap_or_else(|| domain.to_string())
+                    };
+                    let gp = super::store::resolve_grandparent(
+                        parent_title,
+                        domain,
+                        config,
+                        parent_candidates,
+                        db,
+                    )
+                    .await
+                    .map(Box::new);
+                    result = Some(UiParentInfo {
+                        param_name: crate::generate::api::router::param_name_from_path_segment(
+                            &resolve_path_segment_with_config(None, &parent_schema, config),
+                        ),
+                        domain: parent_domain,
+                        path_segment: resolve_path_segment_with_config(
+                            None,
+                            &parent_schema,
+                            config,
+                        ),
+                        module_name: parent_schema.pg_table_name.clone(),
+                        entity_name: parent_schema.rust_type_name.clone(),
+                        grandparent: gp,
+                    });
+                }
+            }
+        }
+    }
+
+    // 2. Fall back to graph parent_candidates (only if entity is not explicitly root)
+    let page_effective_role = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(schema_title))
+        .and_then(|ec| ec.role.as_deref())
+        .unwrap_or("root");
+    if result.is_none() && page_effective_role != "root" {
+        for pc in parent_candidates {
+            let child_name = crate::generate::api::router::strip_suffix(
+                &pc.child_title,
+                &config.defaults.type_suffix,
+            );
+            if child_name == stripped {
+                let in_explicit = config
+                    .domains
+                    .get(domain)
+                    .map(|d| d.entities.contains(&pc.parent_title))
+                    .unwrap_or(false);
+                let parent_in_domain = in_explicit
+                    || db
+                        .get_schema_in_domain(&pc.parent_title, domain)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
+                        .unwrap_or(false);
+                if !parent_in_domain {
+                    break;
+                }
+                if let Ok(Some(parent_schema)) =
+                    db.get_schema_in_domain(&pc.parent_title, domain).await
+                {
+                    let gp = super::store::resolve_grandparent(
+                        &pc.parent_title,
+                        domain,
+                        config,
+                        parent_candidates,
+                        db,
+                    )
+                    .await
+                    .map(Box::new);
+                    result = Some(UiParentInfo {
+                        param_name: crate::generate::api::router::param_name_from_path_segment(
+                            &resolve_path_segment_with_config(None, &parent_schema, config),
+                        ),
+                        domain: domain.to_string(),
+                        path_segment: resolve_path_segment_with_config(
+                            None,
+                            &parent_schema,
+                            config,
+                        ),
+                        module_name: parent_schema.pg_table_name.clone(),
+                        entity_name: parent_schema.rust_type_name.clone(),
+                        grandparent: gp,
+                    });
+                }
+                break;
+            }
+        }
+    }
+    result
+}
+
+fn routes_dir_for(
+    routes_base: &Path,
+    parent: Option<&UiParentInfo>,
+    domain: &str,
+    path_segment: &str,
+) -> PathBuf {
+    if let Some(p) = parent {
+        if let Some(ref gp) = p.grandparent {
+            // Depth-2: grandparent/[gp_param]/parent/[parent_param]/child
+            routes_base
+                .join(&gp.domain)
+                .join(&gp.path_segment)
+                .join(format!("[{}]", gp.param_name))
+                .join(&p.path_segment)
+                .join(format!("[{}]", p.param_name))
+                .join(path_segment)
+        } else {
+            routes_base
+                .join(&p.domain)
+                .join(&p.path_segment)
+                .join(format!("[{}]", p.param_name))
+                .join(path_segment)
+        }
+    } else {
+        routes_base.join(domain).join(path_segment)
+    }
+}
+
+fn emit_ui_pages(
+    tera: &tera::Tera,
+    ctx: &UiPageContext,
+    project: &ProjectConfig,
+    routes_dir: &Path,
+) -> Result<Vec<GeneratedFile>> {
+    let mut files = Vec::new();
+
+    // List page
+    if ctx.has_list {
+        let content = render_template_with_project(tera, "ui/list_page.tera", ctx, project)?;
+        files.push(GeneratedFile {
+            path: routes_dir.join("+page.svelte"),
+            content,
+        });
+        let load = render_template_with_project(tera, "ui/list_load.tera", ctx, project)?;
+        files.push(GeneratedFile {
+            path: routes_dir.join("+page.server.ts"),
+            content: load,
+        });
+    }
+
+    // Detail page
+    if ctx.has_read {
+        let content = render_template_with_project(tera, "ui/detail_page.tera", ctx, project)?;
+        files.push(GeneratedFile {
+            path: routes_dir
+                .join(format!("[{}]", ctx.param_name))
+                .join("+page.svelte"),
+            content,
+        });
+        let load = render_template_with_project(tera, "ui/detail_load.tera", ctx, project)?;
+        files.push(GeneratedFile {
+            path: routes_dir
+                .join(format!("[{}]", ctx.param_name))
+                .join("+page.server.ts"),
+            content: load,
+        });
+    }
+
+    // Create page
+    if ctx.has_create {
+        let content = render_template_with_project(tera, "ui/form_page.tera", ctx, project)?;
+        files.push(GeneratedFile {
+            path: routes_dir.join("new").join("+page.svelte"),
+            content,
+        });
+    }
+
+    // Edit page
+    if ctx.has_update {
+        let content = render_template_with_project(tera, "ui/edit_page.tera", ctx, project)?;
+        files.push(GeneratedFile {
+            path: routes_dir
+                .join(format!("[{}]", ctx.param_name))
+                .join("edit")
+                .join("+page.svelte"),
+            content,
+        });
+        let load = render_template_with_project(tera, "ui/edit_load.tera", ctx, project)?;
+        files.push(GeneratedFile {
+            path: routes_dir
+                .join(format!("[{}]", ctx.param_name))
+                .join("edit")
+                .join("+page.server.ts"),
+            content: load,
+        });
+    }
+
+    Ok(files)
 }

@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::PropertyNode;
 use serde::Serialize;
 
 use crate::error::Result;
@@ -1123,62 +1125,7 @@ impl DtoGenerator {
         // Dot-notation paths are grouped by their first segment key (e.g. "deployment.position"
         // and "deployment.organization" both become "deployment") — only the first path per
         // group contributes an IncludedData field, matching UI access patterns.
-        let include_fields: Vec<serde_json::Value> = {
-            // Resolve the field alias for an include path: for dot-notation paths use the
-            // first segment (e.g. "deployment" for "deployment.position"), otherwise the
-            // single-segment alias directly.
-            fn field_alias_for(path: &ResolvedIncludePath) -> String {
-                if path.segments.len() > 1 {
-                    path.segments[0].module_name.clone()
-                } else {
-                    path.alias.clone()
-                }
-            }
-            let mut seen_aliases = std::collections::HashSet::new();
-            include_paths
-                .iter()
-                .filter(|path| seen_aliases.insert(field_alias_for(path)))
-                .map(|path| {
-                    let (rust_type, inner_type, is_vec) = if path.segments.len() == 1 {
-                        let seg = &path.segments[0];
-                        // When the segment has a child_table_override (VO→entity),
-                        // the response type is the child DTO (e.g. WorkerPersonLegalResponse),
-                        // not the entity's response type (PersonResponse).
-                        let resp_type = seg
-                            .child_table_override
-                            .as_ref()
-                            .map(|o| o.response_type.clone())
-                            .unwrap_or_else(|| format!("{}Response", seg.entity_name));
-                        if seg.is_array {
-                            (format!("Option<Vec<{}>>", resp_type), resp_type, true)
-                        } else {
-                            (format!("Option<{}>", resp_type), resp_type, false)
-                        }
-                    } else {
-                        // Dot-notation paths use the combined DTO type name.
-                        let combined_name =
-                            format!("{}CombinedResponse", path.segments[0].entity_name);
-                        (format!("Option<{}>", combined_name), combined_name, false)
-                    };
-
-                    let field_alias = field_alias_for(path);
-                    // For dot-notation paths, field_alias is the first segment (e.g. "deployment")
-                    // which doesn't need serde renaming — the Rust field name is the JSON key.
-                    // Only apply rename when field_alias has underscore-for-dot substitution
-                    // that changes the Rust identifier from the API key (single-segment paths).
-                    let needs_serde_rename = path.segments.len() == 1 && field_alias != path.alias;
-                    serde_json::json!({
-                        "alias": path.alias,
-                        "field_alias": field_alias,
-                        "serde_rename": if needs_serde_rename { Some(&path.alias) } else { None },
-                        "rust_type": rust_type,
-                        "inner_type": inner_type,
-                        "is_vec": is_vec,
-                        "is_dot_path": path.segments.len() > 1,
-                    })
-                })
-                .collect()
-        };
+        let include_fields = build_include_fields(include_paths);
 
         // Query all properties for dot-notation intermediate entity fields
         let all_props = db.list_all_properties().await?;
@@ -1187,248 +1134,13 @@ impl DtoGenerator {
         // Paths like "deployment.position" and "deployment.organization" share the same
         // intermediate entity and produce a single combined DTO (DeploymentCombinedResponse)
         // with one optional nested field per leaf.
-        let enriched_types: Vec<serde_json::Value> = if has_dot_paths {
-            // Group dot-notation paths by first segment.
-            let mut by_first_seg: std::collections::HashMap<String, Vec<&ResolvedIncludePath>> =
-                std::collections::HashMap::new();
-            for path in include_paths {
-                if path.segments.len() > 1 {
-                    let key = path.segments[0].module_name.clone();
-                    by_first_seg.entry(key).or_default().push(path);
-                }
-            }
-
-            let mut enriched = Vec::new();
-            for group_paths in by_first_seg.values() {
-                let first_path = group_paths[0];
-                let intermediate = &first_path.segments[0];
-
-                // Build the combined type name: DeploymentCombinedResponse
-                let combined_name = format!("{}CombinedResponse", intermediate.entity_name);
-
-                let mut base_fields: Vec<serde_json::Value> = Vec::new();
-                base_fields.push(
-                    serde_json::json!({"name": "id", "rust_type": "Uuid", "is_optional": false}),
-                );
-
-                let props_key = match db
-                    .get_schema_in_domain(&intermediate.schema_title, domain)
-                    .await?
-                {
-                    Some(s) => Some(s.title),
-                    None => {
-                        let with_type = format!("{}Type", intermediate.entity_name);
-                        db.get_schema_in_domain(&with_type, domain)
-                            .await?
-                            .map(|s| s.title)
-                    }
-                };
-                if let Some(ref key) = props_key {
-                    if let Some(props) = all_props.get(key) {
-                        for prop in props {
-                            if prop.rust_field_name == "id"
-                                || prop.rust_field_name == "created_at"
-                                || prop.rust_field_name == "updated_at"
-                            {
-                                continue;
-                            }
-                            // Skip ValueObject properties (not direct columns).
-                            if matches!(
-                                prop.effective_kind(),
-                                Some(RefClassificationKind::ValueObject)
-                            ) {
-                                continue;
-                            }
-                            let is_optional = prop.is_nullable || !prop.is_required;
-                            let field_type = if matches!(
-                                prop.effective_kind(),
-                                Some(RefClassificationKind::StructuredWrapper)
-                            ) {
-                                let base = if prop.is_array {
-                                    "Vec<serde_json::Value>"
-                                } else {
-                                    "serde_json::Value"
-                                };
-                                if is_optional {
-                                    format!("Option<{base}>")
-                                } else {
-                                    base.to_string()
-                                }
-                            } else if matches!(
-                                prop.effective_kind(),
-                                Some(RefClassificationKind::EntityReference)
-                            ) {
-                                if is_optional {
-                                    "Option<uuid::Uuid>".to_string()
-                                } else {
-                                    "uuid::Uuid".to_string()
-                                }
-                            } else if matches!(
-                                prop.effective_kind(),
-                                Some(
-                                    RefClassificationKind::CodelistReference
-                                        | RefClassificationKind::CodelistCheck
-                                )
-                            ) {
-                                let enum_type = codelist_enum_name_from_ref(&prop.ref_target)
-                                    .unwrap_or_else(|| "String".to_string());
-                                if is_optional {
-                                    format!("Option<{}>", enum_type)
-                                } else {
-                                    enum_type
-                                }
-                            } else {
-                                let raw = prop.rust_field_type.clone();
-                                if is_optional
-                                    && !raw.starts_with("Option<")
-                                    && !raw.starts_with("Vec<Option<")
-                                {
-                                    format!("Option<{}>", raw)
-                                } else {
-                                    raw
-                                }
-                            };
-                            let fd = codegraph_core::types::resolve_field(prop);
-                            base_fields.push(serde_json::json!({
-                                "name": fd.rust_field_name,
-                                "rust_type": field_type,
-                                "is_optional": is_optional,
-                            }));
-                        }
-                    }
-                }
-
-                base_fields.push(serde_json::json!({"name": "created_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}));
-                base_fields.push(serde_json::json!({"name": "updated_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}));
-
-                // Add one nested field per leaf in the group.
-                let mut nested_fields: Vec<serde_json::Value> = Vec::new();
-                for leaf_path in group_paths {
-                    let leaf = &leaf_path.segments[leaf_path.segments.len() - 1];
-                    nested_fields.push(serde_json::json!({
-                        "alias": leaf.module_name,
-                        "rust_type": format!("Option<{}Response>", leaf.entity_name),
-                        "inner_type": format!("{}Response", leaf.entity_name),
-                        "is_vec": false,
-                    }));
-                }
-
-                enriched.push(serde_json::json!({
-                    "type_name": combined_name,
-                    "base_fields": base_fields,
-                    "nested_fields": nested_fields,
-                }));
-            }
-            enriched
-        } else {
-            Vec::new()
-        };
+        let enriched_types = build_enriched_types(db, domain, include_paths, &all_props).await?;
 
         // Register include DTO types for cross-generator import resolution.
-        let module_path: Vec<String> = vec![
-            "crate".into(),
-            "domain".into(),
-            domain.into(),
-            module_name.clone(),
-            "dto_included".into(),
-        ];
-        type_registry::register_type(
-            &format!("{}WithIncludeResponse", entity_name),
-            module_path.clone(),
-        );
-        type_registry::register_type(&format!("{}IncludedData", entity_name), module_path);
-        for path in include_paths {
-            let type_name = if path.segments.len() > 1 {
-                format!("{}CombinedResponse", path.segments[0].entity_name)
-            } else {
-                path.response_rust_type.clone()
-            };
-            // Register the include response type under the module that
-            // DEFINES it, or import resolution poisons the registry with a
-            // self-referencing path (first registration wins):
-            // - multi-segment combined DTOs are defined in this entity's
-            //   dto_included module;
-            // - VO→entity child-table overrides resolve to this entity's
-            //   dto_response module, where its child DTOs are registered;
-            // - plain single-segment paths resolve to the target entity's
-            //   dto_response module ({Target}Response is defined there).
-            let defining_module = match path.segments.len() {
-                1 => {
-                    if path.segments[0].child_table_override.is_some() {
-                        // This entity's dto_response module, where its
-                        // child DTOs are registered.
-                        vec![
-                            "crate".into(),
-                            "domain".into(),
-                            domain.into(),
-                            module_name.clone(),
-                            "dto_response".into(),
-                        ]
-                    } else {
-                        let seg = &path.segments[0];
-                        vec![
-                            "crate".into(),
-                            "domain".into(),
-                            seg.domain.clone(),
-                            seg.module_name.clone(),
-                            "dto_response".into(),
-                        ]
-                    }
-                }
-                _ => vec![
-                    "crate".into(),
-                    "domain".into(),
-                    domain.into(),
-                    module_name.clone(),
-                    "dto_included".into(),
-                ],
-            };
-            type_registry::register_type(&type_name, defining_module);
-        }
+        register_include_types(&entity_name, domain, &module_name, include_paths);
 
         // Collect all type names referenced by include fields for cross-entity import resolution.
-        let mut ref_type_names: Vec<String> = Vec::new();
-        for field in &include_fields {
-            if let Some(inner) = field["inner_type"].as_str() {
-                ref_type_names.push(inner.to_string());
-            }
-        }
-        for et in &enriched_types {
-            if let Some(nested) = et["nested_fields"].as_array() {
-                for nf in nested {
-                    if let Some(inner) = nf["inner_type"].as_str() {
-                        ref_type_names.push(inner.to_string());
-                    }
-                }
-            }
-            // Also add base_fields' response type references (e.g.,
-            // CertificationResponse, IdentifierResponse) so they are
-            // imported.  Strip Option<...> and Vec<...> wrappers to
-            // extract the inner type name.
-            if let Some(base) = et["base_fields"].as_array() {
-                for bf in base {
-                    if let Some(rt) = bf["rust_type"].as_str() {
-                        let inner = rt
-                            .strip_prefix("Option<")
-                            .or_else(|| rt.strip_prefix("Vec<"))
-                            .and_then(|s| s.strip_suffix('>'))
-                            .unwrap_or(rt);
-                        // Skip codelist enum types — they are referenced via
-                        // `pub use crate::codelist::…` re-exports, and resolving
-                        // them to their dto_response module would emit an
-                        // import the generated body never uses.
-                        let is_codelist = (inner.ends_with("CodeList") || inner.ends_with("Code"))
-                            && !inner.contains('<');
-                        if !is_codelist {
-                            // Add unwrapped types (e.g. "JobResponse") and
-                            // wrapped types (e.g. "CertificationResponse" from
-                            // "Vec<CertificationResponse>") to the import list.
-                            ref_type_names.push(inner.to_string());
-                        }
-                    }
-                }
-            }
-        }
+        let mut ref_type_names = collect_ref_type_names(&include_fields, &enriched_types);
         // Also add framework types referenced by the template.
         ref_type_names.push(format!("{}LinkedResponse", entity_name));
         ref_type_names.push("Meta".into());
@@ -1442,39 +1154,11 @@ impl DtoGenerator {
         let imports = type_registry::resolve_imports(&ref_type_names, &caller_module);
 
         // Collect codelist enum types referenced by compound DTO base fields.
-        let mut codelist_imports: Vec<String> = Vec::new();
-        for et in &enriched_types {
-            if let Some(base_fields) = et["base_fields"].as_array() {
-                for bf in base_fields {
-                    if let Some(rust_type) = bf["rust_type"].as_str() {
-                        let ty = rust_type
-                            .strip_prefix("Option<")
-                            .and_then(|s| s.strip_suffix('>'))
-                            .unwrap_or(rust_type);
-                        // Codelist enum types end with "CodeList" or "StatusCode" etc.
-                        if (ty.ends_with("CodeList") || ty.ends_with("Code"))
-                            && !ty.contains('<')
-                            && !codelist_imports.contains(&ty.to_string())
-                        {
-                            codelist_imports.push(ty.to_string());
-                        }
-                    }
-                }
-            }
-        }
+        let codelist_imports = collect_codelist_imports(&enriched_types);
 
         // Only emit `use uuid::Uuid;` when an enriched base field actually
         // references the bare `Uuid` type (otherwise the import is dead code).
-        let needs_uuid = enriched_types.iter().any(|et| {
-            et["base_fields"].as_array().is_some_and(|bfs| {
-                bfs.iter().any(|bf| {
-                    bf["rust_type"]
-                        .as_str()
-                        .map(|rt| rt == "Uuid" || rt == "Option<Uuid>")
-                        .unwrap_or(false)
-                })
-            })
-        });
+        let needs_uuid = needs_uuid_import(&enriched_types);
 
         let ctx = serde_json::json!({
             "entity_name": entity_name,
@@ -1502,6 +1186,366 @@ impl DtoGenerator {
             content,
         }])
     }
+}
+
+/// Resolve the field alias for an include path: for dot-notation paths use the
+/// first segment (e.g. "deployment" for "deployment.position"), otherwise the
+/// single-segment alias directly.
+fn field_alias_for(path: &ResolvedIncludePath) -> String {
+    if path.segments.len() > 1 {
+        path.segments[0].module_name.clone()
+    } else {
+        path.alias.clone()
+    }
+}
+
+/// Build include_fields for the dto_included template.
+fn build_include_fields(include_paths: &[ResolvedIncludePath]) -> Vec<serde_json::Value> {
+    let mut seen_aliases = std::collections::HashSet::new();
+    include_paths
+        .iter()
+        .filter(|path| seen_aliases.insert(field_alias_for(path)))
+        .map(|path| {
+            let (rust_type, inner_type, is_vec) = if path.segments.len() == 1 {
+                let seg = &path.segments[0];
+                // When the segment has a child_table_override (VO→entity),
+                // the response type is the child DTO (e.g. WorkerPersonLegalResponse),
+                // not the entity's response type (PersonResponse).
+                let resp_type = seg
+                    .child_table_override
+                    .as_ref()
+                    .map(|o| o.response_type.clone())
+                    .unwrap_or_else(|| format!("{}Response", seg.entity_name));
+                if seg.is_array {
+                    (format!("Option<Vec<{}>>", resp_type), resp_type, true)
+                } else {
+                    (format!("Option<{}>", resp_type), resp_type, false)
+                }
+            } else {
+                // Dot-notation paths use the combined DTO type name.
+                let combined_name = format!("{}CombinedResponse", path.segments[0].entity_name);
+                (format!("Option<{}>", combined_name), combined_name, false)
+            };
+
+            let field_alias = field_alias_for(path);
+            // For dot-notation paths, field_alias is the first segment (e.g. "deployment")
+            // which doesn't need serde renaming — the Rust field name is the JSON key.
+            // Only apply rename when field_alias has underscore-for-dot substitution
+            // that changes the Rust identifier from the API key (single-segment paths).
+            let needs_serde_rename = path.segments.len() == 1 && field_alias != path.alias;
+            serde_json::json!({
+                "alias": path.alias,
+                "field_alias": field_alias,
+                "serde_rename": if needs_serde_rename { Some(&path.alias) } else { None },
+                "rust_type": rust_type,
+                "inner_type": inner_type,
+                "is_vec": is_vec,
+                "is_dot_path": path.segments.len() > 1,
+            })
+        })
+        .collect()
+}
+
+async fn build_enriched_types(
+    db: &dyn GraphQuerier,
+    domain: &str,
+    include_paths: &[ResolvedIncludePath],
+    all_props: &HashMap<String, Vec<PropertyNode>>,
+) -> Result<Vec<serde_json::Value>> {
+    if !include_paths.iter().any(|p| p.segments.len() > 1) {
+        return Ok(Vec::new());
+    }
+    // Group dot-notation paths by first segment.
+    let mut by_first_seg: std::collections::HashMap<String, Vec<&ResolvedIncludePath>> =
+        std::collections::HashMap::new();
+    for path in include_paths {
+        if path.segments.len() > 1 {
+            let key = path.segments[0].module_name.clone();
+            by_first_seg.entry(key).or_default().push(path);
+        }
+    }
+
+    let mut enriched = Vec::new();
+    for group_paths in by_first_seg.values() {
+        enriched.push(build_combined_group(db, domain, group_paths, all_props).await?);
+    }
+    Ok(enriched)
+}
+
+async fn build_combined_group(
+    db: &dyn GraphQuerier,
+    domain: &str,
+    group_paths: &[&ResolvedIncludePath],
+    all_props: &HashMap<String, Vec<PropertyNode>>,
+) -> Result<serde_json::Value> {
+    let first_path = group_paths[0];
+    let intermediate = &first_path.segments[0];
+
+    // Build the combined type name: DeploymentCombinedResponse
+    let combined_name = format!("{}CombinedResponse", intermediate.entity_name);
+
+    let mut base_fields: Vec<serde_json::Value> = Vec::new();
+    base_fields.push(serde_json::json!({"name": "id", "rust_type": "Uuid", "is_optional": false}));
+
+    let props_key = match db
+        .get_schema_in_domain(&intermediate.schema_title, domain)
+        .await?
+    {
+        Some(s) => Some(s.title),
+        None => {
+            let with_type = format!("{}Type", intermediate.entity_name);
+            db.get_schema_in_domain(&with_type, domain)
+                .await?
+                .map(|s| s.title)
+        }
+    };
+    if let Some(ref key) = props_key {
+        if let Some(props) = all_props.get(key) {
+            for prop in props {
+                if prop.rust_field_name == "id"
+                    || prop.rust_field_name == "created_at"
+                    || prop.rust_field_name == "updated_at"
+                {
+                    continue;
+                }
+                // Skip ValueObject properties (not direct columns).
+                if matches!(
+                    prop.effective_kind(),
+                    Some(RefClassificationKind::ValueObject)
+                ) {
+                    continue;
+                }
+                let is_optional = prop.is_nullable || !prop.is_required;
+                let field_type = dot_field_type(prop, is_optional);
+                let fd = codegraph_core::types::resolve_field(prop);
+                base_fields.push(serde_json::json!({
+                    "name": fd.rust_field_name,
+                    "rust_type": field_type,
+                    "is_optional": is_optional,
+                }));
+            }
+        }
+    }
+
+    base_fields.push(serde_json::json!({"name": "created_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}));
+    base_fields.push(serde_json::json!({"name": "updated_at", "rust_type": "chrono::DateTime<chrono::Utc>", "is_optional": false}));
+
+    // Add one nested field per leaf in the group.
+    let mut nested_fields: Vec<serde_json::Value> = Vec::new();
+    for leaf_path in group_paths {
+        let leaf = &leaf_path.segments[leaf_path.segments.len() - 1];
+        nested_fields.push(serde_json::json!({
+            "alias": leaf.module_name,
+            "rust_type": format!("Option<{}Response>", leaf.entity_name),
+            "inner_type": format!("{}Response", leaf.entity_name),
+            "is_vec": false,
+        }));
+    }
+
+    Ok(serde_json::json!({
+        "type_name": combined_name,
+        "base_fields": base_fields,
+        "nested_fields": nested_fields,
+    }))
+}
+
+fn dot_field_type(prop: &PropertyNode, is_optional: bool) -> String {
+    if matches!(
+        prop.effective_kind(),
+        Some(RefClassificationKind::StructuredWrapper)
+    ) {
+        let base = if prop.is_array {
+            "Vec<serde_json::Value>"
+        } else {
+            "serde_json::Value"
+        };
+        if is_optional {
+            format!("Option<{base}>")
+        } else {
+            base.to_string()
+        }
+    } else if matches!(
+        prop.effective_kind(),
+        Some(RefClassificationKind::EntityReference)
+    ) {
+        if is_optional {
+            "Option<uuid::Uuid>".to_string()
+        } else {
+            "uuid::Uuid".to_string()
+        }
+    } else if matches!(
+        prop.effective_kind(),
+        Some(RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck)
+    ) {
+        let enum_type =
+            codelist_enum_name_from_ref(&prop.ref_target).unwrap_or_else(|| "String".to_string());
+        if is_optional {
+            format!("Option<{}>", enum_type)
+        } else {
+            enum_type
+        }
+    } else {
+        let raw = prop.rust_field_type.clone();
+        if is_optional && !raw.starts_with("Option<") && !raw.starts_with("Vec<Option<") {
+            format!("Option<{}>", raw)
+        } else {
+            raw
+        }
+    }
+}
+
+fn register_include_types(
+    entity_name: &str,
+    domain: &str,
+    module_name: &str,
+    include_paths: &[ResolvedIncludePath],
+) {
+    let module_path: Vec<String> = vec![
+        "crate".into(),
+        "domain".into(),
+        domain.into(),
+        module_name.to_string(),
+        "dto_included".into(),
+    ];
+    type_registry::register_type(
+        &format!("{}WithIncludeResponse", entity_name),
+        module_path.clone(),
+    );
+    type_registry::register_type(&format!("{}IncludedData", entity_name), module_path);
+    for path in include_paths {
+        let type_name = if path.segments.len() > 1 {
+            format!("{}CombinedResponse", path.segments[0].entity_name)
+        } else {
+            path.response_rust_type.clone()
+        };
+        // Register the include response type under the module that
+        // DEFINES it, or import resolution poisons the registry with a
+        // self-referencing path (first registration wins):
+        // - multi-segment combined DTOs are defined in this entity's
+        //   dto_included module;
+        // - VO→entity child-table overrides resolve to this entity's
+        //   dto_response module, where its child DTOs are registered;
+        // - plain single-segment paths resolve to the target entity's
+        //   dto_response module ({Target}Response is defined there).
+        let defining_module = match path.segments.len() {
+            1 => {
+                if path.segments[0].child_table_override.is_some() {
+                    // This entity's dto_response module, where its
+                    // child DTOs are registered.
+                    vec![
+                        "crate".into(),
+                        "domain".into(),
+                        domain.into(),
+                        module_name.to_string(),
+                        "dto_response".into(),
+                    ]
+                } else {
+                    let seg = &path.segments[0];
+                    vec![
+                        "crate".into(),
+                        "domain".into(),
+                        seg.domain.clone(),
+                        seg.module_name.clone(),
+                        "dto_response".into(),
+                    ]
+                }
+            }
+            _ => vec![
+                "crate".into(),
+                "domain".into(),
+                domain.into(),
+                module_name.to_string(),
+                "dto_included".into(),
+            ],
+        };
+        type_registry::register_type(&type_name, defining_module);
+    }
+}
+
+fn collect_ref_type_names(
+    include_fields: &[serde_json::Value],
+    enriched_types: &[serde_json::Value],
+) -> Vec<String> {
+    let mut ref_type_names: Vec<String> = Vec::new();
+    for field in include_fields {
+        if let Some(inner) = field["inner_type"].as_str() {
+            ref_type_names.push(inner.to_string());
+        }
+    }
+    for et in enriched_types {
+        if let Some(nested) = et["nested_fields"].as_array() {
+            for nf in nested {
+                if let Some(inner) = nf["inner_type"].as_str() {
+                    ref_type_names.push(inner.to_string());
+                }
+            }
+        }
+        // Also add base_fields' response type references (e.g.,
+        // CertificationResponse, IdentifierResponse) so they are
+        // imported.  Strip Option<...> and Vec<...> wrappers to
+        // extract the inner type name.
+        if let Some(base) = et["base_fields"].as_array() {
+            for bf in base {
+                if let Some(rt) = bf["rust_type"].as_str() {
+                    let inner = rt
+                        .strip_prefix("Option<")
+                        .or_else(|| rt.strip_prefix("Vec<"))
+                        .and_then(|s| s.strip_suffix('>'))
+                        .unwrap_or(rt);
+                    // Skip codelist enum types — they are referenced via
+                    // `pub use crate::codelist::…` re-exports, and resolving
+                    // them to their dto_response module would emit an
+                    // import the generated body never uses.
+                    let is_codelist = (inner.ends_with("CodeList") || inner.ends_with("Code"))
+                        && !inner.contains('<');
+                    if !is_codelist {
+                        // Add unwrapped types (e.g. "JobResponse") and
+                        // wrapped types (e.g. "CertificationResponse" from
+                        // "Vec<CertificationResponse>") to the import list.
+                        ref_type_names.push(inner.to_string());
+                    }
+                }
+            }
+        }
+    }
+    ref_type_names
+}
+
+fn collect_codelist_imports(enriched_types: &[serde_json::Value]) -> Vec<String> {
+    let mut codelist_imports: Vec<String> = Vec::new();
+    for et in enriched_types {
+        if let Some(base_fields) = et["base_fields"].as_array() {
+            for bf in base_fields {
+                if let Some(rust_type) = bf["rust_type"].as_str() {
+                    let ty = rust_type
+                        .strip_prefix("Option<")
+                        .and_then(|s| s.strip_suffix('>'))
+                        .unwrap_or(rust_type);
+                    // Codelist enum types end with "CodeList" or "StatusCode" etc.
+                    if (ty.ends_with("CodeList") || ty.ends_with("Code"))
+                        && !ty.contains('<')
+                        && !codelist_imports.contains(&ty.to_string())
+                    {
+                        codelist_imports.push(ty.to_string());
+                    }
+                }
+            }
+        }
+    }
+    codelist_imports
+}
+
+fn needs_uuid_import(enriched_types: &[serde_json::Value]) -> bool {
+    enriched_types.iter().any(|et| {
+        et["base_fields"].as_array().is_some_and(|bfs| {
+            bfs.iter().any(|bf| {
+                bf["rust_type"]
+                    .as_str()
+                    .map(|rt| rt == "Uuid" || rt == "Option<Uuid>")
+                    .unwrap_or(false)
+            })
+        })
+    })
 }
 
 /// Strips `_code` suffix from a codelist field name, unless the result

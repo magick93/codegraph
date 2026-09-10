@@ -76,6 +76,39 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     let mut supervisor = Supervisor::new(args.keep);
 
     // 1. Supabase.
+    e2e_supabase_up(config, supabase_dir).await?;
+
+    // 2. Generate.
+    e2e_generate(config, args).await?;
+
+    // 3. Migrate.
+    e2e_migrate(config, supabase_dir).await?;
+
+    // 4. Provision the API key (shared file, also used by the ui/cli suites).
+    let api_key = e2e_provision_api_key(config).await?;
+
+    // 5. Build.
+    let binary = e2e_build(config, args).await?;
+
+    // 6. Services.
+    e2e_start_services(config, args, &binary, api_key.as_deref(), &mut supervisor).await?;
+
+    // 7. Playwright.
+    let outcome = e2e_playwright(config, args, api_key.as_deref()).await?;
+
+    // 8. Summary.
+    e2e_write_summary(config, args, &outcome);
+    supervisor.shutdown_all().await;
+    if outcome.passed {
+        Ok(())
+    } else {
+        Err(OpsError::TestFailure(
+            "Playwright E2E suite failed".to_string(),
+        ))
+    }
+}
+
+async fn e2e_supabase_up(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<()> {
     output::section("E2E 1. Supabase");
     let health_url = supabase_health_url(config);
     if http_ok(&health_url).await {
@@ -88,8 +121,10 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     // pre_e2e hooks (e.g. the pgmq patch) need the supabase container running
     // and must complete BEFORE the migration symlink + `supabase db reset`.
     crate::ext::run_hooks(config, "pre_e2e").await?;
+    Ok(())
+}
 
-    // 2. Generate.
+async fn e2e_generate(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     output::section("E2E 2. Generate");
     if !args.skip_generate {
         let binary = match &config.manifest.graph_binary {
@@ -139,8 +174,10 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     } else {
         output::info("Generation skipped (--skip-generate)");
     }
+    Ok(())
+}
 
-    // 3. Migrate.
+async fn e2e_migrate(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<()> {
     output::section("E2E 3. Database");
     let app_migrations = config.app_dir.join("migrations");
     let supabase_migrations = supabase_dir.join("supabase").join("migrations");
@@ -166,15 +203,19 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     }
 
     crate::ext::run_hooks(config, "post_migrate").await?;
+    Ok(())
+}
 
-    // 4. Provision the API key (shared file, also used by the ui/cli suites).
+async fn e2e_provision_api_key(config: &OpsConfig) -> OpsResult<Option<String>> {
     let api_key = super::ui::read_or_provision_api_key(config).await?;
     match &api_key {
         Some(_) => output::ok("API key provisioned"),
         None => output::warn("API key not provisioned — auth-dependent tests will fail"),
     }
+    Ok(api_key)
+}
 
-    // 5. Build.
+async fn e2e_build(config: &OpsConfig, args: &E2eArgs) -> OpsResult<PathBuf> {
     output::section("E2E 4. Build");
     if !args.skip_build {
         cargo_build_app(config, args.release)
@@ -189,8 +230,16 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         })?;
     crate::preflight::ensure_binary_fresh(&config.app_dir, &binary)?;
     output::ok(format!("Using binary {}", binary.display()));
+    Ok(binary)
+}
 
-    // 6. Services.
+async fn e2e_start_services(
+    config: &OpsConfig,
+    args: &E2eArgs,
+    binary: &Path,
+    api_key: Option<&str>,
+    supervisor: &mut Supervisor,
+) -> OpsResult<()> {
     output::section("E2E 5. Start Services");
     let api_url = config.api_url();
     let db_url = config
@@ -199,7 +248,7 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         .map(|t| t.url())
         .unwrap_or_else(|| config.api_db.url());
     {
-        let mut cmd = Command::new(&binary);
+        let mut cmd = Command::new(binary);
         cmd.arg("start")
             .arg("--bind-addr")
             .arg(bind_addr_with_port(config))
@@ -256,7 +305,7 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
             .arg(config.manifest.servers.ui_port.to_string());
         cmd.current_dir(&config.ui_dir);
         cmd.env("PUBLIC_API_URL", &api_url);
-        if let Some(key) = &api_key {
+        if let Some(key) = api_key {
             cmd.env("PUBLIC_API_KEY", key);
         }
         match ManagedProcess::spawn(cmd, "SvelteKit preview", Path::new(SVELTEKIT_LOG)) {
@@ -273,8 +322,23 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         return Err(e);
     }
     output::ok(format!("SvelteKit preview running at {ui_url}"));
+    Ok(())
+}
 
-    // 7. Playwright.
+/// Outcome of the Playwright run (including the in-session `--last-failed`
+/// retry), consumed by the summary/report stage.
+struct PlaywrightOutcome {
+    passed: bool,
+    tallies: Vec<ProjectTally>,
+    failed_titles: Vec<String>,
+    transient_resolved: usize,
+}
+
+async fn e2e_playwright(
+    config: &OpsConfig,
+    args: &E2eArgs,
+    api_key: Option<&str>,
+) -> OpsResult<PlaywrightOutcome> {
     output::section("E2E 6. Playwright Tests");
     if let Err(e) = run_blocking(
         "npx",
@@ -291,7 +355,7 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         cmd.arg("--headed");
     }
     cmd.args(&args.playwright_args);
-    for (key, value) in super::ui::playwright_env(config, api_key.as_deref()) {
+    for (key, value) in super::ui::playwright_env(config, api_key) {
         cmd.env(key, value);
     }
     if let Some(chromium) = find_chromium(&[
@@ -331,7 +395,7 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
             retry_cmd.arg("--headed");
         }
         retry_cmd.args(&args.playwright_args);
-        for (key, value) in super::ui::playwright_env(config, api_key.as_deref()) {
+        for (key, value) in super::ui::playwright_env(config, api_key) {
             retry_cmd.env(key, value);
         }
         if let Some(chromium) = find_chromium(&[
@@ -359,24 +423,35 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         }
     }
 
-    // 8. Summary.
+    Ok(PlaywrightOutcome {
+        passed,
+        tallies,
+        failed_titles,
+        transient_resolved,
+    })
+}
+
+fn e2e_write_summary(config: &OpsConfig, args: &E2eArgs, outcome: &PlaywrightOutcome) {
     output::section("=== E2E Summary ===");
+    let tallies = &outcome.tallies;
     if !tallies.is_empty() {
         output::info("Per-project Playwright results:");
-        for t in &tallies {
+        for t in tallies {
             println!("  {}: {} passed, {} failed", t.project, t.passed, t.failed);
         }
     }
-    if passed {
-        if transient_resolved > 0 {
+    if outcome.passed {
+        if outcome.transient_resolved > 0 {
             output::ok(format!(
-                "ALL E2E TESTS PASSED ({transient_resolved} transient, passed on retry)"
+                "ALL E2E TESTS PASSED ({} transient, passed on retry)",
+                outcome.transient_resolved
             ));
         } else {
             output::ok("ALL E2E TESTS PASSED");
         }
     } else {
         output::fail("SOME E2E TESTS FAILED");
+        let failed_titles = &outcome.failed_titles;
         if !failed_titles.is_empty() {
             output::info("Failed tests:");
             for title in failed_titles.iter().take(20) {
@@ -407,24 +482,17 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         );
         report.passed = tallies.iter().map(|t| t.passed).sum();
         report.failed = tallies.iter().map(|t| t.failed).sum();
-        report.failures = failed_titles
+        report.failures = outcome
+            .failed_titles
             .iter()
             .map(|title| SuiteFailure {
                 context: String::new(),
                 title: title.clone(),
             })
             .collect();
-        report.transient_resolved = transient_resolved;
-        report.exit = i32::from(!passed);
+        report.transient_resolved = outcome.transient_resolved;
+        report.exit = i32::from(!outcome.passed);
         let _ = report.write(Path::new(results_file));
-    }
-    supervisor.shutdown_all().await;
-    if passed {
-        Ok(())
-    } else {
-        Err(OpsError::TestFailure(
-            "Playwright E2E suite failed".to_string(),
-        ))
     }
 }
 

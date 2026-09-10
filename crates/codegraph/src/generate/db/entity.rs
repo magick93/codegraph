@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::resolve_field;
+use codegraph_core::types::FieldDefinition;
 use codegraph_core::types::{
     AuditPolicy, PolicyKind, PropertyNode, SoftDeleteMarker, SoftDeletePolicy,
     SoftDeleteVisibility, TenantIsolationPolicy, TenantStrategy,
@@ -127,48 +128,9 @@ impl EntityGenerator for SeaOrmEntityGenerator {
         }
 
         let all_props = db.get_properties(schema_title).await?;
+        let ddl_column_names = query_ddl_column_names(db, schema_title, table_name).await;
 
-        // The DDL generator is the source of truth for which columns a table
-        // has: it derives them from the composition tree via
-        // `column_info_to_ddl` (which normalizes array entity-refs to junction
-        // tables, collapses composite ranges, and expands composite wrappers).
-        // Restrict the SeaORM model to exactly those column names so
-        // SELECT/INSERT/RETURNING never reference a column the DDL did not
-        // create (e.g. subject_id on screening."order").
-        let mut ddl_column_names: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        match db.get_composition_tree(schema_title).await {
-            Ok(tree) => {
-                if let Some(range) = &tree.root.composite_range {
-                    ddl_column_names.insert(range.pg_column_name.clone());
-                }
-                for col in &tree.root.columns {
-                    if col.name == "id" {
-                        continue;
-                    }
-                    if let Some((cols, _, _, _)) =
-                        crate::generate::db::ddl::column_info_to_ddl(col, table_name)
-                    {
-                        for c in cols {
-                            ddl_column_names.insert(c.name);
-                        }
-                    }
-                }
-            }
-            Err(_) => {
-                // No composition tree (plain codelist entities): no filter.
-            }
-        }
-
-        // Deduplicate properties by field name — allOf composition can produce
-        // duplicate HasProperty edges (parent + child both contribute the same field).
-        let mut props = {
-            let mut seen = std::collections::HashSet::new();
-            all_props
-                .into_iter()
-                .filter(|p| seen.insert(p.rust_field_name.clone()))
-                .collect::<Vec<_>>()
-        };
+        let mut props = dedup_properties(all_props);
         // For codelist entities with no graph properties (enum-only JSON schema),
         // inject the three columns created by the codelist DDL template.
         codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist, domain);
@@ -177,57 +139,12 @@ impl EntityGenerator for SeaOrmEntityGenerator {
         // When policies are present, they drive audit/tenant/soft-delete column decisions.
         // When empty, fall back to existing domains.toml-based behavior for backward compat.
         let policies = db.get_policies_for_schema(schema_title).await?;
-
-        let audit_policy: Option<&AuditPolicy> = policies.iter().find_map(|p| match &p.kind {
-            PolicyKind::Audit(a) => Some(a),
-            _ => None,
-        });
-        let soft_delete_policy: Option<&SoftDeletePolicy> =
-            policies.iter().find_map(|p| match &p.kind {
-                PolicyKind::SoftDelete(sd) => Some(sd),
-                _ => None,
-            });
-        let tenant_policy: Option<&TenantIsolationPolicy> =
-            policies.iter().find_map(|p| match &p.kind {
-                PolicyKind::TenantIsolation(ti) => Some(ti),
-                _ => None,
-            });
+        let (audit_policy, soft_delete_policy, tenant_policy) = split_policy_kinds(&policies);
 
         // Composite range: collapse start/end fields into a single range column
-        let composite_range = db.get_composite_range(schema_title).await.ok().flatten();
-        let consumed_fields: std::collections::HashSet<String> = db
-            .get_consumed_fields(schema_title)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(prop, _role)| prop.name)
-            .collect();
+        let (composite_range, consumed_fields) = query_range_inputs(db, schema_title).await;
 
-        let mut columns = vec![EntityColumn {
-            field_name: "id".to_string(),
-            rust_type: "Uuid".to_string(),
-            sea_orm_type: "Uuid".to_string(),
-            column_name: "id".to_string(),
-            is_primary_key: true,
-            is_nullable: false,
-            pg_cast: None,
-            sea_orm_attr: None,
-        }];
-
-        // Emit the range column if present — uses Custom column type for correct PG casting
-        if let Some(ref range) = composite_range {
-            let pg_cast = pg_cast_for_type(&range.pg_type);
-            columns.push(EntityColumn {
-                field_name: range.pg_column_name.clone(),
-                rust_type: "Option<String>".to_string(),
-                sea_orm_type: "Text".to_string(),
-                column_name: range.pg_column_name.clone(),
-                is_primary_key: false,
-                is_nullable: true,
-                pg_cast,
-                sea_orm_attr: None,
-            });
-        }
+        let mut columns = initial_columns(composite_range.as_ref());
 
         // Inject FK column for parent-child relationships detected from the schema graph.
         // This ensures child entities have a `{parent}_id` UUID FK column even when the
@@ -243,57 +160,12 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             entity_cfg,
             &config.defaults.type_suffix,
         ) {
-            // Honor the schema's `required` when the FK column corresponds to a
-            // real property on this entity (JSON schema is the source of truth).
-            // Only synthetic ArrayItems FKs (no child-side property) stay nullable.
-            let is_required = props
-                .iter()
-                .any(|p| {
-                    let fd = codegraph_core::types::resolve_field(p);
-                    fd.rust_field_name == fk_field || p.pg_column_name == fk_field
-                })
-                .then(|| {
-                    props.iter().find_map(|p| {
-                        let fd = codegraph_core::types::resolve_field(p);
-                        if fd.rust_field_name == fk_field || p.pg_column_name == fk_field {
-                            Some(p.is_required)
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .flatten()
-                .unwrap_or(false);
-            let (rust_type, is_nullable) = if is_required {
-                ("Uuid".to_string(), false)
-            } else {
-                ("Option<Uuid>".to_string(), true)
-            };
-            columns.push(EntityColumn {
-                field_name: fk_field.clone(),
-                rust_type,
-                sea_orm_type: "Uuid".to_string(),
-                column_name: fk_field,
-                is_primary_key: false,
-                is_nullable,
-                pg_cast: None,
-                sea_orm_attr: None,
-            });
+            push_parent_fk_column(&mut columns, &props, fk_field);
         }
-
-        // Inject hierarchy field if configured (self-referential FK for tree/hierarchy support)
-        if let Some(hf) = entity_cfg.and_then(|ec| ec.hierarchy_field.clone()) {
-            columns.push(EntityColumn {
-                field_name: hf.clone(),
-                rust_type: "Option<Uuid>".to_string(),
-                sea_orm_type: "Uuid".to_string(),
-                column_name: hf,
-                is_primary_key: false,
-                is_nullable: true,
-                pg_cast: None,
-                sea_orm_attr: None,
-            });
-        }
+        push_hierarchy_column(
+            &mut columns,
+            entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
+        );
 
         // Collect entity titles for FK-on-VO detection (used in the VO match arm below).
         let entity_titles: std::collections::HashSet<String> = config
@@ -302,439 +174,66 @@ impl EntityGenerator for SeaOrmEntityGenerator {
             .flat_map(|d| d.entities.iter().cloned())
             .collect();
 
-        for prop in &props {
-            // Skip 'id' — hardcoded above as the UUID primary key
-            if prop.rust_field_name == "id" {
-                continue;
-            }
-            // Skip fields consumed by composite ranges
-            if consumed_fields.contains(&prop.name) {
-                continue;
-            }
-            let field_def = resolve_field(prop);
-            match prop.effective_kind() {
-                Some(RefClassificationKind::PrimitiveWrapper)
-                | Some(RefClassificationKind::StructuredWrapper)
-                | Some(RefClassificationKind::ArrayWrapper)
-                | Some(RefClassificationKind::RangeWrapper)
-                | Some(RefClassificationKind::InlineEnum) => {
-                    let is_structured =
-                        prop.effective_kind() == Some(RefClassificationKind::StructuredWrapper);
-                    let is_nullable = !prop.is_required;
-                    // Entity layer uses serde_json::Value for JSONB structured
-                    // wrappers — the typed struct is used at the DTO layer only.
-                    let base_type = if is_structured {
-                        "serde_json::Value".to_string()
-                    } else {
-                        prop.rust_field_type.clone()
-                    };
-                    let rust_type = if is_nullable {
-                        format!("Option<{base_type}>")
-                    } else {
-                        base_type
-                    };
-                    let pg_cast =
-                        if prop.effective_kind() == Some(RefClassificationKind::RangeWrapper) {
-                            pg_cast_for_type(&prop.pg_column_type)
-                        } else {
-                            None
-                        };
-                    let sea_orm_attr = if is_structured {
-                        Some(r#"column_type = "JsonBinary""#.to_string())
-                    } else {
-                        None
-                    };
-
-                    columns.push(EntityColumn {
-                        field_name: field_def.rust_field_name,
-                        rust_type,
-                        sea_orm_type: if is_structured {
-                            "JsonBinary".to_string()
-                        } else {
-                            prop.sea_orm_type.clone()
-                        },
-                        column_name: field_def.column_name,
-                        is_primary_key: false,
-                        is_nullable,
-                        pg_cast,
-                        sea_orm_attr,
-                    });
-                }
-                Some(RefClassificationKind::CodelistReference) => {
-                    // Array codelist properties are child tables, not columns.
-                    if prop.is_array {
-                        continue;
-                    }
-                    let is_nullable = !prop.is_required;
-                    let rust_type = if is_nullable {
-                        "Option<String>".to_string()
-                    } else {
-                        "String".to_string()
-                    };
-                    columns.push(EntityColumn {
-                        field_name: field_def.rust_field_name,
-                        rust_type,
-                        sea_orm_type: "String".to_string(),
-                        column_name: field_def.column_name,
-                        is_primary_key: false,
-                        is_nullable,
-                        pg_cast: None,
-                        sea_orm_attr: None,
-                    });
-                }
-                Some(RefClassificationKind::CodelistCheck) => {
-                    // Array codelist properties are child tables, not columns.
-                    if prop.is_array {
-                        continue;
-                    }
-                    let is_nullable = !prop.is_required;
-                    let rust_type = if is_nullable {
-                        "Option<String>".to_string()
-                    } else {
-                        "String".to_string()
-                    };
-
-                    columns.push(EntityColumn {
-                        field_name: field_def.rust_field_name,
-                        rust_type,
-                        sea_orm_type: "String".to_string(),
-                        column_name: field_def.column_name,
-                        is_primary_key: false,
-                        is_nullable,
-                        pg_cast: None,
-                        sea_orm_attr: None,
-                    });
-                }
-                Some(RefClassificationKind::EntityReference) => {
-                    // Nullability honors the schema's `required` — the JSON schema is
-                    // the source of truth. A required entity ref produces a NOT NULL
-                    // FK column (Uuid, is_nullable: false) in both the DDL and the
-                    // model; an optional ref produces Option<Uuid>.
-                    // Array entity refs are junction child tables (persisted via
-                    // raw SQL in the repository), never columns on this model.
-                    if prop.is_array {
-                        continue;
-                    }
-                    // The DDL is the source of truth for the column universe:
-                    // array entity-refs and `type: object` + `items` refs are
-                    // junction tables with no column. Skipping anything the DDL
-                    // does not have keeps SELECT/RETURNING off phantom columns.
-                    if !ddl_column_names.contains(&field_def.column_name) {
-                        continue;
-                    }
-                    let is_nullable = !prop.is_required;
-                    columns.push(EntityColumn {
-                        field_name: field_def.rust_field_name,
-                        rust_type: if is_nullable {
-                            "Option<Uuid>".to_string()
-                        } else {
-                            "Uuid".to_string()
-                        },
-                        sea_orm_type: "Uuid".to_string(),
-                        column_name: field_def.column_name,
-                        is_primary_key: false,
-                        is_nullable,
-                        pg_cast: None,
-                        sea_orm_attr: None,
-                    });
-                }
-                Some(RefClassificationKind::CompositeWrapper)
-                | Some(RefClassificationKind::MediaWrapper) => {
-                    if let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await
-                    {
-                        for col in &comp_cols {
-                            let field_name = format!("{}{}", field_def.rust_field_name, col.suffix);
-                            let column_name = format!("{}{}", field_def.column_name, col.suffix);
-                            let is_nullable = !prop.is_required;
-                            // Entity models always use the raw column type (e.g. String),
-                            // not the DTO enum type (e.g. CurrencyCodeList).
-                            let rust_type = if is_nullable {
-                                format!("Option<{}>", col.rust_type)
-                            } else {
-                                col.rust_type.clone()
-                            };
-                            columns.push(EntityColumn {
-                                field_name,
-                                rust_type,
-                                sea_orm_type: col.sea_orm_type.clone(),
-                                column_name,
-                                is_primary_key: false,
-                                is_nullable,
-                                pg_cast: crate::generate::pg_cast_for_type(&col.pg_type),
-                                sea_orm_attr: None,
-                            });
-                        }
-                    }
-                }
-                Some(RefClassificationKind::ValueObject)
-                    // When a non-array VO property targets a known entity (directly
-                    // or through an allOf composition chain), emit an FK column on
-                    // this entity model. Uses the shared resolve_fk_column_name utility
-                    // — single source of truth for FK column naming across layers.
-                    // The resolver returns None for non-resolving props; emitting
-                    // from the raw names would hallucinate columns for fields that
-                    // merely end in `_id` (e.g. screening."order".subject_id).
-                    if !prop.is_array => {
-                        let Some((fk_field, fk_col)) = codegraph_core::types::resolve_fk_column_name(
-                            db,
-                            prop,
-                            schema_title,
-                            &entity_titles,
-                        )
-                        .await?
-                        else {
-                            continue;
-                        };
-                        // VO→entity FK columns are always nullable in the DDL
-                        // (the DTO/repository model the VO as a nested child
-                        // table and never populate the FK), so the model field
-                        // must be Option<Uuid> regardless of schema required.
-                        let is_nullable = true;
-                        columns.push(EntityColumn {
-                            field_name: fk_field,
-                            rust_type: if is_nullable {
-                                "Option<Uuid>".to_string()
-                            } else {
-                                "Uuid".to_string()
-                            },
-                            sea_orm_type: "Uuid".to_string(),
-                            column_name: fk_col,
-                            is_primary_key: false,
-                            is_nullable,
-                            pg_cast: None,
-                            sea_orm_attr: None,
-                        });
-                    }
-                    // Child tables for non-entity VO targets are generated below
-                _ => {}
-            }
-        }
+        push_property_columns(
+            db,
+            &props,
+            schema_title,
+            &consumed_fields,
+            &ddl_column_names,
+            &entity_titles,
+            &mut columns,
+        )
+        .await?;
 
         // Deduplicate columns by field_name — composite wrappers, allOf composition, and
         // EntityReference _id suffixes can produce duplicate column names. Keep the first.
-        {
-            let mut seen_fields = std::collections::HashSet::new();
-            columns.retain(|c| seen_fields.insert(c.field_name.clone()));
-        }
+        dedup_columns_by_field_name(&mut columns);
 
         // Add tenant column — policy-driven when TenantIsolationPolicy exists,
         // otherwise fall back to legacy config-based behavior.
-        let (is_tenant_scoped, tenant_column_name): (bool, String) = if let Some(ti) = tenant_policy
-        {
-            match &ti.strategy {
-                TenantStrategy::Column { property } => (true, property.clone()),
-                _ => (true, String::new()),
-            }
-        } else {
-            (
-                !is_global_entity(table_name, config),
-                "platform_organization_id".to_string(),
-            )
-        };
-        if is_tenant_scoped && !tenant_column_name.is_empty() {
-            columns.insert(
-                1, // After id, before other columns
-                EntityColumn {
-                    field_name: tenant_column_name.clone(),
-                    rust_type: "Uuid".to_string(),
-                    sea_orm_type: self
-                        .dialect
-                        .map_sea_orm_type("Uuid")
-                        .unwrap_or("Uuid".to_string()),
-                    column_name: tenant_column_name,
-                    is_primary_key: false,
-                    is_nullable: false,
-                    pg_cast: None,
-                    sea_orm_attr: None,
-                },
-            );
-        }
+        add_tenant_column(
+            &*self.dialect,
+            &mut columns,
+            tenant_policy,
+            table_name,
+            config,
+        );
 
         // Add timestamp columns — policy-driven when AuditPolicy exists,
         // otherwise unconditional (backward compat: all entities get timestamps).
-        if let Some(audit) = audit_policy {
-            if audit.track_created {
-                columns.push(EntityColumn {
-                    field_name: "created_at".to_string(),
-                    rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-                    sea_orm_type: "TimestampWithTimeZone".to_string(),
-                    column_name: "created_at".to_string(),
-                    is_primary_key: false,
-                    is_nullable: false,
-                    pg_cast: None,
-                    sea_orm_attr: None,
-                });
-            }
-            if audit.track_updated {
-                columns.push(EntityColumn {
-                    field_name: "updated_at".to_string(),
-                    rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-                    sea_orm_type: "TimestampWithTimeZone".to_string(),
-                    column_name: "updated_at".to_string(),
-                    is_primary_key: false,
-                    is_nullable: false,
-                    pg_cast: None,
-                    sea_orm_attr: None,
-                });
-            }
-        } else {
-            // Backward compat: always add timestamps when no AuditPolicy present
-            columns.push(EntityColumn {
-                field_name: "created_at".to_string(),
-                rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-                sea_orm_type: "TimestampWithTimeZone".to_string(),
-                column_name: "created_at".to_string(),
-                is_primary_key: false,
-                is_nullable: false,
-                pg_cast: None,
-                sea_orm_attr: None,
-            });
-            columns.push(EntityColumn {
-                field_name: "updated_at".to_string(),
-                rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-                sea_orm_type: "TimestampWithTimeZone".to_string(),
-                column_name: "updated_at".to_string(),
-                is_primary_key: false,
-                is_nullable: false,
-                pg_cast: None,
-                sea_orm_attr: None,
-            });
-        }
+        add_timestamp_columns(&mut columns, audit_policy);
 
         // Add soft-delete marker column from policy (before audit block).
         // The soft-delete policy takes precedence for the marker column name/type.
         // Track which field names are consumed by the soft-delete marker to avoid
         // adding them again in the audit block below.
-        let mut soft_delete_marker_field: Option<String> = None;
-        if let Some(sd) = soft_delete_policy {
-            let (marker_name, marker_type) = match &sd.marker {
-                SoftDeleteMarker::Timestamp(name) => {
-                    (name.clone(), "chrono::DateTime<chrono::Utc>")
-                }
-                SoftDeleteMarker::Boolean(name) => (name.clone(), "bool"),
-                SoftDeleteMarker::Status(name) => (name.clone(), "String"),
-            };
-            soft_delete_marker_field = Some(marker_name.clone());
-            columns.push(EntityColumn {
-                field_name: marker_name.clone(),
-                rust_type: format!("Option<{}>", marker_type),
-                sea_orm_type: "TimestampWithTimeZone".to_string(),
-                column_name: marker_name,
-                is_primary_key: false,
-                is_nullable: true,
-                pg_cast: None,
-                sea_orm_attr: None,
-            });
-        }
+        let soft_delete_marker_field = add_soft_delete_marker(&mut columns, soft_delete_policy);
 
         // Add soft-delete / audit columns for auditable root entities
-        let is_auditable = if let Some(audit) = audit_policy {
-            // Policy-driven: auditable only if the policy requests delete tracking
-            audit.track_deleted
-        } else {
-            // Backward compat: use domain-level auditable flag
-            config
-                .domains
-                .get(domain)
-                .and_then(|d| d.auditable)
-                .unwrap_or(true)
-        };
+        let is_auditable = audit_tracking_enabled(
+            audit_policy,
+            config.domains.get(domain).and_then(|d| d.auditable),
+        );
         if is_auditable {
-            // Only add deleted_at column if soft-delete marker is not already providing
-            // a timestamp-based marker (avoid duplicate column).
-            if soft_delete_marker_field.as_deref() != Some("deleted_at") {
-                columns.push(EntityColumn {
-                    field_name: "deleted_at".to_string(),
-                    rust_type: "Option<chrono::DateTime<chrono::Utc>>".to_string(),
-                    sea_orm_type: "TimestampWithTimeZone".to_string(),
-                    column_name: "deleted_at".to_string(),
-                    is_primary_key: false,
-                    is_nullable: true,
-                    pg_cast: None,
-                    sea_orm_attr: None,
-                });
-            }
-            columns.push(EntityColumn {
-                field_name: "deleted_by".to_string(),
-                rust_type: "Option<Uuid>".to_string(),
-                sea_orm_type: "Uuid".to_string(),
-                column_name: "deleted_by".to_string(),
-                is_primary_key: false,
-                is_nullable: true,
-                pg_cast: None,
-                sea_orm_attr: None,
-            });
-            columns.push(EntityColumn {
-                field_name: "updated_by".to_string(),
-                rust_type: "Option<Uuid>".to_string(),
-                sea_orm_type: "Uuid".to_string(),
-                column_name: "updated_by".to_string(),
-                is_primary_key: false,
-                is_nullable: true,
-                pg_cast: None,
-                sea_orm_attr: None,
-            });
-            columns.push(EntityColumn {
-                field_name: "is_demo_data".to_string(),
-                rust_type: "bool".to_string(),
-                sea_orm_type: "Boolean".to_string(),
-                column_name: "is_demo_data".to_string(),
-                is_primary_key: false,
-                is_nullable: false,
-                pg_cast: None,
-                sea_orm_attr: None,
-            });
+            push_audit_columns(&mut columns, soft_delete_marker_field.as_deref());
         }
 
         // Deduplicate columns by field_name — CompositeWrapper expansion from
         // allOf-inherited properties can produce duplicate expanded columns.
-        {
-            let mut seen = std::collections::HashSet::new();
-            columns.retain(|col| seen.insert(col.field_name.clone()));
-        }
+        dedup_columns_by_field_name(&mut columns);
 
         // Domain-prefix the entity module name to avoid cross-domain
         // collisions (e.g. common::PositionType vs screening::PositionType).
         let entity_module_name = format!("{}_{}", schema_name, table_name);
 
         let import_prefix = &config.defaults.types_import_prefix;
-        let structured_imports: Vec<String> = columns
-            .iter()
-            .filter(|c| c.sea_orm_attr.as_deref() == Some(r#"column_type = "JsonBinary""#))
-            .filter_map(|c| {
-                let mut inner = c.rust_type.as_str();
-                // Strip Option<> and Vec<> wrappers to get the base type
-                if let Some(s) = inner
-                    .strip_prefix("Option<")
-                    .and_then(|s| s.strip_suffix('>'))
-                {
-                    inner = s;
-                }
-                if let Some(s) = inner.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
-                    inner = s;
-                }
-                if inner != "serde_json::Value" && !inner.is_empty() {
-                    Some(format!("use {import_prefix}::{inner};"))
-                } else {
-                    None
-                }
-            })
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
+        let structured_imports = structured_imports_for_columns(&columns, import_prefix);
 
         // Add self-referential relation for hierarchy if configured
-        let mut relations = Vec::new();
-        if let Some(hf) = entity_cfg.and_then(|ec| ec.hierarchy_field.clone()) {
-            relations.push(EntityRelation {
-                name: "Parent".to_string(),
-                relation_type: "belongs_to = \"Entity\"".to_string(),
-                related_entity: entity_module_name.clone(),
-                from_column: codegraph_naming::to_pascal_case(&hf),
-                to_column: "Id".to_string(),
-                is_self_ref: true,
-            });
-        }
+        let relations = hierarchy_relations(
+            entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
+            &entity_module_name,
+        );
 
         let ctx = EntityContext {
             module_name: entity_module_name.clone(),
@@ -778,67 +277,744 @@ impl EntityGenerator for SeaOrmEntityGenerator {
 
         // Generate child entity files for ValueObject properties.
         // FK columns for VO→entity references are handled in the main column loop above.
-        for prop in &props {
-            if prop.effective_kind() == Some(RefClassificationKind::ValueObject) {
-                // Non-array VOs targeting entities are already handled as FK columns
-                // in the main column loop above — skip them here.
-                if !prop.is_array {
-                    if let Some(true) = db
-                        .get_property_ref_target(&prop.name, schema_title)
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|t| entity_titles.contains(&t.title))
-                    {
-                        continue;
-                    }
-                }
-                let mut visited = std::collections::HashSet::new();
-                visited.insert(schema_title.to_string());
-                let child_files = Box::pin(build_child_entity(
-                    db,
-                    prop,
-                    schema_title,
-                    table_name,
-                    schema_name,
-                    rust_type,
-                    &self.output_dir,
-                    tera,
-                    config,
-                    &mut visited,
-                    0,
-                    project,
-                    &*self.dialect,
-                ))
-                .await?;
-                files.extend(child_files);
-            }
-
-            // Codelist array properties → synthetic child entity with single "code" column.
-            if prop.is_array
-                && matches!(
-                    prop.effective_kind(),
-                    Some(RefClassificationKind::CodelistReference)
-                        | Some(RefClassificationKind::CodelistCheck)
-                )
-            {
-                let child_files = build_codelist_child_entity(
-                    prop,
-                    table_name,
-                    schema_name,
-                    rust_type,
-                    &self.output_dir,
-                    tera,
-                    config,
-                    project,
-                    &*self.dialect,
-                )?;
-                files.extend(child_files);
-            }
-        }
+        files.extend(
+            build_child_entity_files(
+                db,
+                &props,
+                schema_title,
+                table_name,
+                schema_name,
+                rust_type,
+                &self.output_dir,
+                tera,
+                config,
+                project,
+                &*self.dialect,
+                &entity_titles,
+            )
+            .await?,
+        );
 
         Ok(files)
     }
+}
+
+async fn query_ddl_column_names(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    table_name: &str,
+) -> std::collections::HashSet<String> {
+    // The DDL generator is the source of truth for which columns a table
+    // has: it derives them from the composition tree via
+    // `column_info_to_ddl` (which normalizes array entity-refs to junction
+    // tables, collapses composite ranges, and expands composite wrappers).
+    // Restrict the SeaORM model to exactly those column names so
+    // SELECT/INSERT/RETURNING never reference a column the DDL did not
+    // create (e.g. subject_id on screening."order").
+    let mut ddl_column_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    match db.get_composition_tree(schema_title).await {
+        Ok(tree) => {
+            if let Some(range) = &tree.root.composite_range {
+                ddl_column_names.insert(range.pg_column_name.clone());
+            }
+            for col in &tree.root.columns {
+                if col.name == "id" {
+                    continue;
+                }
+                if let Some((cols, _, _, _)) =
+                    crate::generate::db::ddl::column_info_to_ddl(col, table_name)
+                {
+                    for c in cols {
+                        ddl_column_names.insert(c.name);
+                    }
+                }
+            }
+        }
+        Err(_) => {
+            // No composition tree (plain codelist entities): no filter.
+        }
+    }
+    ddl_column_names
+}
+
+fn dedup_properties(all_props: Vec<PropertyNode>) -> Vec<PropertyNode> {
+    // Deduplicate properties by field name — allOf composition can produce
+    // duplicate HasProperty edges (parent + child both contribute the same field).
+    let mut seen = std::collections::HashSet::new();
+    all_props
+        .into_iter()
+        .filter(|p| seen.insert(p.rust_field_name.clone()))
+        .collect::<Vec<_>>()
+}
+
+fn split_policy_kinds(
+    policies: &[codegraph_core::types::PolicyNode],
+) -> (
+    Option<&AuditPolicy>,
+    Option<&SoftDeletePolicy>,
+    Option<&TenantIsolationPolicy>,
+) {
+    let audit_policy: Option<&AuditPolicy> = policies.iter().find_map(|p| match &p.kind {
+        PolicyKind::Audit(a) => Some(a),
+        _ => None,
+    });
+    let soft_delete_policy: Option<&SoftDeletePolicy> =
+        policies.iter().find_map(|p| match &p.kind {
+            PolicyKind::SoftDelete(sd) => Some(sd),
+            _ => None,
+        });
+    let tenant_policy: Option<&TenantIsolationPolicy> =
+        policies.iter().find_map(|p| match &p.kind {
+            PolicyKind::TenantIsolation(ti) => Some(ti),
+            _ => None,
+        });
+    (audit_policy, soft_delete_policy, tenant_policy)
+}
+
+async fn query_range_inputs(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+) -> (
+    Option<codegraph_core::types::CompositeRange>,
+    std::collections::HashSet<String>,
+) {
+    let composite_range = db.get_composite_range(schema_title).await.ok().flatten();
+    let consumed_fields: std::collections::HashSet<String> = db
+        .get_consumed_fields(schema_title)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(prop, _role)| prop.name)
+        .collect();
+    (composite_range, consumed_fields)
+}
+
+fn initial_columns(
+    composite_range: Option<&codegraph_core::types::CompositeRange>,
+) -> Vec<EntityColumn> {
+    let mut columns = vec![EntityColumn {
+        field_name: "id".to_string(),
+        rust_type: "Uuid".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        column_name: "id".to_string(),
+        is_primary_key: true,
+        is_nullable: false,
+        pg_cast: None,
+        sea_orm_attr: None,
+    }];
+
+    // Emit the range column if present — uses Custom column type for correct PG casting
+    if let Some(range) = composite_range {
+        let pg_cast = pg_cast_for_type(&range.pg_type);
+        columns.push(EntityColumn {
+            field_name: range.pg_column_name.clone(),
+            rust_type: "Option<String>".to_string(),
+            sea_orm_type: "Text".to_string(),
+            column_name: range.pg_column_name.clone(),
+            is_primary_key: false,
+            is_nullable: true,
+            pg_cast,
+            sea_orm_attr: None,
+        });
+    }
+
+    columns
+}
+
+fn push_parent_fk_column(
+    columns: &mut Vec<EntityColumn>,
+    props: &[PropertyNode],
+    fk_field: String,
+) {
+    // Honor the schema's `required` when the FK column corresponds to a
+    // real property on this entity (JSON schema is the source of truth).
+    // Only synthetic ArrayItems FKs (no child-side property) stay nullable.
+    let is_required = props
+        .iter()
+        .any(|p| {
+            let fd = codegraph_core::types::resolve_field(p);
+            fd.rust_field_name == fk_field || p.pg_column_name == fk_field
+        })
+        .then(|| {
+            props.iter().find_map(|p| {
+                let fd = codegraph_core::types::resolve_field(p);
+                if fd.rust_field_name == fk_field || p.pg_column_name == fk_field {
+                    Some(p.is_required)
+                } else {
+                    None
+                }
+            })
+        })
+        .flatten()
+        .unwrap_or(false);
+    let (rust_type, is_nullable) = if is_required {
+        ("Uuid".to_string(), false)
+    } else {
+        ("Option<Uuid>".to_string(), true)
+    };
+    columns.push(EntityColumn {
+        field_name: fk_field.clone(),
+        rust_type,
+        sea_orm_type: "Uuid".to_string(),
+        column_name: fk_field,
+        is_primary_key: false,
+        is_nullable,
+        pg_cast: None,
+        sea_orm_attr: None,
+    });
+}
+
+fn push_hierarchy_column(columns: &mut Vec<EntityColumn>, hierarchy_field: Option<String>) {
+    // Inject hierarchy field if configured (self-referential FK for tree/hierarchy support)
+    if let Some(hf) = hierarchy_field {
+        columns.push(EntityColumn {
+            field_name: hf.clone(),
+            rust_type: "Option<Uuid>".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            column_name: hf,
+            is_primary_key: false,
+            is_nullable: true,
+            pg_cast: None,
+            sea_orm_attr: None,
+        });
+    }
+}
+
+async fn push_property_columns(
+    db: &dyn GraphQuerier,
+    props: &[PropertyNode],
+    schema_title: &str,
+    consumed_fields: &std::collections::HashSet<String>,
+    ddl_column_names: &std::collections::HashSet<String>,
+    entity_titles: &std::collections::HashSet<String>,
+    columns: &mut Vec<EntityColumn>,
+) -> Result<()> {
+    for prop in props {
+        // Skip 'id' — hardcoded above as the UUID primary key
+        if prop.rust_field_name == "id" {
+            continue;
+        }
+        // Skip fields consumed by composite ranges
+        if consumed_fields.contains(&prop.name) {
+            continue;
+        }
+        let field_def = resolve_field(prop);
+        match prop.effective_kind() {
+            Some(RefClassificationKind::PrimitiveWrapper)
+            | Some(RefClassificationKind::StructuredWrapper)
+            | Some(RefClassificationKind::ArrayWrapper)
+            | Some(RefClassificationKind::RangeWrapper)
+            | Some(RefClassificationKind::InlineEnum) => {
+                columns.push(wrapper_entity_column(prop, field_def));
+            }
+            Some(RefClassificationKind::CodelistReference) => {
+                // Array codelist properties are child tables, not columns.
+                if prop.is_array {
+                    continue;
+                }
+                columns.push(codelist_string_column(prop, field_def));
+            }
+            Some(RefClassificationKind::CodelistCheck) => {
+                // Array codelist properties are child tables, not columns.
+                if prop.is_array {
+                    continue;
+                }
+                columns.push(codelist_string_column(prop, field_def));
+            }
+            Some(RefClassificationKind::EntityReference) => {
+                // Nullability honors the schema's `required` — the JSON schema is
+                // the source of truth. A required entity ref produces a NOT NULL
+                // FK column (Uuid, is_nullable: false) in both the DDL and the
+                // model; an optional ref produces Option<Uuid>.
+                // Array entity refs are junction child tables (persisted via
+                // raw SQL in the repository), never columns on this model.
+                if prop.is_array {
+                    continue;
+                }
+                // The DDL is the source of truth for the column universe:
+                // array entity-refs and `type: object` + `items` refs are
+                // junction tables with no column. Skipping anything the DDL
+                // does not have keeps SELECT/RETURNING off phantom columns.
+                if !ddl_column_names.contains(&field_def.column_name) {
+                    continue;
+                }
+                columns.push(entity_ref_column(prop, field_def));
+            }
+            Some(RefClassificationKind::CompositeWrapper)
+            | Some(RefClassificationKind::MediaWrapper) => {
+                let comp_cols =
+                    composite_wrapper_columns(db, prop, schema_title, field_def).await;
+                for col in comp_cols {
+                    columns.push(col);
+                }
+            }
+            Some(RefClassificationKind::ValueObject)
+                // When a non-array VO property targets a known entity (directly
+                // or through an allOf composition chain), emit an FK column on
+                // this entity model. Uses the shared resolve_fk_column_name utility
+                // — single source of truth for FK column naming across layers.
+                if !prop.is_array => {
+                    if let Some(column) =
+                        value_object_fk_column(db, prop, schema_title, entity_titles).await?
+                    {
+                        columns.push(column);
+                    }
+                }
+                // Child tables for non-entity VO targets are generated below
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn wrapper_entity_column(prop: &PropertyNode, field_def: FieldDefinition) -> EntityColumn {
+    let is_structured = prop.effective_kind() == Some(RefClassificationKind::StructuredWrapper);
+    let is_nullable = !prop.is_required;
+    // Entity layer uses serde_json::Value for JSONB structured
+    // wrappers — the typed struct is used at the DTO layer only.
+    let base_type = if is_structured {
+        "serde_json::Value".to_string()
+    } else {
+        prop.rust_field_type.clone()
+    };
+    let rust_type = if is_nullable {
+        format!("Option<{base_type}>")
+    } else {
+        base_type
+    };
+    let pg_cast = if prop.effective_kind() == Some(RefClassificationKind::RangeWrapper) {
+        pg_cast_for_type(&prop.pg_column_type)
+    } else {
+        None
+    };
+    let sea_orm_attr = if is_structured {
+        Some(r#"column_type = "JsonBinary""#.to_string())
+    } else {
+        None
+    };
+
+    EntityColumn {
+        field_name: field_def.rust_field_name,
+        rust_type,
+        sea_orm_type: if is_structured {
+            "JsonBinary".to_string()
+        } else {
+            prop.sea_orm_type.clone()
+        },
+        column_name: field_def.column_name,
+        is_primary_key: false,
+        is_nullable,
+        pg_cast,
+        sea_orm_attr,
+    }
+}
+
+fn codelist_string_column(prop: &PropertyNode, field_def: FieldDefinition) -> EntityColumn {
+    let is_nullable = !prop.is_required;
+    let rust_type = if is_nullable {
+        "Option<String>".to_string()
+    } else {
+        "String".to_string()
+    };
+    EntityColumn {
+        field_name: field_def.rust_field_name,
+        rust_type,
+        sea_orm_type: "String".to_string(),
+        column_name: field_def.column_name,
+        is_primary_key: false,
+        is_nullable,
+        pg_cast: None,
+        sea_orm_attr: None,
+    }
+}
+
+fn entity_ref_column(prop: &PropertyNode, field_def: FieldDefinition) -> EntityColumn {
+    let is_nullable = !prop.is_required;
+    EntityColumn {
+        field_name: field_def.rust_field_name,
+        rust_type: if is_nullable {
+            "Option<Uuid>".to_string()
+        } else {
+            "Uuid".to_string()
+        },
+        sea_orm_type: "Uuid".to_string(),
+        column_name: field_def.column_name,
+        is_primary_key: false,
+        is_nullable,
+        pg_cast: None,
+        sea_orm_attr: None,
+    }
+}
+
+async fn composite_wrapper_columns(
+    db: &dyn GraphQuerier,
+    prop: &PropertyNode,
+    schema_title: &str,
+    field_def: FieldDefinition,
+) -> Vec<EntityColumn> {
+    let mut out = Vec::new();
+    if let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await {
+        for col in &comp_cols {
+            let field_name = format!("{}{}", field_def.rust_field_name, col.suffix);
+            let column_name = format!("{}{}", field_def.column_name, col.suffix);
+            let is_nullable = !prop.is_required;
+            // Entity models always use the raw column type (e.g. String),
+            // not the DTO enum type (e.g. CurrencyCodeList).
+            let rust_type = if is_nullable {
+                format!("Option<{}>", col.rust_type)
+            } else {
+                col.rust_type.clone()
+            };
+            out.push(EntityColumn {
+                field_name,
+                rust_type,
+                sea_orm_type: col.sea_orm_type.clone(),
+                column_name,
+                is_primary_key: false,
+                is_nullable,
+                pg_cast: crate::generate::pg_cast_for_type(&col.pg_type),
+                sea_orm_attr: None,
+            });
+        }
+    }
+    out
+}
+
+async fn value_object_fk_column(
+    db: &dyn GraphQuerier,
+    prop: &PropertyNode,
+    schema_title: &str,
+    entity_titles: &std::collections::HashSet<String>,
+) -> Result<Option<EntityColumn>> {
+    let Some((fk_field, fk_col)) =
+        codegraph_core::types::resolve_fk_column_name(db, prop, schema_title, entity_titles)
+            .await?
+    else {
+        // The resolver returns None for non-resolving props; emitting from the
+        // raw names would hallucinate columns for fields that merely end in
+        // `_id` (e.g. screening."order".subject_id).
+        return Ok(None);
+    };
+    // VO→entity FK columns are always nullable in the DDL
+    // (the DTO/repository model the VO as a nested child
+    // table and never populate the FK), so the model field
+    // must be Option<Uuid> regardless of schema required.
+    let is_nullable = true;
+    Ok(Some(EntityColumn {
+        field_name: fk_field,
+        rust_type: if is_nullable {
+            "Option<Uuid>".to_string()
+        } else {
+            "Uuid".to_string()
+        },
+        sea_orm_type: "Uuid".to_string(),
+        column_name: fk_col,
+        is_primary_key: false,
+        is_nullable,
+        pg_cast: None,
+        sea_orm_attr: None,
+    }))
+}
+
+fn dedup_columns_by_field_name(columns: &mut Vec<EntityColumn>) {
+    let mut seen_fields = std::collections::HashSet::new();
+    columns.retain(|c| seen_fields.insert(c.field_name.clone()));
+}
+
+fn add_tenant_column(
+    dialect: &dyn SqlDialect,
+    columns: &mut Vec<EntityColumn>,
+    tenant_policy: Option<&TenantIsolationPolicy>,
+    table_name: &str,
+    config: &DomainConfig,
+) {
+    let (is_tenant_scoped, tenant_column_name): (bool, String) = if let Some(ti) = tenant_policy {
+        match &ti.strategy {
+            TenantStrategy::Column { property } => (true, property.clone()),
+            _ => (true, String::new()),
+        }
+    } else {
+        (
+            !is_global_entity(table_name, config),
+            "platform_organization_id".to_string(),
+        )
+    };
+    if is_tenant_scoped && !tenant_column_name.is_empty() {
+        columns.insert(
+            1, // After id, before other columns
+            EntityColumn {
+                field_name: tenant_column_name.clone(),
+                rust_type: "Uuid".to_string(),
+                sea_orm_type: dialect
+                    .map_sea_orm_type("Uuid")
+                    .unwrap_or("Uuid".to_string()),
+                column_name: tenant_column_name,
+                is_primary_key: false,
+                is_nullable: false,
+                pg_cast: None,
+                sea_orm_attr: None,
+            },
+        );
+    }
+}
+
+fn add_timestamp_columns(columns: &mut Vec<EntityColumn>, audit_policy: Option<&AuditPolicy>) {
+    if let Some(audit) = audit_policy {
+        if audit.track_created {
+            columns.push(EntityColumn {
+                field_name: "created_at".to_string(),
+                rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
+                sea_orm_type: "TimestampWithTimeZone".to_string(),
+                column_name: "created_at".to_string(),
+                is_primary_key: false,
+                is_nullable: false,
+                pg_cast: None,
+                sea_orm_attr: None,
+            });
+        }
+        if audit.track_updated {
+            columns.push(EntityColumn {
+                field_name: "updated_at".to_string(),
+                rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
+                sea_orm_type: "TimestampWithTimeZone".to_string(),
+                column_name: "updated_at".to_string(),
+                is_primary_key: false,
+                is_nullable: false,
+                pg_cast: None,
+                sea_orm_attr: None,
+            });
+        }
+    } else {
+        // Backward compat: always add timestamps when no AuditPolicy present
+        columns.push(EntityColumn {
+            field_name: "created_at".to_string(),
+            rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
+            sea_orm_type: "TimestampWithTimeZone".to_string(),
+            column_name: "created_at".to_string(),
+            is_primary_key: false,
+            is_nullable: false,
+            pg_cast: None,
+            sea_orm_attr: None,
+        });
+        columns.push(EntityColumn {
+            field_name: "updated_at".to_string(),
+            rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
+            sea_orm_type: "TimestampWithTimeZone".to_string(),
+            column_name: "updated_at".to_string(),
+            is_primary_key: false,
+            is_nullable: false,
+            pg_cast: None,
+            sea_orm_attr: None,
+        });
+    }
+}
+
+fn add_soft_delete_marker(
+    columns: &mut Vec<EntityColumn>,
+    soft_delete_policy: Option<&SoftDeletePolicy>,
+) -> Option<String> {
+    let mut soft_delete_marker_field: Option<String> = None;
+    if let Some(sd) = soft_delete_policy {
+        let (marker_name, marker_type) = match &sd.marker {
+            SoftDeleteMarker::Timestamp(name) => (name.clone(), "chrono::DateTime<chrono::Utc>"),
+            SoftDeleteMarker::Boolean(name) => (name.clone(), "bool"),
+            SoftDeleteMarker::Status(name) => (name.clone(), "String"),
+        };
+        soft_delete_marker_field = Some(marker_name.clone());
+        columns.push(EntityColumn {
+            field_name: marker_name.clone(),
+            rust_type: format!("Option<{}>", marker_type),
+            sea_orm_type: "TimestampWithTimeZone".to_string(),
+            column_name: marker_name,
+            is_primary_key: false,
+            is_nullable: true,
+            pg_cast: None,
+            sea_orm_attr: None,
+        });
+    }
+    soft_delete_marker_field
+}
+
+fn audit_tracking_enabled(
+    audit_policy: Option<&AuditPolicy>,
+    config_auditable: Option<bool>,
+) -> bool {
+    if let Some(audit) = audit_policy {
+        // Policy-driven: auditable only if the policy requests delete tracking
+        audit.track_deleted
+    } else {
+        // Backward compat: use domain-level auditable flag
+        config_auditable.unwrap_or(true)
+    }
+}
+
+fn push_audit_columns(columns: &mut Vec<EntityColumn>, soft_delete_marker_field: Option<&str>) {
+    // Only add deleted_at column if soft-delete marker is not already providing
+    // a timestamp-based marker (avoid duplicate column).
+    if soft_delete_marker_field != Some("deleted_at") {
+        columns.push(EntityColumn {
+            field_name: "deleted_at".to_string(),
+            rust_type: "Option<chrono::DateTime<chrono::Utc>>".to_string(),
+            sea_orm_type: "TimestampWithTimeZone".to_string(),
+            column_name: "deleted_at".to_string(),
+            is_primary_key: false,
+            is_nullable: true,
+            pg_cast: None,
+            sea_orm_attr: None,
+        });
+    }
+    columns.push(EntityColumn {
+        field_name: "deleted_by".to_string(),
+        rust_type: "Option<Uuid>".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        column_name: "deleted_by".to_string(),
+        is_primary_key: false,
+        is_nullable: true,
+        pg_cast: None,
+        sea_orm_attr: None,
+    });
+    columns.push(EntityColumn {
+        field_name: "updated_by".to_string(),
+        rust_type: "Option<Uuid>".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        column_name: "updated_by".to_string(),
+        is_primary_key: false,
+        is_nullable: true,
+        pg_cast: None,
+        sea_orm_attr: None,
+    });
+    columns.push(EntityColumn {
+        field_name: "is_demo_data".to_string(),
+        rust_type: "bool".to_string(),
+        sea_orm_type: "Boolean".to_string(),
+        column_name: "is_demo_data".to_string(),
+        is_primary_key: false,
+        is_nullable: false,
+        pg_cast: None,
+        sea_orm_attr: None,
+    });
+}
+
+fn structured_imports_for_columns(columns: &[EntityColumn], import_prefix: &str) -> Vec<String> {
+    columns
+        .iter()
+        .filter(|c| c.sea_orm_attr.as_deref() == Some(r#"column_type = "JsonBinary""#))
+        .filter_map(|c| {
+            let mut inner = c.rust_type.as_str();
+            // Strip Option<> and Vec<> wrappers to get the base type
+            if let Some(s) = inner
+                .strip_prefix("Option<")
+                .and_then(|s| s.strip_suffix('>'))
+            {
+                inner = s;
+            }
+            if let Some(s) = inner.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
+                inner = s;
+            }
+            if inner != "serde_json::Value" && !inner.is_empty() {
+                Some(format!("use {import_prefix}::{inner};"))
+            } else {
+                None
+            }
+        })
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn hierarchy_relations(
+    hierarchy_field: Option<String>,
+    entity_module_name: &str,
+) -> Vec<EntityRelation> {
+    let mut relations = Vec::new();
+    if let Some(hf) = hierarchy_field {
+        relations.push(EntityRelation {
+            name: "Parent".to_string(),
+            relation_type: "belongs_to = \"Entity\"".to_string(),
+            related_entity: entity_module_name.to_string(),
+            from_column: codegraph_naming::to_pascal_case(&hf),
+            to_column: "Id".to_string(),
+            is_self_ref: true,
+        });
+    }
+    relations
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn build_child_entity_files(
+    db: &dyn GraphQuerier,
+    props: &[PropertyNode],
+    schema_title: &str,
+    table_name: &str,
+    schema_name: &str,
+    rust_type: &str,
+    output_dir: &Path,
+    tera: &tera::Tera,
+    config: &DomainConfig,
+    project: &ProjectConfig,
+    dialect: &dyn SqlDialect,
+    entity_titles: &std::collections::HashSet<String>,
+) -> Result<Vec<GeneratedFile>> {
+    let mut files = Vec::new();
+    for prop in props {
+        if prop.effective_kind() == Some(RefClassificationKind::ValueObject) {
+            // Non-array VOs targeting entities are already handled as FK columns
+            // in the main column loop above — skip them here.
+            if !prop.is_array {
+                if let Some(true) = db
+                    .get_property_ref_target(&prop.name, schema_title)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|t| entity_titles.contains(&t.title))
+                {
+                    continue;
+                }
+            }
+            let mut visited = std::collections::HashSet::new();
+            visited.insert(schema_title.to_string());
+            let child_files = Box::pin(build_child_entity(
+                db,
+                prop,
+                schema_title,
+                table_name,
+                schema_name,
+                rust_type,
+                output_dir,
+                tera,
+                config,
+                &mut visited,
+                0,
+                project,
+                dialect,
+            ))
+            .await?;
+            files.extend(child_files);
+        }
+
+        // Codelist array properties → synthetic child entity with single "code" column.
+        if prop.is_array
+            && matches!(
+                prop.effective_kind(),
+                Some(RefClassificationKind::CodelistReference)
+                    | Some(RefClassificationKind::CodelistCheck)
+            )
+        {
+            let child_files = build_codelist_child_entity(
+                prop,
+                table_name,
+                schema_name,
+                rust_type,
+                output_dir,
+                tera,
+                config,
+                project,
+                dialect,
+            )?;
+            files.extend(child_files);
+        }
+    }
+    Ok(files)
 }
 
 /// Recursively build SeaORM entity files for a ValueObject child table.
@@ -919,57 +1095,8 @@ async fn build_child_entity(
         config.defaults.strip_suffix(&ts.rust_type_name)
     );
 
-    let mut columns = vec![
-        EntityColumn {
-            field_name: "id".to_string(),
-            rust_type: "Uuid".to_string(),
-            sea_orm_type: dialect
-                .map_sea_orm_type("Uuid")
-                .unwrap_or("Uuid".to_string()),
-            column_name: "id".to_string(),
-            is_primary_key: true,
-            is_nullable: false,
-            pg_cast: None,
-            sea_orm_attr: None,
-        },
-        EntityColumn {
-            field_name: super::ddl::child_parent_fk_column(parent_table_name),
-            rust_type: "Uuid".to_string(),
-            sea_orm_type: dialect
-                .map_sea_orm_type("Uuid")
-                .unwrap_or("Uuid".to_string()),
-            column_name: super::ddl::child_parent_fk_column(parent_table_name),
-            is_primary_key: false,
-            is_nullable: false,
-            pg_cast: None,
-            sea_orm_attr: None,
-        },
-    ];
-
-    // Composite range: collapse start/end fields into a single range column
-    let composite_range = db.get_composite_range(&ts.title).await.ok().flatten();
-    let consumed_fields: std::collections::HashSet<String> = db
-        .get_consumed_fields(&ts.title)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(prop, _role)| prop.name)
-        .collect();
-
-    // Emit the range column if present — uses Custom column type for correct PG casting
-    if let Some(ref range) = composite_range {
-        let pg_cast = pg_cast_for_type(&range.pg_type);
-        columns.push(EntityColumn {
-            field_name: range.pg_column_name.clone(),
-            rust_type: "Option<String>".to_string(),
-            sea_orm_type: "Text".to_string(),
-            column_name: range.pg_column_name.clone(),
-            is_primary_key: false,
-            is_nullable: true,
-            pg_cast,
-            sea_orm_attr: None,
-        });
-    }
+    let (mut columns, consumed_fields) =
+        child_base_columns(db, &ts.title, dialect, parent_table_name).await;
 
     let mut nested_files = Vec::new();
 
@@ -985,45 +1112,7 @@ async fn build_child_entity(
             | Some(RefClassificationKind::ArrayWrapper)
             | Some(RefClassificationKind::RangeWrapper)
             | Some(RefClassificationKind::InlineEnum) => {
-                let is_structured =
-                    child_prop.effective_kind() == Some(RefClassificationKind::StructuredWrapper);
-                let is_nullable = !child_prop.is_required;
-                let base_type = if is_structured {
-                    "serde_json::Value".to_string()
-                } else {
-                    child_prop.rust_field_type.clone()
-                };
-                let rust_type = if is_nullable {
-                    format!("Option<{base_type}>")
-                } else {
-                    base_type
-                };
-                let pg_cast =
-                    if child_prop.effective_kind() == Some(RefClassificationKind::RangeWrapper) {
-                        pg_cast_for_type(&child_prop.pg_column_type)
-                    } else {
-                        None
-                    };
-                let sea_orm_attr = if is_structured {
-                    Some(r#"column_type = "JsonBinary""#.to_string())
-                } else {
-                    None
-                };
-
-                columns.push(EntityColumn {
-                    field_name: child_field_def.rust_field_name,
-                    rust_type,
-                    sea_orm_type: if is_structured {
-                        "JsonBinary".to_string()
-                    } else {
-                        child_prop.sea_orm_type.clone()
-                    },
-                    column_name: child_field_def.column_name,
-                    is_primary_key: false,
-                    is_nullable,
-                    pg_cast,
-                    sea_orm_attr,
-                });
+                columns.push(wrapper_entity_column(child_prop, child_field_def));
             }
             Some(RefClassificationKind::CodelistReference)
             | Some(RefClassificationKind::CodelistCheck) => {
@@ -1043,22 +1132,7 @@ async fn build_child_entity(
                     )?;
                     nested_files.extend(child_files);
                 } else {
-                    let is_nullable = !child_prop.is_required;
-                    let rust_type = if is_nullable {
-                        "Option<String>".to_string()
-                    } else {
-                        "String".to_string()
-                    };
-                    columns.push(EntityColumn {
-                        field_name: child_field_def.rust_field_name,
-                        rust_type,
-                        sea_orm_type: "String".to_string(),
-                        column_name: child_field_def.column_name,
-                        is_primary_key: false,
-                        is_nullable,
-                        pg_cast: None,
-                        sea_orm_attr: None,
-                    });
+                    columns.push(codelist_string_column(child_prop, child_field_def));
                 }
             }
             Some(RefClassificationKind::EntityReference) => {
@@ -1088,28 +1162,11 @@ async fn build_child_entity(
             }
             Some(RefClassificationKind::CompositeWrapper)
             | Some(RefClassificationKind::MediaWrapper) => {
-                if let Ok(comp_cols) = db.get_composite_columns(&child_prop.name, &ts.title).await {
-                    for col in &comp_cols {
-                        let field_name =
-                            format!("{}{}", child_field_def.rust_field_name, col.suffix);
-                        let column_name = format!("{}{}", child_field_def.column_name, col.suffix);
-                        let is_nullable = !child_prop.is_required;
-                        let rust_type = if is_nullable {
-                            format!("Option<{}>", col.rust_type)
-                        } else {
-                            col.rust_type.clone()
-                        };
-                        columns.push(EntityColumn {
-                            field_name,
-                            rust_type,
-                            sea_orm_type: col.sea_orm_type.clone(),
-                            column_name,
-                            is_primary_key: false,
-                            is_nullable,
-                            pg_cast: None,
-                            sea_orm_attr: None,
-                        });
-                    }
+                let comp_cols =
+                    child_composite_wrapper_columns(db, child_prop, &ts.title, child_field_def)
+                        .await;
+                for col in comp_cols {
+                    columns.push(col);
                 }
             }
             Some(RefClassificationKind::ValueObject) => {
@@ -1138,70 +1195,18 @@ async fn build_child_entity(
 
     // Deduplicate columns by field_name — composite wrappers, allOf composition, and
     // EntityReference _id suffixes can produce duplicate column names. Keep the first.
-    {
-        let mut seen_fields = std::collections::HashSet::new();
-        columns.retain(|c| seen_fields.insert(c.field_name.clone()));
-    }
+    dedup_columns_by_field_name(&mut columns);
 
     // Add timestamp columns
-    columns.push(EntityColumn {
-        field_name: "created_at".to_string(),
-        rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-        sea_orm_type: dialect
-            .map_sea_orm_type("TimestampWithTimeZone")
-            .unwrap_or("TimestampWithTimeZone".to_string()),
-        column_name: "created_at".to_string(),
-        is_primary_key: false,
-        is_nullable: false,
-        pg_cast: None,
-        sea_orm_attr: None,
-    });
-    columns.push(EntityColumn {
-        field_name: "updated_at".to_string(),
-        rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-        sea_orm_type: dialect
-            .map_sea_orm_type("TimestampWithTimeZone")
-            .unwrap_or("TimestampWithTimeZone".to_string()),
-        column_name: "updated_at".to_string(),
-        is_primary_key: false,
-        is_nullable: false,
-        pg_cast: None,
-        sea_orm_attr: None,
-    });
+    child_timestamp_columns(&mut columns, dialect);
 
     // Deduplicate columns by field_name — same rationale as parent entity.
-    {
-        let mut seen = std::collections::HashSet::new();
-        columns.retain(|col| seen.insert(col.field_name.clone()));
-    }
+    dedup_columns_by_field_name(&mut columns);
 
     let entity_module_name = format!("{}_{}", schema_name, child_table_name);
 
     let import_prefix = &config.defaults.types_import_prefix;
-    let structured_imports: Vec<String> = columns
-        .iter()
-        .filter(|c| c.sea_orm_attr.as_deref() == Some(r#"column_type = "JsonBinary""#))
-        .filter_map(|c| {
-            let mut inner = c.rust_type.as_str();
-            // Strip Option<> and Vec<> wrappers to get the base type
-            if let Some(s) = inner
-                .strip_prefix("Option<")
-                .and_then(|s| s.strip_suffix('>'))
-            {
-                inner = s;
-            }
-            if let Some(s) = inner.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
-                inner = s;
-            }
-            if inner != "serde_json::Value" && !inner.is_empty() {
-                Some(format!("use {import_prefix}::{inner};"))
-            } else {
-                None
-            }
-        })
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
+    let structured_imports = structured_imports_for_columns(&columns, import_prefix);
 
     let ctx = EntityContext {
         module_name: entity_module_name.clone(),
@@ -1228,6 +1233,126 @@ async fn build_child_entity(
     files.extend(nested_files);
 
     Ok(files)
+}
+
+async fn child_base_columns(
+    db: &dyn GraphQuerier,
+    ts_title: &str,
+    dialect: &dyn SqlDialect,
+    parent_table_name: &str,
+) -> (Vec<EntityColumn>, std::collections::HashSet<String>) {
+    let mut columns = vec![
+        EntityColumn {
+            field_name: "id".to_string(),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: dialect
+                .map_sea_orm_type("Uuid")
+                .unwrap_or("Uuid".to_string()),
+            column_name: "id".to_string(),
+            is_primary_key: true,
+            is_nullable: false,
+            pg_cast: None,
+            sea_orm_attr: None,
+        },
+        EntityColumn {
+            field_name: super::ddl::child_parent_fk_column(parent_table_name),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: dialect
+                .map_sea_orm_type("Uuid")
+                .unwrap_or("Uuid".to_string()),
+            column_name: super::ddl::child_parent_fk_column(parent_table_name),
+            is_primary_key: false,
+            is_nullable: false,
+            pg_cast: None,
+            sea_orm_attr: None,
+        },
+    ];
+
+    // Composite range: collapse start/end fields into a single range column
+    let composite_range = db.get_composite_range(ts_title).await.ok().flatten();
+    let consumed_fields: std::collections::HashSet<String> = db
+        .get_consumed_fields(ts_title)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(prop, _role)| prop.name)
+        .collect();
+
+    // Emit the range column if present — uses Custom column type for correct PG casting
+    if let Some(ref range) = composite_range {
+        let pg_cast = pg_cast_for_type(&range.pg_type);
+        columns.push(EntityColumn {
+            field_name: range.pg_column_name.clone(),
+            rust_type: "Option<String>".to_string(),
+            sea_orm_type: "Text".to_string(),
+            column_name: range.pg_column_name.clone(),
+            is_primary_key: false,
+            is_nullable: true,
+            pg_cast,
+            sea_orm_attr: None,
+        });
+    }
+
+    (columns, consumed_fields)
+}
+
+async fn child_composite_wrapper_columns(
+    db: &dyn GraphQuerier,
+    child_prop: &PropertyNode,
+    ts_title: &str,
+    child_field_def: FieldDefinition,
+) -> Vec<EntityColumn> {
+    let mut out = Vec::new();
+    if let Ok(comp_cols) = db.get_composite_columns(&child_prop.name, ts_title).await {
+        for col in &comp_cols {
+            let field_name = format!("{}{}", child_field_def.rust_field_name, col.suffix);
+            let column_name = format!("{}{}", child_field_def.column_name, col.suffix);
+            let is_nullable = !child_prop.is_required;
+            let rust_type = if is_nullable {
+                format!("Option<{}>", col.rust_type)
+            } else {
+                col.rust_type.clone()
+            };
+            out.push(EntityColumn {
+                field_name,
+                rust_type,
+                sea_orm_type: col.sea_orm_type.clone(),
+                column_name,
+                is_primary_key: false,
+                is_nullable,
+                pg_cast: None,
+                sea_orm_attr: None,
+            });
+        }
+    }
+    out
+}
+
+fn child_timestamp_columns(columns: &mut Vec<EntityColumn>, dialect: &dyn SqlDialect) {
+    columns.push(EntityColumn {
+        field_name: "created_at".to_string(),
+        rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
+        sea_orm_type: dialect
+            .map_sea_orm_type("TimestampWithTimeZone")
+            .unwrap_or("TimestampWithTimeZone".to_string()),
+        column_name: "created_at".to_string(),
+        is_primary_key: false,
+        is_nullable: false,
+        pg_cast: None,
+        sea_orm_attr: None,
+    });
+    columns.push(EntityColumn {
+        field_name: "updated_at".to_string(),
+        rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
+        sea_orm_type: dialect
+            .map_sea_orm_type("TimestampWithTimeZone")
+            .unwrap_or("TimestampWithTimeZone".to_string()),
+        column_name: "updated_at".to_string(),
+        is_primary_key: false,
+        is_nullable: false,
+        pg_cast: None,
+        sea_orm_attr: None,
+    });
 }
 
 #[allow(clippy::too_many_arguments)]

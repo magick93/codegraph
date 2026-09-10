@@ -4,7 +4,7 @@
 //! by `manifest.hurl`; DB access via `config.api_db`. Everything else is
 //! derived from the generated app (binary name, migrations dir, ports).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::OpsConfig;
@@ -127,6 +127,65 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     // (provider parity: the cornucopia manifest gets its profile passed to
     // the graph binary and CORNUCOPIA_DATABASE_URL exported for the build).
     // --skip-build skips both; --skip-generate skips only generation.
+    stage_generate_build(config, args).await?;
+
+    // ---- 1. Preflight ----
+    let binary = stage_preflight(config, args, &mut counters).await?;
+
+    // ---- 2. Database ----
+    let (migration_dir, auth_header, api_key_b) =
+        stage_database(config, args, &mut counters).await?;
+
+    // ---- 3. Server ----
+    let mut supervisor = stage_server(config, args, &binary, &mut counters).await?;
+
+    // ---- 4. Hurl API tests ----
+    stage_hurl(config, args, auth_header.as_ref(), &mut counters).await?;
+
+    // ---- 5. Curl smoke tests ----
+    stage_curl_smoke(config, auth_header.as_ref(), &mut counters).await;
+
+    // ---- 6. DB inspection ----
+    stage_db_inspection(config, &migration_dir, &mut counters).await;
+
+    // ---- 7. Health endpoint ----
+    stage_health(config, &mut counters).await;
+
+    // ---- 8. Cross-tenant RLS isolation ----
+    stage_rls_isolation(
+        config,
+        auth_header.as_ref(),
+        api_key_b.as_ref(),
+        &mut counters,
+    )
+    .await;
+
+    // ---- 9. Server log check ----
+    stage_server_log(config, &mut counters).await;
+
+    // ---- 10. Graceful shutdown verification ----
+    stage_graceful_shutdown(config, &mut supervisor, &mut counters).await;
+
+    // ---- 11. Regeneration (optional) ----
+    stage_regeneration(config, args, &mut counters).await?;
+
+    // ---- Summary ----
+    let ok = counters.summary();
+    write_api_report(config, args, &counters, ok);
+    supervisor.shutdown_all().await;
+
+    if ok {
+        Ok(())
+    } else {
+        Err(OpsError::TestFailure(format!(
+            "{} of {} API tests failed",
+            counters.failures,
+            counters.passes + counters.failures
+        )))
+    }
+}
+
+async fn stage_generate_build(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     if !args.skip_build {
         output::section("0. Generate + build");
         config.metrics.begin("Generate + build");
@@ -154,8 +213,14 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         output::ok("App built");
         config.metrics.end();
     }
+    Ok(())
+}
 
-    // ---- 1. Preflight ----
+async fn stage_preflight(
+    config: &OpsConfig,
+    args: &ApiArgs,
+    counters: &mut TestCounters,
+) -> OpsResult<PathBuf> {
     output::section("1. Preflight");
     config.metrics.begin("Preflight");
 
@@ -396,6 +461,14 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     }
     config.metrics.end();
 
+    Ok(binary)
+}
+
+async fn stage_database(
+    config: &OpsConfig,
+    args: &ApiArgs,
+    counters: &mut TestCounters,
+) -> OpsResult<(PathBuf, Option<String>, Option<String>)> {
     // ---- 2. Database ----
     output::section("2. Database");
     config.metrics.begin("DB migrate");
@@ -483,6 +556,15 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     }
     config.metrics.end();
 
+    Ok((migration_dir, auth_header, api_key_b))
+}
+
+async fn stage_server(
+    config: &OpsConfig,
+    args: &ApiArgs,
+    binary: &Path,
+    counters: &mut TestCounters,
+) -> OpsResult<Supervisor> {
     // ---- 3. Server ----
     output::section("3. Server");
     config.metrics.begin("Start Axum");
@@ -492,7 +574,7 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         "{}:{}",
         config.manifest.servers.bind_addr, config.manifest.servers.api_port
     );
-    let mut server_cmd = Command::new(&binary);
+    let mut server_cmd = Command::new(binary);
     server_cmd
         .arg("start")
         .arg("--bind-addr")
@@ -525,6 +607,15 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     }
     config.metrics.end();
 
+    Ok(supervisor)
+}
+
+async fn stage_hurl(
+    config: &OpsConfig,
+    args: &ApiArgs,
+    auth_header: Option<&String>,
+    counters: &mut TestCounters,
+) -> OpsResult<()> {
     // ---- 4. Hurl API tests ----
     output::section("4. Hurl API tests");
     config.metrics.begin("Hurl API tests");
@@ -621,6 +712,14 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     output::info(format!("Total API requests: {total_requests}"));
     config.metrics.end();
 
+    Ok(())
+}
+
+async fn stage_curl_smoke(
+    config: &OpsConfig,
+    auth_header: Option<&String>,
+    counters: &mut TestCounters,
+) {
     // ---- 5. Curl smoke tests ----
     output::section("5. Curl smoke tests");
     config.metrics.begin("Curl smoke tests");
@@ -719,7 +818,13 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         output::info("no smoke entity configured — skipping curl smoke");
     }
     config.metrics.end();
+}
 
+async fn stage_db_inspection(
+    config: &OpsConfig,
+    migration_dir: &Path,
+    counters: &mut TestCounters,
+) {
     // ---- 6. DB inspection ----
     output::section("6. DB inspection");
     config.metrics.begin("DB inspection");
@@ -749,20 +854,22 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         output::info("no RLS policies found");
     }
 
-    let api_key_mig = find_file(&migration_dir, "api_key");
+    let api_key_mig = find_file(migration_dir, "api_key");
     if api_key_mig {
         counters.pass("API key migration generated");
     } else {
         counters.fail_test("no API key migration found");
     }
-    let rls_files = count_files_with_suffix(&migration_dir, "_rls.sql");
+    let rls_files = count_files_with_suffix(migration_dir, "_rls.sql");
     if rls_files > 0 {
         counters.pass(format!("RLS migration files: {rls_files}"));
     } else {
         counters.fail_test("no RLS migration files");
     }
     config.metrics.end();
+}
 
+async fn stage_health(config: &OpsConfig, counters: &mut TestCounters) {
     // ---- 7. Health endpoint ----
     output::section("7. Health endpoint");
     config.metrics.begin("GET /health");
@@ -781,7 +888,14 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         Err(e) => counters.fail_test(format!("GET /health: {e}")),
     }
     config.metrics.end();
+}
 
+async fn stage_rls_isolation(
+    config: &OpsConfig,
+    auth_header: Option<&String>,
+    api_key_b: Option<&String>,
+    counters: &mut TestCounters,
+) {
     // ---- 8. Cross-tenant RLS isolation ----
     output::section("8. Cross-tenant RLS isolation");
     config.metrics.begin("RLS cross-tenant isolation");
@@ -797,9 +911,7 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         .hurl
         .as_ref()
         .map(|h| config.root_dir.join(&h.dir).join(&isolation_file));
-    if let (Some(path), Some(key_a), Some(key_b)) =
-        (isolation_path, auth_header.as_ref(), api_key_b.as_ref())
-    {
+    if let (Some(path), Some(key_a), Some(key_b)) = (isolation_path, auth_header, api_key_b) {
         if path.is_file() {
             let key_a = key_a.trim_start_matches("Authorization: Bearer ");
             let out = Command::new("hurl")
@@ -837,7 +949,9 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         output::warn("skipped RLS isolation (missing hurl config or API keys)");
     }
     config.metrics.end();
+}
 
+async fn stage_server_log(config: &OpsConfig, counters: &mut TestCounters) {
     // ---- 9. Server log check ----
     output::section("9. Server log check");
     config.metrics.begin("Axum server log check");
@@ -865,7 +979,13 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         }
     }
     config.metrics.end();
+}
 
+async fn stage_graceful_shutdown(
+    config: &OpsConfig,
+    supervisor: &mut Supervisor,
+    counters: &mut TestCounters,
+) {
     // ---- 10. Graceful shutdown verification ----
     output::section("10. Graceful shutdown");
     config.metrics.begin("SIGTERM graceful shutdown");
@@ -909,7 +1029,13 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         }
     }
     config.metrics.end();
+}
 
+async fn stage_regeneration(
+    config: &OpsConfig,
+    args: &ApiArgs,
+    counters: &mut TestCounters,
+) -> OpsResult<()> {
     // ---- 11. Regeneration (optional) ----
     if args.regen {
         output::section("11. Regeneration validation");
@@ -942,8 +1068,10 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         config.metrics.end();
     }
 
-    // ---- Summary ----
-    let ok = counters.summary();
+    Ok(())
+}
+
+fn write_api_report(config: &OpsConfig, args: &ApiArgs, counters: &TestCounters, ok: bool) {
     if let Some(metrics_file) = &args.metrics_file {
         let _ = config.metrics.append_tsv(Path::new(metrics_file), "api");
     }
@@ -959,17 +1087,6 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
         report.failures = counters.failure_log.clone();
         report.exit = i32::from(!ok);
         let _ = report.write(Path::new(results_file));
-    }
-    supervisor.shutdown_all().await;
-
-    if ok {
-        Ok(())
-    } else {
-        Err(OpsError::TestFailure(format!(
-            "{} of {} API tests failed",
-            counters.failures,
-            counters.passes + counters.failures
-        )))
     }
 }
 

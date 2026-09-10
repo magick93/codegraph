@@ -1047,30 +1047,7 @@ impl DdlGenerator {
         let tree = db.get_composition_tree(schema_title).await?;
         let root = &tree.root;
 
-        let mut columns = vec![ColumnDef {
-            name: "id".to_string(),
-            pg_type: "UUID".to_string(),
-            nullable: false,
-            default: Some("gen_random_uuid()".to_string()),
-            is_primary_key: true,
-            is_array: false,
-        }];
-
-        let mut foreign_keys = Vec::new();
-        let mut check_constraints = Vec::new();
-        let mut comments = Vec::new();
-
-        // Emit composite range column if present (already resolved on the tree node)
-        if let Some(ref range) = root.composite_range {
-            columns.push(ColumnDef {
-                name: range.pg_column_name.clone(),
-                pg_type: range.pg_type.clone(),
-                nullable: true,
-                default: None,
-                is_primary_key: false,
-                is_array: false,
-            });
-        }
+        let mut artifacts = DdlAccumulators::new(root);
 
         // Inject FK column for parent-child relationships detected from the schema graph.
         // Honor the schema's `required` when the FK corresponds to a real property;
@@ -1079,154 +1056,22 @@ impl DdlGenerator {
             .domains
             .get(domain)
             .and_then(|d| d.get_entity_config(&schema.rust_type_name));
-        let ddl_props = db.get_properties(schema_title).await.unwrap_or_default();
-        if let Some(fk_col) = crate::generate::resolve_parent_fk_column(
+        add_parent_fk(
+            db,
+            config,
+            domain,
             schema_title,
-            &self.parent_candidates,
             entity_cfg,
-            &config.defaults.type_suffix,
-        ) {
-            let is_required = ddl_props.iter().any(|p| {
-                codegraph_core::types::resolve_field(p).rust_field_name == fk_col
-                    || p.pg_column_name == fk_col
-            }) && ddl_props
-                .iter()
-                .find_map(|p| {
-                    let fd = codegraph_core::types::resolve_field(p);
-                    if fd.rust_field_name == fk_col || p.pg_column_name == fk_col {
-                        Some(p.is_required)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(false);
-            columns.push(ColumnDef {
-                name: fk_col.clone(),
-                pg_type: "UUID".to_string(),
-                nullable: !is_required,
-                default: None,
-                is_primary_key: false,
-                is_array: false,
-            });
-            // Resolve the parent's schema and table for the FK constraint.
-            // Manual config takes priority over graph detection.
-            let mut fk_resolved = false;
-            if let Some(ec) = entity_cfg {
-                if ec.role.as_deref() == Some("child") {
-                    if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) =
-                            db.get_schema_in_domain(parent_title, domain).await
-                        {
-                            let parent_domain = if config
-                                .domains
-                                .get(domain)
-                                .map(|d| d.entities.contains(parent_title))
-                                .unwrap_or(false)
-                            {
-                                domain
-                            } else {
-                                parent_schema.domain.as_deref().unwrap_or(domain)
-                            };
-                            foreign_keys.push(ForeignKeyDef {
-                                column_name: strip_rsharp(&fk_col),
-                                column: fk_col.clone(),
-                                references_schema: parent_domain.to_string(),
-                                references_table: parent_schema.pg_table_name.clone(),
-                                references_column: "id".to_string(),
-                                on_delete: "CASCADE".to_string(),
-                                is_codelist: false,
-                            });
-                            fk_resolved = true;
-                        }
-                    }
-                }
-            }
-            if !fk_resolved {
-                let stripped = crate::generate::api::router::strip_suffix(
-                    schema_title,
-                    &config.defaults.type_suffix,
-                );
-                if let Some(pc) = self.parent_candidates.iter().find(|pc| {
-                    crate::generate::api::router::strip_suffix(
-                        &pc.child_title,
-                        &config.defaults.type_suffix,
-                    ) == stripped
-                }) {
-                    if let Ok(Some(parent_schema)) =
-                        db.get_schema_in_domain(&pc.parent_title, domain).await
-                    {
-                        let parent_domain = if config
-                            .domains
-                            .get(domain)
-                            .map(|d| d.entities.contains(&pc.parent_title))
-                            .unwrap_or(false)
-                        {
-                            domain
-                        } else {
-                            parent_schema.domain.as_deref().unwrap_or(domain)
-                        };
-                        foreign_keys.push(ForeignKeyDef {
-                            column_name: strip_rsharp(&fk_col),
-                            column: fk_col,
-                            references_schema: parent_domain.to_string(),
-                            references_table: parent_schema.pg_table_name.clone(),
-                            references_column: "id".to_string(),
-                            on_delete: "CASCADE".to_string(),
-                            is_codelist: false,
-                        });
-                    }
-                }
-            }
-        }
+            &self.parent_candidates,
+            &mut artifacts,
+        )
+        .await;
 
         // Inject self-referential FK column for hierarchy entities
-        let mut indexes: Vec<IndexDef> = Vec::new();
-        if let Some(ec) = entity_cfg {
-            if let Some(ref hierarchy_field) = ec.hierarchy_field {
-                columns.push(ColumnDef {
-                    name: hierarchy_field.clone(),
-                    pg_type: "UUID".to_string(),
-                    nullable: true,
-                    default: None,
-                    is_primary_key: false,
-                    is_array: false,
-                });
-                foreign_keys.push(ForeignKeyDef {
-                    column: hierarchy_field.clone(),
-                    column_name: strip_rsharp(hierarchy_field),
-                    references_schema: schema_name.clone(),
-                    references_table: table_name.clone(),
-                    references_column: "id".to_string(),
-                    is_codelist: false,
-                    on_delete: "SET NULL".to_string(),
-                });
-                indexes.push(IndexDef {
-                    name: format!("idx_{}_{}", table_name, hierarchy_field),
-                    columns: vec![hierarchy_field.clone()],
-                    unique: false,
-                });
-            }
-        }
+        add_hierarchy_artifacts(entity_cfg, &mut artifacts, &schema_name, &table_name);
 
         // Convert tree columns to DDL artifacts — no graph queries needed
-        for col in &root.columns {
-            if col.name == "id" {
-                continue;
-            }
-            if let Some((cols, fks, checks, cmts)) = column_info_to_ddl(col, &table_name) {
-                columns.extend(cols);
-                foreign_keys.extend(fks);
-                check_constraints.extend(checks);
-                comments.extend(cmts);
-            }
-        }
-
-        // Deduplicate check constraints by name — duplicate ColumnInfo entries
-        // from cross-domain schema merging produce duplicate constraints.
-        {
-            let mut seen = HashSet::new();
-            check_constraints.retain(|chk| seen.insert(chk.name.clone()));
-        }
+        add_tree_columns(root, &table_name, &mut artifacts);
 
         // Filter FK constraints: only keep FKs whose target table belongs to an
         // entity that is actually configured in some domain (will have a migration).
@@ -1236,24 +1081,8 @@ impl DdlGenerator {
         // - Cross-domain refs pointing to non-existent schemas (e.g. "jdx")
         // Build (schema, table) pairs — a FK is valid only if its target
         // (references_schema, references_table) matches a generated entity.
-        let generated_tables: HashSet<(String, String)> = config
-            .domains
-            .values()
-            .flat_map(|d| {
-                let schema = &d.postgres_schema;
-                d.entities.iter().map(move |title| {
-                    let table = codegraph_naming::to_snake_case(&codegraph_naming::strip_suffix(
-                        title, "Type",
-                    ));
-                    (schema.clone(), table)
-                })
-            })
-            .collect();
-        foreign_keys.retain(|fk| {
-            fk.is_codelist
-                || generated_tables
-                    .contains(&(fk.references_schema.clone(), fk.references_table.clone()))
-        });
+        let generated_tables = generated_table_set(config);
+        retain_generated_fks(&mut artifacts.foreign_keys, &generated_tables);
 
         // Query graph properties for entity-reference columns that the composition
         // tree may have missed (e.g. cross-domain references where the target schema
@@ -1266,71 +1095,14 @@ impl DdlGenerator {
         // (i.e. is an entity configured in some domain). This prevents phantom
         // FK constraints to VO types that were force-classified but never
         // generated as entities, or to entities excluded in their domain.
-        if let Ok(props) = db.get_properties(schema_title).await {
-            let existing_names: std::collections::HashSet<String> =
-                columns.iter().map(|c| c.name.clone()).collect();
-
-            for prop in &props {
-                let kind = prop.effective_kind();
-                if kind != Some(RefClassificationKind::EntityReference) {
-                    continue;
-                }
-                // Array entity refs are junction/FK-on-child relationships
-                // materialized elsewhere (child tables, child-side FKs) — never
-                // columns on this table.
-                if prop.is_array {
-                    continue;
-                }
-                let base = prop
-                    .rust_field_name
-                    .strip_prefix("r#")
-                    .unwrap_or(&prop.rust_field_name);
-                let col_name = if base.ends_with("_id") {
-                    base.to_string()
-                } else {
-                    format!("{}_id", base)
-                };
-                if !existing_names.contains(col_name.as_str()) {
-                    // Try to resolve the FK target for the constraint.
-                    // Only emit the FK if the target schema is an entity
-                    // configured in some domain (has its own table/migration).
-                    // VOs, excluded types, and entity types not in any domain's
-                    // entities list don't have tables, so FK constraints to them
-                    // would fail with "undefined_table".
-                    if let Ok(Some(target)) =
-                        db.get_property_ref_target(&prop.name, schema_title).await
-                    {
-                        if !target.pg_table_name.is_empty() && target.is_entity {
-                            columns.push(ColumnDef {
-                                name: col_name.clone(),
-                                pg_type: "UUID".to_string(),
-                                nullable: true,
-                                default: None,
-                                is_primary_key: false,
-                                is_array: false,
-                            });
-                            let fk_schema = target.domain.as_deref().unwrap_or(&schema_name);
-                            foreign_keys.push(ForeignKeyDef {
-                                column_name: strip_rsharp(&prop.rust_field_name),
-                                column: col_name,
-                                references_schema: fk_schema.to_string(),
-                                references_table: target.pg_table_name.clone(),
-                                is_codelist: false,
-                                references_column: "id".to_string(),
-                                on_delete: "SET NULL".to_string(),
-                            });
-                        }
-                    }
-                }
-            }
-
-            // Re-filter after adding cross-domain FKs (same logic as above)
-            foreign_keys.retain(|fk| {
-                fk.is_codelist
-                    || generated_tables
-                        .contains(&(fk.references_schema.clone(), fk.references_table.clone()))
-            });
-        }
+        add_property_ref_columns(
+            db,
+            schema_title,
+            &schema_name,
+            &generated_tables,
+            &mut artifacts,
+        )
+        .await;
 
         // Convert child CompositionNodes → ChildTableDefs
         let mut child_tables: Vec<ChildTableDef> = root
@@ -1347,75 +1119,20 @@ impl DdlGenerator {
             })
             .collect();
 
-        // Add standard timestamp columns
-        columns.push(ColumnDef {
-            name: "created_at".to_string(),
-            pg_type: "TIMESTAMPTZ".to_string(),
-            nullable: false,
-            default: Some("now()".to_string()),
-            is_primary_key: false,
-            is_array: false,
-        });
-        columns.push(ColumnDef {
-            name: "updated_at".to_string(),
-            pg_type: "TIMESTAMPTZ".to_string(),
-            nullable: false,
-            default: Some("now()".to_string()),
-            is_primary_key: false,
-            is_array: false,
-        });
-        let has_updated_at = true;
-
-        // Determine tenancy
-        let is_tenant_scoped = !is_global_entity(&table_name, config);
-
-        // Add platform_organization_id for tenant-scoped entities
-        if is_tenant_scoped {
-            columns.insert(
-                1,
-                ColumnDef {
-                    name: "platform_organization_id".to_string(),
-                    pg_type: "UUID".to_string(),
-                    nullable: false,
-                    default: Some("'00000000-0000-0000-0000-000000000000'::UUID".to_string()),
-                    is_primary_key: false,
-                    is_array: false,
-                },
-            );
-
-            // Child tables (junction + VO) inherit the parent's tenancy: they
-            // carry the same tenant column so org-isolation RLS policies can
-            // be applied to them too. Nested children recurse.
-            let tenant_col = ColumnDef {
-                name: "platform_organization_id".to_string(),
-                pg_type: "UUID".to_string(),
-                nullable: false,
-                default: Some("'00000000-0000-0000-0000-000000000000'::UUID".to_string()),
-                is_primary_key: false,
-                is_array: false,
-            };
-            inject_child_tenant_columns(&mut child_tables, &tenant_col);
-        }
+        // Add standard timestamp columns and determine tenancy
+        let (has_updated_at, is_tenant_scoped) = add_timestamp_and_tenant_columns(
+            &mut artifacts.columns,
+            &mut child_tables,
+            config,
+            &table_name,
+        );
 
         // Deduplicate columns by name — CompositeWrapper expansion from
         // allOf-inherited properties can produce duplicate expanded columns.
-        {
-            let mut seen = std::collections::HashSet::new();
-            columns.retain(|col| seen.insert(col.name.clone()));
-        }
-
         // Deduplicate foreign keys by constraint name — cross-domain
         // schema merging via allOf produces duplicate FK definitions.
-        {
-            let mut seen = std::collections::HashSet::new();
-            foreign_keys.retain(|fk| seen.insert(fk.column_name.clone()));
-        }
-
         // Deduplicate comments by column name — same root cause.
-        {
-            let mut seen = std::collections::HashSet::new();
-            comments.retain(|c| seen.insert(c.column.clone()));
-        }
+        dedup_ddl_artifacts(&mut artifacts);
 
         // Query required extensions
         let mut extensions: Vec<String> = db
@@ -1429,26 +1146,8 @@ impl DdlGenerator {
         let domain = schema_name.clone();
 
         // Check if this entity has a workflow config
-        let workflow_cfg = config
-            .domains
-            .get(&domain)
-            .and_then(|d| d.get_entity_config(schema_title))
-            .and_then(|ec| ec.workflow.as_ref());
-
-        let has_workflow = workflow_cfg
-            .map(|wf| wf.generate_action_endpoints)
-            .unwrap_or(false);
-
-        // Workflow status fields from native schema columns are NOT NULL but lack a
-        // DEFAULT. Set the initial_state as the DB DEFAULT so INSERTs that don't
-        // include the status column (the API excludes it from CreateRequest) succeed.
-        if let Some(wf) = workflow_cfg {
-            for col in columns.iter_mut() {
-                if col.name == wf.status_field && !col.nullable && col.default.is_none() {
-                    col.default = Some(format!("'{}'", wf.initial_state));
-                }
-            }
-        }
+        let has_workflow =
+            apply_workflow_defaults(config, &domain, schema_title, &mut artifacts.columns);
 
         let resource_name = table_name.replace('_', "-");
 
@@ -1463,7 +1162,7 @@ impl DdlGenerator {
             .and_then(|d| d.get_entity_config(schema_title))
             .map(|ec| &ec.search);
 
-        let fts = build_fts_context(search_config, &columns, &table_name);
+        let fts = build_fts_context(search_config, &artifacts.columns, &table_name);
 
         let embeddings = build_embedding_contexts(search_config, &table_name);
 
@@ -1474,7 +1173,7 @@ impl DdlGenerator {
 
         // Detect extensions required by column types (safety net for transitive refs
         // that the ingestion pass may miss, e.g. PersonType → AddressType → GeoType).
-        for ext in detect_extensions_from_columns(&columns, &flat_child_tables) {
+        for ext in detect_extensions_from_columns(&artifacts.columns, &flat_child_tables) {
             if !extensions.contains(&ext) {
                 extensions.push(ext);
             }
@@ -1497,6 +1196,14 @@ impl DdlGenerator {
                 .await
                 .unwrap_or_default()
                 .is_empty();
+
+        let DdlAccumulators {
+            columns,
+            foreign_keys,
+            check_constraints,
+            comments,
+            indexes,
+        } = artifacts;
 
         Ok(DdlContext {
             schema_name,
@@ -1523,6 +1230,430 @@ impl DdlGenerator {
             is_codelist: schema.is_codelist,
         })
     }
+}
+
+/// Mutable DDL artifact accumulators shared by the `query_ddl_context` phases.
+struct DdlAccumulators {
+    columns: Vec<ColumnDef>,
+    foreign_keys: Vec<ForeignKeyDef>,
+    check_constraints: Vec<CheckConstraint>,
+    comments: Vec<ColumnComment>,
+    indexes: Vec<IndexDef>,
+}
+
+impl DdlAccumulators {
+    fn new(root: &codegraph_core::types::CompositionNode) -> Self {
+        let mut columns = vec![ColumnDef {
+            name: "id".to_string(),
+            pg_type: "UUID".to_string(),
+            nullable: false,
+            default: Some("gen_random_uuid()".to_string()),
+            is_primary_key: true,
+            is_array: false,
+        }];
+
+        // Emit composite range column if present (already resolved on the tree node)
+        if let Some(ref range) = root.composite_range {
+            columns.push(ColumnDef {
+                name: range.pg_column_name.clone(),
+                pg_type: range.pg_type.clone(),
+                nullable: true,
+                default: None,
+                is_primary_key: false,
+                is_array: false,
+            });
+        }
+
+        Self {
+            columns,
+            foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
+            comments: Vec::new(),
+            indexes: Vec::new(),
+        }
+    }
+}
+
+async fn add_parent_fk(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    schema_title: &str,
+    entity_cfg: Option<&codegraph_config::EntityConfig>,
+    parent_candidates: &[codegraph_core::types::ParentCandidate],
+    artifacts: &mut DdlAccumulators,
+) {
+    let ddl_props = db.get_properties(schema_title).await.unwrap_or_default();
+    if let Some(fk_col) = crate::generate::resolve_parent_fk_column(
+        schema_title,
+        parent_candidates,
+        entity_cfg,
+        &config.defaults.type_suffix,
+    ) {
+        let is_required = ddl_props.iter().any(|p| {
+            codegraph_core::types::resolve_field(p).rust_field_name == fk_col
+                || p.pg_column_name == fk_col
+        }) && ddl_props
+            .iter()
+            .find_map(|p| {
+                let fd = codegraph_core::types::resolve_field(p);
+                if fd.rust_field_name == fk_col || p.pg_column_name == fk_col {
+                    Some(p.is_required)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
+        artifacts.columns.push(ColumnDef {
+            name: fk_col.clone(),
+            pg_type: "UUID".to_string(),
+            nullable: !is_required,
+            default: None,
+            is_primary_key: false,
+            is_array: false,
+        });
+        // Resolve the parent's schema and table for the FK constraint.
+        // Manual config takes priority over graph detection.
+        let mut fk_resolved = false;
+        if let Some(ec) = entity_cfg {
+            if ec.role.as_deref() == Some("child") {
+                if let Some(ref parent_title) = ec.parent {
+                    if let Ok(Some(parent_schema)) =
+                        db.get_schema_in_domain(parent_title, domain).await
+                    {
+                        let parent_domain = if config
+                            .domains
+                            .get(domain)
+                            .map(|d| d.entities.contains(parent_title))
+                            .unwrap_or(false)
+                        {
+                            domain
+                        } else {
+                            parent_schema.domain.as_deref().unwrap_or(domain)
+                        };
+                        artifacts.foreign_keys.push(ForeignKeyDef {
+                            column_name: strip_rsharp(&fk_col),
+                            column: fk_col.clone(),
+                            references_schema: parent_domain.to_string(),
+                            references_table: parent_schema.pg_table_name.clone(),
+                            references_column: "id".to_string(),
+                            on_delete: "CASCADE".to_string(),
+                            is_codelist: false,
+                        });
+                        fk_resolved = true;
+                    }
+                }
+            }
+        }
+        if !fk_resolved {
+            let stripped = crate::generate::api::router::strip_suffix(
+                schema_title,
+                &config.defaults.type_suffix,
+            );
+            if let Some(pc) = parent_candidates.iter().find(|pc| {
+                crate::generate::api::router::strip_suffix(
+                    &pc.child_title,
+                    &config.defaults.type_suffix,
+                ) == stripped
+            }) {
+                if let Ok(Some(parent_schema)) =
+                    db.get_schema_in_domain(&pc.parent_title, domain).await
+                {
+                    let parent_domain = if config
+                        .domains
+                        .get(domain)
+                        .map(|d| d.entities.contains(&pc.parent_title))
+                        .unwrap_or(false)
+                    {
+                        domain
+                    } else {
+                        parent_schema.domain.as_deref().unwrap_or(domain)
+                    };
+                    artifacts.foreign_keys.push(ForeignKeyDef {
+                        column_name: strip_rsharp(&fk_col),
+                        column: fk_col,
+                        references_schema: parent_domain.to_string(),
+                        references_table: parent_schema.pg_table_name.clone(),
+                        references_column: "id".to_string(),
+                        on_delete: "CASCADE".to_string(),
+                        is_codelist: false,
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn add_hierarchy_artifacts(
+    entity_cfg: Option<&codegraph_config::EntityConfig>,
+    artifacts: &mut DdlAccumulators,
+    schema_name: &str,
+    table_name: &str,
+) {
+    if let Some(ec) = entity_cfg {
+        if let Some(ref hierarchy_field) = ec.hierarchy_field {
+            artifacts.columns.push(ColumnDef {
+                name: hierarchy_field.clone(),
+                pg_type: "UUID".to_string(),
+                nullable: true,
+                default: None,
+                is_primary_key: false,
+                is_array: false,
+            });
+            artifacts.foreign_keys.push(ForeignKeyDef {
+                column: hierarchy_field.clone(),
+                column_name: strip_rsharp(hierarchy_field),
+                references_schema: schema_name.to_string(),
+                references_table: table_name.to_string(),
+                references_column: "id".to_string(),
+                is_codelist: false,
+                on_delete: "SET NULL".to_string(),
+            });
+            artifacts.indexes.push(IndexDef {
+                name: format!("idx_{}_{}", table_name, hierarchy_field),
+                columns: vec![hierarchy_field.clone()],
+                unique: false,
+            });
+        }
+    }
+}
+
+fn add_tree_columns(
+    root: &codegraph_core::types::CompositionNode,
+    table_name: &str,
+    artifacts: &mut DdlAccumulators,
+) {
+    for col in &root.columns {
+        if col.name == "id" {
+            continue;
+        }
+        if let Some((cols, fks, checks, cmts)) = column_info_to_ddl(col, table_name) {
+            artifacts.columns.extend(cols);
+            artifacts.foreign_keys.extend(fks);
+            artifacts.check_constraints.extend(checks);
+            artifacts.comments.extend(cmts);
+        }
+    }
+
+    // Deduplicate check constraints by name — duplicate ColumnInfo entries
+    // from cross-domain schema merging produce duplicate constraints.
+    {
+        let mut seen = HashSet::new();
+        artifacts
+            .check_constraints
+            .retain(|chk| seen.insert(chk.name.clone()));
+    }
+}
+
+fn generated_table_set(config: &DomainConfig) -> HashSet<(String, String)> {
+    config
+        .domains
+        .values()
+        .flat_map(|d| {
+            let schema = &d.postgres_schema;
+            d.entities.iter().map(move |title| {
+                let table =
+                    codegraph_naming::to_snake_case(&codegraph_naming::strip_suffix(title, "Type"));
+                (schema.clone(), table)
+            })
+        })
+        .collect()
+}
+
+fn retain_generated_fks(
+    foreign_keys: &mut Vec<ForeignKeyDef>,
+    generated_tables: &HashSet<(String, String)>,
+) {
+    foreign_keys.retain(|fk| {
+        fk.is_codelist
+            || generated_tables
+                .contains(&(fk.references_schema.clone(), fk.references_table.clone()))
+    });
+}
+
+async fn add_property_ref_columns(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    schema_name: &str,
+    generated_tables: &HashSet<(String, String)>,
+    artifacts: &mut DdlAccumulators,
+) {
+    if let Ok(props) = db.get_properties(schema_title).await {
+        let existing_names: std::collections::HashSet<String> =
+            artifacts.columns.iter().map(|c| c.name.clone()).collect();
+
+        for prop in &props {
+            let kind = prop.effective_kind();
+            if kind != Some(RefClassificationKind::EntityReference) {
+                continue;
+            }
+            // Array entity refs are junction/FK-on-child relationships
+            // materialized elsewhere (child tables, child-side FKs) — never
+            // columns on this table.
+            if prop.is_array {
+                continue;
+            }
+            let base = prop
+                .rust_field_name
+                .strip_prefix("r#")
+                .unwrap_or(&prop.rust_field_name);
+            let col_name = if base.ends_with("_id") {
+                base.to_string()
+            } else {
+                format!("{}_id", base)
+            };
+            if !existing_names.contains(col_name.as_str()) {
+                // Try to resolve the FK target for the constraint.
+                // Only emit the FK if the target schema is an entity
+                // configured in some domain (has its own table/migration).
+                // VOs, excluded types, and entity types not in any domain's
+                // entities list don't have tables, so FK constraints to them
+                // would fail with "undefined_table".
+                if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, schema_title).await
+                {
+                    if !target.pg_table_name.is_empty() && target.is_entity {
+                        artifacts.columns.push(ColumnDef {
+                            name: col_name.clone(),
+                            pg_type: "UUID".to_string(),
+                            nullable: true,
+                            default: None,
+                            is_primary_key: false,
+                            is_array: false,
+                        });
+                        let fk_schema = target.domain.as_deref().unwrap_or(schema_name);
+                        artifacts.foreign_keys.push(ForeignKeyDef {
+                            column_name: strip_rsharp(&prop.rust_field_name),
+                            column: col_name,
+                            references_schema: fk_schema.to_string(),
+                            references_table: target.pg_table_name.clone(),
+                            is_codelist: false,
+                            references_column: "id".to_string(),
+                            on_delete: "SET NULL".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Re-filter after adding cross-domain FKs (same logic as above)
+        retain_generated_fks(&mut artifacts.foreign_keys, generated_tables);
+    }
+}
+
+fn add_timestamp_and_tenant_columns(
+    columns: &mut Vec<ColumnDef>,
+    child_tables: &mut [ChildTableDef],
+    config: &DomainConfig,
+    table_name: &str,
+) -> (bool, bool) {
+    // Add standard timestamp columns
+    columns.push(ColumnDef {
+        name: "created_at".to_string(),
+        pg_type: "TIMESTAMPTZ".to_string(),
+        nullable: false,
+        default: Some("now()".to_string()),
+        is_primary_key: false,
+        is_array: false,
+    });
+    columns.push(ColumnDef {
+        name: "updated_at".to_string(),
+        pg_type: "TIMESTAMPTZ".to_string(),
+        nullable: false,
+        default: Some("now()".to_string()),
+        is_primary_key: false,
+        is_array: false,
+    });
+    let has_updated_at = true;
+
+    // Determine tenancy
+    let is_tenant_scoped = !is_global_entity(table_name, config);
+
+    // Add platform_organization_id for tenant-scoped entities
+    if is_tenant_scoped {
+        columns.insert(
+            1,
+            ColumnDef {
+                name: "platform_organization_id".to_string(),
+                pg_type: "UUID".to_string(),
+                nullable: false,
+                default: Some("'00000000-0000-0000-0000-000000000000'::UUID".to_string()),
+                is_primary_key: false,
+                is_array: false,
+            },
+        );
+
+        // Child tables (junction + VO) inherit the parent's tenancy: they
+        // carry the same tenant column so org-isolation RLS policies can
+        // be applied to them too. Nested children recurse.
+        let tenant_col = ColumnDef {
+            name: "platform_organization_id".to_string(),
+            pg_type: "UUID".to_string(),
+            nullable: false,
+            default: Some("'00000000-0000-0000-0000-000000000000'::UUID".to_string()),
+            is_primary_key: false,
+            is_array: false,
+        };
+        inject_child_tenant_columns(child_tables, &tenant_col);
+    }
+
+    (has_updated_at, is_tenant_scoped)
+}
+
+fn dedup_ddl_artifacts(artifacts: &mut DdlAccumulators) {
+    // Deduplicate columns by name — CompositeWrapper expansion from
+    // allOf-inherited properties can produce duplicate expanded columns.
+    {
+        let mut seen = std::collections::HashSet::new();
+        artifacts
+            .columns
+            .retain(|col| seen.insert(col.name.clone()));
+    }
+
+    // Deduplicate foreign keys by constraint name — cross-domain
+    // schema merging via allOf produces duplicate FK definitions.
+    {
+        let mut seen = std::collections::HashSet::new();
+        artifacts
+            .foreign_keys
+            .retain(|fk| seen.insert(fk.column_name.clone()));
+    }
+
+    // Deduplicate comments by column name — same root cause.
+    {
+        let mut seen = std::collections::HashSet::new();
+        artifacts.comments.retain(|c| seen.insert(c.column.clone()));
+    }
+}
+
+fn apply_workflow_defaults(
+    config: &DomainConfig,
+    domain: &str,
+    schema_title: &str,
+    columns: &mut [ColumnDef],
+) -> bool {
+    // Check if this entity has a workflow config
+    let workflow_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(schema_title))
+        .and_then(|ec| ec.workflow.as_ref());
+
+    let has_workflow = workflow_cfg
+        .map(|wf| wf.generate_action_endpoints)
+        .unwrap_or(false);
+
+    // Workflow status fields from native schema columns are NOT NULL but lack a
+    // DEFAULT. Set the initial_state as the DB DEFAULT so INSERTs that don't
+    // include the status column (the API excludes it from CreateRequest) succeed.
+    if let Some(wf) = workflow_cfg {
+        for col in columns.iter_mut() {
+            if col.name == wf.status_field && !col.nullable && col.default.is_none() {
+                col.default = Some(format!("'{}'", wf.initial_state));
+            }
+        }
+    }
+
+    has_workflow
 }
 
 /// Mapping from Postgres extension name to the column type patterns that require it.

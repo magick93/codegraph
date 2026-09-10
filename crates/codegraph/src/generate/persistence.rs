@@ -49,7 +49,107 @@ pub async fn build_persistence_entity(
 
     // Query policies
     let policies = db.get_policies_for_schema(schema_title).await?;
+    let (audit_policy, soft_delete_policy, tenant_policy) = split_policy_kinds(&policies);
 
+    let (composite_range, consumed_fields) = query_range_inputs(db, schema_title).await;
+
+    let mut columns = initial_columns(composite_range.as_ref());
+
+    // ── Parent FK injection ──────────────────────────────────────────────
+    let entity_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(rust_type));
+    if let Some(fk_field) = crate::generate::resolve_parent_fk_column(
+        schema_title,
+        parent_candidates,
+        entity_cfg,
+        &config.defaults.type_suffix,
+    ) {
+        push_parent_fk_column(&mut columns, &props, fk_field);
+    }
+
+    // ── Hierarchy field ──────────────────────────────────────────────────
+    push_hierarchy_column(
+        &mut columns,
+        entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
+    );
+
+    // Collect entity titles for FK-on-VO detection
+    let entity_titles: HashSet<String> = config
+        .domains
+        .values()
+        .flat_map(|d| d.entities.iter().cloned())
+        .collect();
+
+    // ── Property-to-column classification ────────────────────────────────
+    push_property_columns(
+        db,
+        &props,
+        schema_title,
+        &consumed_fields,
+        &entity_titles,
+        &mut columns,
+    )
+    .await?;
+
+    // ── Deduplicate columns by field_name ─────────────────────────────────
+    dedup_columns(&mut columns);
+
+    // ── Tenant column ────────────────────────────────────────────────────
+    add_tenant_column(&mut columns, tenant_policy, table_name, config);
+
+    // ── Audit timestamp columns ──────────────────────────────────────────
+    add_audit_timestamp_columns(&mut columns, audit_policy);
+
+    // ── Soft-delete marker column ────────────────────────────────────────
+    let soft_delete_marker_field = add_soft_delete_marker(&mut columns, soft_delete_policy);
+
+    // ── Additional audit columns ─────────────────────────────────────────
+    let is_auditable = audit_tracking_enabled(
+        audit_policy,
+        config.domains.get(domain).and_then(|d| d.auditable),
+    );
+
+    if is_auditable {
+        push_audit_user_columns(&mut columns, soft_delete_marker_field.as_deref());
+    }
+
+    // ── Final dedup ──────────────────────────────────────────────────────
+    dedup_columns(&mut columns);
+
+    // ── Build policy effects ─────────────────────────────────────────────
+    let policies = build_policy_effects(&policies, soft_delete_policy, tenant_policy, audit_policy);
+
+    // ── Build relations (self-referential hierarchy only for now) ────────
+    let relations = build_hierarchy_relations(
+        entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
+        schema_name,
+        table_name,
+    );
+
+    // ── Collect child tables (deferred — child entities are built lazily) ─
+    let child_tables = Vec::new();
+
+    Ok(PersistenceEntity {
+        title: schema_title.into(),
+        table_name: table_name.clone(),
+        schema_name: schema_name.into(),
+        rust_type_name: rust_type.clone(),
+        columns,
+        child_tables,
+        relations,
+        policies,
+    })
+}
+
+fn split_policy_kinds(
+    policies: &[codegraph_core::types::PolicyNode],
+) -> (
+    Option<&codegraph_core::types::AuditPolicy>,
+    Option<&SoftDeletePolicy>,
+    Option<&TenantIsolationPolicy>,
+) {
     let audit_policy: Option<&codegraph_core::types::AuditPolicy> =
         policies.iter().find_map(|p| match &p.kind {
             PolicyKind::Audit(a) => Some(a),
@@ -65,7 +165,16 @@ pub async fn build_persistence_entity(
             PolicyKind::TenantIsolation(ti) => Some(ti),
             _ => None,
         });
+    (audit_policy, soft_delete_policy, tenant_policy)
+}
 
+async fn query_range_inputs(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+) -> (
+    Option<codegraph_core::types::CompositeRange>,
+    HashSet<String>,
+) {
     let composite_range = db.get_composite_range(schema_title).await.ok().flatten();
     let consumed_fields: HashSet<String> = db
         .get_consumed_fields(schema_title)
@@ -74,7 +183,12 @@ pub async fn build_persistence_entity(
         .into_iter()
         .map(|(prop, _role)| prop.name)
         .collect();
+    (composite_range, consumed_fields)
+}
 
+fn initial_columns(
+    composite_range: Option<&codegraph_core::types::CompositeRange>,
+) -> Vec<PersistenceColumn> {
     let mut columns = Vec::new();
 
     // ── Primary key ──────────────────────────────────────────────────────
@@ -92,7 +206,7 @@ pub async fn build_persistence_entity(
     });
 
     // ── Composite range column ────────────────────────────────────────────
-    if let Some(ref range) = composite_range {
+    if let Some(range) = composite_range {
         columns.push(PersistenceColumn {
             field_name: range.pg_column_name.clone(),
             column_name: range.pg_column_name.clone(),
@@ -107,46 +221,43 @@ pub async fn build_persistence_entity(
         });
     }
 
-    // ── Parent FK injection ──────────────────────────────────────────────
-    let entity_cfg = config
-        .domains
-        .get(domain)
-        .and_then(|d| d.get_entity_config(rust_type));
-    if let Some(fk_field) = crate::generate::resolve_parent_fk_column(
-        schema_title,
-        parent_candidates,
-        entity_cfg,
-        &config.defaults.type_suffix,
-    ) {
-        let prop_is_required = props
-            .iter()
-            .find(|p| resolve_field(p).column_name == fk_field || p.pg_column_name == fk_field)
-            .map(|p| p.is_required)
-            .unwrap_or(false);
-        let is_nullable = !prop_is_required;
-        let rust_type = if is_nullable {
-            "Option<Uuid>".into()
-        } else {
-            "Uuid".into()
-        };
-        columns.push(PersistenceColumn {
-            field_name: fk_field.clone(),
-            column_name: fk_field,
-            rust_type,
-            pg_type: "UUID".into(),
-            is_primary_key: false,
-            is_nullable,
-            is_jsonb: false,
-            is_range: false,
-            pg_cast: None,
-            role: PersistenceColumnRole::ForeignKey {
-                ref_entity: String::new(),
-            },
-        });
-    }
+    columns
+}
 
-    // ── Hierarchy field ──────────────────────────────────────────────────
-    if let Some(hf) = entity_cfg.and_then(|ec| ec.hierarchy_field.clone()) {
+fn push_parent_fk_column(
+    columns: &mut Vec<PersistenceColumn>,
+    props: &[codegraph_core::types::PropertyNode],
+    fk_field: String,
+) {
+    let prop_is_required = props
+        .iter()
+        .find(|p| resolve_field(p).column_name == fk_field || p.pg_column_name == fk_field)
+        .map(|p| p.is_required)
+        .unwrap_or(false);
+    let is_nullable = !prop_is_required;
+    let rust_type = if is_nullable {
+        "Option<Uuid>".into()
+    } else {
+        "Uuid".into()
+    };
+    columns.push(PersistenceColumn {
+        field_name: fk_field.clone(),
+        column_name: fk_field,
+        rust_type,
+        pg_type: "UUID".into(),
+        is_primary_key: false,
+        is_nullable,
+        is_jsonb: false,
+        is_range: false,
+        pg_cast: None,
+        role: PersistenceColumnRole::ForeignKey {
+            ref_entity: String::new(),
+        },
+    });
+}
+
+fn push_hierarchy_column(columns: &mut Vec<PersistenceColumn>, hierarchy_field: Option<String>) {
+    if let Some(hf) = hierarchy_field {
         columns.push(PersistenceColumn {
             field_name: hf.clone(),
             column_name: hf,
@@ -160,16 +271,17 @@ pub async fn build_persistence_entity(
             role: PersistenceColumnRole::HierarchyParent,
         });
     }
+}
 
-    // Collect entity titles for FK-on-VO detection
-    let entity_titles: HashSet<String> = config
-        .domains
-        .values()
-        .flat_map(|d| d.entities.iter().cloned())
-        .collect();
-
-    // ── Property-to-column classification ────────────────────────────────
-    for prop in &props {
+async fn push_property_columns(
+    db: &dyn GraphQuerier,
+    props: &[codegraph_core::types::PropertyNode],
+    schema_title: &str,
+    consumed_fields: &HashSet<String>,
+    entity_titles: &HashSet<String>,
+    columns: &mut Vec<PersistenceColumn>,
+) -> Result<()> {
+    for prop in props {
         if prop.rust_field_name == "id" {
             continue;
         }
@@ -183,149 +295,197 @@ pub async fn build_persistence_entity(
             | Some(RefClassificationKind::ArrayWrapper)
             | Some(RefClassificationKind::RangeWrapper)
             | Some(RefClassificationKind::InlineEnum) => {
-                let is_structured =
-                    prop.effective_kind() == Some(RefClassificationKind::StructuredWrapper);
-                let is_nullable = !prop.is_required;
-                let base_type = if is_structured {
-                    "serde_json::Value".into()
-                } else {
-                    prop.rust_field_type.clone()
-                };
-                let rust_type = if is_nullable {
-                    format!("Option<{base_type}>")
-                } else {
-                    base_type
-                };
-                let pg_cast = if prop.effective_kind() == Some(RefClassificationKind::RangeWrapper)
-                {
-                    pg_cast_for_type(&prop.pg_column_type)
-                } else {
-                    None
-                };
-                let is_range = prop.effective_kind() == Some(RefClassificationKind::RangeWrapper);
-
-                columns.push(PersistenceColumn {
-                    field_name: field_def.rust_field_name,
-                    column_name: field_def.column_name,
-                    rust_type,
-                    pg_type: prop.pg_column_type.clone(),
-                    is_primary_key: false,
-                    is_nullable,
-                    is_jsonb: is_structured,
-                    is_range,
-                    pg_cast,
-                    role: PersistenceColumnRole::Data,
-                });
+                columns.push(wrapper_column(prop, field_def));
             }
             Some(RefClassificationKind::CodelistReference)
             | Some(RefClassificationKind::CodelistCheck) => {
                 if prop.is_array {
                     continue;
                 }
-                let is_nullable = !prop.is_required;
-                let rust_type = if is_nullable {
-                    "Option<String>".into()
-                } else {
-                    "String".into()
-                };
-                columns.push(PersistenceColumn {
-                    field_name: field_def.rust_field_name,
-                    column_name: field_def.column_name,
-                    rust_type,
-                    pg_type: "TEXT".into(),
-                    is_primary_key: false,
-                    is_nullable,
-                    is_jsonb: false,
-                    is_range: false,
-                    pg_cast: None,
-                    role: PersistenceColumnRole::Data,
-                });
+                columns.push(codelist_column(prop, field_def));
             }
             Some(RefClassificationKind::EntityReference) => {
-                let is_nullable = !prop.is_required;
-                columns.push(PersistenceColumn {
-                    field_name: field_def.rust_field_name,
-                    column_name: field_def.column_name,
-                    rust_type: if is_nullable {
-                        "Option<Uuid>".into()
-                    } else {
-                        "Uuid".into()
-                    },
-                    pg_type: "UUID".into(),
-                    is_primary_key: false,
-                    is_nullable,
-                    is_jsonb: false,
-                    is_range: false,
-                    pg_cast: None,
-                    role: PersistenceColumnRole::ForeignKey {
-                        ref_entity: prop.rust_field_type.clone(),
-                    },
-                });
+                columns.push(entity_ref_column(prop, field_def));
             }
             Some(RefClassificationKind::CompositeWrapper)
             | Some(RefClassificationKind::MediaWrapper) => {
-                if let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await {
-                    for col in &comp_cols {
-                        let field_name = format!("{}{}", field_def.rust_field_name, col.suffix);
-                        let column_name = format!("{}{}", field_def.column_name, col.suffix);
-                        let is_nullable = !prop.is_required;
-                        let rust_type = if is_nullable {
-                            format!("Option<{}>", col.rust_type)
-                        } else {
-                            col.rust_type.clone()
-                        };
-                        columns.push(PersistenceColumn {
-                            field_name,
-                            column_name,
-                            rust_type,
-                            pg_type: col.pg_type.clone(),
-                            is_primary_key: false,
-                            is_nullable,
-                            is_jsonb: false,
-                            is_range: false,
-                            pg_cast: crate::generate::pg_cast_for_type(&col.pg_type),
-                            role: PersistenceColumnRole::Data,
-                        });
-                    }
+                let comp_cols = composite_wrapper_columns(db, prop, schema_title, field_def).await;
+                for col in comp_cols {
+                    columns.push(col);
                 }
             }
             Some(RefClassificationKind::ValueObject) if !prop.is_array => {
-                let Some((fk_field, fk_col)) = codegraph_core::types::resolve_fk_column_name(
-                    db,
-                    prop,
-                    schema_title,
-                    &entity_titles,
-                )
-                .await?
-                else {
-                    continue;
-                };
-                columns.push(PersistenceColumn {
-                    field_name: fk_field,
-                    column_name: fk_col,
-                    rust_type: "Option<Uuid>".into(),
-                    pg_type: "UUID".into(),
-                    is_primary_key: false,
-                    is_nullable: true,
-                    is_jsonb: false,
-                    is_range: false,
-                    pg_cast: None,
-                    role: PersistenceColumnRole::ForeignKey {
-                        ref_entity: String::new(),
-                    },
-                });
+                if let Some(column) =
+                    value_object_fk_column(db, prop, schema_title, entity_titles).await?
+                {
+                    columns.push(column);
+                }
             }
             _ => {}
         }
     }
+    Ok(())
+}
 
-    // ── Deduplicate columns by field_name ─────────────────────────────────
-    {
-        let mut seen_fields = HashSet::new();
-        columns.retain(|c| seen_fields.insert(c.field_name.clone()));
+fn wrapper_column(
+    prop: &codegraph_core::types::PropertyNode,
+    field_def: codegraph_core::types::FieldDefinition,
+) -> PersistenceColumn {
+    let is_structured = prop.effective_kind() == Some(RefClassificationKind::StructuredWrapper);
+    let is_nullable = !prop.is_required;
+    let base_type = if is_structured {
+        "serde_json::Value".into()
+    } else {
+        prop.rust_field_type.clone()
+    };
+    let rust_type = if is_nullable {
+        format!("Option<{base_type}>")
+    } else {
+        base_type
+    };
+    let pg_cast = if prop.effective_kind() == Some(RefClassificationKind::RangeWrapper) {
+        pg_cast_for_type(&prop.pg_column_type)
+    } else {
+        None
+    };
+    let is_range = prop.effective_kind() == Some(RefClassificationKind::RangeWrapper);
+
+    PersistenceColumn {
+        field_name: field_def.rust_field_name,
+        column_name: field_def.column_name,
+        rust_type,
+        pg_type: prop.pg_column_type.clone(),
+        is_primary_key: false,
+        is_nullable,
+        is_jsonb: is_structured,
+        is_range,
+        pg_cast,
+        role: PersistenceColumnRole::Data,
     }
+}
 
-    // ── Tenant column ────────────────────────────────────────────────────
+fn codelist_column(
+    prop: &codegraph_core::types::PropertyNode,
+    field_def: codegraph_core::types::FieldDefinition,
+) -> PersistenceColumn {
+    let is_nullable = !prop.is_required;
+    let rust_type = if is_nullable {
+        "Option<String>".into()
+    } else {
+        "String".into()
+    };
+    PersistenceColumn {
+        field_name: field_def.rust_field_name,
+        column_name: field_def.column_name,
+        rust_type,
+        pg_type: "TEXT".into(),
+        is_primary_key: false,
+        is_nullable,
+        is_jsonb: false,
+        is_range: false,
+        pg_cast: None,
+        role: PersistenceColumnRole::Data,
+    }
+}
+
+fn entity_ref_column(
+    prop: &codegraph_core::types::PropertyNode,
+    field_def: codegraph_core::types::FieldDefinition,
+) -> PersistenceColumn {
+    let is_nullable = !prop.is_required;
+    PersistenceColumn {
+        field_name: field_def.rust_field_name,
+        column_name: field_def.column_name,
+        rust_type: if is_nullable {
+            "Option<Uuid>".into()
+        } else {
+            "Uuid".into()
+        },
+        pg_type: "UUID".into(),
+        is_primary_key: false,
+        is_nullable,
+        is_jsonb: false,
+        is_range: false,
+        pg_cast: None,
+        role: PersistenceColumnRole::ForeignKey {
+            ref_entity: prop.rust_field_type.clone(),
+        },
+    }
+}
+
+async fn composite_wrapper_columns(
+    db: &dyn GraphQuerier,
+    prop: &codegraph_core::types::PropertyNode,
+    schema_title: &str,
+    field_def: codegraph_core::types::FieldDefinition,
+) -> Vec<PersistenceColumn> {
+    let mut out = Vec::new();
+    if let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await {
+        for col in &comp_cols {
+            let field_name = format!("{}{}", field_def.rust_field_name, col.suffix);
+            let column_name = format!("{}{}", field_def.column_name, col.suffix);
+            let is_nullable = !prop.is_required;
+            let rust_type = if is_nullable {
+                format!("Option<{}>", col.rust_type)
+            } else {
+                col.rust_type.clone()
+            };
+            out.push(PersistenceColumn {
+                field_name,
+                column_name,
+                rust_type,
+                pg_type: col.pg_type.clone(),
+                is_primary_key: false,
+                is_nullable,
+                is_jsonb: false,
+                is_range: false,
+                pg_cast: crate::generate::pg_cast_for_type(&col.pg_type),
+                role: PersistenceColumnRole::Data,
+            });
+        }
+    }
+    out
+}
+
+async fn value_object_fk_column(
+    db: &dyn GraphQuerier,
+    prop: &codegraph_core::types::PropertyNode,
+    schema_title: &str,
+    entity_titles: &HashSet<String>,
+) -> Result<Option<PersistenceColumn>> {
+    let Some((fk_field, fk_col)) =
+        codegraph_core::types::resolve_fk_column_name(db, prop, schema_title, entity_titles)
+            .await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(PersistenceColumn {
+        field_name: fk_field,
+        column_name: fk_col,
+        rust_type: "Option<Uuid>".into(),
+        pg_type: "UUID".into(),
+        is_primary_key: false,
+        is_nullable: true,
+        is_jsonb: false,
+        is_range: false,
+        pg_cast: None,
+        role: PersistenceColumnRole::ForeignKey {
+            ref_entity: String::new(),
+        },
+    }))
+}
+
+fn dedup_columns(columns: &mut Vec<PersistenceColumn>) {
+    let mut seen_fields = HashSet::new();
+    columns.retain(|c| seen_fields.insert(c.field_name.clone()));
+}
+
+fn add_tenant_column(
+    columns: &mut Vec<PersistenceColumn>,
+    tenant_policy: Option<&TenantIsolationPolicy>,
+    table_name: &str,
+    config: &DomainConfig,
+) {
     let (is_tenant_scoped, tenant_column_name): (bool, String) = if let Some(ti) = tenant_policy {
         match &ti.strategy {
             TenantStrategy::Column { property } => (true, property.clone()),
@@ -354,8 +514,12 @@ pub async fn build_persistence_entity(
             },
         );
     }
+}
 
-    // ── Audit timestamp columns ──────────────────────────────────────────
+fn add_audit_timestamp_columns(
+    columns: &mut Vec<PersistenceColumn>,
+    audit_policy: Option<&codegraph_core::types::AuditPolicy>,
+) {
     if let Some(audit) = audit_policy {
         if audit.track_created {
             columns.push(make_audit_column(
@@ -388,8 +552,12 @@ pub async fn build_persistence_entity(
             AuditTimestampKind::Updated,
         ));
     }
+}
 
-    // ── Soft-delete marker column ────────────────────────────────────────
+fn add_soft_delete_marker(
+    columns: &mut Vec<PersistenceColumn>,
+    soft_delete_policy: Option<&SoftDeletePolicy>,
+) -> Option<String> {
     let mut soft_delete_marker_field: Option<String> = None;
     if let Some(sd) = soft_delete_policy {
         let (marker_name, marker_type) = match &sd.marker {
@@ -411,77 +579,81 @@ pub async fn build_persistence_entity(
             role: PersistenceColumnRole::SoftDeleteMarker,
         });
     }
+    soft_delete_marker_field
+}
 
-    // ── Additional audit columns ─────────────────────────────────────────
-    let is_auditable = if let Some(audit) = audit_policy {
+fn audit_tracking_enabled(
+    audit_policy: Option<&codegraph_core::types::AuditPolicy>,
+    config_auditable: Option<bool>,
+) -> bool {
+    if let Some(audit) = audit_policy {
         audit.track_deleted
     } else {
-        config
-            .domains
-            .get(domain)
-            .and_then(|d| d.auditable)
-            .unwrap_or(true)
-    };
-
-    if is_auditable {
-        if soft_delete_marker_field.as_deref() != Some("deleted_at") {
-            columns.push(make_audit_column(
-                "deleted_at",
-                "Option<chrono::DateTime<chrono::Utc>>",
-                "TIMESTAMPTZ",
-                AuditTimestampKind::Deleted,
-            ));
-        }
-        columns.push(PersistenceColumn {
-            field_name: "deleted_by".into(),
-            column_name: "deleted_by".into(),
-            rust_type: "Option<Uuid>".into(),
-            pg_type: "UUID".into(),
-            is_primary_key: false,
-            is_nullable: true,
-            is_jsonb: false,
-            is_range: false,
-            pg_cast: None,
-            role: PersistenceColumnRole::AuditUser {
-                kind: AuditUserKind::DeletedBy,
-            },
-        });
-        columns.push(PersistenceColumn {
-            field_name: "updated_by".into(),
-            column_name: "updated_by".into(),
-            rust_type: "Option<Uuid>".into(),
-            pg_type: "UUID".into(),
-            is_primary_key: false,
-            is_nullable: true,
-            is_jsonb: false,
-            is_range: false,
-            pg_cast: None,
-            role: PersistenceColumnRole::AuditUser {
-                kind: AuditUserKind::UpdatedBy,
-            },
-        });
-        columns.push(PersistenceColumn {
-            field_name: "is_demo_data".into(),
-            column_name: "is_demo_data".into(),
-            rust_type: "bool".into(),
-            pg_type: "BOOLEAN".into(),
-            is_primary_key: false,
-            is_nullable: false,
-            is_jsonb: false,
-            is_range: false,
-            pg_cast: None,
-            role: PersistenceColumnRole::AuditFlag,
-        });
+        config_auditable.unwrap_or(true)
     }
+}
 
-    // ── Final dedup ──────────────────────────────────────────────────────
-    {
-        let mut seen = HashSet::new();
-        columns.retain(|col| seen.insert(col.field_name.clone()));
+fn push_audit_user_columns(
+    columns: &mut Vec<PersistenceColumn>,
+    soft_delete_marker_field: Option<&str>,
+) {
+    if soft_delete_marker_field != Some("deleted_at") {
+        columns.push(make_audit_column(
+            "deleted_at",
+            "Option<chrono::DateTime<chrono::Utc>>",
+            "TIMESTAMPTZ",
+            AuditTimestampKind::Deleted,
+        ));
     }
+    columns.push(PersistenceColumn {
+        field_name: "deleted_by".into(),
+        column_name: "deleted_by".into(),
+        rust_type: "Option<Uuid>".into(),
+        pg_type: "UUID".into(),
+        is_primary_key: false,
+        is_nullable: true,
+        is_jsonb: false,
+        is_range: false,
+        pg_cast: None,
+        role: PersistenceColumnRole::AuditUser {
+            kind: AuditUserKind::DeletedBy,
+        },
+    });
+    columns.push(PersistenceColumn {
+        field_name: "updated_by".into(),
+        column_name: "updated_by".into(),
+        rust_type: "Option<Uuid>".into(),
+        pg_type: "UUID".into(),
+        is_primary_key: false,
+        is_nullable: true,
+        is_jsonb: false,
+        is_range: false,
+        pg_cast: None,
+        role: PersistenceColumnRole::AuditUser {
+            kind: AuditUserKind::UpdatedBy,
+        },
+    });
+    columns.push(PersistenceColumn {
+        field_name: "is_demo_data".into(),
+        column_name: "is_demo_data".into(),
+        rust_type: "bool".into(),
+        pg_type: "BOOLEAN".into(),
+        is_primary_key: false,
+        is_nullable: false,
+        is_jsonb: false,
+        is_range: false,
+        pg_cast: None,
+        role: PersistenceColumnRole::AuditFlag,
+    });
+}
 
-    // ── Build policy effects ─────────────────────────────────────────────
-    let policies = PersistencePolicies {
+fn build_policy_effects(
+    policies: &[codegraph_core::types::PolicyNode],
+    soft_delete_policy: Option<&SoftDeletePolicy>,
+    tenant_policy: Option<&TenantIsolationPolicy>,
+    audit_policy: Option<&codegraph_core::types::AuditPolicy>,
+) -> PersistencePolicies {
+    PersistencePolicies {
         soft_delete: soft_delete_policy.map(|sd| SoftDeleteEffect {
             policy_name: "soft_delete".into(),
             marker_column: match &sd.marker {
@@ -544,11 +716,16 @@ pub async fn build_persistence_entity(
             }),
             _ => None,
         }),
-    };
+    }
+}
 
-    // ── Build relations (self-referential hierarchy only for now) ────────
+fn build_hierarchy_relations(
+    hierarchy_field: Option<String>,
+    schema_name: &str,
+    table_name: &str,
+) -> Vec<PersistenceEntityRelation> {
     let mut relations = Vec::new();
-    if let Some(hf) = entity_cfg.and_then(|ec| ec.hierarchy_field.clone()) {
+    if let Some(hf) = hierarchy_field {
         let entity_module_name = format!("{}_{}", schema_name, table_name);
         relations.push(PersistenceEntityRelation {
             name: "Parent".into(),
@@ -559,20 +736,7 @@ pub async fn build_persistence_entity(
             is_self_ref: true,
         });
     }
-
-    // ── Collect child tables (deferred — child entities are built lazily) ─
-    let child_tables = Vec::new();
-
-    Ok(PersistenceEntity {
-        title: schema_title.into(),
-        table_name: table_name.clone(),
-        schema_name: schema_name.into(),
-        rust_type_name: rust_type.clone(),
-        columns,
-        child_tables,
-        relations,
-        policies,
-    })
+    relations
 }
 
 fn make_audit_column(
