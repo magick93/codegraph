@@ -220,7 +220,7 @@ fn build_state_machine_json(workflow: &codegraph_config::WorkflowConfig) -> Stri
         })
         .collect();
 
-    let timers: Vec<TimerSer> = workflow
+    let mut timers: Vec<TimerSer> = workflow
         .timers
         .values()
         .map(|t| TimerSer {
@@ -230,6 +230,11 @@ fn build_state_machine_json(workflow: &codegraph_config::WorkflowConfig) -> Stri
             target_state: t.target_state.clone(),
         })
         .collect();
+    // HashMap iteration order is not stable across processes; sort so the
+    // seeded JSONB state machine is byte-identical between runs.
+    timers.sort_by(|a, b| {
+        (&a.trigger_on_enter, &a.timer_type).cmp(&(&b.trigger_on_enter, &b.timer_type))
+    });
 
     let sm = StateMachine {
         transitions,

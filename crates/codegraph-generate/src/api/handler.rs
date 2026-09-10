@@ -387,6 +387,12 @@ async fn resolve_handler_topology(
     topo.cross_refs =
         detect_cross_refs(db, config, domain, entity_name, entity_cfg, &topo.children).await;
 
+    // Graph/config discovery order is not stable across processes (HashMap
+    // iteration, unordered MATCH rows); sort so emitted handler code
+    // (`with_child` links, route registrations) is byte-identical between runs.
+    topo.children
+        .sort_by(|a, b| a.path_segment.cmp(&b.path_segment));
+
     Ok(topo)
 }
 

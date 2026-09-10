@@ -169,7 +169,7 @@ impl GraphQuerier for GrafeoEngine {
             self,
             &format!(
                 "MATCH (:Schema {{title: $title}})-[:HasProperty]->(p:Property) \
-                 RETURN {PROPERTY_RETURN_COLS}"
+                 RETURN {PROPERTY_RETURN_COLS} ORDER BY p.name"
             ),
             params,
         )?;
@@ -197,7 +197,7 @@ impl GraphQuerier for GrafeoEngine {
             self,
             &format!(
                 "MATCH (:Schema {{title: $title, domain: $domain}})-[:HasProperty]->(p:Property) \
-                 RETURN {PROPERTY_RETURN_COLS}"
+             RETURN {PROPERTY_RETURN_COLS} ORDER BY p.name"
             ),
             params,
         )?;
