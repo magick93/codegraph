@@ -6,7 +6,8 @@ Workspace root `Cargo.toml` with 13 crates:
 
 | Crate | Purpose |
 |-------|---------|
-| `codegraph` | Main binary: CLI, ingest, classify, validate, 60+ generators + project init/doctor/add-domain lifecycle |
+| `codegraph` | Main binary: CLI, ingest, classify, validate + project init/doctor/add-domain lifecycle |
+| `codegraph-generate` | The 60+ generators, generator traits, template engine, profile/BuildPlan |
 | `codegraph-core` | Graph data model: `GraphQuerier`, `GraphIngestor`, node/edge types |
 | `codegraph-grafeo` | Grafeo graph database adapter implementing core traits |
 | `codegraph-backend` | Backend factory (currently Grafeo-only) |
@@ -338,14 +339,14 @@ cargo test --workspace                    # all tests (969+)
 cargo test -p codegraph-ifml-dsl          # 20 DSL parser tests
 cargo test -p codegraph -- lsp            # 5 LSP server tests
 cargo test -p codegraph --test ifml_e2e_tests  # 5 E2E tests
-cargo test -p codegraph --lib -- ifml     # 6 dependency graph tests
+cargo test -p codegraph-generate --lib -- ifml  # 6 dependency graph tests
 cargo test -p codegraph --test init_tests # project lifecycle integration tests
 
 # Dialect tests
-cargo test -p codegraph --lib -- generate::db::dialect  # 12 dialect unit tests
+cargo test -p codegraph-generate --lib -- db::dialect  # 12 dialect unit tests
 
 # gRPC tests (all levels)
-cargo test -p codegraph --lib -- grpc     # 34+ unit tests
+cargo test -p codegraph-generate --lib -- grpc     # 34+ unit tests
 cargo test -p codegraph --test grpc_snapshot_tests  # Level 2: Insta snapshots
 cargo test -p codegraph --test grpc_compile_tests   # Level 3: protoc compilation
 

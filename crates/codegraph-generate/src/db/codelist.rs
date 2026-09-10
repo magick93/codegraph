@@ -1,0 +1,114 @@
+use crate::ProjectConfig;
+use std::path::{Path, PathBuf};
+
+use async_trait::async_trait;
+use codegraph_core::traits::GraphQuerier;
+use serde::Serialize;
+
+use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::error::Result;
+use crate::render_template_with_project;
+use crate::traits::{EntityGenerator, GeneratedFile};
+use codegraph_config::DomainConfig;
+
+#[derive(Debug, Serialize)]
+pub struct CodelistContext {
+    pub schema_name: String,
+    pub table_name: String,
+    pub display_name: String,
+    pub values: Vec<CodelistValue>,
+    pub render_as: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CodelistValue {
+    pub code: String,
+    pub display_name: String,
+    pub sort_order: usize,
+}
+
+pub struct CodelistGenerator {
+    output_dir: PathBuf,
+    dialect: Box<dyn SqlDialect>,
+}
+
+impl CodelistGenerator {
+    pub fn new(output_dir: &Path) -> Self {
+        Self {
+            output_dir: output_dir.to_path_buf(),
+            dialect: dialect_for_target(DatabaseTarget::Postgres),
+        }
+    }
+
+    pub fn with_dialect(mut self, dialect: Box<dyn SqlDialect>) -> Self {
+        self.dialect = dialect;
+        self
+    }
+}
+
+#[async_trait]
+impl EntityGenerator for CodelistGenerator {
+    fn name(&self) -> &str {
+        "codelist"
+    }
+
+    fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {
+        Some(vec![DatabaseTarget::Postgres, DatabaseTarget::Sqlite])
+    }
+
+    async fn generate(
+        &self,
+        db: &dyn GraphQuerier,
+        schema_title: &str,
+        domain: &str,
+        _config: &DomainConfig,
+        tera: &tera::Tera,
+        project: &ProjectConfig,
+    ) -> Result<Vec<GeneratedFile>> {
+        let schema = match db.get_schema_in_domain(schema_title, domain).await {
+            Ok(Some(s)) => s,
+            _ => return Ok(Vec::new()),
+        };
+
+        // Only generate for codelist schemas
+        if schema.classification != "codelist" && schema.classification != "codelist_check" {
+            return Ok(Vec::new());
+        }
+
+        let table_name = &schema.pg_table_name;
+        let schema_name = if domain.is_empty() { "common" } else { domain };
+        let display_name = &schema.rust_type_name;
+
+        // Query enum values
+        let enum_values = db.get_enum_values(schema_title).await.unwrap_or_default();
+        let values: Vec<CodelistValue> = enum_values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| CodelistValue {
+                code: v.value.clone(),
+                display_name: v.display_name.as_deref().unwrap_or("").to_string(),
+                sort_order: i,
+            })
+            .collect();
+
+        let ctx = CodelistContext {
+            schema_name: schema_name.to_string(),
+            table_name: table_name.to_string(),
+            display_name: display_name.to_string(),
+            values,
+            render_as: schema.classification.clone(),
+        };
+
+        let content = render_template_with_project(
+            tera,
+            &db_template_for(&*self.dialect, "codelist"),
+            &ctx,
+            project,
+        )?;
+        Ok(vec![GeneratedFile {
+            path: crate::db::migrations_root(&self.output_dir)
+                .join(format!("{}_{}_codelist.sql", schema_name, table_name)),
+            content,
+        }])
+    }
+}

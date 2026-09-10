@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/codegraph",
+    "crates/codegraph-generate",
     "crates/codegraph-core",
     "crates/codegraph-classifier",
     "crates/codegraph-config",

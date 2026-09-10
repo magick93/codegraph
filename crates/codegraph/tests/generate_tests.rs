@@ -1633,7 +1633,7 @@ async fn test_domain_types_codelist_generates_enum_not_string_alias() {
     let mut tera = tera::Tera::default();
     tera.add_raw_template(
         "codelist/enum.tera",
-        include_str!("../templates/codelist/enum.tera"),
+        include_str!("../../codegraph-generate/templates/codelist/enum.tera"),
     )
     .unwrap();
 
