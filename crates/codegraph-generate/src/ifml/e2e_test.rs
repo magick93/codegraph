@@ -15,6 +15,7 @@ use super::context::{IfmlAction, IfmlComponent, IfmlModel, IfmlViewContainer};
 use super::querier::{IfmlGraphQuerier, IfmlQuerier};
 use super::route_generator::{
     mapped_container_testid, modal_wrapper_active, modal_wrapper_testid, shell_nav,
+    workflow_for_entity,
 };
 
 /// Global generator emitting IFML-driven Playwright E2E specs.
@@ -330,6 +331,92 @@ impl IfmlE2eTestGenerator {
             target_pattern: url_pattern(&view_route(&save.0), &save.1),
         })
     }
+
+    /// Workflow state tests for a view: one per fetch-wired component whose
+    /// bound entity has a workflow in domain config. Mirrors the fetch
+    /// wiring of the route generator's load context — only components that
+    /// actually load entity data can show the current state. Schema-backed
+    /// only, and skipped for mapped components (they render no fallback
+    /// badge markup).
+    async fn build_view_workflow_tests(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        api_version: &str,
+        vc: &IfmlViewContainer,
+    ) -> Vec<WorkflowTest> {
+        let id_param = id_param_from(&vc.params);
+        let mut has_list = false;
+        let mut has_details = false;
+        let mut has_form = false;
+        let mut tests = Vec::new();
+
+        for c in &vc.components {
+            let is_list = is_collection(c);
+            let is_details = is_details(c);
+            let is_form = is_form(c);
+            let fetch_list = is_list && !has_list;
+            let fetch_item = is_details && !has_details && id_param.is_some();
+            let fetch_form = is_form && !has_form && id_param.is_some();
+            has_list |= fetch_list;
+            has_details |= fetch_item;
+            has_form |= fetch_form;
+            if !fetch_list && !fetch_item && !fetch_form {
+                continue;
+            }
+            if let Some(test) = self
+                .build_workflow_test(db, config, api_version, vc, c, id_param.as_deref())
+                .await
+            {
+                tests.push(test);
+            }
+        }
+        tests
+    }
+
+    async fn build_workflow_test(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        api_version: &str,
+        vc: &IfmlViewContainer,
+        c: &IfmlComponent,
+        id_param: Option<&str>,
+    ) -> Option<WorkflowTest> {
+        let entity = c.entity.as_deref()?;
+        let kind = component_kind(c);
+        if self
+            .mappings
+            .as_ref()
+            .and_then(|m| m.resolve(&vc.name, &c.name, &c.component_type, &kind))
+            .is_some()
+        {
+            return None;
+        }
+        let workflow = workflow_for_entity(config, entity)?;
+        let api = schema_backed_api(db, config, entity, api_version).await?;
+        if !api.has_create {
+            return None;
+        }
+        if is_collection(c) && !api.has_list {
+            return None;
+        }
+        if (is_details(c) || is_form(c)) && !api.has_read {
+            return None;
+        }
+
+        Some(WorkflowTest {
+            component_name: c.name.clone(),
+            route: view_route(&vc.name),
+            id_param: id_param.map(str::to_string),
+            state_testid: format!("{}-state", c.name),
+            initial_state: workflow.initial_state,
+            fixture: Fixture {
+                base_path: api.base_path,
+                entries: fixture_entries(c),
+            },
+        })
+    }
 }
 
 #[async_trait]
@@ -360,6 +447,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         }
 
         let mut specs = Vec::new();
+        let mut workflow_specs: Vec<(String, Vec<WorkflowTest>)> = Vec::new();
         for vc in &model.view_containers {
             let spec = self
                 .build_view_spec(db, config, &project.api_version, &model, vc)
@@ -367,8 +455,14 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             if has_tests(&spec) {
                 specs.push(spec);
             }
+            let workflow_tests = self
+                .build_view_workflow_tests(db, config, &project.api_version, vc)
+                .await;
+            if !workflow_tests.is_empty() {
+                workflow_specs.push((vc.name.clone(), workflow_tests));
+            }
         }
-        if specs.is_empty() {
+        if specs.is_empty() && workflow_specs.is_empty() {
             return Ok(vec![]);
         }
 
@@ -382,6 +476,22 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 content: render_spec(spec),
             })
             .collect();
+
+        for (view_name, workflow_tests) in &workflow_specs {
+            if let Some(vc) = model
+                .view_containers
+                .iter()
+                .find(|vc| &vc.name == view_name)
+            {
+                files.push(GeneratedFile {
+                    path: self.output_dir.join("tests").join("ifml").join(format!(
+                        "{}.workflow.spec.ts",
+                        codegraph_naming::to_kebab_case(view_name)
+                    )),
+                    content: render_workflow_spec(vc, workflow_tests),
+                });
+            }
+        }
 
         let config_path = self.output_dir.join("playwright.config.ts");
         if !config_path.exists() {
@@ -470,6 +580,21 @@ pub struct RoundTripTest {
     pub target_pattern: String,
 }
 
+/// One workflow state assertion inside a view's `{view}.workflow.spec.ts`:
+/// create a fixture via the API, open the view, and assert the state badge
+/// shows the configured initial state (mirrors the non-IFML
+/// `{entity}.workflow.test.ts` convention).
+#[derive(Debug)]
+pub struct WorkflowTest {
+    /// Human-readable component name used in the test title.
+    pub component_name: String,
+    pub route: String,
+    pub id_param: Option<String>,
+    pub state_testid: String,
+    pub initial_state: String,
+    pub fixture: Fixture,
+}
+
 #[derive(Debug)]
 pub struct Fixture {
     pub base_path: String,
@@ -522,6 +647,55 @@ const PACKAGE_JSON: &str = r#"{
   }
 }
 "#;
+
+/// Render a view's `{view}.workflow.spec.ts`: one test per workflow
+/// component, mirroring the non-IFML workflow test's "initial state"
+/// assertion (`toContainText` on the state badge).
+fn render_workflow_spec(vc: &IfmlViewContainer, tests: &[WorkflowTest]) -> String {
+    let label = vc.label.clone().unwrap_or_else(|| vc.name.clone());
+    let mut s = String::new();
+    s.push_str("// Generated by codegraph. DO NOT EDIT.\n");
+    s.push_str(&format!(
+        "// IFML Playwright E2E workflow tests for view {}.\n\n",
+        vc.name
+    ));
+    s.push_str("import { test, expect } from '@playwright/test';\n\n");
+    s.push_str(&format!(
+        "test.describe('{} workflow', () => {{\n",
+        js_string(&label)
+    ));
+
+    for workflow in tests {
+        s.push_str(&format!(
+            "\ttest('shows the initial workflow state for {}', async ({{ page, request }}) => {{\n",
+            js_string(&workflow.component_name)
+        ));
+        s.push_str(&format!(
+            "\t\tconst created = await (await request.post('{}', {{ data: {} }})).json();\n",
+            workflow.fixture.base_path,
+            workflow.fixture.data_literal()
+        ));
+        match &workflow.id_param {
+            Some(id_param) => s.push_str(&format!(
+                "\t\tawait page.goto(`{}?{}=${{created.id}}`);\n",
+                workflow.route, id_param
+            )),
+            None => s.push_str(&format!("\t\tawait page.goto('{}');\n", workflow.route)),
+        }
+        s.push_str(&format!(
+            "\t\tawait expect(page.getByTestId('{}')).toContainText('{}');\n",
+            workflow.state_testid,
+            js_string(&workflow.initial_state)
+        ));
+        s.push_str("\t});\n\n");
+    }
+
+    while s.ends_with("\n\n") {
+        s.pop();
+    }
+    s.push_str("});\n");
+    s
+}
 
 fn render_spec(spec: &ViewTestSpec) -> String {
     let mut s = String::new();

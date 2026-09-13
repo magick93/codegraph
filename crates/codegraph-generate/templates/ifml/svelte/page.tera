@@ -137,7 +137,8 @@
 			<tr data-testid="{{ comp.name }}-row"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
 			{% for col in comp.table.columns %}
 				<td>{item.{{ col.binding }}}</td>
-			{% endfor %}
+			{% endfor %}{% if comp.workflow %}
+			<td>{{ comp.workflow.badge_html }}</td>{% endif %}
 			</tr>
 {% raw %}		{/each}{% endraw %}
 	</tbody>
@@ -180,7 +181,9 @@
 {% if comp.submit_handler %}
 {% raw %}	{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
 {% endif %}
-	{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}
+	{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}{% if comp.workflow %}
+	{{ comp.workflow.badge_html }}
+{% endif %}
 </form>
 {%- for btn in comp.buttons %}
 <{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>
@@ -204,7 +207,8 @@
 			<tr data-testid="{{ comp.name }}-row"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
 			{% for field in comp.fields %}
 				<td>{item.{{ field }}}</td>
-			{% endfor %}
+			{% endfor %}{% if comp.workflow %}
+			<td>{{ comp.workflow.badge_html }}</td>{% endif %}
 			</tr>
 {% raw %}		{/each}{% endraw %}
 	</tbody>
@@ -221,7 +225,9 @@
 {% if comp.submit_handler %}
 {% raw %}	{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
 {% endif %}
-	{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}
+	{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}{% if comp.workflow %}
+	{{ comp.workflow.badge_html }}
+{% endif %}
 </form>
 {%- for btn in comp.buttons %}
 <{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>
@@ -233,7 +239,9 @@
 	<dt>{{ field }}</dt>
 	<dd>{data.{{ field }}}</dd>
 	{% endfor %}
-</dl>
+</dl>{% if comp.workflow %}
+{{ comp.workflow.badge_html }}
+{% endif %}
 
 {% endif %}
 {% endfor %}

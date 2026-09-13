@@ -34,6 +34,28 @@ entities = ["CustomerType"]
     .unwrap()
 }
 
+fn workflow_config() -> DomainConfig {
+    toml::from_str(
+        r#"
+[defaults]
+api_version = "v1"
+
+[domains.sales]
+label = "Sales"
+schema_dir = "sales"
+postgres_schema = "sales"
+entities = ["CustomerType"]
+
+[domains.sales.entity_config.CustomerType.workflow]
+status_field = "status"
+initial_state = "received"
+states = ["received", "review", "done"]
+terminal_states = ["done"]
+"#,
+    )
+    .unwrap()
+}
+
 fn customer_schema() -> SchemaNode {
     SchemaNode {
         schema_id: "sales/customer_type.json".into(),
@@ -262,10 +284,19 @@ async fn generate(
     output: &Path,
     mappings: Option<IfmlComponentMappings>,
 ) -> Vec<codegraph_generate::traits::GeneratedFile> {
+    generate_with_config(db, output, mappings, &test_config()).await
+}
+
+async fn generate_with_config(
+    db: &MockEngine,
+    output: &Path,
+    mappings: Option<IfmlComponentMappings>,
+    config: &DomainConfig,
+) -> Vec<codegraph_generate::traits::GeneratedFile> {
     let gen = IfmlE2eTestGenerator::new(output, "svelte").with_mappings(mappings);
     gen.generate(
         db,
-        &test_config(),
+        config,
         &[],
         &tera::Tera::default(),
         &ProjectConfig::default(),
@@ -684,5 +715,98 @@ testids = { root = "card" }
     assert!(
         spec.contains("await expect(page.getByTestId('card')).toBeVisible();"),
         "{spec}"
+    );
+}
+
+#[tokio::test]
+async fn workflow_spec_emitted_for_schema_backed_workflow_entity() {
+    let engine = MockEngine::new();
+    ingest_customer_schema(&engine).await;
+    ingest_ifml_model(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate_with_config(&engine, dir.path(), None, &workflow_config()).await;
+
+    let list_spec = content_of(&files, "tests/ifml/customer-list.workflow.spec.ts");
+    assert!(
+        list_spec.contains("test.describe('Customer Management workflow'"),
+        "{list_spec}"
+    );
+    assert!(
+        list_spec.contains("shows the initial workflow state for grid"),
+        "{list_spec}"
+    );
+    assert!(
+        list_spec.contains("request.post('/api/v1/sales/customer'"),
+        "{list_spec}"
+    );
+    assert!(list_spec.contains("'name': 'Test name'"), "{list_spec}");
+    assert!(list_spec.contains("'age': 42"), "{list_spec}");
+    assert!(
+        list_spec.contains("page.goto('/customerlist')"),
+        "{list_spec}"
+    );
+    assert!(
+        list_spec.contains("page.getByTestId('grid-state')"),
+        "{list_spec}"
+    );
+    assert!(
+        list_spec.contains("toContainText('received')"),
+        "{list_spec}"
+    );
+
+    let detail_spec = content_of(&files, "tests/ifml/customer-detail.workflow.spec.ts");
+    assert!(
+        detail_spec.contains("page.goto(`/customerdetail?customerId=${created.id}`)"),
+        "{detail_spec}"
+    );
+    assert!(
+        detail_spec.contains("page.getByTestId('info-state')"),
+        "{detail_spec}"
+    );
+
+    let edit_spec = content_of(&files, "tests/ifml/customer-edit.workflow.spec.ts");
+    assert!(
+        edit_spec.contains("page.getByTestId('editor-state')"),
+        "{edit_spec}"
+    );
+}
+
+#[tokio::test]
+async fn workflow_spec_not_emitted_without_workflow_config() {
+    let engine = MockEngine::new();
+    ingest_customer_schema(&engine).await;
+    ingest_ifml_model(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate(&engine, dir.path(), None).await;
+
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with(".workflow.spec.ts")),
+        "no workflow config must mean no workflow specs"
+    );
+    assert!(
+        files
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with("customer-list.spec.ts")),
+        "regular specs are still emitted"
+    );
+}
+
+#[tokio::test]
+async fn workflow_spec_requires_schema_backing() {
+    let engine = MockEngine::new();
+    ingest_ifml_model(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate_with_config(&engine, dir.path(), None, &workflow_config()).await;
+
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with(".workflow.spec.ts")),
+        "schema-less runs must not emit workflow specs"
     );
 }
