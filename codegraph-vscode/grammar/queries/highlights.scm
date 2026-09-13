@@ -6,11 +6,15 @@
 "component" @keyword
 "action" @keyword
 "module" @keyword
+"actor" @keyword
 "input" @keyword
 "output" @keyword
 "params" @keyword
 "label" @keyword
 "on" @keyword
+"if" @keyword
+"use" @keyword
+"as" @keyword
 
 ; Event type keywords
 "select" @keyword.function

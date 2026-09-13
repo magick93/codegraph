@@ -17,6 +17,7 @@ module.exports = grammar({
       $.view_declaration,
       $.action_declaration,
       $.module_declaration,
+      $.actor_declaration,
     ),
 
     // ── Domain declaration ──────────────────────────────────────
@@ -52,6 +53,14 @@ module.exports = grammar({
       '}',
     ),
 
+    // ── Actor declaration ─────────────────────────────────────────
+    actor_declaration: $ => seq(
+      'actor', $.string,
+      '{',
+      repeat($.property_assignment),
+      '}',
+    ),
+
     // ── View body (shared by view and container) ─────────────────
     view_body: $ => seq(
       '{',
@@ -62,6 +71,8 @@ module.exports = grammar({
         $.container_declaration,
         $.component_declaration,
         $.event_handler,
+        $.condition_statement,
+        $.module_use_statement,
       )),
       '}',
     ),
@@ -75,6 +86,7 @@ module.exports = grammar({
         $.field_decl,
         $.chart_decl,
         $.event_handler,
+        $.condition_statement,
       )),
       '}',
     ),
@@ -152,9 +164,33 @@ module.exports = grammar({
 
     parameter_decl: $ => seq(
       field('name', $.identifier), ':', field('type', $.type_ref),
+      optional(seq('=', field('default', $.param_default))),
     ),
 
+    param_default: $ => choice($.string, $.number, $.boolean),
+
     label_declaration: $ => seq('label', $.string, ';'),
+
+    // ── Conditional guards ───────────────────────────────────────
+    condition_statement: $ => seq(
+      'if', $.expression, ';',
+    ),
+
+    // ── Module instantiation ─────────────────────────────────────
+    module_use_statement: $ => seq(
+      'use', $.string,
+      optional(seq('as', $.identifier)),
+      choice(
+        seq($.module_use_body, optional(';')),
+        ';',
+      ),
+    ),
+
+    module_use_body: $ => seq(
+      '{',
+      repeat($.property_assignment),
+      '}',
+    ),
 
     // ── Property assignment ──────────────────────────────────────
     property_assignment: $ => seq(
@@ -182,8 +218,13 @@ module.exports = grammar({
     event_handler: $ => seq(
       'on', field('type', $.event_type),
       optional($.event_param),
+      optional($.event_condition),
       '->', field('action', $.event_action),
       ';',
+    ),
+
+    event_condition: $ => seq(
+      'if', $.expression,
     ),
 
     event_type: $ => choice(

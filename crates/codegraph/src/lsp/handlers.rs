@@ -1092,7 +1092,8 @@ fn walk_semantic(
 
         "view" | "component" | "container" | "module" | "domain" | "schema" | "on" | "navigate"
         | "refresh" | "action" | "params" | "label" | "stay_statement" | "input" | "output"
-        | "true" | "false" | "column" | "field" | "chart" | "lookup" | "via" | "expr" => {
+        | "true" | "false" | "column" | "field" | "chart" | "lookup" | "via" | "expr" | "if"
+        | "use" | "as" | "actor" => {
             add_semantic_token(node, tokens, 8, 0);
         }
 

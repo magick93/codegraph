@@ -786,3 +786,247 @@ view "Dashboard" {
                     (value_expression
                       (expression
                         (identifier)))))))))))))
+
+==================
+Condition guard in view body
+==================
+
+view "Guarded" {
+    if data.enabled;
+
+    component "c" {
+        type: list;
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (condition_statement
+        (expression
+          (field_expr
+            (identifier)
+            (identifier))))
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier)))))))))
+
+==================
+Condition guard in component body
+==================
+
+view "V" {
+    component "c" {
+        type: list;
+
+        if count > 0;
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (condition_statement
+            (expression
+              (identifier)
+              (number))))))))
+
+==================
+Module use statement
+==================
+
+view "V" {
+    use "AuditTrail" as audit { scope: org; };
+
+    use "Plain";
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (module_use_statement
+        (string)
+        (identifier)
+        (module_use_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))))
+      (module_use_statement
+        (string)))))
+
+==================
+Actor declaration
+==================
+
+actor "Manager" {
+    description: "Can approve";
+    level: 3;
+}
+
+---
+
+(source_file
+  (actor_declaration
+    (string)
+    (property_assignment
+      key: (identifier)
+      value: (value_expression
+        (expression
+          (string))))
+    (property_assignment
+      key: (identifier)
+      value: (value_expression
+        (expression
+          (number))))))
+
+==================
+Event handler with condition
+==================
+
+view "V" {
+    component "c" {
+        type: list;
+
+        on select(row) if row.active -> navigate("Detail");
+        on delete if confirm("Sure") == true -> stay;
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier))))
+          (event_handler
+            type: (event_type)
+            (event_param
+              (identifier))
+            (event_condition
+              (expression
+                (field_expr
+                  (identifier)
+                  (identifier))))
+            action: (event_action
+              (navigate_action
+                (string))))
+          (event_handler
+            type: (event_type)
+            (event_condition
+              (expression
+                (call_expr
+                  (identifier)
+                  (expression
+                    (string)))
+                (boolean)))
+            action: (event_action
+              (stay_statement))))))))
+
+==================
+Parameter default values
+==================
+
+view "V" {
+    params { limit: Int = 10, title: String = "Hello", flag: Boolean = true };
+
+    component "c" {
+        type: list;
+    }
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (params_block
+        (parameter_block
+          (parameter_decl
+            name: (identifier)
+            type: (type_ref)
+            default: (param_default
+              (number)))
+          (parameter_decl
+            name: (identifier)
+            type: (type_ref)
+            default: (param_default
+              (string)))
+          (parameter_decl
+            name: (identifier)
+            type: (type_ref)
+            default: (param_default
+              (boolean)))))
+      (component_declaration
+        (string)
+        (component_body
+          (property_assignment
+            key: (identifier)
+            value: (value_expression
+              (expression
+                (identifier)))))))))
+
+==================
+Roles and messages arrays
+==================
+
+view "V" {
+    roles: [manager, auditor];
+    messages: ["Welcome"];
+}
+
+---
+
+(source_file
+  (view_declaration
+    (string)
+    (view_body
+      (property_assignment
+        key: (identifier)
+        value: (value_expression
+          (array_literal
+            (value_expression
+              (expression
+                (identifier)))
+            (value_expression
+              (expression
+                (identifier))))))
+      (property_assignment
+        key: (identifier)
+        value: (value_expression
+          (array_literal
+            (value_expression
+              (expression
+                (string)))))))))

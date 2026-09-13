@@ -37,7 +37,7 @@
         },
         "keywords": {
             "patterns": [
-                { "match": "\\b(view|container|component|action|module|domain|schema|params|input|output|xor|default|modal|landmark)\\b", "name": "keyword.control.ifml" }
+                { "match": "\\b(view|container|component|action|module|actor|domain|schema|params|input|output|xor|default|modal|landmark|if|use|as)\\b", "name": "keyword.control.ifml" }
             ]
         },
         "eventKeywords": {
