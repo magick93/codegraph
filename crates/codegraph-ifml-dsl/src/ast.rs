@@ -7,6 +7,7 @@ pub enum IfmlDefinition {
     View(ViewDeclaration),
     Action(ActionDeclaration),
     Module(ModuleDeclaration),
+    Actor(ActorDeclaration),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -28,6 +29,8 @@ pub struct ViewDeclaration {
     pub components: Vec<ComponentDeclaration>,
     pub events: Vec<EventHandler>,
     pub module_uses: Vec<ModuleUse>,
+    #[serde(default)]
+    pub roles: Vec<String>,
     pub condition: Option<Expression>,
     pub position: Option<Position>,
 }
@@ -483,12 +486,23 @@ pub struct ModuleDeclaration {
     pub events: Vec<EventHandler>,
 }
 
+/// A top-level `actor "Name" { ... }` declaration. Actors carry
+/// label-style properties only; event handlers and node persistence
+/// are deferred until the roles/permissions slice lands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActorDeclaration {
+    pub name: String,
+    pub properties: Vec<PropertyAssignment>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IfmlModel {
     pub domains: Vec<DomainDeclaration>,
     pub views: Vec<ViewDeclaration>,
     pub actions: Vec<ActionDeclaration>,
     pub modules: Vec<ModuleDeclaration>,
+    #[serde(default)]
+    pub actors: Vec<ActorDeclaration>,
 }
 
 #[derive(Debug, Error)]

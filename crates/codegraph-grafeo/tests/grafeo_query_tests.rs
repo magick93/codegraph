@@ -704,6 +704,7 @@ async fn test_view_component_spec_round_trip() {
         conditional_expression: None,
         domain: Some("sales".to_string()),
         module_uses: None,
+        roles: None,
     };
     engine.ingest_view_container(&container).await.unwrap();
 
@@ -752,6 +753,7 @@ async fn test_view_component_spec_absent_round_trip() {
         conditional_expression: None,
         domain: None,
         module_uses: None,
+        roles: None,
     };
     engine.ingest_view_container(&container).await.unwrap();
 
@@ -787,7 +789,7 @@ async fn test_view_component_spec_absent_round_trip() {
 }
 
 #[tokio::test]
-async fn test_view_container_module_uses_round_trip() {
+async fn test_view_container_module_uses_and_roles_round_trip() {
     let engine = GrafeoEngine::in_memory().unwrap();
     let container = ViewContainerNode {
         name: "Catalog".to_string(),
@@ -808,6 +810,7 @@ async fn test_view_container_module_uses_round_trip() {
                 alias: None,
             },
         ]),
+        roles: Some(vec!["admin".to_string(), "manager".to_string()]),
     };
     engine.ingest_view_container(&container).await.unwrap();
 
@@ -821,6 +824,7 @@ async fn test_view_container_module_uses_round_trip() {
         conditional_expression: None,
         domain: None,
         module_uses: None,
+        roles: None,
     };
     engine.ingest_view_container(&plain).await.unwrap();
 
@@ -844,10 +848,15 @@ async fn test_view_container_module_uses_round_trip() {
             },
         ])
     );
+    assert_eq!(
+        catalog.roles,
+        Some(vec!["admin".to_string(), "manager".to_string()])
+    );
 
     let plain_loaded = loaded
         .iter()
         .find(|c| c.name == "Plain")
         .expect("Plain container");
     assert_eq!(plain_loaded.module_uses, None);
+    assert_eq!(plain_loaded.roles, None);
 }

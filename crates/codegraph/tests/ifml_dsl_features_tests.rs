@@ -83,6 +83,60 @@ view "Plain" {
 }
 
 #[tokio::test]
+async fn test_view_roles_round_trip_through_graph() {
+    let ifml = r#"
+actor "Admin" {
+    label: "Administrator";
+}
+
+actor "Auditor" {
+    label: "Auditor";
+}
+
+view "AdminConsole" {
+    roles: [admin, manager];
+
+    component "grid" {
+        type: list;
+        data: Product;
+    }
+}
+
+view "Storefront" {
+    component "grid" {
+        type: list;
+        data: Product;
+    }
+}
+"#;
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
+    let model = codegraph_ifml_dsl::parse_ifml(ifml).expect("Should parse IFML with actors/roles");
+    assert_eq!(model.actors.len(), 2);
+    assert_eq!(model.views[0].roles, vec!["admin", "manager"]);
+    assert!(
+        !model.views[0].properties.iter().any(|p| p.key == "roles"),
+        "roles must not remain in the property bag"
+    );
+
+    let stats = codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
+        .await
+        .expect("Should ingest");
+    assert_eq!(stats.actors, 2, "actor declarations should be counted");
+
+    let containers = engine.get_ifml_view_containers().await.unwrap();
+    assert_eq!(containers.len(), 2);
+
+    let console = container(&containers, "AdminConsole");
+    assert_eq!(
+        console.roles,
+        Some(vec!["admin".to_string(), "manager".to_string()])
+    );
+
+    let storefront = container(&containers, "Storefront");
+    assert_eq!(storefront.roles, None);
+}
+
+#[tokio::test]
 async fn test_form_messages_and_param_defaults_ingest_cleanly() {
     let ifml = r#"
 view "EditCustomer" {

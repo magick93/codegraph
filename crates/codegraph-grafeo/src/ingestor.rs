@@ -934,11 +934,15 @@ impl GraphIngestor for GrafeoEngine {
             .module_uses
             .as_ref()
             .map(|m| serde_json::to_string(m).unwrap_or_default());
+        let roles_json = node
+            .roles
+            .as_ref()
+            .map(|r| serde_json::to_string(r).unwrap_or_default());
         let gql = format!(
             "INSERT (:ViewContainer {{ \
                 name: '{}', label: {}, is_xor: {}, is_default: {}, \
                 is_landmark: {}, is_modal: {}, conditional_expression: {}, domain: {}, \
-                module_uses: {} \
+                module_uses: {}, roles: {} \
             }})",
             escape_gql(&node.name),
             opt_str(&node.label),
@@ -949,6 +953,7 @@ impl GraphIngestor for GrafeoEngine {
             opt_str(&node.conditional_expression),
             opt_str(&node.domain),
             opt_str(&module_uses_json),
+            opt_str(&roles_json),
         );
         session
             .execute(&gql)

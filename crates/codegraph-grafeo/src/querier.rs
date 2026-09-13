@@ -939,7 +939,7 @@ impl GraphQuerier for GrafeoEngine {
         let gql = "MATCH (vc:ViewContainer) RETURN \
             vc.name, vc.label, vc.is_xor, vc.is_default, \
             vc.is_landmark, vc.is_modal, vc.conditional_expression, vc.domain, \
-            vc.module_uses \
+            vc.module_uses, vc.roles \
             ORDER BY vc.name";
         let result = query_gql(self, gql)?;
         let reader = RowReader::from_columns(&result.columns);
@@ -948,6 +948,8 @@ impl GraphQuerier for GrafeoEngine {
             let module_uses_str: Option<String> = reader.get_opt_string(row, "vc.module_uses")?;
             let module_uses: Option<Vec<ModuleUseRecord>> =
                 module_uses_str.and_then(|s| serde_json::from_str(&s).ok());
+            let roles_str: Option<String> = reader.get_opt_string(row, "vc.roles")?;
+            let roles: Option<Vec<String>> = roles_str.and_then(|s| serde_json::from_str(&s).ok());
             nodes.push(ViewContainerNode {
                 name: reader.get_string(row, "vc.name")?,
                 label: reader.get_opt_string(row, "vc.label")?,
@@ -958,6 +960,7 @@ impl GraphQuerier for GrafeoEngine {
                 conditional_expression: reader.get_opt_string(row, "vc.conditional_expression")?,
                 domain: reader.get_opt_string(row, "vc.domain")?,
                 module_uses,
+                roles,
             });
         }
         Ok(nodes)

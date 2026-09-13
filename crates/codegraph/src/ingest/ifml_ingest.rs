@@ -113,6 +113,10 @@ pub async fn ingest_ifml_model(
         }
     }
 
+    // Actor declarations are parsed and counted but not yet persisted;
+    // a dedicated node type lands with the roles/permissions slice.
+    stats.actors += model.actors.len();
+
     Ok(stats)
 }
 
@@ -127,6 +131,11 @@ async fn ingest_view_container(db: &dyn GraphIngestor, view: &ViewDeclaration) -
         conditional_expression: view.condition.as_ref().map(render_expression),
         domain: None,
         module_uses: module_use_records(&view.module_uses),
+        roles: if view.roles.is_empty() {
+            None
+        } else {
+            Some(view.roles.clone())
+        },
     };
     let id = db
         .ingest_view_container(&node)
@@ -149,6 +158,7 @@ async fn ingest_container_node(
         conditional_expression: container.condition.as_ref().map(render_expression),
         domain: None,
         module_uses: module_use_records(&container.module_uses),
+        roles: None,
     };
     db.ingest_view_container(&node).await.map_err(Error::Graph)
 }
@@ -492,13 +502,14 @@ pub struct IfmlIngestStats {
     pub parameters: usize,
     pub actions: usize,
     pub module_uses: usize,
+    pub actors: usize,
 }
 
 impl std::fmt::Display for IfmlIngestStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} views, {} nested containers, {} components, {} events, {} params, {} actions, {} module uses",
+            "{} views, {} nested containers, {} components, {} events, {} params, {} actions, {} module uses, {} actors",
             self.view_containers,
             self.containers,
             self.components,
@@ -506,6 +517,7 @@ impl std::fmt::Display for IfmlIngestStats {
             self.parameters,
             self.actions,
             self.module_uses,
+            self.actors,
         )
     }
 }

@@ -2,7 +2,7 @@
 ifml_model = {
     SOI ~
     domain_declaration* ~
-    (view_declaration | action_declaration | module_declaration)* ~
+    (view_declaration | action_declaration | module_declaration | actor_declaration)* ~
     EOI
 }
 
@@ -194,6 +194,13 @@ module_declaration = {
         "output" ~ parameter_block ~
         property_assignment* ~
         (container_declaration | component_declaration | event_handler)* ~
+    "}"
+}
+
+// ── Actor declarations ─────────────────────────────────────────────
+actor_declaration = {
+    "actor" ~ string ~ "{" ~
+        property_assignment* ~
     "}"
 }
 

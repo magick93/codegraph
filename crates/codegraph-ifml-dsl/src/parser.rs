@@ -1300,6 +1300,25 @@ fn extract_position_property(properties: &[PropertyAssignment]) -> Option<Positi
     }
 }
 
+fn extract_roles_property(properties: &[PropertyAssignment]) -> Vec<String> {
+    properties
+        .iter()
+        .find(|p| p.key == "roles")
+        .and_then(|p| match &p.value {
+            ValueExpression::Array(items) => Some(
+                items
+                    .iter()
+                    .filter_map(|v| match v {
+                        ValueExpression::Identifier(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
 fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
     let mut inner = pair.clone().into_inner();
     let name = inner.next().map(|p| parse_string(&p)).unwrap_or_default();
@@ -1318,6 +1337,7 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
             components: Vec::new(),
             events: Vec::new(),
             module_uses: Vec::new(),
+            roles: Vec::new(),
             condition: None,
             position: None,
         };
@@ -1330,6 +1350,11 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
     let is_xor = extract_bool_property(&properties, "xor");
     let is_modal = extract_bool_property(&properties, "modal");
     let position = extract_position_property(&properties);
+    let roles = extract_roles_property(&properties);
+    let properties: Vec<PropertyAssignment> = properties
+        .into_iter()
+        .filter(|p| p.key != "roles")
+        .collect();
 
     ViewDeclaration {
         name,
@@ -1343,6 +1368,7 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
         components,
         events,
         module_uses,
+        roles,
         condition,
         position,
     }
@@ -1416,11 +1442,26 @@ fn parse_domain_declaration(pair: Pair<Rule>) -> DomainDeclaration {
     DomainDeclaration { name, schema_name }
 }
 
+fn parse_actor_declaration(pair: Pair<Rule>) -> ActorDeclaration {
+    let mut inner = pair.clone().into_inner();
+    let name = inner.next().map(|p| parse_string(&p)).unwrap_or_default();
+
+    let mut properties = Vec::new();
+    for child in inner {
+        if child.as_rule() == Rule::property_assignment {
+            properties.push(parse_property_assignment(child));
+        }
+    }
+
+    ActorDeclaration { name, properties }
+}
+
 fn parse_ifml_model(pairs: Pairs<Rule>) -> Result<IfmlModel, IfmlParseError> {
     let mut domains = Vec::new();
     let mut views = Vec::new();
     let mut actions = Vec::new();
     let mut modules = Vec::new();
+    let mut actors = Vec::new();
 
     for pair in pairs {
         let rule = pair.as_rule();
@@ -1429,6 +1470,7 @@ fn parse_ifml_model(pairs: Pairs<Rule>) -> Result<IfmlModel, IfmlParseError> {
             Rule::view_declaration => views.push(parse_view_declaration(pair)),
             Rule::action_declaration => actions.push(parse_action_declaration(pair)),
             Rule::module_declaration => modules.push(parse_module_declaration(pair)),
+            Rule::actor_declaration => actors.push(parse_actor_declaration(pair)),
             Rule::EOI => {}
             _ => {
                 return Err(IfmlParseError::Parse {
@@ -1444,6 +1486,7 @@ fn parse_ifml_model(pairs: Pairs<Rule>) -> Result<IfmlModel, IfmlParseError> {
         views,
         actions,
         modules,
+        actors,
     })
 }
 
@@ -1461,6 +1504,7 @@ pub fn parse_ifml(input: &str) -> Result<IfmlModel, IfmlParseError> {
             views: Vec::new(),
             actions: Vec::new(),
             modules: Vec::new(),
+            actors: Vec::new(),
         });
     }
 
@@ -3209,6 +3253,153 @@ view "Bad" {
                 i
             );
         }
+    }
+
+    #[test]
+    fn test_actor_declaration_parses() {
+        let input = r#"
+actor "Admin" {
+    label: "Administrator";
+    description: "Full system access";
+}
+
+actor "Auditor" {
+    label: "Auditor";
+}
+
+view "Dashboard" {
+    component "grid" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(model.actors.len(), 2);
+        assert_eq!(model.views.len(), 1);
+
+        let admin = &model.actors[0];
+        assert_eq!(admin.name, "Admin");
+        assert_eq!(admin.properties.len(), 2);
+        assert_eq!(admin.properties[0].key, "label");
+        match &admin.properties[0].value {
+            ValueExpression::String(s) => assert_eq!(s, "Administrator"),
+            other => panic!("Expected String, got {:?}", other),
+        }
+
+        let auditor = &model.actors[1];
+        assert_eq!(auditor.name, "Auditor");
+        assert_eq!(auditor.properties.len(), 1);
+    }
+
+    #[test]
+    fn test_actor_with_empty_body_parses() {
+        let input = r#"
+actor "Guest" {}
+
+view "Public" {
+    component "grid" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(model.actors.len(), 1);
+        assert_eq!(model.actors[0].name, "Guest");
+        assert!(model.actors[0].properties.is_empty());
+    }
+
+    #[test]
+    fn test_view_roles_extracted_from_property_bag() {
+        let input = r#"
+view "AdminConsole" {
+    roles: [admin, manager];
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+        assert_eq!(view.roles, vec!["admin".to_string(), "manager".to_string()]);
+        assert!(view.is_landmark);
+        assert!(
+            !view.properties.iter().any(|p| p.key == "roles"),
+            "roles must be removed from the property bag"
+        );
+    }
+
+    #[test]
+    fn test_view_roles_empty_array() {
+        let input = r#"
+view "Open" {
+    roles: [];
+
+    component "grid" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert!(model.views[0].roles.is_empty());
+        assert!(
+            !model.views[0].properties.iter().any(|p| p.key == "roles"),
+            "empty roles must also be removed from the property bag"
+        );
+    }
+
+    #[test]
+    fn test_view_without_roles_parses_identically() {
+        let input = r#"
+view "Catalog" {
+    label "Catalog";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Product;
+        fields: [name, price];
+    }
+
+    on load -> stay;
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+        assert!(view.roles.is_empty());
+        assert_eq!(view.label.as_deref(), Some("Catalog"));
+        assert!(view.is_landmark);
+        assert_eq!(view.components.len(), 1);
+        assert_eq!(view.events.len(), 1);
+    }
+
+    #[test]
+    fn test_actor_ast_serde_round_trip() {
+        let input = r#"
+actor "Admin" {
+    label: "Administrator";
+}
+
+view "Console" {
+    roles: [admin];
+    component "grid" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let json = serde_json::to_string(&model).expect("serialize model");
+        let round_tripped: IfmlModel = serde_json::from_str(&json).expect("deserialize model");
+        let reserialized = serde_json::to_string(&round_tripped).expect("re-serialize model");
+        assert_eq!(reserialized, json);
+        assert_eq!(round_tripped.actors[0].name, "Admin");
+        assert_eq!(round_tripped.views[0].roles, vec!["admin".to_string()]);
     }
 
     #[test]
