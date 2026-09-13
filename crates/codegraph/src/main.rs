@@ -134,6 +134,17 @@ async fn main() -> codegraph::error::Result<()> {
             })
             .await
         }
+        cli::Commands::IfmlDerive {
+            from_svelte,
+            output,
+            name,
+            force,
+        } => codegraph::ifml_derive::ifml_derive(codegraph::ifml_derive::IfmlDeriveArgs {
+            from_svelte: &from_svelte,
+            output: &output,
+            name: name.as_deref(),
+            force,
+        }),
         cli::Commands::Lsp {
             schemas,
             classifier,

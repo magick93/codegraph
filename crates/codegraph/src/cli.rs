@@ -173,6 +173,24 @@ pub enum Commands {
         #[arg(long)]
         domain: Vec<String>,
     },
+    /// Reverse-infer an IFML DSL model from existing SvelteKit pages (spike)
+    IfmlDerive {
+        /// Directory of the SvelteKit app to scan for +page.svelte files
+        #[arg(long)]
+        from_svelte: PathBuf,
+
+        /// Output .ifml file path
+        #[arg(long, default_value = "app.ifml")]
+        output: PathBuf,
+
+        /// App name used as the IFML domain name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Overwrite the output file if it already exists
+        #[arg(long)]
+        force: bool,
+    },
     /// Start the IFML Language Server Protocol server
     Lsp {
         /// Paths to JSON schema directories
