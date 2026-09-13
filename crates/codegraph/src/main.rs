@@ -25,6 +25,7 @@ async fn main() -> codegraph::error::Result<()> {
             template_dir,
             ifml_framework,
             ifml_components,
+            ifml_design_system,
         } => {
             codegraph::driver::generate(
                 &config,
@@ -33,6 +34,7 @@ async fn main() -> codegraph::error::Result<()> {
                 &template_dir,
                 &ifml_framework,
                 ifml_components.as_deref(),
+                ifml_design_system.as_deref(),
             )
             .await
         }
@@ -66,6 +68,7 @@ async fn main() -> codegraph::error::Result<()> {
             openapi_files,
             ifml_framework,
             ifml_components,
+            ifml_design_system,
         } => {
             codegraph::driver::run(codegraph::driver::RunArgs {
                 schemas: &schemas,
@@ -82,6 +85,7 @@ async fn main() -> codegraph::error::Result<()> {
                 openapi_files: &openapi_files,
                 ifml_framework: &ifml_framework,
                 ifml_components: ifml_components.as_deref(),
+                ifml_design_system: ifml_design_system.as_deref(),
                 codegraph_rev: None,
             })
             .await
@@ -96,6 +100,7 @@ async fn main() -> codegraph::error::Result<()> {
             profiles_config,
             template_dir,
             ifml_components,
+            ifml_design_system,
         } => {
             codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
                 config_path: &config,
@@ -107,6 +112,7 @@ async fn main() -> codegraph::error::Result<()> {
                 profiles_config_path: profiles_config,
                 template_dir: &template_dir,
                 ifml_components: ifml_components.as_deref(),
+                ifml_design_system: ifml_design_system.as_deref(),
             })
             .await
         }

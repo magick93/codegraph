@@ -39,6 +39,10 @@ pub enum Commands {
         /// Path to ifml-components.toml mapping IFML components to handcrafted components
         #[arg(long)]
         ifml_components: Option<PathBuf>,
+        /// Built-in IFML design-system pack to apply (e.g. "shadcn-svelte").
+        /// Overrides the profiles.toml `ifml_design_system` feature.
+        #[arg(long)]
+        ifml_design_system: Option<String>,
     },
     /// Classify all schemas and show entity/VO decisions
     Classify {
@@ -104,6 +108,10 @@ pub enum Commands {
         /// Path to ifml-components.toml mapping IFML components to handcrafted components
         #[arg(long)]
         ifml_components: Option<PathBuf>,
+        /// Built-in IFML design-system pack to apply (e.g. "shadcn-svelte").
+        /// Overrides the profiles.toml `ifml_design_system` feature.
+        #[arg(long)]
+        ifml_design_system: Option<String>,
     },
     /// IFML-only UI generation: ingest .ifml DSL files and emit framework routes
     IfmlGenerate {
@@ -134,6 +142,10 @@ pub enum Commands {
         /// Path to ifml-components.toml mapping IFML components to handcrafted components
         #[arg(long)]
         ifml_components: Option<PathBuf>,
+        /// Built-in IFML design-system pack to apply (e.g. "shadcn-svelte").
+        /// Overrides the profiles.toml `ifml_design_system` feature.
+        #[arg(long)]
+        ifml_design_system: Option<String>,
     },
     /// Scaffold a starter IFML DSL file (CRUD views + navigation) from JSON schemas
     IfmlScaffold {

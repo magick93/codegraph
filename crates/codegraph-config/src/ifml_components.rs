@@ -64,6 +64,17 @@ pub struct IfmlComponentMapping {
 }
 
 impl IfmlComponentMappings {
+    /// Merge project mappings with a built-in design-system pack.
+    ///
+    /// Project entries are kept ahead of the pack's so they shadow pack
+    /// entries at the same resolution tier (lookup is first-match-wins);
+    /// pack entries stay reachable for slots the project mappings do not
+    /// cover.
+    pub fn merge_with_pack(mut project: Self, pack: &Self) -> Self {
+        project.components.extend(pack.components.iter().cloned());
+        project
+    }
+
     pub fn load(path: &Path) -> Result<Self, String> {
         let raw = std::fs::read_to_string(path)
             .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
@@ -134,6 +145,34 @@ fn kind_matches(m: &IfmlComponentMapping, component_type: &str, kind: &str) -> b
         Some(k) => k == component_type || k == kind,
         None => false,
     }
+}
+
+/// Built-in design-system packs: (name, embedded TOML source).
+pub const BUILT_IN_PACKS: &[(&str, &str)] =
+    &[("shadcn-svelte", include_str!("packs/shadcn-svelte.toml"))];
+
+/// Names of the built-in design-system packs, in registration order.
+pub fn built_in_pack_names() -> impl Iterator<Item = &'static str> {
+    BUILT_IN_PACKS.iter().map(|(name, _)| *name)
+}
+
+/// Parse the built-in design-system pack `name`.
+///
+/// Unknown names are an error naming the known packs — callers surface the
+/// message rather than silently falling back to unmapped components.
+pub fn built_in_pack(name: &str) -> Result<IfmlComponentMappings, String> {
+    let source = BUILT_IN_PACKS
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, source)| *source)
+        .ok_or_else(|| {
+            format!(
+                "unknown IFML design system pack \"{name}\"; known packs: {}",
+                built_in_pack_names().collect::<Vec<_>>().join(", ")
+            )
+        })?;
+    IfmlComponentMappings::parse_str(source)
+        .map_err(|e| format!("invalid built-in design system pack \"{name}\": {e}"))
 }
 
 impl IfmlComponentMapping {
@@ -424,6 +463,120 @@ path = "$lib/components/Grid.svelte"
             m.resolve_slot("V", "grid", "list", "list", None)
                 .unwrap()
                 .path
+        );
+    }
+
+    #[test]
+    fn built_in_pack_names_include_shadcn_svelte() {
+        assert!(built_in_pack_names().any(|name| name == "shadcn-svelte"));
+    }
+
+    #[test]
+    fn shadcn_svelte_pack_parses_and_covers_roles() {
+        let pack = built_in_pack("shadcn-svelte").unwrap();
+        assert!(!pack.components.is_empty());
+        for role in [
+            SemanticRole::ActionControl,
+            SemanticRole::NavigationControl,
+            SemanticRole::Field,
+            SemanticRole::SelectionField,
+            SemanticRole::Collection,
+            SemanticRole::ModalView,
+            SemanticRole::PresentationContainer,
+            SemanticRole::Display,
+            SemanticRole::Shell,
+            SemanticRole::Pagination,
+        ] {
+            assert!(
+                pack.resolve_by_role("AnyView", role).is_some(),
+                "pack misses role {role:?}"
+            );
+        }
+        let button = pack.resolve_by_role("AnyView", SemanticRole::ActionControl);
+        assert_eq!(
+            button.unwrap().path,
+            "$lib/components/ui/button/button.svelte"
+        );
+    }
+
+    #[test]
+    fn unknown_pack_name_is_an_error() {
+        let err = built_in_pack("material").expect_err("unknown pack must error");
+        assert!(
+            err.contains("unknown IFML design system pack \"material\""),
+            "{err}"
+        );
+        assert!(err.contains("shadcn-svelte"), "{err}");
+    }
+
+    #[test]
+    fn merge_keeps_project_entries_ahead_of_pack() {
+        let project = mappings(
+            r#"
+[[component]]
+role = "collection"
+path = "$lib/components/MyTable.svelte"
+"#,
+        );
+        let pack = built_in_pack("shadcn-svelte").unwrap();
+        let merged = IfmlComponentMappings::merge_with_pack(project, &pack);
+        let resolved = merged
+            .resolve_slot("V", "grid", "list", "table", Some(SemanticRole::Collection))
+            .unwrap();
+        assert_eq!(resolved.path, "$lib/components/MyTable.svelte");
+    }
+
+    #[test]
+    fn merge_falls_through_to_pack_when_project_silent() {
+        let project = mappings(
+            r#"
+[[component]]
+name = "grid"
+path = "$lib/components/Grid.svelte"
+"#,
+        );
+        let pack = built_in_pack("shadcn-svelte").unwrap();
+        let merged = IfmlComponentMappings::merge_with_pack(project, &pack);
+        assert_eq!(
+            merged
+                .resolve_slot("V", "grid", "list", "table", Some(SemanticRole::Collection))
+                .unwrap()
+                .path,
+            "$lib/components/Grid.svelte"
+        );
+        assert_eq!(
+            merged
+                .resolve_slot(
+                    "V",
+                    "save",
+                    "button",
+                    "button",
+                    Some(SemanticRole::ActionControl)
+                )
+                .unwrap()
+                .path,
+            "$lib/components/ui/button/button.svelte"
+        );
+        assert_eq!(
+            merged
+                .resolve("V", "other", "table", "table")
+                .unwrap()
+                .export_name(),
+            "Table"
+        );
+    }
+
+    #[test]
+    fn merge_with_empty_project_uses_pack() {
+        let project = mappings("");
+        let pack = built_in_pack("shadcn-svelte").unwrap();
+        let merged = IfmlComponentMappings::merge_with_pack(project, &pack);
+        assert_eq!(
+            merged
+                .resolve_by_role("V", SemanticRole::ModalView)
+                .unwrap()
+                .export_name(),
+            "Dialog"
         );
     }
 }

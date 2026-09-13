@@ -382,6 +382,7 @@ entities = ["CustomerType"]
         profiles_config_path: None,
         template_dir: &[],
         ifml_components: None,
+        ifml_design_system: None,
     })
     .await
     .expect("ifml_generate should succeed for typed components");
