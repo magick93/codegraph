@@ -38,7 +38,17 @@
 
 	async function {{ comp.submit.handler_name }}(event: SubmitEvent) {
 		event.preventDefault();
+{%- if comp.submit.client_validate %}
+		const form = event.currentTarget as HTMLFormElement;
+		if (!form.checkValidity()) {
+			const invalid = form.querySelector(':invalid');
+			formError = invalid?.getAttribute('data-validate-message') ?? 'Please review the highlighted fields';
+			return;
+		}
+		const formData = Object.fromEntries(new FormData(form));
+{%- else %}
 		const formData = Object.fromEntries(new FormData(event.currentTarget as HTMLFormElement));
+{%- endif %}
 		submitting = true;
 		formError = '';
 		try {
@@ -91,13 +101,16 @@
 {%- if comp.data_validate %}
 	data-validate="{{ comp.data_validate }}"
 {%- endif %}
+{%- if comp.data_validate_message %}
+	data-validate-message="{{ comp.data_validate_message }}"
+{%- endif %}
 {%- for p in comp.event_props %}
 	{{ p }}
 {%- endfor %}
 />
 {% elif comp.table %}
 <h1>{{ label }}</h1>
-<table{% if comp.table.pagination %} data-pagination="true"{% endif %}>
+<table data-testid="{{ comp.name }}-table"{% if comp.table.pagination %} data-pagination="true"{% endif %}>
 	<thead>
 		<tr>
 		{% for col in comp.table.columns %}
@@ -107,7 +120,7 @@
 	</thead>
 	<tbody>
 {% raw %}		{#each data.items as item}{% endraw %}
-			<tr{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
+			<tr data-testid="{{ comp.name }}-row"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
 			{% for col in comp.table.columns %}
 				<td>{item.{{ col.binding }}}</td>
 			{% endfor %}
@@ -117,12 +130,12 @@
 </table>
 
 {% elif comp.form %}
-<form{% if comp.submit_prop %} {{ comp.submit_prop }}{% else %} method="POST"{% endif %}>
+<form data-testid="{{ comp.name }}-form"{% if comp.submit_prop %} {{ comp.submit_prop }}{% else %} method="POST"{% endif %}>
 	{% for field in comp.form.fields %}
 	{% if field.is_select %}
 	<label>
 		{{ field.name }}
-		<select name="{{ field.name }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}>
+		<select name="{{ field.name }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %}>
 			{% for value in field.values %}
 			<option value="{{ value }}">{{ value }}</option>
 			{% endfor %}
@@ -141,19 +154,19 @@
 	{% elif field.is_textarea %}
 	<label>
 		{{ field.name }}
-		<textarea name="{{ field.name }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}></textarea>
+		<textarea name="{{ field.name }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %}></textarea>
 	</label>
 	{% else %}
 	<label>
 		{{ field.name }}
-		<input name="{{ field.name }}" type="{{ field.input_type }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %} />
+		<input name="{{ field.name }}" type="{{ field.input_type }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %} />
 	</label>
 	{% endif %}
 	{% endfor %}
 {% if comp.submit_handler %}
-{% raw %}	{#if formError}<span class="error">{formError}</span>{/if}{% endraw %}
+{% raw %}	{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
 {% endif %}
-	<button type="submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>
+	<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>
 </form>
 
 {% elif comp.chart %}
@@ -161,7 +174,7 @@
 
 {% elif comp.component_type == "list" %}
 <h1>{{ label }}</h1>
-<table>
+<table data-testid="{{ comp.name }}-table">
 	<thead>
 		<tr>
 		{% for field in comp.fields %}
@@ -171,7 +184,7 @@
 	</thead>
 	<tbody>
 {% raw %}		{#each data.items as item}{% endraw %}
-			<tr{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
+			<tr data-testid="{{ comp.name }}-row"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
 			{% for field in comp.fields %}
 				<td>{item.{{ field }}}</td>
 			{% endfor %}
@@ -181,18 +194,21 @@
 </table>
 
 {% elif comp.component_type == "form" %}
-<form{% if comp.submit_prop %} {{ comp.submit_prop }}{% else %} method="POST"{% endif %}>
+<form data-testid="{{ comp.name }}-form"{% if comp.submit_prop %} {{ comp.submit_prop }}{% else %} method="POST"{% endif %}>
 	{% for field in comp.fields %}
 	<label>
 		{{ field }}
 		<input name="{{ field }}" />
 	</label>
 	{% endfor %}
-	<button type="submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>
+{% if comp.submit_handler %}
+{% raw %}	{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
+{% endif %}
+	<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>
 </form>
 
 {% elif comp.component_type == "details" %}
-<dl>
+<dl data-testid="{{ comp.name }}-details">
 	{% for field in comp.fields %}
 	<dt>{{ field }}</dt>
 	<dd>{data.{{ field }}}</dd>

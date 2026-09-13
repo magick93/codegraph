@@ -21,7 +21,7 @@ pub const SPECLESS_CUSTOMERLIST_PAGE: &str = r##"<script lang="ts">
 </svelte:head>
 
 <h1>Customer Management</h1>
-<table>
+<table data-testid="grid-table">
 	<thead>
 		<tr>
 		
@@ -37,7 +37,7 @@ pub const SPECLESS_CUSTOMERLIST_PAGE: &str = r##"<script lang="ts">
 	</thead>
 	<tbody>
 		{#each data.items as item}
-			<tr onclick={() => comp_grid_select(item)}>
+			<tr data-testid="grid-row" onclick={() => comp_grid_select(item)}>
 			
 				<td>{item.name}</td>
 			
@@ -84,7 +84,7 @@ pub const SPECLESS_CUSTOMERDETAIL_PAGE: &str = r##"<script lang="ts">
 	<title>CustomerDetail</title>
 </svelte:head>
 
-<dl>
+<dl data-testid="info-details">
 	
 	<dt>name</dt>
 	<dd>{data.name}</dd>

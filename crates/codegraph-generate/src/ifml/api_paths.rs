@@ -146,10 +146,12 @@ mod tests {
             ParameterDef {
                 name: "region".to_string(),
                 type_ref: "String".to_string(),
+                default: None,
             },
             ParameterDef {
                 name: "customerId".to_string(),
                 type_ref: "Uuid".to_string(),
+                default: None,
             },
         ];
         assert_eq!(id_param_from(&params).as_deref(), Some("customerId"));

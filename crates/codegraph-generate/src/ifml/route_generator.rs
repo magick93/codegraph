@@ -169,6 +169,9 @@ pub struct PageComponentContext {
     /// Joined validation expressions for mapped form components
     /// (`data-validate` attribute).
     data_validate: Option<String>,
+    /// First validation message for mapped form components
+    /// (`data-validate-message` attribute).
+    data_validate_message: Option<String>,
     api: Option<ResolvedApi>,
     /// View parameter carrying the entity id (edit mode), when any.
     id_param: Option<String>,
@@ -190,6 +193,9 @@ pub struct RenderSubmit {
     method: String,
     /// Navigation target URL expression from the view's save event.
     navigate_url: Option<String>,
+    /// Emit the conservative client-side check that surfaces the first
+    /// failing validation message before the network request.
+    client_validate: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -247,6 +253,9 @@ pub struct RenderInputField {
     values: Vec<String>,
     /// Validation expressions joined for a `data-validate` attribute.
     data_validate: String,
+    /// Message positionally paired with the first validation; rendered as
+    /// `data-validate-message` next to `data-validate`.
+    message: Option<String>,
 }
 
 /// Typed-chart render context derived from a `ComponentSpec::Chart`
@@ -263,6 +272,16 @@ pub struct PageLoadContext {
     name: String,
     components: Vec<PageLoadComponentContext>,
     has_fetch: bool,
+    /// View parameters carrying a DSL default, rendered as
+    /// `url.searchParams.get(name) ?? params.name ?? <default>` fallbacks.
+    param_defaults: Vec<RenderParamDefault>,
+}
+
+/// A view parameter default: JS literal emitted as the final `??` fallback.
+#[derive(Debug, Serialize)]
+pub struct RenderParamDefault {
+    name: String,
+    default: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -276,6 +295,8 @@ pub struct PageLoadComponentContext {
     route_name: String,
     api: Option<ResolvedApi>,
     id_param: Option<String>,
+    /// Default literal for the id param, when the view declares one.
+    id_default: Option<String>,
     paginate: bool,
     fetch_list: bool,
     fetch_item: bool,
@@ -426,6 +447,12 @@ async fn page_component_context(
             .collect::<Vec<_>>()
             .join(" && ")
     });
+    let data_validate_message = form.as_ref().and_then(|form| {
+        form.fields
+            .iter()
+            .find(|f| !f.data_validate.is_empty())
+            .and_then(|f| f.message.clone())
+    });
     let data_prop = if is_collection(c) || chart.is_some() {
         "data={data.items}".to_string()
     } else if is_form_component(c) {
@@ -457,6 +484,7 @@ async fn page_component_context(
         fields_prop,
         submit_prop,
         data_validate,
+        data_validate_message,
         api,
         id_param: id_param.map(str::to_string),
         row_handler,
@@ -554,7 +582,16 @@ fn build_submit(
         url_expr,
         method,
         navigate_url,
+        client_validate: form_has_messages(c),
     })
+}
+
+/// True when any typed form field pairs a validation with a message —
+/// the signal for the submit handler's client-side message check.
+fn form_has_messages(c: &IfmlComponent) -> bool {
+    matches!(&c.spec, Some(ComponentSpec::Form(spec)) if spec.fields.iter().any(|f| {
+        !f.validations.is_empty() && !f.messages.is_empty()
+    }))
 }
 
 fn render_event(evt: &IfmlEvent) -> RenderEvent {
@@ -670,6 +707,11 @@ fn render_form(spec: &FormSpec) -> RenderForm {
                 };
                 let validations: Vec<String> =
                     field.validations.iter().map(render_expression).collect();
+                let message = if validations.is_empty() {
+                    None
+                } else {
+                    field.messages.first().cloned()
+                };
                 RenderInputField {
                     name: field.name.clone(),
                     input_type,
@@ -679,6 +721,7 @@ fn render_form(spec: &FormSpec) -> RenderForm {
                     required: field.required,
                     values: field.values.clone(),
                     data_validate: validations.join(" && "),
+                    message,
                 }
             })
             .collect(),
@@ -758,6 +801,20 @@ fn build_load_context(
     components: &[PageComponentContext],
 ) -> PageLoadContext {
     let id_param = id_param_from(&vc.params);
+    let param_defaults: Vec<RenderParamDefault> = vc
+        .params
+        .iter()
+        .filter_map(|p| {
+            p.default.as_ref().map(|d| RenderParamDefault {
+                name: p.name.clone(),
+                default: d.clone(),
+            })
+        })
+        .collect();
+    let id_default = id_param
+        .as_deref()
+        .and_then(|name| vc.params.iter().find(|p| p.name == name))
+        .and_then(|p| p.default.clone());
     let mut load_components = Vec::new();
     let mut has_list = false;
     let mut has_details = false;
@@ -793,6 +850,7 @@ fn build_load_context(
             route_name: comp.entity.to_lowercase(),
             api: comp.api.clone(),
             id_param: id_param.clone(),
+            id_default: id_default.clone(),
             paginate: fetch_list && (comp.table.as_ref().map(|t| t.pagination).unwrap_or(true)),
             fetch_list,
             fetch_item,
@@ -805,6 +863,7 @@ fn build_load_context(
         name: vc.name.clone(),
         components: load_components,
         has_fetch,
+        param_defaults,
     }
 }
 
@@ -955,7 +1014,7 @@ entities = ["CustomerType"]
                         right: Box::new(Expression::NumLit(2.0)),
                     }],
                     values: Vec::new(),
-                    messages: Vec::new(),
+                    messages: vec!["Name too short".to_string()],
                 },
                 codegraph_ifml_dsl::FieldDef {
                     name: "start".to_string(),
@@ -988,10 +1047,146 @@ entities = ["CustomerType"]
         assert_eq!(form.fields[0].input_type, "text");
         assert!(form.fields[0].required);
         assert_eq!(form.fields[0].data_validate, "len(name) > 2");
+        assert_eq!(form.fields[0].message.as_deref(), Some("Name too short"));
         assert_eq!(form.fields[1].input_type, "datetime-local");
         assert!(form.fields[2].is_select);
         assert_eq!(form.fields[2].values, vec!["gold", "silver"]);
         assert_eq!(form.fields[3].input_type, "stars");
+    }
+
+    #[test]
+    fn form_message_renders_validate_message_and_client_check() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let spec = ComponentSpec::Form(FormSpec {
+            fields: vec![codegraph_ifml_dsl::FieldDef {
+                name: "title".to_string(),
+                input: InputFieldType::Text,
+                required: true,
+                validations: vec![Expression::BinOp {
+                    left: Box::new(Expression::Call {
+                        name: "len".to_string(),
+                        args: vec![Expression::Ident("title".to_string())],
+                    }),
+                    op: BinOp::Gt,
+                    right: Box::new(Expression::NumLit(2.0)),
+                }],
+                values: Vec::new(),
+                messages: vec!["Title too short".to_string()],
+            }],
+        });
+        let ctx = svelte_context(vec![page_component_context_sync(&component_with_spec(
+            Some(spec),
+        ))]);
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains(
+                "data-validate=\"len(title) > 2\" data-validate-message=\"Title too short\""
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("data-testid=\"grid-form\""), "{rendered}");
+        assert!(
+            rendered.contains("data-testid=\"grid-submit\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"grid-error\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("form.querySelector(':invalid')"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("invalid?.getAttribute('data-validate-message')"),
+            "{rendered}"
+        );
+
+        let plain = ComponentSpec::Form(FormSpec {
+            fields: vec![codegraph_ifml_dsl::FieldDef {
+                name: "title".to_string(),
+                input: InputFieldType::Text,
+                required: true,
+                validations: Vec::new(),
+                values: Vec::new(),
+                messages: Vec::new(),
+            }],
+        });
+        let ctx = svelte_context(vec![page_component_context_sync(&component_with_spec(
+            Some(plain),
+        ))]);
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(!rendered.contains("checkValidity"), "{rendered}");
+        assert!(rendered.contains("data-testid=\"grid-form\""), "{rendered}");
+        assert!(
+            rendered.contains(
+                "const formData = Object.fromEntries(new FormData(event.currentTarget as HTMLFormElement));"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn load_context_renders_param_default_fallbacks() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
+        let mut details = component_with_spec(None);
+        details.component_type = "details".to_string();
+        let details = page_component_context_sync(&details);
+        let vc = IfmlViewContainer {
+            name: "CustomerList".to_string(),
+            label: None,
+            is_xor: false,
+            is_default: false,
+            is_landmark: true,
+            is_modal: false,
+            params: vec![
+                super::super::context::ParameterDef {
+                    name: "slug".to_string(),
+                    type_ref: "String".to_string(),
+                    default: Some("'home'".to_string()),
+                },
+                super::super::context::ParameterDef {
+                    name: "customerId".to_string(),
+                    type_ref: "Uuid".to_string(),
+                    default: Some("'00000000-0000-0000-0000-000000000000'".to_string()),
+                },
+            ],
+            components: vec![],
+            events: Vec::new(),
+            containers: Vec::new(),
+        };
+        let ctx = build_load_context("v1", &vc, &[list, details]);
+        let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains(
+                "paramDefaults['slug'] = url.searchParams.get('slug') ?? params.slug ?? 'home';"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("result.params = paramDefaults;"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "const customerId = url.searchParams.get('customerId') ?? params.customerId ?? '00000000-0000-0000-0000-000000000000';"
+            ),
+            "{rendered}"
+        );
+
+        let bare_vc = IfmlViewContainer {
+            params: vec![super::super::context::ParameterDef {
+                name: "customerId".to_string(),
+                type_ref: "Uuid".to_string(),
+                default: None,
+            }],
+            ..vc
+        };
+        let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
+        let ctx = build_load_context("v1", &bare_vc, &[list]);
+        let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+        assert!(!rendered.contains("paramDefaults"), "{rendered}");
     }
 
     #[test]
@@ -1088,7 +1283,11 @@ entities = ["CustomerType"]
         let ctx = svelte_context(vec![table_ctx]);
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
-            rendered.contains("<table data-pagination=\"true\">"),
+            rendered.contains("<table data-testid=\"grid-table\" data-pagination=\"true\">"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("<tr data-testid=\"grid-row\">"),
             "{rendered}"
         );
         assert!(rendered.contains("<th>Name</th>"), "{rendered}");
@@ -1213,6 +1412,7 @@ testids = { root = "data-table", row = "data-row" }
             params: vec![super::super::context::ParameterDef {
                 name: "customerId".to_string(),
                 type_ref: "Uuid".to_string(),
+                default: None,
             }],
             components: vec![],
             events: Vec::new(),

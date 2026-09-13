@@ -262,6 +262,7 @@ impl<'a> IfmlQuerier for IfmlGraphQuerier<'a> {
                 .map(|p| ParameterDef {
                     name: p.name,
                     type_ref: p.type_ref,
+                    default: None,
                 })
                 .collect();
             let components = self.get_components_for(&vc.name, &index, &bindings).await?;
@@ -366,6 +367,7 @@ mod tests {
             conditional_expression: None,
             domain: None,
             module_uses: None,
+            roles: None,
         })
         .await
         .unwrap();

@@ -82,6 +82,9 @@ pub enum IfmlAction {
 pub struct ParameterDef {
     pub name: String,
     pub type_ref: String,
+    /// JS literal for the DSL default (`'home'`, `1`, `true`); `None` when
+    /// the parameter has no default or the graph record lacks one.
+    pub default: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

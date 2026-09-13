@@ -170,7 +170,11 @@ async fn table_spec_renders_typed_columns() {
     let svelte = generate_svelte(dir.path(), SPECFUL_IFML).await;
     let page = read(&svelte, "src/routes/customertable/+page.svelte");
 
-    assert!(page.contains("<table data-pagination=\"true\">"), "{page}");
+    assert!(
+        page.contains("<table data-testid=\"grid-table\" data-pagination=\"true\">"),
+        "{page}"
+    );
+    assert!(page.contains("<tr data-testid=\"grid-row\">"), "{page}");
     assert!(page.contains("<th>Name</th>"), "{page}");
     assert!(page.contains("<th>Status</th>"), "{page}");
     assert!(page.contains("<th>Tenure</th>"), "{page}");
@@ -192,6 +196,16 @@ async fn form_spec_renders_typed_inputs() {
     let svelte = generate_svelte(dir.path(), SPECFUL_IFML).await;
     let page = read(&svelte, "src/routes/customeredit/+page.svelte");
 
+    assert!(
+        page.contains("<form data-testid=\"editor-form\" on:submit={submit_editor}>"),
+        "{page}"
+    );
+    assert!(
+        page.contains(
+            "<button type=\"submit\" data-testid=\"editor-submit\" disabled={submitting}>Submit</button>"
+        ),
+        "{page}"
+    );
     assert!(
         page.contains(
             "<input name=\"name\" type=\"text\" required data-validate=\"len(name) > 2\" />"
@@ -355,9 +369,19 @@ view "CustomerEdit" {
     );
     assert!(page.contains("method: 'PUT'"), "{page}");
     assert!(page.contains("goto(\"/customerlist\")"), "{page}");
+    assert!(
+        !page.contains("checkValidity"),
+        "no-message forms must keep the plain submit handler: {page}"
+    );
     assert!(page.contains("on:submit={submit_editor}"), "{page}");
     assert!(
-        page.contains("<span class=\"error\">{formError}</span>"),
+        page.contains("<span class=\"error\" data-testid=\"editor-error\">{formError}</span>"),
+        "{page}"
+    );
+    assert!(
+        page.contains(
+            "<button type=\"submit\" data-testid=\"editor-submit\" disabled={submitting}>"
+        ),
         "{page}"
     );
 
@@ -371,5 +395,117 @@ view "CustomerEdit" {
     assert!(
         load.contains("`/api/v1/sales/customer/${ customerId }`"),
         "{load}"
+    );
+}
+
+#[tokio::test]
+async fn specless_pages_expose_stable_test_selectors() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), SPECLESS_IFML).await;
+    let list = read(&svelte, "src/routes/customerlist/+page.svelte");
+    assert!(
+        list.contains("<table data-testid=\"grid-table\">"),
+        "{list}"
+    );
+    assert!(
+        list.contains("<tr data-testid=\"grid-row\" onclick={() => comp_grid_select(item)}>"),
+        "{list}"
+    );
+
+    let details = read(&svelte, "src/routes/customerdetail/+page.svelte");
+    assert!(
+        details.contains("<dl data-testid=\"info-details\">"),
+        "{details}"
+    );
+}
+
+#[tokio::test]
+async fn validation_message_renders_with_data_validate() {
+    let dir = tempfile::tempdir().unwrap();
+    let ifml = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    label "Customers";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+
+view "CustomerEdit" {
+    params { customerId: Uuid };
+
+    component "editor" {
+        type: form;
+        data: Customer;
+
+        field title -> input text {
+            required: true;
+            validations: [len(title) > 2];
+            messages: ["Title too short"];
+        }
+
+        on save -> navigate("CustomerList", {});
+    }
+}
+"#;
+    let svelte = generate_svelte(dir.path(), ifml).await;
+    let page = read(&svelte, "src/routes/customeredit/+page.svelte");
+
+    assert!(
+        page.contains(
+            "<input name=\"title\" type=\"text\" required data-validate=\"len(title) > 2\" data-validate-message=\"Title too short\" />"
+        ),
+        "{page}"
+    );
+    assert!(page.contains("if (!form.checkValidity()) {"), "{page}");
+    assert!(
+        page.contains(
+            "formError = invalid?.getAttribute('data-validate-message') ?? 'Please review the highlighted fields';"
+        ),
+        "{page}"
+    );
+    assert!(page.contains("data-testid=\"editor-error\""), "{page}");
+    assert!(page.contains("data-testid=\"editor-submit\""), "{page}");
+}
+
+#[tokio::test]
+async fn specless_form_fallback_renders_submit_and_error_testids() {
+    let dir = tempfile::tempdir().unwrap();
+    let ifml = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerForm" {
+    component "editor" {
+        type: form;
+        data: Customer;
+        fields: [name, email];
+    }
+}
+"#;
+    let svelte = generate_svelte(dir.path(), ifml).await;
+    let page = read(&svelte, "src/routes/customerform/+page.svelte");
+
+    assert!(
+        page.contains("<form data-testid=\"editor-form\" on:submit={submit_editor}>"),
+        "{page}"
+    );
+    assert!(
+        page.contains("<span class=\"error\" data-testid=\"editor-error\">{formError}</span>"),
+        "{page}"
+    );
+    assert!(
+        page.contains(
+            "<button type=\"submit\" data-testid=\"editor-submit\" disabled={submitting}>Submit</button>"
+        ),
+        "{page}"
     );
 }

@@ -4,6 +4,13 @@ import { error } from '@sveltejs/kit';
 {% endif %}
 export const load: PageLoad = async ({ params, url, fetch }) => {
 	const result: Record<string, unknown> = {};
+{%- if param_defaults %}
+	const paramDefaults: Record<string, string> = {};
+{%- for pd in param_defaults %}
+	paramDefaults['{{ pd.name }}'] = url.searchParams.get('{{ pd.name }}') ?? params.{{ pd.name }} ?? {{ pd.default }};
+{%- endfor %}
+	result.params = paramDefaults;
+{%- endif %}
 {% for comp in components %}
 {%- if comp.fetch_list %}
 	const {{ comp.name }}Response = await fetch(`{{ comp.api.base_path }}{% if comp.paginate %}?page=${url.searchParams.get('page') ?? '0'}&page_size=${url.searchParams.get('page_size') ?? '20'}{% endif %}`);
@@ -13,7 +20,7 @@ export const load: PageLoad = async ({ params, url, fetch }) => {
 	const {{ comp.name }}Data = await {{ comp.name }}Response.json();
 	result.items = Array.isArray({{ comp.name }}Data) ? {{ comp.name }}Data : {{ comp.name }}Data.data ?? [];
 {%- elif comp.fetch_item %}
-	const {{ comp.id_param }} = url.searchParams.get('{{ comp.id_param }}') ?? params.{{ comp.id_param }};
+	const {{ comp.id_param }} = url.searchParams.get('{{ comp.id_param }}') ?? params.{{ comp.id_param }}{% if comp.id_default %} ?? {{ comp.id_default }}{% endif %};
 	if ({{ comp.id_param }}) {
 		const {{ comp.name }}Response = await fetch(`{{ comp.api.base_path }}/${ {{ comp.id_param }} }`);
 		if (!{{ comp.name }}Response.ok) {
@@ -22,7 +29,7 @@ export const load: PageLoad = async ({ params, url, fetch }) => {
 		result.item = await {{ comp.name }}Response.json();
 	}
 {%- elif comp.fetch_form %}
-	const {{ comp.id_param }} = url.searchParams.get('{{ comp.id_param }}') ?? params.{{ comp.id_param }};
+	const {{ comp.id_param }} = url.searchParams.get('{{ comp.id_param }}') ?? params.{{ comp.id_param }}{% if comp.id_default %} ?? {{ comp.id_default }}{% endif %};
 	if ({{ comp.id_param }}) {
 		const {{ comp.name }}Response = await fetch(`{{ comp.api.base_path }}/${ {{ comp.id_param }} }`);
 		if (!{{ comp.name }}Response.ok) {
