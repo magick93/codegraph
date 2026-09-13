@@ -9,8 +9,9 @@ use codegraph_config::{DomainConfig, IfmlComponentMappings};
 use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    EdgeProperties, EdgeType, EventNode, ParameterDefinitionNode, PropertyNode, SchemaNode,
-    ViewComponentNode, ViewContainerNode,
+    ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, EdgeProperties, EdgeType,
+    EventNode, GrantEdge, ParameterDefinitionNode, PropertyNode, SchemaNode, ViewComponentNode,
+    ViewContainerNode,
 };
 use codegraph_generate::ifml::e2e_test::IfmlE2eTestGenerator;
 use codegraph_generate::traits::GlobalGenerator;
@@ -141,6 +142,19 @@ async fn ingest_modal_view(db: &MockEngine, name: &str) {
 }
 
 async fn ingest_view_with_flags(db: &MockEngine, name: &str, label: Option<&str>, is_modal: bool) {
+    ingest_guarded_view(db, name, label, is_modal, &[], &[]).await;
+}
+
+async fn ingest_guarded_view(
+    db: &MockEngine,
+    name: &str,
+    label: Option<&str>,
+    is_modal: bool,
+    roles: &[&str],
+    requires: &[&str],
+) {
+    let roles = (!roles.is_empty()).then(|| roles.iter().map(|s| s.to_string()).collect());
+    let requires = (!requires.is_empty()).then(|| requires.iter().map(|s| s.to_string()).collect());
     db.ingest_view_container(&ViewContainerNode {
         name: name.to_string(),
         label: label.map(str::to_string),
@@ -151,7 +165,45 @@ async fn ingest_view_with_flags(db: &MockEngine, name: &str, label: Option<&str>
         conditional_expression: None,
         domain: None,
         module_uses: None,
-        roles: None,
+        roles,
+        requires,
+    })
+    .await
+    .unwrap();
+}
+
+/// Admin (human) permits `manage_refunds`; Intern (human) holds nothing;
+/// Helper (agent, extends Admin) inherits the permit but is excluded from
+/// e2e personas.
+async fn ingest_policy(db: &MockEngine) {
+    let actor = |name: &str, kind: &str, extends: Option<&str>| ActorNode {
+        name: name.to_string(),
+        kind: Some(kind.to_string()),
+        extends: extends.map(str::to_string),
+        block: Some("core".to_string()),
+    };
+    db.ingest_actor_policy(&ActorPolicyModel {
+        actors: vec![
+            actor("Admin", "human", None),
+            actor("Intern", "human", None),
+            actor("Helper", "agent", Some("Admin")),
+        ],
+        capabilities: vec![CapabilityNode {
+            name: "manage_refunds".to_string(),
+            class: "Refund".to_string(),
+            block: None,
+        }],
+        grants: vec![GrantEdge {
+            actor: "Admin".to_string(),
+            capability: "manage_refunds".to_string(),
+            effect: "permit".to_string(),
+            when: None,
+            obligations: vec![],
+        }],
+        policy: ActorPolicyNode {
+            blocks: vec!["core".to_string()],
+            never_both: vec![],
+        },
     })
     .await
     .unwrap();
@@ -694,6 +746,7 @@ async fn render_tests_assert_mapped_container_wrapper() {
             domain: None,
             module_uses: None,
             roles: None,
+            requires: None,
         })
         .await
         .unwrap();
@@ -808,5 +861,190 @@ async fn workflow_spec_requires_schema_backing() {
             .iter()
             .any(|f| f.path.to_string_lossy().ends_with(".workflow.spec.ts")),
         "schema-less runs must not emit workflow specs"
+    );
+}
+
+/// CustomerList (unguarded denial target) plus a roles-guarded AdminConsole.
+async fn ingest_guarded_model(db: &MockEngine, roles: &[&str], requires: &[&str]) {
+    ingest_view(db, "CustomerList", Some("Customer Management")).await;
+    ingest_guarded_view(
+        db,
+        "AdminConsole",
+        Some("Admin Console"),
+        false,
+        roles,
+        requires,
+    )
+    .await;
+    ingest_component(db, "AdminConsole", "grid", "list", &["name"], None).await;
+}
+
+#[tokio::test]
+async fn persona_tests_emitted_per_human_actor_with_policy() {
+    let engine = MockEngine::new();
+    ingest_guarded_model(&engine, &["Admin"], &[]).await;
+    ingest_policy(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate(&engine, dir.path(), None).await;
+    let spec = content_of(&files, "tests/ifml/admin-console.spec.ts");
+
+    assert!(
+        spec.contains("test('actor Admin views Admin Console', async ({ page }) => {"),
+        "{spec}"
+    );
+    assert!(
+        spec.contains("(globalThis as any).__USER_ROLES__ = ['Admin'];"),
+        "{spec}"
+    );
+    assert!(spec.contains("page.goto('/adminconsole')"), "{spec}");
+    assert!(
+        spec.contains("page.getByRole('heading', { name: 'Admin Console' })"),
+        "{spec}"
+    );
+
+    assert!(
+        spec.contains(
+            "test('actor Intern is redirected from Admin Console', async ({ page }) => {"
+        ),
+        "{spec}"
+    );
+    assert!(
+        spec.contains("(globalThis as any).__USER_ROLES__ = ['Intern'];"),
+        "{spec}"
+    );
+    assert!(spec.contains("page.waitForURL('/customerlist')"), "{spec}");
+
+    assert!(
+        !spec.contains("Helper"),
+        "agent-kind actors must not become e2e personas: {spec}"
+    );
+}
+
+#[tokio::test]
+async fn capability_only_view_personas_seed_user_capabilities() {
+    let engine = MockEngine::new();
+    ingest_guarded_model(&engine, &[], &["manage_refunds"]).await;
+    ingest_policy(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate(&engine, dir.path(), None).await;
+    let spec = content_of(&files, "tests/ifml/admin-console.spec.ts");
+
+    assert!(
+        spec.contains("(globalThis as any).__USER_CAPABILITIES__ = ['manage_refunds'];"),
+        "{spec}"
+    );
+    assert!(
+        spec.contains("test('actor Admin views Admin Console'"),
+        "{spec}"
+    );
+    assert!(
+        spec.contains("test('actor Intern is redirected from Admin Console'"),
+        "{spec}"
+    );
+}
+
+#[tokio::test]
+async fn no_policy_emits_no_persona_tests() {
+    let engine = MockEngine::new();
+    ingest_guarded_model(&engine, &["Admin"], &[]).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate(&engine, dir.path(), None).await;
+    let spec = content_of(&files, "tests/ifml/admin-console.spec.ts");
+    assert!(
+        !spec.contains("__USER_ROLES__") && !spec.contains("actor "),
+        "no policy must mean no persona tests: {spec}"
+    );
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.content.contains("__USER_CAPABILITIES__")),
+        "no policy must mean no capability seeding anywhere"
+    );
+}
+
+/// CustomerList (unguarded denial target) plus a guarded RefundEdit form view.
+async fn ingest_guarded_form_model(db: &MockEngine, roles: &[&str], requires: &[&str]) {
+    ingest_view(db, "CustomerList", Some("Customer Management")).await;
+    ingest_guarded_view(
+        db,
+        "RefundEdit",
+        Some("Refund Edit"),
+        false,
+        roles,
+        requires,
+    )
+    .await;
+    ingest_component(
+        db,
+        "RefundEdit",
+        "editor",
+        "form",
+        &["name"],
+        Some(EDITOR_FORM_SPEC),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn persona_test_asserts_gated_submit_for_permitted_actor_only() {
+    let engine = MockEngine::new();
+    ingest_guarded_form_model(&engine, &[], &["manage_refunds"]).await;
+    ingest_policy(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate(&engine, dir.path(), None).await;
+    let spec = content_of(&files, "tests/ifml/refund-edit.spec.ts");
+
+    let admin_start = spec.find("actor Admin views").expect("admin persona");
+    let intern_start = spec
+        .find("actor Intern is redirected")
+        .expect("intern persona");
+    let intern_end = spec[intern_start..]
+        .find("\n\ttest(")
+        .map(|i| intern_start + i)
+        .unwrap_or(spec.len());
+    let admin_block = &spec[admin_start..intern_start];
+    assert!(
+        admin_block.contains("await expect(page.getByTestId('editor-submit')).toBeVisible();"),
+        "permitted persona must assert the gated control is visible: {spec}"
+    );
+    let intern_block = &spec[intern_start..intern_end];
+    assert!(
+        !intern_block.contains("editor-submit"),
+        "denied persona redirects before any control assertion: {intern_block}"
+    );
+}
+
+#[tokio::test]
+async fn persona_test_skips_control_assertion_for_mapped_forms() {
+    let engine = MockEngine::new();
+    ingest_guarded_form_model(&engine, &[], &["manage_refunds"]).await;
+    ingest_policy(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let mappings: IfmlComponentMappings = toml::from_str(
+        r#"
+[[component]]
+type = "form"
+path = "$lib/components/RefundForm.svelte"
+export = "RefundForm"
+testids = { root = "refund-form" }
+"#,
+    )
+    .unwrap();
+
+    let files = generate(&engine, dir.path(), Some(mappings)).await;
+    let spec = content_of(&files, "tests/ifml/refund-edit.spec.ts");
+
+    assert!(
+        spec.contains("await expect(page.getByTestId('refund-form')).toBeVisible();"),
+        "mapped form root is still asserted: {spec}"
+    );
+    assert!(
+        !spec.contains("editor-submit"),
+        "mapped forms own their internals — no fallback control assertion: {spec}"
     );
 }

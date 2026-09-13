@@ -11,10 +11,10 @@ use crate::traits::{GeneratedFile, GlobalGenerator};
 use crate::GenerationEntry;
 
 use super::api_paths::{id_param_from, resolve_entity_api, ResolvedApi};
-use super::context::{IfmlAction, IfmlComponent, IfmlModel, IfmlViewContainer};
+use super::context::{IfmlAction, IfmlComponent, IfmlModel, IfmlViewContainer, PolicyContext};
 use super::querier::{IfmlGraphQuerier, IfmlQuerier};
 use super::route_generator::{
-    mapped_container_testid, modal_wrapper_active, modal_wrapper_testid, shell_nav,
+    denial_target, mapped_container_testid, modal_wrapper_active, modal_wrapper_testid, shell_nav,
     workflow_for_entity,
 };
 
@@ -132,6 +132,7 @@ impl IfmlE2eTestGenerator {
             click_throughs: Vec::new(),
             validations: Vec::new(),
             round_trips: Vec::new(),
+            personas: Vec::new(),
         };
 
         if id_param.is_none() {
@@ -417,6 +418,65 @@ impl IfmlE2eTestGenerator {
             },
         })
     }
+
+    /// Actor-persona guard tests for a view: one per human actor, asserting
+    /// the permitted outcome (the page renders) or the denied one (redirect
+    /// to the denial target). Capability-only views also seed
+    /// `__USER_CAPABILITIES__` with the actor's effective capabilities.
+    fn build_persona_tests(
+        &self,
+        policy: &PolicyContext,
+        human_actors: &[String],
+        vc: &IfmlViewContainer,
+        denial: &str,
+    ) -> Vec<PersonaTest> {
+        if vc.roles.is_empty() && vc.requires.is_empty() {
+            return Vec::new();
+        }
+        let (assert_heading, primary_testid) = match primary_component(vc, self) {
+            Some((_, selectors, is_collection)) => (is_collection, selectors.root),
+            None => (true, None),
+        };
+        // The page markup gates the submit control behind the same guard
+        // checks, so a permitted persona can assert it is visible. Mapped
+        // form components own their internals — no control assertion there.
+        let control_testid = vc
+            .components
+            .iter()
+            .find(|c| is_form(c))
+            .filter(|c| {
+                let kind = component_kind(c);
+                self.mappings
+                    .as_ref()
+                    .and_then(|m| m.resolve(&vc.name, &c.name, &c.component_type, &kind))
+                    .is_none()
+            })
+            .and_then(|c| self.selectors(vc, c).submit);
+        let capability_only = !vc.requires.is_empty() && vc.roles.is_empty();
+        let mut tests = Vec::new();
+        for actor in human_actors {
+            let caps = policy
+                .actors
+                .iter()
+                .find(|(name, _)| name == actor)
+                .map(|(_, caps)| caps.clone())
+                .unwrap_or_default();
+            let roles_ok = vc.roles.is_empty() || vc.roles.iter().any(|role| role == actor);
+            let caps_ok = vc.requires.is_empty() || vc.requires.iter().any(|c| caps.contains(c));
+            tests.push(PersonaTest {
+                actor: actor.clone(),
+                permitted: roles_ok && caps_ok,
+                route: view_route(&vc.name),
+                label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
+                assert_heading,
+                primary_testid: primary_testid.clone(),
+                denial_target: denial.to_string(),
+                capabilities: capability_only.then(|| caps.clone()),
+                control_testid: control_testid.clone(),
+            });
+        }
+        tests
+    }
 }
 
 #[async_trait]
@@ -448,10 +508,25 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
 
         let mut specs = Vec::new();
         let mut workflow_specs: Vec<(String, Vec<WorkflowTest>)> = Vec::new();
+        let human_actors: Vec<String> = match &model.policy {
+            Some(_) => db
+                .get_actors()
+                .await
+                .map_err(crate::error::Error::Graph)?
+                .into_iter()
+                .filter(|actor| actor.kind.as_deref() != Some("agent"))
+                .map(|actor| actor.name)
+                .collect(),
+            None => Vec::new(),
+        };
+        let denial = denial_target(&model);
         for vc in &model.view_containers {
-            let spec = self
+            let mut spec = self
                 .build_view_spec(db, config, &project.api_version, &model, vc)
                 .await;
+            if let Some(policy) = &model.policy {
+                spec.personas = self.build_persona_tests(policy, &human_actors, vc, &denial);
+            }
             if has_tests(&spec) {
                 specs.push(spec);
             }
@@ -523,6 +598,32 @@ pub struct ViewTestSpec {
     pub click_throughs: Vec<ClickThroughTest>,
     pub validations: Vec<ValidationTest>,
     pub round_trips: Vec<RoundTripTest>,
+    /// Actor-persona guard tests (policy-gated): per human actor, one test
+    /// asserting the view renders when permitted or redirects to the denial
+    /// target when not.
+    pub personas: Vec<PersonaTest>,
+}
+
+/// One actor-persona guard test: seeds `__USER_ROLES__` (and
+/// `__USER_CAPABILITIES__` for capability-only views) before navigating,
+/// then asserts the permitted outcome (page renders) or the denied one
+/// (redirect to the denial target).
+#[derive(Debug)]
+pub struct PersonaTest {
+    pub actor: String,
+    pub permitted: bool,
+    pub route: String,
+    pub label: String,
+    pub assert_heading: bool,
+    pub primary_testid: Option<String>,
+    pub denial_target: String,
+    /// Capabilities seeded into `__USER_CAPABILITIES__` for capability-only
+    /// views (requires without roles); `None` skips the seeding.
+    pub capabilities: Option<Vec<String>>,
+    /// Submit-control testid asserted visible for permitted personas when
+    /// the view carries an unmapped form (the page markup gates it behind
+    /// the same guard checks); `None` skips the assertion.
+    pub control_testid: Option<String>,
 }
 
 #[derive(Debug)]
@@ -741,6 +842,65 @@ fn render_spec(spec: &ViewTestSpec) -> String {
         s.push_str("\t});\n\n");
     }
 
+    for persona in &spec.personas {
+        let caps_lines = match &persona.capabilities {
+            Some(caps) => format!(
+                "\t\t\t(globalThis as any).__USER_CAPABILITIES__ = [{}];\n",
+                caps.iter()
+                    .map(|c| format!("'{}'", js_string(c)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            None => String::new(),
+        };
+        s.push_str(&format!(
+            "\ttest('actor {} {} {}', async ({{ page }}) => {{\n",
+            js_string(&persona.actor),
+            if persona.permitted {
+                "views"
+            } else {
+                "is redirected from"
+            },
+            js_string(&persona.label)
+        ));
+        s.push_str(&format!(
+            "\t\tawait page.addInitScript(() => {{\n\t\t\t(globalThis as any).__USER_ROLES__ = ['{}'];\n{}\t\t}});\n",
+            js_string(&persona.actor),
+            caps_lines
+        ));
+        s.push_str(&format!("\t\tawait page.goto('{}');\n", persona.route));
+        if persona.permitted {
+            if persona.assert_heading {
+                s.push_str(&format!(
+                    "\t\tawait expect(page.getByRole('heading', {{ name: '{}' }})).toBeVisible();\n",
+                    js_string(&persona.label)
+                ));
+            } else if let Some(testid) = &persona.primary_testid {
+                s.push_str(&format!(
+                    "\t\tawait expect(page.getByTestId('{}')).toBeVisible();\n",
+                    testid
+                ));
+            } else {
+                s.push_str(&format!(
+                    "\t\tawait expect(page.getByRole('heading', {{ name: '{}' }})).toBeVisible();\n",
+                    js_string(&persona.label)
+                ));
+            }
+            if let Some(control_testid) = &persona.control_testid {
+                s.push_str(&format!(
+                    "\t\tawait expect(page.getByTestId('{}')).toBeVisible();\n",
+                    control_testid
+                ));
+            }
+        } else {
+            s.push_str(&format!(
+                "\t\tawait page.waitForURL('{}');\n",
+                js_string(&persona.denial_target)
+            ));
+        }
+        s.push_str("\t});\n\n");
+    }
+
     for flow in &spec.click_throughs {
         s.push_str(&format!(
             "\ttest('{}', async ({{ page, request }}) => {{\n",
@@ -868,6 +1028,7 @@ fn view_route(name: &str) -> String {
 
 fn has_tests(spec: &ViewTestSpec) -> bool {
     spec.render.is_some()
+        || !spec.personas.is_empty()
         || !spec.click_throughs.is_empty()
         || !spec.validations.is_empty()
         || !spec.round_trips.is_empty()
@@ -1160,6 +1321,7 @@ mod tests {
             }],
             validations: Vec::new(),
             round_trips: Vec::new(),
+            personas: Vec::new(),
         };
 
         let rendered = render_spec(&spec);
@@ -1229,6 +1391,7 @@ mod tests {
             }],
             validations: Vec::new(),
             round_trips: Vec::new(),
+            personas: Vec::new(),
         };
 
         let rendered = render_spec(&spec);

@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::{DataBindingResolution, EventNode, NavigationFlowRecord};
+use codegraph_core::types::{
+    resolve_effective_permits, DataBindingResolution, EventNode, NavigationFlowRecord,
+};
 use codegraph_ifml_dsl::ComponentSpec;
 
 use super::context::*;
@@ -138,6 +140,42 @@ impl<'a> IfmlGraphQuerier<'a> {
         Ok(ActionIndex::new(flows, data_flows, action_triggers))
     }
 
+    /// The ingested actor policy as a render-ready context: effective
+    /// capabilities per actor via `resolve_effective_permits` (extends
+    /// chain, forbid-wins), plus the capability inventory. `None` when the
+    /// graph carries no policy.
+    async fn policy_context(&self) -> Result<Option<PolicyContext>, GraphError> {
+        let actors = self.db.get_actors().await?;
+        let capabilities = self.db.get_capabilities().await?;
+        if actors.is_empty() && capabilities.is_empty() {
+            return Ok(None);
+        }
+        let grants = self.db.get_grants().await?;
+        let mut actor_caps: Vec<(String, Vec<String>)> = actors
+            .iter()
+            .map(|actor| {
+                let mut caps: Vec<String> =
+                    resolve_effective_permits(&actors, &grants, &actor.name)
+                        .into_iter()
+                        .filter(|permit| permit.effect == "permit")
+                        .map(|permit| permit.capability)
+                        .collect();
+                caps.sort();
+                caps.dedup();
+                (actor.name.clone(), caps)
+            })
+            .collect();
+        actor_caps.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut capability_names: Vec<String> =
+            capabilities.into_iter().map(|cap| cap.name).collect();
+        capability_names.sort();
+        capability_names.dedup();
+        Ok(Some(PolicyContext {
+            actors: actor_caps,
+            capabilities: capability_names,
+        }))
+    }
+
     async fn get_components_for(
         &self,
         container_name: &str,
@@ -237,6 +275,7 @@ impl<'a> IfmlQuerier for IfmlGraphQuerier<'a> {
         let navigation_edges = self.get_navigation_edges().await?;
         let data_flows = self.get_data_flows().await?;
         let generation_order = self.compute_generation_order().await?;
+        let policy = self.policy_context().await?;
 
         Ok(IfmlModel {
             view_containers,
@@ -244,6 +283,7 @@ impl<'a> IfmlQuerier for IfmlGraphQuerier<'a> {
             navigation_edges,
             data_flows,
             generation_order,
+            policy,
         })
     }
 
@@ -280,6 +320,7 @@ impl<'a> IfmlQuerier for IfmlGraphQuerier<'a> {
                 is_landmark: vc.is_landmark,
                 is_modal: vc.is_modal,
                 roles: vc.roles.clone().unwrap_or_default(),
+                requires: vc.requires.clone().unwrap_or_default(),
                 params,
                 components,
                 events,
@@ -369,6 +410,7 @@ mod tests {
             domain: None,
             module_uses: None,
             roles: None,
+            requires: None,
         })
         .await
         .unwrap();
@@ -606,6 +648,7 @@ mod tests {
                 domain: None,
                 module_uses: None,
                 roles: Some(vec!["admin".to_string(), "manager".to_string()]),
+                requires: Some(vec!["manage_refunds".to_string()]),
             })
             .await
             .unwrap();
@@ -621,11 +664,106 @@ mod tests {
             admin.roles,
             vec!["admin".to_string(), "manager".to_string()]
         );
+        assert_eq!(admin.requires, vec!["manage_refunds".to_string()]);
         let public = containers
             .iter()
             .find(|c| c.name == "Public")
             .expect("Public container");
         assert!(public.roles.is_empty());
+        assert!(public.requires.is_empty());
+    }
+
+    #[tokio::test]
+    async fn policy_context_resolves_effective_capabilities_per_actor() {
+        use codegraph_core::types::{
+            ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, GrantEdge,
+        };
+        let engine = MockEngine::new();
+        engine
+            .ingest_actor_policy(&ActorPolicyModel {
+                actors: vec![
+                    ActorNode {
+                        name: "Admin".to_string(),
+                        kind: Some("human".to_string()),
+                        extends: None,
+                        block: Some("core".to_string()),
+                    },
+                    ActorNode {
+                        name: "Manager".to_string(),
+                        kind: Some("human".to_string()),
+                        extends: Some("Admin".to_string()),
+                        block: Some("core".to_string()),
+                    },
+                ],
+                capabilities: vec![
+                    CapabilityNode {
+                        name: "manage_refunds".to_string(),
+                        class: "Refund".to_string(),
+                        block: None,
+                    },
+                    CapabilityNode {
+                        name: "approve_expense".to_string(),
+                        class: "Expense".to_string(),
+                        block: None,
+                    },
+                ],
+                grants: vec![
+                    GrantEdge {
+                        actor: "Admin".to_string(),
+                        capability: "manage_refunds".to_string(),
+                        effect: "permit".to_string(),
+                        when: None,
+                        obligations: vec![],
+                    },
+                    GrantEdge {
+                        actor: "Admin".to_string(),
+                        capability: "approve_expense".to_string(),
+                        effect: "permit".to_string(),
+                        when: None,
+                        obligations: vec![],
+                    },
+                    GrantEdge {
+                        actor: "Manager".to_string(),
+                        capability: "approve_expense".to_string(),
+                        effect: "forbid".to_string(),
+                        when: None,
+                        obligations: vec![],
+                    },
+                ],
+                policy: ActorPolicyNode {
+                    blocks: vec!["core".to_string()],
+                    never_both: vec![],
+                },
+            })
+            .await
+            .unwrap();
+
+        let querier = IfmlGraphQuerier::new(&engine);
+        let model = querier.get_ifml_model().await.unwrap();
+        let policy = model.policy.expect("policy context");
+        assert_eq!(
+            policy.actors,
+            vec![
+                (
+                    "Admin".to_string(),
+                    vec!["approve_expense".to_string(), "manage_refunds".to_string()]
+                ),
+                ("Manager".to_string(), vec!["manage_refunds".to_string()]),
+            ]
+        );
+        assert_eq!(
+            policy.capabilities,
+            vec!["approve_expense".to_string(), "manage_refunds".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn policy_context_is_none_without_policy() {
+        let engine = MockEngine::new();
+        ingest_view_container(&engine, "Public", false).await;
+        let querier = IfmlGraphQuerier::new(&engine);
+        let model = querier.get_ifml_model().await.unwrap();
+        assert!(model.policy.is_none());
     }
 
     #[test]

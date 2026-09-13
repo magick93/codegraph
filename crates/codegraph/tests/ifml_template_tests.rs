@@ -882,10 +882,14 @@ async fn role_guarded_view_emits_load_guard_and_roles_helper() {
     );
     assert!(load.contains("const roles = currentRoles();"), "{load}");
     assert!(
-        load.contains("if (!roles.some((r) => viewRoles.includes(r))) {"),
+        load.contains("if (viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {"),
         "{load}"
     );
-    assert!(load.contains("throw redirect(303, '/');"), "{load}");
+    assert!(
+        load.contains("throw redirect(303, '/customerlist');"),
+        "denial redirects to the first unguarded view: {load}"
+    );
+    assert!(!load.contains("can("), "{load}");
     let load_start = load.find("export const load").unwrap();
     let guard_start = load.find("const roles = currentRoles();").unwrap();
     assert!(
@@ -902,11 +906,253 @@ async fn role_guarded_view_emits_load_guard_and_roles_helper() {
         helper.contains("(globalThis as any).__USER_ROLES__ ?? []"),
         "{helper}"
     );
+    assert!(
+        !helper.contains("can("),
+        "roles-only runs without policy keep the legacy helper shape: {helper}"
+    );
 
     let unguarded = read(&svelte, "src/routes/customerlist/+page.ts");
     assert!(
         !unguarded.contains("currentRoles"),
         "views without roles must stay guard-free: {unguarded}"
+    );
+}
+
+const REQUIRES_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "RefundConsole" {
+    label "Refund Console";
+    requires: [manage_refunds];
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+
+view "CustomerList" {
+    label "Customers";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+"#;
+
+#[tokio::test]
+async fn requires_guarded_view_emits_can_checks_and_capability_roles_helper() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), REQUIRES_IFML).await;
+
+    let load = read(&svelte, "src/routes/refundconsole/+page.ts");
+    assert!(
+        load.contains("import { redirect } from '@sveltejs/kit';"),
+        "{load}"
+    );
+    assert!(load.contains("import { can } from '$lib/roles';"), "{load}");
+    assert!(
+        !load.contains("currentRoles"),
+        "capability-only views need no roles import: {load}"
+    );
+    assert!(
+        load.contains("const viewRequires = ['manage_refunds'];"),
+        "{load}"
+    );
+    assert!(
+        load.contains("if (viewRequires.length && !viewRequires.some((c) => can(c))) {"),
+        "{load}"
+    );
+    assert!(
+        load.contains("throw redirect(303, '/customerlist');"),
+        "denial redirects to the first unguarded view: {load}"
+    );
+
+    let helper = read(&svelte, "src/lib/roles.ts");
+    assert!(
+        helper.contains("export function can(capability: string): boolean {"),
+        "{helper}"
+    );
+    assert!(
+        helper.contains("(globalThis as any).__USER_CAPABILITIES__ ?? []"),
+        "{helper}"
+    );
+    assert!(
+        !helper.contains("ROLE_CAPABILITIES"),
+        "no ingested policy must mean no embedded capability map: {helper}"
+    );
+    assert!(
+        helper.contains("export function currentRoles(): string[] {"),
+        "{helper}"
+    );
+
+    let unguarded = read(&svelte, "src/routes/customerlist/+page.ts");
+    assert!(
+        !unguarded.contains("can("),
+        "views without requires must stay guard-free: {unguarded}"
+    );
+}
+
+const GUARDED_FORM_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    label "Customers";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+
+view "RefundEdit" {
+    component "editor" {
+        type: form;
+        data: Customer;
+
+        field name -> input text { required: true; }
+
+        on save -> navigate("CustomerList", {});
+    }
+}
+"#;
+
+fn guarded_form_ifml(guard: &str) -> String {
+    GUARDED_FORM_IFML.replace(
+        "view \"RefundEdit\" {",
+        &format!("view \"RefundEdit\" {{\n    {}", guard),
+    )
+}
+
+#[tokio::test]
+async fn requires_view_gates_submit_and_emits_can_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(
+        dir.path(),
+        &guarded_form_ifml("requires: [manage_refunds];"),
+    )
+    .await;
+
+    let page = read(&svelte, "src/routes/refundedit/+page.svelte");
+    assert!(page.contains("import { can } from '$lib/roles';"), "{page}");
+    assert!(
+        !page.contains("currentRoles"),
+        "capability-only views need no roles import: {page}"
+    );
+    assert!(
+        page.contains("const viewRequires = ['manage_refunds'];"),
+        "{page}"
+    );
+    assert!(
+        page.contains(
+            "{#if viewRequires.some((c) => can(c))}<button type=\"submit\" data-testid=\"editor-submit\" disabled={submitting}>Submit</button>{/if}"
+        ),
+        "{page}"
+    );
+
+    let list = read(&svelte, "src/routes/customerlist/+page.svelte");
+    assert!(
+        !list.contains("$lib/roles"),
+        "unguarded pages must not import the roles helper: {list}"
+    );
+    assert!(
+        !list.contains("can(") && !list.contains("{#if view"),
+        "unguarded pages must stay gate-free: {list}"
+    );
+}
+
+#[tokio::test]
+async fn roles_view_gates_submit_and_emits_current_roles_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), &guarded_form_ifml("roles: [admin, manager];")).await;
+
+    let page = read(&svelte, "src/routes/refundedit/+page.svelte");
+    assert!(
+        page.contains("import { currentRoles } from '$lib/roles';"),
+        "{page}"
+    );
+    assert!(
+        !page.contains("can("),
+        "role-only views need no capability import: {page}"
+    );
+    assert!(
+        page.contains("const viewRoles = ['admin', 'manager'];"),
+        "{page}"
+    );
+    assert!(page.contains("const roles = currentRoles();"), "{page}");
+    assert!(
+        page.contains(
+            "{#if roles.some((r) => viewRoles.includes(r))}<button type=\"submit\" data-testid=\"editor-submit\" disabled={submitting}>Submit</button>{/if}"
+        ),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn combined_guarded_view_gates_submit_with_and_of_checks() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(
+        dir.path(),
+        &guarded_form_ifml("roles: [admin];\n    requires: [manage_refunds];"),
+    )
+    .await;
+
+    let page = read(&svelte, "src/routes/refundedit/+page.svelte");
+    assert!(
+        page.contains("import { currentRoles } from '$lib/roles';"),
+        "{page}"
+    );
+    assert!(page.contains("import { can } from '$lib/roles';"), "{page}");
+    assert!(
+        page.contains(
+            "{#if viewRequires.some((c) => can(c)) && roles.some((r) => viewRoles.includes(r))}<button type=\"submit\" data-testid=\"editor-submit\" disabled={submitting}>Submit</button>{/if}"
+        ),
+        "markup must match the load guard's requires-AND-roles semantics: {page}"
+    );
+}
+
+#[tokio::test]
+async fn mapped_action_control_button_gated_for_requires_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+role = "action-control"
+path = "$lib/components/Button.svelte"
+export = "Button"
+testids = { root = "ui-button" }
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_mappings(
+        dir.path(),
+        &guarded_form_ifml("requires: [manage_refunds];"),
+        Some(&mappings),
+    )
+    .await;
+
+    let page = read(&svelte, "src/routes/refundedit/+page.svelte");
+    assert!(
+        page.contains(
+            "{#if viewRequires.some((c) => can(c))}<Button onclick={submit_editor} disabled={submitting} testid=\"ui-button\">Save</Button>{/if}"
+        ),
+        "{page}"
+    );
+    assert!(
+        !page.contains("<button type=\"submit\""),
+        "mapped button must replace the fallback: {page}"
     );
 }
 

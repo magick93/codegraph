@@ -2,19 +2,35 @@ import type { PageLoad } from './$types';
 {% if has_fetch %}
 import { error } from '@sveltejs/kit';
 {% endif %}
-{%- if view_roles %}
+{%- if view_roles or view_requires %}
 import { redirect } from '@sveltejs/kit';
+{%- if view_roles %}
 import { currentRoles } from '$lib/roles';
+{%- endif %}
+{%- if view_requires %}
+import { can } from '$lib/roles';
+{%- endif %}
+{%- if guard_consts %}
 
-const viewRoles = [{% for r in view_roles %}'{{ r }}'{% if not loop.last %}, {% endif %}{% endfor %}];
-{% endif %}
+{{ guard_consts }}
+{%- endif %}
+{%- endif %}
 export const load: PageLoad = async ({ params, url, fetch }) => {
+{%- if view_roles or view_requires %}
 {%- if view_roles %}
 	const roles = currentRoles();
-	if (!roles.some((r) => viewRoles.includes(r))) {
-		throw redirect(303, '/');
+{%- endif %}
+{%- if view_requires %}
+	if (viewRequires.length && !viewRequires.some((c) => can(c))) {
+		throw redirect(303, '{{ denial_target }}');
 	}
-{% endif %}
+{%- endif %}
+{%- if view_roles %}
+	if (viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {
+		throw redirect(303, '{{ denial_target }}');
+	}
+{%- endif %}
+{%- endif %}
 	const result: Record<string, unknown> = {};
 {%- if param_defaults %}
 	const paramDefaults: Record<string, string> = {};
