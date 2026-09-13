@@ -31,6 +31,10 @@ pub struct ViewDeclaration {
     pub module_uses: Vec<ModuleUse>,
     #[serde(default)]
     pub roles: Vec<String>,
+    /// Capability requirements declared as `requires: [CapA, CapB];` on a
+    /// view. Extracted from the property bag; empty when absent.
+    #[serde(default)]
+    pub requires: Vec<String>,
     pub condition: Option<Expression>,
     pub position: Option<Position>,
 }
@@ -503,6 +507,11 @@ pub struct IfmlModel {
     pub modules: Vec<ModuleDeclaration>,
     #[serde(default)]
     pub actors: Vec<ActorDeclaration>,
+    /// Raw string values of top-level `import "..."` statements, in source
+    /// order. Duplicates are preserved; resolution/dedup is a resolver
+    /// concern, not a parser concern.
+    #[serde(default)]
+    pub imports: Vec<String>,
 }
 
 #[derive(Debug, Error)]

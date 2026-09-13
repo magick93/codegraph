@@ -1,10 +1,15 @@
 // ── Entry point ──────────────────────────────────────────────────
 ifml_model = {
     SOI ~
-    domain_declaration* ~
-    (view_declaration | action_declaration | module_declaration | actor_declaration)* ~
+    (import_declaration | domain_declaration)* ~
+    (import_declaration | view_declaration | action_declaration | module_declaration | actor_declaration)* ~
     EOI
 }
+
+// ── Import declaration ────────────────────────────────────────────
+// `import "rexlang/auth.actor";` — the raw string value is kept verbatim;
+// resolution/dedup is a downstream concern. Trailing `;` is optional.
+import_declaration = { "import" ~ string ~ ";"? }
 
 // ── Domain declaration ────────────────────────────────────────────
 domain_declaration = {
