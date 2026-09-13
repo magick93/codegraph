@@ -25,6 +25,7 @@ pub struct ViewContainerNode {
     pub domain: Option<String>,
     pub module_uses: Option<Vec<ModuleUseRecord>>,
     pub roles: Option<Vec<String>>,
+    pub requires: Option<Vec<String>>,
 }
 
 /// A `use "Module" as alias;` statement resolved onto a ViewContainer:

@@ -3,12 +3,12 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
-    CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode,
-    EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
-    NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
-    RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode,
+    CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue,
+    ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode,
+    MembershipNode, NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode,
+    PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -113,6 +113,15 @@ fn build_edge_props_string(props: Option<&EdgeProperties>) -> String {
     }
     if let Some(v) = &p.expression {
         fields.push(format!("expression: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.effect {
+        fields.push(format!("effect: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.when_expr {
+        fields.push(format!("when_expr: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.obligations {
+        fields.push(format!("obligations: '{}'", escape_gql(v)));
     }
     if fields.is_empty() {
         String::new()
@@ -589,6 +598,7 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::HasMembership => "HasMembership",
             EdgeType::MembershipInTenant => "MembershipInTenant",
             EdgeType::HasRole => "HasRole",
+            EdgeType::Grant => "Grant",
         };
 
         let match_clause = match &edge_type {
@@ -910,6 +920,13 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(strip_api_prefix(to_id)),
                 )
             }
+            EdgeType::Grant => {
+                format!(
+                    "MATCH (a:Actor {{name: '{}'}}), (b:Capability {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
             // These edge types are handled by the early-return above but must
             // be listed to satisfy the exhaustive match. They are unreachable.
             EdgeType::HasProperty
@@ -938,11 +955,15 @@ impl GraphIngestor for GrafeoEngine {
             .roles
             .as_ref()
             .map(|r| serde_json::to_string(r).unwrap_or_default());
+        let requires_json = node
+            .requires
+            .as_ref()
+            .map(|r| serde_json::to_string(r).unwrap_or_default());
         let gql = format!(
             "INSERT (:ViewContainer {{ \
                 name: '{}', label: {}, is_xor: {}, is_default: {}, \
                 is_landmark: {}, is_modal: {}, conditional_expression: {}, domain: {}, \
-                module_uses: {}, roles: {} \
+                module_uses: {}, roles: {}, requires: {} \
             }})",
             escape_gql(&node.name),
             opt_str(&node.label),
@@ -954,6 +975,7 @@ impl GraphIngestor for GrafeoEngine {
             opt_str(&node.domain),
             opt_str(&module_uses_json),
             opt_str(&roles_json),
+            opt_str(&requires_json),
         );
         session
             .execute(&gql)
@@ -1474,6 +1496,78 @@ impl GraphIngestor for GrafeoEngine {
         session
             .execute(&gql)
             .map_err(|e| GraphError::Ingest(format!("ingest_tenant failed: {e}")))?;
+        Ok(())
+    }
+
+    // ── Authorization metamodel ──────────────────────────────────────
+
+    async fn ingest_actor_policy(&self, model: &ActorPolicyModel) -> Result<(), GraphError> {
+        let session = self.db().session();
+
+        for actor in &model.actors {
+            let gql = format!(
+                "INSERT (:Actor {{ name: '{}', kind: {}, extends: {}, block: {} }})",
+                escape_gql(&actor.name),
+                opt_str(&actor.kind),
+                opt_str(&actor.extends),
+                opt_str(&actor.block),
+            );
+            session.execute(&gql).map_err(|e| {
+                GraphError::Ingest(format!("ingest_actor_policy actor failed: {e}"))
+            })?;
+        }
+
+        for capability in &model.capabilities {
+            let gql = format!(
+                "INSERT (:Capability {{ name: '{}', class: '{}', block: {} }})",
+                escape_gql(&capability.name),
+                escape_gql(&capability.class),
+                opt_str(&capability.block),
+            );
+            session.execute(&gql).map_err(|e| {
+                GraphError::Ingest(format!("ingest_actor_policy capability failed: {e}"))
+            })?;
+        }
+
+        for grant in &model.grants {
+            let obligations_json = serde_json::to_string(&grant.obligations)
+                .map_err(|e| GraphError::Ingest(e.to_string()))?;
+            let gql = format!(
+                "MATCH (a:Actor {{name: '{actor}'}}), (c:Capability {{name: '{capability}'}}) \
+                 INSERT (a)-[:Grant {{ effect: '{effect}', when_expr: {when}, obligations: '{obligations}' }}]->(c)",
+                actor = escape_gql(&grant.actor),
+                capability = escape_gql(&grant.capability),
+                effect = escape_gql(&grant.effect),
+                when = opt_str(&grant.when),
+                obligations = escape_gql(&obligations_json),
+            );
+            session.execute(&gql).map_err(|e| {
+                GraphError::Ingest(format!("ingest_actor_policy grant failed: {e}"))
+            })?;
+        }
+
+        let blocks_json = serde_json::to_string(&model.policy.blocks)
+            .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let never_both_json = serde_json::to_string(&model.policy.never_both)
+            .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        session
+            .execute("MERGE (:ActorPolicy {name: 'actor_policy'})")
+            .map_err(|e| GraphError::Ingest(format!("ingest_actor_policy merge failed: {e}")))?;
+        let set_gql = format!(
+            "MATCH (p:ActorPolicy {{name: 'actor_policy'}}) SET p.blocks = '{}'",
+            escape_gql(&blocks_json),
+        );
+        session
+            .execute(&set_gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_actor_policy blocks failed: {e}")))?;
+        let set_gql = format!(
+            "MATCH (p:ActorPolicy {{name: 'actor_policy'}}) SET p.never_both = '{}'",
+            escape_gql(&never_both_json),
+        );
+        session.execute(&set_gql).map_err(|e| {
+            GraphError::Ingest(format!("ingest_actor_policy never_both failed: {e}"))
+        })?;
+
         Ok(())
     }
 }

@@ -3,14 +3,15 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, ColumnInfo,
-    CompositeColumn, CompositeRange, CompositionNode, CompositionTree, DataBindingResolution,
-    DetectionSource, EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget,
+    resolve_effective_permits, ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode,
+    ApiResourceNode, CapabilityNode, CodeList, CollectionNode, ColumnInfo, CompositeColumn,
+    CompositeRange, CompositionNode, CompositionTree, DataBindingResolution, DetectionSource,
+    EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, GrantEdge,
     HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleUseRecord, NamespaceNode,
-    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode,
-    PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData,
-    SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate, PermissionNode,
+    Permit, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
+    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -939,7 +940,7 @@ impl GraphQuerier for GrafeoEngine {
         let gql = "MATCH (vc:ViewContainer) RETURN \
             vc.name, vc.label, vc.is_xor, vc.is_default, \
             vc.is_landmark, vc.is_modal, vc.conditional_expression, vc.domain, \
-            vc.module_uses, vc.roles \
+            vc.module_uses, vc.roles, vc.requires \
             ORDER BY vc.name";
         let result = query_gql(self, gql)?;
         let reader = RowReader::from_columns(&result.columns);
@@ -950,6 +951,9 @@ impl GraphQuerier for GrafeoEngine {
                 module_uses_str.and_then(|s| serde_json::from_str(&s).ok());
             let roles_str: Option<String> = reader.get_opt_string(row, "vc.roles")?;
             let roles: Option<Vec<String>> = roles_str.and_then(|s| serde_json::from_str(&s).ok());
+            let requires_str: Option<String> = reader.get_opt_string(row, "vc.requires")?;
+            let requires: Option<Vec<String>> =
+                requires_str.and_then(|s| serde_json::from_str(&s).ok());
             nodes.push(ViewContainerNode {
                 name: reader.get_string(row, "vc.name")?,
                 label: reader.get_opt_string(row, "vc.label")?,
@@ -961,6 +965,7 @@ impl GraphQuerier for GrafeoEngine {
                 domain: reader.get_opt_string(row, "vc.domain")?,
                 module_uses,
                 roles,
+                requires,
             });
         }
         Ok(nodes)
@@ -1708,6 +1713,87 @@ impl GraphQuerier for GrafeoEngine {
             .iter()
             .map(|row| row_to_tenant_node(&reader, row))
             .collect()
+    }
+
+    // ── Authorization metamodel queries ───────────────────────────────
+
+    async fn get_actors(&self) -> Result<Vec<ActorNode>, GraphError> {
+        let gql = "MATCH (a:Actor) RETURN a.name, a.kind, a.extends, a.block ORDER BY a.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(ActorNode {
+                name: reader.get_string(row, "a.name")?,
+                kind: reader.get_opt_string(row, "a.kind")?,
+                extends: reader.get_opt_string(row, "a.extends")?,
+                block: reader.get_opt_string(row, "a.block")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_capabilities(&self) -> Result<Vec<CapabilityNode>, GraphError> {
+        let gql = "MATCH (c:Capability) RETURN c.name, c.class, c.block ORDER BY c.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(CapabilityNode {
+                name: reader.get_string(row, "c.name")?,
+                class: reader.get_string(row, "c.class")?,
+                block: reader.get_opt_string(row, "c.block")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_grants(&self) -> Result<Vec<GrantEdge>, GraphError> {
+        let gql = "MATCH (a:Actor)-[g:Grant]->(c:Capability) \
+                   RETURN a.name, c.name, g.effect, g.when_expr, g.obligations \
+                   ORDER BY a.name, c.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut grants = Vec::new();
+        for row in &result.rows {
+            let obligations_json = reader.get_opt_string(row, "g.obligations")?;
+            let obligations: Vec<String> = obligations_json
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            grants.push(GrantEdge {
+                actor: reader.get_string(row, "a.name")?,
+                capability: reader.get_string(row, "c.name")?,
+                effect: reader.get_string(row, "g.effect")?,
+                when: reader.get_opt_string(row, "g.when_expr")?,
+                obligations,
+            });
+        }
+        Ok(grants)
+    }
+
+    async fn get_actor_policy(&self) -> Result<Option<ActorPolicyNode>, GraphError> {
+        let gql = "MATCH (p:ActorPolicy) RETURN p.blocks, p.never_both LIMIT 1";
+        let result = query_gql(self, gql)?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        let row = &result.rows[0];
+        let blocks: Vec<String> = reader
+            .get_opt_string(row, "p.blocks")?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let never_both: Vec<NeverBothGroup> = reader
+            .get_opt_string(row, "p.never_both")?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        Ok(Some(ActorPolicyNode { blocks, never_both }))
+    }
+
+    async fn effective_permits(&self, actor: &str) -> Result<Vec<Permit>, GraphError> {
+        let actors = self.get_actors().await?;
+        let grants = self.get_grants().await?;
+        Ok(resolve_effective_permits(&actors, &grants, actor))
     }
 }
 

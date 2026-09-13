@@ -6,10 +6,11 @@ use async_trait::async_trait;
 use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
-    CompositeRange, CompositionTree, DataBindingResolution, EnumValue, ErrorDefinitionNode,
-    EventNode, Extension, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
-    NamespaceNode, NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode,
+    ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode, CapabilityNode,
+    CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree,
+    DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, GrantEdge,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
+    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
     PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
     SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
     ViewComponentNode, ViewContainerNode,
@@ -767,5 +768,27 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn list_all_tenants(&self) -> Result<Vec<TenantNode>, GraphError> {
         self.inner.list_all_tenants().await
+    }
+
+    // ── Authorization metamodel queries ────────────────────────────────
+
+    async fn get_actors(&self) -> Result<Vec<ActorNode>, GraphError> {
+        self.inner.get_actors().await
+    }
+
+    async fn get_capabilities(&self) -> Result<Vec<CapabilityNode>, GraphError> {
+        self.inner.get_capabilities().await
+    }
+
+    async fn get_grants(&self) -> Result<Vec<GrantEdge>, GraphError> {
+        self.inner.get_grants().await
+    }
+
+    async fn get_actor_policy(&self) -> Result<Option<ActorPolicyNode>, GraphError> {
+        self.inner.get_actor_policy().await
+    }
+
+    async fn effective_permits(&self, actor: &str) -> Result<Vec<Permit>, GraphError> {
+        self.inner.effective_permits(actor).await
     }
 }

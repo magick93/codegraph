@@ -68,6 +68,9 @@ pub enum EdgeType {
     HasMembership,
     MembershipInTenant,
     HasRole,
+
+    // Authorization metamodel edge types
+    Grant,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -91,4 +94,8 @@ pub struct EdgeProperties {
     pub relationship_name: Option<String>,
     pub propagation_trigger: Option<String>,
     pub policy_name: Option<String>,
+    pub effect: Option<String>,
+    pub when_expr: Option<String>,
+    /// Pre-serialized JSON array of obligation names for Grant edges.
+    pub obligations: Option<String>,
 }

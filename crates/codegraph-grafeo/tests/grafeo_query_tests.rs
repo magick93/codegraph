@@ -705,6 +705,7 @@ async fn test_view_component_spec_round_trip() {
         domain: Some("sales".to_string()),
         module_uses: None,
         roles: None,
+        requires: None,
     };
     engine.ingest_view_container(&container).await.unwrap();
 
@@ -754,6 +755,7 @@ async fn test_view_component_spec_absent_round_trip() {
         domain: None,
         module_uses: None,
         roles: None,
+        requires: None,
     };
     engine.ingest_view_container(&container).await.unwrap();
 
@@ -811,6 +813,10 @@ async fn test_view_container_module_uses_and_roles_round_trip() {
             },
         ]),
         roles: Some(vec!["admin".to_string(), "manager".to_string()]),
+        requires: Some(vec![
+            "ResolveTicket".to_string(),
+            "ApproveRefund".to_string(),
+        ]),
     };
     engine.ingest_view_container(&container).await.unwrap();
 
@@ -825,6 +831,7 @@ async fn test_view_container_module_uses_and_roles_round_trip() {
         domain: None,
         module_uses: None,
         roles: None,
+        requires: None,
     };
     engine.ingest_view_container(&plain).await.unwrap();
 
@@ -852,6 +859,13 @@ async fn test_view_container_module_uses_and_roles_round_trip() {
         catalog.roles,
         Some(vec!["admin".to_string(), "manager".to_string()])
     );
+    assert_eq!(
+        catalog.requires,
+        Some(vec![
+            "ResolveTicket".to_string(),
+            "ApproveRefund".to_string()
+        ])
+    );
 
     let plain_loaded = loaded
         .iter()
@@ -859,4 +873,142 @@ async fn test_view_container_module_uses_and_roles_round_trip() {
         .expect("Plain container");
     assert_eq!(plain_loaded.module_uses, None);
     assert_eq!(plain_loaded.roles, None);
+    assert_eq!(plain_loaded.requires, None);
+}
+
+// --- Authorization metamodel ---
+
+#[tokio::test]
+async fn test_actor_policy_round_trip_and_effective_permits() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+
+    let model = ActorPolicyModel {
+        actors: vec![
+            ActorNode {
+                name: "Admin".to_string(),
+                kind: Some("human".to_string()),
+                extends: None,
+                block: Some("core".to_string()),
+            },
+            ActorNode {
+                name: "Manager".to_string(),
+                kind: Some("human".to_string()),
+                extends: Some("Admin".to_string()),
+                block: Some("core".to_string()),
+            },
+            ActorNode {
+                name: "Auditor".to_string(),
+                kind: Some("agent".to_string()),
+                extends: None,
+                block: Some("audit".to_string()),
+            },
+        ],
+        capabilities: vec![
+            CapabilityNode {
+                name: "approve_expense".to_string(),
+                class: "Expense".to_string(),
+                block: Some("core".to_string()),
+            },
+            CapabilityNode {
+                name: "view_report".to_string(),
+                class: "Report".to_string(),
+                block: None,
+            },
+        ],
+        grants: vec![
+            GrantEdge {
+                actor: "Admin".to_string(),
+                capability: "approve_expense".to_string(),
+                effect: "permit".to_string(),
+                when: None,
+                obligations: vec![],
+            },
+            GrantEdge {
+                actor: "Admin".to_string(),
+                capability: "view_report".to_string(),
+                effect: "permit".to_string(),
+                when: Some("admin.verified == true".to_string()),
+                obligations: vec!["log_access".to_string()],
+            },
+            GrantEdge {
+                actor: "Manager".to_string(),
+                capability: "approve_expense".to_string(),
+                effect: "forbid".to_string(),
+                when: None,
+                obligations: vec![],
+            },
+        ],
+        policy: ActorPolicyNode {
+            blocks: vec!["core".to_string(), "audit".to_string()],
+            never_both: vec![NeverBothGroup {
+                capabilities: vec!["approve_expense".to_string()],
+            }],
+        },
+    };
+    engine.ingest_actor_policy(&model).await.unwrap();
+
+    let actors = engine.get_actors().await.unwrap();
+    assert_eq!(actors.len(), 3);
+    let manager = actors.iter().find(|a| a.name == "Manager").unwrap();
+    assert_eq!(manager.extends.as_deref(), Some("Admin"));
+    assert_eq!(manager.kind.as_deref(), Some("human"));
+    let auditor = actors.iter().find(|a| a.name == "Auditor").unwrap();
+    assert_eq!(auditor.kind.as_deref(), Some("agent"));
+
+    let capabilities = engine.get_capabilities().await.unwrap();
+    assert_eq!(capabilities.len(), 2);
+    let approve = capabilities
+        .iter()
+        .find(|c| c.name == "approve_expense")
+        .unwrap();
+    assert_eq!(approve.class, "Expense");
+
+    let grants = engine.get_grants().await.unwrap();
+    assert_eq!(grants.len(), 3);
+    let view_report = grants
+        .iter()
+        .find(|g| g.capability == "view_report")
+        .unwrap();
+    assert_eq!(view_report.effect, "permit");
+    assert_eq!(view_report.when.as_deref(), Some("admin.verified == true"));
+    assert_eq!(view_report.obligations, vec!["log_access".to_string()]);
+
+    let policy = engine
+        .get_actor_policy()
+        .await
+        .unwrap()
+        .expect("policy node");
+    assert_eq!(policy.blocks, vec!["core".to_string(), "audit".to_string()]);
+    assert_eq!(policy.never_both.len(), 1);
+    assert_eq!(
+        policy.never_both[0].capabilities,
+        vec!["approve_expense".to_string()]
+    );
+
+    // Admin: own permits only, when/obligations preserved.
+    let admin_permits = engine.effective_permits("Admin").await.unwrap();
+    assert_eq!(admin_permits.len(), 2);
+    let admin_view = admin_permits
+        .iter()
+        .find(|p| p.capability == "view_report")
+        .unwrap();
+    assert_eq!(admin_view.when.as_deref(), Some("admin.verified == true"));
+    assert_eq!(admin_view.obligations, vec!["log_access".to_string()]);
+
+    // Manager: inherits view_report permit via extends; forbid wins for
+    // approve_expense so the inherited permit is dropped.
+    let manager_permits = engine.effective_permits("Manager").await.unwrap();
+    assert_eq!(manager_permits.len(), 2);
+    let manager_approve = manager_permits
+        .iter()
+        .find(|p| p.capability == "approve_expense")
+        .expect("forbid entry survives");
+    assert_eq!(manager_approve.effect, "forbid");
+    assert!(manager_permits
+        .iter()
+        .all(|p| p.capability != "approve_expense" || p.effect == "forbid"));
+
+    // Auditor: no grants at all.
+    let auditor_permits = engine.effective_permits("Auditor").await.unwrap();
+    assert!(auditor_permits.is_empty());
 }

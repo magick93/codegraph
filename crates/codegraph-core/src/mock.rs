@@ -60,6 +60,10 @@ pub struct MockEngine {
     security_identities: Mutex<HashMap<String, SecurityIdentityNode>>,
     memberships: Mutex<Vec<MembershipNode>>,
     tenants: Mutex<HashMap<String, TenantNode>>,
+    actors: Mutex<HashMap<String, ActorNode>>,
+    capabilities: Mutex<HashMap<String, CapabilityNode>>,
+    grants: Mutex<Vec<GrantEdge>>,
+    actor_policy: Mutex<Option<ActorPolicyNode>>,
     start_time: Instant,
 }
 
@@ -112,6 +116,10 @@ impl MockEngine {
             security_identities: Mutex::new(HashMap::new()),
             memberships: Mutex::new(Vec::new()),
             tenants: Mutex::new(HashMap::new()),
+            actors: Mutex::new(HashMap::new()),
+            capabilities: Mutex::new(HashMap::new()),
+            grants: Mutex::new(Vec::new()),
+            actor_policy: Mutex::new(None),
             start_time: Instant::now(),
         }
     }
@@ -851,6 +859,27 @@ impl GraphIngestor for MockEngine {
         Ok(())
     }
 
+    async fn ingest_actor_policy(&self, model: &ActorPolicyModel) -> Result<(), GraphError> {
+        {
+            let mut actors = self.actors.lock().unwrap();
+            for actor in &model.actors {
+                actors.insert(actor.name.clone(), actor.clone());
+            }
+        }
+        {
+            let mut capabilities = self.capabilities.lock().unwrap();
+            for capability in &model.capabilities {
+                capabilities.insert(capability.name.clone(), capability.clone());
+            }
+        }
+        self.grants
+            .lock()
+            .unwrap()
+            .extend(model.grants.iter().cloned());
+        *self.actor_policy.lock().unwrap() = Some(model.policy.clone());
+        Ok(())
+    }
+
     async fn finalize(&self) -> Result<IngestStats, GraphError> {
         let schemas = self.schemas.lock().unwrap();
         let properties = self.properties.lock().unwrap();
@@ -1581,5 +1610,39 @@ impl GraphQuerier for MockEngine {
 
     async fn list_all_tenants(&self) -> Result<Vec<TenantNode>, GraphError> {
         Ok(self.tenants.lock().unwrap().values().cloned().collect())
+    }
+
+    // ── Authorization metamodel queries ─────────────────────────────
+
+    async fn get_actors(&self) -> Result<Vec<ActorNode>, GraphError> {
+        let mut actors: Vec<ActorNode> = self.actors.lock().unwrap().values().cloned().collect();
+        actors.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(actors)
+    }
+
+    async fn get_capabilities(&self) -> Result<Vec<CapabilityNode>, GraphError> {
+        let mut capabilities: Vec<CapabilityNode> = self
+            .capabilities
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        capabilities.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(capabilities)
+    }
+
+    async fn get_grants(&self) -> Result<Vec<GrantEdge>, GraphError> {
+        Ok(self.grants.lock().unwrap().clone())
+    }
+
+    async fn get_actor_policy(&self) -> Result<Option<ActorPolicyNode>, GraphError> {
+        Ok(self.actor_policy.lock().unwrap().clone())
+    }
+
+    async fn effective_permits(&self, actor: &str) -> Result<Vec<Permit>, GraphError> {
+        let actors: Vec<ActorNode> = self.actors.lock().unwrap().values().cloned().collect();
+        let grants = self.grants.lock().unwrap().clone();
+        Ok(resolve_effective_permits(&actors, &grants, actor))
     }
 }

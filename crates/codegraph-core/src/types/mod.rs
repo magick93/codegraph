@@ -1,5 +1,6 @@
 mod api;
 mod atproto;
+mod authorization;
 mod codelist;
 mod composite;
 mod composition;
@@ -20,6 +21,10 @@ pub use api::{
     PermissionNode, PipelineNode,
 };
 pub use atproto::{CollectionNode, LexiconNode, NamespaceNode, RepositoryNode};
+pub use authorization::{
+    resolve_effective_permits, ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode,
+    GrantEdge, NeverBothGroup, Permit,
+};
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};

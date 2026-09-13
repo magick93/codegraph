@@ -1,9 +1,10 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
-    CompositeRange, CompositionTree, DataBindingResolution, EnumValue, ErrorDefinitionNode,
-    EventNode, Extension, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
-    NamespaceNode, NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode,
+    ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode, CapabilityNode,
+    CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree,
+    DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, GrantEdge,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
+    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
     PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
     SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
     ViewComponentNode, ViewContainerNode,
@@ -388,6 +389,31 @@ pub trait GraphQuerier: Send + Sync {
     }
 
     async fn list_all_tenants(&self) -> Result<Vec<TenantNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    // ── Authorization metamodel query methods ─────────────────────────
+
+    async fn get_actors(&self) -> Result<Vec<ActorNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_capabilities(&self) -> Result<Vec<CapabilityNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_grants(&self) -> Result<Vec<GrantEdge>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_actor_policy(&self) -> Result<Option<ActorPolicyNode>, GraphError> {
+        Ok(None)
+    }
+
+    /// Effective grant decisions for an actor after resolving its `extends`
+    /// chain: union of all chain grants with forbid-wins per capability
+    /// (see `resolve_effective_permits` for the exact rules).
+    async fn effective_permits(&self, _actor: &str) -> Result<Vec<Permit>, GraphError> {
         Ok(Vec::new())
     }
 }
