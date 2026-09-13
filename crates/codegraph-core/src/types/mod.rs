@@ -31,7 +31,8 @@ pub use field_def::{
 };
 pub use ifml::{
     strip_ifml_prefix, ActionNode, DataBindingNode, DataBindingResolution, DataFlowData, EventNode,
-    NavigationFlowData, ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
+    NavigationFlowData, NavigationFlowRecord, ParameterDefinitionNode, ViewComponentNode,
+    ViewContainerNode,
 };
 pub use persistence::{
     AuditEffect, AuditTimestampKind, AuditUserKind, PersistenceChildTable, PersistenceColumn,

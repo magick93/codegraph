@@ -64,7 +64,7 @@ pub struct IfmlEvent {
     pub action: IfmlAction,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum IfmlAction {
     Navigate {
         target: String,
@@ -91,6 +91,9 @@ pub struct NavigationEdge {
     pub target_container: String,
     pub parameter_binding: HashMap<String, String>,
     pub conditional_expression: Option<String>,
+    /// Raw component name when the event hangs off a ViewComponent;
+    /// `None` when the event hangs off the container itself.
+    pub source_component: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

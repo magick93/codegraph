@@ -3,10 +3,10 @@ use crate::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, CompositionTree, DataBindingResolution, EnumValue, ErrorDefinitionNode,
     EventNode, Extension, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
-    NamespaceNode, ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode,
-    PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData,
-    SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    NamespaceNode, NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode,
+    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
+    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -187,8 +187,11 @@ pub trait GraphQuerier: Send + Sync {
         Ok(Vec::new())
     }
 
-    /// Get NavigationFlow edges: (source_element, source_event, target_container).
-    async fn get_ifml_navigation_flows(&self) -> Result<Vec<(String, String, String)>, GraphError> {
+    /// Get NavigationFlow edges with full fidelity: the element the event
+    /// hangs off (`source`), the owning ViewContainer (`source_container`),
+    /// the event name, the target ViewContainer, and the persisted
+    /// `target_param_binding` JSON.
+    async fn get_ifml_navigation_flows(&self) -> Result<Vec<NavigationFlowRecord>, GraphError> {
         Ok(Vec::new())
     }
 
@@ -204,8 +207,22 @@ pub trait GraphQuerier: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Get TriggersAction edges: (event_name, action_name).
+    async fn get_ifml_action_triggers(&self) -> Result<Vec<(String, String)>, GraphError> {
+        Ok(Vec::new())
+    }
+
     /// Get all ParameterDefinition nodes.
     async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get the ParameterDefinition nodes bound to a ViewContainer via
+    /// HasParameter edges.
+    async fn get_parameters_for_view(
+        &self,
+        _container_name: &str,
+    ) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
         Ok(Vec::new())
     }
 

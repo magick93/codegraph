@@ -1,6 +1,8 @@
 //! Byte-exact expected outputs for the spec-less IFML svelte fixture.
-//! Captured from the pre-change generator; the templates must reproduce
-//! these files verbatim when no component specs are present.
+//! Captured from the lossless-IR querier: navigation flows resolve `from`
+//! to the owning ViewContainer and view params flow into the route map.
+//! The templates must reproduce these files verbatim when no component
+//! specs are present.
 
 pub const SPECLESS_CUSTOMERLIST_PAGE: &str = r##"<script lang="ts">
 	import type { PageData } from './$types';
@@ -133,7 +135,7 @@ export const routeMap: Record<string, RouteDefinition> = {
 		label: 'CustomerDetail',
 		isLandmark: false,
 		isModal: false,
-		params: [],
+		params: ['customerId'],
 	},
 
 	'CustomerList': {
@@ -156,7 +158,7 @@ export interface NavLink {
 
 export const navigationLinks: NavLink[] = [
 
-	{ from: 'grid', to: 'CustomerDetail', event: 'comp_grid_select', label: 'comp_grid_select' },
+	{ from: 'CustomerList', to: 'CustomerDetail', event: 'comp_grid_select', label: 'comp_grid_select' },
 
 ];
 

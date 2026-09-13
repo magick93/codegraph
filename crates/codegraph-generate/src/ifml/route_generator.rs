@@ -1,4 +1,5 @@
 use crate::ProjectConfig;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -62,7 +63,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
         let page_template = format!("ifml/{}/page.tera", self.framework);
         let load_template = format!("ifml/{}/page_load.tera", self.framework);
 
-        for vc in &model.view_containers {
+        for vc in ordered_view_containers(&model) {
             if let Ok(content) = render_page_svelte(vc, tera, &page_template, &project.api_version)
             {
                 files.push(GeneratedFile {
@@ -87,6 +88,29 @@ impl GlobalGenerator for IfmlRouteGenerator {
 
         Ok(files)
     }
+}
+
+/// Order view containers by the model's computed generation order
+/// (targets before sources). Containers absent from the order keep their
+/// graph order at the end.
+fn ordered_view_containers(
+    model: &super::context::IfmlModel,
+) -> Vec<&super::context::IfmlViewContainer> {
+    let position: HashMap<&str, usize> = model
+        .generation_order
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (name.as_str(), i))
+        .collect();
+    let mut containers: Vec<&super::context::IfmlViewContainer> =
+        model.view_containers.iter().collect();
+    containers.sort_by_key(|vc| {
+        position
+            .get(vc.name.as_str())
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
+    containers
 }
 
 #[derive(Debug, Serialize)]

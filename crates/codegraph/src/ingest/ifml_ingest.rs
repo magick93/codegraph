@@ -106,6 +106,7 @@ async fn ingest_view_container(db: &dyn GraphIngestor, view: &ViewDeclaration) -
         is_default: false,
         is_landmark: view.is_landmark,
         is_modal: view.is_modal,
+        conditional_expression: view.condition.as_ref().map(render_expression),
         domain: None,
     };
     let id = db
@@ -126,6 +127,7 @@ async fn ingest_container_node(
         is_default: container.is_default,
         is_landmark: false,
         is_modal: false,
+        conditional_expression: container.condition.as_ref().map(render_expression),
         domain: None,
     };
     db.ingest_view_container(&node).await.map_err(Error::Graph)
@@ -241,6 +243,7 @@ async fn ingest_view_component(
         filter,
         api_operation,
         spec,
+        conditional_expression: comp.condition.as_ref().map(render_expression),
         domain: None,
     };
 
@@ -261,7 +264,7 @@ async fn ingest_view_component(
         let binding_id = db
             .ingest_data_binding(&DataBindingNode {
                 name: binding_name.clone(),
-                conditional_expression: None,
+                conditional_expression: node.conditional_expression.clone(),
                 expression_language: "ifml".to_string(),
                 domain: None,
             })
@@ -342,6 +345,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
         } else {
             Some(event.params.clone())
         },
+        conditional_expression: event.condition.as_ref().map(render_expression),
         domain: None,
     };
 
@@ -359,7 +363,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                 let pairs: Vec<String> = b
                     .pairs
                     .iter()
-                    .map(|(k, v)| format!("\"{}\": \"{}\"", k, expr_to_string(v)))
+                    .map(|(k, v)| format!("\"{}\": \"{}\"", k, render_expression(v)))
                     .collect();
                 format!("{{{}}}", pairs.join(", "))
             });
@@ -408,6 +412,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                             name: format!("{}_{}", action_id.replace(':', "_"), outcome_str),
                             event_type: outcome_str.clone(),
                             params: None,
+                            conditional_expression: None,
                             domain: None,
                         })
                         .await
@@ -431,7 +436,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                             let pairs: Vec<String> = b
                                 .pairs
                                 .iter()
-                                .map(|(k, v)| format!("\"{}\": \"{}\"", k, expr_to_string(v)))
+                                .map(|(k, v)| format!("\"{}\": \"{}\"", k, render_expression(v)))
                                 .collect();
                             format!("{{{}}}", pairs.join(", "))
                         });
@@ -456,55 +461,6 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
     }
 
     Ok(())
-}
-
-fn expr_to_string(expr: &Expression) -> String {
-    match expr {
-        Expression::Ident(s) => s.clone(),
-        Expression::StringLit(s) => format!("\"{}\"", s),
-        Expression::NumLit(n) => n.to_string(),
-        Expression::BoolLit(b) => b.to_string(),
-        Expression::FieldExpr { object, field } => {
-            format!("{}.{}", expr_to_string(object), field)
-        }
-        Expression::BinOp { left, op, right } => {
-            let op_str = match op {
-                BinOp::Eq => "==",
-                BinOp::Ne => "!=",
-                BinOp::Lt => "<",
-                BinOp::Le => "<=",
-                BinOp::Gt => ">",
-                BinOp::Ge => ">=",
-                BinOp::RegexMatch => "~=",
-                BinOp::NegRegex => "!~",
-                BinOp::Add => "+",
-                BinOp::Sub => "-",
-                BinOp::Mul => "*",
-                BinOp::Div => "/",
-                BinOp::Mod => "%",
-                BinOp::And => "&&",
-                BinOp::Or => "||",
-            };
-            format!(
-                "{} {} {}",
-                expr_to_string(left),
-                op_str,
-                expr_to_string(right)
-            )
-        }
-        Expression::UnaryOp { op, operand } => {
-            let op_str = match op {
-                UnaryOp::Not => "!",
-                UnaryOp::Neg => "-",
-            };
-            format!("{}{}", op_str, expr_to_string(operand))
-        }
-        Expression::Group(inner) => format!("({})", expr_to_string(inner)),
-        Expression::Call { name, args } => {
-            let args_str: Vec<String> = args.iter().map(expr_to_string).collect();
-            format!("{}({})", name, args_str.join(", "))
-        }
-    }
 }
 
 #[derive(Debug, Default)]

@@ -701,6 +701,7 @@ async fn test_view_component_spec_round_trip() {
         is_default: false,
         is_landmark: true,
         is_modal: false,
+        conditional_expression: None,
         domain: Some("sales".to_string()),
     };
     engine.ingest_view_container(&container).await.unwrap();
@@ -714,6 +715,7 @@ async fn test_view_component_spec_round_trip() {
         filter: None,
         api_operation: None,
         spec: Some(r#"{"columns":[{"field":"name","sortable":true}]}"#.to_string()),
+        conditional_expression: None,
         domain: Some("sales".to_string()),
     };
     engine.ingest_view_component(&component).await.unwrap();
@@ -746,6 +748,7 @@ async fn test_view_component_spec_absent_round_trip() {
         is_default: false,
         is_landmark: false,
         is_modal: false,
+        conditional_expression: None,
         domain: None,
     };
     engine.ingest_view_container(&container).await.unwrap();
@@ -759,6 +762,7 @@ async fn test_view_component_spec_absent_round_trip() {
         filter: None,
         api_operation: None,
         spec: None,
+        conditional_expression: None,
         domain: None,
     };
     engine.ingest_view_component(&component).await.unwrap();

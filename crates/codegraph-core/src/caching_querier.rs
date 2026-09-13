@@ -9,10 +9,10 @@ use crate::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, CompositionTree, DataBindingResolution, EnumValue, ErrorDefinitionNode,
     EventNode, Extension, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
-    NamespaceNode, ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode,
-    PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData,
-    SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    NamespaceNode, NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode,
+    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
+    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -535,7 +535,7 @@ impl GraphQuerier for CachingQuerier<'_> {
         self.inner.get_ifml_events(parent_id).await
     }
 
-    async fn get_ifml_navigation_flows(&self) -> Result<Vec<(String, String, String)>, GraphError> {
+    async fn get_ifml_navigation_flows(&self) -> Result<Vec<NavigationFlowRecord>, GraphError> {
         self.inner.get_ifml_navigation_flows().await
     }
 
@@ -549,8 +549,19 @@ impl GraphQuerier for CachingQuerier<'_> {
         self.inner.get_ifml_actions().await
     }
 
+    async fn get_ifml_action_triggers(&self) -> Result<Vec<(String, String)>, GraphError> {
+        self.inner.get_ifml_action_triggers().await
+    }
+
     async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
         self.inner.get_ifml_parameters().await
+    }
+
+    async fn get_parameters_for_view(
+        &self,
+        container_name: &str,
+    ) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
+        self.inner.get_parameters_for_view(container_name).await
     }
 
     async fn get_data_bindings(&self) -> Result<Vec<DataBindingResolution>, GraphError> {

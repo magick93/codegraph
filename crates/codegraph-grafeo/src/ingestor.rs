@@ -933,7 +933,7 @@ impl GraphIngestor for GrafeoEngine {
         let gql = format!(
             "INSERT (:ViewContainer {{ \
                 name: '{}', label: {}, is_xor: {}, is_default: {}, \
-                is_landmark: {}, is_modal: {}, domain: {} \
+                is_landmark: {}, is_modal: {}, conditional_expression: {}, domain: {} \
             }})",
             escape_gql(&node.name),
             opt_str(&node.label),
@@ -941,6 +941,7 @@ impl GraphIngestor for GrafeoEngine {
             node.is_default,
             node.is_landmark,
             node.is_modal,
+            opt_str(&node.conditional_expression),
             opt_str(&node.domain),
         );
         session
@@ -960,7 +961,7 @@ impl GraphIngestor for GrafeoEngine {
             "INSERT (:ViewComponent {{ \
                 name: '{}', component_type: '{}', mode: {}, \
                 entity: {}, fields: {}, filter: {}, api_operation: {}, \
-                spec: {}, domain: {} \
+                spec: {}, conditional_expression: {}, domain: {} \
             }})",
             escape_gql(&node.name),
             escape_gql(&node.component_type),
@@ -970,6 +971,7 @@ impl GraphIngestor for GrafeoEngine {
             opt_str(&node.filter),
             opt_str(&node.api_operation),
             opt_str(&node.spec),
+            opt_str(&node.conditional_expression),
             opt_str(&node.domain),
         );
         session
@@ -987,11 +989,12 @@ impl GraphIngestor for GrafeoEngine {
             .map(|p| serde_json::to_string(p).unwrap_or_default());
         let gql = format!(
             "INSERT (:Event {{ \
-                name: '{}', event_type: '{}', params: {}, domain: {} \
+                name: '{}', event_type: '{}', params: {}, conditional_expression: {}, domain: {} \
             }})",
             escape_gql(&node.name),
             escape_gql(&node.event_type),
             opt_str(&params_json),
+            opt_str(&node.conditional_expression),
             opt_str(&node.domain),
         );
         session

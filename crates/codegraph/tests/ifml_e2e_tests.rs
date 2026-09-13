@@ -192,21 +192,33 @@ async fn test_ifml_grafeo_round_trip_edges() {
     assert_eq!(events[0].name, "comp_grid_select");
 
     let flows = engine.get_ifml_navigation_flows().await.unwrap();
-    assert!(
-        flows.contains(&(
-            "grid".to_string(),
-            "comp_grid_select".to_string(),
-            "CustomerDetail".to_string()
-        )),
-        "missing grid->CustomerDetail flow: {flows:?}"
+    let grid_flow = flows
+        .iter()
+        .find(|f| f.event == "comp_grid_select")
+        .expect("missing grid->CustomerDetail flow");
+    assert_eq!(grid_flow.source, "grid");
+    assert_eq!(grid_flow.source_container, "CustomerList");
+    assert_eq!(grid_flow.target, "CustomerDetail");
+    assert_eq!(
+        grid_flow.target_param_binding.as_deref(),
+        Some(r#"{"customerId": "row.id"}"#)
     );
+    let info_flow = flows
+        .iter()
+        .find(|f| f.event == "comp_info_edit")
+        .expect("missing info->CustomerEdit flow");
+    assert_eq!(info_flow.source, "info");
+    assert_eq!(info_flow.source_container, "CustomerDetail");
+    assert_eq!(info_flow.target, "CustomerEdit");
+    assert_eq!(
+        info_flow.target_param_binding.as_deref(),
+        Some(r#"{"customerId": "params.customerId"}"#)
+    );
+
+    let triggers = engine.get_ifml_action_triggers().await.unwrap();
     assert!(
-        flows.contains(&(
-            "info".to_string(),
-            "comp_info_edit".to_string(),
-            "CustomerEdit".to_string()
-        )),
-        "missing info->CustomerEdit flow: {flows:?}"
+        triggers.contains(&("comp_form_save".to_string(), "UpdateCustomer".to_string())),
+        "missing comp_form_save->UpdateCustomer trigger: {triggers:?}"
     );
 
     let actions = engine.get_ifml_actions().await.unwrap();
@@ -372,6 +384,84 @@ entities = ["CustomerType"]
     })
     .await
     .expect("ifml_generate should succeed for typed components");
+}
+
+/// Round-trip test for conditional guards: IFML DSL conditions are rendered
+/// to source text and persisted as `conditional_expression` on the
+/// ViewContainer, ViewComponent, Event, and DataBinding nodes.
+#[tokio::test]
+async fn test_ifml_conditions_round_trip_through_graph() {
+    let ifml = r#"
+view "AdminDashboard" {
+    if user.role == "admin";
+
+    component "adminGrid" {
+        type: list;
+        data: Customer;
+        if account.balance >= 100;
+
+        on select(row) if row.active == true && row.tier != "free" -> navigate("Detail", {
+            id: row.id
+        });
+        on load -> stay;
+    }
+}
+
+view "Plain" {
+    component "grid" {
+        type: list;
+        data: Customer;
+    }
+}
+"#;
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
+    let model = codegraph_ifml_dsl::parse_ifml(ifml).expect("Should parse conditional IFML");
+    codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
+        .await
+        .expect("Should ingest");
+
+    let containers = engine.get_ifml_view_containers().await.unwrap();
+    let admin = containers
+        .iter()
+        .find(|c| c.name == "AdminDashboard")
+        .expect("AdminDashboard container");
+    assert_eq!(
+        admin.conditional_expression.as_deref(),
+        Some("user.role == \"admin\"")
+    );
+    let plain = containers
+        .iter()
+        .find(|c| c.name == "Plain")
+        .expect("Plain container");
+    assert_eq!(plain.conditional_expression, None);
+
+    let components = engine
+        .get_ifml_view_components("AdminDashboard")
+        .await
+        .unwrap();
+    assert_eq!(components.len(), 1);
+    assert_eq!(
+        components[0].conditional_expression.as_deref(),
+        Some("account.balance >= 100")
+    );
+    let plain_components = engine.get_ifml_view_components("Plain").await.unwrap();
+    assert_eq!(plain_components[0].conditional_expression, None);
+
+    let events = engine.get_ifml_events("comp:adminGrid").await.unwrap();
+    assert_eq!(events.len(), 2);
+    let select = events
+        .iter()
+        .find(|e| e.event_type == "select")
+        .expect("select event");
+    assert_eq!(
+        select.conditional_expression.as_deref(),
+        Some("row.active == true && row.tier != \"free\"")
+    );
+    let load = events
+        .iter()
+        .find(|e| e.event_type == "load")
+        .expect("load event");
+    assert_eq!(load.conditional_expression, None);
 }
 
 /// Test IFML stale route cleanup
