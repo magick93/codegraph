@@ -257,54 +257,66 @@ pub async fn collect_ui_fields(
 
         // Resolve entity reference API paths for test dependency creation
         if is_entity_ref {
-            if let Some(ref target) = prop.ref_target {
-                // Extract the type name from various ref formats:
-                //   "../../common/json/OrganizationType.json#" -> "OrganizationType"
-                //   "#/definitions/AssessmentAccessType"       -> "AssessmentAccessType"
-                //   "SomeType"                                 -> "SomeType"
-                let last_segment = target.rsplit('/').next().unwrap_or(target);
-                let ref_schema_title = last_segment
-                    .strip_suffix(".json#")
-                    .or_else(|| last_segment.strip_suffix(".json"))
-                    .unwrap_or(last_segment);
-                // Try to find the schema, preferring the current domain when
-                // the same type name exists in multiple domains (e.g., OrderType
-                // in both assessments and screening).
-                let mut resolved = None;
-                if let Ok(Some(ref_schema)) = db
-                    .get_schema_in_domain(ref_schema_title, current_domain.unwrap_or(""))
+            // Prefer the graph-resolved target schema: it handles `.schema.json`
+            // ref stems and filename/title divergence (e.g. `eta.schema.json`
+            // vs title "Estimated Time of Completion") that string parsing
+            // cannot. Fall back to parsing the raw `$ref` string when no graph
+            // edge is recorded.
+            let mut resolved = if prop.is_array {
+                db.get_array_item_schema(&prop.name, schema_title)
                     .await
-                {
-                    resolved = Some(ref_schema);
-                }
-                // Fallback: look in all domains (cross-domain references like
-                // timecard.leave_request → common.worker are common).
-                if resolved.is_none() {
-                    if let Ok(Some(ref_schema)) = db.get_schema(ref_schema_title).await {
+                    .ok()
+                    .flatten()
+            } else {
+                db.get_property_ref_target(&prop.name, schema_title)
+                    .await
+                    .ok()
+                    .flatten()
+            };
+            if resolved.is_none() {
+                if let Some(ref target) = prop.ref_target {
+                    // Extract the type name from various ref formats:
+                    //   "../../common/json/organization.schema.json" -> "organization"
+                    //   "../../common/json/OrganizationType.json#"     -> "OrganizationType"
+                    //   "#/definitions/AssessmentAccessType"           -> "AssessmentAccessType"
+                    //   "SomeType"                                     -> "SomeType"
+                    let last_segment = target.rsplit('/').next().unwrap_or(target);
+                    let ref_schema_title = last_segment
+                        .strip_suffix(".schema.json")
+                        .or_else(|| last_segment.strip_suffix(".json#"))
+                        .or_else(|| last_segment.strip_suffix(".json"))
+                        .unwrap_or(last_segment);
+                    if let Ok(Some(ref_schema)) = db
+                        .get_schema_in_domain(ref_schema_title, current_domain.unwrap_or(""))
+                        .await
+                    {
                         resolved = Some(ref_schema);
                     }
-                }
-                // If the resolved schema is in a different domain, check if
-                // the same type exists in the current domain and prefer it.
-                if let (Some(cur_domain), Some(ref found)) = (current_domain, &resolved) {
-                    if found.domain.as_deref() != Some(cur_domain) {
-                        if let Ok(schemas) = db.list_schemas(Some(cur_domain)).await {
-                            if let Some(same_domain) =
-                                schemas.iter().find(|s| s.title == ref_schema_title)
-                            {
-                                resolved = Some(same_domain.clone());
-                            }
+                    if resolved.is_none() {
+                        if let Ok(Some(ref_schema)) = db.get_schema(ref_schema_title).await {
+                            resolved = Some(ref_schema);
                         }
                     }
                 }
-                if let Some(ref_schema) = resolved {
-                    if let Some(ref domain) = ref_schema.domain {
-                        field.ref_api_path = Some(format!(
-                            "/{}/{}",
-                            domain,
-                            resolve_path_segment_with_config(None, &ref_schema, config)
-                        ));
+            }
+            // If the resolved schema is in a different domain, check if the
+            // same type exists in the current domain and prefer it.
+            if let (Some(cur_domain), Some(found)) = (current_domain, &resolved) {
+                if found.domain.as_deref() != Some(cur_domain) {
+                    if let Ok(schemas) = db.list_schemas(Some(cur_domain)).await {
+                        if let Some(same_domain) = schemas.iter().find(|s| s.title == found.title) {
+                            resolved = Some(same_domain.clone());
+                        }
                     }
+                }
+            }
+            if let Some(ref_schema) = resolved {
+                if let Some(ref domain) = ref_schema.domain {
+                    field.ref_api_path = Some(format!(
+                        "/{}/{}",
+                        domain,
+                        resolve_path_segment_with_config(None, &ref_schema, config)
+                    ));
                 }
             }
         }
