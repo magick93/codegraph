@@ -1,0 +1,36 @@
+{#-
+  Shared entity-ref dependency setup. Rendered via `{% include %}` with
+  `dep_section` set by the caller to one of: "before_all", "after_all",
+  "test_data". The include shares the caller's context, so it can read
+  `dependency_steps`, `dependency_errors`, and `entity_ref_deps` directly.
+-#}
+{%- if dep_section == "before_all" -%}
+{% if dependency_errors | length > 0 %}
+    throw new Error('{{ dependency_errors | join(sep="; ") }}');
+{% endif %}
+{% for step in dependency_steps %}
+    const dep_{{ loop.index }} = await createEntityAsAcme(orgContext, '{{ step.api_path }}', { {{ step.fields_json }}{% for fk in step.fk_map %}, '{{ fk[0] }}': depIds['{{ fk[1] }}']{% endfor %} });
+    depIds['{{ step.dep_id }}'] = {% if step.is_array %}[dep_{{ loop.index }}['id'] as string]{% else %}dep_{{ loop.index }}['id'] as string{% endif %};
+{% endfor %}
+{%- elif dep_section == "after_all" -%}
+    const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
+{% for step in dependency_steps | reverse %}
+    {
+      const ids = depIds['{{ step.dep_id }}'];
+      if (ids) {
+        for (const id of (Array.isArray(ids) ? ids : [ids])) {
+          try {
+            await fetch(`${baseUrl}/api/v1{{ step.api_path }}/${id}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
+            });
+          } catch { /* best effort */ }
+        }
+      }
+    }
+{% endfor %}
+{%- elif dep_section == "test_data" -%}
+{% for dep in entity_ref_deps %}
+    ...(depIds['{{ dep.dep_id }}'] ? { '{{ dep.field_name }}': depIds['{{ dep.dep_id }}'] } : {}),
+{% endfor %}
+{%- endif -%}

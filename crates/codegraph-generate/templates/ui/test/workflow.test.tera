@@ -28,7 +28,7 @@ const BASE_PATH = '/{{ domain }}/{{ path_segment }}';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 {% raw %}
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 {% endraw %}
 
 {% raw %}
@@ -57,7 +57,9 @@ function testData(): Record<string, unknown> {
 {% elif field.is_range %}
     '{{ field.name }}': '[2025-01-01T00:00:00Z,2025-12-31T23:59:59Z]',
 {% elif field.is_entity_ref %}
-    ...(depIds['{{ field.name }}'] ? { '{{ field.name }}': depIds['{{ field.name }}'] } : {}),
+    // '{{ field.name }}': entity ref — emitted by _dep_setup.tera
+{% elif field.pg_type == "UUID" and not field.is_entity_ref %}
+    '{{ field.name }}': `00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padStart(12, '0')}`,
 {% elif field.structured_sub_fields | length > 0 and field.is_array %}
     '{{ field.name }}': [{ value: 'Test {{ field.label }}' }],
 {% elif field.structured_sub_fields | length > 0 %}
@@ -74,6 +76,8 @@ function testData(): Record<string, unknown> {
     '{{ field.name }}': 'Test {{ field.label }}',
 {% endif %}
 {% endfor %}
+{% set dep_section = "test_data" %}
+{% include "ui/test/_dep_setup.tera" %}
   };
 }
 
@@ -96,28 +100,13 @@ test.describe('{{ entity_name }} Workflow', () => {
     UI_PATH = `/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}/${gpId}/{{ parent.path_segment }}/${parentId}/{{ path_segment }}`;
 {% endif %}
 {% endif %}
-{% for dep in entity_ref_deps %}
-    try {
-      const dep_{{ loop.index }} = await createEntityAsAcme(orgContext, '{{ dep.api_path }}', { {{ dep.test_data_json }} });
-      depIds['{{ dep.field_name }}'] = dep_{{ loop.index }}['id'] as string;
-    } catch (_e) {
-      // Dependency entity may already exist or have its own required fields
-    }
-{% endfor %}
+{% set dep_section = "before_all" %}
+{% include "ui/test/_dep_setup.tera" %}
   });
 
   test.afterAll(async ({ orgContext }) => {
-    const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
-{% for dep in entity_ref_deps %}
-    if (depIds['{{ dep.field_name }}']) {
-      try {
-        await fetch(`${baseUrl}/api/v1{{ dep.api_path }}/${depIds['{{ dep.field_name }}']}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
-        });
-      } catch { /* best effort */ }
-    }
-{% endfor %}
+{% set dep_section = "after_all" %}
+{% include "ui/test/_dep_setup.tera" %}
   });
 {% endif %}
 

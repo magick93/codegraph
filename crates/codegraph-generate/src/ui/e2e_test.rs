@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::{PropertyNode, SchemaNode};
 use serde::Serialize;
 
 use crate::error::Result;
@@ -21,13 +22,30 @@ use super::store::UiParentInfo;
 
 #[derive(Debug, Serialize)]
 pub struct EntityRefDep {
-    /// The field name in the form (e.g., "order_id")
+    /// Rust field name on the main entity (e.g., "tenant_id" or "parties").
     pub field_name: String,
-    /// The API path for the referenced entity (e.g., "/assessments/order")
+    /// Key into `depIds`, unique across the whole dependency closure.
+    pub dep_id: String,
+    /// API path for the referenced entity (e.g., "/platform/tenant").
     pub api_path: String,
-    /// JSON object literal (without outer braces) for minimal valid creation payload
-    /// e.g. `'language': 'aa', 'name': 'Test Dep'`
-    pub test_data_json: String,
+    /// Whether the reference is a junction array (array-of-entity-ref).
+    pub is_array: bool,
+}
+
+/// One entity creation step in the dependency `beforeAll`.
+/// Steps are ordered leaf-first so an entity's FK deps already exist.
+#[derive(Debug, Serialize)]
+pub struct DependencyStep {
+    /// Key into `depIds`.
+    pub dep_id: String,
+    /// API path for `createEntityAsAcme`.
+    pub api_path: String,
+    /// JS object body WITHOUT outer braces; excludes FK fields (see `fk_map`).
+    pub fields_json: String,
+    /// `[(fk_column, referenced_dep_id)]` — FK columns filled from created deps.
+    pub fk_map: Vec<[String; 2]>,
+    /// Whether this dep is referenced through a junction array.
+    pub is_array: bool,
 }
 
 /// Configuration for generated include E2E tests.
@@ -94,8 +112,12 @@ pub struct UiE2eTestContext {
     pub first_list_column: Option<String>,
     pub has_fts: bool,
     pub fts_search_field: String,
-    /// Entity reference dependencies that must be created before the main entity
+    /// Main-entity required refs (consumed by `testData()`).
     pub entity_ref_deps: Vec<EntityRefDep>,
+    /// Ordered leaf-first dependency creation steps (consumed by `beforeAll`).
+    pub dependency_steps: Vec<DependencyStep>,
+    /// Actionable messages when a required dep cannot be satisfied.
+    pub dependency_errors: Vec<String>,
     pub has_entity_ref_deps: bool,
     /// Child sections (child entities) displayed on the detail page
     pub child_sections: Vec<ChildSection>,
@@ -290,8 +312,17 @@ impl EntityGenerator for UiE2eTestGenerator {
             }
         }
 
-        let fields =
+        let mut fields =
             collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
+
+        let all_props = match Some(domain.as_str()) {
+            Some(d) => db.get_properties_in_domain(schema_title, d).await?,
+            None => db.get_properties(schema_title).await?,
+        };
+        // Required plain-uuid FK columns without a `$ref`/graph edge (e.g.
+        // `party.case_id`) resolve to their entity by naming convention and
+        // must be marked before create/update fields are derived.
+        apply_convention_refs(db, config, &domain, &all_props, &mut fields).await;
 
         let mut create_fields: Vec<UiField> = fields
             .iter()
@@ -376,31 +407,19 @@ impl EntityGenerator for UiE2eTestGenerator {
         let has_delete = operations.contains(&"delete".to_string());
         let has_list = operations.contains(&"list".to_string());
 
-        // Collect entity reference dependencies (deduplicated) with minimal test data
-        let mut entity_ref_deps = Vec::new();
-        let mut seen_deps = std::collections::HashSet::new();
-        // Get all properties so we can find ref_target for each entity ref field
-        let all_props = match Some(domain.as_str()) {
-            Some(d) => db.get_properties_in_domain(schema_title, d).await?,
-            None => db.get_properties(schema_title).await?,
-        };
-        for field in &create_fields {
-            if field.is_entity_ref {
-                if let Some(ref api_path) = field.ref_api_path {
-                    if seen_deps.insert(field.name.clone()) {
-                        let test_data_json =
-                            build_dep_test_data(db, &all_props, &field.name, Some(&domain), config)
-                                .await;
-                        entity_ref_deps.push(EntityRefDep {
-                            field_name: field.name.clone(),
-                            api_path: api_path.clone(),
-                            test_data_json,
-                        });
-                    }
-                }
-            }
-        }
-        let has_entity_ref_deps = !entity_ref_deps.is_empty();
+        // Build the required entity-ref dependency closure (leaf-first).
+        // Required FKs (e.g. case.tenant_id) are created in beforeAll; optional
+        // refs are omitted from payloads and never created.
+        let (entity_ref_deps, dependency_steps, dependency_errors) = build_required_dependencies(
+            db,
+            config,
+            schema_title,
+            &domain,
+            &all_props,
+            &create_fields,
+        )
+        .await;
+        let has_entity_ref_deps = !entity_ref_deps.is_empty() || !dependency_errors.is_empty();
 
         // Resolve include test config
         let e2e_include = if let Some(ec) = entity_cfg {
@@ -613,6 +632,8 @@ impl EntityGenerator for UiE2eTestGenerator {
             has_fts,
             fts_search_field,
             entity_ref_deps,
+            dependency_steps,
+            dependency_errors,
             has_entity_ref_deps,
             child_sections,
             has_child_sections,
@@ -736,111 +757,419 @@ impl EntityGenerator for UiE2eTestGenerator {
     }
 }
 
-/// Build a JS object-literal body (without outer braces) containing minimal valid
-/// test data for creating a dependency entity. Returns empty string if we can't
-/// resolve the dep's fields.
-async fn build_dep_test_data(
+/// Resolve the referenced schema for an entity-ref property via the graph,
+/// falling back to parsing the raw `$ref` string when the graph has no edge.
+/// Mirrors `collect_ui_fields` resolution: handles `.schema.json` stems,
+/// filename/title divergence, and cross-domain refs.
+async fn resolve_ref_schema(
     db: &dyn GraphQuerier,
-    parent_props: &[codegraph_core::types::PropertyNode],
-    field_name: &str,
+    prop: &PropertyNode,
+    schema_title: &str,
     current_domain: Option<&str>,
-    config: &DomainConfig,
-) -> String {
-    // Find the property that matches this field to get its ref_target.
-    // Entity ref UI fields have _id suffix (e.g. "deployment_id") while
-    // the PropertyNode uses the raw name (e.g. "deployment").
-    let raw_name = field_name.strip_suffix("_id").unwrap_or(field_name);
-    let prop = parent_props
-        .iter()
-        .find(|p| p.rust_field_name == field_name || p.rust_field_name == raw_name);
-    let ref_target = match prop.and_then(|p| p.ref_target.as_ref()) {
-        Some(t) => t,
-        None => return String::new(),
+) -> Option<SchemaNode> {
+    let mut resolved = if prop.is_array {
+        db.get_array_item_schema(&prop.name, schema_title)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        db.get_property_ref_target(&prop.name, schema_title)
+            .await
+            .ok()
+            .flatten()
     };
+    if resolved.is_none() {
+        if let Some(ref target) = prop.ref_target {
+            let last_segment = target.rsplit('/').next().unwrap_or(target);
+            let ref_schema_title = last_segment
+                .strip_suffix(".schema.json")
+                .or_else(|| last_segment.strip_suffix(".json#"))
+                .or_else(|| last_segment.strip_suffix(".json"))
+                .unwrap_or(last_segment);
+            if let Ok(Some(ref_schema)) = db
+                .get_schema_in_domain(ref_schema_title, current_domain.unwrap_or(""))
+                .await
+            {
+                resolved = Some(ref_schema);
+            }
+            if resolved.is_none() {
+                if let Ok(Some(ref_schema)) = db.get_schema(ref_schema_title).await {
+                    resolved = Some(ref_schema);
+                }
+            }
+        }
+    }
+    // Final fallback: a required plain `format: uuid` scalar ending in `_id`
+    // with no `$ref`/graph edge (e.g. `party.case_id`) resolves to an entity by
+    // naming convention.
+    if resolved.is_none() {
+        resolved = resolve_convention_ref(db, prop, current_domain).await;
+    }
+    // Prefer a same-domain schema when the resolved one lives elsewhere.
+    if let (Some(cur_domain), Some(found)) = (current_domain, &resolved) {
+        if found.domain.as_deref() != Some(cur_domain) {
+            if let Ok(schemas) = db.list_schemas(Some(cur_domain)).await {
+                if let Some(same_domain) = schemas.iter().find(|s| s.title == found.title) {
+                    resolved = Some(same_domain.clone());
+                }
+            }
+        }
+    }
+    resolved
+}
 
-    // Extract schema title from ref_target
-    let last_segment = ref_target.rsplit('/').next().unwrap_or(ref_target);
-    let ref_schema_title = last_segment
-        .strip_suffix(".json#")
-        .or_else(|| last_segment.strip_suffix(".json"))
-        .unwrap_or(last_segment);
+/// Normalize an identifier for convention matching: keep only lowercase
+/// alphanumerics, so `case`, `Case`, and `case_id`'s stem all collapse to
+/// `case` (and `CaseType` would become `casetype`, which does not match).
+fn normalize_convention_stem(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
 
-    // Resolve the referenced schema to find its domain.
-    // Try current domain first, then fallback to cross-domain lookup
-    // (e.g., timecard.leave_request → common.WorkerType).
-    let dep_domain = match db
-        .get_schema_in_domain(ref_schema_title, current_domain.unwrap_or(""))
+/// Resolve a required plain `format: uuid` scalar FK column with no `$ref`/
+/// graph edge (e.g. `case_id`) to its entity by naming convention: strip the
+/// `_id` suffix, normalize, and find the unique `is_entity` schema whose
+/// normalized `pg_table_name` or `rust_type_name` equals the stem. On multiple
+/// matches, prefer a same-domain schema; return `None` if still ambiguous.
+async fn resolve_convention_ref(
+    db: &dyn GraphQuerier,
+    prop: &PropertyNode,
+    current_domain: Option<&str>,
+) -> Option<SchemaNode> {
+    if prop.is_array || !prop.is_required || prop.ref_target.is_some() {
+        return None;
+    }
+    if prop.format.as_deref() != Some("uuid") {
+        return None;
+    }
+    let field = prop
+        .rust_field_name
+        .strip_prefix("r#")
+        .unwrap_or(&prop.rust_field_name);
+    let stem = field.strip_suffix("_id")?;
+    if stem.is_empty() {
+        return None;
+    }
+    let stem_norm = normalize_convention_stem(stem);
+    let matches: Vec<SchemaNode> = db
+        .list_schemas(None)
         .await
-    {
-        Ok(Some(s)) => s.domain.clone(),
-        _ => match db.get_schema(ref_schema_title).await {
-            Ok(Some(s)) => s.domain.clone(),
-            _ => current_domain.map(|s| s.to_string()),
-        },
-    };
-
-    // Collect UI fields for the dependency entity
-    let dep_fields = match collect_ui_fields(
-        db,
-        ref_schema_title,
-        &[],
-        dep_domain.as_deref().or(current_domain),
-        config,
-    )
-    .await
-    {
-        Ok(f) => f,
-        Err(_) => return String::new(),
-    };
-
-    // Gather the dep entity's properties so we can skip fields that have ref_target
-    // (even if not classified as entity_ref — ValueObjects and composite wrappers
-    // also reference other schemas).
-    let dep_props = match current_domain {
-        Some(d) => db
-            .get_properties_in_domain(ref_schema_title, d)
-            .await
-            .unwrap_or_default(),
-        None => db
-            .get_properties(ref_schema_title)
-            .await
-            .unwrap_or_default(),
-    };
-    let ref_target_fields: std::collections::HashSet<String> = dep_props
-        .iter()
-        .filter(|p| p.ref_target.is_some())
-        .map(|p| p.rust_field_name.clone())
+        .ok()?
+        .into_iter()
+        .filter(|s| {
+            s.is_entity
+                && (normalize_convention_stem(&s.pg_table_name) == stem_norm
+                    || normalize_convention_stem(&s.rust_type_name) == stem_norm)
+        })
         .collect();
+    match matches.len() {
+        0 => None,
+        1 => matches.into_iter().next(),
+        _ => {
+            let same_domain: Vec<SchemaNode> = matches
+                .into_iter()
+                .filter(|s| s.domain.as_deref() == current_domain)
+                .collect();
+            if same_domain.len() == 1 {
+                same_domain.into_iter().next()
+            } else {
+                None
+            }
+        }
+    }
+}
 
-    // Build test value entries — include only fields that are simple scalars or
-    // codelists, skipping entity refs, complex types, and fields with ref_target.
-    let mut entries = Vec::new();
-    for f in &dep_fields {
-        // Skip entity refs in deps (would cause recursive dep creation).
-        if f.is_entity_ref {
+/// Post-process collected UI fields: mark required plain-uuid convention FK
+/// columns (e.g. `case_id`) as entity refs so they participate in dependency
+/// setup and `testData()` emits the dep branch instead of a literal.
+async fn apply_convention_refs(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    props: &[PropertyNode],
+    fields: &mut [UiField],
+) {
+    for field in fields.iter_mut() {
+        if field.is_entity_ref || !field.is_required {
             continue;
         }
-        // Skip fields ending in _id that aren't codelists — they're likely
-        // FK references that need real UUIDs, not string test data.
-        if f.name.ends_with("_id") && !f.is_codelist {
+        let Some(prop) = find_ref_property(props, &field.name) else {
             continue;
+        };
+        if let Some(target) = resolve_convention_ref(db, prop, Some(domain)).await {
+            field.is_entity_ref = true;
+            field.ref_api_path = Some(api_path_for_schema(&target, config));
         }
-        // Skip bare "id" field — it's the primary key, auto-generated
-        if f.name == "id" {
+    }
+}
+
+/// Match a UI entity-ref field to its graph property. Entity-ref UI fields use
+/// the `_id`-suffixed DTO name for scalars; arrays keep the raw field name.
+fn find_ref_property<'a>(props: &'a [PropertyNode], field_name: &str) -> Option<&'a PropertyNode> {
+    let raw = field_name.strip_suffix("_id").unwrap_or(field_name);
+    props.iter().find(|p| {
+        p.rust_field_name == field_name
+            || p.rust_field_name == raw
+            || p.name == raw
+            || p.pg_column_name == field_name
+    })
+}
+
+fn api_path_for_schema(schema: &SchemaNode, config: &DomainConfig) -> String {
+    let domain = schema.domain.clone().unwrap_or_default();
+    format!(
+        "/{}/{}",
+        domain,
+        resolve_path_segment_with_config(None, schema, config)
+    )
+}
+
+/// Allocate a unique `depIds` key, suffixing `_2`, `_3`, ... on collision.
+fn unique_dep_id(base: &str, used: &mut HashSet<String>) -> String {
+    let mut candidate = base.to_string();
+    let mut n = 2usize;
+    while used.contains(&candidate) {
+        candidate = format!("{}_{}", base, n);
+        n += 1;
+    }
+    used.insert(candidate.clone());
+    candidate
+}
+
+/// A discovered dependency node, keyed by `SchemaNode::schema_id`.
+struct DepNode {
+    title: String,
+    dep_id: String,
+    api_path: String,
+    fields_json: String,
+    is_array: bool,
+    /// `(fk_field_name, child_key)` for each required entity ref.
+    children: Vec<(String, String)>,
+}
+
+/// Build the required-only transitive entity-ref closure for the main entity.
+///
+/// Returns `(entity_ref_deps, dependency_steps, errors)`:
+/// - `entity_ref_deps` maps the main entity's required refs to `depIds` keys.
+/// - `dependency_steps` is ordered leaf-first so every FK is created first.
+/// - `errors` holds actionable messages for unsatisfiable/cyclic required deps.
+async fn build_required_dependencies(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    main_title: &str,
+    main_domain: &str,
+    main_props: &[PropertyNode],
+    create_fields: &[UiField],
+) -> (Vec<EntityRefDep>, Vec<DependencyStep>, Vec<String>) {
+    let mut assigned: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut used: HashSet<String> = HashSet::new();
+    let mut nodes: std::collections::HashMap<String, DepNode> = std::collections::HashMap::new();
+    let mut node_order: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    let mut entity_ref_deps: Vec<EntityRefDep> = Vec::new();
+
+    // Seed the worklist from the main entity's required entity-ref fields.
+    let mut queue: std::collections::VecDeque<(SchemaNode, String, bool)> =
+        std::collections::VecDeque::new();
+    for field in create_fields
+        .iter()
+        .filter(|f| f.is_entity_ref && f.is_required)
+    {
+        let Some(prop) = find_ref_property(main_props, &field.name) else {
+            errors.push(format!(
+                "required entity reference '{}' on {} could not be matched to a schema property",
+                field.name, main_title
+            ));
             continue;
-        }
-        // Skip fields that have a ref_target in the graph (references to other
-        // entities, ValueObjects, etc. — we can't fabricate valid UUIDs).
-        if ref_target_fields.contains(&f.name) {
-            continue;
-        }
-        let value = test_value_for_field(f);
-        if !value.is_empty() {
-            entries.push(format!("'{}': {}", f.name, value));
+        };
+        match resolve_ref_schema(db, prop, main_title, Some(main_domain)).await {
+            Some(target) => {
+                let key = target.schema_id.clone();
+                let dep_id = if let Some(existing) = assigned.get(&key) {
+                    existing.clone()
+                } else {
+                    let id = unique_dep_id(&field.name, &mut used);
+                    assigned.insert(key.clone(), id.clone());
+                    id
+                };
+                entity_ref_deps.push(EntityRefDep {
+                    field_name: field.name.clone(),
+                    dep_id: dep_id.clone(),
+                    api_path: api_path_for_schema(&target, config),
+                    is_array: field.is_array,
+                });
+                queue.push_back((target, dep_id, field.is_array));
+            }
+            None => errors.push(format!(
+                "required entity reference '{}' on {} has no resolvable target schema",
+                field.name, main_title
+            )),
         }
     }
 
-    entries.join(", ")
+    // Discover the closure breadth-first; leaf-first ordering happens below.
+    while let Some((target, dep_id, is_array)) = queue.pop_front() {
+        let key = target.schema_id.clone();
+        if nodes.contains_key(&key) {
+            continue;
+        }
+        let target_domain = target
+            .domain
+            .clone()
+            .unwrap_or_else(|| main_domain.to_string());
+        let api_path = api_path_for_schema(&target, config);
+        let fields_json =
+            build_test_data_json(db, &target.title, Some(&target_domain), config).await;
+        let props = db
+            .get_properties_in_domain(&target.title, &target_domain)
+            .await
+            .unwrap_or_default();
+        let dep_fields = collect_ui_fields(db, &target.title, &[], Some(&target_domain), config)
+            .await
+            .unwrap_or_default();
+
+        // Required plain-uuid FK columns on the dependency (e.g. `party.case_id`
+        // when creating a `Claim` whose closure pulls in `Party`) must also be
+        // resolved by convention so the transitive closure stays complete.
+        let mut dep_fields = dep_fields;
+        apply_convention_refs(db, config, &target_domain, &props, &mut dep_fields).await;
+
+        // Required entity refs on this dep become child steps.
+        let mut children: Vec<(String, String)> = Vec::new();
+        for rf in dep_fields
+            .iter()
+            .filter(|f| f.is_entity_ref && f.is_required)
+        {
+            let Some(prop) = find_ref_property(&props, &rf.name) else {
+                errors.push(format!(
+                    "required entity reference '{}' on {} could not be matched to a schema property",
+                    rf.name, target.title
+                ));
+                continue;
+            };
+            match resolve_ref_schema(db, prop, &target.title, Some(&target_domain)).await {
+                Some(child_target) => {
+                    let child_key = child_target.schema_id.clone();
+                    let child_dep_id = if let Some(existing) = assigned.get(&child_key) {
+                        existing.clone()
+                    } else {
+                        let id = unique_dep_id(&rf.name, &mut used);
+                        assigned.insert(child_key.clone(), id.clone());
+                        id
+                    };
+                    children.push((rf.name.clone(), child_key.clone()));
+                    queue.push_back((child_target, child_dep_id, rf.is_array));
+                }
+                None => errors.push(format!(
+                    "required entity reference '{}' on {} has no resolvable target schema",
+                    rf.name, target.title
+                )),
+            }
+        }
+
+        // Required scalar fields that cannot be populated make the dep unsatisfiable.
+        for f in dep_fields.iter().filter(|f| f.is_required) {
+            if f.is_entity_ref || f.nested_type_name.is_some() || f.name == "id" {
+                continue;
+            }
+            if test_value_for_field(f).is_empty() {
+                errors.push(format!(
+                    "required field '{}' on {} cannot be populated with test data",
+                    f.name, target.title
+                ));
+            }
+        }
+
+        nodes.insert(
+            key.clone(),
+            DepNode {
+                title: target.title.clone(),
+                dep_id,
+                api_path,
+                fields_json,
+                is_array,
+                children,
+            },
+        );
+        node_order.push(key);
+    }
+
+    // Post-order DFS over the discovered graph (leaf-first) + cycle detection.
+    let mut steps: Vec<DependencyStep> = Vec::new();
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut visiting: HashSet<String> = HashSet::new();
+    let mut order: Vec<String> = Vec::new();
+    for key in &node_order {
+        post_order_visit(
+            key,
+            &nodes,
+            &mut visited,
+            &mut visiting,
+            &mut order,
+            &mut errors,
+        );
+    }
+    for key in &order {
+        let Some(node) = nodes.get(key) else {
+            continue;
+        };
+        let fk_map = node
+            .children
+            .iter()
+            .filter_map(|(fk, child_key)| {
+                nodes
+                    .get(child_key)
+                    .map(|child| [fk.clone(), child.dep_id.clone()])
+            })
+            .collect();
+        steps.push(DependencyStep {
+            dep_id: node.dep_id.clone(),
+            api_path: node.api_path.clone(),
+            fields_json: node.fields_json.clone(),
+            fk_map,
+            is_array: node.is_array,
+        });
+    }
+
+    (entity_ref_deps, steps, errors)
+}
+
+fn post_order_visit(
+    key: &str,
+    nodes: &std::collections::HashMap<String, DepNode>,
+    visited: &mut HashSet<String>,
+    visiting: &mut HashSet<String>,
+    order: &mut Vec<String>,
+    errors: &mut Vec<String>,
+) {
+    if visited.contains(key) {
+        return;
+    }
+    if !visiting.insert(key.to_string()) {
+        // Already on the current DFS stack — a required-dependency cycle.
+        let title = nodes
+            .get(key)
+            .map(|n| n.title.clone())
+            .unwrap_or_else(|| key.to_string());
+        let msg = format!(
+            "required dependency cycle detected involving '{}' — break the required FK cycle or make one ref optional",
+            title
+        );
+        if !errors.iter().any(|e| e == &msg) {
+            errors.push(msg);
+        }
+        return;
+    }
+    if let Some(node) = nodes.get(key) {
+        for (_, child_key) in &node.children {
+            post_order_visit(child_key, nodes, visited, visiting, order, errors);
+        }
+    }
+    visiting.remove(key);
+    visited.insert(key.to_string());
+    order.push(key.to_string());
 }
 
 /// Build a JS object-literal body (without outer braces) for creating an entity
@@ -899,6 +1228,13 @@ async fn build_test_data_json(
     entries.join(", ")
 }
 
+/// A runtime-valid v4 UUID as a TypeScript template literal (fixed version
+/// nibble `4` and variant nibble `8`, random 12-hex tail).
+fn uuid_literal() -> String {
+    "`00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padStart(12, '0')}`"
+        .to_string()
+}
+
 /// Generate a JS literal value for a UiField, matching the same logic used in
 /// test templates' testData() function.
 fn test_value_for_field(field: &UiField) -> String {
@@ -914,6 +1250,11 @@ fn test_value_for_field(field: &UiField) -> String {
             return format!("[{{ code: '{}' }}]", field.codelist_values[0]);
         }
         return format!("'{}'", field.codelist_values[0]);
+    }
+    // Plain UUID columns (resolved entity refs are handled above) must serialize
+    // as a valid v4 UUID; a literal like `'Test Reviewer Id'` fails validation.
+    if field.pg_type == "UUID" && !field.is_entity_ref {
+        return uuid_literal();
     }
     match field.input_type.as_str() {
         "number" => "42".to_string(),
