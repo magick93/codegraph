@@ -122,6 +122,7 @@ async fn generate_svelte_with_mappings(
         profiles_config_path: None,
         template_dir: &[],
         ifml_components: mappings,
+        ifml_design_system: None,
     })
     .await
     .unwrap();
@@ -507,5 +508,193 @@ view "CustomerForm" {
             "<button type=\"submit\" data-testid=\"editor-submit\" disabled={submitting}>Submit</button>"
         ),
         "{page}"
+    );
+}
+
+const EDIT_SAVE_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    label "Customers";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name];
+
+        on select(row) -> navigate("CustomerEdit", { customerId: row.id });
+    }
+}
+
+view "CustomerEdit" {
+    params { customerId: Uuid };
+
+    component "editor" {
+        type: form;
+        data: Customer;
+
+        field name -> input text { required: true; }
+
+        on save -> navigate("CustomerList", {});
+    }
+}
+"#;
+
+#[tokio::test]
+async fn mapped_action_control_renders_button_invocation() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+role = "action-control"
+path = "$lib/components/Button.svelte"
+export = "Button"
+testids = { root = "ui-button" }
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_mappings(dir.path(), EDIT_SAVE_IFML, Some(&mappings)).await;
+    let page = read(&svelte, "src/routes/customeredit/+page.svelte");
+
+    assert!(
+        page.contains("import Button from '$lib/components/Button.svelte';"),
+        "{page}"
+    );
+    assert!(
+        page.contains(
+            "<Button onclick={submit_editor} disabled={submitting} testid=\"ui-button\">Save</Button>"
+        ),
+        "{page}"
+    );
+    assert!(
+        !page.contains("<button type=\"submit\""),
+        "mapped button must replace the hardcoded fallback: {page}"
+    );
+}
+
+const MODAL_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    label "Customers";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name];
+
+        on select(row) -> navigate("CustomerDialog", { customerId: row.id });
+    }
+}
+
+view "CustomerDialog" {
+    params { customerId: Uuid };
+    modal: true;
+
+    component "editor" {
+        type: form;
+        data: Customer;
+
+        field name -> input text { required: true; }
+
+        on save -> navigate("CustomerList", {});
+    }
+}
+"#;
+
+#[tokio::test]
+async fn modal_view_renders_dialog_wrapper_and_nav_passes_dialog_param() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+role = "modal-view"
+path = "$lib/components/Dialog.svelte"
+export = "Dialog"
+testids = { root = "customer-modal" }
+
+[[component]]
+role = "action-control"
+path = "$lib/components/Button.svelte"
+export = "Button"
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_mappings(dir.path(), MODAL_IFML, Some(&mappings)).await;
+
+    let dialog = read(&svelte, "src/routes/customerdialog/+page.svelte");
+    assert!(
+        dialog.contains("import Dialog from '$lib/components/Dialog.svelte';"),
+        "{dialog}"
+    );
+    assert!(
+        dialog.contains("<Dialog bind:open={dialog_open} testid=\"customer-modal\">"),
+        "{dialog}"
+    );
+    assert!(dialog.contains("</Dialog>"), "{dialog}");
+    assert!(
+        dialog.contains("let dialog_open = $state(true);"),
+        "{dialog}"
+    );
+    assert!(
+        dialog.contains(
+            "data-testid=\"customerdialog-modal-close\" onclick={close_dialog}>Close</button>"
+        ),
+        "{dialog}"
+    );
+    assert!(
+        dialog.contains(
+            "<Button onclick={submit_editor} disabled={submitting} testid=\"editor-submit\">Save</Button>"
+        ),
+        "{dialog}"
+    );
+
+    let list = read(&svelte, "src/routes/customerlist/+page.svelte");
+    assert!(
+        list.contains("goto(`/customerdialog?customerId=${row.id}&dialog=open`)"),
+        "{list}"
+    );
+}
+
+#[tokio::test]
+async fn modal_view_without_mappings_renders_as_plain_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), MODAL_IFML).await;
+
+    let dialog = read(&svelte, "src/routes/customerdialog/+page.svelte");
+    assert!(
+        !dialog.contains("dialog_open"),
+        "no-pack modal views must not gain dialog state: {dialog}"
+    );
+    assert!(!dialog.contains("class=\"modal\""), "{dialog}");
+    assert!(
+        dialog.contains("<form data-testid=\"editor-form\""),
+        "{dialog}"
+    );
+    assert!(
+        dialog.contains(
+            "<button type=\"submit\" data-testid=\"editor-submit\" disabled={submitting}>Submit</button>"
+        ),
+        "{dialog}"
+    );
+
+    let list = read(&svelte, "src/routes/customerlist/+page.svelte");
+    assert!(
+        list.contains("goto(`/customerdialog?customerId=${row.id}`)"),
+        "{list}"
+    );
+    assert!(
+        !list.contains("dialog=open"),
+        "no-pack navigation must keep byte-identical URLs: {list}"
     );
 }

@@ -1,5 +1,5 @@
 use crate::ProjectConfig;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -72,10 +72,23 @@ impl GlobalGenerator for IfmlRouteGenerator {
         let page_template = format!("ifml/{}/page.tera", self.framework);
         let load_template = format!("ifml/{}/page_load.tera", self.framework);
 
+        let modal_targets: HashSet<String> = model
+            .view_containers
+            .iter()
+            .filter(|vc| modal_wrapper_active(vc.is_modal, &vc.name, self.mappings.as_ref()))
+            .map(|vc| vc.name.clone())
+            .collect();
+
         for vc in ordered_view_containers(&model) {
-            let ctx =
-                build_page_context(db, config, &project.api_version, vc, self.mappings.as_ref())
-                    .await;
+            let ctx = build_page_context(
+                db,
+                config,
+                &project.api_version,
+                vc,
+                self.mappings.as_ref(),
+                &modal_targets,
+            )
+            .await;
 
             if let Ok(content) = render_template(tera, &page_template, &ctx) {
                 files.push(GeneratedFile {
@@ -142,6 +155,9 @@ pub struct PageSvelteContext {
     /// Semantic slot role of the container grouping: `presentation-container`
     /// for xor/wizard containers.
     container_role: Option<SemanticRole>,
+    /// Modal wrapper for `modal: true` views with a resolved mapping or a
+    /// non-empty mapping pack; `None` renders the plain page.
+    modal: Option<RenderModal>,
 }
 
 #[derive(Debug, Serialize)]
@@ -191,6 +207,10 @@ pub struct PageComponentContext {
     row_handler: Option<String>,
     submit: Option<RenderSubmit>,
     submit_handler: Option<String>,
+    /// Mapped submit button replacing the hardcoded fallback `<button>`.
+    submit_button: Option<RenderButton>,
+    /// Mapped cancel/back/click buttons rendered after the form.
+    buttons: Vec<RenderButton>,
 }
 
 /// Submit wiring for a form component: fetch + success navigation.
@@ -227,6 +247,40 @@ pub struct RenderEvent {
     /// Semantic slot role: `action-control` for save/submit/cancel/back/click
     /// button-style events.
     pub role: Option<SemanticRole>,
+}
+
+/// Modal wrapper for a `modal: true` view: a mapped `modal-view` component
+/// (`<Dialog bind:open={dialog_open}>`) or the built-in div fallback.
+#[derive(Debug, Serialize)]
+pub struct RenderModal {
+    /// Full opening markup line, e.g.
+    /// `<Dialog bind:open={dialog_open} testid="x-modal">` or
+    /// `<div class="modal" role="dialog" data-testid="x-modal">`.
+    pub open_line: String,
+    /// Full closing markup, e.g. `</Dialog>` or `</div>`.
+    pub close_line: String,
+    /// Testid of the generated close button.
+    pub close_testid: String,
+    /// Component import when the wrapper is a mapped dialog; `None` for the
+    /// built-in div fallback.
+    pub import: Option<RenderImport>,
+}
+
+/// A mapped action-control button replacing the hardcoded fallback `<button>`
+/// (form submit) or rendering a cancel/back/click action.
+#[derive(Debug, Serialize)]
+pub struct RenderButton {
+    pub import_name: String,
+    pub import_path: String,
+    /// Humanized event action: Save / Cancel / Submit / Back.
+    pub label: String,
+    /// Ready-to-render `onclick={handler}` prop; `None` when no handler fn
+    /// is generated.
+    pub onclick_prop: Option<String>,
+    /// Ready-to-render `disabled={submitting}` prop for submit buttons.
+    pub disabled_prop: Option<String>,
+    /// Ready-to-render `testid="..."` prop.
+    pub testid_prop: String,
 }
 
 /// Typed-table render context derived from a `ComponentSpec::Table`
@@ -325,6 +379,7 @@ async fn build_page_context(
     api_version: &str,
     vc: &IfmlViewContainer,
     mappings: Option<&IfmlComponentMappings>,
+    modal_targets: &HashSet<String>,
 ) -> PageSvelteContext {
     let id_param = id_param_from(&vc.params);
     let mut api_cache: HashMap<String, Option<ResolvedApi>> = HashMap::new();
@@ -340,15 +395,28 @@ async fn build_page_context(
             id_param.as_deref(),
             mappings,
             &mut api_cache,
+            modal_targets,
         )
         .await;
         components.push(ctx);
     }
 
-    let view_events: Vec<RenderEvent> = vc.events.iter().map(render_event).collect();
+    let view_events: Vec<RenderEvent> = vc
+        .events
+        .iter()
+        .map(|e| render_event(e, modal_targets))
+        .collect();
 
     let mut imports: Vec<RenderImport> = Vec::new();
     let mut seen_imports: HashMap<String, String> = HashMap::new();
+    let modal = modal_context(vc, mappings);
+    if let Some(imp) = modal.as_ref().and_then(|m| m.import.as_ref()) {
+        seen_imports.insert(imp.import_path.clone(), imp.export_name.clone());
+        imports.push(RenderImport {
+            export_name: imp.export_name.clone(),
+            import_path: imp.import_path.clone(),
+        });
+    }
     let mut needs_goto = view_events.iter().any(|e| e.action_kind == "navigate");
     let mut has_submit = false;
     for comp in &components {
@@ -375,6 +443,17 @@ async fn build_page_context(
                 });
             }
         }
+        for btn in comp.submit_button.iter().chain(comp.buttons.iter()) {
+            if seen_imports
+                .insert(btn.import_path.clone(), btn.import_name.clone())
+                .is_none()
+            {
+                imports.push(RenderImport {
+                    export_name: btn.import_name.clone(),
+                    import_path: btn.import_path.clone(),
+                });
+            }
+        }
     }
     let needs_on_mount = view_events
         .iter()
@@ -393,6 +472,7 @@ async fn build_page_context(
         has_submit,
         view_role: semantic_view_role(vc),
         container_role: semantic_container_role(vc),
+        modal,
     }
 }
 
@@ -406,6 +486,7 @@ async fn page_component_context(
     id_param: Option<&str>,
     mappings: Option<&IfmlComponentMappings>,
     api_cache: &mut HashMap<String, Option<ResolvedApi>>,
+    modal_targets: &HashSet<String>,
 ) -> PageComponentContext {
     let (table, form, chart) = match c.spec {
         Some(ComponentSpec::Table(ref spec)) => (Some(render_table(spec)), None, None),
@@ -419,7 +500,11 @@ async fn page_component_context(
     let mapping = mappings
         .and_then(|m| m.resolve_slot(&vc.name, &c.name, &c.component_type, &kind, slot_role))
         .map(mapping_context);
-    let events: Vec<RenderEvent> = c.events.iter().map(render_event).collect();
+    let events: Vec<RenderEvent> = c
+        .events
+        .iter()
+        .map(|e| render_event(e, modal_targets))
+        .collect();
     let event_props: Vec<String> = events
         .iter()
         .filter(|e| {
@@ -458,6 +543,20 @@ async fn page_component_context(
     let submit_prop = submit_handler
         .as_ref()
         .map(|handler| format!("on:submit={{{handler}}}"));
+    let button_mapping = if mapping.is_none() {
+        mappings.and_then(|m| {
+            m.resolve_slot(
+                &vc.name,
+                &c.name,
+                &c.component_type,
+                &kind,
+                Some(SemanticRole::ActionControl),
+            )
+        })
+    } else {
+        None
+    };
+    let (submit_button, buttons) = button_context(c, button_mapping, submit.as_ref(), &events);
     let data_validate = form.as_ref().map(|form| {
         form.fields
             .iter()
@@ -510,6 +609,8 @@ async fn page_component_context(
         row_handler,
         submit,
         submit_handler,
+        submit_button,
+        buttons,
         table,
         form,
         chart,
@@ -673,7 +774,7 @@ fn form_has_messages(c: &IfmlComponent) -> bool {
     }))
 }
 
-fn render_event(evt: &IfmlEvent) -> RenderEvent {
+fn render_event(evt: &IfmlEvent, modal_targets: &HashSet<String>) -> RenderEvent {
     let (action_kind, target, binding) = match &evt.action {
         IfmlAction::Navigate { target, binding } => ("navigate", target.clone(), binding),
         IfmlAction::Refresh { target, binding } => ("refresh", target.clone(), binding),
@@ -681,7 +782,12 @@ fn render_event(evt: &IfmlEvent) -> RenderEvent {
         IfmlAction::Stay => ("stay", String::new(), &HashMap::new()),
     };
     let url_expr = if action_kind == "navigate" {
-        nav_url_expr(&target, binding)
+        let expr = nav_url_expr(&target, binding);
+        if modal_targets.contains(&target) {
+            with_dialog_param(&expr)
+        } else {
+            expr
+        }
     } else {
         String::new()
     };
@@ -692,6 +798,143 @@ fn render_event(evt: &IfmlEvent) -> RenderEvent {
         target,
         url_expr,
         role: event_role(&evt.event_type),
+    }
+}
+
+/// Append the `dialog=open` query param marking navigation into a modal
+/// view: template-literal URLs get `&dialog=open`, plain literals get
+/// `?dialog=open`.
+fn with_dialog_param(url_expr: &str) -> String {
+    if let Some(inner) = url_expr.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+        format!("`{inner}&dialog=open`")
+    } else if let Some(inner) = url_expr.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        format!("\"{inner}?dialog=open\"")
+    } else {
+        url_expr.to_string()
+    }
+}
+
+/// Whether a `modal: true` view renders a modal wrapper: a mapped
+/// `modal-view` component when one resolves, else the built-in div fallback
+/// whenever a non-empty mapping pack is present. Without mappings the view
+/// renders as a plain page (byte-identical output).
+pub(crate) fn modal_wrapper_active(
+    is_modal: bool,
+    _view: &str,
+    mappings: Option<&IfmlComponentMappings>,
+) -> bool {
+    is_modal && mappings.is_some_and(|m| !m.components.is_empty())
+}
+
+/// The modal wrapper's `data-testid`: the resolved modal-view mapping's
+/// `testids.root`, else `{view}-modal`.
+pub(crate) fn modal_wrapper_testid(view: &str, mappings: Option<&IfmlComponentMappings>) -> String {
+    mappings
+        .and_then(|m| m.resolve_by_role(view, SemanticRole::ModalView))
+        .and_then(|m| m.testid("root").map(str::to_string))
+        .unwrap_or_else(|| format!("{}-modal", view.to_lowercase()))
+}
+
+/// Modal wrapper context for a view container; `None` renders the plain page.
+fn modal_context(
+    vc: &IfmlViewContainer,
+    mappings: Option<&IfmlComponentMappings>,
+) -> Option<RenderModal> {
+    if !modal_wrapper_active(vc.is_modal, &vc.name, mappings) {
+        return None;
+    }
+    let view_lower = vc.name.to_lowercase();
+    let close_testid = format!("{view_lower}-modal-close");
+    let mapping = mappings.and_then(|m| m.resolve_by_role(&vc.name, SemanticRole::ModalView));
+    let (open_line, close_line, import) = match mapping {
+        Some(m) => {
+            let export = m.export_name();
+            let testid = modal_wrapper_testid(&vc.name, mappings);
+            (
+                format!("<{export} bind:open={{dialog_open}} testid=\"{testid}\">"),
+                format!("</{export}>"),
+                Some(RenderImport {
+                    export_name: export.to_string(),
+                    import_path: m.path.clone(),
+                }),
+            )
+        }
+        None => (
+            format!("<div class=\"modal\" role=\"dialog\" data-testid=\"{view_lower}-modal\">"),
+            "</div>".to_string(),
+            None,
+        ),
+    };
+    Some(RenderModal {
+        open_line,
+        close_line,
+        close_testid,
+        import,
+    })
+}
+
+/// Mapped action-control buttons for a component's fallback markup: the
+/// form's save/submit button plus cancel/back/click buttons. A `None`
+/// mapping keeps the hardcoded fallback markup (byte-identical output).
+fn button_context(
+    c: &IfmlComponent,
+    mapping: Option<&IfmlComponentMapping>,
+    submit: Option<&RenderSubmit>,
+    events: &[RenderEvent],
+) -> (Option<RenderButton>, Vec<RenderButton>) {
+    let Some(m) = mapping else {
+        return (None, Vec::new());
+    };
+    let export = m.export_name().to_string();
+    let import_path = m.path.clone();
+    let testid_prop = |fallback: String| {
+        let testid = m.testid("root").map(str::to_string).unwrap_or(fallback);
+        format!("testid=\"{testid}\"")
+    };
+    let onclick_prop = |handler: &str| format!("onclick={{{handler}}}");
+    let submit_button = RenderButton {
+        import_name: export.clone(),
+        import_path: import_path.clone(),
+        label: primary_button_label(events),
+        onclick_prop: submit.map(|s| onclick_prop(&s.handler_name)),
+        disabled_prop: submit
+            .is_some()
+            .then(|| "disabled={submitting}".to_string()),
+        testid_prop: testid_prop(format!("{}-submit", c.name)),
+    };
+    let buttons = events
+        .iter()
+        .filter(|e| {
+            e.action_kind == "navigate"
+                && matches!(e.event_type.as_str(), "cancel" | "back" | "click")
+        })
+        .map(|e| RenderButton {
+            import_name: export.clone(),
+            import_path: import_path.clone(),
+            label: humanize_event_label(&e.event_type),
+            onclick_prop: Some(onclick_prop(&e.handler_name)),
+            disabled_prop: None,
+            testid_prop: testid_prop(format!("{}-{}", c.name, e.event_type)),
+        })
+        .collect();
+    (Some(submit_button), buttons)
+}
+
+/// Label for the primary form button: the save/submit event's humanized
+/// action, else "Submit".
+fn primary_button_label(events: &[RenderEvent]) -> String {
+    events
+        .iter()
+        .find(|e| e.event_type == "save" || e.event_type == "submit")
+        .map(|e| humanize_event_label(&e.event_type))
+        .unwrap_or_else(|| "Submit".to_string())
+}
+
+fn humanize_event_label(event_type: &str) -> String {
+    let mut chars = event_type.chars();
+    match chars.next() {
+        Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
     }
 }
 
@@ -1064,6 +1307,7 @@ entities = ["CustomerType"]
             None,
             Some(mappings),
             &mut cache,
+            &HashSet::new(),
         ))
     }
 
@@ -1341,7 +1585,7 @@ entities = ["CustomerType"]
                 binding: HashMap::new(),
             },
         };
-        let rendered = render_event(&evt);
+        let rendered = render_event(&evt, &HashSet::new());
         assert_eq!(rendered.handler_name, "comp_grid_select");
         assert_eq!(rendered.action_kind, "navigate");
         assert_eq!(rendered.url_expr, "\"/customerdetail\"");
@@ -1361,6 +1605,7 @@ entities = ["CustomerType"]
             has_submit: false,
             view_role: None,
             container_role: None,
+            modal: None,
         }
     }
 
@@ -1455,6 +1700,7 @@ testids = { root = "data-table", row = "data-row" }
             "v1",
             &vc,
             Some(&mappings),
+            &HashSet::new(),
         ));
 
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
@@ -1542,15 +1788,15 @@ testids = { root = "data-table", row = "data-row" }
             },
         };
         for event_type in ["save", "submit", "cancel", "back", "click"] {
-            let rendered = render_event(&evt(event_type));
+            let rendered = render_event(&evt(event_type), &HashSet::new());
             assert_eq!(
                 rendered.role,
                 Some(SemanticRole::ActionControl),
                 "{event_type}"
             );
         }
-        assert_eq!(render_event(&evt("select")).role, None);
-        assert_eq!(render_event(&evt("load")).role, None);
+        assert_eq!(render_event(&evt("select"), &HashSet::new()).role, None);
+        assert_eq!(render_event(&evt("load"), &HashSet::new()).role, None);
     }
 
     #[test]
@@ -1621,6 +1867,7 @@ testids = { root = "data-table", row = "data-row" }
             "v1",
             &vc(true, false, false),
             None,
+            &HashSet::new(),
         ));
         assert_eq!(ctx.view_role, Some(SemanticRole::ModalView));
         assert_eq!(ctx.container_role, None);
@@ -1631,6 +1878,7 @@ testids = { root = "data-table", row = "data-row" }
             "v1",
             &vc(false, true, false),
             None,
+            &HashSet::new(),
         ));
         assert_eq!(ctx.view_role, Some(SemanticRole::Shell));
 
@@ -1640,6 +1888,7 @@ testids = { root = "data-table", row = "data-row" }
             "v1",
             &vc(false, false, true),
             None,
+            &HashSet::new(),
         ));
         assert_eq!(ctx.view_role, None);
         assert_eq!(
@@ -1677,5 +1926,275 @@ path = "$lib/components/Collection.svelte"
         let ctx = page_component_context_for_tests(&c, &mappings);
         let mapping = ctx.mapping.expect("role-mapped component");
         assert_eq!(mapping.import_name, "Collection");
+    }
+
+    fn form_component() -> IfmlComponent {
+        let mut c = component_with_spec(Some(ComponentSpec::Form(FormSpec {
+            fields: vec![field_def("name", InputFieldType::Text)],
+        })));
+        c.name = "editor".to_string();
+        c.component_type = "form".to_string();
+        c
+    }
+
+    fn save_event() -> IfmlEvent {
+        IfmlEvent {
+            name: "comp_editor_save".to_string(),
+            event_type: "save".to_string(),
+            params: Vec::new(),
+            action: IfmlAction::Navigate {
+                target: "CustomerList".to_string(),
+                binding: HashMap::new(),
+            },
+        }
+    }
+
+    fn form_view(is_modal: bool) -> IfmlViewContainer {
+        IfmlViewContainer {
+            name: if is_modal {
+                "CustomerDialog".to_string()
+            } else {
+                "CustomerEdit".to_string()
+            },
+            label: None,
+            is_xor: false,
+            is_default: false,
+            is_landmark: false,
+            is_modal,
+            params: Vec::new(),
+            components: vec![form_component()],
+            events: Vec::new(),
+            containers: Vec::new(),
+        }
+    }
+
+    fn button_mappings() -> IfmlComponentMappings {
+        toml::from_str(
+            r#"
+[[component]]
+role = "action-control"
+path = "$lib/components/Button.svelte"
+export = "Button"
+testids = { root = "ui-button" }
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn mapped_save_event_renders_button_invocation() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let mut vc = form_view(false);
+        vc.components[0].events.push(save_event());
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            Some(&button_mappings()),
+            &HashSet::new(),
+        ));
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains("import Button from '$lib/components/Button.svelte';"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "<Button onclick={submit_editor} disabled={submitting} testid=\"ui-button\">Save</Button>"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("<button type=\"submit\""),
+            "mapped button must replace the hardcoded fallback: {rendered}"
+        );
+    }
+
+    #[test]
+    fn mapped_cancel_event_renders_secondary_button() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let mut vc = form_view(false);
+        vc.components[0].events.push(IfmlEvent {
+            name: "comp_editor_cancel".to_string(),
+            event_type: "cancel".to_string(),
+            params: Vec::new(),
+            action: IfmlAction::Navigate {
+                target: "CustomerList".to_string(),
+                binding: HashMap::new(),
+            },
+        });
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            Some(&button_mappings()),
+            &HashSet::new(),
+        ));
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains(
+                "<Button onclick={comp_editor_cancel} testid=\"ui-button\">Cancel</Button>"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn unmapped_form_keeps_hardcoded_submit_button() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let mut vc = form_view(false);
+        vc.components[0].events.push(save_event());
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            Some(&IfmlComponentMappings::default()),
+            &HashSet::new(),
+        ));
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains(
+                "<button type=\"submit\" data-testid=\"editor-submit\" disabled={submitting}>Submit</button>"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("<Button"), "{rendered}");
+    }
+
+    #[test]
+    fn modal_view_with_mapping_renders_dialog_wrapper() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let mut vc = form_view(true);
+        vc.components[0].events.push(save_event());
+        let mappings: IfmlComponentMappings = toml::from_str(
+            r#"
+[[component]]
+role = "modal-view"
+path = "$lib/components/Dialog.svelte"
+export = "Dialog"
+testids = { root = "customer-modal" }
+
+[[component]]
+role = "action-control"
+path = "$lib/components/Button.svelte"
+export = "Button"
+"#,
+        )
+        .unwrap();
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            Some(&mappings),
+            &HashSet::new(),
+        ));
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains("import Dialog from '$lib/components/Dialog.svelte';"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("<Dialog bind:open={dialog_open} testid=\"customer-modal\">"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("</Dialog>"), "{rendered}");
+        assert!(
+            rendered.contains("let dialog_open = $state(true);"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("history.back();"), "{rendered}");
+        assert!(
+            rendered.contains("data-testid=\"customerdialog-modal-close\" onclick={close_dialog}"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn modal_view_without_modal_mapping_renders_builtin_div_fallback() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let vc = form_view(true);
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            Some(&button_mappings()),
+            &HashSet::new(),
+        ));
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains(
+                "<div class=\"modal\" role=\"dialog\" data-testid=\"customerdialog-modal\">"
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("</div>"), "{rendered}");
+        assert!(!rendered.contains("bind:open"), "{rendered}");
+        assert!(
+            rendered.contains("let dialog_open = $state(true);"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn modal_view_without_pack_renders_plain_page() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let vc = form_view(true);
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            None,
+            &HashSet::new(),
+        ));
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(!rendered.contains("dialog_open"), "{rendered}");
+        assert!(!rendered.contains("class=\"modal\""), "{rendered}");
+        assert!(
+            rendered.contains("<form data-testid=\"editor-form\""),
+            "no-mapping modal views must render exactly as before: {rendered}"
+        );
+    }
+
+    #[test]
+    fn navigation_into_modal_target_appends_dialog_param() {
+        let targets: HashSet<String> = ["CustomerDialog".to_string()].into_iter().collect();
+        let evt = IfmlEvent {
+            name: "comp_grid_select".to_string(),
+            event_type: "select".to_string(),
+            params: vec!["row".to_string()],
+            action: IfmlAction::Navigate {
+                target: "CustomerDialog".to_string(),
+                binding: HashMap::new(),
+            },
+        };
+        assert_eq!(
+            render_event(&evt, &targets).url_expr,
+            "\"/customerdialog?dialog=open\""
+        );
+
+        let mut binding = HashMap::new();
+        binding.insert("customerId".to_string(), "row.id".to_string());
+        let bound = IfmlEvent {
+            action: IfmlAction::Navigate {
+                target: "CustomerDialog".to_string(),
+                binding,
+            },
+            ..evt
+        };
+        assert_eq!(
+            render_event(&bound, &targets).url_expr,
+            "`/customerdialog?customerId=${row.id}&dialog=open`"
+        );
+        assert_eq!(
+            render_event(&bound, &HashSet::new()).url_expr,
+            "`/customerdialog?customerId=${row.id}`",
+            "non-modal targets must keep byte-identical URLs"
+        );
     }
 }

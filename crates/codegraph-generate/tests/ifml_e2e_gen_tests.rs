@@ -111,13 +111,21 @@ async fn ingest_customer_schema(db: &MockEngine) {
 }
 
 async fn ingest_view(db: &MockEngine, name: &str, label: Option<&str>) {
+    ingest_view_with_flags(db, name, label, false).await;
+}
+
+async fn ingest_modal_view(db: &MockEngine, name: &str) {
+    ingest_view_with_flags(db, name, None, true).await;
+}
+
+async fn ingest_view_with_flags(db: &MockEngine, name: &str, label: Option<&str>, is_modal: bool) {
     db.ingest_view_container(&ViewContainerNode {
         name: name.to_string(),
         label: label.map(str::to_string),
         is_xor: false,
         is_default: false,
         is_landmark: label.is_some(),
-        is_modal: false,
+        is_modal,
         conditional_expression: None,
         domain: None,
         module_uses: None,
@@ -416,6 +424,132 @@ testids = { root = "data-table", row = "data-row" }
     assert!(
         list_spec.contains("page.getByTestId('data-row').first().click()"),
         "{list_spec}"
+    );
+}
+
+#[tokio::test]
+async fn modal_click_through_asserts_dialog_and_close() {
+    let engine = MockEngine::new();
+    ingest_customer_schema(&engine).await;
+
+    ingest_view(&engine, "CustomerList", Some("Customer Management")).await;
+    ingest_modal_view(&engine, "CustomerDialog").await;
+    ingest_component(
+        &engine,
+        "CustomerList",
+        "grid",
+        "list",
+        &["name", "age"],
+        None,
+    )
+    .await;
+    ingest_component(
+        &engine,
+        "CustomerDialog",
+        "editor",
+        "form",
+        &["name"],
+        Some(EDITOR_FORM_SPEC),
+    )
+    .await;
+    ingest_event(&engine, "grid", "comp_grid_select", "select").await;
+    ingest_navigation_flow(
+        &engine,
+        "comp_grid_select",
+        "CustomerDialog",
+        Some(r#"{"customerId": "row.id"}"#),
+    )
+    .await;
+    ingest_id_param(&engine, "CustomerDialog", "customerId").await;
+
+    let mappings: IfmlComponentMappings = toml::from_str(
+        r#"
+[[component]]
+role = "modal-view"
+path = "$lib/components/Dialog.svelte"
+export = "Dialog"
+testids = { root = "customer-modal" }
+"#,
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate(&engine, dir.path(), Some(mappings)).await;
+    let list_spec = content_of(&files, "tests/ifml/customer-list.spec.ts");
+    assert!(
+        list_spec
+            .contains("waitForURL(new RegExp('/customerdialog\\\\?customerId=[^&]+&dialog=open'))"),
+        "{list_spec}"
+    );
+    assert!(
+        list_spec.contains("expect(page.getByTestId('customer-modal')).toBeVisible()"),
+        "{list_spec}"
+    );
+    assert!(
+        list_spec.contains("page.getByTestId('customerdialog-modal-close').click()"),
+        "{list_spec}"
+    );
+    assert!(
+        list_spec.contains("waitForURL(new RegExp('/customerlist$'))"),
+        "{list_spec}"
+    );
+}
+
+#[tokio::test]
+async fn non_modal_click_through_keeps_plain_target_pattern() {
+    let engine = MockEngine::new();
+    ingest_customer_schema(&engine).await;
+    ingest_ifml_model(&engine).await;
+
+    let mappings: IfmlComponentMappings = toml::from_str(
+        r#"
+[[component]]
+role = "action-control"
+path = "$lib/components/Button.svelte"
+"#,
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate(&engine, dir.path(), Some(mappings)).await;
+    let list_spec = content_of(&files, "tests/ifml/customer-list.spec.ts");
+    assert!(
+        list_spec.contains("waitForURL(new RegExp('/customerdetail\\\\?customerId=[^&]+'))"),
+        "{list_spec}"
+    );
+    assert!(
+        !list_spec.contains("dialog=open"),
+        "non-modal targets must not gain the dialog param: {list_spec}"
+    );
+}
+
+#[tokio::test]
+async fn form_tests_use_mapped_button_testid() {
+    let engine = MockEngine::new();
+    ingest_customer_schema(&engine).await;
+    ingest_ifml_model(&engine).await;
+
+    let mappings: IfmlComponentMappings = toml::from_str(
+        r#"
+[[component]]
+role = "action-control"
+path = "$lib/components/Button.svelte"
+export = "Button"
+testids = { root = "ui-save-btn" }
+"#,
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate(&engine, dir.path(), Some(mappings)).await;
+    let edit_spec = content_of(&files, "tests/ifml/customer-edit.spec.ts");
+    assert!(
+        edit_spec.contains("page.getByTestId('ui-save-btn').click()"),
+        "{edit_spec}"
+    );
+    assert!(
+        !edit_spec.contains("getByTestId('editor-submit')"),
+        "mapped button testid must replace the fallback: {edit_spec}"
     );
 }
 

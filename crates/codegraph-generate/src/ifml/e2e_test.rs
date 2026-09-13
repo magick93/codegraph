@@ -2,7 +2,7 @@ use crate::ProjectConfig;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use codegraph_config::{DomainConfig, IfmlComponentMappings};
+use codegraph_config::{DomainConfig, IfmlComponentMappings, SemanticRole};
 use codegraph_core::traits::GraphQuerier;
 use codegraph_ifml_dsl::{ComponentSpec, FormSpec};
 
@@ -13,6 +13,7 @@ use crate::GenerationEntry;
 use super::api_paths::{id_param_from, resolve_entity_api, ResolvedApi};
 use super::context::{IfmlAction, IfmlComponent, IfmlModel, IfmlViewContainer};
 use super::querier::{IfmlGraphQuerier, IfmlQuerier};
+use super::route_generator::{modal_wrapper_active, modal_wrapper_testid};
 
 /// Global generator emitting IFML-driven Playwright E2E specs.
 ///
@@ -78,11 +79,24 @@ impl IfmlE2eTestGenerator {
                 submit: None,
             }
         } else if is_form(c) {
+            let submit = self
+                .mappings
+                .as_ref()
+                .and_then(|m| {
+                    m.resolve_slot(
+                        &vc.name,
+                        &c.name,
+                        &c.component_type,
+                        &kind,
+                        Some(SemanticRole::ActionControl),
+                    )
+                })
+                .and_then(|m| m.testid("root").map(str::to_string));
             ComponentSelectors {
                 root: Some(format!("{}-form", c.name)),
                 row: None,
                 form: Some(format!("{}-form", c.name)),
-                submit: Some(format!("{}-submit", c.name)),
+                submit: Some(submit.unwrap_or_else(|| format!("{}-submit", c.name))),
             }
         } else if is_details(c) {
             ComponentSelectors {
@@ -126,7 +140,7 @@ impl IfmlE2eTestGenerator {
                 continue;
             }
             if let Some(test) = self
-                .build_click_through(db, config, api_version, vc, edge)
+                .build_click_through(db, config, api_version, model, vc, edge)
                 .await
             {
                 spec.click_throughs.push(test);
@@ -166,6 +180,7 @@ impl IfmlE2eTestGenerator {
         db: &dyn GraphQuerier,
         config: &DomainConfig,
         api_version: &str,
+        model: &IfmlModel,
         vc: &IfmlViewContainer,
         edge: &super::context::NavigationEdge,
     ) -> Option<ClickThroughTest> {
@@ -184,6 +199,29 @@ impl IfmlE2eTestGenerator {
             return None;
         }
 
+        let target_view = model
+            .view_containers
+            .iter()
+            .find(|v| v.name == edge.target_container);
+        let target_modal = target_view
+            .is_some_and(|v| modal_wrapper_active(v.is_modal, &v.name, self.mappings.as_ref()));
+        let target_pattern = if target_modal {
+            url_pattern_with_dialog(&view_route(&edge.target_container), &edge.parameter_binding)
+        } else {
+            url_pattern(&view_route(&edge.target_container), &edge.parameter_binding)
+        };
+        let modal = target_modal.then(|| {
+            let source_route = view_route(&vc.name);
+            ModalCloseAssertions {
+                wrapper_testid: modal_wrapper_testid(
+                    &edge.target_container,
+                    self.mappings.as_ref(),
+                ),
+                close_testid: format!("{}-modal-close", edge.target_container.to_lowercase()),
+                back_pattern: format!("{}$", escape_regex(&source_route)),
+            }
+        });
+
         Some(ClickThroughTest {
             title: format!(
                 "{} navigates to {}",
@@ -195,10 +233,8 @@ impl IfmlE2eTestGenerator {
                 base_path: api.base_path.clone(),
                 entries: fixture_entries(component),
             },
-            target_pattern: url_pattern(
-                &view_route(&edge.target_container),
-                &edge.parameter_binding,
-            ),
+            target_pattern,
+            modal,
         })
     }
 
@@ -384,6 +420,16 @@ pub struct ClickThroughTest {
     pub row_testid: String,
     pub fixture: Fixture,
     pub target_pattern: String,
+    /// Assertions for navigation into a `modal: true` target: wrapper
+    /// visibility, close-button click, and the URL pattern after close.
+    pub modal: Option<ModalCloseAssertions>,
+}
+
+#[derive(Debug)]
+pub struct ModalCloseAssertions {
+    pub wrapper_testid: String,
+    pub close_testid: String,
+    pub back_pattern: String,
 }
 
 #[derive(Debug)]
@@ -514,6 +560,20 @@ fn render_spec(spec: &ViewTestSpec) -> String {
             "\t\tawait page.waitForURL(new RegExp('{}'));\n",
             js_string(&flow.target_pattern)
         ));
+        if let Some(modal) = &flow.modal {
+            s.push_str(&format!(
+                "\t\tawait expect(page.getByTestId('{}')).toBeVisible();\n",
+                modal.wrapper_testid
+            ));
+            s.push_str(&format!(
+                "\t\tawait page.getByTestId('{}').click();\n",
+                modal.close_testid
+            ));
+            s.push_str(&format!(
+                "\t\tawait page.waitForURL(new RegExp('{}'));\n",
+                js_string(&modal.back_pattern)
+            ));
+        }
         s.push_str("\t});\n\n");
     }
 
@@ -803,6 +863,18 @@ fn binding_value_pattern(value: &str) -> String {
     }
 }
 
+/// URL pattern for navigation into a modal view: the `dialog=open` marker
+/// is appended last, mirroring the route generator's `nav_url_expr` ordering.
+fn url_pattern_with_dialog(
+    route: &str,
+    binding: &std::collections::HashMap<String, String>,
+) -> String {
+    if binding.is_empty() {
+        return format!("{}\\?dialog=open", escape_regex(route));
+    }
+    format!("{}&dialog=open", url_pattern(route, binding))
+}
+
 fn escape_regex(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -850,6 +922,65 @@ mod tests {
     }
 
     #[test]
+    fn url_pattern_with_dialog_appends_marker_last() {
+        let mut binding = HashMap::new();
+        binding.insert("customerId".to_string(), "row.id".to_string());
+        assert_eq!(
+            url_pattern_with_dialog("/customerdialog", &binding),
+            "/customerdialog\\?customerId=[^&]+&dialog=open"
+        );
+        assert_eq!(
+            url_pattern_with_dialog("/customerdialog", &HashMap::new()),
+            "/customerdialog\\?dialog=open"
+        );
+    }
+
+    #[test]
+    fn modal_click_through_renders_wrapper_and_close_assertions() {
+        let spec = ViewTestSpec {
+            view_name: "CustomerList".to_string(),
+            label: "Customer Management".to_string(),
+            route: "/customerlist".to_string(),
+            render: None,
+            click_throughs: vec![ClickThroughTest {
+                title: "comp_grid_select navigates to CustomerDialog".to_string(),
+                source_route: "/customerlist".to_string(),
+                row_testid: "grid-row".to_string(),
+                fixture: Fixture {
+                    base_path: "/api/v1/sales/customer".to_string(),
+                    entries: vec![],
+                },
+                target_pattern: "/customerdialog\\?dialog=open".to_string(),
+                modal: Some(ModalCloseAssertions {
+                    wrapper_testid: "customer-modal".to_string(),
+                    close_testid: "customerdialog-modal-close".to_string(),
+                    back_pattern: "/customerlist$".to_string(),
+                }),
+            }],
+            validations: Vec::new(),
+            round_trips: Vec::new(),
+        };
+
+        let rendered = render_spec(&spec);
+        assert!(
+            rendered.contains("waitForURL(new RegExp('/customerdialog\\\\?dialog=open'))"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("expect(page.getByTestId('customer-modal')).toBeVisible()"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("page.getByTestId('customerdialog-modal-close').click()"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("waitForURL(new RegExp('/customerlist$'))"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn binding_value_pattern_handles_literals_and_expressions() {
         assert_eq!(binding_value_pattern("\"eu\""), "eu");
         assert_eq!(binding_value_pattern("row.id"), "[^&]+");
@@ -891,6 +1022,7 @@ mod tests {
                     entries: vec![("name".to_string(), "'Test name'".to_string())],
                 },
                 target_pattern: "/customerdetail\\?customerId=[^&]+".to_string(),
+                modal: None,
             }],
             validations: Vec::new(),
             round_trips: Vec::new(),

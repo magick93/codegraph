@@ -11,6 +11,14 @@
 {%- endfor %}
 
 	let { data, params }: { data: PageData; params: Record<string, string> } = $props();
+{%- if modal %}
+	let dialog_open = $state(true);
+
+	function close_dialog() {
+		dialog_open = false;
+		history.back();
+	}
+{% endif %}
 {%- if has_submit %}
 	let submitting = $state(false);
 	let formError = $state('');
@@ -77,6 +85,9 @@
 	<title>{{ label }}</title>
 </svelte:head>
 
+{%- if modal %}
+{{ modal.open_line }}
+{%- endif %}
 {%- for comp in components %}
 {% if comp.mapping %}
 <{{ comp.mapping.import_name }}
@@ -166,8 +177,11 @@
 {% if comp.submit_handler %}
 {% raw %}	{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
 {% endif %}
-	<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>
+	{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}
 </form>
+{%- for btn in comp.buttons %}
+<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>
+{%- endfor %}
 
 {% elif comp.chart %}
 <div class="chart" data-chart-kind="{{ comp.chart.kind }}"{% if comp.chart.label_field %} data-label-field="{{ comp.chart.label_field }}"{% endif %}{% if comp.chart.value_fields %} data-value-fields="{{ comp.chart.value_fields | join(sep=',') }}"{% endif %}></div>
@@ -204,8 +218,11 @@
 {% if comp.submit_handler %}
 {% raw %}	{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
 {% endif %}
-	<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>
+	{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}
 </form>
+{%- for btn in comp.buttons %}
+<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>
+{%- endfor %}
 
 {% elif comp.component_type == "details" %}
 <dl data-testid="{{ comp.name }}-details">
@@ -217,3 +234,7 @@
 
 {% endif %}
 {% endfor %}
+{% if modal %}
+	<button type="button" data-testid="{{ modal.close_testid }}" onclick={close_dialog}>Close</button>
+{{ modal.close_line }}
+{% endif %}
