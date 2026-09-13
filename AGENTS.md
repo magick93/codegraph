@@ -200,6 +200,34 @@ heuristics) — used by `ifml-scaffold`; route-generator unification is a follow
 into separate view containers (no Tabs grouping), layout nav hrefs keep event-scoped
 binding expressions verbatim.
 
+### Workflow + authorization-driven UI (phase 4)
+
+View `roles: [...]` thread from the graph into the load context; views with roles
+emit a SvelteKit `redirect(303, '/')` guard in `+page.ts` checking `currentRoles()`
+against `viewRoles`, plus a one-time `src/lib/roles.ts` helper (never overwritten)
+reading `globalThis.__USER_ROLES__` (real auth sets this, e.g. from `+layout.ts`
+server data). Components bound to entities with a `domains.toml` workflow
+(`WorkflowConfig`) render `data-workflow-state`/`data-workflow-terminal` badges
+(`{component}-state` testid) across list/details/form markup, and the e2e generator
+emits `{view}.workflow.spec.ts` (API fixture → initial-state assertion), mirroring
+the entity pipeline's workflow test convention. Both are presence-gated: no roles /
+no workflow → byte-identical output. Deferred: transition buttons, mapped-component
+badge parity, DSL-level state guards, role-conditional markup.
+
+### Reverse inference: `codegraph ifml-derive` (phase 5 spike)
+
+`codegraph ifml-derive --from-svelte <dir> [--output app.ifml]` parses SvelteKit
+`.svelte` pages (`tree-sitter-svelte-next` for markup; string scanning for script
+handlers) and infers an IFML model: routes → views, `<form>`/inputs/selects → form
+fields, `onclick`/`on:click` handlers → events (save/cancel/click heuristics),
+`goto()` → `navigate()` with identifier bindings, confident single-segment `fetch()`
+→ `data:`. Output is parse-verified like `ifml-scaffold`; skips (nested containers,
+unnamed controls, non-confident fetches, non-page files) are reported on stderr.
+Known spike limitations: `function NAME` handlers only (arrow consts fall back to
+`action()`), flat one-level inference, best-effort target naming, naive
+singularization, plain/dotted-identifier bindings only, no `type: list` inference
+(row clicks become view-level `select(row)` events).
+
 ### IFML Playwright tests
 
 `ifml_e2e_test` (profiles.toml ui section, expanded per framework) emits
