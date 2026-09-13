@@ -123,6 +123,8 @@ fn make_args<'a>(
         frameworks,
         profiles_config_path: None,
         template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
     }
 }
 
@@ -152,6 +154,17 @@ async fn ifml_generate_svelte_produces_routes_only() {
         .exists());
     assert!(output.join("svelte/src/lib/routes.ts").exists());
 
+    // IFML E2E tests + Playwright harness scaffold.
+    let list_spec = std::fs::read_to_string(
+        output
+            .join("svelte/tests/ifml")
+            .join("customer-list.spec.ts"),
+    )
+    .unwrap();
+    assert!(list_spec.contains("test('renders Customer Management'"),);
+    assert!(output.join("svelte/playwright.config.ts").exists());
+    assert!(output.join("svelte/package.json").exists());
+
     // Narrowness: nothing but the IFML framework output is generated.
     assert!(!output.join("migrations").exists());
     assert!(!output.join("src/domain").exists());
@@ -159,6 +172,45 @@ async fn ifml_generate_svelte_produces_routes_only() {
     assert!(!output.join("ui").exists());
     let sql_files = collect_sql_files(&output);
     assert!(sql_files.is_empty(), "unexpected .sql files: {sql_files:?}");
+}
+
+#[tokio::test]
+async fn ifml_generate_without_schemas_emits_only_render_tests() {
+    let dir = tempfile::tempdir().unwrap();
+    write_domains_toml(dir.path());
+    let ifml_path = dir.path().join("app.ifml");
+    std::fs::write(&ifml_path, APP_IFML).unwrap();
+    let output = dir.path().join("out");
+    let domains_toml = dir.path().join("domains.toml");
+
+    codegraph::driver::ifml_generate(make_args(
+        &domains_toml,
+        &output,
+        &[ifml_path],
+        &frameworks(&["svelte"]),
+    ))
+    .await
+    .unwrap();
+
+    let tests_dir = output.join("svelte/tests/ifml");
+    let mut spec_contents = Vec::new();
+    for entry in std::fs::read_dir(&tests_dir).unwrap().flatten() {
+        if entry.path().extension().is_some_and(|e| e == "ts") {
+            spec_contents.push(std::fs::read_to_string(entry.path()).unwrap());
+        }
+    }
+    assert!(
+        !spec_contents.is_empty(),
+        "render specs should be emitted for views with testable behavior"
+    );
+    let list_spec = std::fs::read_to_string(tests_dir.join("customer-list.spec.ts")).unwrap();
+    assert!(list_spec.contains("test('renders Customer Management'"));
+    assert!(
+        !spec_contents
+            .iter()
+            .any(|c| c.contains("request.post") || c.contains("waitForURL")),
+        "schema-less runs must emit render tests only"
+    );
 }
 
 #[tokio::test]
@@ -188,6 +240,8 @@ async fn ifml_generate_with_schemas_enriches_entity_resolution() {
         frameworks: &frameworks(&["svelte"]),
         profiles_config_path: None,
         template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
     })
     .await
     .unwrap();
@@ -280,6 +334,8 @@ async fn ifml_generate_multiple_frameworks() {
         frameworks: &frameworks(&["svelte", "react"]),
         profiles_config_path: None,
         template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
     })
     .await
     .unwrap();

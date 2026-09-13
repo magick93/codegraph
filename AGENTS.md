@@ -33,50 +33,91 @@ fixture app exercised by `grafeo_e2e_tests`). None are workspace members.
 IFML (Interaction Flow Modeling Language) DSL integrated alongside JSON Schema as a
 **complementary primary input**. JSON Schema defines the data model (entities/fields),
 the IFML DSL defines the interaction model (views/navigation/events). Both feed into
-the same Grafeo graph, linked by data binding edges.
+the same Grafeo graph, linked by data binding edges. The authoring loop:
+`codegraph ifml-scaffold` emits a starter `.ifml` from schemas → user edits it
+(LSP validates `data:`/`fields:`/navigate targets/modules) → `codegraph ifml-generate`
+renders behavior-wired SvelteKit pages + Playwright tests. Component quality parity is
+achieved by mapping IFML elements to handcrafted components via `ifml-components.toml`.
 
 ### Architecture layers
 
+Note: the IFML generators live in `codegraph-generate` (moved out of the `codegraph`
+crate); older docs referencing `crates/codegraph/src/generate/ifml/` are stale.
+
 | Layer | Location | Technology |
 |-------|----------|------------|
-| **DSL Parser** | `crates/codegraph-ifml-dsl/` | Pest (Rust PEG parser) |
-| **AST types** | `crates/codegraph-ifml-dsl/src/ast.rs` | Serde-serializable AST |
-| **Grammar** | `crates/codegraph-ifml-dsl/src/grammar/ifml.pest` | PEG grammar (13 rule categories) |
-| **Graph model** | `crates/codegraph-core/src/types/ifml.rs` | 7 node types, 16 edge types |
+| **DSL Parser** | `crates/codegraph-ifml-dsl/` | Pest (Rust PEG parser), 68 tests |
+| **AST types** | `crates/codegraph-ifml-dsl/src/ast.rs` | Serde-serializable AST + `render_expression()` |
+| **Grammar** | `crates/codegraph-ifml-dsl/src/grammar/ifml.pest` | PEG grammar (source of truth) |
+| **Tree-sitter grammar** | `codegraph-vscode/grammar/grammar.js` → `crates/tree-sitter-ifml/src/parser.c` | LSP/editor parsing; regenerate with `npx tree-sitter-cli generate --abi 14` |
+| **Graph model** | `crates/codegraph-core/src/types/ifml.rs` | 7 node types, 16 edge types, `NavigationFlowRecord`, `ModuleUseRecord` |
 | **Grafeo DDL** | `crates/codegraph-grafeo/src/schema_ddl.rs` | GQL CREATE statements |
-| **Grafeo ingestor** | `crates/codegraph-grafeo/src/ingestor.rs` | GQL INSERT for IFML nodes |
-| **Grafeo querier** | `crates/codegraph-grafeo/src/querier.rs` | GQL MATCH queries for IFML |
+| **Grafeo ingestor** | `crates/codegraph-grafeo/src/ingestor.rs` | GQL INSERT for IFML nodes (extra node props like `conditional_expression`/`module_uses`/`roles` persist without DDL changes) |
+| **Grafeo querier** | `crates/codegraph-grafeo/src/querier.rs` | GQL MATCH queries for IFML (nav flows resolve component → owning ViewContainer) |
 | **GraphIngestor trait** | `crates/codegraph-core/src/traits/ingestor.rs` | 6 IFML ingest methods |
-| **GraphQuerier trait** | `crates/codegraph-core/src/traits/querier.rs` | 7 IFML query methods |
+| **GraphQuerier trait** | `crates/codegraph-core/src/traits/querier.rs` | 9 IFML query methods (incl. `get_ifml_action_triggers`, `get_parameters_for_view`) |
 | **CachingQuerier** | `crates/codegraph-core/src/caching_querier.rs` | Delegates IFML queries |
-| **Ingestion bridge** | `crates/codegraph/src/ingest/ifml_ingest.rs` | AST → GraphIngestor |
-| **IfmlQuerier** | `crates/codegraph/src/generate/ifml/querier.rs` | High-level trait + impl |
-| **Dependency sort** | `crates/codegraph/src/generate/ifml/dependency_graph.rs` | Kahn's algorithm |
-| **Route generator** | `crates/codegraph/src/generate/ifml/route_generator.rs` | SvelteKit pages |
-| **Nav generator** | `crates/codegraph/src/generate/ifml/navigation_generator.rs` | Route map |
-| **Templates** | `crates/codegraph/templates/ifml/` | 6 Tera templates |
-| **Profile caps** | `crates/codegraph/src/generate/ifml/profiles.rs` | ifml_backend feature |
-| **LSP server** | `crates/codegraph/src/lsp/` | lsp-server crate, 5 tests |
-| **CLI** | `crates/codegraph/src/cli.rs`, `main.rs` | `--ifml-files` flag, `lsp` cmd |
+| **Ingestion bridge** | `crates/codegraph/src/ingest/ifml_ingest.rs` | AST → GraphIngestor (`IfmlIngestStats` incl. module_uses/actors) |
+| **Scaffold CLI** | `crates/codegraph/src/ifml_scaffold.rs` | schemas + classifier → starter `.ifml` (parse-verifies its own output) |
+| **IfmlQuerier** | `crates/codegraph-generate/src/ifml/querier.rs` | Lossless model assembly (real event actions, params, bindings) |
+| **Dependency sort** | `crates/codegraph-generate/src/ifml/dependency_graph.rs` | Kahn's algorithm (drives emit order) |
+| **Route generator** | `crates/codegraph-generate/src/ifml/route_generator.rs` | Behavior-wired SvelteKit pages (events → goto/submit handlers, testids) |
+| **Nav generator** | `crates/codegraph-generate/src/ifml/navigation_generator.rs` | Route map + type helpers |
+| **API path resolution** | `crates/codegraph-generate/src/ifml/api_paths.rs` | Entity → real endpoint (API model > ApiResource > legacy guess) |
+| **E2E generator** | `crates/codegraph-generate/src/ifml/e2e_test.rs` | Playwright specs (render/click-through/validation/CRUD) |
+| **Component mappings** | `crates/codegraph-config/src/ifml_components.rs` | `ifml-components.toml`: IFML element → handcrafted component |
+| **Templates** | `crates/codegraph-generate/templates/ifml/` | Per-framework `page.tera`/`page_load.tera`/`navigation_map.tera` |
+| **Profile caps** | `crates/codegraph-generate/src/ifml/profiles.rs` | `ifml_backend` + `ifml_route_{fw}`/`ifml_navigation_{fw}`/`ifml_e2e_test_{fw}` |
+| **LSP server** | `crates/codegraph/src/lsp/` | lsp-server crate; diagnostics (unknown entity/field/navigate target/module), completions |
+| **CLI** | `crates/codegraph/src/cli.rs`, `main.rs` | `ifml-scaffold`, `ifml-generate`, `--ifml-files`, `--ifml-components` |
 
 ### IFML DSL syntax (C-like)
 
 ```ifml
 domain "sales" { schema "sales"; }
 
+actor "Admin" { role: admin; }
+
 view "CustomerList" {
     label "Customer Management";
     landmark: true;
+    roles: [admin, manager];
 
     component "grid" {
         type: list;
         data: Customer;
         fields: [name, email, phone, status];
 
-        on select(row) -> navigate("CustomerDetail", { customerId: row.id });
+        on select(row) if row.active == true -> navigate("CustomerDetail", { customerId: row.id });
     }
 }
+
+view "CustomerForm" {
+    params { id: Uuid, slug: String = "home" };
+
+    component "editor" {
+        type: form;
+        data: Customer;
+        field title -> input text {
+            required: true;
+            validations: [len(title) > 2];
+            messages: ["Title too short"];
+        }
+
+        on save -> navigate("CustomerList");
+    }
+}
+
+view "Dashboard" {
+    use "Pagination" as pager { page_size: 25 };
+}
 ```
+
+Guards (`if <expr>` on views/components/events), validation messages (positionally
+paired with `validations`), param defaults, module instantiation and actors all parse,
+persist to the graph, and flow into generation (messages → `data-validate-message`,
+defaults → load-fn fallbacks). Actor declarations are parsed/counted only — no node
+type yet; role-based route-guard codegen is deferred.
 
 ### IFML node types (Grafeo graph)
 
@@ -99,13 +140,133 @@ view "CustomerList" {
 ### IFML DSL to graph flow
 
 ```
+JSON Schema → ifml-scaffold (CLI) → starter .ifml → user edits (LSP)
 .ifml file → Pest parser → AST → GraphIngestor (GQL INSERT) → Grafeo graph
                                                                     ↓
 JSON Schema → SchemaLoader → GraphIngestor (GQL INSERT) → Grafeo graph
                                                                     ↓
-                                              Generators read via GraphQuerier
-                                              (IfmlGraphQuerier wraps it)
+                    IfmlGraphQuerier (lossless: actions/params/bindings)
+                                                                    ↓
+              route_generator (behavior-wired pages) + e2e_test (Playwright)
 ```
+
+### Component mappings (`ifml-components.toml`)
+
+`--ifml-components <file>` (on `generate`/`run`/`ifml-generate`) maps IFML elements to
+handcrafted components so generated pages reach parity with the entity-scoped UI
+pipeline. Resolution priority: **component name → type → semantic role → kind**
+(`table`/`form`/`details`/`chart`), optionally scoped with `view = "Name"`:
+
+```toml
+[[component]]
+kind = "table"
+path = "$lib/components/DataTable.svelte"
+export = "DataTable"
+testids = { root = "data-table", row = "data-row" }
+```
+
+Mapped components render as import + invocation with conventional props (`data`,
+`fields`, testids); unmapped components fall back to built-in templates. Fallback
+markup carries stable selectors: `{component}-{table,row,form,submit,error,details}`
+— the e2e generator's contract.
+
+### Semantic UI layer (issue #196)
+
+The mapping ontology includes a closed `SemanticRole` enum (strict TOML validation):
+`action-control`, `navigation-control`, `field`, `selection-field`, `collection`,
+`modal-view`, `presentation-container`, `display`, `shell`, `pagination`. The route
+generator computes a role per slot (form save/cancel buttons → `action-control`,
+dropdown/radio inputs → `selection-field`, `modal: true` views → `modal-view`, xor
+containers → `presentation-container`, landmark views → `shell`, paginated lists →
+`pagination`), and mappings match on it between the name and kind tiers.
+
+Design-system packs: `--ifml-design-system shadcn-svelte` (or
+`ifml_design_system = "shadcn-svelte"` in profiles features; CLI > profile > none)
+loads a built-in pack (`crates/codegraph-config/src/packs/shadcn-svelte.toml`,
+embedded via `include_str!`) covering all 10 roles. Project `--ifml-components`
+entries are merged BEFORE pack entries, so they shadow pack entries per tier; pack
+entries fill gaps. Unknown pack names error strictly. No-pack output is byte-identical
+to pre-ontology output (all role-driven rendering is mapping-gated).
+
+Mapping-gated generation beyond whole components: mapped `action-control` buttons
+(`<Button onclick={submit_editor}>`), `modal-view` wrappers (`<Dialog bind:open>` +
+`&dialog=open` nav params + close handler), `presentation-container` wrappers around
+xor containers, and a `+layout.svelte` nav shell emitted from landmark views when a
+`shell` mapping resolves. Control inference from domain types lives in
+`crates/codegraph/src/ifml_control_inference.rs` (codelist → dropdown + selection-field
+with values, entity-ref → dropdown + options note, email/password/number/datetime/uuid
+heuristics) — used by `ifml-scaffold`; route-generator unification is a follow-up
+(generate crate lacks classifier deps). Known limitations: nested containers flatten
+into separate view containers (no Tabs grouping), layout nav hrefs keep event-scoped
+binding expressions verbatim.
+
+### Workflow + authorization-driven UI (phase 4)
+
+View `roles: [...]` thread from the graph into the load context; views with roles
+emit a SvelteKit `redirect(303, '/')` guard in `+page.ts` checking `currentRoles()`
+against `viewRoles`, plus a one-time `src/lib/roles.ts` helper (never overwritten)
+reading `globalThis.__USER_ROLES__` (real auth sets this, e.g. from `+layout.ts`
+server data). Components bound to entities with a `domains.toml` workflow
+(`WorkflowConfig`) render `data-workflow-state`/`data-workflow-terminal` badges
+(`{component}-state` testid) across list/details/form markup, and the e2e generator
+emits `{view}.workflow.spec.ts` (API fixture → initial-state assertion), mirroring
+the entity pipeline's workflow test convention. Both are presence-gated: no roles /
+no workflow → byte-identical output. Deferred: transition buttons, mapped-component
+badge parity, DSL-level state guards.
+
+### rexlang authorization integration (issue #199)
+
+The IFML DSL supports `import "<path>.actor";` (top-level, `.ifml`-relative) and
+view `requires: [Capability, ...];`. codegraph depends on the rexlang crates
+(`rex-ir`, `rex-driver` as workspace path deps — git-pin at release): policy
+parsing/typechecking stays in rexlang, codegraph consumes the typechecked
+`ActorModel`. `crates/codegraph/src/ifml_actor_import.rs` resolves `.json`
+artifacts (`ActorModel::from_json`) or `.actor` sources
+(`rex_driver::compile_actors_str` with transitively collected `.mox` domains),
+merges+dedups imports, and ingests via `ingest_actor_policy` (diagnostics warn,
+never fail generation; `imported_policies` stat).
+
+Graph model (`crates/codegraph-core/src/types/authorization.rs`): `ActorNode`
+(`kind: human|agent`, `extends`), `CapabilityNode` (class bound), `GrantEdge`
+(permit/forbid + `when_expr` + obligations JSON), `ActorPolicy` singleton
+(blocks + never_both); DDL in schema_ddl.rs (`when` is reserved → `when_expr`).
+`resolve_effective_permits` walks `extends` chains — forbid wins over permit,
+duplicates collapse, deterministic order.
+
+Guards (capability primary, roles compat): views with `requires`/`roles` emit a
+two-check `+page.ts` guard — `can(c)` from `ROLE_CAPABILITIES` (policy-derived,
+generation-time effective permits) ∪ `globalThis.__USER_CAPABILITIES__`, plus the
+roles check — denial redirects to the first unguarded view. `src/lib/roles.ts`
+(one-time) carries `currentRoles()` + `can()`. Controls in guarded views gate
+behind `{#if}` matching the load guard exactly (whole-component invocations never
+wrapped; unguarded views byte-identical). LSP warns on unknown capabilities/actors
+when the document's imports resolve to a policy. E2E emits persona tests per human
+actor (`addInitScript __USER_ROLES__`). Deferred: react/vue/flutter guard parity,
+role-conditional per-control capabilities, delegation/purpose persistence
+(currently dropped in conversion).
+
+### Reverse inference: `codegraph ifml-derive` (phase 5 spike)
+
+`codegraph ifml-derive --from-svelte <dir> [--output app.ifml]` parses SvelteKit
+`.svelte` pages (`tree-sitter-svelte-next` for markup; string scanning for script
+handlers) and infers an IFML model: routes → views, `<form>`/inputs/selects → form
+fields, `onclick`/`on:click` handlers → events (save/cancel/click heuristics),
+`goto()` → `navigate()` with identifier bindings, confident single-segment `fetch()`
+→ `data:`. Output is parse-verified like `ifml-scaffold`; skips (nested containers,
+unnamed controls, non-confident fetches, non-page files) are reported on stderr.
+Known spike limitations: `function NAME` handlers only (arrow consts fall back to
+`action()`), flat one-level inference, best-effort target naming, naive
+singularization, plain/dotted-identifier bindings only, no `type: list` inference
+(row clicks become view-level `select(row)` events).
+
+### IFML Playwright tests
+
+`ifml_e2e_test` (profiles.toml ui section, expanded per framework) emits
+`{fw}/tests/ifml/{view}.spec.ts`: render tests always; click-through (per
+NavigationFlow, API-created fixtures, `waitForURL` with bound params), validation
+negatives and CRUD round-trips only when the bound entity is schema-backed (runs
+without schemas degrade to render tests). Emitted `playwright.config.ts`/`package.json`
+never overwrite existing files.
 
 ## gRPC Code Generation
 
@@ -336,10 +497,10 @@ cargo run -- lsp --schemas schemas/ --classifier classifier.toml --config domain
 ```bash
 # Rust tests
 cargo test --workspace                    # all tests (969+)
-cargo test -p codegraph-ifml-dsl          # 20 DSL parser tests
-cargo test -p codegraph -- lsp            # 5 LSP server tests
-cargo test -p codegraph --test ifml_e2e_tests  # 5 E2E tests
-cargo test -p codegraph-generate --lib -- ifml  # 6 dependency graph tests
+cargo test -p codegraph-ifml-dsl          # 68 DSL parser tests
+cargo test -p codegraph -- lsp            # 26 LSP server tests
+cargo test -p codegraph --test ifml_e2e_tests  # 8 E2E tests
+cargo test -p codegraph-generate --lib -- ifml  # 34 IFML generator tests
 cargo test -p codegraph --test init_tests # project lifecycle integration tests
 
 # Dialect tests
@@ -1066,7 +1227,7 @@ Cloudflare Workers Observability (decision #111) — no hand-rolled OTLP:
 - Imports grouped: std → external → internal → current crate, separated by blank lines.
 - Templates in `crates/codegraph/templates/` use Tera syntax.
 - 60+ generators in `crates/codegraph/src/generate/` organized by target (api, db, ddd, ui, cli, etc.).
-- IFML-specific generators in `crates/codegraph/src/generate/ifml/`.
+- IFML-specific generators in `crates/codegraph-generate/src/ifml/`.
 - gRPC-specific generators in `crates/codegraph/src/generate/grpc/`.
 - Cornucopia-specific generators in `crates/codegraph/src/generate/db/cornucopia_*.rs` and `crates/codegraph/src/generate/ddd/cornucopia_repo.rs`.
 - New node/edge types go in `crates/codegraph-core/src/types/` + `crates/codegraph-grafeo/src/schema_ddl.rs`.

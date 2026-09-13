@@ -93,4 +93,62 @@ mod tests {
             String::from_utf8_lossy(source_bytes)
         );
     }
+
+    #[test]
+    fn test_can_parse_condition_use_actor_and_event_condition() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&super::language())
+            .expect("Error loading IFML language");
+
+        let source = r#"actor "Manager" { label: "mgr"; }
+
+module "AuditTrail" {
+    input { entityId: Uuid = "0" }
+    output { count: Int = 0 }
+}
+
+view "Customers" {
+    roles: [manager];
+    messages: ["Welcome"];
+
+    if data.enabled;
+
+    use "AuditTrail" as audit { scope: org; };
+
+    component "grid" {
+        type: list;
+        data: Customer;
+
+        if count > 0;
+
+        on select(row) if row.active -> navigate("Detail");
+    }
+}"#;
+
+        let tree = parser.parse(source, None).expect("Failed to parse");
+        let root = tree.root_node();
+        assert!(
+            !root.has_error(),
+            "new pipeline syntax should parse cleanly, tree: {}",
+            root.to_sexp()
+        );
+
+        let mut found = std::collections::HashSet::new();
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            found.insert(node.kind().to_string());
+            let mut cursor = node.walk();
+            stack.extend(node.children(&mut cursor));
+        }
+        for kind in [
+            "actor_declaration",
+            "condition_statement",
+            "module_use_statement",
+            "event_condition",
+            "param_default",
+        ] {
+            assert!(found.contains(kind), "expected {kind} node in tree");
+        }
+    }
 }

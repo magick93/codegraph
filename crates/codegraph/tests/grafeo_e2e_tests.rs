@@ -129,6 +129,7 @@ async fn generate_full_app(output_dir: &std::path::Path) {
             ext_points: None,
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
+            ifml_components: None,
             project_config: Some(&project_config),
             emdash_plugins: None,
             domain_config_dir: None,

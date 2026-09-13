@@ -1,0 +1,11 @@
+<script lang="ts">
+	import {{ shell.import.export_name }} from '{{ shell.import.import_path }}';
+
+	let { children }: { children: import('svelte').Snippet } = $props();
+</script>
+
+<{{ shell.import.export_name }}{% if shell.testid %} testid="{{ shell.testid }}"{% endif %}>
+{% for item in shell.items %}	<a {{ item.href_attr }}>{{ item.label }}</a>
+{% endfor %}</{{ shell.import.export_name }}>
+
+{@render children()}

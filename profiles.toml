@@ -32,6 +32,7 @@ atproto_float_policy = "integer_scaled"
 ops_backend = true
 persistence_provider = "sea_orm"   # "sea_orm" (default) | "cornucopia"
 deployment_topology = "monolith"   # "monolith" (default) | "workers"
+ifml_design_system = ""            # built-in IFML component pack ("" = none, e.g. "shadcn-svelte")
 
 [profiles.default.api]
 generators = [
@@ -68,7 +69,7 @@ generators = [
     # Global
     "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
     # IFML
-    "ifml_route", "ifml_navigation",
+    "ifml_route", "ifml_navigation", "ifml_e2e_test",
 ]
 output = "review/generated-candidate/"
 scripts.post_gen = []

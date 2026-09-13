@@ -6,13 +6,14 @@ use async_trait::async_trait;
 use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
-    CompositeRange, CompositionTree, DataBindingResolution, EnumValue, ErrorDefinitionNode,
-    EventNode, Extension, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
-    NamespaceNode, ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode,
-    PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData,
-    SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode, CapabilityNode,
+    CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree,
+    DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, GrantEdge,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
+    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
+    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
+    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -535,7 +536,7 @@ impl GraphQuerier for CachingQuerier<'_> {
         self.inner.get_ifml_events(parent_id).await
     }
 
-    async fn get_ifml_navigation_flows(&self) -> Result<Vec<(String, String, String)>, GraphError> {
+    async fn get_ifml_navigation_flows(&self) -> Result<Vec<NavigationFlowRecord>, GraphError> {
         self.inner.get_ifml_navigation_flows().await
     }
 
@@ -549,8 +550,19 @@ impl GraphQuerier for CachingQuerier<'_> {
         self.inner.get_ifml_actions().await
     }
 
+    async fn get_ifml_action_triggers(&self) -> Result<Vec<(String, String)>, GraphError> {
+        self.inner.get_ifml_action_triggers().await
+    }
+
     async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
         self.inner.get_ifml_parameters().await
+    }
+
+    async fn get_parameters_for_view(
+        &self,
+        container_name: &str,
+    ) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
+        self.inner.get_parameters_for_view(container_name).await
     }
 
     async fn get_data_bindings(&self) -> Result<Vec<DataBindingResolution>, GraphError> {
@@ -756,5 +768,27 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn list_all_tenants(&self) -> Result<Vec<TenantNode>, GraphError> {
         self.inner.list_all_tenants().await
+    }
+
+    // ── Authorization metamodel queries ────────────────────────────────
+
+    async fn get_actors(&self) -> Result<Vec<ActorNode>, GraphError> {
+        self.inner.get_actors().await
+    }
+
+    async fn get_capabilities(&self) -> Result<Vec<CapabilityNode>, GraphError> {
+        self.inner.get_capabilities().await
+    }
+
+    async fn get_grants(&self) -> Result<Vec<GrantEdge>, GraphError> {
+        self.inner.get_grants().await
+    }
+
+    async fn get_actor_policy(&self) -> Result<Option<ActorPolicyNode>, GraphError> {
+        self.inner.get_actor_policy().await
+    }
+
+    async fn effective_permits(&self, actor: &str) -> Result<Vec<Permit>, GraphError> {
+        self.inner.effective_permits(actor).await
     }
 }

@@ -57,6 +57,25 @@
     }
   },
   {
+    "type": "actor_declaration",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "property_assignment",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "array_literal",
     "named": true,
     "fields": {},
@@ -204,6 +223,10 @@
           "named": true
         },
         {
+          "type": "condition_statement",
+          "named": true
+        },
+        {
           "type": "event_handler",
           "named": true
         },
@@ -232,6 +255,21 @@
         },
         {
           "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "condition_statement",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "expression",
           "named": true
         }
       ]
@@ -299,6 +337,21 @@
     }
   },
   {
+    "type": "event_condition",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "event_handler",
     "named": true,
     "fields": {
@@ -324,9 +377,13 @@
       }
     },
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": false,
       "types": [
+        {
+          "type": "event_condition",
+          "named": true
+        },
         {
           "type": "event_param",
           "named": true
@@ -572,6 +629,44 @@
     }
   },
   {
+    "type": "module_use_body",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "property_assignment",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "module_use_statement",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "module_use_body",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "navigate_action",
     "named": true,
     "fields": {},
@@ -651,6 +746,29 @@
     }
   },
   {
+    "type": "param_default",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "number",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "parameter_binding",
     "named": true,
     "fields": {},
@@ -684,6 +802,16 @@
     "type": "parameter_decl",
     "named": true,
     "fields": {
+      "default": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "param_default",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -769,6 +897,7 @@
   {
     "type": "source_file",
     "named": true,
+    "root": true,
     "fields": {},
     "children": {
       "multiple": true,
@@ -776,6 +905,10 @@
       "types": [
         {
           "type": "action_declaration",
+          "named": true
+        },
+        {
+          "type": "actor_declaration",
           "named": true
         },
         {
@@ -844,6 +977,10 @@
           "named": true
         },
         {
+          "type": "condition_statement",
+          "named": true
+        },
+        {
           "type": "container_declaration",
           "named": true
         },
@@ -853,6 +990,10 @@
         },
         {
           "type": "label_declaration",
+          "named": true
+        },
+        {
+          "type": "module_use_statement",
           "named": true
         },
         {
@@ -958,6 +1099,10 @@
     "named": false
   },
   {
+    "type": "=",
+    "named": false
+  },
+  {
     "type": "==",
     "named": false
   },
@@ -1006,6 +1151,14 @@
     "named": false
   },
   {
+    "type": "actor",
+    "named": false
+  },
+  {
+    "type": "as",
+    "named": false
+  },
+  {
     "type": "back",
     "named": false
   },
@@ -1039,7 +1192,8 @@
   },
   {
     "type": "comment",
-    "named": true
+    "named": true,
+    "extra": true
   },
   {
     "type": "component",
@@ -1100,6 +1254,10 @@
   {
     "type": "identifier",
     "named": true
+  },
+  {
+    "type": "if",
+    "named": false
   },
   {
     "type": "input",
@@ -1215,6 +1373,10 @@
   },
   {
     "type": "true",
+    "named": false
+  },
+  {
+    "type": "use",
     "named": false
   },
   {

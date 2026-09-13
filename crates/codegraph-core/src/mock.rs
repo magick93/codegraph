@@ -32,7 +32,9 @@ pub struct MockEngine {
     data_bindings: Mutex<HashMap<String, DataBindingNode>>,
     view_container_components: Mutex<HashMap<String, Vec<String>>>,
     events_by_parent: Mutex<HashMap<String, Vec<String>>>,
-    navigation_flows: Mutex<Vec<(String, String, String)>>,
+    navigation_flows: Mutex<Vec<(String, String, Option<String>)>>,
+    params_by_parent: Mutex<HashMap<String, Vec<String>>>,
+    action_triggers: Mutex<Vec<(String, String)>>,
     data_flows: Mutex<Vec<DataFlowKey>>,
     data_binding_edges: Mutex<Vec<(String, String)>>,
     binding_entity_edges: Mutex<Vec<(String, String)>>,
@@ -58,6 +60,10 @@ pub struct MockEngine {
     security_identities: Mutex<HashMap<String, SecurityIdentityNode>>,
     memberships: Mutex<Vec<MembershipNode>>,
     tenants: Mutex<HashMap<String, TenantNode>>,
+    actors: Mutex<HashMap<String, ActorNode>>,
+    capabilities: Mutex<HashMap<String, CapabilityNode>>,
+    grants: Mutex<Vec<GrantEdge>>,
+    actor_policy: Mutex<Option<ActorPolicyNode>>,
     start_time: Instant,
 }
 
@@ -84,6 +90,8 @@ impl MockEngine {
             view_container_components: Mutex::new(HashMap::new()),
             events_by_parent: Mutex::new(HashMap::new()),
             navigation_flows: Mutex::new(Vec::new()),
+            params_by_parent: Mutex::new(HashMap::new()),
+            action_triggers: Mutex::new(Vec::new()),
             data_flows: Mutex::new(Vec::new()),
             data_binding_edges: Mutex::new(Vec::new()),
             binding_entity_edges: Mutex::new(Vec::new()),
@@ -108,6 +116,10 @@ impl MockEngine {
             security_identities: Mutex::new(HashMap::new()),
             memberships: Mutex::new(Vec::new()),
             tenants: Mutex::new(HashMap::new()),
+            actors: Mutex::new(HashMap::new()),
+            capabilities: Mutex::new(HashMap::new()),
+            grants: Mutex::new(Vec::new()),
+            actor_policy: Mutex::new(None),
             start_time: Instant::now(),
         }
     }
@@ -564,10 +576,24 @@ impl GraphIngestor for MockEngine {
                     .push(strip_ifml_prefix(to_id).to_string());
             }
             EdgeType::NavigationFlow => {
+                let binding = props.and_then(|p| p.target_param_binding.clone());
                 self.navigation_flows.lock().unwrap().push((
                     from_id.to_string(),
                     to_id.to_string(),
-                    String::new(),
+                    binding,
+                ));
+            }
+            EdgeType::HasParameter => {
+                let param = strip_ifml_prefix(to_id).to_string();
+                let mut map = self.params_by_parent.lock().unwrap();
+                map.entry(strip_ifml_prefix(from_id).to_string())
+                    .or_default()
+                    .push(param);
+            }
+            EdgeType::TriggersAction => {
+                self.action_triggers.lock().unwrap().push((
+                    strip_ifml_prefix(from_id).to_string(),
+                    strip_ifml_prefix(to_id).to_string(),
                 ));
             }
             EdgeType::DataFlow => {
@@ -830,6 +856,27 @@ impl GraphIngestor for MockEngine {
             .lock()
             .unwrap()
             .insert(t.name.clone(), t.clone());
+        Ok(())
+    }
+
+    async fn ingest_actor_policy(&self, model: &ActorPolicyModel) -> Result<(), GraphError> {
+        {
+            let mut actors = self.actors.lock().unwrap();
+            for actor in &model.actors {
+                actors.insert(actor.name.clone(), actor.clone());
+            }
+        }
+        {
+            let mut capabilities = self.capabilities.lock().unwrap();
+            for capability in &model.capabilities {
+                capabilities.insert(capability.name.clone(), capability.clone());
+            }
+        }
+        self.grants
+            .lock()
+            .unwrap()
+            .extend(model.grants.iter().cloned());
+        *self.actor_policy.lock().unwrap() = Some(model.policy.clone());
         Ok(())
     }
 
@@ -1196,24 +1243,41 @@ impl GraphQuerier for MockEngine {
             .collect())
     }
 
-    async fn get_ifml_navigation_flows(&self) -> Result<Vec<(String, String, String)>, GraphError> {
+    async fn get_ifml_navigation_flows(&self) -> Result<Vec<NavigationFlowRecord>, GraphError> {
         let events_by_parent = self.events_by_parent.lock().unwrap();
+        let components_by_container = self.view_container_components.lock().unwrap();
         let flows = self.navigation_flows.lock().unwrap();
         let mut result = Vec::new();
-        for (event_id, target_id, _) in flows.iter() {
+        for (event_id, target_id, binding) in flows.iter() {
             let event_name = strip_ifml_prefix(event_id).to_string();
             let parent = events_by_parent
                 .iter()
                 .find(|(_, evs)| evs.contains(&event_name))
                 .map(|(p, _)| p.clone())
                 .unwrap_or_default();
-            result.push((
-                strip_ifml_prefix(&parent).to_string(),
-                event_name,
-                strip_ifml_prefix(target_id).to_string(),
-            ));
+            let source = strip_ifml_prefix(&parent).to_string();
+            let source_container = if let Some(component) = parent.strip_prefix("comp:") {
+                components_by_container
+                    .iter()
+                    .find(|(_, children)| children.iter().any(|c| c == component))
+                    .map(|(container, _)| container.clone())
+                    .unwrap_or_else(|| source.clone())
+            } else {
+                source.clone()
+            };
+            result.push(NavigationFlowRecord {
+                source,
+                source_container,
+                event: event_name,
+                target: strip_ifml_prefix(target_id).to_string(),
+                target_param_binding: binding.clone(),
+            });
         }
         Ok(result)
+    }
+
+    async fn get_ifml_action_triggers(&self) -> Result<Vec<(String, String)>, GraphError> {
+        Ok(self.action_triggers.lock().unwrap().clone())
     }
 
     async fn get_ifml_data_flows(
@@ -1241,6 +1305,21 @@ impl GraphQuerier for MockEngine {
     async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
         let map = self.parameter_definitions.lock().unwrap();
         Ok(map.values().cloned().collect())
+    }
+
+    async fn get_parameters_for_view(
+        &self,
+        container_name: &str,
+    ) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
+        let definitions = self.parameter_definitions.lock().unwrap();
+        let by_parent = self.params_by_parent.lock().unwrap();
+        Ok(by_parent
+            .get(container_name)
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|name| definitions.get(name).cloned())
+            .collect())
     }
 
     async fn get_data_bindings(&self) -> Result<Vec<DataBindingResolution>, GraphError> {
@@ -1531,5 +1610,39 @@ impl GraphQuerier for MockEngine {
 
     async fn list_all_tenants(&self) -> Result<Vec<TenantNode>, GraphError> {
         Ok(self.tenants.lock().unwrap().values().cloned().collect())
+    }
+
+    // ── Authorization metamodel queries ─────────────────────────────
+
+    async fn get_actors(&self) -> Result<Vec<ActorNode>, GraphError> {
+        let mut actors: Vec<ActorNode> = self.actors.lock().unwrap().values().cloned().collect();
+        actors.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(actors)
+    }
+
+    async fn get_capabilities(&self) -> Result<Vec<CapabilityNode>, GraphError> {
+        let mut capabilities: Vec<CapabilityNode> = self
+            .capabilities
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        capabilities.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(capabilities)
+    }
+
+    async fn get_grants(&self) -> Result<Vec<GrantEdge>, GraphError> {
+        Ok(self.grants.lock().unwrap().clone())
+    }
+
+    async fn get_actor_policy(&self) -> Result<Option<ActorPolicyNode>, GraphError> {
+        Ok(self.actor_policy.lock().unwrap().clone())
+    }
+
+    async fn effective_permits(&self, actor: &str) -> Result<Vec<Permit>, GraphError> {
+        let actors: Vec<ActorNode> = self.actors.lock().unwrap().values().cloned().collect();
+        let grants = self.grants.lock().unwrap().clone();
+        Ok(resolve_effective_permits(&actors, &grants, actor))
     }
 }

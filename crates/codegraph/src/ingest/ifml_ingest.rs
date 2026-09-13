@@ -1,11 +1,27 @@
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    ActionNode, DataBindingNode, EdgeProperties, EdgeType, EventNode, ParameterDefinitionNode,
-    ViewComponentNode, ViewContainerNode,
+    ActionNode, DataBindingNode, EdgeProperties, EdgeType, EventNode, ModuleUseRecord,
+    ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
 };
 use codegraph_ifml_dsl::*;
 
 use crate::error::{Error, Result};
+
+/// Map DSL module-use statements to their persisted graph form; `None` when
+/// the declaration carries no uses.
+fn module_use_records(uses: &[ModuleUse]) -> Option<Vec<ModuleUseRecord>> {
+    if uses.is_empty() {
+        return None;
+    }
+    Some(
+        uses.iter()
+            .map(|u| ModuleUseRecord {
+                module: u.module.clone(),
+                alias: u.alias.clone(),
+            })
+            .collect(),
+    )
+}
 
 /// Ingest a parsed IFML model into the graph database.
 pub async fn ingest_ifml_model(
@@ -21,10 +37,12 @@ pub async fn ingest_ifml_model(
     for view in &model.views {
         let _vc_id = ingest_view_container(db, view).await?;
         stats.view_containers += 1;
+        stats.module_uses += view.module_uses.len();
 
         for container in &view.containers {
             let _container_id = ingest_container_node(db, container).await?;
             stats.containers += 1;
+            stats.module_uses += container.module_uses.len();
         }
     }
 
@@ -95,6 +113,10 @@ pub async fn ingest_ifml_model(
         }
     }
 
+    // Actor declarations are parsed and counted but not yet persisted;
+    // a dedicated node type lands with the roles/permissions slice.
+    stats.actors += model.actors.len();
+
     Ok(stats)
 }
 
@@ -106,7 +128,19 @@ async fn ingest_view_container(db: &dyn GraphIngestor, view: &ViewDeclaration) -
         is_default: false,
         is_landmark: view.is_landmark,
         is_modal: view.is_modal,
+        conditional_expression: view.condition.as_ref().map(render_expression),
         domain: None,
+        module_uses: module_use_records(&view.module_uses),
+        roles: if view.roles.is_empty() {
+            None
+        } else {
+            Some(view.roles.clone())
+        },
+        requires: if view.requires.is_empty() {
+            None
+        } else {
+            Some(view.requires.clone())
+        },
     };
     let id = db
         .ingest_view_container(&node)
@@ -126,7 +160,11 @@ async fn ingest_container_node(
         is_default: container.is_default,
         is_landmark: false,
         is_modal: false,
+        conditional_expression: container.condition.as_ref().map(render_expression),
         domain: None,
+        module_uses: module_use_records(&container.module_uses),
+        roles: None,
+        requires: None,
     };
     db.ingest_view_container(&node).await.map_err(Error::Graph)
 }
@@ -241,6 +279,7 @@ async fn ingest_view_component(
         filter,
         api_operation,
         spec,
+        conditional_expression: comp.condition.as_ref().map(render_expression),
         domain: None,
     };
 
@@ -261,7 +300,7 @@ async fn ingest_view_component(
         let binding_id = db
             .ingest_data_binding(&DataBindingNode {
                 name: binding_name.clone(),
-                conditional_expression: None,
+                conditional_expression: node.conditional_expression.clone(),
                 expression_language: "ifml".to_string(),
                 domain: None,
             })
@@ -342,6 +381,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
         } else {
             Some(event.params.clone())
         },
+        conditional_expression: event.condition.as_ref().map(render_expression),
         domain: None,
     };
 
@@ -359,7 +399,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                 let pairs: Vec<String> = b
                     .pairs
                     .iter()
-                    .map(|(k, v)| format!("\"{}\": \"{}\"", k, expr_to_string(v)))
+                    .map(|(k, v)| format!("\"{}\": \"{}\"", k, render_expression(v)))
                     .collect();
                 format!("{{{}}}", pairs.join(", "))
             });
@@ -408,6 +448,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                             name: format!("{}_{}", action_id.replace(':', "_"), outcome_str),
                             event_type: outcome_str.clone(),
                             params: None,
+                            conditional_expression: None,
                             domain: None,
                         })
                         .await
@@ -431,7 +472,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                             let pairs: Vec<String> = b
                                 .pairs
                                 .iter()
-                                .map(|(k, v)| format!("\"{}\": \"{}\"", k, expr_to_string(v)))
+                                .map(|(k, v)| format!("\"{}\": \"{}\"", k, render_expression(v)))
                                 .collect();
                             format!("{{{}}}", pairs.join(", "))
                         });
@@ -458,55 +499,6 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
     Ok(())
 }
 
-fn expr_to_string(expr: &Expression) -> String {
-    match expr {
-        Expression::Ident(s) => s.clone(),
-        Expression::StringLit(s) => format!("\"{}\"", s),
-        Expression::NumLit(n) => n.to_string(),
-        Expression::BoolLit(b) => b.to_string(),
-        Expression::FieldExpr { object, field } => {
-            format!("{}.{}", expr_to_string(object), field)
-        }
-        Expression::BinOp { left, op, right } => {
-            let op_str = match op {
-                BinOp::Eq => "==",
-                BinOp::Ne => "!=",
-                BinOp::Lt => "<",
-                BinOp::Le => "<=",
-                BinOp::Gt => ">",
-                BinOp::Ge => ">=",
-                BinOp::RegexMatch => "~=",
-                BinOp::NegRegex => "!~",
-                BinOp::Add => "+",
-                BinOp::Sub => "-",
-                BinOp::Mul => "*",
-                BinOp::Div => "/",
-                BinOp::Mod => "%",
-                BinOp::And => "&&",
-                BinOp::Or => "||",
-            };
-            format!(
-                "{} {} {}",
-                expr_to_string(left),
-                op_str,
-                expr_to_string(right)
-            )
-        }
-        Expression::UnaryOp { op, operand } => {
-            let op_str = match op {
-                UnaryOp::Not => "!",
-                UnaryOp::Neg => "-",
-            };
-            format!("{}{}", op_str, expr_to_string(operand))
-        }
-        Expression::Group(inner) => format!("({})", expr_to_string(inner)),
-        Expression::Call { name, args } => {
-            let args_str: Vec<String> = args.iter().map(expr_to_string).collect();
-            format!("{}({})", name, args_str.join(", "))
-        }
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct IfmlIngestStats {
     pub view_containers: usize,
@@ -515,19 +507,25 @@ pub struct IfmlIngestStats {
     pub events: usize,
     pub parameters: usize,
     pub actions: usize,
+    pub module_uses: usize,
+    pub actors: usize,
+    pub imported_policies: usize,
 }
 
 impl std::fmt::Display for IfmlIngestStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} views, {} nested containers, {} components, {} events, {} params, {} actions",
+            "{} views, {} nested containers, {} components, {} events, {} params, {} actions, {} module uses, {} actors, {} imported policies",
             self.view_containers,
             self.containers,
             self.components,
             self.events,
             self.parameters,
             self.actions,
+            self.module_uses,
+            self.actors,
+            self.imported_policies,
         )
     }
 }

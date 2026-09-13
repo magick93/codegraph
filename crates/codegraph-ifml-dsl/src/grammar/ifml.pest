@@ -1,10 +1,15 @@
 // ── Entry point ──────────────────────────────────────────────────
 ifml_model = {
     SOI ~
-    domain_declaration* ~
-    (view_declaration | action_declaration | module_declaration)* ~
+    (import_declaration | domain_declaration)* ~
+    (import_declaration | view_declaration | action_declaration | module_declaration | actor_declaration)* ~
     EOI
 }
+
+// ── Import declaration ────────────────────────────────────────────
+// `import "rexlang/auth.actor";` — the raw string value is kept verbatim;
+// resolution/dedup is a downstream concern. Trailing `;` is optional.
+import_declaration = { "import" ~ string ~ ";"? }
 
 // ── Domain declaration ────────────────────────────────────────────
 domain_declaration = {
@@ -23,7 +28,7 @@ view_body = {
         params_block? ~
         label_declaration? ~
         property_assignment* ~
-        (container_declaration | component_declaration | event_handler)* ~
+        (container_declaration | component_declaration | event_handler | condition_statement | module_use_statement)* ~
     "}"
 }
 
@@ -36,7 +41,7 @@ container_body = {
         params_block? ~
         label_declaration? ~
         property_assignment* ~
-        (container_declaration | component_declaration | event_handler)* ~
+        (container_declaration | component_declaration | event_handler | condition_statement | module_use_statement)* ~
     "}"
 }
 
@@ -47,8 +52,16 @@ parameter_block = {
 }
 
 parameter_decl = {
-    identifier ~ ":" ~ type_ref
+    identifier ~ ":" ~ type_ref ~ ("=" ~ param_default)?
 }
+
+param_default = { string | number | boolean }
+
+module_use_statement = {
+    "use" ~ string ~ ("as" ~ identifier)? ~ (module_use_body ~ ";"? | ";")
+}
+
+module_use_body = { "{" ~ property_assignment* ~ "}" }
 
 label_declaration = { "label" ~ string ~ ";" }
 
@@ -60,8 +73,8 @@ component_declaration = {
 component_body = {
     "{" ~
         property_assignment* ~
-        (column_decl | field_decl | chart_decl)* ~
-        event_handler* ~
+        (column_decl | field_decl | chart_decl | condition_statement)* ~
+        (event_handler | condition_statement)* ~
     "}"
 }
 
@@ -120,8 +133,10 @@ object_member_value = { logical_or | array_literal }
 
 // ── Event handlers ────────────────────────────────────────────────
 event_handler = {
-    "on" ~ event_type ~ event_param? ~ "->" ~ event_action ~ ";"
+    "on" ~ event_type ~ event_param? ~ event_condition? ~ "->" ~ event_action ~ ";"
 }
+
+event_condition = { "if" ~ expression }
 
 event_type = {
     "select" | "submit" | "click" | "change" | "load" |
@@ -186,6 +201,16 @@ module_declaration = {
         (container_declaration | component_declaration | event_handler)* ~
     "}"
 }
+
+// ── Actor declarations ─────────────────────────────────────────────
+actor_declaration = {
+    "actor" ~ string ~ "{" ~
+        property_assignment* ~
+    "}"
+}
+
+// ── Conditional guards ────────────────────────────────────────────
+condition_statement = { "if" ~ expression ~ ";" }
 
 // ── C-like expressions ────────────────────────────────────────────
 expression = { logical_or }

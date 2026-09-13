@@ -61,7 +61,21 @@ fn parse_parameter_decl(pair: Pair<Rule>) -> ParameterDecl {
         .next()
         .map(|p| parse_identifier(&p))
         .unwrap_or_default();
-    ParameterDecl { name, type_ref }
+    let default = inner
+        .next()
+        .filter(|p| p.as_rule() == Rule::param_default)
+        .and_then(|p| p.into_inner().next())
+        .map(|p| match p.as_rule() {
+            Rule::string => ValueExpression::String(parse_string(&p)),
+            Rule::number => ValueExpression::Number(parse_number(&p)),
+            Rule::boolean => ValueExpression::Bool(p.as_str() == "true"),
+            _ => ValueExpression::Identifier(p.as_str().to_string()),
+        });
+    ParameterDecl {
+        name,
+        type_ref,
+        default,
+    }
 }
 
 fn parse_parameter_block(pair: Pair<Rule>) -> Vec<ParameterDecl> {
@@ -711,11 +725,15 @@ fn parse_event_handler(pair: Pair<Rule>) -> EventHandler {
         .unwrap_or(EventType::Custom("unknown".to_string()));
 
     let mut params = Vec::new();
+    let mut condition = None;
     let mut action = EventAction::Stay;
 
     for child in inner {
         match child.as_rule() {
             Rule::event_param => params = parse_event_param(child),
+            Rule::event_condition => {
+                condition = child.into_inner().next().map(parse_expression);
+            }
             _ => action = parse_event_action(child),
         }
     }
@@ -723,6 +741,7 @@ fn parse_event_handler(pair: Pair<Rule>) -> EventHandler {
     EventHandler {
         event_type,
         params,
+        condition,
         action,
     }
 }
@@ -808,6 +827,7 @@ fn parse_input_body_property(
     required: &mut bool,
     validations: &mut Vec<Expression>,
     values: &mut Vec<String>,
+    messages: &mut Vec<String>,
 ) {
     match (key, value) {
         ("required", Some(value)) => {
@@ -819,18 +839,27 @@ fn parse_input_body_property(
             validations.extend(extract_validation_expressions(value));
         }
         ("values", Some(value)) => {
-            if let ValueExpression::Array(items) = parse_value_expression(value) {
-                for item in items {
-                    match item {
-                        ValueExpression::String(s) => values.push(s),
-                        ValueExpression::Identifier(id) => values.push(id),
-                        _ => {}
-                    }
-                }
-            }
+            *values = extract_string_list(value);
+        }
+        ("messages", Some(value)) => {
+            *messages = extract_string_list(value);
         }
         _ => {}
     }
+}
+
+fn extract_string_list(value: Pair<Rule>) -> Vec<String> {
+    let mut out = Vec::new();
+    if let ValueExpression::Array(items) = parse_value_expression(value) {
+        for item in items {
+            match item {
+                ValueExpression::String(s) => out.push(s),
+                ValueExpression::Identifier(id) => out.push(id),
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 fn extract_validation_expressions(value: Pair<Rule>) -> Vec<Expression> {
@@ -858,6 +887,7 @@ fn parse_field_decl(pair: Pair<Rule>) -> Option<FieldDef> {
     let mut required = false;
     let mut validations = Vec::new();
     let mut values = Vec::new();
+    let mut messages = Vec::new();
     if let Some(body) = inner.next() {
         for child in body.into_inner() {
             if child.as_rule() != Rule::property_assignment {
@@ -874,6 +904,7 @@ fn parse_field_decl(pair: Pair<Rule>) -> Option<FieldDef> {
                 &mut required,
                 &mut validations,
                 &mut values,
+                &mut messages,
             );
         }
     }
@@ -883,6 +914,7 @@ fn parse_field_decl(pair: Pair<Rule>) -> Option<FieldDef> {
         required,
         validations,
         values,
+        messages,
     })
 }
 
@@ -969,6 +1001,7 @@ fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
                 spec: None,
                 properties: Vec::new(),
                 events: Vec::new(),
+                condition: None,
             };
         }
     };
@@ -978,6 +1011,7 @@ fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
     let mut fields = Vec::new();
     let mut chart_spec = None;
     let mut events = Vec::new();
+    let mut condition = None;
     for child in body.into_inner() {
         match child.as_rule() {
             Rule::property_assignment => properties.push(parse_property_assignment(child)),
@@ -993,6 +1027,9 @@ fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
                 }
             }
             Rule::event_handler => events.push(parse_event_handler(child)),
+            Rule::condition_statement => {
+                condition = child.into_inner().next().map(parse_expression);
+            }
             _ => {}
         }
     }
@@ -1038,6 +1075,32 @@ fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
         spec,
         properties,
         events,
+        condition,
+    }
+}
+
+fn parse_module_use_statement(pair: Pair<Rule>) -> ModuleUse {
+    let mut module = String::new();
+    let mut alias = None;
+    let mut properties = Vec::new();
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::string => module = parse_string(&child),
+            Rule::identifier => alias = Some(child.as_str().to_string()),
+            Rule::module_use_body => {
+                for body_child in child.into_inner() {
+                    if body_child.as_rule() == Rule::property_assignment {
+                        properties.push(parse_property_assignment(body_child));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    ModuleUse {
+        module,
+        alias,
+        properties,
     }
 }
 
@@ -1048,6 +1111,8 @@ type ViewBodyParts = (
     Vec<ContainerDeclaration>,
     Vec<ComponentDeclaration>,
     Vec<EventHandler>,
+    Vec<ModuleUse>,
+    Option<Expression>,
 );
 
 fn parse_view_body_content(pair: Pair<Rule>) -> ViewBodyParts {
@@ -1057,6 +1122,8 @@ fn parse_view_body_content(pair: Pair<Rule>) -> ViewBodyParts {
     let mut containers = Vec::new();
     let mut components = Vec::new();
     let mut events = Vec::new();
+    let mut module_uses = Vec::new();
+    let mut condition = None;
 
     for child in pair.clone().into_inner() {
         match child.as_rule() {
@@ -1074,25 +1141,42 @@ fn parse_view_body_content(pair: Pair<Rule>) -> ViewBodyParts {
             Rule::container_declaration => containers.push(parse_container_declaration(child)),
             Rule::component_declaration => components.push(parse_component_declaration(child)),
             Rule::event_handler => events.push(parse_event_handler(child)),
+            Rule::module_use_statement => module_uses.push(parse_module_use_statement(child)),
+            Rule::condition_statement => {
+                condition = child.into_inner().next().map(parse_expression);
+            }
             _ => {}
         }
     }
 
-    (params, label, properties, containers, components, events)
+    (
+        params,
+        label,
+        properties,
+        containers,
+        components,
+        events,
+        module_uses,
+        condition,
+    )
 }
 
-fn parse_container_body_content(
-    pair: Pair<Rule>,
-) -> (
+type ContainerBodyParts = (
     Vec<ParameterDecl>,
     Vec<PropertyAssignment>,
     Vec<ComponentDeclaration>,
     Vec<EventHandler>,
-) {
+    Vec<ModuleUse>,
+    Option<Expression>,
+);
+
+fn parse_container_body_content(pair: Pair<Rule>) -> ContainerBodyParts {
     let mut params = Vec::new();
     let mut properties = Vec::new();
     let mut components = Vec::new();
     let mut events = Vec::new();
+    let mut module_uses = Vec::new();
+    let mut condition = None;
 
     for child in pair.clone().into_inner() {
         match child.as_rule() {
@@ -1104,11 +1188,22 @@ fn parse_container_body_content(
             Rule::property_assignment => properties.push(parse_property_assignment(child)),
             Rule::component_declaration => components.push(parse_component_declaration(child)),
             Rule::event_handler => events.push(parse_event_handler(child)),
+            Rule::module_use_statement => module_uses.push(parse_module_use_statement(child)),
+            Rule::condition_statement => {
+                condition = child.into_inner().next().map(parse_expression);
+            }
             _ => {}
         }
     }
 
-    (params, properties, components, events)
+    (
+        params,
+        properties,
+        components,
+        events,
+        module_uses,
+        condition,
+    )
 }
 
 fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
@@ -1124,11 +1219,14 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
             properties: Vec::new(),
             components: Vec::new(),
             events: Vec::new(),
+            module_uses: Vec::new(),
+            condition: None,
             position: None,
         };
     };
 
-    let (params, properties, components, events) = parse_container_body_content(body);
+    let (params, properties, components, events, module_uses, condition) =
+        parse_container_body_content(body);
 
     let is_default = properties
         .iter()
@@ -1151,6 +1249,8 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
         properties,
         components,
         events,
+        module_uses,
+        condition,
         position,
     }
 }
@@ -1200,6 +1300,33 @@ fn extract_position_property(properties: &[PropertyAssignment]) -> Option<Positi
     }
 }
 
+fn extract_roles_property(properties: &[PropertyAssignment]) -> Vec<String> {
+    extract_identifier_list_property(properties, "roles")
+}
+
+fn extract_requires_property(properties: &[PropertyAssignment]) -> Vec<String> {
+    extract_identifier_list_property(properties, "requires")
+}
+
+fn extract_identifier_list_property(properties: &[PropertyAssignment], key: &str) -> Vec<String> {
+    properties
+        .iter()
+        .find(|p| p.key == key)
+        .and_then(|p| match &p.value {
+            ValueExpression::Array(items) => Some(
+                items
+                    .iter()
+                    .filter_map(|v| match v {
+                        ValueExpression::Identifier(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
 fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
     let mut inner = pair.clone().into_inner();
     let name = inner.next().map(|p| parse_string(&p)).unwrap_or_default();
@@ -1217,16 +1344,27 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
             containers: Vec::new(),
             components: Vec::new(),
             events: Vec::new(),
+            module_uses: Vec::new(),
+            roles: Vec::new(),
+            requires: Vec::new(),
+            condition: None,
             position: None,
         };
     };
 
-    let (params, label, properties, containers, components, events) = parse_view_body_content(body);
+    let (params, label, properties, containers, components, events, module_uses, condition) =
+        parse_view_body_content(body);
 
     let is_landmark = extract_bool_property(&properties, "landmark");
     let is_xor = extract_bool_property(&properties, "xor");
     let is_modal = extract_bool_property(&properties, "modal");
     let position = extract_position_property(&properties);
+    let roles = extract_roles_property(&properties);
+    let requires = extract_requires_property(&properties);
+    let properties: Vec<PropertyAssignment> = properties
+        .into_iter()
+        .filter(|p| p.key != "roles" && p.key != "requires")
+        .collect();
 
     ViewDeclaration {
         name,
@@ -1239,6 +1377,10 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
         containers,
         components,
         events,
+        module_uses,
+        roles,
+        requires,
+        condition,
         position,
     }
 }
@@ -1311,11 +1453,32 @@ fn parse_domain_declaration(pair: Pair<Rule>) -> DomainDeclaration {
     DomainDeclaration { name, schema_name }
 }
 
+fn parse_actor_declaration(pair: Pair<Rule>) -> ActorDeclaration {
+    let mut inner = pair.clone().into_inner();
+    let name = inner.next().map(|p| parse_string(&p)).unwrap_or_default();
+
+    let mut properties = Vec::new();
+    for child in inner {
+        if child.as_rule() == Rule::property_assignment {
+            properties.push(parse_property_assignment(child));
+        }
+    }
+
+    ActorDeclaration { name, properties }
+}
+
+fn parse_import_declaration(pair: Pair<Rule>) -> String {
+    let mut inner = pair.into_inner();
+    inner.next().map(|p| parse_string(&p)).unwrap_or_default()
+}
+
 fn parse_ifml_model(pairs: Pairs<Rule>) -> Result<IfmlModel, IfmlParseError> {
     let mut domains = Vec::new();
     let mut views = Vec::new();
     let mut actions = Vec::new();
     let mut modules = Vec::new();
+    let mut actors = Vec::new();
+    let mut imports = Vec::new();
 
     for pair in pairs {
         let rule = pair.as_rule();
@@ -1324,6 +1487,8 @@ fn parse_ifml_model(pairs: Pairs<Rule>) -> Result<IfmlModel, IfmlParseError> {
             Rule::view_declaration => views.push(parse_view_declaration(pair)),
             Rule::action_declaration => actions.push(parse_action_declaration(pair)),
             Rule::module_declaration => modules.push(parse_module_declaration(pair)),
+            Rule::actor_declaration => actors.push(parse_actor_declaration(pair)),
+            Rule::import_declaration => imports.push(parse_import_declaration(pair)),
             Rule::EOI => {}
             _ => {
                 return Err(IfmlParseError::Parse {
@@ -1339,6 +1504,8 @@ fn parse_ifml_model(pairs: Pairs<Rule>) -> Result<IfmlModel, IfmlParseError> {
         views,
         actions,
         modules,
+        actors,
+        imports,
     })
 }
 
@@ -1356,6 +1523,8 @@ pub fn parse_ifml(input: &str) -> Result<IfmlModel, IfmlParseError> {
             views: Vec::new(),
             actions: Vec::new(),
             modules: Vec::new(),
+            actors: Vec::new(),
+            imports: Vec::new(),
         });
     }
 
@@ -2637,5 +2806,917 @@ view "Bad" {
 }
 "#;
         assert!(parse_ifml(input).is_err());
+    }
+
+    #[test]
+    fn test_view_condition_statement() {
+        let input = r#"
+view "AdminDashboard" {
+    if user.role == "admin";
+
+    component "grid" {
+        type: list;
+        data: Customer;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+        assert_eq!(
+            view.condition,
+            Some(Expression::BinOp {
+                left: Box::new(Expression::FieldExpr {
+                    object: Box::new(Expression::Ident("user".to_string())),
+                    field: "role".to_string(),
+                }),
+                op: BinOp::Eq,
+                right: Box::new(Expression::StringLit("admin".to_string())),
+            })
+        );
+    }
+
+    #[test]
+    fn test_container_condition_statement() {
+        let input = r#"
+view "Wizard" {
+    container "Step1" {
+        if params.enabled != false;
+        component "form" {
+            type: form;
+            data: Customer;
+        }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let container = &model.views[0].containers[0];
+        assert!(matches!(
+            &container.condition,
+            Some(Expression::BinOp { op: BinOp::Ne, .. })
+        ));
+    }
+
+    #[test]
+    fn test_component_condition_statement() {
+        let input = r#"
+view "Dashboard" {
+    component "adminPanel" {
+        type: list;
+        data: Customer;
+        if user.is_admin;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        assert_eq!(
+            comp.condition,
+            Some(Expression::FieldExpr {
+                object: Box::new(Expression::Ident("user".to_string())),
+                field: "is_admin".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_condition_statement_last_wins() {
+        let input = r#"
+view "V" {
+    if flag_a;
+    if flag_b;
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(
+            model.views[0].condition,
+            Some(Expression::Ident("flag_b".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_event_condition() {
+        let input = r#"
+view "List" {
+    component "grid" {
+        type: list;
+        data: Customer;
+
+        on select(row) if row.active == true -> navigate("Detail", { id: row.id });
+        on click -> stay;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let events = &model.views[0].components[0].events;
+        assert_eq!(events.len(), 2);
+
+        assert_eq!(events[0].event_type, EventType::Select);
+        assert_eq!(events[0].condition, Some(row_active_eq_true()));
+        match &events[0].action {
+            EventAction::Navigate { target, binding } => {
+                assert_eq!(target, "Detail");
+                assert!(binding.is_some());
+            }
+            other => panic!("Expected Navigate, got {:?}", other),
+        }
+
+        assert_eq!(events[1].event_type, EventType::Click);
+        assert_eq!(events[1].condition, None);
+    }
+
+    #[test]
+    fn test_dangling_if_fails_parse() {
+        let cases = [
+            r#"
+view "Bad" {
+    if;
+}
+"#,
+            r#"
+view "Bad" {
+    component "c" {
+        type: list;
+        if;
+    }
+}
+"#,
+            r#"
+view "Bad" {
+    component "c" {
+        type: list;
+        on click if -> stay;
+    }
+}
+"#,
+            r#"
+view "Bad" {
+    if
+}
+"#,
+        ];
+        for (i, input) in cases.iter().enumerate() {
+            assert!(
+                parse_ifml(input).is_err(),
+                "dangling if case {} should fail to parse",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_condition_operator_structure_round_trip() {
+        let input = r#"
+view "Guarded" {
+    if user.role == "admin" && account.balance >= 100 || !user.locked;
+    component "grid" {
+        type: list;
+        data: Customer;
+        if !(a + 1 < 3) && name ~= "^A";
+        on select(row) if (row.x != 1 || row.y <= 2) -> stay;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+
+        match &view.condition {
+            Some(Expression::BinOp {
+                op: BinOp::Or,
+                left,
+                ..
+            }) => {
+                assert!(matches!(
+                    left.as_ref(),
+                    Expression::BinOp { op: BinOp::And, .. }
+                ));
+            }
+            other => panic!("Expected Or at top level, got {:?}", other),
+        }
+
+        let comp = &view.components[0];
+        match &comp.condition {
+            Some(Expression::BinOp {
+                op: BinOp::And,
+                left,
+                right,
+            }) => {
+                assert!(matches!(
+                    left.as_ref(),
+                    Expression::UnaryOp {
+                        op: UnaryOp::Not,
+                        ..
+                    }
+                ));
+                assert!(matches!(
+                    right.as_ref(),
+                    Expression::BinOp {
+                        op: BinOp::RegexMatch,
+                        ..
+                    }
+                ));
+            }
+            other => panic!("Expected And, got {:?}", other),
+        }
+
+        let event = &comp.events[0];
+        match &event.condition {
+            Some(Expression::Group(inner)) => match inner.as_ref() {
+                Expression::BinOp {
+                    op: BinOp::Or,
+                    left,
+                    right,
+                } => {
+                    assert!(matches!(
+                        left.as_ref(),
+                        Expression::BinOp { op: BinOp::Ne, .. }
+                    ));
+                    assert!(matches!(
+                        right.as_ref(),
+                        Expression::BinOp { op: BinOp::Le, .. }
+                    ));
+                }
+                other => panic!("Expected Or inside group, got {:?}", other),
+            },
+            other => panic!("Expected Group, got {:?}", other),
+        }
+    }
+
+    fn row_active_eq_true() -> Expression {
+        Expression::BinOp {
+            left: Box::new(Expression::FieldExpr {
+                object: Box::new(Expression::Ident("row".to_string())),
+                field: "active".to_string(),
+            }),
+            op: BinOp::Eq,
+            right: Box::new(Expression::BoolLit(true)),
+        }
+    }
+
+    #[test]
+    fn test_form_field_messages_parse() {
+        let input = r#"
+view "Edit" {
+    component "EditForm" {
+        type: form;
+        data: Customer;
+
+        field name  -> input text   { required: true; validations: [len(name) > 2, name ~= "^[A-Z]"]; messages: ["Name too short", "Must start uppercase"]; }
+        field email -> input email  { validations: [is_email(email)]; messages: ["Invalid email"]; }
+        field nick  -> input text;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let spec = match &model.views[0].components[0].spec {
+            Some(ComponentSpec::Form(spec)) => spec,
+            other => panic!("Expected Form spec, got {:?}", other),
+        };
+        assert_eq!(spec.fields.len(), 3);
+
+        let name_field = &spec.fields[0];
+        assert_eq!(name_field.validations.len(), 2);
+        assert_eq!(
+            name_field.messages,
+            vec![
+                "Name too short".to_string(),
+                "Must start uppercase".to_string()
+            ]
+        );
+
+        let email_field = &spec.fields[1];
+        assert_eq!(email_field.validations.len(), 1);
+        assert_eq!(email_field.messages, vec!["Invalid email".to_string()]);
+
+        let nick_field = &spec.fields[2];
+        assert!(nick_field.validations.is_empty());
+        assert!(nick_field.messages.is_empty());
+    }
+
+    #[test]
+    fn test_param_defaults_parse() {
+        let input = r#"
+view "Catalog" {
+    params { id: Uuid, slug: String = "home", page: Int = 1, verbose: Boolean = true };
+
+    component "grid" {
+        type: list;
+        data: Product;
+    }
+}
+
+module "Pager" {
+    input { offset: Int = 0 }
+    output { rows: String }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let params = &model.views[0].params;
+        assert_eq!(params.len(), 4);
+
+        assert_eq!(params[0].name, "id");
+        assert_eq!(params[0].default, None);
+
+        assert_eq!(params[1].name, "slug");
+        assert_eq!(
+            params[1].default,
+            Some(ValueExpression::String("home".to_string()))
+        );
+
+        assert_eq!(params[2].name, "page");
+        assert_eq!(params[2].default, Some(ValueExpression::Number(1.0)));
+
+        assert_eq!(params[3].name, "verbose");
+        assert_eq!(params[3].default, Some(ValueExpression::Bool(true)));
+
+        assert_eq!(
+            model.modules[0].input_params[0].default,
+            Some(ValueExpression::Number(0.0))
+        );
+    }
+
+    #[test]
+    fn test_param_negative_number_default() {
+        let input = r#"
+view "V" {
+    params { zoom: Int = -2 };
+    component "c" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(
+            model.views[0].params[0].default,
+            Some(ValueExpression::Number(-2.0))
+        );
+    }
+
+    #[test]
+    fn test_param_default_requires_literal() {
+        let input = r#"
+view "V" {
+    params { slug: String = slugify(title) };
+    component "c" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        assert!(parse_ifml(input).is_err());
+    }
+
+    #[test]
+    fn test_module_use_in_view() {
+        let input = r#"
+view "Catalog" {
+    use "Pagination" as pager;
+    use "Footer";
+
+    component "grid" {
+        type: list;
+        data: Product;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let uses = &model.views[0].module_uses;
+        assert_eq!(uses.len(), 2);
+
+        assert_eq!(uses[0].module, "Pagination");
+        assert_eq!(uses[0].alias.as_deref(), Some("pager"));
+        assert!(uses[0].properties.is_empty());
+
+        assert_eq!(uses[1].module, "Footer");
+        assert_eq!(uses[1].alias, None);
+    }
+
+    #[test]
+    fn test_module_use_in_container_and_with_properties() {
+        let input = r#"
+view "Wizard" {
+    container "Step1" {
+        use "Pagination" as pager {
+            page_size: 25;
+            compact: true;
+        }
+
+        component "form" {
+            type: form;
+            data: Customer;
+        }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let container = &model.views[0].containers[0];
+        assert_eq!(container.module_uses.len(), 1);
+
+        let module_use = &container.module_uses[0];
+        assert_eq!(module_use.module, "Pagination");
+        assert_eq!(module_use.alias.as_deref(), Some("pager"));
+        assert_eq!(module_use.properties.len(), 2);
+        assert_eq!(module_use.properties[0].key, "page_size");
+        assert_eq!(
+            module_use.properties[0].value,
+            ValueExpression::Number(25.0)
+        );
+        assert_eq!(module_use.properties[1].key, "compact");
+        assert_eq!(module_use.properties[1].value, ValueExpression::Bool(true));
+    }
+
+    #[test]
+    fn test_use_still_parses_as_property_name() {
+        let input = r#"
+view "V" {
+    use: "fallback";
+    component "c" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+        assert!(view.module_uses.is_empty());
+        assert_eq!(view.properties.len(), 1);
+        assert_eq!(view.properties[0].key, "use");
+        match &view.properties[0].value {
+            ValueExpression::String(s) => assert_eq!(s, "fallback"),
+            other => panic!("Expected String, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_dangling_module_use_fails_parse() {
+        let cases = [
+            r#"
+view "Bad" {
+    use "Pagination"
+}
+"#,
+            r#"
+view "Bad" {
+    use Pagination as pager;
+}
+"#,
+            r#"
+view "Bad" {
+    use "Pagination" as;
+}
+"#,
+        ];
+        for (i, input) in cases.iter().enumerate() {
+            assert!(
+                parse_ifml(input).is_err(),
+                "dangling use case {} should fail to parse",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_actor_declaration_parses() {
+        let input = r#"
+actor "Admin" {
+    label: "Administrator";
+    description: "Full system access";
+}
+
+actor "Auditor" {
+    label: "Auditor";
+}
+
+view "Dashboard" {
+    component "grid" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(model.actors.len(), 2);
+        assert_eq!(model.views.len(), 1);
+
+        let admin = &model.actors[0];
+        assert_eq!(admin.name, "Admin");
+        assert_eq!(admin.properties.len(), 2);
+        assert_eq!(admin.properties[0].key, "label");
+        match &admin.properties[0].value {
+            ValueExpression::String(s) => assert_eq!(s, "Administrator"),
+            other => panic!("Expected String, got {:?}", other),
+        }
+
+        let auditor = &model.actors[1];
+        assert_eq!(auditor.name, "Auditor");
+        assert_eq!(auditor.properties.len(), 1);
+    }
+
+    #[test]
+    fn test_actor_with_empty_body_parses() {
+        let input = r#"
+actor "Guest" {}
+
+view "Public" {
+    component "grid" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(model.actors.len(), 1);
+        assert_eq!(model.actors[0].name, "Guest");
+        assert!(model.actors[0].properties.is_empty());
+    }
+
+    #[test]
+    fn test_view_roles_extracted_from_property_bag() {
+        let input = r#"
+view "AdminConsole" {
+    roles: [admin, manager];
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+        assert_eq!(view.roles, vec!["admin".to_string(), "manager".to_string()]);
+        assert!(view.is_landmark);
+        assert!(
+            !view.properties.iter().any(|p| p.key == "roles"),
+            "roles must be removed from the property bag"
+        );
+    }
+
+    #[test]
+    fn test_view_roles_empty_array() {
+        let input = r#"
+view "Open" {
+    roles: [];
+
+    component "grid" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert!(model.views[0].roles.is_empty());
+        assert!(
+            !model.views[0].properties.iter().any(|p| p.key == "roles"),
+            "empty roles must also be removed from the property bag"
+        );
+    }
+
+    #[test]
+    fn test_view_without_roles_parses_identically() {
+        let input = r#"
+view "Catalog" {
+    label "Catalog";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Product;
+        fields: [name, price];
+    }
+
+    on load -> stay;
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+        assert!(view.roles.is_empty());
+        assert_eq!(view.label.as_deref(), Some("Catalog"));
+        assert!(view.is_landmark);
+        assert_eq!(view.components.len(), 1);
+        assert_eq!(view.events.len(), 1);
+    }
+
+    #[test]
+    fn test_actor_ast_serde_round_trip() {
+        let input = r#"
+actor "Admin" {
+    label: "Administrator";
+}
+
+view "Console" {
+    roles: [admin];
+    component "grid" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let json = serde_json::to_string(&model).expect("serialize model");
+        let round_tripped: IfmlModel = serde_json::from_str(&json).expect("deserialize model");
+        let reserialized = serde_json::to_string(&round_tripped).expect("re-serialize model");
+        assert_eq!(reserialized, json);
+        assert_eq!(round_tripped.actors[0].name, "Admin");
+        assert_eq!(round_tripped.views[0].roles, vec!["admin".to_string()]);
+    }
+
+    #[test]
+    fn test_dsl_feature_ast_serde_round_trip() {
+        let input = r#"
+view "Catalog" {
+    params { slug: String = "home" };
+    use "Pagination" as pager { page_size: 25; };
+
+    container "Main" {
+        use "Footer";
+    }
+
+    component "f" {
+        type: form;
+        data: Customer;
+        field name -> input text { required: true; validations: [len(name) > 2]; messages: ["Too short"]; }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let json = serde_json::to_string(&model).expect("serialize model");
+        let round_tripped: IfmlModel = serde_json::from_str(&json).expect("deserialize model");
+        let reserialized = serde_json::to_string(&round_tripped).expect("re-serialize model");
+        assert_eq!(reserialized, json);
+
+        assert_eq!(
+            round_tripped.views[0].params[0].default,
+            Some(ValueExpression::String("home".to_string()))
+        );
+        assert_eq!(
+            round_tripped.views[0].module_uses[0].alias.as_deref(),
+            Some("pager")
+        );
+        let field = match &round_tripped.views[0].components[0].spec {
+            Some(ComponentSpec::Form(spec)) => &spec.fields[0],
+            other => panic!("Expected Form spec, got {:?}", other),
+        };
+        assert_eq!(field.messages, vec!["Too short".to_string()]);
+    }
+
+    #[test]
+    fn test_import_at_start() {
+        let input = r#"
+import "rexlang/auth.actor";
+
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    component "grid" {
+        type: list;
+        data: Customer;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(model.imports, vec!["rexlang/auth.actor".to_string()]);
+        assert_eq!(model.domains.len(), 1);
+        assert_eq!(model.views.len(), 1);
+    }
+
+    #[test]
+    fn test_import_mixed_positions() {
+        let input = r#"
+domain "sales" {
+    schema "sales";
+}
+
+import "rexlang/middle.actor";
+
+view "CustomerList" {
+    component "grid" {
+        type: list;
+        data: Customer;
+    }
+}
+
+actor "Admin" {
+    label: "Administrator";
+}
+
+import "rexlang/end.actor";
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(
+            model.imports,
+            vec![
+                "rexlang/middle.actor".to_string(),
+                "rexlang/end.actor".to_string()
+            ]
+        );
+        assert_eq!(model.domains.len(), 1);
+        assert_eq!(model.views.len(), 1);
+        assert_eq!(model.actors.len(), 1);
+    }
+
+    #[test]
+    fn test_duplicate_imports_preserved_verbatim() {
+        let input = r#"
+import "rexlang/auth.actor";
+import "rexlang/auth.actor";
+import "other/thing.actor";
+import "rexlang/auth.actor";
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(
+            model.imports,
+            vec![
+                "rexlang/auth.actor".to_string(),
+                "rexlang/auth.actor".to_string(),
+                "other/thing.actor".to_string(),
+                "rexlang/auth.actor".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_import_without_semicolon_parses() {
+        let input = r#"
+import "rexlang/auth.actor"
+
+view "V" {
+    component "c" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(model.imports, vec!["rexlang/auth.actor".to_string()]);
+    }
+
+    #[test]
+    fn test_no_imports_yields_empty_vec() {
+        let input = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    component "grid" {
+        type: list;
+        data: Customer;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert!(model.imports.is_empty());
+    }
+
+    #[test]
+    fn test_dangling_import_fails_parse() {
+        let cases = [
+            r#"
+import;
+"#,
+            r#"
+import "missing-close
+"#,
+            r#"
+import missing-quotes;
+"#,
+        ];
+        for (i, input) in cases.iter().enumerate() {
+            assert!(
+                parse_ifml(input).is_err(),
+                "dangling import case {} should fail to parse",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_view_requires_extracted_from_property_bag() {
+        let input = r#"
+view "RefundQueue" {
+    requires: [RaiseRefund, ApproveRefund];
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Refund;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+        assert_eq!(
+            view.requires,
+            vec!["RaiseRefund".to_string(), "ApproveRefund".to_string()]
+        );
+        assert!(view.is_landmark);
+        assert!(
+            !view.properties.iter().any(|p| p.key == "requires"),
+            "requires must be removed from the property bag"
+        );
+    }
+
+    #[test]
+    fn test_view_requires_empty_array() {
+        let input = r#"
+view "Open" {
+    requires: [];
+
+    component "grid" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert!(model.views[0].requires.is_empty());
+        assert!(
+            !model.views[0]
+                .properties
+                .iter()
+                .any(|p| p.key == "requires"),
+            "empty requires must also be removed from the property bag"
+        );
+    }
+
+    #[test]
+    fn test_view_requires_and_roles_coexist() {
+        let input = r#"
+view "Approvals" {
+    roles: [admin, manager];
+    requires: [ApproveRefund];
+
+    component "grid" {
+        type: list;
+        data: Refund;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+        assert_eq!(view.roles, vec!["admin".to_string(), "manager".to_string()]);
+        assert_eq!(view.requires, vec!["ApproveRefund".to_string()]);
+        assert!(!view.properties.iter().any(|p| p.key == "roles"));
+        assert!(!view.properties.iter().any(|p| p.key == "requires"));
+    }
+
+    #[test]
+    fn test_view_without_requires_parses_identically() {
+        let input = r#"
+view "Catalog" {
+    label "Catalog";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Product;
+        fields: [name, price];
+    }
+
+    on load -> stay;
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+        assert!(view.requires.is_empty());
+        assert!(view.roles.is_empty());
+        assert_eq!(view.label.as_deref(), Some("Catalog"));
+        assert!(view.is_landmark);
+        assert_eq!(view.components.len(), 1);
+        assert_eq!(view.events.len(), 1);
+    }
+
+    #[test]
+    fn test_imports_and_requires_serde_round_trip() {
+        let input = r#"
+import "rexlang/auth.actor";
+
+view "RefundQueue" {
+    roles: [approver];
+    requires: [RaiseRefund];
+
+    component "grid" {
+        type: list;
+        data: Refund;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let json = serde_json::to_string(&model).expect("serialize model");
+        let round_tripped: IfmlModel = serde_json::from_str(&json).expect("deserialize model");
+        let reserialized = serde_json::to_string(&round_tripped).expect("re-serialize model");
+        assert_eq!(reserialized, json);
+        assert_eq!(
+            round_tripped.imports,
+            vec!["rexlang/auth.actor".to_string()]
+        );
+        assert_eq!(
+            round_tripped.views[0].requires,
+            vec!["RaiseRefund".to_string()]
+        );
     }
 }

@@ -21,7 +21,20 @@ pub struct ViewContainerNode {
     pub is_default: bool,
     pub is_landmark: bool,
     pub is_modal: bool,
+    pub conditional_expression: Option<String>,
     pub domain: Option<String>,
+    pub module_uses: Option<Vec<ModuleUseRecord>>,
+    pub roles: Option<Vec<String>>,
+    pub requires: Option<Vec<String>>,
+}
+
+/// A `use "Module" as alias;` statement resolved onto a ViewContainer:
+/// the module reference is persisted by name with its optional alias;
+/// property overrides stay DSL-side until module expansion lands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModuleUseRecord {
+    pub module: String,
+    pub alias: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -34,6 +47,7 @@ pub struct ViewComponentNode {
     pub filter: Option<String>,
     pub api_operation: Option<String>,
     pub spec: Option<String>,
+    pub conditional_expression: Option<String>,
     pub domain: Option<String>,
 }
 
@@ -42,6 +56,7 @@ pub struct EventNode {
     pub name: String,
     pub event_type: String,
     pub params: Option<Vec<String>>,
+    pub conditional_expression: Option<String>,
     pub domain: Option<String>,
 }
 
@@ -69,6 +84,20 @@ pub struct DataBindingNode {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NavigationFlowData {
+    pub target_param_binding: Option<String>,
+}
+
+/// A NavigationFlow edge resolved with full fidelity: `source` is the
+/// element the event hangs off (a ViewContainer or ViewComponent name),
+/// `source_container` is the owning ViewContainer (equal to `source` when
+/// the event hangs off the container itself), and `target_param_binding`
+/// is the raw JSON persisted at ingest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NavigationFlowRecord {
+    pub source: String,
+    pub source_container: String,
+    pub event: String,
+    pub target: String,
     pub target_param_binding: Option<String>,
 }
 

@@ -1,0 +1,89 @@
+# shadcn-svelte design-system pack for the IFML UI pipeline.
+#
+# Binds semantic slot roles to shadcn-svelte components under the default
+# `$lib/components/ui/...` import paths. Selected with
+# `--ifml-design-system shadcn-svelte` or `ifml_design_system = "shadcn-svelte"`
+# in profiles.toml features. Project-provided ifml-components.toml entries take
+# precedence per resolution tier (name -> type -> role -> kind), so override any
+# entry here by declaring the same selector with your own component.
+
+# Submit/cancel/back/click event controls; `type: button` components.
+[[component]]
+role = "action-control"
+kind = "button"
+path = "$lib/components/ui/button/button.svelte"
+export = "Button"
+testids = { root = "button" }
+
+# Navigation controls render the button styled as a link (href passthrough).
+[[component]]
+role = "navigation-control"
+path = "$lib/components/ui/button/button.svelte"
+export = "Button"
+testids = { root = "link-button" }
+
+# Text inputs, available for per-field slot resolution.
+[[component]]
+role = "field"
+path = "$lib/components/ui/input/input.svelte"
+export = "Input"
+testids = { root = "input" }
+
+# Dropdown / radio / checkbox slots.
+[[component]]
+role = "selection-field"
+kind = "dropdown"
+path = "$lib/components/ui/select/select.svelte"
+export = "Select"
+testids = { root = "select" }
+
+# Data tables, typed table specs and `type: list` components.
+[[component]]
+role = "collection"
+kind = "table"
+path = "$lib/components/ui/table/table.svelte"
+export = "Table"
+testids = { root = "table", row = "table-row" }
+
+[[component]]
+role = "collection"
+kind = "list"
+path = "$lib/components/ui/table/table.svelte"
+export = "Table"
+testids = { root = "table", row = "table-row" }
+
+# Modal view containers.
+[[component]]
+role = "modal-view"
+path = "$lib/components/ui/dialog/dialog.svelte"
+export = "Dialog"
+testids = { root = "dialog" }
+
+# Details views.
+[[component]]
+role = "display"
+kind = "details"
+path = "$lib/components/ui/card/card.svelte"
+export = "Card"
+testids = { root = "card" }
+
+# xor/wizard groupings.
+[[component]]
+role = "presentation-container"
+path = "$lib/components/ui/card/card.svelte"
+export = "Card"
+testids = { root = "card" }
+
+# Landmark views.
+[[component]]
+role = "shell"
+path = "$lib/components/ui/navigation-menu/navigation-menu.svelte"
+export = "NavigationMenu"
+testids = { root = "navigation-menu" }
+
+# Paginated tables.
+[[component]]
+role = "pagination"
+path = "$lib/components/ui/pagination/pagination.svelte"
+export = "Pagination"
+testids = { root = "pagination" }

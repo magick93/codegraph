@@ -3,13 +3,15 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, ColumnInfo,
-    CompositeColumn, CompositeRange, CompositionNode, CompositionTree, DataBindingResolution,
-    DetectionSource, EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
-    ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode, PolicyNode,
-    PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData, SchemaNode,
-    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
+    resolve_effective_permits, ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode,
+    ApiResourceNode, CapabilityNode, CodeList, CollectionNode, ColumnInfo, CompositeColumn,
+    CompositeRange, CompositionNode, CompositionTree, DataBindingResolution, DetectionSource,
+    EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, GrantEdge,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleUseRecord, NamespaceNode,
+    NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate, PermissionNode,
+    Permit, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
+    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -937,12 +939,21 @@ impl GraphQuerier for GrafeoEngine {
     async fn get_ifml_view_containers(&self) -> Result<Vec<ViewContainerNode>, GraphError> {
         let gql = "MATCH (vc:ViewContainer) RETURN \
             vc.name, vc.label, vc.is_xor, vc.is_default, \
-            vc.is_landmark, vc.is_modal, vc.domain \
+            vc.is_landmark, vc.is_modal, vc.conditional_expression, vc.domain, \
+            vc.module_uses, vc.roles, vc.requires \
             ORDER BY vc.name";
         let result = query_gql(self, gql)?;
         let reader = RowReader::from_columns(&result.columns);
         let mut nodes = Vec::new();
         for row in &result.rows {
+            let module_uses_str: Option<String> = reader.get_opt_string(row, "vc.module_uses")?;
+            let module_uses: Option<Vec<ModuleUseRecord>> =
+                module_uses_str.and_then(|s| serde_json::from_str(&s).ok());
+            let roles_str: Option<String> = reader.get_opt_string(row, "vc.roles")?;
+            let roles: Option<Vec<String>> = roles_str.and_then(|s| serde_json::from_str(&s).ok());
+            let requires_str: Option<String> = reader.get_opt_string(row, "vc.requires")?;
+            let requires: Option<Vec<String>> =
+                requires_str.and_then(|s| serde_json::from_str(&s).ok());
             nodes.push(ViewContainerNode {
                 name: reader.get_string(row, "vc.name")?,
                 label: reader.get_opt_string(row, "vc.label")?,
@@ -950,7 +961,11 @@ impl GraphQuerier for GrafeoEngine {
                 is_default: reader.get_bool(row, "vc.is_default")?,
                 is_landmark: reader.get_bool(row, "vc.is_landmark")?,
                 is_modal: reader.get_bool(row, "vc.is_modal")?,
+                conditional_expression: reader.get_opt_string(row, "vc.conditional_expression")?,
                 domain: reader.get_opt_string(row, "vc.domain")?,
+                module_uses,
+                roles,
+                requires,
             });
         }
         Ok(nodes)
@@ -964,7 +979,8 @@ impl GraphQuerier for GrafeoEngine {
         let gql = format!(
             "MATCH (vc:ViewContainer {{name: '{escaped}'}})-[:ContainsViewComponent]->(comp:ViewComponent) \
              RETURN comp.name, comp.component_type, comp.mode, comp.entity, \
-             comp.fields, comp.filter, comp.api_operation, comp.spec, comp.domain ORDER BY comp.name"
+             comp.fields, comp.filter, comp.api_operation, comp.spec, \
+             comp.conditional_expression, comp.domain ORDER BY comp.name"
         );
         let result = query_gql(self, &gql)?;
         let reader = RowReader::from_columns(&result.columns);
@@ -982,6 +998,8 @@ impl GraphQuerier for GrafeoEngine {
                 filter: reader.get_opt_string(row, "comp.filter")?,
                 api_operation: reader.get_opt_string(row, "comp.api_operation")?,
                 spec: reader.get_opt_string(row, "comp.spec")?,
+                conditional_expression: reader
+                    .get_opt_string(row, "comp.conditional_expression")?,
                 domain: reader.get_opt_string(row, "comp.domain")?,
             });
         }
@@ -993,7 +1011,8 @@ impl GraphQuerier for GrafeoEngine {
         let gql = format!(
             "MATCH (parent)-[:HasEvent]->(evt:Event) \
              WHERE parent.name = '{escaped}' \
-             RETURN evt.name, evt.event_type, evt.params, evt.domain ORDER BY evt.name"
+             RETURN evt.name, evt.event_type, evt.params, \
+             evt.conditional_expression, evt.domain ORDER BY evt.name"
         );
         let result = query_gql(self, &gql)?;
         let reader = RowReader::from_columns(&result.columns);
@@ -1006,26 +1025,52 @@ impl GraphQuerier for GrafeoEngine {
                 name: reader.get_string(row, "evt.name")?,
                 event_type: reader.get_string(row, "evt.event_type")?,
                 params,
+                conditional_expression: reader.get_opt_string(row, "evt.conditional_expression")?,
                 domain: reader.get_opt_string(row, "evt.domain")?,
             });
         }
         Ok(nodes)
     }
 
-    async fn get_ifml_navigation_flows(&self) -> Result<Vec<(String, String, String)>, GraphError> {
+    async fn get_ifml_navigation_flows(&self) -> Result<Vec<NavigationFlowRecord>, GraphError> {
         let gql = "MATCH (source)-[:HasEvent]->(evt:Event)-[flow:NavigationFlow]->(target:ViewContainer) \
-                   RETURN source.name, evt.name, target.name";
+                   RETURN source.name, evt.name, target.name, flow.target_param_binding";
         let result = query_gql(self, gql)?;
         let reader = RowReader::from_columns(&result.columns);
         let mut flows = Vec::new();
         for row in &result.rows {
-            flows.push((
-                reader.get_string(row, "source.name")?,
-                reader.get_string(row, "evt.name")?,
-                reader.get_string(row, "target.name")?,
-            ));
+            flows.push(NavigationFlowRecord {
+                source: reader.get_string(row, "source.name")?,
+                source_container: String::new(),
+                event: reader.get_string(row, "evt.name")?,
+                target: reader.get_string(row, "target.name")?,
+                target_param_binding: reader.get_opt_string(row, "flow.target_param_binding")?,
+            });
+        }
+
+        let owners = component_owner_containers(self)?;
+        for flow in &mut flows {
+            flow.source_container = owners
+                .get(&flow.source)
+                .cloned()
+                .unwrap_or_else(|| flow.source.clone());
         }
         Ok(flows)
+    }
+
+    async fn get_ifml_action_triggers(&self) -> Result<Vec<(String, String)>, GraphError> {
+        let gql = "MATCH (evt:Event)-[:TriggersAction]->(a:ActionNode) \
+                   RETURN evt.name, a.name ORDER BY evt.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut triggers = Vec::new();
+        for row in &result.rows {
+            triggers.push((
+                reader.get_string(row, "evt.name")?,
+                reader.get_string(row, "a.name")?,
+            ));
+        }
+        Ok(triggers)
     }
 
     async fn get_ifml_data_flows(
@@ -1064,6 +1109,29 @@ impl GraphQuerier for GrafeoEngine {
     async fn get_ifml_parameters(&self) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
         let gql = "MATCH (p:ParameterDefinition) RETURN p.name, p.direction, p.type_ref, p.domain ORDER BY p.name";
         let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(ParameterDefinitionNode {
+                name: reader.get_string(row, "p.name")?,
+                direction: reader.get_string(row, "p.direction")?,
+                type_ref: reader.get_string(row, "p.type_ref")?,
+                domain: reader.get_opt_string(row, "p.domain")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_parameters_for_view(
+        &self,
+        container_name: &str,
+    ) -> Result<Vec<ParameterDefinitionNode>, GraphError> {
+        let escaped = container_name.replace('\'', "\\'");
+        let gql = format!(
+            "MATCH (vc:ViewContainer {{name: '{escaped}'}})-[:HasParameter]->(p:ParameterDefinition) \
+             RETURN p.name, p.direction, p.type_ref, p.domain ORDER BY p.name"
+        );
+        let result = query_gql(self, &gql)?;
         let reader = RowReader::from_columns(&result.columns);
         let mut nodes = Vec::new();
         for row in &result.rows {
@@ -1646,10 +1714,110 @@ impl GraphQuerier for GrafeoEngine {
             .map(|row| row_to_tenant_node(&reader, row))
             .collect()
     }
+
+    // ── Authorization metamodel queries ───────────────────────────────
+
+    async fn get_actors(&self) -> Result<Vec<ActorNode>, GraphError> {
+        let gql = "MATCH (a:Actor) RETURN a.name, a.kind, a.extends, a.block ORDER BY a.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(ActorNode {
+                name: reader.get_string(row, "a.name")?,
+                kind: reader.get_opt_string(row, "a.kind")?,
+                extends: reader.get_opt_string(row, "a.extends")?,
+                block: reader.get_opt_string(row, "a.block")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_capabilities(&self) -> Result<Vec<CapabilityNode>, GraphError> {
+        let gql = "MATCH (c:Capability) RETURN c.name, c.class, c.block ORDER BY c.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(CapabilityNode {
+                name: reader.get_string(row, "c.name")?,
+                class: reader.get_string(row, "c.class")?,
+                block: reader.get_opt_string(row, "c.block")?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_grants(&self) -> Result<Vec<GrantEdge>, GraphError> {
+        let gql = "MATCH (a:Actor)-[g:Grant]->(c:Capability) \
+                   RETURN a.name, c.name, g.effect, g.when_expr, g.obligations \
+                   ORDER BY a.name, c.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut grants = Vec::new();
+        for row in &result.rows {
+            let obligations_json = reader.get_opt_string(row, "g.obligations")?;
+            let obligations: Vec<String> = obligations_json
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            grants.push(GrantEdge {
+                actor: reader.get_string(row, "a.name")?,
+                capability: reader.get_string(row, "c.name")?,
+                effect: reader.get_string(row, "g.effect")?,
+                when: reader.get_opt_string(row, "g.when_expr")?,
+                obligations,
+            });
+        }
+        Ok(grants)
+    }
+
+    async fn get_actor_policy(&self) -> Result<Option<ActorPolicyNode>, GraphError> {
+        let gql = "MATCH (p:ActorPolicy) RETURN p.blocks, p.never_both LIMIT 1";
+        let result = query_gql(self, gql)?;
+        if result.rows.is_empty() {
+            return Ok(None);
+        }
+        let reader = RowReader::from_columns(&result.columns);
+        let row = &result.rows[0];
+        let blocks: Vec<String> = reader
+            .get_opt_string(row, "p.blocks")?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let never_both: Vec<NeverBothGroup> = reader
+            .get_opt_string(row, "p.never_both")?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        Ok(Some(ActorPolicyNode { blocks, never_both }))
+    }
+
+    async fn effective_permits(&self, actor: &str) -> Result<Vec<Permit>, GraphError> {
+        let actors = self.get_actors().await?;
+        let grants = self.get_grants().await?;
+        Ok(resolve_effective_permits(&actors, &grants, actor))
+    }
 }
 
 /// Maximum nesting depth for recursive composition tree building.
 const MAX_COMPOSITION_DEPTH: usize = 10;
+
+/// Map of ViewComponent name → owning ViewContainer name, resolved from
+/// ContainsViewComponent edges.
+fn component_owner_containers(
+    engine: &GrafeoEngine,
+) -> Result<HashMap<String, String>, GraphError> {
+    let gql = "MATCH (vc:ViewContainer)-[:ContainsViewComponent]->(comp:ViewComponent) \
+               RETURN vc.name, comp.name";
+    let result = query_gql(engine, gql)?;
+    let reader = RowReader::from_columns(&result.columns);
+    let mut owners = HashMap::new();
+    for row in &result.rows {
+        owners.insert(
+            reader.get_string(row, "comp.name")?,
+            reader.get_string(row, "vc.name")?,
+        );
+    }
+    Ok(owners)
+}
 
 /// Build the synthetic codelist-array child node (single "code" column) for a
 /// codelist array property and push it onto `children`.

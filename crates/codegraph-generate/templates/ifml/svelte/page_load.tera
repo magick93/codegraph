@@ -1,30 +1,72 @@
 import type { PageLoad } from './$types';
+{% if has_fetch %}
+import { error } from '@sveltejs/kit';
+{% endif %}
+{%- if view_roles or view_requires %}
+import { redirect } from '@sveltejs/kit';
+{%- if view_roles %}
+import { currentRoles } from '$lib/roles';
+{%- endif %}
+{%- if view_requires %}
+import { can } from '$lib/roles';
+{%- endif %}
+{%- if guard_consts %}
 
-export const load: PageLoad = async ({ params, fetch }) => {
-{% for comp in components %}
-{% if comp.component_type == "list" %}
-	const response = await fetch('/api/{{ api_version }}/{{ comp.route_name }}');
-	const items = await response.json();
-
-	return { items };
-
-{% elif comp.component_type == "details" %}
-	const response = await fetch(`/api/{{ api_version }}/{{ comp.route_name }}/${params.id}`);
-	const item = await response.json();
-
-	return { item };
-
-{% elif comp.component_type == "form" %}
-	// Form load: fetch data for editing if params.id is present
-{% if comp.entity %}
-	if (params.id) {
-		const response = await fetch(`/api/{{ api_version }}/{{ comp.route_name }}/${params.id}`);
-		const formData = await response.json();
-		return { formData };
+{{ guard_consts }}
+{%- endif %}
+{%- endif %}
+export const load: PageLoad = async ({ params, url, fetch }) => {
+{%- if view_roles or view_requires %}
+{%- if view_roles %}
+	const roles = currentRoles();
+{%- endif %}
+{%- if view_requires %}
+	if (viewRequires.length && !viewRequires.some((c) => can(c))) {
+		throw redirect(303, '{{ denial_target }}');
 	}
-{% endif %}
-{% endif %}
-{% endfor %}
+{%- endif %}
+{%- if view_roles %}
+	if (viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {
+		throw redirect(303, '{{ denial_target }}');
+	}
+{%- endif %}
+{%- endif %}
+	const result: Record<string, unknown> = {};
+{%- if param_defaults %}
+	const paramDefaults: Record<string, string> = {};
+{%- for pd in param_defaults %}
+	paramDefaults['{{ pd.name }}'] = url.searchParams.get('{{ pd.name }}') ?? params.{{ pd.name }} ?? {{ pd.default }};
+{%- endfor %}
+	result.params = paramDefaults;
+{%- endif %}
+{% for comp in components %}
+{%- if comp.fetch_list %}
+	const {{ comp.name }}Response = await fetch(`{{ comp.api.base_path }}{% if comp.paginate %}?page=${url.searchParams.get('page') ?? '0'}&page_size=${url.searchParams.get('page_size') ?? '20'}{% endif %}`);
+	if (!{{ comp.name }}Response.ok) {
+		error({{ comp.name }}Response.status, 'Failed to load {{ comp.entity | lower }}');
+	}
+	const {{ comp.name }}Data = await {{ comp.name }}Response.json();
+	result.items = Array.isArray({{ comp.name }}Data) ? {{ comp.name }}Data : {{ comp.name }}Data.data ?? [];
+{%- elif comp.fetch_item %}
+	const {{ comp.id_param }} = url.searchParams.get('{{ comp.id_param }}') ?? params.{{ comp.id_param }}{% if comp.id_default %} ?? {{ comp.id_default }}{% endif %};
+	if ({{ comp.id_param }}) {
+		const {{ comp.name }}Response = await fetch(`{{ comp.api.base_path }}/${ {{ comp.id_param }} }`);
+		if (!{{ comp.name }}Response.ok) {
+			error({{ comp.name }}Response.status, 'Failed to load {{ comp.entity | lower }}');
+		}
+		result.item = await {{ comp.name }}Response.json();
+	}
+{%- elif comp.fetch_form %}
+	const {{ comp.id_param }} = url.searchParams.get('{{ comp.id_param }}') ?? params.{{ comp.id_param }}{% if comp.id_default %} ?? {{ comp.id_default }}{% endif %};
+	if ({{ comp.id_param }}) {
+		const {{ comp.name }}Response = await fetch(`{{ comp.api.base_path }}/${ {{ comp.id_param }} }`);
+		if (!{{ comp.name }}Response.ok) {
+			error({{ comp.name }}Response.status, 'Failed to load {{ comp.entity | lower }}');
+		}
+		result.formData = await {{ comp.name }}Response.json();
+	}
+{%- endif %}
+{%- endfor %}
 
-	return {};
+	return result;
 };

@@ -1,17 +1,137 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+{%- if needs_goto %}
+	import { goto } from '$app/navigation';
+{%- endif %}
+{%- if needs_on_mount %}
+	import { onMount } from 'svelte';
+{%- endif %}
+{%- for imp in control_gate.imports %}
+	import { {{ imp }} } from '$lib/roles';
+{%- endfor %}
+{%- for imp in imports %}
+	import {{ imp.export_name }} from '{{ imp.import_path }}';
+{%- endfor %}
 
-	let { data }: { data: PageData } = $props();
+	let { data, params }: { data: PageData; params: Record<string, string> } = $props();
+{%- if control_gate.consts %}
+
+	{{ control_gate.consts }}
+{%- endif %}
+{%- if modal %}
+	let dialog_open = $state(true);
+
+	function close_dialog() {
+		dialog_open = false;
+		history.back();
+	}
+{% endif %}
+{%- if has_submit %}
+	let submitting = $state(false);
+	let formError = $state('');
+{%- endif %}
+{%- for evt in view_events %}
+{%- if evt.action_kind == "navigate" and evt.event_type == "load" %}
+
+	onMount(() => {
+		goto({{ evt.url_expr }});
+	});
+{%- endif %}
+{%- endfor %}
+{%- for comp in components %}
+{%- for evt in comp.events %}
+{%- if evt.action_kind == "navigate" %}
+
+	function {{ evt.handler_name }}(row: Record<string, unknown>) {
+		goto({{ evt.url_expr }});
+	}
+{%- endif %}
+{%- endfor %}
+{%- endfor %}
+{%- for comp in components %}
+{%- if comp.submit %}
+
+	async function {{ comp.submit.handler_name }}(event: SubmitEvent) {
+		event.preventDefault();
+{%- if comp.submit.client_validate %}
+		const form = event.currentTarget as HTMLFormElement;
+		if (!form.checkValidity()) {
+			const invalid = form.querySelector(':invalid');
+			formError = invalid?.getAttribute('data-validate-message') ?? 'Please review the highlighted fields';
+			return;
+		}
+		const formData = Object.fromEntries(new FormData(form));
+{%- else %}
+		const formData = Object.fromEntries(new FormData(event.currentTarget as HTMLFormElement));
+{%- endif %}
+		submitting = true;
+		formError = '';
+		try {
+			const response = await fetch({{ comp.submit.url_expr }}, {
+				method: '{{ comp.submit.method }}',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(formData)
+			});
+			if (!response.ok) {
+				const body = await response.json().catch(() => null);
+				formError = body?.error ?? body?.message ?? `Request failed (${response.status})`;
+				return;
+			}
+{%- if comp.submit.navigate_url %}
+			goto({{ comp.submit.navigate_url }});
+{%- endif %}
+		} finally {
+			submitting = false;
+		}
+	}
+{%- endif %}
+{%- endfor %}
 </script>
 
 <svelte:head>
 	<title>{{ label }}</title>
 </svelte:head>
 
-{% for comp in components %}
-{% if comp.table %}
+{%- if modal %}
+{{ modal.open_line }}
+{%- endif %}
+{%- if container %}
+{{ container.open_line }}
+{%- endif %}
+{%- for comp in components %}
+{% if comp.mapping %}
+<{{ comp.mapping.import_name }}
+{%- if comp.data_prop %}
+	{{ comp.data_prop }}
+{%- endif %}
+{%- if comp.fields_prop %}
+	{{ comp.fields_prop }}
+{%- endif %}
+{%- if comp.form or comp.component_type == "details" %}
+	params={params}
+{%- endif %}
+{%- if comp.mapping.testid %}
+	testid="{{ comp.mapping.testid }}"
+{%- endif %}
+{%- if comp.mapping.row_testid %}
+	rowTestid="{{ comp.mapping.row_testid }}"
+{%- endif %}
+{%- if comp.submit_prop %}
+	{{ comp.submit_prop }}
+{%- endif %}
+{%- if comp.data_validate %}
+	data-validate="{{ comp.data_validate }}"
+{%- endif %}
+{%- if comp.data_validate_message %}
+	data-validate-message="{{ comp.data_validate_message }}"
+{%- endif %}
+{%- for p in comp.event_props %}
+	{{ p }}
+{%- endfor %}
+/>
+{% elif comp.table %}
 <h1>{{ label }}</h1>
-<table{% if comp.table.pagination %} data-pagination="true"{% endif %}>
+<table data-testid="{{ comp.name }}-table"{% if comp.table.pagination %} data-pagination="true"{% endif %}>
 	<thead>
 		<tr>
 		{% for col in comp.table.columns %}
@@ -21,22 +141,23 @@
 	</thead>
 	<tbody>
 {% raw %}		{#each data.items as item}{% endraw %}
-			<tr>
+			<tr data-testid="{{ comp.name }}-row"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
 			{% for col in comp.table.columns %}
 				<td>{item.{{ col.binding }}}</td>
-			{% endfor %}
+			{% endfor %}{% if comp.workflow %}
+			<td>{{ comp.workflow.badge_html }}</td>{% endif %}
 			</tr>
 {% raw %}		{/each}{% endraw %}
 	</tbody>
 </table>
 
 {% elif comp.form %}
-<form method="POST">
+<form data-testid="{{ comp.name }}-form"{% if comp.submit_prop %} {{ comp.submit_prop }}{% else %} method="POST"{% endif %}>
 	{% for field in comp.form.fields %}
 	{% if field.is_select %}
 	<label>
 		{{ field.name }}
-		<select name="{{ field.name }}"{% if field.required %} required{% endif %}>
+		<select name="{{ field.name }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %}>
 			{% for value in field.values %}
 			<option value="{{ value }}">{{ value }}</option>
 			{% endfor %}
@@ -55,24 +176,32 @@
 	{% elif field.is_textarea %}
 	<label>
 		{{ field.name }}
-		<textarea name="{{ field.name }}"{% if field.required %} required{% endif %}></textarea>
+		<textarea name="{{ field.name }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %}></textarea>
 	</label>
 	{% else %}
 	<label>
 		{{ field.name }}
-		<input name="{{ field.name }}" type="{{ field.input_type }}"{% if field.required %} required{% endif %} />
+		<input name="{{ field.name }}" type="{{ field.input_type }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %} />
 	</label>
 	{% endif %}
 	{% endfor %}
-	<button type="submit">Submit</button>
+{% if comp.submit_handler %}
+{% raw %}	{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
+{% endif %}
+	{{ control_gate.open }}{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}{{ control_gate.close }}{% if comp.workflow %}
+	{{ comp.workflow.badge_html }}
+{% endif %}
 </form>
+{%- for btn in comp.buttons %}
+{{ control_gate.open }}<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>{{ control_gate.close }}
+{%- endfor %}
 
 {% elif comp.chart %}
 <div class="chart" data-chart-kind="{{ comp.chart.kind }}"{% if comp.chart.label_field %} data-label-field="{{ comp.chart.label_field }}"{% endif %}{% if comp.chart.value_fields %} data-value-fields="{{ comp.chart.value_fields | join(sep=',') }}"{% endif %}></div>
 
 {% elif comp.component_type == "list" %}
 <h1>{{ label }}</h1>
-<table>
+<table data-testid="{{ comp.name }}-table">
 	<thead>
 		<tr>
 		{% for field in comp.fields %}
@@ -82,33 +211,51 @@
 	</thead>
 	<tbody>
 {% raw %}		{#each data.items as item}{% endraw %}
-			<tr>
+			<tr data-testid="{{ comp.name }}-row"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
 			{% for field in comp.fields %}
-				<td>{item.{{ field }}</td>
-			{% endfor %}
+				<td>{item.{{ field }}}</td>
+			{% endfor %}{% if comp.workflow %}
+			<td>{{ comp.workflow.badge_html }}</td>{% endif %}
 			</tr>
 {% raw %}		{/each}{% endraw %}
 	</tbody>
 </table>
 
 {% elif comp.component_type == "form" %}
-<form method="POST">
+<form data-testid="{{ comp.name }}-form"{% if comp.submit_prop %} {{ comp.submit_prop }}{% else %} method="POST"{% endif %}>
 	{% for field in comp.fields %}
 	<label>
 		{{ field }}
 		<input name="{{ field }}" />
 	</label>
 	{% endfor %}
-	<button type="submit">Submit</button>
+{% if comp.submit_handler %}
+{% raw %}	{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
+{% endif %}
+	{{ control_gate.open }}{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}{{ control_gate.close }}{% if comp.workflow %}
+	{{ comp.workflow.badge_html }}
+{% endif %}
 </form>
+{%- for btn in comp.buttons %}
+{{ control_gate.open }}<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>{{ control_gate.close }}
+{%- endfor %}
 
 {% elif comp.component_type == "details" %}
-<dl>
+<dl data-testid="{{ comp.name }}-details">
 	{% for field in comp.fields %}
 	<dt>{{ field }}</dt>
-	<dd>{data.{{ field }}</dd>
+	<dd>{data.{{ field }}}</dd>
 	{% endfor %}
-</dl>
+</dl>{% if comp.workflow %}
+{{ comp.workflow.badge_html }}
+{% endif %}
 
 {% endif %}
 {% endfor %}
+{% if container %}
+{{ container.close_line }}
+{% endif %}
+{%- if modal %}
+	<button type="button" data-testid="{{ modal.close_testid }}" onclick={close_dialog}>Close</button>
+{{ modal.close_line }}
+{% endif %}

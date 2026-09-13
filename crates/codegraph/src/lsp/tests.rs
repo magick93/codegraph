@@ -877,6 +877,634 @@ fn test_lsp_code_action_missing_entity() {
     do_shutdown(&client_conn);
 }
 
+#[test]
+fn test_lsp_diagnostic_unknown_field_in_fields() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    let mut schema_infos = std::collections::HashMap::new();
+    schema_infos.insert(
+        "Customer".to_string(),
+        SchemaInfo {
+            title: "CustomerType".to_string(),
+            description: None,
+            properties: vec!["name".to_string(), "email".to_string()],
+            rel_path: "customer.json".to_string(),
+        },
+    );
+    let state = GrafeoState {
+        entity_names: vec!["Customer".to_string()],
+        schema_infos,
+        schema_dirs: vec![],
+    };
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, state).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // 'bogus' is not a property of CustomerType — should warn naming the schema title
+    open_document(
+        &client_conn,
+        "file:///bad_field.ifml",
+        r#"view "Test" { component "c" { type: list; data: Customer; fields: [name, bogus]; } }"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///bad_field.ifml");
+    assert!(
+        params.diagnostics.iter().any(|d| {
+            d.message.contains("bogus")
+                && d.message.contains("Customer")
+                && d.message.contains("CustomerType")
+        }),
+        "should warn about unknown field 'bogus' on entity 'Customer' naming schema title, got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_no_field_diagnostic_for_known_fields() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    let mut schema_infos = std::collections::HashMap::new();
+    schema_infos.insert(
+        "Customer".to_string(),
+        SchemaInfo {
+            title: "CustomerType".to_string(),
+            description: None,
+            properties: vec!["name".to_string(), "email".to_string()],
+            rel_path: "customer.json".to_string(),
+        },
+    );
+    let state = GrafeoState {
+        entity_names: vec!["Customer".to_string()],
+        schema_infos,
+        schema_dirs: vec![],
+    };
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, state).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    open_document(
+        &client_conn,
+        "file:///good_fields.ifml",
+        r#"view "Test" { component "c" { type: list; data: Customer; fields: [name, email]; } }"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///good_fields.ifml");
+    assert!(
+        !params
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("not found on entity")),
+        "known fields should not produce field diagnostics, got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_completion_field_names_in_fields_context() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    let mut schema_infos = std::collections::HashMap::new();
+    schema_infos.insert(
+        "Customer".to_string(),
+        SchemaInfo {
+            title: "CustomerType".to_string(),
+            description: None,
+            properties: vec!["name".to_string(), "email".to_string()],
+            rel_path: "customer.json".to_string(),
+        },
+    );
+    let state = GrafeoState {
+        entity_names: vec!["Customer".to_string()],
+        schema_infos,
+        schema_dirs: vec![],
+    };
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, state).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    let text = r#"view "A" { component "c" { type: list; data: Customer; fields: [name, ] } }"#;
+    open_document(&client_conn, "file:///fields_ctx.ifml", text);
+
+    let _ = recv_diagnostics(&client_conn, "file:///fields_ctx.ifml");
+
+    // Place the cursor right after "fields: [" — the fields context should
+    // offer the bound entity's properties.
+    let pos = text.find("fields: [").unwrap() + "fields: [".len();
+    client_conn
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2i32),
+            method: "textDocument/completion".to_string(),
+            params: serde_json::json!({
+                "textDocument": { "uri": "file:///fields_ctx.ifml" },
+                "position": { "line": 0, "character": pos }
+            }),
+        }))
+        .unwrap();
+
+    let msg = client_conn.receiver.recv().unwrap();
+    match msg {
+        Message::Response(resp) => {
+            let result = resp.result.unwrap_or(serde_json::Value::Null);
+            assert!(!result.is_null(), "completion should return results");
+            let completion: CompletionResponse = serde_json::from_value(result).unwrap();
+            match completion {
+                CompletionResponse::List(list) => {
+                    let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
+                    assert!(
+                        labels.contains(&"email") && labels.contains(&"name"),
+                        "fields context should suggest properties of Customer, got: {labels:?}"
+                    );
+                }
+                _ => panic!("Expected completion list"),
+            }
+        }
+        _ => panic!("Expected completion response"),
+    }
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_diagnostic_unknown_navigate_target() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+    do_init_handshake(&client_conn);
+
+    // navigate("Missing") — no view "Missing" declared → WARNING
+    open_document(
+        &client_conn,
+        "file:///nav_bad.ifml",
+        r#"view "List" {
+    component "c" {
+        type: list;
+        on select -> navigate("Missing", { id: row.id });
+    }
+}"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///nav_bad.ifml");
+    let unknown_view: Vec<&Diagnostic> = params
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("Unknown view"))
+        .collect();
+    assert!(
+        unknown_view.iter().any(|d| d.message.contains("Missing")),
+        "should warn about unknown navigate target 'Missing', got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        unknown_view
+            .iter()
+            .all(|d| d.severity == Some(DiagnosticSeverity::WARNING)),
+        "unknown navigate target should be a warning"
+    );
+
+    // navigate("Detail") with view "Detail" declared → no unknown-view warning
+    open_document(
+        &client_conn,
+        "file:///nav_good.ifml",
+        r#"view "List" {
+    component "c" {
+        type: list;
+        on select -> navigate("Detail", { id: row.id });
+    }
+}
+
+view "Detail" { }"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///nav_good.ifml");
+    assert!(
+        !params
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("Unknown view")),
+        "valid navigate target should NOT warn, got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_completion_module_names_after_use() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    let text = "module \"Maps\" { input { } output { } }\nview \"A\" {\n    use \"\n}";
+    open_document(&client_conn, "file:///use_ctx.ifml", text);
+
+    let _ = recv_diagnostics(&client_conn, "file:///use_ctx.ifml");
+
+    // Cursor right after the opening quote of `use "`
+    client_conn
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2i32),
+            method: "textDocument/completion".to_string(),
+            params: serde_json::json!({
+                "textDocument": { "uri": "file:///use_ctx.ifml" },
+                "position": { "line": 2, "character": 9 }
+            }),
+        }))
+        .unwrap();
+
+    let msg = client_conn.receiver.recv().unwrap();
+    match msg {
+        Message::Response(resp) => {
+            let result = resp.result.unwrap_or(serde_json::Value::Null);
+            assert!(!result.is_null(), "completion should return results");
+            let completion: CompletionResponse = serde_json::from_value(result).unwrap();
+            match completion {
+                CompletionResponse::List(list) => {
+                    let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
+                    assert!(
+                        labels.contains(&"Maps"),
+                        "completion after `use \"` should suggest declared modules, got: {labels:?}"
+                    );
+                }
+                _ => panic!("Expected completion list"),
+            }
+        }
+        _ => panic!("Expected completion response"),
+    }
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_diagnostic_unknown_module_use() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // use "Missing" with no module "Missing" declared → WARNING
+    open_document(
+        &client_conn,
+        "file:///use_bad.ifml",
+        "module \"AuditTrail\" { input { } output { } }\nview \"A\" {\n    use \"Missing\";\n}",
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///use_bad.ifml");
+    assert!(
+        !params.diagnostics.is_empty(),
+        "use of undeclared module should produce diagnostics, got none"
+    );
+    assert!(
+        params
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("Unknown module")
+                && d.message.contains("Missing")
+                && d.severity == Some(DiagnosticSeverity::WARNING)),
+        "should warn about unknown module 'Missing', got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    // use "AuditTrail" with module declared → no unknown-module warning
+    open_document(
+        &client_conn,
+        "file:///use_good.ifml",
+        "module \"AuditTrail\" { input { } output { } }\nview \"A\" {\n    use \"AuditTrail\" as audit { scope: org; };\n}",
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///use_good.ifml");
+    assert!(
+        params.diagnostics.is_empty(),
+        "declared module use should produce no diagnostics, got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_diagnostic_new_syntax_parses_clean() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // if guards, event conditions, use statements, actor declarations,
+    // roles/messages arrays and param defaults must not yield syntax ERRORs
+    open_document(
+        &client_conn,
+        "file:///new_syntax.ifml",
+        r#"actor "Manager" { label: "mgr"; }
+
+view "A" {
+    roles: [manager];
+    messages: ["Welcome"];
+
+    if data.enabled;
+
+    component "c" {
+        type: list;
+
+        if count > 0;
+
+        on select(row) if row.active -> navigate("A");
+    }
+}"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///new_syntax.ifml");
+    let syntax_errors: Vec<&Diagnostic> = params
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+        .collect();
+    assert!(
+        syntax_errors.is_empty(),
+        "new pipeline syntax should parse without ERROR diagnostics, got: {:?}",
+        syntax_errors.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_completion_view_body_new_keywords() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // Empty line inside the view body (line 4), outside the component
+    open_document(
+        &client_conn,
+        "file:///view_kw.ifml",
+        "view \"A\" {\n    component \"c\" {\n        type: list;\n    }\n\n}",
+    );
+
+    let _ = recv_diagnostics(&client_conn, "file:///view_kw.ifml");
+
+    client_conn
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2i32),
+            method: "textDocument/completion".to_string(),
+            params: serde_json::json!({
+                "textDocument": { "uri": "file:///view_kw.ifml" },
+                "position": { "line": 4, "character": 0 }
+            }),
+        }))
+        .unwrap();
+
+    let msg = client_conn.receiver.recv().unwrap();
+    match msg {
+        Message::Response(resp) => {
+            let result = resp.result.unwrap_or(serde_json::Value::Null);
+            assert!(!result.is_null(), "completion should return results");
+            let completion: CompletionResponse = serde_json::from_value(result).unwrap();
+            match completion {
+                CompletionResponse::List(list) => {
+                    let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
+                    for expected in ["if", "use", "roles"] {
+                        assert!(
+                            labels.contains(&expected),
+                            "view body should suggest '{expected}', got: {labels:?}"
+                        );
+                    }
+                }
+                _ => panic!("Expected completion list"),
+            }
+        }
+        _ => panic!("Expected completion response"),
+    }
+
+    do_shutdown(&client_conn);
+}
+
+fn write_policy_fixture(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("domain.mox"),
+        "package example\n\nclass Ticket {\n    id readonly String ticketNo\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("policy.actor"),
+        concat!(
+            "import \"domain.mox\"\n",
+            "\n",
+            "actors Ops {\n",
+            "    actor Manager\n",
+            "    capability ViewDashboards on Ticket\n",
+            "\n",
+            "    grant Manager {\n",
+            "        permit ViewDashboards\n",
+            "    }\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+}
+
+fn temp_file_uri(dir: &std::path::Path, name: &str) -> String {
+    Url::from_file_path(dir.join(name))
+        .expect("valid file path")
+        .to_string()
+}
+
+#[test]
+fn test_lsp_diagnostic_unknown_capability_and_actor() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    write_policy_fixture(tmp.path());
+
+    let (server_conn, client_conn) = Connection::memory();
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    let uri = temp_file_uri(tmp.path(), "app.ifml");
+    open_document(
+        &client_conn,
+        &uri,
+        r#"import "policy.actor";
+
+view "Dashboard" {
+    roles: [Stranger];
+    requires: [NoSuchCap];
+}"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, &uri);
+    assert!(
+        params.diagnostics.iter().any(|d| {
+            d.message.contains("Unknown capability 'NoSuchCap'")
+                && d.severity == Some(DiagnosticSeverity::WARNING)
+        }),
+        "should warn about unknown capability 'NoSuchCap', got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        params.diagnostics.iter().any(|d| {
+            d.message.contains("Unknown actor 'Stranger'")
+                && d.severity == Some(DiagnosticSeverity::WARNING)
+        }),
+        "should warn about unknown actor 'Stranger', got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_known_capability_and_actor_stay_clean() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    write_policy_fixture(tmp.path());
+
+    let (server_conn, client_conn) = Connection::memory();
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    let uri = temp_file_uri(tmp.path(), "app.ifml");
+    open_document(
+        &client_conn,
+        &uri,
+        r#"import "policy.actor";
+
+view "Dashboard" {
+    roles: [Manager];
+    requires: [ViewDashboards];
+}"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, &uri);
+    assert!(
+        params.diagnostics.is_empty(),
+        "known capability and actor should produce no diagnostics, got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_unresolvable_import_no_diagnostics_storm() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+
+    let (server_conn, client_conn) = Connection::memory();
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // missing.actor does not exist: no policy resolves, so roles/requires
+    // must stay undiagnosed instead of flooding with warnings.
+    let uri = temp_file_uri(tmp.path(), "app.ifml");
+    open_document(
+        &client_conn,
+        &uri,
+        r#"import "missing.actor";
+
+view "Dashboard" {
+    roles: [Stranger];
+    requires: [NoSuchCap];
+}"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, &uri);
+    assert!(
+        !params.diagnostics.iter().any(
+            |d| d.message.contains("Unknown actor") || d.message.contains("Unknown capability")
+        ),
+        "unresolvable import must not produce capability/role diagnostics, got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
 fn send_update_positions(
     client: &Connection,
     id: i32,

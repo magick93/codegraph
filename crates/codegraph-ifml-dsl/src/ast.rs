@@ -7,6 +7,7 @@ pub enum IfmlDefinition {
     View(ViewDeclaration),
     Action(ActionDeclaration),
     Module(ModuleDeclaration),
+    Actor(ActorDeclaration),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,6 +28,14 @@ pub struct ViewDeclaration {
     pub containers: Vec<ContainerDeclaration>,
     pub components: Vec<ComponentDeclaration>,
     pub events: Vec<EventHandler>,
+    pub module_uses: Vec<ModuleUse>,
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// Capability requirements declared as `requires: [CapA, CapB];` on a
+    /// view. Extracted from the property bag; empty when absent.
+    #[serde(default)]
+    pub requires: Vec<String>,
+    pub condition: Option<Expression>,
     pub position: Option<Position>,
 }
 
@@ -44,6 +53,8 @@ pub struct ContainerDeclaration {
     pub properties: Vec<PropertyAssignment>,
     pub components: Vec<ComponentDeclaration>,
     pub events: Vec<EventHandler>,
+    pub module_uses: Vec<ModuleUse>,
+    pub condition: Option<Expression>,
     pub position: Option<Position>,
 }
 
@@ -111,6 +122,7 @@ pub struct ComponentDeclaration {
     pub spec: Option<ComponentSpec>,
     pub properties: Vec<PropertyAssignment>,
     pub events: Vec<EventHandler>,
+    pub condition: Option<Expression>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -161,6 +173,18 @@ pub struct FieldDef {
     pub required: bool,
     pub validations: Vec<Expression>,
     pub values: Vec<String>,
+    #[serde(default)]
+    pub messages: Vec<String>,
+}
+
+/// A `use "Module" as alias { ... };` statement instantiating a declared
+/// module inside a view or container body.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModuleUse {
+    pub module: String,
+    pub alias: Option<String>,
+    #[serde(default)]
+    pub properties: Vec<PropertyAssignment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -263,6 +287,7 @@ pub enum ValueExpression {
 pub struct EventHandler {
     pub event_type: EventType,
     pub params: Vec<String>,
+    pub condition: Option<Expression>,
     pub action: EventAction,
 }
 
@@ -327,6 +352,8 @@ pub struct ActionBody {
 pub struct ParameterDecl {
     pub name: String,
     pub type_ref: String,
+    #[serde(default)]
+    pub default: Option<ValueExpression>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -379,10 +406,70 @@ pub enum BinOp {
     Or,
 }
 
+impl BinOp {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BinOp::Eq => "==",
+            BinOp::Ne => "!=",
+            BinOp::Lt => "<",
+            BinOp::Le => "<=",
+            BinOp::Gt => ">",
+            BinOp::Ge => ">=",
+            BinOp::RegexMatch => "~=",
+            BinOp::NegRegex => "!~",
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Mod => "%",
+            BinOp::And => "&&",
+            BinOp::Or => "||",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum UnaryOp {
     Not,
     Neg,
+}
+
+impl UnaryOp {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            UnaryOp::Not => "!",
+            UnaryOp::Neg => "-",
+        }
+    }
+}
+
+/// Render an expression back to its DSL source form, deterministically:
+/// binary operators are surrounded by single spaces, unary prefixes bind
+/// directly, and explicit groups keep their parentheses.
+pub fn render_expression(expr: &Expression) -> String {
+    match expr {
+        Expression::Ident(s) => s.clone(),
+        Expression::StringLit(s) => format!("\"{s}\""),
+        Expression::NumLit(n) => n.to_string(),
+        Expression::BoolLit(b) => b.to_string(),
+        Expression::FieldExpr { object, field } => {
+            format!("{}.{}", render_expression(object), field)
+        }
+        Expression::BinOp { left, op, right } => format!(
+            "{} {} {}",
+            render_expression(left),
+            op.as_str(),
+            render_expression(right)
+        ),
+        Expression::UnaryOp { op, operand } => {
+            format!("{}{}", op.as_str(), render_expression(operand))
+        }
+        Expression::Group(inner) => format!("({})", render_expression(inner)),
+        Expression::Call { name, args } => {
+            let args_str: Vec<String> = args.iter().map(render_expression).collect();
+            format!("{}({})", name, args_str.join(", "))
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -403,12 +490,28 @@ pub struct ModuleDeclaration {
     pub events: Vec<EventHandler>,
 }
 
+/// A top-level `actor "Name" { ... }` declaration. Actors carry
+/// label-style properties only; event handlers and node persistence
+/// are deferred until the roles/permissions slice lands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActorDeclaration {
+    pub name: String,
+    pub properties: Vec<PropertyAssignment>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IfmlModel {
     pub domains: Vec<DomainDeclaration>,
     pub views: Vec<ViewDeclaration>,
     pub actions: Vec<ActionDeclaration>,
     pub modules: Vec<ModuleDeclaration>,
+    #[serde(default)]
+    pub actors: Vec<ActorDeclaration>,
+    /// Raw string values of top-level `import "..."` statements, in source
+    /// order. Duplicates are preserved; resolution/dedup is a resolver
+    /// concern, not a parser concern.
+    #[serde(default)]
+    pub imports: Vec<String>,
 }
 
 #[derive(Debug, Error)]
@@ -417,4 +520,105 @@ pub enum IfmlParseError {
     Parse { position: String, message: String },
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field(object: &str, name: &str) -> Expression {
+        Expression::FieldExpr {
+            object: Box::new(Expression::Ident(object.to_string())),
+            field: name.to_string(),
+        }
+    }
+
+    fn bin_op(left: Expression, op: BinOp, right: Expression) -> Expression {
+        Expression::BinOp {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        }
+    }
+
+    #[test]
+    fn test_render_literals() {
+        assert_eq!(render_expression(&Expression::Ident("x".to_string())), "x");
+        assert_eq!(
+            render_expression(&Expression::StringLit("admin".to_string())),
+            "\"admin\""
+        );
+        assert_eq!(render_expression(&Expression::NumLit(42.0)), "42");
+        assert_eq!(render_expression(&Expression::BoolLit(true)), "true");
+    }
+
+    #[test]
+    fn test_render_field_call_and_unary() {
+        assert_eq!(render_expression(&field("row", "active")), "row.active");
+        assert_eq!(
+            render_expression(&Expression::Call {
+                name: "today".to_string(),
+                args: vec![field("a", "b")],
+            }),
+            "today(a.b)"
+        );
+        assert_eq!(
+            render_expression(&Expression::UnaryOp {
+                op: UnaryOp::Not,
+                operand: Box::new(field("user", "locked")),
+            }),
+            "!user.locked"
+        );
+        assert_eq!(
+            render_expression(&Expression::UnaryOp {
+                op: UnaryOp::Neg,
+                operand: Box::new(Expression::NumLit(1.5)),
+            }),
+            "-1.5"
+        );
+    }
+
+    #[test]
+    fn test_render_bin_ops_and_grouping() {
+        let expr = bin_op(
+            bin_op(
+                field("user", "role"),
+                BinOp::Eq,
+                Expression::StringLit("admin".to_string()),
+            ),
+            BinOp::And,
+            bin_op(
+                field("account", "balance"),
+                BinOp::Ge,
+                Expression::NumLit(100.0),
+            ),
+        );
+        assert_eq!(
+            render_expression(&expr),
+            "user.role == \"admin\" && account.balance >= 100"
+        );
+
+        let grouped = Expression::Group(Box::new(bin_op(
+            Expression::Ident("a".to_string()),
+            BinOp::Or,
+            Expression::Ident("b".to_string()),
+        )));
+        assert_eq!(render_expression(&grouped), "(a || b)");
+
+        let regex = bin_op(
+            field("row", "name"),
+            BinOp::NegRegex,
+            Expression::StringLit("^A".to_string()),
+        );
+        assert_eq!(render_expression(&regex), "row.name !~ \"^A\"");
+    }
+
+    #[test]
+    fn test_bin_op_and_unary_op_as_str() {
+        assert_eq!(BinOp::Eq.as_str(), "==");
+        assert_eq!(BinOp::RegexMatch.as_str(), "~=");
+        assert_eq!(BinOp::Mod.as_str(), "%");
+        assert_eq!(UnaryOp::Not.as_str(), "!");
+        assert_eq!(UnaryOp::Neg.as_str(), "-");
+    }
 }

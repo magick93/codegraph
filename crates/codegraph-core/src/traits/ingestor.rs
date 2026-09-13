@@ -1,11 +1,11 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, CompositeColumn,
-    CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode,
-    EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
-    NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
-    RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode,
+    CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue,
+    ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode,
+    MembershipNode, NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode,
+    PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -150,4 +150,10 @@ pub trait GraphIngestor: Send + Sync {
         let _ = tenant;
         Ok(())
     }
+
+    // ── Authorization metamodel ──────────────────────────────────────
+
+    /// Ingest a full actor policy model: actors, capabilities, grant edges,
+    /// and the model-level ActorPolicy carrier (blocks + never_both groups).
+    async fn ingest_actor_policy(&self, model: &ActorPolicyModel) -> Result<(), GraphError>;
 }

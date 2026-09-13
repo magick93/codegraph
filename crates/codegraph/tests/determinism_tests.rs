@@ -131,6 +131,7 @@ async fn run_generation(output_dir: &Path) {
             ext_points: None,
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
+            ifml_components: None,
             project_config: Some(&project_config),
             emdash_plugins: None,
             domain_config_dir: None,

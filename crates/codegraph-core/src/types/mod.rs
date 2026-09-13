@@ -1,5 +1,6 @@
 mod api;
 mod atproto;
+mod authorization;
 mod codelist;
 mod composite;
 mod composition;
@@ -20,6 +21,10 @@ pub use api::{
     PermissionNode, PipelineNode,
 };
 pub use atproto::{CollectionNode, LexiconNode, NamespaceNode, RepositoryNode};
+pub use authorization::{
+    resolve_effective_permits, ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode,
+    GrantEdge, NeverBothGroup, Permit,
+};
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};
@@ -31,7 +36,8 @@ pub use field_def::{
 };
 pub use ifml::{
     strip_ifml_prefix, ActionNode, DataBindingNode, DataBindingResolution, DataFlowData, EventNode,
-    NavigationFlowData, ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
+    ModuleUseRecord, NavigationFlowData, NavigationFlowRecord, ParameterDefinitionNode,
+    ViewComponentNode, ViewContainerNode,
 };
 pub use persistence::{
     AuditEffect, AuditTimestampKind, AuditUserKind, PersistenceChildTable, PersistenceColumn,

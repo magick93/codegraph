@@ -287,6 +287,25 @@ fn node_type_ddl() -> Vec<&'static str> {
             strategy_json STRING NOT NULL,
             domain STRING
         )",
+        // Actor — authorization metamodel
+        "CREATE NODE TYPE IF NOT EXISTS Actor (
+            name STRING NOT NULL,
+            kind STRING,
+            extends STRING,
+            block STRING
+        )",
+        // Capability — authorization metamodel
+        "CREATE NODE TYPE IF NOT EXISTS Capability (
+            name STRING NOT NULL,
+            class STRING NOT NULL,
+            block STRING
+        )",
+        // ActorPolicy — authorization metamodel model-level carrier
+        "CREATE NODE TYPE IF NOT EXISTS ActorPolicy (
+            name STRING NOT NULL,
+            blocks STRING,
+            never_both STRING
+        )",
     ]
 }
 
@@ -351,5 +370,7 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS HasMembership",
         "CREATE EDGE TYPE IF NOT EXISTS MembershipInTenant",
         "CREATE EDGE TYPE IF NOT EXISTS HasRole",
+        // Authorization metamodel edge types
+        "CREATE EDGE TYPE IF NOT EXISTS Grant (effect STRING NOT NULL, when_expr STRING, obligations STRING)",
     ]
 }

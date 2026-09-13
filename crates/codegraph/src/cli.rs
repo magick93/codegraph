@@ -36,6 +36,13 @@ pub enum Commands {
         /// IFML framework targets for code generation (e.g. svelte, react)
         #[arg(long)]
         ifml_framework: Vec<String>,
+        /// Path to ifml-components.toml mapping IFML components to handcrafted components
+        #[arg(long)]
+        ifml_components: Option<PathBuf>,
+        /// Built-in IFML design-system pack to apply (e.g. "shadcn-svelte").
+        /// Overrides the profiles.toml `ifml_design_system` feature.
+        #[arg(long)]
+        ifml_design_system: Option<String>,
     },
     /// Classify all schemas and show entity/VO decisions
     Classify {
@@ -98,6 +105,13 @@ pub enum Commands {
         /// IFML framework targets for code generation (e.g. svelte, react)
         #[arg(long)]
         ifml_framework: Vec<String>,
+        /// Path to ifml-components.toml mapping IFML components to handcrafted components
+        #[arg(long)]
+        ifml_components: Option<PathBuf>,
+        /// Built-in IFML design-system pack to apply (e.g. "shadcn-svelte").
+        /// Overrides the profiles.toml `ifml_design_system` feature.
+        #[arg(long)]
+        ifml_design_system: Option<String>,
     },
     /// IFML-only UI generation: ingest .ifml DSL files and emit framework routes
     IfmlGenerate {
@@ -125,6 +139,57 @@ pub enum Commands {
         /// times; later directories take precedence.
         #[arg(long)]
         template_dir: Vec<PathBuf>,
+        /// Path to ifml-components.toml mapping IFML components to handcrafted components
+        #[arg(long)]
+        ifml_components: Option<PathBuf>,
+        /// Built-in IFML design-system pack to apply (e.g. "shadcn-svelte").
+        /// Overrides the profiles.toml `ifml_design_system` feature.
+        #[arg(long)]
+        ifml_design_system: Option<String>,
+    },
+    /// Scaffold a starter IFML DSL file (CRUD views + navigation) from JSON schemas
+    IfmlScaffold {
+        /// Path to JSON schema directory
+        #[arg(long)]
+        schemas: PathBuf,
+
+        /// Path to classifier.toml
+        #[arg(long)]
+        classifier: PathBuf,
+
+        /// Path to domains.toml
+        #[arg(long)]
+        config: PathBuf,
+
+        /// Output .ifml file path
+        #[arg(long, default_value = "app.ifml")]
+        output: PathBuf,
+
+        /// Overwrite the output file if it already exists
+        #[arg(long)]
+        force: bool,
+
+        /// Filter to specific domain(s); repeatable
+        #[arg(long)]
+        domain: Vec<String>,
+    },
+    /// Reverse-infer an IFML DSL model from existing SvelteKit pages (spike)
+    IfmlDerive {
+        /// Directory of the SvelteKit app to scan for +page.svelte files
+        #[arg(long)]
+        from_svelte: PathBuf,
+
+        /// Output .ifml file path
+        #[arg(long, default_value = "app.ifml")]
+        output: PathBuf,
+
+        /// App name used as the IFML domain name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Overwrite the output file if it already exists
+        #[arg(long)]
+        force: bool,
     },
     /// Start the IFML Language Server Protocol server
     Lsp {

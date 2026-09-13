@@ -35,6 +35,13 @@ pub struct RunArgs<'a> {
     pub ifml_files: &'a [PathBuf],
     pub openapi_files: &'a [PathBuf],
     pub ifml_framework: &'a [String],
+    /// Optional `ifml-components.toml` mapping IFML components to
+    /// handcrafted framework components. Absent = all built-in templates.
+    pub ifml_components: Option<&'a Path>,
+    /// Built-in IFML design-system pack name (e.g. "shadcn-svelte").
+    /// Overrides the profiles.toml `ifml_design_system` feature. Project
+    /// `ifml_components` entries take precedence over pack entries.
+    pub ifml_design_system: Option<&'a str>,
     /// Git rev to pin in generated Cargo.toml codegraph deps. When None the
     /// driver falls back to `git rev-parse HEAD` of the current directory.
     pub codegraph_rev: Option<String>,
@@ -54,6 +61,53 @@ pub struct IfmlGenerateArgs<'a> {
     /// Optional path to profiles.toml.
     pub profiles_config_path: Option<PathBuf>,
     pub template_dir: &'a [PathBuf],
+    /// Optional `ifml-components.toml` mapping IFML components to
+    /// handcrafted framework components. Absent = all built-in templates.
+    pub ifml_components: Option<&'a Path>,
+    /// Built-in IFML design-system pack name (e.g. "shadcn-svelte").
+    /// Overrides the profiles.toml `ifml_design_system` feature. Project
+    /// `ifml_components` entries take precedence over pack entries.
+    pub ifml_design_system: Option<&'a str>,
+}
+
+fn load_ifml_component_mappings(
+    path: Option<&Path>,
+    design_system: Option<&str>,
+) -> Result<Option<codegraph_config::IfmlComponentMappings>> {
+    let project = match path {
+        Some(path) => codegraph_config::IfmlComponentMappings::load(path)
+            .map(Some)
+            .map_err(crate::error::Error::Config)?,
+        None => None,
+    };
+    let pack = match design_system.filter(|name| !name.is_empty()) {
+        Some(name) => {
+            Some(codegraph_config::built_in_pack(name).map_err(crate::error::Error::Config)?)
+        }
+        None => None,
+    };
+    Ok(match (project, pack) {
+        (Some(project), Some(pack)) => Some(
+            codegraph_config::IfmlComponentMappings::merge_with_pack(project, &pack),
+        ),
+        (Some(project), None) => Some(project),
+        (None, Some(pack)) => Some(pack),
+        (None, None) => None,
+    })
+}
+
+/// Effective design-system pack: the explicit argument wins over the
+/// profile's `ifml_design_system` feature; empty values mean "no pack".
+fn effective_design_system<'a>(
+    arg: Option<&'a str>,
+    build_plan: Option<&'a crate::profile::BuildPlan>,
+) -> Option<&'a str> {
+    arg.filter(|name| !name.is_empty()).or_else(|| {
+        build_plan
+            .and_then(|bp| bp.features.get("ifml_design_system"))
+            .and_then(|v| v.as_str())
+            .filter(|name| !name.is_empty())
+    })
 }
 
 /// Run the full pipeline: ingest + classify + generate.
@@ -72,6 +126,8 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         ifml_files,
         openapi_files,
         ifml_framework,
+        ifml_components,
+        ifml_design_system,
         codegraph_rev,
     } = args;
 
@@ -200,14 +256,24 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
                     e
                 ))
             })?;
-            let stats =
+            let mut stats =
                 crate::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+            stats.imported_policies = crate::ifml_actor_import::ingest_actor_imports(
+                be.ingestor(),
+                be.querier(),
+                &model,
+                ifml_path,
+            )
+            .await?;
             total_stats.view_containers += stats.view_containers;
             total_stats.containers += stats.containers;
             total_stats.components += stats.components;
             total_stats.events += stats.events;
             total_stats.parameters += stats.parameters;
             total_stats.actions += stats.actions;
+            total_stats.module_uses += stats.module_uses;
+            total_stats.actors += stats.actors;
+            total_stats.imported_policies += stats.imported_policies;
         }
         println!("Pass 1b complete: {total_stats}");
     }
@@ -325,6 +391,11 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
 
     run_validation(be.querier(), &domain_config).await?;
 
+    let ifml_component_mappings = load_ifml_component_mappings(
+        ifml_components,
+        effective_design_system(ifml_design_system, build_plan.as_ref()),
+    )?;
+
     let report = crate::generate::run_generators_with_opts(crate::generate::GeneratorOpts {
         db: be.querier(),
         config: &domain_config,
@@ -339,6 +410,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         ext_points: ext_config.as_ref(),
         build_plan: build_plan.as_ref(),
         ifml_frameworks: ifml_framework.to_vec(),
+        ifml_components: ifml_component_mappings.as_ref(),
         project_config: project_config.as_ref(),
         emdash_plugins: None,
         domain_config_dir: config_path.parent(),
@@ -394,6 +466,8 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         frameworks,
         profiles_config_path,
         template_dir,
+        ifml_components,
+        ifml_design_system,
     } = args;
 
     if ifml_files.is_empty() {
@@ -501,13 +575,24 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
                 e
             ))
         })?;
-        let stats = crate::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+        let mut stats =
+            crate::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+        stats.imported_policies = crate::ifml_actor_import::ingest_actor_imports(
+            be.ingestor(),
+            be.querier(),
+            &model,
+            ifml_path,
+        )
+        .await?;
         total_stats.view_containers += stats.view_containers;
         total_stats.containers += stats.containers;
         total_stats.components += stats.components;
         total_stats.events += stats.events;
         total_stats.parameters += stats.parameters;
         total_stats.actions += stats.actions;
+        total_stats.module_uses += stats.module_uses;
+        total_stats.actors += stats.actors;
+        total_stats.imported_policies += stats.imported_policies;
     }
     println!("Pass 1b complete: {total_stats}");
 
@@ -606,6 +691,11 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         crate::generate::template_engine::create_tera_with_overrides(&override_dirs)?
     };
 
+    let ifml_component_mappings = load_ifml_component_mappings(
+        ifml_components,
+        effective_design_system(ifml_design_system, build_plan.as_ref()),
+    )?;
+
     let report = crate::generate::run_ifml_generators(
         be.querier(),
         &domain_config,
@@ -614,6 +704,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         &frameworks,
         build_plan.as_ref(),
         &project_config,
+        ifml_component_mappings.as_ref(),
     )
     .await?;
 
@@ -633,6 +724,8 @@ pub async fn generate(
     extension_points_path: Option<&Path>,
     template_dir: &[PathBuf],
     ifml_frameworks: &[String],
+    ifml_components: Option<&Path>,
+    ifml_design_system: Option<&str>,
 ) -> Result<()> {
     let config = codegraph_config::config::parse_domain_config(config_path)
         .map_err(|e| crate::error::Error::Config(e.to_string()))?;
@@ -675,6 +768,8 @@ pub async fn generate(
     // generate uses a pre-populated backend; schema base dir is unknown here.
     // Pass an empty path so UiCodelistGenerator skips gracefully.
     run_validation(be.querier(), &config).await?;
+    let ifml_component_mappings =
+        load_ifml_component_mappings(ifml_components, ifml_design_system)?;
     let report = crate::generate::run_generators_with_opts(crate::generate::GeneratorOpts {
         db: be.querier(),
         config: &config,
@@ -689,6 +784,7 @@ pub async fn generate(
         ext_points: ext_config.as_ref(),
         build_plan: None,
         ifml_frameworks: ifml_frameworks.to_vec(),
+        ifml_components: ifml_component_mappings.as_ref(),
         project_config: None,
         emdash_plugins: None,
         domain_config_dir: config_path.parent(),
@@ -857,4 +953,99 @@ fn current_git_rev() -> String {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codegraph_config::SemanticRole;
+
+    #[test]
+    fn design_system_arg_beats_profile_feature() {
+        let dir = tempfile::tempdir().unwrap();
+        let profiles = dir.path().join("profiles.toml");
+        std::fs::write(
+            &profiles,
+            "[profiles.default.meta]\nname = \"default\"\nversion = \"1.0.0\"\n\
+             description = \"test\"\n\n\
+             [profiles.default.features]\n\
+             ifml_design_system = \"shadcn-svelte\"\n",
+        )
+        .unwrap();
+        let resolved =
+            crate::profile::load_and_resolve_profile(&profiles, "default", None).unwrap();
+        let registry = crate::profile::CapabilityRegistry::new();
+        let plan = crate::profile::BuildPlan::from_profile(&resolved, &registry).unwrap();
+
+        assert_eq!(
+            effective_design_system(Some("other"), Some(&plan)),
+            Some("other")
+        );
+        assert_eq!(
+            effective_design_system(None, Some(&plan)),
+            Some("shadcn-svelte")
+        );
+    }
+
+    #[test]
+    fn design_system_defaults_to_none_without_flag_or_feature() {
+        assert_eq!(effective_design_system(None, None), None);
+        assert_eq!(effective_design_system(Some(""), None), None);
+    }
+
+    #[test]
+    fn design_system_pack_loads_and_project_entries_win() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("ifml-components.toml");
+        std::fs::write(
+            &project,
+            "[[component]]\nrole = \"collection\"\npath = \"$lib/components/MyTable.svelte\"\n",
+        )
+        .unwrap();
+
+        let merged = load_ifml_component_mappings(Some(&project), Some("shadcn-svelte"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            merged
+                .resolve_slot("V", "grid", "list", "table", Some(SemanticRole::Collection))
+                .unwrap()
+                .path,
+            "$lib/components/MyTable.svelte"
+        );
+        assert_eq!(
+            merged
+                .resolve_slot(
+                    "V",
+                    "save",
+                    "button",
+                    "button",
+                    Some(SemanticRole::ActionControl)
+                )
+                .unwrap()
+                .export_name(),
+            "Button"
+        );
+    }
+
+    #[test]
+    fn design_system_pack_loads_without_project_file() {
+        let pack_only = load_ifml_component_mappings(None, Some("shadcn-svelte"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pack_only
+                .resolve_by_role("V", SemanticRole::ModalView)
+                .unwrap()
+                .export_name(),
+            "Dialog"
+        );
+    }
+
+    #[test]
+    fn unknown_design_system_pack_is_an_error() {
+        let err = load_ifml_component_mappings(None, Some("material"))
+            .expect_err("unknown pack must error");
+        assert!(err.to_string().contains("unknown IFML design system pack"));
+    }
 }
