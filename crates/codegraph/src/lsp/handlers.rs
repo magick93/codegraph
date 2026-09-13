@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use auto_lsp::anyhow;
@@ -102,6 +102,16 @@ static NAVIGATE_BINDING_QUERY: LazyLock<Query> = LazyLock::new(|| {
         r"(navigate_action (string) @target (parameter_binding (binding_pair key: (identifier) @binding.key)))",
     )
     .expect("Failed to create navigate binding query")
+});
+
+static NAV_TARGET_QUERY: LazyLock<Query> = LazyLock::new(|| {
+    Query::new(&IFML_LANG, r"(navigate_action (string) @target)")
+        .expect("Failed to create navigate target query")
+});
+
+static MODULE_DECL_QUERY: LazyLock<Query> = LazyLock::new(|| {
+    Query::new(&IFML_LANG, r"(module_declaration (string) @module-name)")
+        .expect("Failed to create module declaration query")
 });
 
 /// Matches `type: SomeValue` where SomeValue is any identifier
@@ -243,6 +253,17 @@ pub fn handle_completion(
         }
     }
 
+    if items.is_empty() && before_cursor.contains("use \"") {
+        for name in extract_module_names(source_bytes, &root) {
+            items.push(CompletionItem {
+                label: name,
+                kind: Some(CompletionItemKind::MODULE),
+                detail: Some("Module".to_string()),
+                ..Default::default()
+            });
+        }
+    }
+
     if items.is_empty() && before_cursor.contains("fields: [") {
         let after_bracket = before_cursor.split("fields: [").last().unwrap_or("");
         if !after_bracket.contains(']') {
@@ -303,6 +324,24 @@ pub fn handle_completion(
             });
         }
 
+        if in_view_body(&root, position) {
+            for (label, detail) in &[
+                ("if", "Conditional guard: if <expression>;"),
+                (
+                    "use",
+                    "Module instantiation: use \"Module\" as alias { ... };",
+                ),
+                ("roles", "Required roles: roles: [role, ...];"),
+            ] {
+                items.push(CompletionItem {
+                    label: (*label).to_string(),
+                    kind: Some(CompletionItemKind::KEYWORD),
+                    detail: Some((*detail).to_string()),
+                    ..Default::default()
+                });
+            }
+        }
+
         if in_component_body(&root, position) {
             for (label, insert_text, detail) in COMPONENT_STATEMENT_SNIPPETS {
                 items.push(CompletionItem {
@@ -343,6 +382,32 @@ fn in_component_body(root: &tree_sitter::Node, pos: Position) -> bool {
         match node.kind() {
             "component_body" => return true,
             "view_body" | "source_file" => return false,
+            _ => {}
+        }
+        match node.parent() {
+            Some(parent) => node = parent,
+            None => return false,
+        }
+    }
+}
+
+/// True when the position sits at view-body level (not inside a nested
+/// component), where view-level keywords like if/use/roles are valid.
+fn in_view_body(root: &tree_sitter::Node, pos: Position) -> bool {
+    let point = tree_sitter::Point {
+        row: pos.line as usize,
+        column: pos.character as usize,
+    };
+
+    let mut node = match root.descendant_for_point_range(point, point) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    loop {
+        match node.kind() {
+            "view_body" => return true,
+            "component_body" | "source_file" => return false,
             _ => {}
         }
         match node.parent() {
@@ -610,6 +675,121 @@ fn extract_data_refs(source: &[u8], root: &tree_sitter::Node) -> Vec<String> {
     refs
 }
 
+/// Warn about `navigate("X", ...)` targets that name no view declared in the
+/// same document (multi-file models are out of scope).
+fn validate_navigate_targets(
+    source: &[u8],
+    root: &tree_sitter::Node,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let view_names: HashSet<String> = extract_view_names(source, root).into_iter().collect();
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&NAV_TARGET_QUERY, *root, source);
+
+    while let Some(m) = matches.next() {
+        for capture in m.captures {
+            let Ok(text) = capture.node.utf8_text(source) else {
+                continue;
+            };
+            let target = text.trim_matches('"');
+            if target.is_empty() || view_names.contains(target) {
+                continue;
+            }
+            let r = capture.node.range();
+            diagnostics.push(Diagnostic {
+                range: Range::new(
+                    Position::new(r.start_point.row as u32, r.start_point.column as u32),
+                    Position::new(r.end_point.row as u32, r.end_point.column as u32),
+                ),
+                severity: Some(DiagnosticSeverity::WARNING),
+                message: format!("Unknown view '{target}'"),
+                source: Some("codegraph".to_string()),
+                ..Default::default()
+            });
+        }
+    }
+}
+
+/// Warn about `use "M"` instantiations naming no `module "M"` declared in
+/// the same document.
+fn validate_module_uses(source: &str, root: &tree_sitter::Node, diagnostics: &mut Vec<Diagnostic>) {
+    let declared: HashSet<String> = extract_module_names(source.as_bytes(), root)
+        .into_iter()
+        .collect();
+    for (name, range) in extract_module_uses(source) {
+        if declared.contains(&name) {
+            continue;
+        }
+        diagnostics.push(Diagnostic {
+            range,
+            severity: Some(DiagnosticSeverity::WARNING),
+            message: format!("Unknown module '{name}'"),
+            source: Some("codegraph".to_string()),
+            ..Default::default()
+        });
+    }
+}
+
+fn extract_module_names(source: &[u8], root: &tree_sitter::Node) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&MODULE_DECL_QUERY, *root, source);
+
+    while let Some(m) = matches.next() {
+        for capture in m.captures {
+            if let Ok(name) = capture.node.utf8_text(source) {
+                names.push(name.trim_matches('"').to_string());
+            }
+        }
+    }
+
+    names
+}
+
+/// Collect `(module_name, range)` pairs for `use "Name"` statements. The
+/// tree-sitter grammar does not model `use` statements yet, so references are
+/// gathered textually; callers gate this behind a clean parse.
+fn extract_module_uses(source: &str) -> Vec<(String, Range)> {
+    fn is_ident_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_'
+    }
+
+    let mut uses = Vec::new();
+    for (line_idx, line) in source.lines().enumerate() {
+        let code = line.split_once("//").map_or(line, |(c, _)| c);
+        let bytes = code.as_bytes();
+        let mut i = 0;
+        while i + 3 <= bytes.len() {
+            if code[i..].starts_with("use")
+                && (i == 0 || !is_ident_byte(bytes[i - 1]))
+                && (i + 3 >= bytes.len() || !is_ident_byte(bytes[i + 3]))
+            {
+                let mut j = i + 3;
+                while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'"' {
+                    if let Some(len) = code[j + 1..].find('"') {
+                        let name = code[j + 1..j + 1 + len].to_string();
+                        let end_col = j + 2 + len;
+                        uses.push((
+                            name,
+                            Range::new(
+                                Position::new(line_idx as u32, i as u32),
+                                Position::new(line_idx as u32, end_col as u32),
+                            ),
+                        ));
+                        i = end_col;
+                        continue;
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
+    uses
+}
+
 pub fn handle_hover(db: &BaseDb, params: HoverParams) -> anyhow::Result<Option<Hover>> {
     let uri = &params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
@@ -837,6 +1017,13 @@ pub fn compute_diagnostics(db: &BaseDb, uri: &Url) -> Vec<Diagnostic> {
                 }
             }
         }
+    }
+
+    // Semantic reference checks only run on cleanly parsed documents so
+    // tree-sitter error recovery cannot fabricate bogus references.
+    if !root.has_error() {
+        validate_navigate_targets(source_bytes, &root, &mut diagnostics);
+        validate_module_uses(source, &root, &mut diagnostics);
     }
 
     diagnostics

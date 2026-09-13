@@ -226,6 +226,8 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
             total_stats.events += stats.events;
             total_stats.parameters += stats.parameters;
             total_stats.actions += stats.actions;
+            total_stats.module_uses += stats.module_uses;
+            total_stats.actors += stats.actors;
         }
         println!("Pass 1b complete: {total_stats}");
     }
@@ -530,6 +532,8 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         total_stats.events += stats.events;
         total_stats.parameters += stats.parameters;
         total_stats.actions += stats.actions;
+        total_stats.module_uses += stats.module_uses;
+        total_stats.actors += stats.actors;
     }
     println!("Pass 1b complete: {total_stats}");
 

@@ -1049,6 +1049,189 @@ fn test_lsp_completion_field_names_in_fields_context() {
     do_shutdown(&client_conn);
 }
 
+#[test]
+fn test_lsp_diagnostic_unknown_navigate_target() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+    do_init_handshake(&client_conn);
+
+    // navigate("Missing") — no view "Missing" declared → WARNING
+    open_document(
+        &client_conn,
+        "file:///nav_bad.ifml",
+        r#"view "List" {
+    component "c" {
+        type: list;
+        on select -> navigate("Missing", { id: row.id });
+    }
+}"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///nav_bad.ifml");
+    let unknown_view: Vec<&Diagnostic> = params
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("Unknown view"))
+        .collect();
+    assert!(
+        unknown_view.iter().any(|d| d.message.contains("Missing")),
+        "should warn about unknown navigate target 'Missing', got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        unknown_view
+            .iter()
+            .all(|d| d.severity == Some(DiagnosticSeverity::WARNING)),
+        "unknown navigate target should be a warning"
+    );
+
+    // navigate("Detail") with view "Detail" declared → no unknown-view warning
+    open_document(
+        &client_conn,
+        "file:///nav_good.ifml",
+        r#"view "List" {
+    component "c" {
+        type: list;
+        on select -> navigate("Detail", { id: row.id });
+    }
+}
+
+view "Detail" { }"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///nav_good.ifml");
+    assert!(
+        !params
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("Unknown view")),
+        "valid navigate target should NOT warn, got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_completion_module_names_after_use() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    let text = "module \"Maps\" { input { } output { } }\nview \"A\" {\n    use \"\n}";
+    open_document(&client_conn, "file:///use_ctx.ifml", text);
+
+    let _ = recv_diagnostics(&client_conn, "file:///use_ctx.ifml");
+
+    // Cursor right after the opening quote of `use "`
+    client_conn
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2i32),
+            method: "textDocument/completion".to_string(),
+            params: serde_json::json!({
+                "textDocument": { "uri": "file:///use_ctx.ifml" },
+                "position": { "line": 2, "character": 9 }
+            }),
+        }))
+        .unwrap();
+
+    let msg = client_conn.receiver.recv().unwrap();
+    match msg {
+        Message::Response(resp) => {
+            let result = resp.result.unwrap_or(serde_json::Value::Null);
+            assert!(!result.is_null(), "completion should return results");
+            let completion: CompletionResponse = serde_json::from_value(result).unwrap();
+            match completion {
+                CompletionResponse::List(list) => {
+                    let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
+                    assert!(
+                        labels.contains(&"Maps"),
+                        "completion after `use \"` should suggest declared modules, got: {labels:?}"
+                    );
+                }
+                _ => panic!("Expected completion list"),
+            }
+        }
+        _ => panic!("Expected completion response"),
+    }
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_completion_view_body_new_keywords() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // Empty line inside the view body (line 4), outside the component
+    open_document(
+        &client_conn,
+        "file:///view_kw.ifml",
+        "view \"A\" {\n    component \"c\" {\n        type: list;\n    }\n\n}",
+    );
+
+    let _ = recv_diagnostics(&client_conn, "file:///view_kw.ifml");
+
+    client_conn
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2i32),
+            method: "textDocument/completion".to_string(),
+            params: serde_json::json!({
+                "textDocument": { "uri": "file:///view_kw.ifml" },
+                "position": { "line": 4, "character": 0 }
+            }),
+        }))
+        .unwrap();
+
+    let msg = client_conn.receiver.recv().unwrap();
+    match msg {
+        Message::Response(resp) => {
+            let result = resp.result.unwrap_or(serde_json::Value::Null);
+            assert!(!result.is_null(), "completion should return results");
+            let completion: CompletionResponse = serde_json::from_value(result).unwrap();
+            match completion {
+                CompletionResponse::List(list) => {
+                    let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
+                    for expected in ["if", "use", "roles"] {
+                        assert!(
+                            labels.contains(&expected),
+                            "view body should suggest '{expected}', got: {labels:?}"
+                        );
+                    }
+                }
+                _ => panic!("Expected completion list"),
+            }
+        }
+        _ => panic!("Expected completion response"),
+    }
+
+    do_shutdown(&client_conn);
+}
+
 fn send_update_positions(
     client: &Connection,
     id: i32,
