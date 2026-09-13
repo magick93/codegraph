@@ -23,7 +23,7 @@ view_body = {
         params_block? ~
         label_declaration? ~
         property_assignment* ~
-        (container_declaration | component_declaration | event_handler | condition_statement)* ~
+        (container_declaration | component_declaration | event_handler | condition_statement | module_use_statement)* ~
     "}"
 }
 
@@ -36,7 +36,7 @@ container_body = {
         params_block? ~
         label_declaration? ~
         property_assignment* ~
-        (container_declaration | component_declaration | event_handler | condition_statement)* ~
+        (container_declaration | component_declaration | event_handler | condition_statement | module_use_statement)* ~
     "}"
 }
 
@@ -47,8 +47,16 @@ parameter_block = {
 }
 
 parameter_decl = {
-    identifier ~ ":" ~ type_ref
+    identifier ~ ":" ~ type_ref ~ ("=" ~ param_default)?
 }
+
+param_default = { string | number | boolean }
+
+module_use_statement = {
+    "use" ~ string ~ ("as" ~ identifier)? ~ (module_use_body ~ ";"? | ";")
+}
+
+module_use_body = { "{" ~ property_assignment* ~ "}" }
 
 label_declaration = { "label" ~ string ~ ";" }
 

@@ -1,11 +1,27 @@
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    ActionNode, DataBindingNode, EdgeProperties, EdgeType, EventNode, ParameterDefinitionNode,
-    ViewComponentNode, ViewContainerNode,
+    ActionNode, DataBindingNode, EdgeProperties, EdgeType, EventNode, ModuleUseRecord,
+    ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
 };
 use codegraph_ifml_dsl::*;
 
 use crate::error::{Error, Result};
+
+/// Map DSL module-use statements to their persisted graph form; `None` when
+/// the declaration carries no uses.
+fn module_use_records(uses: &[ModuleUse]) -> Option<Vec<ModuleUseRecord>> {
+    if uses.is_empty() {
+        return None;
+    }
+    Some(
+        uses.iter()
+            .map(|u| ModuleUseRecord {
+                module: u.module.clone(),
+                alias: u.alias.clone(),
+            })
+            .collect(),
+    )
+}
 
 /// Ingest a parsed IFML model into the graph database.
 pub async fn ingest_ifml_model(
@@ -21,10 +37,12 @@ pub async fn ingest_ifml_model(
     for view in &model.views {
         let _vc_id = ingest_view_container(db, view).await?;
         stats.view_containers += 1;
+        stats.module_uses += view.module_uses.len();
 
         for container in &view.containers {
             let _container_id = ingest_container_node(db, container).await?;
             stats.containers += 1;
+            stats.module_uses += container.module_uses.len();
         }
     }
 
@@ -108,6 +126,7 @@ async fn ingest_view_container(db: &dyn GraphIngestor, view: &ViewDeclaration) -
         is_modal: view.is_modal,
         conditional_expression: view.condition.as_ref().map(render_expression),
         domain: None,
+        module_uses: module_use_records(&view.module_uses),
     };
     let id = db
         .ingest_view_container(&node)
@@ -129,6 +148,7 @@ async fn ingest_container_node(
         is_modal: false,
         conditional_expression: container.condition.as_ref().map(render_expression),
         domain: None,
+        module_uses: module_use_records(&container.module_uses),
     };
     db.ingest_view_container(&node).await.map_err(Error::Graph)
 }
@@ -471,19 +491,21 @@ pub struct IfmlIngestStats {
     pub events: usize,
     pub parameters: usize,
     pub actions: usize,
+    pub module_uses: usize,
 }
 
 impl std::fmt::Display for IfmlIngestStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} views, {} nested containers, {} components, {} events, {} params, {} actions",
+            "{} views, {} nested containers, {} components, {} events, {} params, {} actions, {} module uses",
             self.view_containers,
             self.containers,
             self.components,
             self.events,
             self.parameters,
             self.actions,
+            self.module_uses,
         )
     }
 }

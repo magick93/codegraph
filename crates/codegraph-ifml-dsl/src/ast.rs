@@ -27,6 +27,7 @@ pub struct ViewDeclaration {
     pub containers: Vec<ContainerDeclaration>,
     pub components: Vec<ComponentDeclaration>,
     pub events: Vec<EventHandler>,
+    pub module_uses: Vec<ModuleUse>,
     pub condition: Option<Expression>,
     pub position: Option<Position>,
 }
@@ -45,6 +46,7 @@ pub struct ContainerDeclaration {
     pub properties: Vec<PropertyAssignment>,
     pub components: Vec<ComponentDeclaration>,
     pub events: Vec<EventHandler>,
+    pub module_uses: Vec<ModuleUse>,
     pub condition: Option<Expression>,
     pub position: Option<Position>,
 }
@@ -164,6 +166,18 @@ pub struct FieldDef {
     pub required: bool,
     pub validations: Vec<Expression>,
     pub values: Vec<String>,
+    #[serde(default)]
+    pub messages: Vec<String>,
+}
+
+/// A `use "Module" as alias { ... };` statement instantiating a declared
+/// module inside a view or container body.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModuleUse {
+    pub module: String,
+    pub alias: Option<String>,
+    #[serde(default)]
+    pub properties: Vec<PropertyAssignment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -331,6 +345,8 @@ pub struct ActionBody {
 pub struct ParameterDecl {
     pub name: String,
     pub type_ref: String,
+    #[serde(default)]
+    pub default: Option<ValueExpression>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

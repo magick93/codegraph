@@ -23,6 +23,16 @@ pub struct ViewContainerNode {
     pub is_modal: bool,
     pub conditional_expression: Option<String>,
     pub domain: Option<String>,
+    pub module_uses: Option<Vec<ModuleUseRecord>>,
+}
+
+/// A `use "Module" as alias;` statement resolved onto a ViewContainer:
+/// the module reference is persisted by name with its optional alias;
+/// property overrides stay DSL-side until module expansion lands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModuleUseRecord {
+    pub module: String,
+    pub alias: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

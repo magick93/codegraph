@@ -6,7 +6,7 @@ use codegraph_core::types::{
     ActionNode, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode, ColumnInfo,
     CompositeColumn, CompositeRange, CompositionNode, CompositionTree, DataBindingResolution,
     DetectionSource, EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleUseRecord, NamespaceNode,
     NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, PipelineNode,
     PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData,
     SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode,
@@ -938,12 +938,16 @@ impl GraphQuerier for GrafeoEngine {
     async fn get_ifml_view_containers(&self) -> Result<Vec<ViewContainerNode>, GraphError> {
         let gql = "MATCH (vc:ViewContainer) RETURN \
             vc.name, vc.label, vc.is_xor, vc.is_default, \
-            vc.is_landmark, vc.is_modal, vc.conditional_expression, vc.domain \
+            vc.is_landmark, vc.is_modal, vc.conditional_expression, vc.domain, \
+            vc.module_uses \
             ORDER BY vc.name";
         let result = query_gql(self, gql)?;
         let reader = RowReader::from_columns(&result.columns);
         let mut nodes = Vec::new();
         for row in &result.rows {
+            let module_uses_str: Option<String> = reader.get_opt_string(row, "vc.module_uses")?;
+            let module_uses: Option<Vec<ModuleUseRecord>> =
+                module_uses_str.and_then(|s| serde_json::from_str(&s).ok());
             nodes.push(ViewContainerNode {
                 name: reader.get_string(row, "vc.name")?,
                 label: reader.get_opt_string(row, "vc.label")?,
@@ -953,6 +957,7 @@ impl GraphQuerier for GrafeoEngine {
                 is_modal: reader.get_bool(row, "vc.is_modal")?,
                 conditional_expression: reader.get_opt_string(row, "vc.conditional_expression")?,
                 domain: reader.get_opt_string(row, "vc.domain")?,
+                module_uses,
             });
         }
         Ok(nodes)

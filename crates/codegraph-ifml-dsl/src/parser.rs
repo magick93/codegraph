@@ -61,7 +61,21 @@ fn parse_parameter_decl(pair: Pair<Rule>) -> ParameterDecl {
         .next()
         .map(|p| parse_identifier(&p))
         .unwrap_or_default();
-    ParameterDecl { name, type_ref }
+    let default = inner
+        .next()
+        .filter(|p| p.as_rule() == Rule::param_default)
+        .and_then(|p| p.into_inner().next())
+        .map(|p| match p.as_rule() {
+            Rule::string => ValueExpression::String(parse_string(&p)),
+            Rule::number => ValueExpression::Number(parse_number(&p)),
+            Rule::boolean => ValueExpression::Bool(p.as_str() == "true"),
+            _ => ValueExpression::Identifier(p.as_str().to_string()),
+        });
+    ParameterDecl {
+        name,
+        type_ref,
+        default,
+    }
 }
 
 fn parse_parameter_block(pair: Pair<Rule>) -> Vec<ParameterDecl> {
@@ -813,6 +827,7 @@ fn parse_input_body_property(
     required: &mut bool,
     validations: &mut Vec<Expression>,
     values: &mut Vec<String>,
+    messages: &mut Vec<String>,
 ) {
     match (key, value) {
         ("required", Some(value)) => {
@@ -824,18 +839,27 @@ fn parse_input_body_property(
             validations.extend(extract_validation_expressions(value));
         }
         ("values", Some(value)) => {
-            if let ValueExpression::Array(items) = parse_value_expression(value) {
-                for item in items {
-                    match item {
-                        ValueExpression::String(s) => values.push(s),
-                        ValueExpression::Identifier(id) => values.push(id),
-                        _ => {}
-                    }
-                }
-            }
+            *values = extract_string_list(value);
+        }
+        ("messages", Some(value)) => {
+            *messages = extract_string_list(value);
         }
         _ => {}
     }
+}
+
+fn extract_string_list(value: Pair<Rule>) -> Vec<String> {
+    let mut out = Vec::new();
+    if let ValueExpression::Array(items) = parse_value_expression(value) {
+        for item in items {
+            match item {
+                ValueExpression::String(s) => out.push(s),
+                ValueExpression::Identifier(id) => out.push(id),
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 fn extract_validation_expressions(value: Pair<Rule>) -> Vec<Expression> {
@@ -863,6 +887,7 @@ fn parse_field_decl(pair: Pair<Rule>) -> Option<FieldDef> {
     let mut required = false;
     let mut validations = Vec::new();
     let mut values = Vec::new();
+    let mut messages = Vec::new();
     if let Some(body) = inner.next() {
         for child in body.into_inner() {
             if child.as_rule() != Rule::property_assignment {
@@ -879,6 +904,7 @@ fn parse_field_decl(pair: Pair<Rule>) -> Option<FieldDef> {
                 &mut required,
                 &mut validations,
                 &mut values,
+                &mut messages,
             );
         }
     }
@@ -888,6 +914,7 @@ fn parse_field_decl(pair: Pair<Rule>) -> Option<FieldDef> {
         required,
         validations,
         values,
+        messages,
     })
 }
 
@@ -1052,6 +1079,31 @@ fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
     }
 }
 
+fn parse_module_use_statement(pair: Pair<Rule>) -> ModuleUse {
+    let mut module = String::new();
+    let mut alias = None;
+    let mut properties = Vec::new();
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::string => module = parse_string(&child),
+            Rule::identifier => alias = Some(child.as_str().to_string()),
+            Rule::module_use_body => {
+                for body_child in child.into_inner() {
+                    if body_child.as_rule() == Rule::property_assignment {
+                        properties.push(parse_property_assignment(body_child));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    ModuleUse {
+        module,
+        alias,
+        properties,
+    }
+}
+
 type ViewBodyParts = (
     Vec<ParameterDecl>,
     Option<String>,
@@ -1059,6 +1111,7 @@ type ViewBodyParts = (
     Vec<ContainerDeclaration>,
     Vec<ComponentDeclaration>,
     Vec<EventHandler>,
+    Vec<ModuleUse>,
     Option<Expression>,
 );
 
@@ -1069,6 +1122,7 @@ fn parse_view_body_content(pair: Pair<Rule>) -> ViewBodyParts {
     let mut containers = Vec::new();
     let mut components = Vec::new();
     let mut events = Vec::new();
+    let mut module_uses = Vec::new();
     let mut condition = None;
 
     for child in pair.clone().into_inner() {
@@ -1087,6 +1141,7 @@ fn parse_view_body_content(pair: Pair<Rule>) -> ViewBodyParts {
             Rule::container_declaration => containers.push(parse_container_declaration(child)),
             Rule::component_declaration => components.push(parse_component_declaration(child)),
             Rule::event_handler => events.push(parse_event_handler(child)),
+            Rule::module_use_statement => module_uses.push(parse_module_use_statement(child)),
             Rule::condition_statement => {
                 condition = child.into_inner().next().map(parse_expression);
             }
@@ -1095,7 +1150,14 @@ fn parse_view_body_content(pair: Pair<Rule>) -> ViewBodyParts {
     }
 
     (
-        params, label, properties, containers, components, events, condition,
+        params,
+        label,
+        properties,
+        containers,
+        components,
+        events,
+        module_uses,
+        condition,
     )
 }
 
@@ -1104,6 +1166,7 @@ type ContainerBodyParts = (
     Vec<PropertyAssignment>,
     Vec<ComponentDeclaration>,
     Vec<EventHandler>,
+    Vec<ModuleUse>,
     Option<Expression>,
 );
 
@@ -1112,6 +1175,7 @@ fn parse_container_body_content(pair: Pair<Rule>) -> ContainerBodyParts {
     let mut properties = Vec::new();
     let mut components = Vec::new();
     let mut events = Vec::new();
+    let mut module_uses = Vec::new();
     let mut condition = None;
 
     for child in pair.clone().into_inner() {
@@ -1124,6 +1188,7 @@ fn parse_container_body_content(pair: Pair<Rule>) -> ContainerBodyParts {
             Rule::property_assignment => properties.push(parse_property_assignment(child)),
             Rule::component_declaration => components.push(parse_component_declaration(child)),
             Rule::event_handler => events.push(parse_event_handler(child)),
+            Rule::module_use_statement => module_uses.push(parse_module_use_statement(child)),
             Rule::condition_statement => {
                 condition = child.into_inner().next().map(parse_expression);
             }
@@ -1131,7 +1196,14 @@ fn parse_container_body_content(pair: Pair<Rule>) -> ContainerBodyParts {
         }
     }
 
-    (params, properties, components, events, condition)
+    (
+        params,
+        properties,
+        components,
+        events,
+        module_uses,
+        condition,
+    )
 }
 
 fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
@@ -1147,12 +1219,14 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
             properties: Vec::new(),
             components: Vec::new(),
             events: Vec::new(),
+            module_uses: Vec::new(),
             condition: None,
             position: None,
         };
     };
 
-    let (params, properties, components, events, condition) = parse_container_body_content(body);
+    let (params, properties, components, events, module_uses, condition) =
+        parse_container_body_content(body);
 
     let is_default = properties
         .iter()
@@ -1175,6 +1249,7 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
         properties,
         components,
         events,
+        module_uses,
         condition,
         position,
     }
@@ -1242,12 +1317,13 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
             containers: Vec::new(),
             components: Vec::new(),
             events: Vec::new(),
+            module_uses: Vec::new(),
             condition: None,
             position: None,
         };
     };
 
-    let (params, label, properties, containers, components, events, condition) =
+    let (params, label, properties, containers, components, events, module_uses, condition) =
         parse_view_body_content(body);
 
     let is_landmark = extract_bool_property(&properties, "landmark");
@@ -1266,6 +1342,7 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
         containers,
         components,
         events,
+        module_uses,
         condition,
         position,
     }
@@ -2909,5 +2986,267 @@ view "Guarded" {
             op: BinOp::Eq,
             right: Box::new(Expression::BoolLit(true)),
         }
+    }
+
+    #[test]
+    fn test_form_field_messages_parse() {
+        let input = r#"
+view "Edit" {
+    component "EditForm" {
+        type: form;
+        data: Customer;
+
+        field name  -> input text   { required: true; validations: [len(name) > 2, name ~= "^[A-Z]"]; messages: ["Name too short", "Must start uppercase"]; }
+        field email -> input email  { validations: [is_email(email)]; messages: ["Invalid email"]; }
+        field nick  -> input text;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let spec = match &model.views[0].components[0].spec {
+            Some(ComponentSpec::Form(spec)) => spec,
+            other => panic!("Expected Form spec, got {:?}", other),
+        };
+        assert_eq!(spec.fields.len(), 3);
+
+        let name_field = &spec.fields[0];
+        assert_eq!(name_field.validations.len(), 2);
+        assert_eq!(
+            name_field.messages,
+            vec![
+                "Name too short".to_string(),
+                "Must start uppercase".to_string()
+            ]
+        );
+
+        let email_field = &spec.fields[1];
+        assert_eq!(email_field.validations.len(), 1);
+        assert_eq!(email_field.messages, vec!["Invalid email".to_string()]);
+
+        let nick_field = &spec.fields[2];
+        assert!(nick_field.validations.is_empty());
+        assert!(nick_field.messages.is_empty());
+    }
+
+    #[test]
+    fn test_param_defaults_parse() {
+        let input = r#"
+view "Catalog" {
+    params { id: Uuid, slug: String = "home", page: Int = 1, verbose: Boolean = true };
+
+    component "grid" {
+        type: list;
+        data: Product;
+    }
+}
+
+module "Pager" {
+    input { offset: Int = 0 }
+    output { rows: String }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let params = &model.views[0].params;
+        assert_eq!(params.len(), 4);
+
+        assert_eq!(params[0].name, "id");
+        assert_eq!(params[0].default, None);
+
+        assert_eq!(params[1].name, "slug");
+        assert_eq!(
+            params[1].default,
+            Some(ValueExpression::String("home".to_string()))
+        );
+
+        assert_eq!(params[2].name, "page");
+        assert_eq!(params[2].default, Some(ValueExpression::Number(1.0)));
+
+        assert_eq!(params[3].name, "verbose");
+        assert_eq!(params[3].default, Some(ValueExpression::Bool(true)));
+
+        assert_eq!(
+            model.modules[0].input_params[0].default,
+            Some(ValueExpression::Number(0.0))
+        );
+    }
+
+    #[test]
+    fn test_param_negative_number_default() {
+        let input = r#"
+view "V" {
+    params { zoom: Int = -2 };
+    component "c" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(
+            model.views[0].params[0].default,
+            Some(ValueExpression::Number(-2.0))
+        );
+    }
+
+    #[test]
+    fn test_param_default_requires_literal() {
+        let input = r#"
+view "V" {
+    params { slug: String = slugify(title) };
+    component "c" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        assert!(parse_ifml(input).is_err());
+    }
+
+    #[test]
+    fn test_module_use_in_view() {
+        let input = r#"
+view "Catalog" {
+    use "Pagination" as pager;
+    use "Footer";
+
+    component "grid" {
+        type: list;
+        data: Product;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let uses = &model.views[0].module_uses;
+        assert_eq!(uses.len(), 2);
+
+        assert_eq!(uses[0].module, "Pagination");
+        assert_eq!(uses[0].alias.as_deref(), Some("pager"));
+        assert!(uses[0].properties.is_empty());
+
+        assert_eq!(uses[1].module, "Footer");
+        assert_eq!(uses[1].alias, None);
+    }
+
+    #[test]
+    fn test_module_use_in_container_and_with_properties() {
+        let input = r#"
+view "Wizard" {
+    container "Step1" {
+        use "Pagination" as pager {
+            page_size: 25;
+            compact: true;
+        }
+
+        component "form" {
+            type: form;
+            data: Customer;
+        }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let container = &model.views[0].containers[0];
+        assert_eq!(container.module_uses.len(), 1);
+
+        let module_use = &container.module_uses[0];
+        assert_eq!(module_use.module, "Pagination");
+        assert_eq!(module_use.alias.as_deref(), Some("pager"));
+        assert_eq!(module_use.properties.len(), 2);
+        assert_eq!(module_use.properties[0].key, "page_size");
+        assert_eq!(
+            module_use.properties[0].value,
+            ValueExpression::Number(25.0)
+        );
+        assert_eq!(module_use.properties[1].key, "compact");
+        assert_eq!(module_use.properties[1].value, ValueExpression::Bool(true));
+    }
+
+    #[test]
+    fn test_use_still_parses_as_property_name() {
+        let input = r#"
+view "V" {
+    use: "fallback";
+    component "c" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+        assert!(view.module_uses.is_empty());
+        assert_eq!(view.properties.len(), 1);
+        assert_eq!(view.properties[0].key, "use");
+        match &view.properties[0].value {
+            ValueExpression::String(s) => assert_eq!(s, "fallback"),
+            other => panic!("Expected String, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_dangling_module_use_fails_parse() {
+        let cases = [
+            r#"
+view "Bad" {
+    use "Pagination"
+}
+"#,
+            r#"
+view "Bad" {
+    use Pagination as pager;
+}
+"#,
+            r#"
+view "Bad" {
+    use "Pagination" as;
+}
+"#,
+        ];
+        for (i, input) in cases.iter().enumerate() {
+            assert!(
+                parse_ifml(input).is_err(),
+                "dangling use case {} should fail to parse",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_dsl_feature_ast_serde_round_trip() {
+        let input = r#"
+view "Catalog" {
+    params { slug: String = "home" };
+    use "Pagination" as pager { page_size: 25; };
+
+    container "Main" {
+        use "Footer";
+    }
+
+    component "f" {
+        type: form;
+        data: Customer;
+        field name -> input text { required: true; validations: [len(name) > 2]; messages: ["Too short"]; }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let json = serde_json::to_string(&model).expect("serialize model");
+        let round_tripped: IfmlModel = serde_json::from_str(&json).expect("deserialize model");
+        let reserialized = serde_json::to_string(&round_tripped).expect("re-serialize model");
+        assert_eq!(reserialized, json);
+
+        assert_eq!(
+            round_tripped.views[0].params[0].default,
+            Some(ValueExpression::String("home".to_string()))
+        );
+        assert_eq!(
+            round_tripped.views[0].module_uses[0].alias.as_deref(),
+            Some("pager")
+        );
+        let field = match &round_tripped.views[0].components[0].spec {
+            Some(ComponentSpec::Form(spec)) => &spec.fields[0],
+            other => panic!("Expected Form spec, got {:?}", other),
+        };
+        assert_eq!(field.messages, vec!["Too short".to_string()]);
     }
 }

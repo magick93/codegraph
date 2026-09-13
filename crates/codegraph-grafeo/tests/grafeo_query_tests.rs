@@ -703,6 +703,7 @@ async fn test_view_component_spec_round_trip() {
         is_modal: false,
         conditional_expression: None,
         domain: Some("sales".to_string()),
+        module_uses: None,
     };
     engine.ingest_view_container(&container).await.unwrap();
 
@@ -750,6 +751,7 @@ async fn test_view_component_spec_absent_round_trip() {
         is_modal: false,
         conditional_expression: None,
         domain: None,
+        module_uses: None,
     };
     engine.ingest_view_container(&container).await.unwrap();
 
@@ -782,4 +784,70 @@ async fn test_view_component_spec_absent_round_trip() {
         .await
         .unwrap();
     assert_eq!(loaded, vec![component]);
+}
+
+#[tokio::test]
+async fn test_view_container_module_uses_round_trip() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    let container = ViewContainerNode {
+        name: "Catalog".to_string(),
+        label: None,
+        is_xor: false,
+        is_default: false,
+        is_landmark: true,
+        is_modal: false,
+        conditional_expression: None,
+        domain: None,
+        module_uses: Some(vec![
+            ModuleUseRecord {
+                module: "Pagination".to_string(),
+                alias: Some("pager".to_string()),
+            },
+            ModuleUseRecord {
+                module: "Footer".to_string(),
+                alias: None,
+            },
+        ]),
+    };
+    engine.ingest_view_container(&container).await.unwrap();
+
+    let plain = ViewContainerNode {
+        name: "Plain".to_string(),
+        label: None,
+        is_xor: false,
+        is_default: false,
+        is_landmark: false,
+        is_modal: false,
+        conditional_expression: None,
+        domain: None,
+        module_uses: None,
+    };
+    engine.ingest_view_container(&plain).await.unwrap();
+
+    let loaded = engine.get_ifml_view_containers().await.unwrap();
+    assert_eq!(loaded.len(), 2);
+
+    let catalog = loaded
+        .iter()
+        .find(|c| c.name == "Catalog")
+        .expect("Catalog container");
+    assert_eq!(
+        catalog.module_uses,
+        Some(vec![
+            ModuleUseRecord {
+                module: "Pagination".to_string(),
+                alias: Some("pager".to_string()),
+            },
+            ModuleUseRecord {
+                module: "Footer".to_string(),
+                alias: None,
+            },
+        ])
+    );
+
+    let plain_loaded = loaded
+        .iter()
+        .find(|c| c.name == "Plain")
+        .expect("Plain container");
+    assert_eq!(plain_loaded.module_uses, None);
 }

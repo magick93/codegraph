@@ -930,10 +930,15 @@ impl GraphIngestor for GrafeoEngine {
     async fn ingest_view_container(&self, node: &ViewContainerNode) -> Result<String, GraphError> {
         let session = self.db().session();
         let id = format!("vc:{}", node.name);
+        let module_uses_json = node
+            .module_uses
+            .as_ref()
+            .map(|m| serde_json::to_string(m).unwrap_or_default());
         let gql = format!(
             "INSERT (:ViewContainer {{ \
                 name: '{}', label: {}, is_xor: {}, is_default: {}, \
-                is_landmark: {}, is_modal: {}, conditional_expression: {}, domain: {} \
+                is_landmark: {}, is_modal: {}, conditional_expression: {}, domain: {}, \
+                module_uses: {} \
             }})",
             escape_gql(&node.name),
             opt_str(&node.label),
@@ -943,6 +948,7 @@ impl GraphIngestor for GrafeoEngine {
             node.is_modal,
             opt_str(&node.conditional_expression),
             opt_str(&node.domain),
+            opt_str(&module_uses_json),
         );
         session
             .execute(&gql)
