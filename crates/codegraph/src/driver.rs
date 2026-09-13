@@ -256,8 +256,15 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
                     e
                 ))
             })?;
-            let stats =
+            let mut stats =
                 crate::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+            stats.imported_policies = crate::ifml_actor_import::ingest_actor_imports(
+                be.ingestor(),
+                be.querier(),
+                &model,
+                ifml_path,
+            )
+            .await?;
             total_stats.view_containers += stats.view_containers;
             total_stats.containers += stats.containers;
             total_stats.components += stats.components;
@@ -266,6 +273,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
             total_stats.actions += stats.actions;
             total_stats.module_uses += stats.module_uses;
             total_stats.actors += stats.actors;
+            total_stats.imported_policies += stats.imported_policies;
         }
         println!("Pass 1b complete: {total_stats}");
     }
@@ -567,7 +575,15 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
                 e
             ))
         })?;
-        let stats = crate::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+        let mut stats =
+            crate::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+        stats.imported_policies = crate::ifml_actor_import::ingest_actor_imports(
+            be.ingestor(),
+            be.querier(),
+            &model,
+            ifml_path,
+        )
+        .await?;
         total_stats.view_containers += stats.view_containers;
         total_stats.containers += stats.containers;
         total_stats.components += stats.components;
@@ -576,6 +592,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         total_stats.actions += stats.actions;
         total_stats.module_uses += stats.module_uses;
         total_stats.actors += stats.actors;
+        total_stats.imported_policies += stats.imported_policies;
     }
     println!("Pass 1b complete: {total_stats}");
 

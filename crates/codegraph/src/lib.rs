@@ -1,6 +1,7 @@
 pub mod classify;
 pub mod driver;
 pub mod error;
+pub mod ifml_actor_import;
 pub mod ifml_control_inference;
 pub mod ifml_derive;
 pub mod ifml_scaffold;

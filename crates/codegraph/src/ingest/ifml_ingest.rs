@@ -136,6 +136,11 @@ async fn ingest_view_container(db: &dyn GraphIngestor, view: &ViewDeclaration) -
         } else {
             Some(view.roles.clone())
         },
+        requires: if view.requires.is_empty() {
+            None
+        } else {
+            Some(view.requires.clone())
+        },
     };
     let id = db
         .ingest_view_container(&node)
@@ -159,6 +164,7 @@ async fn ingest_container_node(
         domain: None,
         module_uses: module_use_records(&container.module_uses),
         roles: None,
+        requires: None,
     };
     db.ingest_view_container(&node).await.map_err(Error::Graph)
 }
@@ -503,13 +509,14 @@ pub struct IfmlIngestStats {
     pub actions: usize,
     pub module_uses: usize,
     pub actors: usize,
+    pub imported_policies: usize,
 }
 
 impl std::fmt::Display for IfmlIngestStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} views, {} nested containers, {} components, {} events, {} params, {} actions, {} module uses, {} actors",
+            "{} views, {} nested containers, {} components, {} events, {} params, {} actions, {} module uses, {} actors, {} imported policies",
             self.view_containers,
             self.containers,
             self.components,
@@ -518,6 +525,7 @@ impl std::fmt::Display for IfmlIngestStats {
             self.actions,
             self.module_uses,
             self.actors,
+            self.imported_policies,
         )
     }
 }

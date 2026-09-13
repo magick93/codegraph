@@ -40,6 +40,8 @@ auto-lsp = { version = "0.6", features = ["lsp_server"] }
 syn = "2"
 tree-sitter = { workspace = true }
 tree-sitter-svelte-next = "0.1.1"
+rex-ir = { workspace = true }
+rex-driver = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
