@@ -1340,6 +1340,171 @@ fn test_lsp_completion_view_body_new_keywords() {
     do_shutdown(&client_conn);
 }
 
+fn write_policy_fixture(dir: &std::path::Path) {
+    std::fs::write(
+        dir.join("domain.mox"),
+        "package example\n\nclass Ticket {\n    id readonly String ticketNo\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("policy.actor"),
+        concat!(
+            "import \"domain.mox\"\n",
+            "\n",
+            "actors Ops {\n",
+            "    actor Manager\n",
+            "    capability ViewDashboards on Ticket\n",
+            "\n",
+            "    grant Manager {\n",
+            "        permit ViewDashboards\n",
+            "    }\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+}
+
+fn temp_file_uri(dir: &std::path::Path, name: &str) -> String {
+    Url::from_file_path(dir.join(name))
+        .expect("valid file path")
+        .to_string()
+}
+
+#[test]
+fn test_lsp_diagnostic_unknown_capability_and_actor() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    write_policy_fixture(tmp.path());
+
+    let (server_conn, client_conn) = Connection::memory();
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    let uri = temp_file_uri(tmp.path(), "app.ifml");
+    open_document(
+        &client_conn,
+        &uri,
+        r#"import "policy.actor";
+
+view "Dashboard" {
+    roles: [Stranger];
+    requires: [NoSuchCap];
+}"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, &uri);
+    assert!(
+        params.diagnostics.iter().any(|d| {
+            d.message.contains("Unknown capability 'NoSuchCap'")
+                && d.severity == Some(DiagnosticSeverity::WARNING)
+        }),
+        "should warn about unknown capability 'NoSuchCap', got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        params.diagnostics.iter().any(|d| {
+            d.message.contains("Unknown actor 'Stranger'")
+                && d.severity == Some(DiagnosticSeverity::WARNING)
+        }),
+        "should warn about unknown actor 'Stranger', got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_known_capability_and_actor_stay_clean() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    write_policy_fixture(tmp.path());
+
+    let (server_conn, client_conn) = Connection::memory();
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    let uri = temp_file_uri(tmp.path(), "app.ifml");
+    open_document(
+        &client_conn,
+        &uri,
+        r#"import "policy.actor";
+
+view "Dashboard" {
+    roles: [Manager];
+    requires: [ViewDashboards];
+}"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, &uri);
+    assert!(
+        params.diagnostics.is_empty(),
+        "known capability and actor should produce no diagnostics, got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_unresolvable_import_no_diagnostics_storm() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+
+    let (server_conn, client_conn) = Connection::memory();
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // missing.actor does not exist: no policy resolves, so roles/requires
+    // must stay undiagnosed instead of flooding with warnings.
+    let uri = temp_file_uri(tmp.path(), "app.ifml");
+    open_document(
+        &client_conn,
+        &uri,
+        r#"import "missing.actor";
+
+view "Dashboard" {
+    roles: [Stranger];
+    requires: [NoSuchCap];
+}"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, &uri);
+    assert!(
+        !params.diagnostics.iter().any(
+            |d| d.message.contains("Unknown actor") || d.message.contains("Unknown capability")
+        ),
+        "unresolvable import must not produce capability/role diagnostics, got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
 fn send_update_positions(
     client: &Connection,
     id: i32,

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::LazyLock;
 
 use auto_lsp::anyhow;
@@ -32,6 +33,8 @@ pub const TOKEN_MODIFIERS: &[&str] = &[
     "deprecated",
     "abstract",
 ];
+
+use crate::ifml_actor_import::resolve_actor_policy;
 
 use super::state::{GrafeoState, GRAFE};
 
@@ -790,6 +793,160 @@ fn extract_module_uses(source: &str) -> Vec<(String, Range)> {
     uses
 }
 
+/// True for ERROR nodes that represent an `import "x";` statement. The
+/// tree-sitter grammar does not model imports yet, so each import line
+/// surfaces as an ERROR node; these are tolerated (not reported, and they
+/// do not disable semantic checks) because imports are valid DSL syntax.
+fn is_import_error(node: &tree_sitter::Node, source: &[u8]) -> bool {
+    if !node.is_error() || node.is_missing() {
+        return false;
+    }
+    let text = node.utf8_text(source).unwrap_or("").trim_start();
+    text == "import"
+        || (text.starts_with("import") && text["import".len()..].starts_with([' ', '\t', '"']))
+}
+
+/// True when the tree has ERROR/MISSING nodes outside `import` statements.
+/// Import lines are tolerated because the tree-sitter grammar does not model
+/// them; every other error keeps semantic checks off.
+fn has_error_outside_imports(root: &tree_sitter::Node, source: &[u8]) -> bool {
+    fn visit(node: &tree_sitter::Node, source: &[u8]) -> bool {
+        if (node.is_error() || node.is_missing()) && !is_import_error(node, source) {
+            return true;
+        }
+        let mut cursor = node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                if visit(&cursor.node(), source) {
+                    return true;
+                }
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        false
+    }
+
+    visit(root, source)
+}
+
+/// Collect the raw paths of top-level `import "x";` statements. The
+/// tree-sitter grammar does not model imports yet, so they are gathered
+/// textually; callers gate this behind a clean-except-imports parse.
+fn extract_import_paths(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim_start().strip_prefix("import ")?.trim();
+            let rest = rest.trim_end_matches(';').trim();
+            let path = rest.strip_prefix('"')?.strip_suffix('"')?;
+            (!path.is_empty()).then(|| path.to_string())
+        })
+        .collect()
+}
+
+/// `(identifier, range)` pairs collected from an IFML array literal.
+type ArrayRefs = Vec<(String, Range)>;
+
+/// Collect `(name, range)` pairs for the identifier elements of the
+/// `roles: [...]` and `requires: [...]` arrays declared directly in view
+/// bodies. Returns `(roles, requires)`.
+fn extract_view_policy_refs(source: &[u8], root: &tree_sitter::Node) -> (ArrayRefs, ArrayRefs) {
+    let mut roles = Vec::new();
+    let mut requires = Vec::new();
+    let mut stack = vec![*root];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "view_declaration" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() != "view_body" {
+                    continue;
+                }
+                let mut body_cursor = child.walk();
+                for prop in child.children(&mut body_cursor) {
+                    if prop.kind() != "property_assignment" {
+                        continue;
+                    }
+                    let Some(key) = prop.child_by_field_name("key") else {
+                        continue;
+                    };
+                    let Ok(key_text) = key.utf8_text(source) else {
+                        continue;
+                    };
+                    if key_text != "roles" && key_text != "requires" {
+                        continue;
+                    }
+                    let Some(value) = prop.child_by_field_name("value") else {
+                        continue;
+                    };
+                    if key_text == "roles" {
+                        collect_array_field_refs(&value, source, &mut roles);
+                    } else {
+                        collect_array_field_refs(&value, source, &mut requires);
+                    }
+                }
+            }
+        }
+        let mut walk = node.walk();
+        for descendant in node.children(&mut walk) {
+            stack.push(descendant);
+        }
+    }
+    (roles, requires)
+}
+
+/// Validate view `roles`/`requires` against the actor policy resolved from
+/// the document's imports. Quiet unless a policy actually resolves: without
+/// one, roles stay undiagnosed (they may be free-form) and unresolvable
+/// imports never produce a diagnostics storm.
+fn validate_policy_refs(
+    source: &str,
+    root: &tree_sitter::Node,
+    uri: &Url,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let imports = extract_import_paths(source);
+    if imports.is_empty() {
+        return;
+    }
+    let Ok(doc_path) = uri.to_file_path() else {
+        return;
+    };
+    let base_dir = doc_path.parent().unwrap_or_else(|| Path::new("."));
+    let Some(policy) = resolve_actor_policy(&imports, base_dir) else {
+        return;
+    };
+    let actor_names: HashSet<String> = policy.actors.into_iter().map(|a| a.name).collect();
+    let capability_names: HashSet<String> =
+        policy.capabilities.into_iter().map(|c| c.name).collect();
+    let (roles, requires) = extract_view_policy_refs(source.as_bytes(), root);
+    for (name, range) in roles {
+        if actor_names.contains(&name) {
+            continue;
+        }
+        diagnostics.push(Diagnostic {
+            range,
+            severity: Some(DiagnosticSeverity::WARNING),
+            message: format!("Unknown actor '{name}'"),
+            source: Some("codegraph".to_string()),
+            ..Default::default()
+        });
+    }
+    for (name, range) in requires {
+        if capability_names.contains(&name) {
+            continue;
+        }
+        diagnostics.push(Diagnostic {
+            range,
+            severity: Some(DiagnosticSeverity::WARNING),
+            message: format!("Unknown capability '{name}'"),
+            source: Some("codegraph".to_string()),
+            ..Default::default()
+        });
+    }
+}
+
 pub fn handle_hover(db: &BaseDb, params: HoverParams) -> anyhow::Result<Option<Hover>> {
     let uri = &params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
@@ -1020,10 +1177,13 @@ pub fn compute_diagnostics(db: &BaseDb, uri: &Url) -> Vec<Diagnostic> {
     }
 
     // Semantic reference checks only run on cleanly parsed documents so
-    // tree-sitter error recovery cannot fabricate bogus references.
-    if !root.has_error() {
+    // tree-sitter error recovery cannot fabricate bogus references. Import
+    // statements are tolerated: the tree-sitter grammar does not model them
+    // yet, so every `import "x";` line surfaces as an ERROR node.
+    if !has_error_outside_imports(&root, source_bytes) {
         validate_navigate_targets(source_bytes, &root, &mut diagnostics);
         validate_module_uses(source, &root, &mut diagnostics);
+        validate_policy_refs(source, &root, uri, &mut diagnostics);
     }
 
     diagnostics
@@ -1217,8 +1377,10 @@ pub fn handle_document_diagnostic(
 /// Walk the Tree-sitter tree and collect all ERROR/MISSING nodes.
 /// Each error node gets a diagnostic with its specific location, so the
 /// editor shows red underlines exactly where the syntax error occurs.
+/// Import statements are skipped: the grammar does not model them yet, but
+/// they are valid DSL syntax (see `is_import_error`).
 fn collect_errors(node: &tree_sitter::Node, source: &[u8], diagnostics: &mut Vec<Diagnostic>) {
-    if node.is_error() || node.is_missing() {
+    if (node.is_error() || node.is_missing()) && !is_import_error(node, source) {
         let range = node.range();
         let text = node.utf8_text(source).unwrap_or("<binary>");
         let message = if node.is_missing() {
