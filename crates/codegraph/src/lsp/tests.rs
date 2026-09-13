@@ -877,6 +877,178 @@ fn test_lsp_code_action_missing_entity() {
     do_shutdown(&client_conn);
 }
 
+#[test]
+fn test_lsp_diagnostic_unknown_field_in_fields() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    let mut schema_infos = std::collections::HashMap::new();
+    schema_infos.insert(
+        "Customer".to_string(),
+        SchemaInfo {
+            title: "CustomerType".to_string(),
+            description: None,
+            properties: vec!["name".to_string(), "email".to_string()],
+            rel_path: "customer.json".to_string(),
+        },
+    );
+    let state = GrafeoState {
+        entity_names: vec!["Customer".to_string()],
+        schema_infos,
+        schema_dirs: vec![],
+    };
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, state).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // 'bogus' is not a property of CustomerType — should warn naming the schema title
+    open_document(
+        &client_conn,
+        "file:///bad_field.ifml",
+        r#"view "Test" { component "c" { type: list; data: Customer; fields: [name, bogus]; } }"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///bad_field.ifml");
+    assert!(
+        params.diagnostics.iter().any(|d| {
+            d.message.contains("bogus")
+                && d.message.contains("Customer")
+                && d.message.contains("CustomerType")
+        }),
+        "should warn about unknown field 'bogus' on entity 'Customer' naming schema title, got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_no_field_diagnostic_for_known_fields() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    let mut schema_infos = std::collections::HashMap::new();
+    schema_infos.insert(
+        "Customer".to_string(),
+        SchemaInfo {
+            title: "CustomerType".to_string(),
+            description: None,
+            properties: vec!["name".to_string(), "email".to_string()],
+            rel_path: "customer.json".to_string(),
+        },
+    );
+    let state = GrafeoState {
+        entity_names: vec!["Customer".to_string()],
+        schema_infos,
+        schema_dirs: vec![],
+    };
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, state).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    open_document(
+        &client_conn,
+        "file:///good_fields.ifml",
+        r#"view "Test" { component "c" { type: list; data: Customer; fields: [name, email]; } }"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///good_fields.ifml");
+    assert!(
+        !params
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("not found on entity")),
+        "known fields should not produce field diagnostics, got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_completion_field_names_in_fields_context() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    let mut schema_infos = std::collections::HashMap::new();
+    schema_infos.insert(
+        "Customer".to_string(),
+        SchemaInfo {
+            title: "CustomerType".to_string(),
+            description: None,
+            properties: vec!["name".to_string(), "email".to_string()],
+            rel_path: "customer.json".to_string(),
+        },
+    );
+    let state = GrafeoState {
+        entity_names: vec!["Customer".to_string()],
+        schema_infos,
+        schema_dirs: vec![],
+    };
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, state).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    let text = r#"view "A" { component "c" { type: list; data: Customer; fields: [name, ] } }"#;
+    open_document(&client_conn, "file:///fields_ctx.ifml", text);
+
+    let _ = recv_diagnostics(&client_conn, "file:///fields_ctx.ifml");
+
+    // Place the cursor right after "fields: [" — the fields context should
+    // offer the bound entity's properties.
+    let pos = text.find("fields: [").unwrap() + "fields: [".len();
+    client_conn
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2i32),
+            method: "textDocument/completion".to_string(),
+            params: serde_json::json!({
+                "textDocument": { "uri": "file:///fields_ctx.ifml" },
+                "position": { "line": 0, "character": pos }
+            }),
+        }))
+        .unwrap();
+
+    let msg = client_conn.receiver.recv().unwrap();
+    match msg {
+        Message::Response(resp) => {
+            let result = resp.result.unwrap_or(serde_json::Value::Null);
+            assert!(!result.is_null(), "completion should return results");
+            let completion: CompletionResponse = serde_json::from_value(result).unwrap();
+            match completion {
+                CompletionResponse::List(list) => {
+                    let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
+                    assert!(
+                        labels.contains(&"email") && labels.contains(&"name"),
+                        "fields context should suggest properties of Customer, got: {labels:?}"
+                    );
+                }
+                _ => panic!("Expected completion list"),
+            }
+        }
+        _ => panic!("Expected completion response"),
+    }
+
+    do_shutdown(&client_conn);
+}
+
 fn send_update_positions(
     client: &Connection,
     id: i32,

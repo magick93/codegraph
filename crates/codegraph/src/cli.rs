@@ -126,6 +126,32 @@ pub enum Commands {
         #[arg(long)]
         template_dir: Vec<PathBuf>,
     },
+    /// Scaffold a starter IFML DSL file (CRUD views + navigation) from JSON schemas
+    IfmlScaffold {
+        /// Path to JSON schema directory
+        #[arg(long)]
+        schemas: PathBuf,
+
+        /// Path to classifier.toml
+        #[arg(long)]
+        classifier: PathBuf,
+
+        /// Path to domains.toml
+        #[arg(long)]
+        config: PathBuf,
+
+        /// Output .ifml file path
+        #[arg(long, default_value = "app.ifml")]
+        output: PathBuf,
+
+        /// Overwrite the output file if it already exists
+        #[arg(long)]
+        force: bool,
+
+        /// Filter to specific domain(s); repeatable
+        #[arg(long)]
+        domain: Vec<String>,
+    },
     /// Start the IFML Language Server Protocol server
     Lsp {
         /// Paths to JSON schema directories

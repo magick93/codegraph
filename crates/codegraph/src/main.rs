@@ -104,6 +104,24 @@ async fn main() -> codegraph::error::Result<()> {
             })
             .await
         }
+        cli::Commands::IfmlScaffold {
+            schemas,
+            classifier,
+            config,
+            output,
+            force,
+            domain,
+        } => {
+            codegraph::ifml_scaffold::ifml_scaffold(codegraph::ifml_scaffold::IfmlScaffoldArgs {
+                schemas: &schemas,
+                classifier: &classifier,
+                config_path: &config,
+                output: &output,
+                force,
+                domains: &domain,
+            })
+            .await
+        }
         cli::Commands::Lsp {
             schemas,
             classifier,

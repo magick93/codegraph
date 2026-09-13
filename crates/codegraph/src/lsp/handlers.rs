@@ -781,6 +781,16 @@ pub fn compute_diagnostics(db: &BaseDb, uri: &Url) -> Vec<Diagnostic> {
     // Validate no duplicate fields in fields: [...] arrays
     validate_no_duplicate_fields(source_bytes, &root, &mut diagnostics);
 
+    // Validate fields: [...] entries against the bound entity's schema.
+    // Only runs when schemas are configured.
+    with_grafe(|grafe| {
+        if let Some(grafe) = grafe {
+            if !grafe.schema_infos.is_empty() {
+                validate_fields_against_schema(source, &root, grafe, &mut diagnostics);
+            }
+        }
+    });
+
     let data_refs = extract_data_refs(source_bytes, &root);
     with_grafe(|grafe| {
         if let Some(grafe) = grafe {
@@ -1228,6 +1238,116 @@ fn validate_no_duplicate_fields(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     walk_for_fields_assignments(root, source, diagnostics);
+}
+
+/// Validate every `fields: [...]` array against the properties of the
+/// entity bound via `data:` in the same component. Unknown fields produce a
+/// warning naming the schema title. No-ops for components whose entity is
+/// not in the loaded schemas (the `data:` check already reports those).
+fn validate_fields_against_schema(
+    source: &str,
+    root: &tree_sitter::Node,
+    grafe: &GrafeoState,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let source_bytes = source.as_bytes();
+    let mut stack = vec![*root];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "component_body" {
+            check_component_fields(&node, source_bytes, grafe, diagnostics);
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+}
+
+fn check_component_fields(
+    body: &tree_sitter::Node,
+    source_bytes: &[u8],
+    grafe: &GrafeoState,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let mut entity = None;
+    let mut field_refs = Vec::new();
+    let mut cursor = body.walk();
+    for child in body.children(&mut cursor) {
+        if child.kind() != "property_assignment" {
+            continue;
+        }
+        let key = match child.child_by_field_name("key") {
+            Some(k) => match k.utf8_text(source_bytes) {
+                Ok(t) => t.to_string(),
+                Err(_) => continue,
+            },
+            None => continue,
+        };
+        let value = match child.child_by_field_name("value") {
+            Some(v) => v,
+            None => continue,
+        };
+        match key.as_str() {
+            "data" => entity = extract_identifier_from_value(source_bytes, &value),
+            "fields" => collect_array_field_refs(&value, source_bytes, &mut field_refs),
+            _ => {}
+        }
+    }
+
+    let Some(entity) = entity else { return };
+    let Some(info) = grafe.schema_infos.get(&entity) else {
+        return;
+    };
+    for (name, range) in field_refs {
+        if !info.properties.contains(&name) {
+            diagnostics.push(Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::WARNING),
+                message: format!(
+                    "Field '{}' not found on entity '{}' (schema '{}')",
+                    name, entity, info.title
+                ),
+                source: Some("codegraph".to_string()),
+                ..Default::default()
+            });
+        }
+    }
+}
+
+/// Collect `(field_name, range)` pairs for identifier elements of the
+/// array literal inside a `fields: [...]` value node.
+fn collect_array_field_refs(
+    value_node: &tree_sitter::Node,
+    source_bytes: &[u8],
+    out: &mut Vec<(String, Range)>,
+) {
+    let mut cursor = value_node.walk();
+    for child in value_node.children(&mut cursor) {
+        if child.kind() != "array_literal" {
+            continue;
+        }
+        let mut arr = child.walk();
+        for elem in child.children(&mut arr) {
+            if elem.kind() != "value_expression" {
+                continue;
+            }
+            let text = match elem.utf8_text(source_bytes) {
+                Ok(t) => t.trim().to_string(),
+                Err(_) => continue,
+            };
+            if text.is_empty() || text.contains('"') {
+                continue;
+            }
+            let r = elem.range();
+            out.push((
+                text,
+                Range::new(
+                    Position::new(r.start_point.row as u32, r.start_point.column as u32),
+                    Position::new(r.end_point.row as u32, r.end_point.column as u32),
+                ),
+            ));
+        }
+    }
 }
 
 fn find_line_with_text(text: &str, needle: &str) -> Option<u32> {

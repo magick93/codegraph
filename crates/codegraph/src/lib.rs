@@ -1,6 +1,7 @@
 pub mod classify;
 pub mod driver;
 pub mod error;
+pub mod ifml_scaffold;
 pub mod ingest;
 pub mod init;
 pub mod lsp;
