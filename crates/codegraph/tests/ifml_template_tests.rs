@@ -80,10 +80,8 @@ view "Dashboard" {
 }
 "#;
 
-fn write_domains_toml(dir: &Path) {
-    std::fs::write(
-        dir.join("domains.toml"),
-        r#"
+fn domains_toml_without_workflow() -> &'static str {
+    r#"
 [defaults]
 api_version = "v1"
 
@@ -92,9 +90,26 @@ label = "Sales"
 schema_dir = "sales"
 postgres_schema = "sales"
 entities = ["CustomerType"]
-"#,
-    )
-    .unwrap();
+"#
+}
+
+fn domains_toml_with_workflow() -> &'static str {
+    r#"
+[defaults]
+api_version = "v1"
+
+[domains.sales]
+label = "Sales"
+schema_dir = "sales"
+postgres_schema = "sales"
+entities = ["CustomerType"]
+
+[domains.sales.entity_config.CustomerType.workflow]
+status_field = "status"
+initial_state = "received"
+states = ["received", "review", "done"]
+terminal_states = ["done"]
+"#
 }
 
 async fn generate_svelte(dir: &Path, ifml: &str) -> std::path::PathBuf {
@@ -106,14 +121,23 @@ async fn generate_svelte_with_mappings(
     ifml: &str,
     mappings: Option<&Path>,
 ) -> std::path::PathBuf {
+    generate_svelte_with_domains(dir, ifml, domains_toml_without_workflow(), mappings).await
+}
+
+async fn generate_svelte_with_domains(
+    dir: &Path,
+    ifml: &str,
+    domains_toml: &str,
+    mappings: Option<&Path>,
+) -> std::path::PathBuf {
     let ifml_path = dir.join("app.ifml");
     std::fs::write(&ifml_path, ifml).unwrap();
     let output = dir.join("out");
-    let domains_toml = dir.join("domains.toml");
-    write_domains_toml(dir);
+    let domains_toml_path = dir.join("domains.toml");
+    std::fs::write(&domains_toml_path, domains_toml).unwrap();
 
     codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
-        config_path: &domains_toml,
+        config_path: &domains_toml_path,
         output: &output,
         ifml_files: &[ifml_path],
         schemas: None,
@@ -810,6 +834,82 @@ async fn xor_container_without_pack_renders_plain_page() {
     );
 }
 
+const ROLES_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "AdminConsole" {
+    label "Admin Console";
+    roles: [admin, manager];
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+
+view "CustomerList" {
+    label "Customers";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+"#;
+
+#[tokio::test]
+async fn role_guarded_view_emits_load_guard_and_roles_helper() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), ROLES_IFML).await;
+
+    let load = read(&svelte, "src/routes/adminconsole/+page.ts");
+    assert!(
+        load.contains("import { currentRoles } from '$lib/roles';"),
+        "{load}"
+    );
+    assert!(
+        load.contains("import { redirect } from '@sveltejs/kit';"),
+        "{load}"
+    );
+    assert!(
+        load.contains("const viewRoles = ['admin', 'manager'];"),
+        "{load}"
+    );
+    assert!(load.contains("const roles = currentRoles();"), "{load}");
+    assert!(
+        load.contains("if (!roles.some((r) => viewRoles.includes(r))) {"),
+        "{load}"
+    );
+    assert!(load.contains("throw redirect(303, '/');"), "{load}");
+    let load_start = load.find("export const load").unwrap();
+    let guard_start = load.find("const roles = currentRoles();").unwrap();
+    assert!(
+        load_start < guard_start,
+        "guard must sit inside load: {load}"
+    );
+
+    let helper = read(&svelte, "src/lib/roles.ts");
+    assert!(
+        helper.contains("export function currentRoles(): string[] {"),
+        "{helper}"
+    );
+    assert!(
+        helper.contains("(globalThis as any).__USER_ROLES__ ?? []"),
+        "{helper}"
+    );
+
+    let unguarded = read(&svelte, "src/routes/customerlist/+page.ts");
+    assert!(
+        !unguarded.contains("currentRoles"),
+        "views without roles must stay guard-free: {unguarded}"
+    );
+}
+
 const SHELL_IFML: &str = r#"
 domain "sales" {
     schema "sales";
@@ -892,4 +992,97 @@ async fn no_shell_mapping_emits_no_layout() {
         !svelte.join("src/routes/+layout.svelte").exists(),
         "no shell mapping must mean no layout emission"
     );
+}
+
+const WORKFLOW_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    label "Customers";
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name, status];
+    }
+}
+
+view "CustomerDetail" {
+    params { customerId: Uuid };
+
+    component "info" {
+        type: details;
+        data: Customer;
+        fields: [name];
+    }
+}
+
+view "CustomerEdit" {
+    params { customerId: Uuid };
+
+    component "editor" {
+        type: form;
+        data: Customer;
+
+        field name -> input text { required: true; }
+
+        on save -> navigate("CustomerList", {});
+    }
+}
+"#;
+
+#[tokio::test]
+async fn workflow_view_renders_state_badges() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte_with_domains(
+        dir.path(),
+        WORKFLOW_IFML,
+        domains_toml_with_workflow(),
+        None,
+    )
+    .await;
+
+    let list = read(&svelte, "src/routes/customerlist/+page.svelte");
+    assert!(
+        list.contains(
+            "<td><span class=\"workflow-state\" data-testid=\"grid-state\" data-workflow-state={item.status} data-workflow-terminal={['done'].includes(item.status) ? \"true\" : \"false\"}>{item.status}</span></td>"
+        ),
+        "list rows must carry a per-row state badge: {list}"
+    );
+
+    let details = read(&svelte, "src/routes/customerdetail/+page.svelte");
+    assert!(
+        details.contains(
+            "<span class=\"workflow-state\" data-testid=\"info-state\" data-workflow-state={data.status} data-workflow-terminal={['done'].includes(data.status) ? \"true\" : \"false\"}>{data.status}</span>"
+        ),
+        "details pages must carry a single state badge: {details}"
+    );
+
+    let form = read(&svelte, "src/routes/customeredit/+page.svelte");
+    assert!(
+        form.contains(
+            "<span class=\"workflow-state\" data-testid=\"editor-state\" data-workflow-state={data.formData?.status} data-workflow-terminal={['done'].includes(data.formData?.status) ? \"true\" : \"false\"}>{data.formData?.status}</span>"
+        ),
+        "form pages must carry a single optional-chained state badge: {form}"
+    );
+}
+
+#[tokio::test]
+async fn no_workflow_config_renders_no_badges() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), WORKFLOW_IFML).await;
+
+    for route in [
+        "src/routes/customerlist/+page.svelte",
+        "src/routes/customerdetail/+page.svelte",
+        "src/routes/customeredit/+page.svelte",
+    ] {
+        let page = read(&svelte, route);
+        assert!(
+            !page.contains("workflow-state") && !page.contains("data-workflow"),
+            "no-workflow runs must stay badge-free: {route}: {page}"
+        );
+    }
 }

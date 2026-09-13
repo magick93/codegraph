@@ -2,7 +2,19 @@ import type { PageLoad } from './$types';
 {% if has_fetch %}
 import { error } from '@sveltejs/kit';
 {% endif %}
+{%- if view_roles %}
+import { redirect } from '@sveltejs/kit';
+import { currentRoles } from '$lib/roles';
+
+const viewRoles = [{% for r in view_roles %}'{{ r }}'{% if not loop.last %}, {% endif %}{% endfor %}];
+{% endif %}
 export const load: PageLoad = async ({ params, url, fetch }) => {
+{%- if view_roles %}
+	const roles = currentRoles();
+	if (!roles.some((r) => viewRoles.includes(r))) {
+		throw redirect(303, '/');
+	}
+{% endif %}
 	const result: Record<string, unknown> = {};
 {%- if param_defaults %}
 	const paramDefaults: Record<string, string> = {};

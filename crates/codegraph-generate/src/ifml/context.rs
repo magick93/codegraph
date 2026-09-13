@@ -23,6 +23,8 @@ pub struct IfmlViewContainer {
     pub is_default: bool,
     pub is_landmark: bool,
     pub is_modal: bool,
+    /// Roles allowed to view this page; empty when unrestricted
+    pub roles: Vec<String>,
     pub params: Vec<ParameterDef>,
     pub components: Vec<IfmlComponent>,
     pub events: Vec<IfmlEvent>,

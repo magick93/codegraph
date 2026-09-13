@@ -279,6 +279,7 @@ impl<'a> IfmlQuerier for IfmlGraphQuerier<'a> {
                 is_default: vc.is_default,
                 is_landmark: vc.is_landmark,
                 is_modal: vc.is_modal,
+                roles: vc.roles.clone().unwrap_or_default(),
                 params,
                 components,
                 events,
@@ -588,6 +589,43 @@ mod tests {
                 binding: HashMap::new()
             }
         );
+    }
+
+    #[tokio::test]
+    async fn view_roles_round_trip_through_mock_engine() {
+        let engine = MockEngine::new();
+        engine
+            .ingest_view_container(&ViewContainerNode {
+                name: "AdminConsole".to_string(),
+                label: None,
+                is_xor: false,
+                is_default: false,
+                is_landmark: false,
+                is_modal: false,
+                conditional_expression: None,
+                domain: None,
+                module_uses: None,
+                roles: Some(vec!["admin".to_string(), "manager".to_string()]),
+            })
+            .await
+            .unwrap();
+        ingest_view_container(&engine, "Public", false).await;
+
+        let querier = IfmlGraphQuerier::new(&engine);
+        let containers = querier.get_view_containers().await.unwrap();
+        let admin = containers
+            .iter()
+            .find(|c| c.name == "AdminConsole")
+            .expect("AdminConsole container");
+        assert_eq!(
+            admin.roles,
+            vec!["admin".to_string(), "manager".to_string()]
+        );
+        let public = containers
+            .iter()
+            .find(|c| c.name == "Public")
+            .expect("Public container");
+        assert!(public.roles.is_empty());
     }
 
     #[test]
