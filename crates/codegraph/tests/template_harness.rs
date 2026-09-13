@@ -2724,6 +2724,7 @@ fn playwright_ts_use_persona_token_renders_did_persona() {
                 ts_type: "string".to_string(),
                 required: true,
                 example_value: "'did:example:0001'".to_string(),
+                is_enum: false,
                 fk_target_domain: None,
                 fk_target_path: None,
                 fk_target_module: None,
@@ -2736,6 +2737,7 @@ fn playwright_ts_use_persona_token_renders_did_persona() {
                 ts_type: "string".to_string(),
                 required: true,
                 example_value: "'did:example:0002'".to_string(),
+                is_enum: false,
                 fk_target_domain: None,
                 fk_target_path: None,
                 fk_target_module: None,
@@ -2743,6 +2745,8 @@ fn playwright_ts_use_persona_token_renders_did_persona() {
                 js_var: None,
             },
         ],
+        update_fields: vec![],
+        update_patch_field: None,
         has_required_fields: true,
         fk_fields: vec![],
         schema_name: "support_plan".to_string(),
@@ -2809,6 +2813,112 @@ fn playwright_ts_use_persona_token_renders_did_persona() {
     assert!(
         fixture_plain.contains("did: 'did:example:0001',"),
         "Non-gated fixture should keep example values. Got:\n{fixture_plain}"
+    );
+}
+
+/// The Update describe PUTs a fresh value into the first safe mutable
+/// string field, asserts echo + persistence, and both Create and Update
+/// rows are registered in createdIds for the file-level afterAll cleanup.
+#[test]
+fn playwright_ts_update_roundtrip_and_cleanup() {
+    use generate::playwright::{TsEntityContext, TsFieldDef};
+    use generate::ProjectConfig;
+
+    let tera = test_tera();
+    let project = ProjectConfig::default();
+
+    let mk_field = |name: &str, example: &str| TsFieldDef {
+        name: name.to_string(),
+        label: name.to_string(),
+        ts_type: "string".to_string(),
+        required: true,
+        example_value: format!("'{example}'"),
+        is_enum: false,
+        fk_target_domain: None,
+        fk_target_path: None,
+        fk_target_module: None,
+        fk_target_entity_name: None,
+        js_var: None,
+    };
+
+    let patch_field = mk_field("preferredName", "Test");
+    let mk_context = |patch: Option<TsFieldDef>| TsEntityContext {
+        entity_name: "PersonRecord".to_string(),
+        module_name: "crm_person_record".to_string(),
+        domain: "crm".to_string(),
+        path_segment: "person-record".to_string(),
+        nsid: "community.os.crm.personRecord".to_string(),
+        has_create: true,
+        has_read: true,
+        has_update: true,
+        has_delete: true,
+        has_list: true,
+        create_fields: vec![patch_field.clone()],
+        update_fields: vec![patch_field.clone()],
+        update_patch_field: patch,
+        has_required_fields: true,
+        fk_fields: vec![],
+        schema_name: "crm_person_record".to_string(),
+        has_fts: false,
+        fts_search_field: String::new(),
+        fts_search_field_required: false,
+        fts_secondary_field: String::new(),
+        use_persona_token: false,
+        permission_record_scoped: false,
+        persona_did: "did:plc:test.generated".to_string(),
+    };
+
+    let spec = generate::render_template_with_project(
+        &tera,
+        "playwright/ts_spec.tera",
+        &mk_context(Some(patch_field.clone())),
+        &project,
+    )
+    .unwrap();
+    assert!(
+        spec.contains("import { uniqueSuffix } from '../../test-utils';"),
+        "Update roundtrip spec should import the shared uniqueSuffix helper. Got:\n{spec}"
+    );
+    assert!(
+        spec.contains("— Update"),
+        "Spec with a patchable field should render the Update describe. Got:\n{spec}"
+    );
+    assert!(
+        spec.contains("data: { preferredName: newValue },"),
+        "Update test should PUT the chosen field. Got:\n{spec}"
+    );
+    assert!(
+        spec.contains("const newValue = `${base} ${uniqueSuffix()}`;"),
+        "Update test should use a fresh unique value. Got:\n{spec}"
+    );
+    assert!(
+        spec.matches("createdIds.push(").count() == 2,
+        "Create and Update suites should both register created rows. Got:\n{spec}"
+    );
+    assert!(
+        spec.contains("test.afterAll"),
+        "Spec should clean up created rows in afterAll. Got:\n{spec}"
+    );
+    assert!(
+        !spec.contains("const newValue = `${'did:"),
+        "DID-shaped fields must not be PATCHed with generated suffixes. Got:\n{spec}"
+    );
+
+    // No safe patch field → no Update roundtrip test (and no unused import).
+    let spec_no_patch = generate::render_template_with_project(
+        &tera,
+        "playwright/ts_spec.tera",
+        &mk_context(None),
+        &project,
+    )
+    .unwrap();
+    assert!(
+        !spec_no_patch.contains("— Update"),
+        "Spec without a safe patch field must skip the Update describe. Got:\n{spec_no_patch}"
+    );
+    assert!(
+        !spec_no_patch.contains("uniqueSuffix"),
+        "Spec without an Update test must not import the helper. Got:\n{spec_no_patch}"
     );
 }
 

@@ -278,33 +278,106 @@ impl EntityGenerator for TsEntityGenerator {
         let properties = db.get_properties_in_domain(schema_title, domain).await?;
         let fields = expand_vo_fields(db, schema_title, &model.fields, &properties).await?;
 
+        // Per-entity config (entity_config.<Entity> in domains.toml) — used
+        // for immutable-field filtering and FTS/permission detection below.
+        let entity_cfg = config
+            .domains
+            .get(domain)
+            .and_then(|d| d.get_entity_config(&model.name));
+
         let mut create_fields: Vec<TsFieldDef> = Vec::with_capacity(fields.len());
+        let mut update_fields: Vec<TsFieldDef> = Vec::with_capacity(fields.len());
+        // The update DTO drops id + immutable fields (see
+        // domain_types/dto_update.tera); mirror that filter so the spec only
+        // PATCHes fields the handler actually applies.
+        let immutable_fields: Vec<String> = entity_cfg
+            .map(|ec| ec.dto.immutable_fields.clone())
+            .unwrap_or_default();
+        // PATCH target for the Update roundtrip test: the first required
+        // mutable plain-string field that tolerates a generated unique
+        // suffix. Enum-typed fields (values must match a codelist variant),
+        // DID/URI-shaped fields (pattern-validated, and DIDs carry record
+        // ownership), range/date/time columns (Postgres rejects the suffixed
+        // literal), pattern-validated fields (e.g. base64 signatures) and FK
+        // refs are skipped — overwriting those would be rejected or reassign
+        // the record.
+        let mut update_patch_field: Option<TsFieldDef> = None;
         for f in &fields {
             let (fk_target_domain, fk_target_path, fk_target_module, fk_target_entity_name) =
                 match resolve_fk_target_meta(db, schema_title, f).await {
                     Some((d, p, m, e)) => (Some(d), Some(p), Some(m), Some(e)),
                     None => (None, None, None, None),
                 };
-            create_fields.push(TsFieldDef {
+            let is_enum_typed = matches!(
+                f.classification.as_deref(),
+                Some("CodelistCheck") | Some("CodelistReference") | Some("InlineEnum")
+            );
+            // Enum-typed fields must serialize a valid variant. The generic
+            // example_for_field fallback emits "test", which serde enum
+            // validation rejects (e.g. PushDeviceTokenPlatform only accepts
+            // ios/android/web) — resolve the codelist variants from the graph
+            // and fall back to the first variant when the generic example
+            // isn't one of them.
+            let mut example_value = f.example_value.clone();
+            if is_enum_typed {
+                if let Some(target) = &f.fk_target {
+                    let filename = target.rsplit('/').next().unwrap_or(target);
+                    let cl_name = filename
+                        .strip_suffix(".json#")
+                        .or_else(|| filename.strip_suffix(".json"))
+                        .unwrap_or(filename);
+                    if let Ok(values) = db.get_enum_values(cl_name).await {
+                        if !values.is_empty() {
+                            let unquoted = example_value.trim_matches('"');
+                            if !values.iter().any(|v| v.value == unquoted) {
+                                example_value = format!("\"{}\"", values[0].value);
+                            }
+                        }
+                    }
+                }
+            }
+            let def = TsFieldDef {
                 name: f.name.clone(),
                 label: f.label.clone(),
                 ts_type: f.ts_type.clone(),
                 required: f.required,
-                example_value: f.example_value.clone(),
+                example_value,
+                is_enum: is_enum_typed,
                 fk_target_domain,
                 fk_target_path,
                 fk_target_module,
                 fk_target_entity_name: fk_target_entity_name.clone(),
                 js_var: fk_target_entity_name.map(|_| f.name.to_lower_camel_case()),
-            });
+            };
+            let immutable = immutable_fields
+                .iter()
+                .any(|i| *i == f.rust_field || *i == f.name);
+            if !immutable {
+                update_fields.push(def.clone());
+            }
+            if update_patch_field.is_none()
+                && !immutable
+                && f.required
+                && def.ts_type == "string"
+                && def.fk_target_entity_name.is_none()
+                && !def.is_enum
+                && !f.name.to_lowercase().contains("did")
+                && !f.name.to_lowercase().ends_with("uri")
+                && !def.example_value.contains("did:")
+                && !def.example_value.contains("at://")
+                && !f.pg_type.contains("RANGE")
+                && !f.pg_type.contains("DATE")
+                && !f.pg_type.contains("TIME")
+                && !properties
+                    .iter()
+                    .any(|p| p.name == f.name && p.pattern.is_some())
+            {
+                update_patch_field = Some(def.clone());
+            }
+            create_fields.push(def);
         }
 
         // Full-text search detection — mirrors ui/e2e_test.rs.
-        let entity_cfg = config
-            .domains
-            .get(domain)
-            .and_then(|d| d.get_entity_config(&model.name));
-
         let has_fts = entity_cfg
             .map(|ec| {
                 !ec.search.fts_weights.is_empty()
@@ -467,6 +540,8 @@ impl EntityGenerator for TsEntityGenerator {
             has_delete: model.operations.delete,
             has_list: model.operations.list,
             create_fields,
+            update_fields,
+            update_patch_field,
             has_required_fields,
             fk_fields,
             schema_name: model.entity_module.clone(),

@@ -2,6 +2,7 @@
 // E2E tests for full-text search on {{ entity_name }}
 
 import { test, expect } from '@playwright/test';
+import { uniqueSuffix } from '../../test-utils';
 {% for fk in fk_fields %}
 import { {{ fk.entity_name }}Fixture } from '../../fixtures/{{ fk.target_domain }}/{{ fk.target_module }}';
 {% endfor %}
@@ -13,7 +14,7 @@ const headers: Record<string, string> = authToken
   : {};
 
 function uniqueTerm(): string {
-  return `FtsSearchTerm${Date.now()}`;
+  return `FtsSearchTerm${uniqueSuffix()}`;
 }
 
 test.describe('FTS search — {{ entity_name }}', () => {

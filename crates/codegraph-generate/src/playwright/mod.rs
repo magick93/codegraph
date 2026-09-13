@@ -127,6 +127,18 @@ pub struct TsEntityContext {
     pub has_delete: bool,
     pub has_list: bool,
     pub create_fields: Vec<TsFieldDef>,
+    /// Fields the update DTO accepts (create fields minus id/immutable ones —
+    /// mirrors the `!is_immutable` derivation in ui/e2e_test.rs). Drives the
+    /// Update describe in ts_spec.tera.
+    pub update_fields: Vec<TsFieldDef>,
+    /// The single mutable field the Update test PATCHes with a fresh unique
+    /// value: the first required plain-string field in `update_fields` that
+    /// tolerates a generated suffix (enum-typed, DID/URI-shaped, and FK-ref
+    /// fields are skipped — overwriting those would be rejected or reassign
+    /// the record). None when no such field exists; the Update roundtrip test
+    /// is then skipped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_patch_field: Option<TsFieldDef>,
     /// True when at least one create field is required (gates the
     /// missing-required-fields test in ts_spec.tera).
     pub has_required_fields: bool,
@@ -165,6 +177,9 @@ pub struct TsFieldDef {
     pub ts_type: String,
     pub required: bool,
     pub example_value: String,
+    /// True when the field is enum/codelist-typed — its value must be one of
+    /// the codelist variants, so a generated unique suffix would be rejected.
+    pub is_enum: bool,
     /// FK target metadata for required entity-ref FKs — used by the spec
     /// generator to create parent rows in `beforeAll` so the child fixture
     /// can reference a real parent id. None for non-FK / optional-FK fields.

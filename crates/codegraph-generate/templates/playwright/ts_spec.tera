@@ -3,11 +3,22 @@
 
 import { test, expect } from '@playwright/test';
 import { {{ entity_name }}Fixture } from '../../fixtures/{{ domain }}/{{ module_name }}';
+{% if has_update and has_create and update_patch_field %}
+import { uniqueSuffix } from '../../test-utils';
+{% endif %}
 {% for fk in fk_fields %}
 import { {{ fk.entity_name }}Fixture } from '../../fixtures/{{ fk.target_domain }}/{{ fk.target_module }}';
 {% endfor %}
 
 {% if use_persona_token %}const authToken = 'test-mode:{{ persona_did }}';{% else %}const authToken = process.env.TEST_AUTH_TOKEN || '';{% endif %}
+{% if has_create or fk_fields %}
+
+// Rows created by the Create/Update suites are removed in afterAll —
+// children first, then the FK parent rows captured in beforeAll — so
+// repeated runs don't accumulate orphans. 404/403 responses are ignored:
+// the row is already gone or the caller may not delete it.
+const createdIds: string[] = [];
+{% endif %}
 {% if fk_fields %}
 
 // Required entity-ref FKs need real parent rows. Created once per file in
@@ -27,6 +38,31 @@ test.beforeAll(async ({ request }) => {
   {{ fk.js_var }}Id = {{ fk.js_var }}Data.data.id;
 {% endfor %}
 });
+
+test.afterAll(async ({ request }) => {
+  for (const id of createdIds) {
+    await request.delete(`/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/${id}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+  }
+{% for fk in fk_fields %}
+  if ({{ fk.js_var }}Id) {
+    await request.delete(`/api/{{ project.api_version }}/{{ fk.target_domain }}/{{ fk.target_path }}/${ {{ fk.js_var }}Id }`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+  }
+{% endfor %}
+});
+{% endif %}
+{% if has_create and not fk_fields %}
+
+test.afterAll(async ({ request }) => {
+  for (const id of createdIds) {
+    await request.delete(`/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/${id}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+  }
+});
 {% endif %}
 {% if has_create %}
 test.describe('{{ entity_name }} — Create', () => {
@@ -39,6 +75,7 @@ test.describe('{{ entity_name }} — Create', () => {
     expect(response.status()).toBe(201);
     const { data } = await response.json();
     expect(data).toHaveProperty('id');
+    createdIds.push(data.id);
 {% for field in create_fields %}
 {% if field.required %}
 {% if field.ts_type is containing("[]") or field.ts_type is containing("any") %}
@@ -90,6 +127,73 @@ test.describe('{{ entity_name }} — Read', () => {
 {% endif %}    expect(response.status()).toBe({% if permission_record_scoped %}403{% else %}404{% endif %});
   });
 });
+{% endif %}
+
+{% if has_update %}
+{% if has_create and update_patch_field %}
+test.describe('{{ entity_name }} — Update', () => {
+  test('PUT /api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/:id updates a {{ entity_name }}', async ({ request }) => {
+    const created = await request.post('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}', {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      data: {{ entity_name }}Fixture.valid({% if fk_fields %}{ {% for fk in fk_fields %}{{ fk.name }}: {{ fk.js_var }}Id{% if not loop.last %}, {% endif %}{% endfor %} }{% endif %}),
+    });
+    expect(created.status()).toBe(201);
+    const { data: createdData } = await created.json();
+    createdIds.push(createdData.id);
+
+    // A fresh unique value proves the update reached storage, not just the echo.
+    const base = {{ update_patch_field.example_value }};
+    const newValue = `${base} ${uniqueSuffix()}`;
+    const response = await request.put(`/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/${createdData.id}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      data: { {{ update_patch_field.name }}: newValue },
+    });
+    expect(response.status()).toBe(200);
+    const { data } = await response.json();
+    expect(data.{{ update_patch_field.name }}).toBe(newValue);
+
+    const check = await request.get(`/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/${createdData.id}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+    expect(check.status()).toBe(200);
+    const checkData = await check.json();
+    expect(checkData.data.{{ update_patch_field.name }}).toBe(newValue);
+    // The single-field update must not disturb the other required fields.
+{% for field in update_fields %}
+{% if field.required and field.name != update_patch_field.name %}
+{% if field.ts_type is containing("[]") or field.ts_type is containing("any") %}
+    expect(checkData.data.{{ field.name }}).toEqual(createdData.{{ field.name }});
+{% else %}
+    expect(checkData.data.{{ field.name }}).toBe(createdData.{{ field.name }});
+{% endif %}
+{% endif %}
+{% endfor %}
+  });
+{% if permission_record_scoped %}
+  test('PUT /api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/:id returns 403 for nonexistent', async ({ request }) => {
+    const response = await request.put('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/00000000-0000-0000-0000-000000000000', {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      data: {},
+    });
+    // Record-scoped authorization runs before the handler, so an unknown id
+    // is denied (403) rather than reaching the 404 lookup.
+    expect(response.status()).toBe(403);
+  });
+{% endif %}
+});
+{% elif permission_record_scoped %}
+test.describe('{{ entity_name }} — Update', () => {
+  test('PUT /api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/:id returns 403 for nonexistent', async ({ request }) => {
+    const response = await request.put('/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/00000000-0000-0000-0000-000000000000', {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      data: {},
+    });
+    // Record-scoped authorization runs before the handler, so an unknown id
+    // is denied (403) rather than reaching the 404 lookup.
+    expect(response.status()).toBe(403);
+  });
+});
+{% endif %}
 {% endif %}
 
 {% if has_delete %}
