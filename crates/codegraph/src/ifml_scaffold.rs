@@ -12,10 +12,10 @@ use codegraph_core::types::{PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
 
 use crate::error::{Error, Result};
+use crate::ifml_control_inference::{infer_control, is_codelist_kind, MAX_CONTROL_VALUES};
 
 const MAX_LIST_FIELDS: usize = 5;
 const MAX_VO_SUBFIELDS: usize = 8;
-const MAX_DROPDOWN_VALUES: usize = 20;
 
 pub struct IfmlScaffoldArgs<'a> {
     pub schemas: &'a Path,
@@ -246,15 +246,6 @@ fn sanitize_identifier(name: &str) -> Option<String> {
     Some(out)
 }
 
-fn is_codelist_kind(kind: Option<&RefClassificationKind>) -> bool {
-    matches!(
-        kind,
-        Some(RefClassificationKind::CodelistReference)
-            | Some(RefClassificationKind::CodelistCheck)
-            | Some(RefClassificationKind::InlineEnum)
-    )
-}
-
 fn is_structured_kind(kind: Option<&RefClassificationKind>) -> bool {
     matches!(
         kind,
@@ -286,37 +277,6 @@ fn scalar_list_fields(props: &[PropertyNode]) -> Vec<String> {
         .collect()
 }
 
-/// Map a property to an IFML input type.
-pub fn input_type_for(prop: &PropertyNode) -> &'static str {
-    if prop.is_array {
-        return "textarea";
-    }
-    if is_codelist_kind(prop.effective_kind().as_ref()) {
-        return "dropdown";
-    }
-    if prop.name.to_ascii_lowercase().contains("email") {
-        return "email";
-    }
-    match prop.prop_type.as_str() {
-        "boolean" => return "checkbox",
-        "integer" | "number" => return "number",
-        _ => {}
-    }
-    let rust = prop.rust_field_type.as_str();
-    if rust.contains("Uuid") {
-        return "hidden";
-    }
-    if let Some(fmt) = prop.format.as_deref() {
-        if fmt.contains("date") || fmt.contains("time") {
-            return "datetime";
-        }
-    }
-    if rust.contains("Date") || rust.contains("Time") {
-        return "datetime";
-    }
-    "text"
-}
-
 /// Build the form fields for one entity: one per scalar property, with
 /// trivially-detectable ValueObject properties expanded into
 /// `{property}_{sub}` fields on the owning entity's form.
@@ -341,11 +301,13 @@ async fn build_form_fields(
         let Some(name) = sanitize_identifier(&prop.name) else {
             continue;
         };
+        let inference =
+            infer_control(prop).with_values(codelist_values(querier, schema, prop).await?);
         fields.push(FormFieldSpec {
             name,
-            input: input_type_for(prop),
-            required: prop.is_required,
-            values: codelist_values(querier, schema, prop).await?,
+            input: inference.input_str(),
+            required: inference.required,
+            values: inference.values,
         });
     }
     Ok(fields)
@@ -385,7 +347,7 @@ async fn expand_vo_fields(
         };
         out.push(FormFieldSpec {
             name,
-            input: input_type_for(sub),
+            input: infer_control(sub).input_str(),
             required: prop.is_required && sub.is_required,
             values: Vec::new(),
         });
@@ -413,7 +375,7 @@ async fn codelist_values(
     let values = querier.get_enum_values(&codelist.name).await?;
     Ok(values
         .into_iter()
-        .take(MAX_DROPDOWN_VALUES)
+        .take(MAX_CONTROL_VALUES)
         .map(|v| v.value)
         .collect())
 }
