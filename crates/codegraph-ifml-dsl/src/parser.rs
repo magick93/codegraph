@@ -711,11 +711,15 @@ fn parse_event_handler(pair: Pair<Rule>) -> EventHandler {
         .unwrap_or(EventType::Custom("unknown".to_string()));
 
     let mut params = Vec::new();
+    let mut condition = None;
     let mut action = EventAction::Stay;
 
     for child in inner {
         match child.as_rule() {
             Rule::event_param => params = parse_event_param(child),
+            Rule::event_condition => {
+                condition = child.into_inner().next().map(parse_expression);
+            }
             _ => action = parse_event_action(child),
         }
     }
@@ -723,6 +727,7 @@ fn parse_event_handler(pair: Pair<Rule>) -> EventHandler {
     EventHandler {
         event_type,
         params,
+        condition,
         action,
     }
 }
@@ -969,6 +974,7 @@ fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
                 spec: None,
                 properties: Vec::new(),
                 events: Vec::new(),
+                condition: None,
             };
         }
     };
@@ -978,6 +984,7 @@ fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
     let mut fields = Vec::new();
     let mut chart_spec = None;
     let mut events = Vec::new();
+    let mut condition = None;
     for child in body.into_inner() {
         match child.as_rule() {
             Rule::property_assignment => properties.push(parse_property_assignment(child)),
@@ -993,6 +1000,9 @@ fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
                 }
             }
             Rule::event_handler => events.push(parse_event_handler(child)),
+            Rule::condition_statement => {
+                condition = child.into_inner().next().map(parse_expression);
+            }
             _ => {}
         }
     }
@@ -1038,6 +1048,7 @@ fn parse_component_declaration(pair: Pair<Rule>) -> ComponentDeclaration {
         spec,
         properties,
         events,
+        condition,
     }
 }
 
@@ -1048,6 +1059,7 @@ type ViewBodyParts = (
     Vec<ContainerDeclaration>,
     Vec<ComponentDeclaration>,
     Vec<EventHandler>,
+    Option<Expression>,
 );
 
 fn parse_view_body_content(pair: Pair<Rule>) -> ViewBodyParts {
@@ -1057,6 +1069,7 @@ fn parse_view_body_content(pair: Pair<Rule>) -> ViewBodyParts {
     let mut containers = Vec::new();
     let mut components = Vec::new();
     let mut events = Vec::new();
+    let mut condition = None;
 
     for child in pair.clone().into_inner() {
         match child.as_rule() {
@@ -1074,25 +1087,32 @@ fn parse_view_body_content(pair: Pair<Rule>) -> ViewBodyParts {
             Rule::container_declaration => containers.push(parse_container_declaration(child)),
             Rule::component_declaration => components.push(parse_component_declaration(child)),
             Rule::event_handler => events.push(parse_event_handler(child)),
+            Rule::condition_statement => {
+                condition = child.into_inner().next().map(parse_expression);
+            }
             _ => {}
         }
     }
 
-    (params, label, properties, containers, components, events)
+    (
+        params, label, properties, containers, components, events, condition,
+    )
 }
 
-fn parse_container_body_content(
-    pair: Pair<Rule>,
-) -> (
+type ContainerBodyParts = (
     Vec<ParameterDecl>,
     Vec<PropertyAssignment>,
     Vec<ComponentDeclaration>,
     Vec<EventHandler>,
-) {
+    Option<Expression>,
+);
+
+fn parse_container_body_content(pair: Pair<Rule>) -> ContainerBodyParts {
     let mut params = Vec::new();
     let mut properties = Vec::new();
     let mut components = Vec::new();
     let mut events = Vec::new();
+    let mut condition = None;
 
     for child in pair.clone().into_inner() {
         match child.as_rule() {
@@ -1104,11 +1124,14 @@ fn parse_container_body_content(
             Rule::property_assignment => properties.push(parse_property_assignment(child)),
             Rule::component_declaration => components.push(parse_component_declaration(child)),
             Rule::event_handler => events.push(parse_event_handler(child)),
+            Rule::condition_statement => {
+                condition = child.into_inner().next().map(parse_expression);
+            }
             _ => {}
         }
     }
 
-    (params, properties, components, events)
+    (params, properties, components, events, condition)
 }
 
 fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
@@ -1124,11 +1147,12 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
             properties: Vec::new(),
             components: Vec::new(),
             events: Vec::new(),
+            condition: None,
             position: None,
         };
     };
 
-    let (params, properties, components, events) = parse_container_body_content(body);
+    let (params, properties, components, events, condition) = parse_container_body_content(body);
 
     let is_default = properties
         .iter()
@@ -1151,6 +1175,7 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
         properties,
         components,
         events,
+        condition,
         position,
     }
 }
@@ -1217,11 +1242,13 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
             containers: Vec::new(),
             components: Vec::new(),
             events: Vec::new(),
+            condition: None,
             position: None,
         };
     };
 
-    let (params, label, properties, containers, components, events) = parse_view_body_content(body);
+    let (params, label, properties, containers, components, events, condition) =
+        parse_view_body_content(body);
 
     let is_landmark = extract_bool_property(&properties, "landmark");
     let is_xor = extract_bool_property(&properties, "xor");
@@ -1239,6 +1266,7 @@ fn parse_view_declaration(pair: Pair<Rule>) -> ViewDeclaration {
         containers,
         components,
         events,
+        condition,
         position,
     }
 }
@@ -2637,5 +2665,249 @@ view "Bad" {
 }
 "#;
         assert!(parse_ifml(input).is_err());
+    }
+
+    #[test]
+    fn test_view_condition_statement() {
+        let input = r#"
+view "AdminDashboard" {
+    if user.role == "admin";
+
+    component "grid" {
+        type: list;
+        data: Customer;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+        assert_eq!(
+            view.condition,
+            Some(Expression::BinOp {
+                left: Box::new(Expression::FieldExpr {
+                    object: Box::new(Expression::Ident("user".to_string())),
+                    field: "role".to_string(),
+                }),
+                op: BinOp::Eq,
+                right: Box::new(Expression::StringLit("admin".to_string())),
+            })
+        );
+    }
+
+    #[test]
+    fn test_container_condition_statement() {
+        let input = r#"
+view "Wizard" {
+    container "Step1" {
+        if params.enabled != false;
+        component "form" {
+            type: form;
+            data: Customer;
+        }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let container = &model.views[0].containers[0];
+        assert!(matches!(
+            &container.condition,
+            Some(Expression::BinOp { op: BinOp::Ne, .. })
+        ));
+    }
+
+    #[test]
+    fn test_component_condition_statement() {
+        let input = r#"
+view "Dashboard" {
+    component "adminPanel" {
+        type: list;
+        data: Customer;
+        if user.is_admin;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let comp = &model.views[0].components[0];
+        assert_eq!(
+            comp.condition,
+            Some(Expression::FieldExpr {
+                object: Box::new(Expression::Ident("user".to_string())),
+                field: "is_admin".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_condition_statement_last_wins() {
+        let input = r#"
+view "V" {
+    if flag_a;
+    if flag_b;
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        assert_eq!(
+            model.views[0].condition,
+            Some(Expression::Ident("flag_b".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_event_condition() {
+        let input = r#"
+view "List" {
+    component "grid" {
+        type: list;
+        data: Customer;
+
+        on select(row) if row.active == true -> navigate("Detail", { id: row.id });
+        on click -> stay;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let events = &model.views[0].components[0].events;
+        assert_eq!(events.len(), 2);
+
+        assert_eq!(events[0].event_type, EventType::Select);
+        assert_eq!(events[0].condition, Some(row_active_eq_true()));
+        match &events[0].action {
+            EventAction::Navigate { target, binding } => {
+                assert_eq!(target, "Detail");
+                assert!(binding.is_some());
+            }
+            other => panic!("Expected Navigate, got {:?}", other),
+        }
+
+        assert_eq!(events[1].event_type, EventType::Click);
+        assert_eq!(events[1].condition, None);
+    }
+
+    #[test]
+    fn test_dangling_if_fails_parse() {
+        let cases = [
+            r#"
+view "Bad" {
+    if;
+}
+"#,
+            r#"
+view "Bad" {
+    component "c" {
+        type: list;
+        if;
+    }
+}
+"#,
+            r#"
+view "Bad" {
+    component "c" {
+        type: list;
+        on click if -> stay;
+    }
+}
+"#,
+            r#"
+view "Bad" {
+    if
+}
+"#,
+        ];
+        for (i, input) in cases.iter().enumerate() {
+            assert!(
+                parse_ifml(input).is_err(),
+                "dangling if case {} should fail to parse",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_condition_operator_structure_round_trip() {
+        let input = r#"
+view "Guarded" {
+    if user.role == "admin" && account.balance >= 100 || !user.locked;
+    component "grid" {
+        type: list;
+        data: Customer;
+        if !(a + 1 < 3) && name ~= "^A";
+        on select(row) if (row.x != 1 || row.y <= 2) -> stay;
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let view = &model.views[0];
+
+        match &view.condition {
+            Some(Expression::BinOp {
+                op: BinOp::Or,
+                left,
+                ..
+            }) => {
+                assert!(matches!(
+                    left.as_ref(),
+                    Expression::BinOp { op: BinOp::And, .. }
+                ));
+            }
+            other => panic!("Expected Or at top level, got {:?}", other),
+        }
+
+        let comp = &view.components[0];
+        match &comp.condition {
+            Some(Expression::BinOp {
+                op: BinOp::And,
+                left,
+                right,
+            }) => {
+                assert!(matches!(
+                    left.as_ref(),
+                    Expression::UnaryOp {
+                        op: UnaryOp::Not,
+                        ..
+                    }
+                ));
+                assert!(matches!(
+                    right.as_ref(),
+                    Expression::BinOp {
+                        op: BinOp::RegexMatch,
+                        ..
+                    }
+                ));
+            }
+            other => panic!("Expected And, got {:?}", other),
+        }
+
+        let event = &comp.events[0];
+        match &event.condition {
+            Some(Expression::Group(inner)) => match inner.as_ref() {
+                Expression::BinOp {
+                    op: BinOp::Or,
+                    left,
+                    right,
+                } => {
+                    assert!(matches!(
+                        left.as_ref(),
+                        Expression::BinOp { op: BinOp::Ne, .. }
+                    ));
+                    assert!(matches!(
+                        right.as_ref(),
+                        Expression::BinOp { op: BinOp::Le, .. }
+                    ));
+                }
+                other => panic!("Expected Or inside group, got {:?}", other),
+            },
+            other => panic!("Expected Group, got {:?}", other),
+        }
+    }
+
+    fn row_active_eq_true() -> Expression {
+        Expression::BinOp {
+            left: Box::new(Expression::FieldExpr {
+                object: Box::new(Expression::Ident("row".to_string())),
+                field: "active".to_string(),
+            }),
+            op: BinOp::Eq,
+            right: Box::new(Expression::BoolLit(true)),
+        }
     }
 }

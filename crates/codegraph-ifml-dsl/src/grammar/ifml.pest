@@ -23,7 +23,7 @@ view_body = {
         params_block? ~
         label_declaration? ~
         property_assignment* ~
-        (container_declaration | component_declaration | event_handler)* ~
+        (container_declaration | component_declaration | event_handler | condition_statement)* ~
     "}"
 }
 
@@ -36,7 +36,7 @@ container_body = {
         params_block? ~
         label_declaration? ~
         property_assignment* ~
-        (container_declaration | component_declaration | event_handler)* ~
+        (container_declaration | component_declaration | event_handler | condition_statement)* ~
     "}"
 }
 
@@ -60,8 +60,8 @@ component_declaration = {
 component_body = {
     "{" ~
         property_assignment* ~
-        (column_decl | field_decl | chart_decl)* ~
-        event_handler* ~
+        (column_decl | field_decl | chart_decl | condition_statement)* ~
+        (event_handler | condition_statement)* ~
     "}"
 }
 
@@ -120,8 +120,10 @@ object_member_value = { logical_or | array_literal }
 
 // ── Event handlers ────────────────────────────────────────────────
 event_handler = {
-    "on" ~ event_type ~ event_param? ~ "->" ~ event_action ~ ";"
+    "on" ~ event_type ~ event_param? ~ event_condition? ~ "->" ~ event_action ~ ";"
 }
+
+event_condition = { "if" ~ expression }
 
 event_type = {
     "select" | "submit" | "click" | "change" | "load" |
@@ -186,6 +188,9 @@ module_declaration = {
         (container_declaration | component_declaration | event_handler)* ~
     "}"
 }
+
+// ── Conditional guards ────────────────────────────────────────────
+condition_statement = { "if" ~ expression ~ ";" }
 
 // ── C-like expressions ────────────────────────────────────────────
 expression = { logical_or }

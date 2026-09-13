@@ -27,6 +27,7 @@ pub struct ViewDeclaration {
     pub containers: Vec<ContainerDeclaration>,
     pub components: Vec<ComponentDeclaration>,
     pub events: Vec<EventHandler>,
+    pub condition: Option<Expression>,
     pub position: Option<Position>,
 }
 
@@ -44,6 +45,7 @@ pub struct ContainerDeclaration {
     pub properties: Vec<PropertyAssignment>,
     pub components: Vec<ComponentDeclaration>,
     pub events: Vec<EventHandler>,
+    pub condition: Option<Expression>,
     pub position: Option<Position>,
 }
 
@@ -111,6 +113,7 @@ pub struct ComponentDeclaration {
     pub spec: Option<ComponentSpec>,
     pub properties: Vec<PropertyAssignment>,
     pub events: Vec<EventHandler>,
+    pub condition: Option<Expression>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -263,6 +266,7 @@ pub enum ValueExpression {
 pub struct EventHandler {
     pub event_type: EventType,
     pub params: Vec<String>,
+    pub condition: Option<Expression>,
     pub action: EventAction,
 }
 
@@ -379,10 +383,70 @@ pub enum BinOp {
     Or,
 }
 
+impl BinOp {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BinOp::Eq => "==",
+            BinOp::Ne => "!=",
+            BinOp::Lt => "<",
+            BinOp::Le => "<=",
+            BinOp::Gt => ">",
+            BinOp::Ge => ">=",
+            BinOp::RegexMatch => "~=",
+            BinOp::NegRegex => "!~",
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Mod => "%",
+            BinOp::And => "&&",
+            BinOp::Or => "||",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum UnaryOp {
     Not,
     Neg,
+}
+
+impl UnaryOp {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            UnaryOp::Not => "!",
+            UnaryOp::Neg => "-",
+        }
+    }
+}
+
+/// Render an expression back to its DSL source form, deterministically:
+/// binary operators are surrounded by single spaces, unary prefixes bind
+/// directly, and explicit groups keep their parentheses.
+pub fn render_expression(expr: &Expression) -> String {
+    match expr {
+        Expression::Ident(s) => s.clone(),
+        Expression::StringLit(s) => format!("\"{s}\""),
+        Expression::NumLit(n) => n.to_string(),
+        Expression::BoolLit(b) => b.to_string(),
+        Expression::FieldExpr { object, field } => {
+            format!("{}.{}", render_expression(object), field)
+        }
+        Expression::BinOp { left, op, right } => format!(
+            "{} {} {}",
+            render_expression(left),
+            op.as_str(),
+            render_expression(right)
+        ),
+        Expression::UnaryOp { op, operand } => {
+            format!("{}{}", op.as_str(), render_expression(operand))
+        }
+        Expression::Group(inner) => format!("({})", render_expression(inner)),
+        Expression::Call { name, args } => {
+            let args_str: Vec<String> = args.iter().map(render_expression).collect();
+            format!("{}({})", name, args_str.join(", "))
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -417,4 +481,105 @@ pub enum IfmlParseError {
     Parse { position: String, message: String },
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field(object: &str, name: &str) -> Expression {
+        Expression::FieldExpr {
+            object: Box::new(Expression::Ident(object.to_string())),
+            field: name.to_string(),
+        }
+    }
+
+    fn bin_op(left: Expression, op: BinOp, right: Expression) -> Expression {
+        Expression::BinOp {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        }
+    }
+
+    #[test]
+    fn test_render_literals() {
+        assert_eq!(render_expression(&Expression::Ident("x".to_string())), "x");
+        assert_eq!(
+            render_expression(&Expression::StringLit("admin".to_string())),
+            "\"admin\""
+        );
+        assert_eq!(render_expression(&Expression::NumLit(42.0)), "42");
+        assert_eq!(render_expression(&Expression::BoolLit(true)), "true");
+    }
+
+    #[test]
+    fn test_render_field_call_and_unary() {
+        assert_eq!(render_expression(&field("row", "active")), "row.active");
+        assert_eq!(
+            render_expression(&Expression::Call {
+                name: "today".to_string(),
+                args: vec![field("a", "b")],
+            }),
+            "today(a.b)"
+        );
+        assert_eq!(
+            render_expression(&Expression::UnaryOp {
+                op: UnaryOp::Not,
+                operand: Box::new(field("user", "locked")),
+            }),
+            "!user.locked"
+        );
+        assert_eq!(
+            render_expression(&Expression::UnaryOp {
+                op: UnaryOp::Neg,
+                operand: Box::new(Expression::NumLit(1.5)),
+            }),
+            "-1.5"
+        );
+    }
+
+    #[test]
+    fn test_render_bin_ops_and_grouping() {
+        let expr = bin_op(
+            bin_op(
+                field("user", "role"),
+                BinOp::Eq,
+                Expression::StringLit("admin".to_string()),
+            ),
+            BinOp::And,
+            bin_op(
+                field("account", "balance"),
+                BinOp::Ge,
+                Expression::NumLit(100.0),
+            ),
+        );
+        assert_eq!(
+            render_expression(&expr),
+            "user.role == \"admin\" && account.balance >= 100"
+        );
+
+        let grouped = Expression::Group(Box::new(bin_op(
+            Expression::Ident("a".to_string()),
+            BinOp::Or,
+            Expression::Ident("b".to_string()),
+        )));
+        assert_eq!(render_expression(&grouped), "(a || b)");
+
+        let regex = bin_op(
+            field("row", "name"),
+            BinOp::NegRegex,
+            Expression::StringLit("^A".to_string()),
+        );
+        assert_eq!(render_expression(&regex), "row.name !~ \"^A\"");
+    }
+
+    #[test]
+    fn test_bin_op_and_unary_op_as_str() {
+        assert_eq!(BinOp::Eq.as_str(), "==");
+        assert_eq!(BinOp::RegexMatch.as_str(), "~=");
+        assert_eq!(BinOp::Mod.as_str(), "%");
+        assert_eq!(UnaryOp::Not.as_str(), "!");
+        assert_eq!(UnaryOp::Neg.as_str(), "-");
+    }
 }
