@@ -154,8 +154,8 @@ JSON Schema → SchemaLoader → GraphIngestor (GQL INSERT) → Grafeo graph
 
 `--ifml-components <file>` (on `generate`/`run`/`ifml-generate`) maps IFML elements to
 handcrafted components so generated pages reach parity with the entity-scoped UI
-pipeline. Resolution priority: **component name → type → kind** (`table`/`form`/
-`details`/`chart`), optionally scoped with `view = "Name"`:
+pipeline. Resolution priority: **component name → type → semantic role → kind**
+(`table`/`form`/`details`/`chart`), optionally scoped with `view = "Name"`:
 
 ```toml
 [[component]]
@@ -169,6 +169,36 @@ Mapped components render as import + invocation with conventional props (`data`,
 `fields`, testids); unmapped components fall back to built-in templates. Fallback
 markup carries stable selectors: `{component}-{table,row,form,submit,error,details}`
 — the e2e generator's contract.
+
+### Semantic UI layer (issue #196)
+
+The mapping ontology includes a closed `SemanticRole` enum (strict TOML validation):
+`action-control`, `navigation-control`, `field`, `selection-field`, `collection`,
+`modal-view`, `presentation-container`, `display`, `shell`, `pagination`. The route
+generator computes a role per slot (form save/cancel buttons → `action-control`,
+dropdown/radio inputs → `selection-field`, `modal: true` views → `modal-view`, xor
+containers → `presentation-container`, landmark views → `shell`, paginated lists →
+`pagination`), and mappings match on it between the name and kind tiers.
+
+Design-system packs: `--ifml-design-system shadcn-svelte` (or
+`ifml_design_system = "shadcn-svelte"` in profiles features; CLI > profile > none)
+loads a built-in pack (`crates/codegraph-config/src/packs/shadcn-svelte.toml`,
+embedded via `include_str!`) covering all 10 roles. Project `--ifml-components`
+entries are merged BEFORE pack entries, so they shadow pack entries per tier; pack
+entries fill gaps. Unknown pack names error strictly. No-pack output is byte-identical
+to pre-ontology output (all role-driven rendering is mapping-gated).
+
+Mapping-gated generation beyond whole components: mapped `action-control` buttons
+(`<Button onclick={submit_editor}>`), `modal-view` wrappers (`<Dialog bind:open>` +
+`&dialog=open` nav params + close handler), `presentation-container` wrappers around
+xor containers, and a `+layout.svelte` nav shell emitted from landmark views when a
+`shell` mapping resolves. Control inference from domain types lives in
+`crates/codegraph/src/ifml_control_inference.rs` (codelist → dropdown + selection-field
+with values, entity-ref → dropdown + options note, email/password/number/datetime/uuid
+heuristics) — used by `ifml-scaffold`; route-generator unification is a follow-up
+(generate crate lacks classifier deps). Known limitations: nested containers flatten
+into separate view containers (no Tabs grouping), layout nav hrefs keep event-scoped
+binding expressions verbatim.
 
 ### IFML Playwright tests
 
