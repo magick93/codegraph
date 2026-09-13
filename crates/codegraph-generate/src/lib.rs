@@ -1450,6 +1450,12 @@ fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn GlobalGene
                 )) as Box<dyn GlobalGenerator>,
             );
         }
+        if ctx.build_plan.is_none() || ctx.plan_has_global(&format!("ifml_e2e_test_{}", fw)) {
+            global_gens.push(Box::new(
+                ifml::e2e_test::IfmlE2eTestGenerator::new(&fw_output, fw)
+                    .with_mappings(ctx.ifml_components.cloned()),
+            ) as Box<dyn GlobalGenerator>);
+        }
     }
 
     if let Some(ext) = ctx.ext_points {
@@ -1998,6 +2004,12 @@ pub async fn run_ifml_generators(
                     &fw_output, fw,
                 )) as Box<dyn GlobalGenerator>,
             );
+        }
+        if build_plan.is_none() || plan_has_global(&format!("ifml_e2e_test_{fw}")) {
+            global_gens.push(Box::new(
+                ifml::e2e_test::IfmlE2eTestGenerator::new(&fw_output, fw)
+                    .with_mappings(ifml_components.cloned()),
+            ) as Box<dyn GlobalGenerator>);
         }
     }
 

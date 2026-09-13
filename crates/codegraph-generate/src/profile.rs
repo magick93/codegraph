@@ -432,11 +432,11 @@ impl BuildPlan {
     ///
     /// Used by the `ifml_generate` driver when no profiles.toml is provided
     /// (or when the provided profile does not declare per-framework IFML
-    /// generators). Each framework gets `ifml_route_{fw}` and
-    /// `ifml_navigation_{fw}` in the global generator list, the
-    /// `ifml_backend` + `framework_{fw}` features, and a default
-    /// `IfmlFrameworkTarget`. Unknown framework names are rejected against
-    /// the capability registry.
+    /// generators). Each framework gets `ifml_route_{fw}`,
+    /// `ifml_navigation_{fw}`, and `ifml_e2e_test_{fw}` in the global
+    /// generator list, the `ifml_backend` + `framework_{fw}` features, and a
+    /// default `IfmlFrameworkTarget`. Unknown framework names are rejected
+    /// against the capability registry.
     pub fn ifml_only(frameworks: &[String]) -> Result<Self> {
         let registry = CapabilityRegistry::new();
         let mut features = toml::Table::new();
@@ -454,6 +454,7 @@ impl BuildPlan {
             features.insert(format!("framework_{fw}"), toml::Value::Boolean(true));
             global_generators.push(route_name);
             global_generators.push(format!("ifml_navigation_{fw}"));
+            global_generators.push(format!("ifml_e2e_test_{fw}"));
             ifml_frameworks.push(IfmlFrameworkTarget {
                 name: fw.clone(),
                 output: None,
@@ -501,7 +502,7 @@ impl BuildPlan {
                     .generators
                     .iter()
                     .flat_map(|gen| match gen.as_str() {
-                        "ifml_route" | "ifml_navigation" => ifml_frameworks
+                        "ifml_route" | "ifml_navigation" | "ifml_e2e_test" => ifml_frameworks
                             .iter()
                             .map(|fw| format!("{}_{}", gen, fw.name))
                             .collect::<Vec<_>>(),

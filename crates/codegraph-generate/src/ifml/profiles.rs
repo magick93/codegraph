@@ -25,6 +25,13 @@ pub fn ifml_capabilities() -> Vec<GeneratorCapability> {
             features_required: vec!["ifml_backend".to_string()],
             features_optional: vec![],
         },
+        GeneratorCapability {
+            name: "ifml_e2e_test".to_string(),
+            kind: GeneratorKind::Global,
+            target: GeneratorTarget::Ui,
+            features_required: vec!["ifml_backend".to_string()],
+            features_optional: vec![],
+        },
     ];
 
     // Framework-specific route generators
@@ -42,6 +49,17 @@ pub fn ifml_capabilities() -> Vec<GeneratorCapability> {
     for framework in &["svelte", "react", "vue", "flutter", "swiftui"] {
         caps.push(GeneratorCapability {
             name: format!("ifml_navigation_{framework}"),
+            kind: GeneratorKind::Global,
+            target: GeneratorTarget::Ui,
+            features_required: vec!["ifml_backend".to_string(), format!("framework_{framework}")],
+            features_optional: vec![],
+        });
+    }
+
+    // Framework-specific E2E test generators
+    for framework in &["svelte", "react", "vue", "flutter", "swiftui"] {
+        caps.push(GeneratorCapability {
+            name: format!("ifml_e2e_test_{framework}"),
             kind: GeneratorKind::Global,
             target: GeneratorTarget::Ui,
             features_required: vec!["ifml_backend".to_string(), format!("framework_{framework}")],
