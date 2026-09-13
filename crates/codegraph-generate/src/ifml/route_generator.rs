@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use codegraph_config::{DomainConfig, IfmlComponentMapping, IfmlComponentMappings};
+use codegraph_config::{DomainConfig, IfmlComponentMapping, IfmlComponentMappings, SemanticRole};
 use codegraph_core::traits::GraphQuerier;
 use codegraph_ifml_dsl::{
     BinOp, ChartKind, ChartSpec, ColumnDef, ComponentSpec, Expression, FormSpec, InputFieldType,
@@ -136,6 +136,12 @@ pub struct PageSvelteContext {
     needs_goto: bool,
     needs_on_mount: bool,
     has_submit: bool,
+    /// Semantic slot role of the view: `modal-view` for modals, else
+    /// `shell` for landmarks.
+    view_role: Option<SemanticRole>,
+    /// Semantic slot role of the container grouping: `presentation-container`
+    /// for xor/wizard containers.
+    container_role: Option<SemanticRole>,
 }
 
 #[derive(Debug, Serialize)]
@@ -148,6 +154,9 @@ pub struct RenderImport {
 pub struct PageComponentContext {
     name: String,
     component_type: String,
+    /// Semantic slot role of the whole component (`collection`, `display`,
+    /// `selection-field`); forms keep `None` — their inputs carry roles.
+    role: Option<SemanticRole>,
     entity: String,
     fields: Vec<String>,
     fields_with_types: Vec<(String, String)>,
@@ -215,12 +224,17 @@ pub struct RenderEvent {
     pub target: String,
     /// JS string expression evaluating to the navigation target URL.
     pub url_expr: String,
+    /// Semantic slot role: `action-control` for save/submit/cancel/back/click
+    /// button-style events.
+    pub role: Option<SemanticRole>,
 }
 
 /// Typed-table render context derived from a `ComponentSpec::Table`
 #[derive(Debug, Serialize)]
 pub struct RenderTable {
     pagination: bool,
+    /// `pagination` when the list spec enables pagination.
+    role: Option<SemanticRole>,
     columns: Vec<RenderColumn>,
 }
 
@@ -246,6 +260,8 @@ pub struct RenderForm {
 pub struct RenderInputField {
     name: String,
     input_type: String,
+    /// Per-input slot role: `selection-field` for dropdown/radio inputs.
+    input_role: Option<SemanticRole>,
     is_textarea: bool,
     is_select: bool,
     is_radio: bool,
@@ -375,6 +391,8 @@ async fn build_page_context(
         needs_goto,
         needs_on_mount,
         has_submit,
+        view_role: semantic_view_role(vc),
+        container_role: semantic_container_role(vc),
     }
 }
 
@@ -397,8 +415,9 @@ async fn page_component_context(
     };
 
     let kind = kind_of(c);
+    let slot_role = component_role(c);
     let mapping = mappings
-        .and_then(|m| m.resolve(&vc.name, &c.name, &c.component_type, &kind))
+        .and_then(|m| m.resolve_slot(&vc.name, &c.name, &c.component_type, &kind, slot_role))
         .map(mapping_context);
     let events: Vec<RenderEvent> = c.events.iter().map(render_event).collect();
     let event_props: Vec<String> = events
@@ -472,6 +491,7 @@ async fn page_component_context(
     PageComponentContext {
         name: c.name.clone(),
         component_type: c.component_type.clone(),
+        role: slot_role,
         entity,
         fields: c.fields.clone(),
         fields_with_types: c.fields_with_types.clone(),
@@ -504,6 +524,65 @@ fn kind_of(c: &IfmlComponent) -> String {
         Some(ComponentSpec::Form(_)) => "form".to_string(),
         Some(ComponentSpec::Chart(_)) => "chart".to_string(),
         None => c.component_type.clone(),
+    }
+}
+
+/// Whole-component slot role: tables/lists are collections, details/charts
+/// are displays, dropdown/radio/checkbox component types are selection
+/// fields. Forms keep `None` — the editing context is carried by their
+/// per-input roles.
+fn component_role(c: &IfmlComponent) -> Option<SemanticRole> {
+    if is_form_component(c) {
+        return None;
+    }
+    match c.spec {
+        Some(ComponentSpec::Table(_)) => Some(SemanticRole::Collection),
+        Some(ComponentSpec::Form(_)) => None,
+        Some(ComponentSpec::Chart(_)) => Some(SemanticRole::Display),
+        None => match c.component_type.as_str() {
+            "table" | "list" => Some(SemanticRole::Collection),
+            "details" | "chart" => Some(SemanticRole::Display),
+            "dropdown" | "radio" | "checkbox" => Some(SemanticRole::SelectionField),
+            _ => None,
+        },
+    }
+}
+
+/// Per-input slot role inside a form: dropdowns and radio groups are
+/// selection fields.
+fn input_field_role(input_type: &str) -> Option<SemanticRole> {
+    match input_type {
+        "dropdown" | "radio" => Some(SemanticRole::SelectionField),
+        _ => None,
+    }
+}
+
+/// Event/button slot role: submit-style and click events drive actions.
+fn event_role(event_type: &str) -> Option<SemanticRole> {
+    match event_type {
+        "save" | "submit" | "cancel" | "back" | "click" => Some(SemanticRole::ActionControl),
+        _ => None,
+    }
+}
+
+/// View slot role: modals render as `modal-view`, landmarks are `shell`
+/// candidates.
+fn semantic_view_role(vc: &IfmlViewContainer) -> Option<SemanticRole> {
+    if vc.is_modal {
+        Some(SemanticRole::ModalView)
+    } else if vc.is_landmark {
+        Some(SemanticRole::Shell)
+    } else {
+        None
+    }
+}
+
+/// Container slot role: xor/wizard groupings are presentation containers.
+fn semantic_container_role(vc: &IfmlViewContainer) -> Option<SemanticRole> {
+    if vc.is_xor {
+        Some(SemanticRole::PresentationContainer)
+    } else {
+        None
     }
 }
 
@@ -612,6 +691,7 @@ fn render_event(evt: &IfmlEvent) -> RenderEvent {
         action_kind: action_kind.to_string(),
         target,
         url_expr,
+        role: event_role(&evt.event_type),
     }
 }
 
@@ -647,6 +727,11 @@ fn sanitize_ident(name: &str) -> String {
 fn render_table(spec: &TableSpec) -> RenderTable {
     RenderTable {
         pagination: spec.pagination,
+        role: if spec.pagination {
+            Some(SemanticRole::Pagination)
+        } else {
+            None
+        },
         columns: spec.columns.iter().map(render_column).collect(),
     }
 }
@@ -714,6 +799,7 @@ fn render_form(spec: &FormSpec) -> RenderForm {
                 };
                 RenderInputField {
                     name: field.name.clone(),
+                    input_role: input_field_role(&input_type),
                     input_type,
                     is_textarea,
                     is_select,
@@ -1273,6 +1359,8 @@ entities = ["CustomerType"]
             needs_goto: false,
             needs_on_mount: false,
             has_submit: false,
+            view_role: None,
+            container_role: None,
         }
     }
 
@@ -1429,5 +1517,165 @@ testids = { root = "data-table", row = "data-row" }
         );
         assert!(ctx.components[2].fetch_item);
         assert_eq!(ctx.components[2].id_param.as_deref(), Some("customerId"));
+    }
+
+    fn field_def(name: &str, input: InputFieldType) -> codegraph_ifml_dsl::FieldDef {
+        codegraph_ifml_dsl::FieldDef {
+            name: name.to_string(),
+            input,
+            required: false,
+            validations: Vec::new(),
+            values: Vec::new(),
+            messages: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn form_save_event_gets_action_control_role() {
+        let evt = |event_type: &str| IfmlEvent {
+            name: format!("comp_form_{event_type}"),
+            event_type: event_type.to_string(),
+            params: Vec::new(),
+            action: IfmlAction::Navigate {
+                target: "CustomerList".to_string(),
+                binding: HashMap::new(),
+            },
+        };
+        for event_type in ["save", "submit", "cancel", "back", "click"] {
+            let rendered = render_event(&evt(event_type));
+            assert_eq!(
+                rendered.role,
+                Some(SemanticRole::ActionControl),
+                "{event_type}"
+            );
+        }
+        assert_eq!(render_event(&evt("select")).role, None);
+        assert_eq!(render_event(&evt("load")).role, None);
+    }
+
+    #[test]
+    fn dropdown_and_radio_inputs_carry_selection_field_role() {
+        let spec = ComponentSpec::Form(FormSpec {
+            fields: vec![
+                field_def("tier", InputFieldType::Dropdown),
+                field_def("channel", InputFieldType::RadioGroup),
+                field_def("name", InputFieldType::Text),
+            ],
+        });
+        let ctx = page_component_context_sync(&component_with_spec(Some(spec)));
+        let form = ctx.form.expect("form render context");
+        assert_eq!(
+            form.fields[0].input_role,
+            Some(SemanticRole::SelectionField)
+        );
+        assert_eq!(
+            form.fields[1].input_role,
+            Some(SemanticRole::SelectionField)
+        );
+        assert_eq!(form.fields[2].input_role, None);
+    }
+
+    #[test]
+    fn component_roles_classify_slots() {
+        let table = component_with_spec(Some(table_spec()));
+        assert_eq!(
+            page_component_context_sync(&table).role,
+            Some(SemanticRole::Collection)
+        );
+
+        let mut details = component_with_spec(None);
+        details.component_type = "details".to_string();
+        assert_eq!(
+            page_component_context_sync(&details).role,
+            Some(SemanticRole::Display)
+        );
+
+        let mut dropdown = component_with_spec(None);
+        dropdown.component_type = "dropdown".to_string();
+        assert_eq!(
+            page_component_context_sync(&dropdown).role,
+            Some(SemanticRole::SelectionField)
+        );
+
+        let form = component_with_spec(Some(ComponentSpec::Form(FormSpec { fields: vec![] })));
+        assert_eq!(page_component_context_sync(&form).role, None);
+    }
+
+    #[test]
+    fn view_roles_mark_modal_landmark_and_xor_containers() {
+        let vc = |is_modal: bool, is_landmark: bool, is_xor: bool| IfmlViewContainer {
+            name: "CustomerDialog".to_string(),
+            label: None,
+            is_xor,
+            is_default: false,
+            is_landmark,
+            is_modal,
+            params: Vec::new(),
+            components: vec![],
+            events: Vec::new(),
+            containers: Vec::new(),
+        };
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc(true, false, false),
+            None,
+        ));
+        assert_eq!(ctx.view_role, Some(SemanticRole::ModalView));
+        assert_eq!(ctx.container_role, None);
+
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc(false, true, false),
+            None,
+        ));
+        assert_eq!(ctx.view_role, Some(SemanticRole::Shell));
+
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc(false, false, true),
+            None,
+        ));
+        assert_eq!(ctx.view_role, None);
+        assert_eq!(
+            ctx.container_role,
+            Some(SemanticRole::PresentationContainer)
+        );
+    }
+
+    #[test]
+    fn paginated_table_gets_pagination_role() {
+        let paged = TableSpec {
+            columns: vec![],
+            pagination: true,
+        };
+        assert_eq!(render_table(&paged).role, Some(SemanticRole::Pagination));
+        let plain = TableSpec {
+            columns: vec![],
+            pagination: false,
+        };
+        assert_eq!(render_table(&plain).role, None);
+    }
+
+    #[test]
+    fn role_mapping_resolves_for_collection_slot() {
+        let mappings: IfmlComponentMappings = toml::from_str(
+            r#"
+[[component]]
+role = "collection"
+path = "$lib/components/Collection.svelte"
+"#,
+        )
+        .unwrap();
+        let mut c = component_with_spec(Some(table_spec()));
+        c.component_type = "list".to_string();
+        let ctx = page_component_context_for_tests(&c, &mappings);
+        let mapping = ctx.mapping.expect("role-mapped component");
+        assert_eq!(mapping.import_name, "Collection");
     }
 }

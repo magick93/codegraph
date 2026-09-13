@@ -12,7 +12,7 @@ pub use config::{
     UiEntityEntry, UiOverrideConfig, UiOverrideEntry, UiWizardConfig, WorkflowConfig,
 };
 pub use error::DomainConfigError;
-pub use ifml_components::{IfmlComponentMapping, IfmlComponentMappings};
+pub use ifml_components::{IfmlComponentMapping, IfmlComponentMappings, SemanticRole};
 pub use ops_manifest::{
     OpsCapabilities, OpsDatabase, OpsDbTarget, OpsExtension, OpsHook, OpsHurl, OpsManifest,
     OpsServers, OpsSmoke, OpsSupabase,

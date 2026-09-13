@@ -2,6 +2,25 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Framework-agnostic semantic role of a UI slot. IFML describes what a slot
+/// means (an action, a modal, a selection); design-system packs bind that
+/// meaning to concrete widgets. Closed on purpose: unknown role strings in
+/// TOML are a parse error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SemanticRole {
+    ActionControl,
+    NavigationControl,
+    Field,
+    SelectionField,
+    Collection,
+    ModalView,
+    PresentationContainer,
+    Display,
+    Shell,
+    Pagination,
+}
+
 /// Component mappings loaded from `ifml-components.toml`.
 ///
 /// Each `[[component]]` entry maps IFML view components (matched by name,
@@ -26,6 +45,11 @@ pub struct IfmlComponentMapping {
     /// Matches the typed spec kind when present, else the component type.
     #[serde(default)]
     pub kind: Option<String>,
+    /// Semantic slot role (e.g. `"selection-field"`, `"modal-view"`) matched
+    /// against the computed role of the slot. Priority: below name/type,
+    /// above kind.
+    #[serde(default)]
+    pub role: Option<SemanticRole>,
     /// Restricts the mapping to a single view container (e.g. `"CustomerList"`).
     #[serde(default)]
     pub view: Option<String>,
@@ -62,20 +86,46 @@ impl IfmlComponentMappings {
         component_type: &str,
         kind: &str,
     ) -> Option<&IfmlComponentMapping> {
+        self.resolve_slot(view, component, component_type, kind, None)
+    }
+
+    /// Resolve the mapping for a UI slot.
+    ///
+    /// Priority: name → component type → semantic role → kind. `role` is the
+    /// slot role computed by the generator (see `SemanticRole`); entries
+    /// carrying a `view` selector only match inside that view; within a tier
+    /// the first matching entry wins.
+    pub fn resolve_slot(
+        &self,
+        view: &str,
+        name: &str,
+        component_type: &str,
+        kind: &str,
+        role: Option<SemanticRole>,
+    ) -> Option<&IfmlComponentMapping> {
         let view_ok = |m: &IfmlComponentMapping| m.view.as_deref().is_none_or(|v| v == view);
         self.components
             .iter()
-            .find(|m| m.name.as_deref() == Some(component) && view_ok(m))
+            .find(|m| m.name.as_deref() == Some(name) && view_ok(m))
             .or_else(|| {
                 self.components
                     .iter()
                     .find(|m| m.component_type.as_deref() == Some(component_type) && view_ok(m))
             })
+            .or_else(|| role.and_then(|r| self.resolve_by_role(view, r)))
             .or_else(|| {
                 self.components
                     .iter()
                     .find(|m| kind_matches(m, component_type, kind) && view_ok(m))
             })
+    }
+
+    /// Resolve a mapping purely by semantic role (first match wins, `view`
+    /// scoping applies).
+    pub fn resolve_by_role(&self, view: &str, role: SemanticRole) -> Option<&IfmlComponentMapping> {
+        self.components
+            .iter()
+            .find(|m| m.role == Some(role) && m.view.as_deref().is_none_or(|v| v == view))
     }
 }
 
@@ -230,5 +280,150 @@ path = "$lib/components/CustomerGrid.svelte"
         let path = dir.path().join("ifml-components.toml");
         std::fs::write(&path, "[[component]]\npath = 123\n").unwrap();
         assert!(IfmlComponentMappings::load(&path).is_err());
+    }
+
+    #[test]
+    fn role_parses_kebab_case() {
+        let m = mappings(
+            r#"
+[[component]]
+role = "selection-field"
+path = "$lib/components/Select.svelte"
+
+[[component]]
+role = "modal-view"
+path = "$lib/components/Dialog.svelte"
+"#,
+        );
+        assert_eq!(m.components[0].role, Some(SemanticRole::SelectionField));
+        assert_eq!(m.components[1].role, Some(SemanticRole::ModalView));
+    }
+
+    #[test]
+    fn unknown_role_fails_parse() {
+        let err = IfmlComponentMappings::parse_str(
+            r#"
+[[component]]
+role = "button"
+path = "$lib/components/Button.svelte"
+"#,
+        )
+        .expect_err("unknown role must be a parse error");
+        assert!(err.contains("unknown variant"), "{err}");
+    }
+
+    #[test]
+    fn resolve_priority_name_type_role_kind() {
+        let m = mappings(
+            r#"
+[[component]]
+kind = "table"
+path = "$lib/components/Kind.svelte"
+
+[[component]]
+role = "collection"
+path = "$lib/components/Role.svelte"
+
+[[component]]
+type = "list"
+path = "$lib/components/Type.svelte"
+
+[[component]]
+name = "grid"
+path = "$lib/components/Name.svelte"
+"#,
+        );
+        let slot = |name: &str, component_type: &str, kind: &str, role: Option<SemanticRole>| {
+            m.resolve_slot("V", name, component_type, kind, role)
+                .unwrap()
+                .path
+                .to_string()
+        };
+        assert_eq!(
+            slot("grid", "list", "table", Some(SemanticRole::Collection)),
+            "$lib/components/Name.svelte"
+        );
+        assert_eq!(
+            slot("other", "list", "table", Some(SemanticRole::Collection)),
+            "$lib/components/Type.svelte"
+        );
+        assert_eq!(
+            slot("other", "tree", "table", Some(SemanticRole::Collection)),
+            "$lib/components/Role.svelte"
+        );
+        assert_eq!(
+            slot("other", "tree", "table", None),
+            "$lib/components/Kind.svelte"
+        );
+    }
+
+    #[test]
+    fn view_scoped_role_entry_only_matches_that_view() {
+        let m = mappings(
+            r#"
+[[component]]
+role = "collection"
+view = "CustomerList"
+path = "$lib/components/CustomerList.svelte"
+"#,
+        );
+        let resolved = m.resolve_by_role("CustomerList", SemanticRole::Collection);
+        assert_eq!(
+            resolved.unwrap().path,
+            "$lib/components/CustomerList.svelte"
+        );
+        assert!(m
+            .resolve_by_role("OtherView", SemanticRole::Collection)
+            .is_none());
+        assert!(m
+            .resolve_slot(
+                "OtherView",
+                "grid",
+                "tree",
+                "tree",
+                Some(SemanticRole::Collection)
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn resolve_by_role_picks_first_match() {
+        let m = mappings(
+            r#"
+[[component]]
+role = "action-control"
+path = "$lib/components/First.svelte"
+
+[[component]]
+role = "action-control"
+path = "$lib/components/Second.svelte"
+"#,
+        );
+        assert_eq!(
+            m.resolve_by_role("Any", SemanticRole::ActionControl)
+                .unwrap()
+                .path,
+            "$lib/components/First.svelte"
+        );
+        assert!(m
+            .resolve_by_role("Any", SemanticRole::NavigationControl)
+            .is_none());
+    }
+
+    #[test]
+    fn resolve_delegates_to_slot_without_role() {
+        let m = mappings(
+            r#"
+[[component]]
+name = "grid"
+path = "$lib/components/Grid.svelte"
+"#,
+        );
+        assert_eq!(
+            m.resolve("V", "grid", "list", "list").unwrap().path,
+            m.resolve_slot("V", "grid", "list", "list", None)
+                .unwrap()
+                .path
+        );
     }
 }
