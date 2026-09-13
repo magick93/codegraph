@@ -88,6 +88,9 @@
 {%- if modal %}
 {{ modal.open_line }}
 {%- endif %}
+{%- if container %}
+{{ container.open_line }}
+{%- endif %}
 {%- for comp in components %}
 {% if comp.mapping %}
 <{{ comp.mapping.import_name }}
@@ -234,7 +237,10 @@
 
 {% endif %}
 {% endfor %}
-{% if modal %}
+{% if container %}
+{{ container.close_line }}
+{% endif %}
+{%- if modal %}
 	<button type="button" data-testid="{{ modal.close_testid }}" onclick={close_dialog}>Close</button>
 {{ modal.close_line }}
 {% endif %}

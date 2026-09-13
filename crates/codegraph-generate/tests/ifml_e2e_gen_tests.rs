@@ -608,3 +608,81 @@ async fn non_svelte_frameworks_emit_nothing() {
         .unwrap();
     assert!(files.is_empty());
 }
+
+#[tokio::test]
+async fn render_tests_assert_shell_nav_when_mapped() {
+    let engine = MockEngine::new();
+    ingest_ifml_model(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let mappings: IfmlComponentMappings = toml::from_str(
+        r#"
+[[component]]
+role = "shell"
+path = "$lib/components/Nav.svelte"
+export = "Nav"
+testids = { root = "side-nav" }
+"#,
+    )
+    .unwrap();
+    let files = generate(&engine, dir.path(), Some(mappings)).await;
+    let list_spec = content_of(&files, "tests/ifml/customer-list.spec.ts");
+    assert!(
+        list_spec.contains("await expect(page.getByTestId('side-nav')).toBeVisible();"),
+        "{list_spec}"
+    );
+}
+
+#[tokio::test]
+async fn render_tests_omit_nav_assertion_without_shell_mapping() {
+    let engine = MockEngine::new();
+    ingest_ifml_model(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate(&engine, dir.path(), None).await;
+    let list_spec = content_of(&files, "tests/ifml/customer-list.spec.ts");
+    assert!(
+        !list_spec.contains("side-nav"),
+        "unmapped shell must not add nav assertions: {list_spec}"
+    );
+}
+
+#[tokio::test]
+async fn render_tests_assert_mapped_container_wrapper() {
+    let engine = MockEngine::new();
+
+    engine
+        .ingest_view_container(&ViewContainerNode {
+            name: "Checkout".to_string(),
+            label: Some("Checkout".to_string()),
+            is_xor: true,
+            is_default: false,
+            is_landmark: false,
+            is_modal: false,
+            conditional_expression: None,
+            domain: None,
+            module_uses: None,
+            roles: None,
+        })
+        .await
+        .unwrap();
+    ingest_component(&engine, "Checkout", "editor", "form", &["name"], None).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mappings: IfmlComponentMappings = toml::from_str(
+        r#"
+[[component]]
+role = "presentation-container"
+path = "$lib/components/Card.svelte"
+export = "Card"
+testids = { root = "card" }
+"#,
+    )
+    .unwrap();
+    let files = generate(&engine, dir.path(), Some(mappings)).await;
+    let spec = content_of(&files, "tests/ifml/checkout.spec.ts");
+    assert!(
+        spec.contains("await expect(page.getByTestId('card')).toBeVisible();"),
+        "{spec}"
+    );
+}

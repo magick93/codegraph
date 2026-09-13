@@ -698,3 +698,198 @@ async fn modal_view_without_mappings_renders_as_plain_page() {
         "no-pack navigation must keep byte-identical URLs: {list}"
     );
 }
+
+const XOR_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "Checkout" {
+    label "Checkout";
+    xor: true;
+
+    component "editor" {
+        type: form;
+        data: Customer;
+
+        field name -> input text { required: true; }
+
+        on save -> navigate("CustomerList", {});
+    }
+}
+
+view "CustomerList" {
+    label "Customers";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+"#;
+
+#[tokio::test]
+async fn xor_container_renders_mapped_card_wrapper_around_children() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+role = "presentation-container"
+path = "$lib/components/Card.svelte"
+export = "Card"
+testids = { root = "card" }
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_mappings(dir.path(), XOR_IFML, Some(&mappings)).await;
+    let page = read(&svelte, "src/routes/checkout/+page.svelte");
+
+    assert!(
+        page.contains("import Card from '$lib/components/Card.svelte';"),
+        "{page}"
+    );
+    assert!(page.contains("<Card testid=\"card\">"), "{page}");
+    assert!(page.contains("</Card>"), "{page}");
+    assert!(
+        page.contains("<form data-testid=\"editor-form\""),
+        "children must render inside the wrapper: {page}"
+    );
+    let open = page.find("<Card testid=\"card\">").unwrap();
+    let child = page.find("<form").unwrap();
+    let close = page.rfind("</Card>").unwrap();
+    assert!(open < child && child < close, "{page}");
+}
+
+#[tokio::test]
+async fn xor_container_renders_section_fallback_when_pack_present() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+role = "action-control"
+path = "$lib/components/Button.svelte"
+export = "Button"
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_mappings(dir.path(), XOR_IFML, Some(&mappings)).await;
+    let page = read(&svelte, "src/routes/checkout/+page.svelte");
+
+    assert!(
+        page.contains("<section data-testid=\"checkout-container\">"),
+        "{page}"
+    );
+    assert!(page.contains("</section>"), "{page}");
+    assert!(!page.contains("<Card"), "{page}");
+}
+
+#[tokio::test]
+async fn xor_container_without_pack_renders_plain_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), XOR_IFML).await;
+    let page = read(&svelte, "src/routes/checkout/+page.svelte");
+
+    assert!(!page.contains("<section"), "{page}");
+    assert!(!page.contains("<Card"), "{page}");
+    assert!(
+        page.contains("<form data-testid=\"editor-form\""),
+        "no-pack xor views must render exactly as before: {page}"
+    );
+
+    // Landmark page is equally untouched without a pack.
+    let list = read(&svelte, "src/routes/customerlist/+page.svelte");
+    assert!(
+        list.contains("<table data-testid=\"grid-table\">"),
+        "{list}"
+    );
+}
+
+const SHELL_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    label "Customers";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name];
+
+        on select(row) -> navigate("CustomerDetail", {
+            customerId: row.id
+        });
+    }
+}
+
+view "CustomerDetail" {
+    params { customerId: Uuid };
+    label "Customer Detail";
+
+    component "info" {
+        type: details;
+        data: Customer;
+        fields: [name];
+    }
+}
+"#;
+
+#[tokio::test]
+async fn landmark_shell_emits_layout_with_nav_items() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+role = "shell"
+path = "$lib/components/Nav.svelte"
+export = "Nav"
+testids = { root = "side-nav" }
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_mappings(dir.path(), SHELL_IFML, Some(&mappings)).await;
+    let layout = read(&svelte, "src/routes/+layout.svelte");
+
+    assert!(
+        layout.contains("import Nav from '$lib/components/Nav.svelte';"),
+        "{layout}"
+    );
+    assert!(
+        layout.contains("let { children }: { children: import('svelte').Snippet } = $props();"),
+        "{layout}"
+    );
+    assert!(layout.contains("<Nav testid=\"side-nav\">"), "{layout}");
+    assert!(
+        layout.contains("<a href={`/customerdetail?customerId=${row.id}`}>Customer Detail</a>"),
+        "{layout}"
+    );
+    assert!(layout.contains("</Nav>"), "{layout}");
+    assert!(layout.contains("{@render children()}"), "{layout}");
+
+    // Pages need no changes for the SvelteKit layout convention.
+    let list = read(&svelte, "src/routes/customerlist/+page.svelte");
+    assert!(
+        list.contains("<table data-testid=\"grid-table\">"),
+        "{list}"
+    );
+}
+
+#[tokio::test]
+async fn no_shell_mapping_emits_no_layout() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), SHELL_IFML).await;
+    assert!(
+        !svelte.join("src/routes/+layout.svelte").exists(),
+        "no shell mapping must mean no layout emission"
+    );
+}

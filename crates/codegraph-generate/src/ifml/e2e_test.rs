@@ -13,7 +13,9 @@ use crate::GenerationEntry;
 use super::api_paths::{id_param_from, resolve_entity_api, ResolvedApi};
 use super::context::{IfmlAction, IfmlComponent, IfmlModel, IfmlViewContainer};
 use super::querier::{IfmlGraphQuerier, IfmlQuerier};
-use super::route_generator::{modal_wrapper_active, modal_wrapper_testid};
+use super::route_generator::{
+    mapped_container_testid, modal_wrapper_active, modal_wrapper_testid, shell_nav,
+};
 
 /// Global generator emitting IFML-driven Playwright E2E specs.
 ///
@@ -132,7 +134,9 @@ impl IfmlE2eTestGenerator {
         };
 
         if id_param.is_none() {
-            spec.render = self.build_render_test(vc);
+            let nav_testid = shell_nav(&model.view_containers, self.mappings.as_ref())
+                .and_then(|shell| shell.testid);
+            spec.render = self.build_render_test(vc, nav_testid);
         }
 
         for edge in &model.navigation_edges {
@@ -165,13 +169,19 @@ impl IfmlE2eTestGenerator {
         spec
     }
 
-    fn build_render_test(&self, vc: &IfmlViewContainer) -> Option<RenderTest> {
+    fn build_render_test(
+        &self,
+        vc: &IfmlViewContainer,
+        nav_testid: Option<String>,
+    ) -> Option<RenderTest> {
         let (_component, selectors, is_collection) = primary_component(vc, self)?;
         Some(RenderTest {
             label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
             route: view_route(&vc.name),
             primary_testid: selectors.root?,
             assert_heading: is_collection,
+            nav_testid,
+            container_testid: mapped_container_testid(&vc.name, vc.is_xor, self.mappings.as_ref()),
         })
     }
 
@@ -411,6 +421,11 @@ pub struct RenderTest {
     pub route: String,
     pub primary_testid: String,
     pub assert_heading: bool,
+    /// Landmark shell nav testid (resolved `shell` mapping) asserted visible
+    /// on every page that renders inside the layout.
+    pub nav_testid: Option<String>,
+    /// Mapped presentation-container wrapper testid for xor view containers.
+    pub container_testid: Option<String>,
 }
 
 #[derive(Debug)]
@@ -537,6 +552,18 @@ fn render_spec(spec: &ViewTestSpec) -> String {
             "\t\tawait expect(page.getByTestId('{}')).toBeVisible();\n",
             render.primary_testid
         ));
+        if let Some(nav_testid) = &render.nav_testid {
+            s.push_str(&format!(
+                "\t\tawait expect(page.getByTestId('{}')).toBeVisible();\n",
+                nav_testid
+            ));
+        }
+        if let Some(container_testid) = &render.container_testid {
+            s.push_str(&format!(
+                "\t\tawait expect(page.getByTestId('{}')).toBeVisible();\n",
+                container_testid
+            ));
+        }
         s.push_str("\t});\n\n");
     }
 
@@ -1012,6 +1039,8 @@ mod tests {
                 route: "/customerlist".to_string(),
                 primary_testid: "grid-table".to_string(),
                 assert_heading: true,
+                nav_testid: Some("navigation-menu".to_string()),
+                container_testid: Some("card".to_string()),
             }),
             click_throughs: vec![ClickThroughTest {
                 title: "comp_grid_select navigates to CustomerDetail".to_string(),
@@ -1037,6 +1066,11 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains("page.getByTestId('grid-table')"));
+        assert!(
+            rendered.contains("page.getByTestId('navigation-menu')"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("page.getByTestId('card')"), "{rendered}");
         assert!(rendered.contains("request.post('/api/v1/sales/customer'"));
         assert!(rendered.contains("page.getByTestId('grid-row').first().click()"));
         assert!(rendered.contains("waitForURL(new RegExp('/customerdetail\\\\?customerId=[^&]+'))"));

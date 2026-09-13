@@ -41,6 +41,24 @@ impl IfmlRouteGenerator {
         self.mappings = mappings;
         self
     }
+
+    /// Framework layout path for the landmark shell; `None` for frameworks
+    /// without a layout convention in this slice.
+    fn route_layout(&self) -> Option<PathBuf> {
+        match self.framework.as_str() {
+            "svelte" => Some(PathBuf::from("src/routes/+layout.svelte")),
+            _ => None,
+        }
+    }
+
+    /// Layout render context when a landmark view exists and a `shell`
+    /// mapping resolves; `None` emits no layout (byte-identical no-pack
+    /// output).
+    fn layout_context(&self, model: &super::context::IfmlModel) -> Option<LayoutSvelteContext> {
+        self.route_layout()?;
+        shell_nav(&model.view_containers, self.mappings.as_ref())
+            .map(|shell| LayoutSvelteContext { shell })
+    }
 }
 
 #[async_trait]
@@ -110,6 +128,18 @@ impl GlobalGenerator for IfmlRouteGenerator {
             }
         }
 
+        if let Some(ctx) = self.layout_context(&model) {
+            let layout_template = format!("ifml/{}/layout.tera", self.framework);
+            if let Ok(content) = render_template(tera, &layout_template, &ctx) {
+                if let Some(rel) = self.route_layout() {
+                    files.push(GeneratedFile {
+                        path: self.output_dir.join(rel),
+                        content,
+                    });
+                }
+            }
+        }
+
         Ok(files)
     }
 }
@@ -158,6 +188,10 @@ pub struct PageSvelteContext {
     /// Modal wrapper for `modal: true` views with a resolved mapping or a
     /// non-empty mapping pack; `None` renders the plain page.
     modal: Option<RenderModal>,
+    /// Presentation-container wrapper for xor view containers with a
+    /// resolved mapping or a non-empty mapping pack; `None` renders the
+    /// plain page.
+    container: Option<RenderContainer>,
 }
 
 #[derive(Debug, Serialize)]
@@ -264,6 +298,48 @@ pub struct RenderModal {
     /// Component import when the wrapper is a mapped dialog; `None` for the
     /// built-in div fallback.
     pub import: Option<RenderImport>,
+}
+
+/// Presentation-container wrapper for an xor view container: a mapped
+/// `presentation-container` component (`<Card testid="...">`) or the
+/// built-in section fallback. Children render inline inside the wrapper.
+#[derive(Debug, Serialize)]
+pub struct RenderContainer {
+    /// Full opening markup line, e.g. `<Card testid="card">` or
+    /// `<section data-testid="checkout-container">`.
+    pub open_line: String,
+    /// Full closing markup, e.g. `</Card>` or `</section>`.
+    pub close_line: String,
+    /// Testid carried by the wrapper.
+    pub testid: String,
+    /// Component import when the wrapper is a mapped container; `None` for
+    /// the built-in section fallback.
+    pub import: Option<RenderImport>,
+}
+
+/// One navigation entry in the landmark shell layout: `href_attr` is the
+/// ready-to-render `href={...}` attribute using the same URL expression the
+/// page goto handlers emit.
+#[derive(Debug, Serialize)]
+pub struct RenderNavItem {
+    pub label: String,
+    pub href_attr: String,
+}
+
+/// Landmark shell nav context: a mapped `shell` component wrapping nav
+/// items built from the landmark views' navigate events.
+#[derive(Debug, Serialize)]
+pub struct RenderShellNav {
+    pub import: RenderImport,
+    pub testid: Option<String>,
+    pub items: Vec<RenderNavItem>,
+}
+
+/// Render context for the framework layout shell
+/// (`ifml/{fw}/layout.tera` → `src/routes/+layout.svelte`).
+#[derive(Debug, Serialize)]
+pub struct LayoutSvelteContext {
+    pub shell: RenderShellNav,
 }
 
 /// A mapped action-control button replacing the hardcoded fallback `<button>`
@@ -417,6 +493,19 @@ async fn build_page_context(
             import_path: imp.import_path.clone(),
         });
     }
+    let container = container_context(vc, mappings);
+    if let Some(imp) = container.as_ref().and_then(|c| c.import.as_ref()) {
+        let export = imp.export_name.clone();
+        if seen_imports
+            .insert(imp.import_path.clone(), export.clone())
+            .is_none()
+        {
+            imports.push(RenderImport {
+                export_name: export,
+                import_path: imp.import_path.clone(),
+            });
+        }
+    }
     let mut needs_goto = view_events.iter().any(|e| e.action_kind == "navigate");
     let mut has_submit = false;
     for comp in &components {
@@ -473,6 +562,7 @@ async fn build_page_context(
         view_role: semantic_view_role(vc),
         container_role: semantic_container_role(vc),
         modal,
+        container,
     }
 }
 
@@ -870,6 +960,145 @@ fn modal_context(
         close_line,
         close_testid,
         import,
+    })
+}
+
+/// Whether an xor view container renders a presentation-container wrapper:
+/// a mapped `presentation-container` component when one resolves, else the
+/// built-in section fallback whenever a non-empty mapping pack is present.
+/// Without mappings the view renders as a plain page (byte-identical output).
+pub(crate) fn container_wrapper_active(
+    is_xor: bool,
+    mappings: Option<&IfmlComponentMappings>,
+) -> bool {
+    is_xor && mappings.is_some_and(|m| !m.components.is_empty())
+}
+
+/// Resolve the presentation-container mapping for an xor view container:
+/// name tier first (the container name), then the role tier.
+fn resolve_container_mapping<'m>(
+    vc: &IfmlViewContainer,
+    mappings: Option<&'m IfmlComponentMappings>,
+) -> Option<&'m IfmlComponentMapping> {
+    mappings.and_then(|m| {
+        m.resolve_slot(
+            &vc.name,
+            &vc.name,
+            "",
+            "",
+            Some(SemanticRole::PresentationContainer),
+        )
+    })
+}
+
+/// The mapped container wrapper's `data-testid`: the resolved mapping's
+/// `testids.root`, else `{view}-container`. `None` when the view is not xor
+/// or no `presentation-container` mapping resolves (the e2e assertion gate).
+pub(crate) fn mapped_container_testid(
+    vc_name: &str,
+    is_xor: bool,
+    mappings: Option<&IfmlComponentMappings>,
+) -> Option<String> {
+    if !is_xor {
+        return None;
+    }
+    let fallback = format!("{}-container", vc_name.to_lowercase());
+    mappings
+        .and_then(|m| {
+            m.resolve_slot(
+                vc_name,
+                vc_name,
+                "",
+                "",
+                Some(SemanticRole::PresentationContainer),
+            )
+        })
+        .map(|m| m.testid("root").map(str::to_string).unwrap_or(fallback))
+}
+
+/// Presentation-container wrapper context for an xor view container; `None`
+/// renders the plain page.
+fn container_context(
+    vc: &IfmlViewContainer,
+    mappings: Option<&IfmlComponentMappings>,
+) -> Option<RenderContainer> {
+    if !container_wrapper_active(vc.is_xor, mappings) {
+        return None;
+    }
+    let view_lower = vc.name.to_lowercase();
+    let section_testid = format!("{view_lower}-container");
+    match resolve_container_mapping(vc, mappings) {
+        Some(m) => {
+            let export = m.export_name();
+            let testid = m
+                .testid("root")
+                .map(str::to_string)
+                .unwrap_or_else(|| section_testid.clone());
+            Some(RenderContainer {
+                open_line: format!("<{export} testid=\"{testid}\">"),
+                close_line: format!("</{export}>"),
+                testid,
+                import: Some(RenderImport {
+                    export_name: export.to_string(),
+                    import_path: m.path.clone(),
+                }),
+            })
+        }
+        None => Some(RenderContainer {
+            open_line: format!("<section data-testid=\"{section_testid}\">"),
+            close_line: "</section>".to_string(),
+            testid: section_testid,
+            import: None,
+        }),
+    }
+}
+
+/// Shell nav context for the landmark layout: resolves the `shell` mapping
+/// against the landmark views and builds nav items from their navigate
+/// events (same URL resolution as the page goto handlers). `None` when no
+/// landmark views exist or no `shell` mapping resolves — no layout is
+/// emitted then.
+pub(crate) fn shell_nav(
+    vcs: &[IfmlViewContainer],
+    mappings: Option<&IfmlComponentMappings>,
+) -> Option<RenderShellNav> {
+    let labels: HashMap<&str, &str> = vcs
+        .iter()
+        .map(|vc| (vc.name.as_str(), vc.label.as_deref().unwrap_or(&vc.name)))
+        .collect();
+    let landmarks = vcs.iter().filter(|vc| vc.is_landmark && !vc.is_modal);
+    let mapping = mappings.and_then(|m| {
+        landmarks
+            .clone()
+            .find_map(|vc| m.resolve_by_role(&vc.name, SemanticRole::Shell))
+    })?;
+    let mut items: Vec<RenderNavItem> = Vec::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    for vc in landmarks {
+        for evt in vc
+            .events
+            .iter()
+            .chain(vc.components.iter().flat_map(|c| c.events.iter()))
+        {
+            if let IfmlAction::Navigate { target, binding } = &evt.action {
+                let url_expr = nav_url_expr(target, binding);
+                let label = labels.get(target.as_str()).copied().unwrap_or(target);
+                if seen.insert((label.to_string(), url_expr.clone())) {
+                    items.push(RenderNavItem {
+                        label: label.to_string(),
+                        href_attr: format!("href={{{url_expr}}}"),
+                    });
+                }
+            }
+        }
+    }
+    Some(RenderShellNav {
+        import: RenderImport {
+            export_name: mapping.export_name().to_string(),
+            import_path: mapping.path.clone(),
+        },
+        testid: mapping.testid("root").map(str::to_string),
+        items,
     })
 }
 
@@ -1606,6 +1835,7 @@ entities = ["CustomerType"]
             view_role: None,
             container_role: None,
             modal: None,
+            container: None,
         }
     }
 
@@ -2196,5 +2426,244 @@ export = "Button"
             "`/customerdialog?customerId=${row.id}`",
             "non-modal targets must keep byte-identical URLs"
         );
+    }
+
+    fn xor_view() -> IfmlViewContainer {
+        IfmlViewContainer {
+            name: "Checkout".to_string(),
+            label: Some("Checkout".to_string()),
+            is_xor: true,
+            is_default: false,
+            is_landmark: false,
+            is_modal: false,
+            params: Vec::new(),
+            components: vec![],
+            events: Vec::new(),
+            containers: Vec::new(),
+        }
+    }
+
+    fn container_mappings() -> IfmlComponentMappings {
+        toml::from_str(
+            r#"
+[[component]]
+role = "presentation-container"
+path = "$lib/components/Card.svelte"
+export = "Card"
+testids = { root = "card" }
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn xor_view_with_mapping_renders_card_wrapper_around_children() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let mut vc = xor_view();
+        vc.components.push(form_component());
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            Some(&container_mappings()),
+            &HashSet::new(),
+        ));
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains("import Card from '$lib/components/Card.svelte';"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("<Card testid=\"card\">"), "{rendered}");
+        assert!(rendered.contains("</Card>"), "{rendered}");
+        assert!(
+            rendered.contains("<form data-testid=\"editor-form\""),
+            "children must render inside the wrapper: {rendered}"
+        );
+        let open = rendered.find("<Card testid=\"card\">").expect("open");
+        let child = rendered.find("<form").expect("form");
+        let close = rendered.rfind("</Card>").expect("close");
+        assert!(open < child && child < close, "{rendered}");
+    }
+
+    #[test]
+    fn xor_view_without_container_mapping_renders_section_fallback() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let vc = xor_view();
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            Some(&button_mappings()),
+            &HashSet::new(),
+        ));
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains("<section data-testid=\"checkout-container\">"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("</section>"), "{rendered}");
+        assert!(!rendered.contains("<Card"), "{rendered}");
+    }
+
+    #[test]
+    fn xor_view_without_pack_renders_plain_page() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let mut vc = xor_view();
+        vc.components.push(form_component());
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            None,
+            &HashSet::new(),
+        ));
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(!rendered.contains("<section"), "{rendered}");
+        assert!(!rendered.contains("<Card"), "{rendered}");
+        assert!(
+            rendered.contains("<form data-testid=\"editor-form\""),
+            "no-pack xor views must render exactly as before: {rendered}"
+        );
+    }
+
+    #[test]
+    fn mapped_container_testid_resolves_only_for_xor_with_mapping() {
+        assert_eq!(
+            mapped_container_testid("Checkout", true, Some(&container_mappings())),
+            Some("card".to_string())
+        );
+        assert_eq!(
+            mapped_container_testid("Checkout", true, Some(&button_mappings())),
+            None
+        );
+        assert_eq!(
+            mapped_container_testid("Checkout", false, Some(&container_mappings())),
+            None
+        );
+    }
+
+    #[test]
+    fn shell_nav_builds_items_from_landmark_navigate_events() {
+        let mut list = IfmlViewContainer {
+            name: "CustomerList".to_string(),
+            label: Some("Customers".to_string()),
+            is_xor: false,
+            is_default: false,
+            is_landmark: true,
+            is_modal: false,
+            params: Vec::new(),
+            components: vec![],
+            events: Vec::new(),
+            containers: Vec::new(),
+        };
+        list.events.push(IfmlEvent {
+            name: "comp_grid_select".to_string(),
+            event_type: "select".to_string(),
+            params: vec!["row".to_string()],
+            action: IfmlAction::Navigate {
+                target: "CustomerDetail".to_string(),
+                binding: HashMap::new(),
+            },
+        });
+        let detail = IfmlViewContainer {
+            name: "CustomerDetail".to_string(),
+            label: None,
+            is_xor: false,
+            is_default: false,
+            is_landmark: false,
+            is_modal: false,
+            params: Vec::new(),
+            components: vec![],
+            events: Vec::new(),
+            containers: Vec::new(),
+        };
+        let shell_mappings: IfmlComponentMappings = toml::from_str(
+            r#"
+[[component]]
+role = "shell"
+path = "$lib/components/Nav.svelte"
+export = "Nav"
+testids = { root = "side-nav" }
+"#,
+        )
+        .unwrap();
+        let nav = shell_nav(&[list, detail], Some(&shell_mappings)).expect("shell nav");
+        assert_eq!(nav.import.export_name, "Nav");
+        assert_eq!(nav.testid.as_deref(), Some("side-nav"));
+        assert_eq!(nav.items.len(), 1);
+        assert_eq!(nav.items[0].label, "CustomerDetail");
+        assert_eq!(nav.items[0].href_attr, "href={\"/customerdetail\"}");
+    }
+
+    #[test]
+    fn shell_nav_is_none_without_landmark_or_shell_mapping() {
+        let plain = IfmlViewContainer {
+            name: "CustomerList".to_string(),
+            label: None,
+            is_xor: false,
+            is_default: false,
+            is_landmark: false,
+            is_modal: false,
+            params: Vec::new(),
+            components: vec![],
+            events: Vec::new(),
+            containers: Vec::new(),
+        };
+        assert!(shell_nav(std::slice::from_ref(&plain), Some(&container_mappings())).is_none());
+        assert!(shell_nav(&[plain], None).is_none());
+    }
+
+    #[test]
+    fn layout_template_renders_shell_navigation_and_children() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let ctx = LayoutSvelteContext {
+            shell: RenderShellNav {
+                import: RenderImport {
+                    export_name: "NavigationMenu".to_string(),
+                    import_path: "$lib/components/ui/navigation-menu/navigation-menu.svelte"
+                        .to_string(),
+                },
+                testid: Some("navigation-menu".to_string()),
+                items: vec![
+                    RenderNavItem {
+                        label: "Customers".to_string(),
+                        href_attr: "href=\"/customerlist\"".to_string(),
+                    },
+                    RenderNavItem {
+                        label: "CustomerDetail".to_string(),
+                        href_attr: "href={`?customerId=${row.id}`}".to_string(),
+                    },
+                ],
+            },
+        };
+        let rendered = render_template(&tera, "ifml/svelte/layout.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains(
+                "import NavigationMenu from '$lib/components/ui/navigation-menu/navigation-menu.svelte';"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered
+                .contains("let { children }: { children: import('svelte').Snippet } = $props();"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("<NavigationMenu testid=\"navigation-menu\">"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("<a href=\"/customerlist\">Customers</a>"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("<a href={`?customerId=${row.id}`}>CustomerDetail</a>"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("</NavigationMenu>"), "{rendered}");
+        assert!(rendered.contains("{@render children()}"), "{rendered}");
     }
 }
