@@ -1,20 +1,24 @@
 //! Byte-exact expected outputs for the spec-less IFML svelte fixture.
-//! Captured from the lossless-IR querier: navigation flows resolve `from`
-//! to the owning ViewContainer and view params flow into the route map.
-//! The templates must reproduce these files verbatim when no component
-//! specs are present.
+//! Captured from the behavior-wired templates: events render as goto
+//! handlers, load functions resolve API paths from the ingested API model
+//! (pagination + error handling included), and the malformed `{item.x`
+//! markup is fixed. The templates must reproduce these files verbatim when
+//! no component specs or mappings are present.
 
 pub const SPECLESS_CUSTOMERLIST_PAGE: &str = r##"<script lang="ts">
 	import type { PageData } from './$types';
+	import { goto } from '$app/navigation';
 
-	let { data }: { data: PageData } = $props();
+	let { data, params }: { data: PageData; params: Record<string, string> } = $props();
+
+	function comp_grid_select(row: Record<string, unknown>) {
+		goto(`/customerdetail?customerId=${row.id}`);
+	}
 </script>
 
 <svelte:head>
 	<title>Customer Management</title>
 </svelte:head>
-
-
 
 <h1>Customer Management</h1>
 <table>
@@ -33,15 +37,15 @@ pub const SPECLESS_CUSTOMERLIST_PAGE: &str = r##"<script lang="ts">
 	</thead>
 	<tbody>
 		{#each data.items as item}
-			<tr>
+			<tr onclick={() => comp_grid_select(item)}>
 			
-				<td>{item.name</td>
+				<td>{item.name}</td>
 			
-				<td>{item.email</td>
+				<td>{item.email}</td>
 			
-				<td>{item.phone</td>
+				<td>{item.phone}</td>
 			
-				<td>{item.status</td>
+				<td>{item.status}</td>
 			
 			</tr>
 		{/each}
@@ -54,43 +58,42 @@ pub const SPECLESS_CUSTOMERLIST_PAGE: &str = r##"<script lang="ts">
 
 pub const SPECLESS_CUSTOMERLIST_LOAD: &str = r##"import type { PageLoad } from './$types';
 
-export const load: PageLoad = async ({ params, fetch }) => {
+import { error } from '@sveltejs/kit';
 
+export const load: PageLoad = async ({ params, url, fetch }) => {
+	const result: Record<string, unknown> = {};
 
-	const response = await fetch('/api/v1/customer');
-	const items = await response.json();
+	const gridResponse = await fetch(`/api/v1/sales/customer?page=${url.searchParams.get('page') ?? '0'}&page_size=${url.searchParams.get('page_size') ?? '20'}`);
+	if (!gridResponse.ok) {
+		error(gridResponse.status, 'Failed to load customer');
+	}
+	const gridData = await gridResponse.json();
+	result.items = Array.isArray(gridData) ? gridData : gridData.data ?? [];
 
-	return { items };
-
-
-
-
-	return {};
+	return result;
 };
 "##;
 
 pub const SPECLESS_CUSTOMERDETAIL_PAGE: &str = r##"<script lang="ts">
 	import type { PageData } from './$types';
 
-	let { data }: { data: PageData } = $props();
+	let { data, params }: { data: PageData; params: Record<string, string> } = $props();
 </script>
 
 <svelte:head>
 	<title>CustomerDetail</title>
 </svelte:head>
 
-
-
 <dl>
 	
 	<dt>name</dt>
-	<dd>{data.name</dd>
+	<dd>{data.name}</dd>
 	
 	<dt>email</dt>
-	<dd>{data.email</dd>
+	<dd>{data.email}</dd>
 	
 	<dt>phone</dt>
-	<dd>{data.phone</dd>
+	<dd>{data.phone}</dd>
 	
 </dl>
 
@@ -100,18 +103,21 @@ pub const SPECLESS_CUSTOMERDETAIL_PAGE: &str = r##"<script lang="ts">
 
 pub const SPECLESS_CUSTOMERDETAIL_LOAD: &str = r##"import type { PageLoad } from './$types';
 
-export const load: PageLoad = async ({ params, fetch }) => {
+import { error } from '@sveltejs/kit';
 
+export const load: PageLoad = async ({ params, url, fetch }) => {
+	const result: Record<string, unknown> = {};
 
-	const response = await fetch(`/api/v1/customer/${params.id}`);
-	const item = await response.json();
+	const customerId = url.searchParams.get('customerId') ?? params.customerId;
+	if (customerId) {
+		const infoResponse = await fetch(`/api/v1/sales/customer/${ customerId }`);
+		if (!infoResponse.ok) {
+			error(infoResponse.status, 'Failed to load customer');
+		}
+		result.item = await infoResponse.json();
+	}
 
-	return { item };
-
-
-
-
-	return {};
+	return result;
 };
 "##;
 
@@ -131,7 +137,7 @@ export const routeMap: Record<string, RouteDefinition> = {
 
 	'CustomerDetail': {
 		name: 'CustomerDetail',
-		route: '/customer-detail',
+		route: '/customerdetail',
 		label: 'CustomerDetail',
 		isLandmark: false,
 		isModal: false,
@@ -140,7 +146,7 @@ export const routeMap: Record<string, RouteDefinition> = {
 
 	'CustomerList': {
 		name: 'CustomerList',
-		route: '/customer-list',
+		route: '/customerlist',
 		label: 'Customer Management',
 		isLandmark: true,
 		isModal: false,

@@ -1,3 +1,4 @@
+pub mod api_paths;
 pub mod context;
 pub mod dependency_graph;
 pub mod navigation_generator;

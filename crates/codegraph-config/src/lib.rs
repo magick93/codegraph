@@ -1,5 +1,6 @@
 pub mod config;
 pub mod error;
+pub mod ifml_components;
 pub mod ops_manifest;
 pub mod registry;
 pub mod workflow_loader;
@@ -11,6 +12,7 @@ pub use config::{
     UiEntityEntry, UiOverrideConfig, UiOverrideEntry, UiWizardConfig, WorkflowConfig,
 };
 pub use error::DomainConfigError;
+pub use ifml_components::{IfmlComponentMapping, IfmlComponentMappings};
 pub use ops_manifest::{
     OpsCapabilities, OpsDatabase, OpsDbTarget, OpsExtension, OpsHook, OpsHurl, OpsManifest,
     OpsServers, OpsSmoke, OpsSupabase,

@@ -35,6 +35,9 @@ pub struct RunArgs<'a> {
     pub ifml_files: &'a [PathBuf],
     pub openapi_files: &'a [PathBuf],
     pub ifml_framework: &'a [String],
+    /// Optional `ifml-components.toml` mapping IFML components to
+    /// handcrafted framework components. Absent = all built-in templates.
+    pub ifml_components: Option<&'a Path>,
     /// Git rev to pin in generated Cargo.toml codegraph deps. When None the
     /// driver falls back to `git rev-parse HEAD` of the current directory.
     pub codegraph_rev: Option<String>,
@@ -54,6 +57,20 @@ pub struct IfmlGenerateArgs<'a> {
     /// Optional path to profiles.toml.
     pub profiles_config_path: Option<PathBuf>,
     pub template_dir: &'a [PathBuf],
+    /// Optional `ifml-components.toml` mapping IFML components to
+    /// handcrafted framework components. Absent = all built-in templates.
+    pub ifml_components: Option<&'a Path>,
+}
+
+fn load_ifml_component_mappings(
+    path: Option<&Path>,
+) -> Result<Option<codegraph_config::IfmlComponentMappings>> {
+    match path {
+        Some(path) => codegraph_config::IfmlComponentMappings::load(path)
+            .map(Some)
+            .map_err(crate::error::Error::Config),
+        None => Ok(None),
+    }
 }
 
 /// Run the full pipeline: ingest + classify + generate.
@@ -72,6 +89,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         ifml_files,
         openapi_files,
         ifml_framework,
+        ifml_components,
         codegraph_rev,
     } = args;
 
@@ -325,6 +343,8 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
 
     run_validation(be.querier(), &domain_config).await?;
 
+    let ifml_component_mappings = load_ifml_component_mappings(ifml_components)?;
+
     let report = crate::generate::run_generators_with_opts(crate::generate::GeneratorOpts {
         db: be.querier(),
         config: &domain_config,
@@ -339,6 +359,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         ext_points: ext_config.as_ref(),
         build_plan: build_plan.as_ref(),
         ifml_frameworks: ifml_framework.to_vec(),
+        ifml_components: ifml_component_mappings.as_ref(),
         project_config: project_config.as_ref(),
         emdash_plugins: None,
         domain_config_dir: config_path.parent(),
@@ -394,6 +415,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         frameworks,
         profiles_config_path,
         template_dir,
+        ifml_components,
     } = args;
 
     if ifml_files.is_empty() {
@@ -606,6 +628,8 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         crate::generate::template_engine::create_tera_with_overrides(&override_dirs)?
     };
 
+    let ifml_component_mappings = load_ifml_component_mappings(ifml_components)?;
+
     let report = crate::generate::run_ifml_generators(
         be.querier(),
         &domain_config,
@@ -614,6 +638,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         &frameworks,
         build_plan.as_ref(),
         &project_config,
+        ifml_component_mappings.as_ref(),
     )
     .await?;
 
@@ -633,6 +658,7 @@ pub async fn generate(
     extension_points_path: Option<&Path>,
     template_dir: &[PathBuf],
     ifml_frameworks: &[String],
+    ifml_components: Option<&Path>,
 ) -> Result<()> {
     let config = codegraph_config::config::parse_domain_config(config_path)
         .map_err(|e| crate::error::Error::Config(e.to_string()))?;
@@ -675,6 +701,7 @@ pub async fn generate(
     // generate uses a pre-populated backend; schema base dir is unknown here.
     // Pass an empty path so UiCodelistGenerator skips gracefully.
     run_validation(be.querier(), &config).await?;
+    let ifml_component_mappings = load_ifml_component_mappings(ifml_components)?;
     let report = crate::generate::run_generators_with_opts(crate::generate::GeneratorOpts {
         db: be.querier(),
         config: &config,
@@ -689,6 +716,7 @@ pub async fn generate(
         ext_points: ext_config.as_ref(),
         build_plan: None,
         ifml_frameworks: ifml_frameworks.to_vec(),
+        ifml_components: ifml_component_mappings.as_ref(),
         project_config: None,
         emdash_plugins: None,
         domain_config_dir: config_path.parent(),

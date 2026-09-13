@@ -123,6 +123,7 @@ fn make_args<'a>(
         frameworks,
         profiles_config_path: None,
         template_dir: &[],
+        ifml_components: None,
     }
 }
 
@@ -188,6 +189,7 @@ async fn ifml_generate_with_schemas_enriches_entity_resolution() {
         frameworks: &frameworks(&["svelte"]),
         profiles_config_path: None,
         template_dir: &[],
+        ifml_components: None,
     })
     .await
     .unwrap();
@@ -280,6 +282,7 @@ async fn ifml_generate_multiple_frameworks() {
         frameworks: &frameworks(&["svelte", "react"]),
         profiles_config_path: None,
         template_dir: &[],
+        ifml_components: None,
     })
     .await
     .unwrap();

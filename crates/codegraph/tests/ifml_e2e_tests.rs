@@ -381,6 +381,7 @@ entities = ["CustomerType"]
         frameworks: &["svelte".to_string()],
         profiles_config_path: None,
         template_dir: &[],
+        ifml_components: None,
     })
     .await
     .expect("ifml_generate should succeed for typed components");

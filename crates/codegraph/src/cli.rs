@@ -36,6 +36,9 @@ pub enum Commands {
         /// IFML framework targets for code generation (e.g. svelte, react)
         #[arg(long)]
         ifml_framework: Vec<String>,
+        /// Path to ifml-components.toml mapping IFML components to handcrafted components
+        #[arg(long)]
+        ifml_components: Option<PathBuf>,
     },
     /// Classify all schemas and show entity/VO decisions
     Classify {
@@ -98,6 +101,9 @@ pub enum Commands {
         /// IFML framework targets for code generation (e.g. svelte, react)
         #[arg(long)]
         ifml_framework: Vec<String>,
+        /// Path to ifml-components.toml mapping IFML components to handcrafted components
+        #[arg(long)]
+        ifml_components: Option<PathBuf>,
     },
     /// IFML-only UI generation: ingest .ifml DSL files and emit framework routes
     IfmlGenerate {
@@ -125,6 +131,9 @@ pub enum Commands {
         /// times; later directories take precedence.
         #[arg(long)]
         template_dir: Vec<PathBuf>,
+        /// Path to ifml-components.toml mapping IFML components to handcrafted components
+        #[arg(long)]
+        ifml_components: Option<PathBuf>,
     },
     /// Scaffold a starter IFML DSL file (CRUD views + navigation) from JSON schemas
     IfmlScaffold {

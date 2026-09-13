@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
+use codegraph_config::{DomainConfig, IfmlComponentMapping, IfmlComponentMappings};
 use codegraph_core::traits::GraphQuerier;
 use codegraph_ifml_dsl::{
     BinOp, ChartKind, ChartSpec, ColumnDef, ComponentSpec, Expression, FormSpec, InputFieldType,
@@ -14,14 +15,16 @@ use crate::error::Result;
 use crate::render_template;
 use crate::traits::{GeneratedFile, GlobalGenerator};
 use crate::GenerationEntry;
-use codegraph_config::DomainConfig;
 
+use super::api_paths::{id_param_from, resolve_entity_api, ResolvedApi};
+use super::context::{IfmlAction, IfmlComponent, IfmlEvent, IfmlViewContainer};
 use super::querier::*;
 
 pub struct IfmlRouteGenerator {
     output_dir: PathBuf,
     framework: String,
     output_paths: super::output_paths::OutputPaths,
+    mappings: Option<IfmlComponentMappings>,
 }
 
 impl IfmlRouteGenerator {
@@ -30,7 +33,13 @@ impl IfmlRouteGenerator {
             output_dir: output_dir.to_path_buf(),
             framework: framework.to_string(),
             output_paths: super::output_paths::OutputPaths::for_framework(framework),
+            mappings: None,
         }
+    }
+
+    pub fn with_mappings(mut self, mappings: Option<IfmlComponentMappings>) -> Self {
+        self.mappings = mappings;
+        self
     }
 }
 
@@ -43,7 +52,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
     async fn generate(
         &self,
         db: &dyn GraphQuerier,
-        _config: &DomainConfig,
+        config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
         project: &ProjectConfig,
@@ -64,8 +73,11 @@ impl GlobalGenerator for IfmlRouteGenerator {
         let load_template = format!("ifml/{}/page_load.tera", self.framework);
 
         for vc in ordered_view_containers(&model) {
-            if let Ok(content) = render_page_svelte(vc, tera, &page_template, &project.api_version)
-            {
+            let ctx =
+                build_page_context(db, config, &project.api_version, vc, self.mappings.as_ref())
+                    .await;
+
+            if let Ok(content) = render_template(tera, &page_template, &ctx) {
                 files.push(GeneratedFile {
                     path: self
                         .output_dir
@@ -75,9 +87,8 @@ impl GlobalGenerator for IfmlRouteGenerator {
             }
 
             if let Some(ref route_load_fn) = self.output_paths.route_load {
-                if let Ok(content) =
-                    render_page_load(vc, tera, &load_template, &project.api_version)
-                {
+                let load_ctx = build_load_context(&project.api_version, vc, &ctx.components);
+                if let Ok(content) = render_template(tera, &load_template, &load_ctx) {
                     files.push(GeneratedFile {
                         path: self.output_dir.join(route_load_fn(&vc.name)),
                         content,
@@ -120,6 +131,17 @@ pub struct PageSvelteContext {
     label: String,
     components: Vec<PageComponentContext>,
     params: Vec<super::context::ParameterDef>,
+    view_events: Vec<RenderEvent>,
+    imports: Vec<RenderImport>,
+    needs_goto: bool,
+    needs_on_mount: bool,
+    has_submit: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RenderImport {
+    pub export_name: String,
+    pub import_path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -133,6 +155,60 @@ pub struct PageComponentContext {
     table: Option<RenderTable>,
     form: Option<RenderForm>,
     chart: Option<RenderChart>,
+    mapping: Option<RenderMapping>,
+    events: Vec<RenderEvent>,
+    /// Ready-to-render event callback props for mapped components,
+    /// e.g. `on:select={comp_grid_select}`.
+    event_props: Vec<String>,
+    /// Ready-to-render data prop for mapped components, e.g. `data={data.items}`.
+    data_prop: String,
+    /// Ready-to-render fields prop for mapped components.
+    fields_prop: String,
+    /// Ready-to-render submit callback prop for mapped form components.
+    submit_prop: Option<String>,
+    /// Joined validation expressions for mapped form components
+    /// (`data-validate` attribute).
+    data_validate: Option<String>,
+    api: Option<ResolvedApi>,
+    /// View parameter carrying the entity id (edit mode), when any.
+    id_param: Option<String>,
+    /// Fields passed to a mapped component: declared fields when present,
+    /// else derived from the typed spec (table columns / form fields).
+    mapped_fields: Vec<String>,
+    /// Handler for row-click navigation on list/table fallback markup.
+    row_handler: Option<String>,
+    submit: Option<RenderSubmit>,
+    submit_handler: Option<String>,
+}
+
+/// Submit wiring for a form component: fetch + success navigation.
+#[derive(Debug, Serialize)]
+pub struct RenderSubmit {
+    handler_name: String,
+    /// URL expression (JS literal) passed to fetch.
+    url_expr: String,
+    method: String,
+    /// Navigation target URL expression from the view's save event.
+    navigate_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RenderMapping {
+    import_name: String,
+    import_path: String,
+    testid: Option<String>,
+    row_testid: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RenderEvent {
+    pub handler_name: String,
+    pub event_type: String,
+    /// "navigate" | "refresh" | "action" | "stay"
+    pub action_kind: String,
+    pub target: String,
+    /// JS string expression evaluating to the navigation target URL.
+    pub url_expr: String,
 }
 
 /// Typed-table render context derived from a `ComponentSpec::Table`
@@ -169,6 +245,8 @@ pub struct RenderInputField {
     is_radio: bool,
     required: bool,
     values: Vec<String>,
+    /// Validation expressions joined for a `data-validate` attribute.
+    data_validate: String,
 }
 
 /// Typed-chart render context derived from a `ComponentSpec::Chart`
@@ -184,48 +262,348 @@ pub struct PageLoadContext {
     pub api_version: String,
     name: String,
     components: Vec<PageLoadComponentContext>,
+    has_fetch: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct PageLoadComponentContext {
+    /// Sanitized JS identifier for local variable names.
+    name: String,
     component_type: String,
     entity: String,
+    /// Legacy lowercase entity route (used by frameworks without a resolved
+    /// API model).
     route_name: String,
+    api: Option<ResolvedApi>,
+    id_param: Option<String>,
+    paginate: bool,
+    fetch_list: bool,
+    fetch_item: bool,
+    fetch_form: bool,
 }
 
-fn render_page_svelte(
-    vc: &super::context::IfmlViewContainer,
-    tera: &tera::Tera,
-    template: &str,
+async fn build_page_context(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
     api_version: &str,
-) -> Result<String> {
-    let ctx = PageSvelteContext {
+    vc: &IfmlViewContainer,
+    mappings: Option<&IfmlComponentMappings>,
+) -> PageSvelteContext {
+    let id_param = id_param_from(&vc.params);
+    let mut api_cache: HashMap<String, Option<ResolvedApi>> = HashMap::new();
+
+    let mut components = Vec::new();
+    for c in &vc.components {
+        let ctx = page_component_context(
+            db,
+            config,
+            api_version,
+            vc,
+            c,
+            id_param.as_deref(),
+            mappings,
+            &mut api_cache,
+        )
+        .await;
+        components.push(ctx);
+    }
+
+    let view_events: Vec<RenderEvent> = vc.events.iter().map(render_event).collect();
+
+    let mut imports: Vec<RenderImport> = Vec::new();
+    let mut seen_imports: HashMap<String, String> = HashMap::new();
+    let mut needs_goto = view_events.iter().any(|e| e.action_kind == "navigate");
+    let mut has_submit = false;
+    for comp in &components {
+        for evt in &comp.events {
+            if evt.action_kind == "navigate" {
+                needs_goto = true;
+            }
+        }
+        if let Some(ref submit) = comp.submit {
+            has_submit = true;
+            if submit.navigate_url.is_some() {
+                needs_goto = true;
+            }
+        }
+        if let Some(ref mapping) = comp.mapping {
+            let export = mapping.import_name.clone();
+            if seen_imports
+                .insert(mapping.import_path.clone(), export.clone())
+                .is_none()
+            {
+                imports.push(RenderImport {
+                    export_name: export,
+                    import_path: mapping.import_path.clone(),
+                });
+            }
+        }
+    }
+    let needs_on_mount = view_events
+        .iter()
+        .any(|e| e.action_kind == "navigate" && e.event_type == "load");
+
+    PageSvelteContext {
         api_version: api_version.to_string(),
         name: vc.name.clone(),
         label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
-        components: vc.components.iter().map(page_component_context).collect(),
+        components,
         params: vc.params.clone(),
-    };
-    render_template(tera, template, &ctx)
+        view_events,
+        imports,
+        needs_goto,
+        needs_on_mount,
+        has_submit,
+    }
 }
 
-fn page_component_context(c: &super::context::IfmlComponent) -> PageComponentContext {
+#[allow(clippy::too_many_arguments)]
+async fn page_component_context(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    api_version: &str,
+    vc: &IfmlViewContainer,
+    c: &IfmlComponent,
+    id_param: Option<&str>,
+    mappings: Option<&IfmlComponentMappings>,
+    api_cache: &mut HashMap<String, Option<ResolvedApi>>,
+) -> PageComponentContext {
     let (table, form, chart) = match c.spec {
         Some(ComponentSpec::Table(ref spec)) => (Some(render_table(spec)), None, None),
         Some(ComponentSpec::Form(ref spec)) => (None, Some(render_form(spec)), None),
         Some(ComponentSpec::Chart(ref spec)) => (None, None, Some(render_chart(spec))),
         None => (None, None, None),
     };
+
+    let kind = kind_of(c);
+    let mapping = mappings
+        .and_then(|m| m.resolve(&vc.name, &c.name, &c.component_type, &kind))
+        .map(mapping_context);
+    let events: Vec<RenderEvent> = c.events.iter().map(render_event).collect();
+    let event_props: Vec<String> = events
+        .iter()
+        .filter(|e| {
+            e.action_kind == "navigate" && e.event_type != "submit" && e.event_type != "save"
+        })
+        .map(|e| format!("on:{}={{{}}}", e.event_type, e.handler_name))
+        .collect();
+
+    let entity = c.entity.clone().unwrap_or_default();
+    let api = match api_cache.get(&entity) {
+        Some(resolved) => resolved.clone(),
+        None => {
+            let resolved = if entity.is_empty() {
+                None
+            } else {
+                resolve_entity_api(db, config, &entity, api_version).await
+            };
+            api_cache.insert(entity.clone(), resolved.clone());
+            resolved
+        }
+    };
+
+    let mapped_fields = mapped_fields(c, table.as_ref(), form.as_ref(), chart.as_ref());
+
+    let row_handler = if is_collection(c) {
+        events
+            .iter()
+            .find(|e| e.action_kind == "navigate")
+            .map(|e| e.handler_name.clone())
+    } else {
+        None
+    };
+
+    let submit = build_submit(c, api.as_ref(), id_param, &events);
+    let submit_handler = submit.as_ref().map(|s| s.handler_name.clone());
+    let submit_prop = submit_handler
+        .as_ref()
+        .map(|handler| format!("on:submit={{{handler}}}"));
+    let data_validate = form.as_ref().map(|form| {
+        form.fields
+            .iter()
+            .filter(|f| !f.data_validate.is_empty())
+            .map(|f| f.data_validate.clone())
+            .collect::<Vec<_>>()
+            .join(" && ")
+    });
+    let data_prop = if is_collection(c) || chart.is_some() {
+        "data={data.items}".to_string()
+    } else if is_form_component(c) {
+        "item={data.formData}".to_string()
+    } else {
+        "item={data.item}".to_string()
+    };
+    let fields_prop = format!(
+        "fields={{[{}]}}",
+        mapped_fields
+            .iter()
+            .map(|f| format!("'{f}'"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
     PageComponentContext {
         name: c.name.clone(),
         component_type: c.component_type.clone(),
-        entity: c.entity.clone().unwrap_or_default(),
+        entity,
         fields: c.fields.clone(),
         fields_with_types: c.fields_with_types.clone(),
         filter: c.filter.clone().unwrap_or_default(),
+        mapped_fields,
+        mapping,
+        events,
+        event_props,
+        data_prop,
+        fields_prop,
+        submit_prop,
+        data_validate,
+        api,
+        id_param: id_param.map(str::to_string),
+        row_handler,
+        submit,
+        submit_handler,
         table,
         form,
         chart,
+    }
+}
+
+/// The layout kind used for mapping resolution: the typed spec kind when a
+/// spec is present, else the component type.
+fn kind_of(c: &IfmlComponent) -> String {
+    match c.spec {
+        Some(ComponentSpec::Table(_)) => "table".to_string(),
+        Some(ComponentSpec::Form(_)) => "form".to_string(),
+        Some(ComponentSpec::Chart(_)) => "chart".to_string(),
+        None => c.component_type.clone(),
+    }
+}
+
+fn is_collection(c: &IfmlComponent) -> bool {
+    matches!(c.spec, Some(ComponentSpec::Table(_))) || c.component_type == "list"
+}
+
+fn is_form_component(c: &IfmlComponent) -> bool {
+    matches!(c.spec, Some(ComponentSpec::Form(_))) || c.component_type == "form"
+}
+
+fn mapped_fields(
+    c: &IfmlComponent,
+    table: Option<&RenderTable>,
+    form: Option<&RenderForm>,
+    chart: Option<&RenderChart>,
+) -> Vec<String> {
+    if !c.fields.is_empty() {
+        return c.fields.clone();
+    }
+    if let Some(table) = table {
+        return table
+            .columns
+            .iter()
+            .filter(|col| col.kind != "expr")
+            .map(|col| col.binding.clone())
+            .collect();
+    }
+    if let Some(form) = form {
+        return form.fields.iter().map(|f| f.name.clone()).collect();
+    }
+    if let Some(chart) = chart {
+        return chart.value_fields.clone();
+    }
+    Vec::new()
+}
+
+fn mapping_context(m: &IfmlComponentMapping) -> RenderMapping {
+    RenderMapping {
+        import_name: m.export_name().to_string(),
+        import_path: m.path.clone(),
+        testid: m.testid("root").map(str::to_string),
+        row_testid: m.testid("row").map(str::to_string),
+    }
+}
+
+/// Build the submit wiring for a form component: POST for create views, PUT
+/// for edit views (view carries an id param); success navigates per the
+/// view's save event.
+fn build_submit(
+    c: &IfmlComponent,
+    api: Option<&ResolvedApi>,
+    id_param: Option<&str>,
+    events: &[RenderEvent],
+) -> Option<RenderSubmit> {
+    if !is_form_component(c) {
+        return None;
+    }
+    let api = api?;
+    let handler_name = format!("submit_{}", sanitize_ident(&c.name));
+    let (url_expr, method) = match id_param {
+        Some(param) if api.has_update => (
+            format!("`{}/${{params.{param}}}`", api.base_path),
+            "PUT".to_string(),
+        ),
+        _ => (format!("\"{}\"", api.base_path), "POST".to_string()),
+    };
+    let navigate_url = events
+        .iter()
+        .find(|e| {
+            e.action_kind == "navigate" && (e.event_type == "save" || e.event_type == "submit")
+        })
+        .map(|e| e.url_expr.clone());
+    Some(RenderSubmit {
+        handler_name,
+        url_expr,
+        method,
+        navigate_url,
+    })
+}
+
+fn render_event(evt: &IfmlEvent) -> RenderEvent {
+    let (action_kind, target, binding) = match &evt.action {
+        IfmlAction::Navigate { target, binding } => ("navigate", target.clone(), binding),
+        IfmlAction::Refresh { target, binding } => ("refresh", target.clone(), binding),
+        IfmlAction::Action(name) => ("action", name.clone(), &HashMap::new()),
+        IfmlAction::Stay => ("stay", String::new(), &HashMap::new()),
+    };
+    let url_expr = if action_kind == "navigate" {
+        nav_url_expr(&target, binding)
+    } else {
+        String::new()
+    };
+    RenderEvent {
+        handler_name: sanitize_ident(&evt.name),
+        event_type: evt.event_type.clone(),
+        action_kind: action_kind.to_string(),
+        target,
+        url_expr,
+    }
+}
+
+/// Build a JS template-literal URL for a navigation target: the target view's
+/// generated route (`/{name-lowercase}`) plus query params from the binding
+/// map (`?key=${expr}`). Binding expressions are emitted verbatim from the
+/// model; keys are sorted for deterministic output.
+fn nav_url_expr(target: &str, binding: &HashMap<String, String>) -> String {
+    let path = format!("/{}", target.to_lowercase());
+    if binding.is_empty() {
+        return format!("\"{path}\"");
+    }
+    let mut pairs: Vec<(&String, &String)> = binding.iter().collect();
+    pairs.sort();
+    let query: Vec<String> = pairs.iter().map(|(k, v)| format!("{k}=${{{v}}}")).collect();
+    format!("`{path}?{}`", query.join("&"))
+}
+
+fn sanitize_ident(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect();
+    if cleaned.is_empty() {
+        "component".to_string()
+    } else if cleaned.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        format!("_{cleaned}")
+    } else {
+        cleaned
     }
 }
 
@@ -290,6 +668,8 @@ fn render_form(spec: &FormSpec) -> RenderForm {
                     InputFieldType::File => ("file".to_string(), false, false, false),
                     InputFieldType::Hidden => ("hidden".to_string(), false, false, false),
                 };
+                let validations: Vec<String> =
+                    field.validations.iter().map(render_expression).collect();
                 RenderInputField {
                     name: field.name.clone(),
                     input_type,
@@ -298,6 +678,7 @@ fn render_form(spec: &FormSpec) -> RenderForm {
                     is_radio,
                     required: field.required,
                     values: field.values.clone(),
+                    data_validate: validations.join(" && "),
                 }
             })
             .collect(),
@@ -368,54 +749,85 @@ fn bin_op_symbol(op: &BinOp) -> &'static str {
     }
 }
 
-fn render_page_load(
-    vc: &super::context::IfmlViewContainer,
-    tera: &tera::Tera,
-    template: &str,
+/// Build the `+page.ts` load context. Only the first list/details/form
+/// component contributes a fetch per page, mirroring the single-return load
+/// contract; each fetch resolves the entity API path from the graph.
+fn build_load_context(
     api_version: &str,
-) -> Result<String> {
-    let ctx = PageLoadContext {
+    vc: &IfmlViewContainer,
+    components: &[PageComponentContext],
+) -> PageLoadContext {
+    let id_param = id_param_from(&vc.params);
+    let mut load_components = Vec::new();
+    let mut has_list = false;
+    let mut has_details = false;
+    let mut has_form_fetch = false;
+    let mut has_fetch = false;
+
+    for comp in components {
+        let is_list = comp.table.is_some() || comp.component_type == "list";
+        let is_details = comp.component_type == "details";
+        let is_form = comp.form.is_some() || comp.component_type == "form";
+
+        let mut fetch_list = false;
+        let mut fetch_item = false;
+        let mut fetch_form = false;
+        if comp.api.is_some() && !comp.entity.is_empty() {
+            if is_list && !has_list {
+                fetch_list = true;
+            } else if is_details && !has_details && id_param.is_some() {
+                fetch_item = true;
+            } else if is_form && !has_form_fetch && id_param.is_some() {
+                fetch_form = true;
+            }
+        }
+        has_list |= fetch_list;
+        has_details |= fetch_item;
+        has_form_fetch |= fetch_form;
+        has_fetch |= fetch_list || fetch_item || fetch_form;
+
+        load_components.push(PageLoadComponentContext {
+            name: sanitize_ident(&comp.name),
+            component_type: comp.component_type.clone(),
+            entity: comp.entity.clone(),
+            route_name: comp.entity.to_lowercase(),
+            api: comp.api.clone(),
+            id_param: id_param.clone(),
+            paginate: fetch_list && (comp.table.as_ref().map(|t| t.pagination).unwrap_or(true)),
+            fetch_list,
+            fetch_item,
+            fetch_form,
+        });
+    }
+
+    PageLoadContext {
         api_version: api_version.to_string(),
         name: vc.name.clone(),
-        components: vc
-            .components
-            .iter()
-            .map(|c| {
-                let route_name = c
-                    .entity
-                    .as_ref()
-                    .map(|e| e.to_lowercase())
-                    .unwrap_or_default();
-                PageLoadComponentContext {
-                    component_type: c.component_type.clone(),
-                    entity: c.entity.clone().unwrap_or_default(),
-                    route_name,
-                }
-            })
-            .collect(),
-    };
-    render_template(tera, template, &ctx)
+        components: load_components,
+        has_fetch,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::template_engine::create_tera;
-    use std::collections::HashMap;
+    use codegraph_core::mock::MockEngine;
+    use codegraph_ifml_dsl::PropertyRef;
 
     fn table_spec() -> ComponentSpec {
         ComponentSpec::Table(TableSpec {
             columns: vec![
                 ColumnDef::Field {
                     label: "Name".to_string(),
-                    field: codegraph_ifml_dsl::PropertyRef {
+                    field: PropertyRef {
                         entity: "Customer".to_string(),
                         property: "name".to_string(),
                     },
                 },
                 ColumnDef::Lookup {
                     label: "Status".to_string(),
-                    field: codegraph_ifml_dsl::PropertyRef {
+                    field: PropertyRef {
                         entity: "Customer".to_string(),
                         property: "status".to_string(),
                     },
@@ -436,8 +848,8 @@ mod tests {
         })
     }
 
-    fn component_with_spec(spec: Option<ComponentSpec>) -> super::super::context::IfmlComponent {
-        super::super::context::IfmlComponent {
+    fn component_with_spec(spec: Option<ComponentSpec>) -> IfmlComponent {
+        IfmlComponent {
             name: "grid".to_string(),
             component_type: "table".to_string(),
             mode: None,
@@ -454,16 +866,65 @@ mod tests {
 
     #[test]
     fn specless_component_yields_no_render_contexts() {
-        let ctx = page_component_context(&component_with_spec(None));
+        let ctx = page_component_context_sync(&component_with_spec(None));
         assert!(ctx.table.is_none());
         assert!(ctx.form.is_none());
         assert!(ctx.chart.is_none());
         assert_eq!(ctx.component_type, "table");
     }
 
+    fn page_component_context_sync(c: &IfmlComponent) -> PageComponentContext {
+        page_component_context_for_tests(c, &IfmlComponentMappings::default())
+    }
+
+    fn test_config() -> DomainConfig {
+        toml::from_str(
+            r#"
+[defaults]
+api_version = "v1"
+
+[domains.sales]
+label = "Sales"
+schema_dir = "sales"
+postgres_schema = "sales"
+entities = ["CustomerType"]
+"#,
+        )
+        .unwrap()
+    }
+
+    fn page_component_context_for_tests(
+        c: &IfmlComponent,
+        mappings: &IfmlComponentMappings,
+    ) -> PageComponentContext {
+        let vc = IfmlViewContainer {
+            name: "CustomerList".to_string(),
+            label: None,
+            is_xor: false,
+            is_default: false,
+            is_landmark: true,
+            is_modal: false,
+            params: Vec::new(),
+            components: vec![],
+            events: Vec::new(),
+            containers: Vec::new(),
+        };
+        let mut cache = HashMap::new();
+        futures::executor::block_on(page_component_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            c,
+            None,
+            Some(mappings),
+            &mut cache,
+        ))
+    }
+
     #[test]
     fn table_spec_maps_column_kinds_and_bindings() {
-        let ctx = page_component_context(&component_with_spec(Some(table_spec())));
+        let ctx = page_component_context_sync(&component_with_spec(Some(table_spec())));
         let table = ctx.table.expect("table render context");
         assert!(table.pagination);
         assert_eq!(table.columns.len(), 3);
@@ -478,15 +939,23 @@ mod tests {
     }
 
     #[test]
-    fn form_spec_maps_input_types() {
+    fn form_spec_maps_input_types_and_validations() {
         let spec = ComponentSpec::Form(FormSpec {
             fields: vec![
                 codegraph_ifml_dsl::FieldDef {
                     name: "name".to_string(),
                     input: InputFieldType::Text,
                     required: true,
-                    validations: Vec::new(),
+                    validations: vec![Expression::BinOp {
+                        left: Box::new(Expression::Call {
+                            name: "len".to_string(),
+                            args: vec![Expression::Ident("name".to_string())],
+                        }),
+                        op: BinOp::Gt,
+                        right: Box::new(Expression::NumLit(2.0)),
+                    }],
                     values: Vec::new(),
+                    messages: Vec::new(),
                 },
                 codegraph_ifml_dsl::FieldDef {
                     name: "start".to_string(),
@@ -494,6 +963,7 @@ mod tests {
                     required: false,
                     validations: Vec::new(),
                     values: Vec::new(),
+                    messages: Vec::new(),
                 },
                 codegraph_ifml_dsl::FieldDef {
                     name: "tier".to_string(),
@@ -501,6 +971,7 @@ mod tests {
                     required: false,
                     validations: Vec::new(),
                     values: vec!["gold".to_string(), "silver".to_string()],
+                    messages: Vec::new(),
                 },
                 codegraph_ifml_dsl::FieldDef {
                     name: "stars".to_string(),
@@ -508,13 +979,15 @@ mod tests {
                     required: false,
                     validations: Vec::new(),
                     values: Vec::new(),
+                    messages: Vec::new(),
                 },
             ],
         });
-        let ctx = page_component_context(&component_with_spec(Some(spec)));
+        let ctx = page_component_context_sync(&component_with_spec(Some(spec)));
         let form = ctx.form.expect("form render context");
         assert_eq!(form.fields[0].input_type, "text");
         assert!(form.fields[0].required);
+        assert_eq!(form.fields[0].data_validate, "len(name) > 2");
         assert_eq!(form.fields[1].input_type, "datetime-local");
         assert!(form.fields[2].is_select);
         assert_eq!(form.fields[2].values, vec!["gold", "silver"]);
@@ -528,7 +1001,7 @@ mod tests {
             label_field: Some("region".to_string()),
             value_fields: vec!["revenue".to_string(), "cost".to_string()],
         });
-        let ctx = page_component_context(&component_with_spec(Some(spec)));
+        let ctx = page_component_context_sync(&component_with_spec(Some(spec)));
         let chart = ctx.chart.expect("chart render context");
         assert_eq!(chart.kind, "bar");
         assert_eq!(chart.label_field.as_deref(), Some("region"));
@@ -561,6 +1034,38 @@ mod tests {
         assert_eq!(render_expression(&string), "\"a \\\"quoted\\\" b\"");
     }
 
+    #[test]
+    fn nav_url_builds_query_from_sorted_bindings() {
+        let mut binding = HashMap::new();
+        binding.insert("customerId".to_string(), "row.id".to_string());
+        binding.insert("region".to_string(), "\"eu\"".to_string());
+        assert_eq!(
+            nav_url_expr("CustomerDetail", &binding),
+            "`/customerdetail?customerId=${row.id}&region=${\"eu\"}`"
+        );
+        assert_eq!(
+            nav_url_expr("CustomerList", &HashMap::new()),
+            "\"/customerlist\""
+        );
+    }
+
+    #[test]
+    fn navigate_event_resolves_handler_and_url() {
+        let evt = IfmlEvent {
+            name: "comp_grid_select".to_string(),
+            event_type: "select".to_string(),
+            params: vec!["row".to_string()],
+            action: IfmlAction::Navigate {
+                target: "CustomerDetail".to_string(),
+                binding: HashMap::new(),
+            },
+        };
+        let rendered = render_event(&evt);
+        assert_eq!(rendered.handler_name, "comp_grid_select");
+        assert_eq!(rendered.action_kind, "navigate");
+        assert_eq!(rendered.url_expr, "\"/customerdetail\"");
+    }
+
     fn svelte_context(components: Vec<PageComponentContext>) -> PageSvelteContext {
         PageSvelteContext {
             api_version: "v1".to_string(),
@@ -568,41 +1073,161 @@ mod tests {
             label: "View".to_string(),
             components,
             params: Vec::new(),
+            view_events: Vec::new(),
+            imports: Vec::new(),
+            needs_goto: false,
+            needs_on_mount: false,
+            has_submit: false,
         }
     }
 
     #[test]
     fn template_renders_typed_table_and_form_markup() {
         let tera = create_tera(Path::new(".")).expect("tera");
-        let table_ctx = page_component_context(&component_with_spec(Some(table_spec())));
+        let table_ctx = page_component_context_sync(&component_with_spec(Some(table_spec())));
         let ctx = svelte_context(vec![table_ctx]);
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
-        assert!(rendered.contains("<table data-pagination=\"true\">"));
-        assert!(rendered.contains("<th>Name</th>"));
-        assert!(rendered.contains("<td>{item.tenure_years(Customer.hire_date)}</td>"));
+        assert!(
+            rendered.contains("<table data-pagination=\"true\">"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("<th>Name</th>"), "{rendered}");
+        assert!(
+            rendered.contains("<td>{item.tenure_years(Customer.hire_date)}</td>"),
+            "{rendered}"
+        );
 
         let chart = ComponentSpec::Chart(ChartSpec {
             kind: ChartKind::Pie,
             label_field: None,
             value_fields: vec!["revenue".to_string()],
         });
-        let ctx = svelte_context(vec![page_component_context(&component_with_spec(Some(
-            chart,
-        )))]);
+        let ctx = svelte_context(vec![page_component_context_sync(&component_with_spec(
+            Some(chart),
+        ))]);
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
-        assert!(rendered.contains("data-chart-kind=\"pie\""));
-        assert!(rendered.contains("data-value-fields=\"revenue\""));
+        assert!(rendered.contains("data-chart-kind=\"pie\""), "{rendered}");
+        assert!(
+            rendered.contains("data-value-fields=\"revenue\""),
+            "{rendered}"
+        );
     }
 
     #[test]
     fn template_specless_table_component_renders_nothing() {
         let tera = create_tera(Path::new(".")).expect("tera");
-        let ctx = svelte_context(vec![page_component_context(&component_with_spec(None))]);
+        let ctx = svelte_context(vec![page_component_context_sync(&component_with_spec(
+            None,
+        ))]);
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(!rendered.contains("<table"));
         assert!(!rendered.contains("<form"));
         assert!(!rendered.contains("data-chart-kind"));
         assert!(!rendered.contains("<h1>"));
         assert!(rendered.trim_end().ends_with("</svelte:head>"));
+    }
+
+    #[test]
+    fn mapped_component_renders_invocation_with_import_and_events() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let mut c = component_with_spec(Some(table_spec()));
+        c.events.push(IfmlEvent {
+            name: "comp_grid_select".to_string(),
+            event_type: "select".to_string(),
+            params: vec![],
+            action: IfmlAction::Navigate {
+                target: "CustomerDetail".to_string(),
+                binding: HashMap::new(),
+            },
+        });
+        let mappings: IfmlComponentMappings = toml::from_str(
+            r#"
+[[component]]
+kind = "table"
+path = "$lib/components/DataTable.svelte"
+export = "DataTable"
+testids = { root = "data-table", row = "data-row" }
+"#,
+        )
+        .unwrap();
+        let vc = IfmlViewContainer {
+            name: "CustomerList".to_string(),
+            label: None,
+            is_xor: false,
+            is_default: false,
+            is_landmark: true,
+            is_modal: false,
+            params: Vec::new(),
+            components: vec![c],
+            events: Vec::new(),
+            containers: Vec::new(),
+        };
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            Some(&mappings),
+        ));
+
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains("import DataTable from '$lib/components/DataTable.svelte';"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("import { goto } from '$app/navigation';"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("<DataTable"), "{rendered}");
+        assert!(rendered.contains("data={data.items}"), "{rendered}");
+        assert!(
+            rendered.contains("fields={['name', 'status']}"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("on:select={comp_grid_select}"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("testid=\"data-table\""), "{rendered}");
+        assert!(rendered.contains("rowTestid=\"data-row\""), "{rendered}");
+        assert!(!rendered.contains("<table"), "{rendered}");
+    }
+
+    #[test]
+    fn load_context_wires_first_list_with_pagination() {
+        let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
+        let second_list = page_component_context_sync(&component_with_spec(None));
+        let details = {
+            let mut c = component_with_spec(None);
+            c.component_type = "details".to_string();
+            page_component_context_sync(&c)
+        };
+        let vc = IfmlViewContainer {
+            name: "CustomerList".to_string(),
+            label: None,
+            is_xor: false,
+            is_default: false,
+            is_landmark: true,
+            is_modal: false,
+            params: vec![super::super::context::ParameterDef {
+                name: "customerId".to_string(),
+                type_ref: "Uuid".to_string(),
+            }],
+            components: vec![],
+            events: Vec::new(),
+            containers: Vec::new(),
+        };
+        let ctx = build_load_context("v1", &vc, &[list, second_list, details]);
+        assert!(ctx.has_fetch);
+        assert_eq!(ctx.components.len(), 3);
+        assert!(ctx.components[0].fetch_list);
+        assert!(ctx.components[0].paginate);
+        assert!(
+            !ctx.components[1].fetch_list,
+            "second list must not double-fetch"
+        );
+        assert!(ctx.components[2].fetch_item);
+        assert_eq!(ctx.components[2].id_param.as_deref(), Some("customerId"));
     }
 }

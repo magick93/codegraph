@@ -483,6 +483,9 @@ pub struct GeneratorOpts<'a> {
     /// IFML framework targets (e.g. "svelte", "react").
     /// If empty, defaults to `["svelte"]` at dispatch.
     pub ifml_frameworks: Vec<String>,
+    /// Optional IFML component mappings (`ifml-components.toml`). `None` or
+    /// empty renders all components with the built-in templates.
+    pub ifml_components: Option<&'a codegraph_config::IfmlComponentMappings>,
     /// Project-level config injected into all template contexts.
     pub project_config: Option<&'a ProjectConfig>,
     /// EmDash plugin packages config (plugins.toml), loaded by the CLI
@@ -530,6 +533,7 @@ pub async fn run_generators(
         ext_points: None,
         build_plan: None,
         ifml_frameworks: vec![],
+        ifml_components: None,
         project_config: None,
         emdash_plugins: None,
         domain_config_dir: None,
@@ -565,6 +569,7 @@ pub async fn run_generators_with_domain_types_base(
         ext_points: None,
         build_plan: None,
         ifml_frameworks: vec![],
+        ifml_components: None,
         project_config: None,
         emdash_plugins: None,
         domain_config_dir: None,
@@ -695,6 +700,8 @@ struct GeneratorContext<'a> {
     /// IFML framework targets (e.g. "svelte", "react"); empty defaults to
     /// `["svelte"]` when building the global generator set.
     ifml_frameworks: Vec<String>,
+    /// Optional IFML component mappings (`ifml-components.toml`).
+    ifml_components: Option<&'a codegraph_config::IfmlComponentMappings>,
     has_emdash: bool,
     emdash_plugins: Option<crate::emdash::EmdashPluginsConfig>,
     has_seed: bool,
@@ -789,6 +796,7 @@ async fn build_generator_context<'a>(
         ext_points,
         build_plan, // used for has_webhooks / profile-based filter
         ifml_frameworks,
+        ifml_components,
         project_config,
         emdash_plugins,
         domain_config_dir,
@@ -911,6 +919,7 @@ async fn build_generator_context<'a>(
         build_plan,
         domain_config_dir,
         ifml_frameworks,
+        ifml_components,
         has_seed,
         has_webhooks,
         has_reports,
@@ -1429,9 +1438,10 @@ fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn GlobalGene
     for fw in &ifml_frameworks {
         let fw_output = output_dir.join(fw);
         if ctx.build_plan.is_none() || ctx.plan_has_global(&format!("ifml_route_{}", fw)) {
-            global_gens.push(Box::new(ifml::route_generator::IfmlRouteGenerator::new(
-                &fw_output, fw,
-            )) as Box<dyn GlobalGenerator>);
+            global_gens.push(Box::new(
+                ifml::route_generator::IfmlRouteGenerator::new(&fw_output, fw)
+                    .with_mappings(ctx.ifml_components.cloned()),
+            ) as Box<dyn GlobalGenerator>);
         }
         if ctx.build_plan.is_none() || ctx.plan_has_global(&format!("ifml_navigation_{}", fw)) {
             global_gens.push(
@@ -1935,6 +1945,7 @@ fn emit_run_manifests(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_ifml_generators(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
@@ -1943,6 +1954,7 @@ pub async fn run_ifml_generators(
     ifml_frameworks: &[String],
     build_plan: Option<&crate::profile::BuildPlan>,
     project: &ProjectConfig,
+    ifml_components: Option<&codegraph_config::IfmlComponentMappings>,
 ) -> Result<report::GenerationReport> {
     let cached_db = CachingQuerier::new(db);
     let db: &dyn GraphQuerier = &cached_db;
@@ -1975,9 +1987,10 @@ pub async fn run_ifml_generators(
         let fw_output = output_dir.join(fw);
         clean_stale_ifml_routes(&fw_output, fw, &active_views);
         if build_plan.is_none() || plan_has_global(&format!("ifml_route_{fw}")) {
-            global_gens.push(Box::new(ifml::route_generator::IfmlRouteGenerator::new(
-                &fw_output, fw,
-            )) as Box<dyn GlobalGenerator>);
+            global_gens.push(Box::new(
+                ifml::route_generator::IfmlRouteGenerator::new(&fw_output, fw)
+                    .with_mappings(ifml_components.cloned()),
+            ) as Box<dyn GlobalGenerator>);
         }
         if build_plan.is_none() || plan_has_global(&format!("ifml_navigation_{fw}")) {
             global_gens.push(

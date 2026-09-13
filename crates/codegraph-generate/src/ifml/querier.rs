@@ -365,6 +365,7 @@ mod tests {
             is_modal: false,
             conditional_expression: None,
             domain: None,
+            module_uses: None,
         })
         .await
         .unwrap();

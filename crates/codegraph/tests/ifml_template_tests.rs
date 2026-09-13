@@ -98,6 +98,14 @@ entities = ["CustomerType"]
 }
 
 async fn generate_svelte(dir: &Path, ifml: &str) -> std::path::PathBuf {
+    generate_svelte_with_mappings(dir, ifml, None).await
+}
+
+async fn generate_svelte_with_mappings(
+    dir: &Path,
+    ifml: &str,
+    mappings: Option<&Path>,
+) -> std::path::PathBuf {
     let ifml_path = dir.join("app.ifml");
     std::fs::write(&ifml_path, ifml).unwrap();
     let output = dir.join("out");
@@ -113,6 +121,7 @@ async fn generate_svelte(dir: &Path, ifml: &str) -> std::path::PathBuf {
         frameworks: &["svelte".to_string()],
         profiles_config_path: None,
         template_dir: &[],
+        ifml_components: mappings,
     })
     .await
     .unwrap();
@@ -184,7 +193,9 @@ async fn form_spec_renders_typed_inputs() {
     let page = read(&svelte, "src/routes/customeredit/+page.svelte");
 
     assert!(
-        page.contains("<input name=\"name\" type=\"text\" required />"),
+        page.contains(
+            "<input name=\"name\" type=\"text\" required data-validate=\"len(name) > 2\" />"
+        ),
         "{page}"
     );
     assert!(
@@ -234,5 +245,131 @@ async fn chart_spec_renders_placeholder_block() {
             "<div class=\"chart\" data-chart-kind=\"bar\" data-label-field=\"region\" data-value-fields=\"revenue,cost\"></div>"
         ),
         "{page}"
+    );
+}
+
+#[tokio::test]
+async fn mapped_component_renders_invocation_instead_of_inline_markup() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+kind = "table"
+path = "$lib/components/DataTable.svelte"
+export = "DataTable"
+testids = { root = "data-table", row = "data-row" }
+
+[[component]]
+name = "editor"
+path = "$lib/components/CustomerForm.svelte"
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_mappings(dir.path(), SPECFUL_IFML, Some(&mappings)).await;
+
+    let page = read(&svelte, "src/routes/customertable/+page.svelte");
+    assert!(
+        page.contains("import DataTable from '$lib/components/DataTable.svelte';"),
+        "{page}"
+    );
+    assert!(page.contains("<DataTable"), "{page}");
+    assert!(page.contains("data={data.items}"), "{page}");
+    assert!(page.contains("fields={['name', 'status']}"), "{page}");
+    assert!(page.contains("testid=\"data-table\""), "{page}");
+    assert!(page.contains("rowTestid=\"data-row\""), "{page}");
+    assert!(
+        !page.contains("<table data-pagination"),
+        "mapped table must not render inline markup: {page}"
+    );
+
+    let form_page = read(&svelte, "src/routes/customeredit/+page.svelte");
+    assert!(
+        form_page.contains("import CustomerForm from '$lib/components/CustomerForm.svelte';"),
+        "{form_page}"
+    );
+    assert!(form_page.contains("item={data.formData}"), "{form_page}");
+    assert!(
+        form_page.contains("data-validate=\"len(name) > 2\""),
+        "{form_page}"
+    );
+    assert!(
+        form_page.contains("on:submit={submit_editor}"),
+        "{form_page}"
+    );
+    assert!(
+        !form_page.contains("<form"),
+        "mapped form must not render inline markup: {form_page}"
+    );
+
+    // Unmapped components keep the built-in template fallback.
+    let dashboard = read(&svelte, "src/routes/dashboard/+page.svelte");
+    assert!(dashboard.contains("data-chart-kind=\"bar\""), "{dashboard}");
+}
+
+#[tokio::test]
+async fn form_view_submit_handler_posts_to_resolved_endpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let ifml = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    label "Customers";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+
+view "CustomerEdit" {
+    params { customerId: Uuid };
+
+    component "editor" {
+        type: form;
+        data: Customer;
+
+        field name -> input text { required: true; }
+
+        on save -> navigate("CustomerList", {});
+    }
+}
+"#;
+    let svelte = generate_svelte(dir.path(), ifml).await;
+    let page = read(&svelte, "src/routes/customeredit/+page.svelte");
+
+    assert!(
+        page.contains("import { goto } from '$app/navigation';"),
+        "{page}"
+    );
+    assert!(
+        page.contains(
+            "const response = await fetch(`/api/v1/sales/customer/${params.customerId}`, {"
+        ),
+        "{page}"
+    );
+    assert!(page.contains("method: 'PUT'"), "{page}");
+    assert!(page.contains("goto(\"/customerlist\")"), "{page}");
+    assert!(page.contains("on:submit={submit_editor}"), "{page}");
+    assert!(
+        page.contains("<span class=\"error\">{formError}</span>"),
+        "{page}"
+    );
+
+    let load = read(&svelte, "src/routes/customeredit/+page.ts");
+    assert!(
+        load.contains(
+            "const customerId = url.searchParams.get('customerId') ?? params.customerId;"
+        ),
+        "{load}"
+    );
+    assert!(
+        load.contains("`/api/v1/sales/customer/${ customerId }`"),
+        "{load}"
     );
 }

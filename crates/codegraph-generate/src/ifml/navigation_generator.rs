@@ -54,7 +54,7 @@ impl GlobalGenerator for IfmlNavigationGenerator {
             return Ok(vec![]);
         }
 
-        let route_map = build_route_map(&model);
+        let route_map = build_route_map(&model, &self.framework);
 
         let mut files = Vec::new();
 
@@ -107,13 +107,24 @@ struct NavLinkContext {
     label: String,
 }
 
-fn build_route_map(model: &super::context::IfmlModel) -> RouteMapContext {
+/// The URL route for a view: it must match the directory the route
+/// generator emits for the target framework (svelte routes use the plain
+/// lowercase view name; the other frameworks use kebab-case).
+fn route_for_view(name: &str, framework: &str) -> String {
+    if framework == "svelte" {
+        name.to_lowercase()
+    } else {
+        to_kebab_case(name)
+    }
+}
+
+fn build_route_map(model: &super::context::IfmlModel, framework: &str) -> RouteMapContext {
     let views: Vec<ViewRouteContext> = model
         .view_containers
         .iter()
         .map(|vc| ViewRouteContext {
             name: vc.name.clone(),
-            route: to_kebab_case(&vc.name),
+            route: route_for_view(&vc.name, framework),
             label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
             is_landmark: vc.is_landmark,
             is_modal: vc.is_modal,

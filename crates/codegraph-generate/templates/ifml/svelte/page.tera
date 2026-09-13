@@ -1,15 +1,101 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+{%- if needs_goto %}
+	import { goto } from '$app/navigation';
+{%- endif %}
+{%- if needs_on_mount %}
+	import { onMount } from 'svelte';
+{%- endif %}
+{%- for imp in imports %}
+	import {{ imp.export_name }} from '{{ imp.import_path }}';
+{%- endfor %}
 
-	let { data }: { data: PageData } = $props();
+	let { data, params }: { data: PageData; params: Record<string, string> } = $props();
+{%- if has_submit %}
+	let submitting = $state(false);
+	let formError = $state('');
+{%- endif %}
+{%- for evt in view_events %}
+{%- if evt.action_kind == "navigate" and evt.event_type == "load" %}
+
+	onMount(() => {
+		goto({{ evt.url_expr }});
+	});
+{%- endif %}
+{%- endfor %}
+{%- for comp in components %}
+{%- for evt in comp.events %}
+{%- if evt.action_kind == "navigate" %}
+
+	function {{ evt.handler_name }}(row: Record<string, unknown>) {
+		goto({{ evt.url_expr }});
+	}
+{%- endif %}
+{%- endfor %}
+{%- endfor %}
+{%- for comp in components %}
+{%- if comp.submit %}
+
+	async function {{ comp.submit.handler_name }}(event: SubmitEvent) {
+		event.preventDefault();
+		const formData = Object.fromEntries(new FormData(event.currentTarget as HTMLFormElement));
+		submitting = true;
+		formError = '';
+		try {
+			const response = await fetch({{ comp.submit.url_expr }}, {
+				method: '{{ comp.submit.method }}',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(formData)
+			});
+			if (!response.ok) {
+				const body = await response.json().catch(() => null);
+				formError = body?.error ?? body?.message ?? `Request failed (${response.status})`;
+				return;
+			}
+{%- if comp.submit.navigate_url %}
+			goto({{ comp.submit.navigate_url }});
+{%- endif %}
+		} finally {
+			submitting = false;
+		}
+	}
+{%- endif %}
+{%- endfor %}
 </script>
 
 <svelte:head>
 	<title>{{ label }}</title>
 </svelte:head>
 
-{% for comp in components %}
-{% if comp.table %}
+{%- for comp in components %}
+{% if comp.mapping %}
+<{{ comp.mapping.import_name }}
+{%- if comp.data_prop %}
+	{{ comp.data_prop }}
+{%- endif %}
+{%- if comp.fields_prop %}
+	{{ comp.fields_prop }}
+{%- endif %}
+{%- if comp.form or comp.component_type == "details" %}
+	params={params}
+{%- endif %}
+{%- if comp.mapping.testid %}
+	testid="{{ comp.mapping.testid }}"
+{%- endif %}
+{%- if comp.mapping.row_testid %}
+	rowTestid="{{ comp.mapping.row_testid }}"
+{%- endif %}
+{%- if comp.submit_prop %}
+	{{ comp.submit_prop }}
+{%- endif %}
+{%- if comp.data_validate %}
+	data-validate="{{ comp.data_validate }}"
+{%- endif %}
+{%- for p in comp.event_props %}
+	{{ p }}
+{%- endfor %}
+/>
+{% elif comp.table %}
 <h1>{{ label }}</h1>
 <table{% if comp.table.pagination %} data-pagination="true"{% endif %}>
 	<thead>
@@ -21,7 +107,7 @@
 	</thead>
 	<tbody>
 {% raw %}		{#each data.items as item}{% endraw %}
-			<tr>
+			<tr{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
 			{% for col in comp.table.columns %}
 				<td>{item.{{ col.binding }}}</td>
 			{% endfor %}
@@ -31,12 +117,12 @@
 </table>
 
 {% elif comp.form %}
-<form method="POST">
+<form{% if comp.submit_prop %} {{ comp.submit_prop }}{% else %} method="POST"{% endif %}>
 	{% for field in comp.form.fields %}
 	{% if field.is_select %}
 	<label>
 		{{ field.name }}
-		<select name="{{ field.name }}"{% if field.required %} required{% endif %}>
+		<select name="{{ field.name }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}>
 			{% for value in field.values %}
 			<option value="{{ value }}">{{ value }}</option>
 			{% endfor %}
@@ -55,16 +141,19 @@
 	{% elif field.is_textarea %}
 	<label>
 		{{ field.name }}
-		<textarea name="{{ field.name }}"{% if field.required %} required{% endif %}></textarea>
+		<textarea name="{{ field.name }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}></textarea>
 	</label>
 	{% else %}
 	<label>
 		{{ field.name }}
-		<input name="{{ field.name }}" type="{{ field.input_type }}"{% if field.required %} required{% endif %} />
+		<input name="{{ field.name }}" type="{{ field.input_type }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %} />
 	</label>
 	{% endif %}
 	{% endfor %}
-	<button type="submit">Submit</button>
+{% if comp.submit_handler %}
+{% raw %}	{#if formError}<span class="error">{formError}</span>{/if}{% endraw %}
+{% endif %}
+	<button type="submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>
 </form>
 
 {% elif comp.chart %}
@@ -82,9 +171,9 @@
 	</thead>
 	<tbody>
 {% raw %}		{#each data.items as item}{% endraw %}
-			<tr>
+			<tr{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
 			{% for field in comp.fields %}
-				<td>{item.{{ field }}</td>
+				<td>{item.{{ field }}}</td>
 			{% endfor %}
 			</tr>
 {% raw %}		{/each}{% endraw %}
@@ -92,21 +181,21 @@
 </table>
 
 {% elif comp.component_type == "form" %}
-<form method="POST">
+<form{% if comp.submit_prop %} {{ comp.submit_prop }}{% else %} method="POST"{% endif %}>
 	{% for field in comp.fields %}
 	<label>
 		{{ field }}
 		<input name="{{ field }}" />
 	</label>
 	{% endfor %}
-	<button type="submit">Submit</button>
+	<button type="submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>
 </form>
 
 {% elif comp.component_type == "details" %}
 <dl>
 	{% for field in comp.fields %}
 	<dt>{{ field }}</dt>
-	<dd>{data.{{ field }}</dd>
+	<dd>{data.{{ field }}}</dd>
 	{% endfor %}
 </dl>
 

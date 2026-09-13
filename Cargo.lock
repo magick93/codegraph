@@ -780,6 +780,7 @@ dependencies = [
  "codegraph-naming",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "toml",
 ]
