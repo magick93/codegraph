@@ -1176,6 +1176,114 @@ fn test_lsp_completion_module_names_after_use() {
 }
 
 #[test]
+fn test_lsp_diagnostic_unknown_module_use() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // use "Missing" with no module "Missing" declared → WARNING
+    open_document(
+        &client_conn,
+        "file:///use_bad.ifml",
+        "module \"AuditTrail\" { input { } output { } }\nview \"A\" {\n    use \"Missing\";\n}",
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///use_bad.ifml");
+    assert!(
+        !params.diagnostics.is_empty(),
+        "use of undeclared module should produce diagnostics, got none"
+    );
+    assert!(
+        params
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("Unknown module")
+                && d.message.contains("Missing")
+                && d.severity == Some(DiagnosticSeverity::WARNING)),
+        "should warn about unknown module 'Missing', got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    // use "AuditTrail" with module declared → no unknown-module warning
+    open_document(
+        &client_conn,
+        "file:///use_good.ifml",
+        "module \"AuditTrail\" { input { } output { } }\nview \"A\" {\n    use \"AuditTrail\" as audit { scope: org; };\n}",
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///use_good.ifml");
+    assert!(
+        params.diagnostics.is_empty(),
+        "declared module use should produce no diagnostics, got: {:?}",
+        params
+            .diagnostics
+            .iter()
+            .map(|d| &d.message)
+            .collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
+fn test_lsp_diagnostic_new_syntax_parses_clean() {
+    let _lock = LSP_TEST_LOCK.lock().unwrap();
+    let (server_conn, client_conn) = Connection::memory();
+
+    std::thread::spawn(move || {
+        run_lsp_server(server_conn, GrafeoState::default()).unwrap();
+    });
+
+    do_init_handshake(&client_conn);
+
+    // if guards, event conditions, use statements, actor declarations,
+    // roles/messages arrays and param defaults must not yield syntax ERRORs
+    open_document(
+        &client_conn,
+        "file:///new_syntax.ifml",
+        r#"actor "Manager" { label: "mgr"; }
+
+view "A" {
+    roles: [manager];
+    messages: ["Welcome"];
+
+    if data.enabled;
+
+    component "c" {
+        type: list;
+
+        if count > 0;
+
+        on select(row) if row.active -> navigate("A");
+    }
+}"#,
+    );
+
+    let params = recv_diagnostics(&client_conn, "file:///new_syntax.ifml");
+    let syntax_errors: Vec<&Diagnostic> = params
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+        .collect();
+    assert!(
+        syntax_errors.is_empty(),
+        "new pipeline syntax should parse without ERROR diagnostics, got: {:?}",
+        syntax_errors.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    do_shutdown(&client_conn);
+}
+
+#[test]
 fn test_lsp_completion_view_body_new_keywords() {
     let _lock = LSP_TEST_LOCK.lock().unwrap();
     let (server_conn, client_conn) = Connection::memory();
