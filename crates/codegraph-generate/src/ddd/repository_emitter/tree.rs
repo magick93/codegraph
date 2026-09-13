@@ -384,11 +384,19 @@ impl RepositoryImplEmitter {
                 && i < dto_rust_types.len()
                 && dto_rust_types[i].is_some()
             {
-                // Codelist: .parse()
-                wln!(
-                    code,
-                    "                {dto_name}: {row_var}.{col_name}.and_then(|v| v.parse().ok()),",
-                );
+                // Codelist: .parse(). Required columns are non-nullable, so
+                // parse directly instead of Option-style and_then.
+                if i < is_nullable.len() && is_nullable[i] {
+                    wln!(
+                        code,
+                        "                {dto_name}: {row_var}.{col_name}.and_then(|v| v.parse().ok()),",
+                    );
+                } else {
+                    wln!(
+                        code,
+                        "                {dto_name}: {row_var}.{col_name}.parse().unwrap_or_default(),",
+                    );
+                }
             } else {
                 wln!(code, "                {dto_name}: {row_var}.{col_name},");
             }
