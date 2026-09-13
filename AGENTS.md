@@ -212,7 +212,38 @@ server data). Components bound to entities with a `domains.toml` workflow
 emits `{view}.workflow.spec.ts` (API fixture → initial-state assertion), mirroring
 the entity pipeline's workflow test convention. Both are presence-gated: no roles /
 no workflow → byte-identical output. Deferred: transition buttons, mapped-component
-badge parity, DSL-level state guards, role-conditional markup.
+badge parity, DSL-level state guards.
+
+### rexlang authorization integration (issue #199)
+
+The IFML DSL supports `import "<path>.actor";` (top-level, `.ifml`-relative) and
+view `requires: [Capability, ...];`. codegraph depends on the rexlang crates
+(`rex-ir`, `rex-driver` as workspace path deps — git-pin at release): policy
+parsing/typechecking stays in rexlang, codegraph consumes the typechecked
+`ActorModel`. `crates/codegraph/src/ifml_actor_import.rs` resolves `.json`
+artifacts (`ActorModel::from_json`) or `.actor` sources
+(`rex_driver::compile_actors_str` with transitively collected `.mox` domains),
+merges+dedups imports, and ingests via `ingest_actor_policy` (diagnostics warn,
+never fail generation; `imported_policies` stat).
+
+Graph model (`crates/codegraph-core/src/types/authorization.rs`): `ActorNode`
+(`kind: human|agent`, `extends`), `CapabilityNode` (class bound), `GrantEdge`
+(permit/forbid + `when_expr` + obligations JSON), `ActorPolicy` singleton
+(blocks + never_both); DDL in schema_ddl.rs (`when` is reserved → `when_expr`).
+`resolve_effective_permits` walks `extends` chains — forbid wins over permit,
+duplicates collapse, deterministic order.
+
+Guards (capability primary, roles compat): views with `requires`/`roles` emit a
+two-check `+page.ts` guard — `can(c)` from `ROLE_CAPABILITIES` (policy-derived,
+generation-time effective permits) ∪ `globalThis.__USER_CAPABILITIES__`, plus the
+roles check — denial redirects to the first unguarded view. `src/lib/roles.ts`
+(one-time) carries `currentRoles()` + `can()`. Controls in guarded views gate
+behind `{#if}` matching the load guard exactly (whole-component invocations never
+wrapped; unguarded views byte-identical). LSP warns on unknown capabilities/actors
+when the document's imports resolve to a policy. E2E emits persona tests per human
+actor (`addInitScript __USER_ROLES__`). Deferred: react/vue/flutter guard parity,
+role-conditional per-control capabilities, delegation/purpose persistence
+(currently dropped in conversion).
 
 ### Reverse inference: `codegraph ifml-derive` (phase 5 spike)
 
