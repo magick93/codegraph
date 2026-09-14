@@ -278,12 +278,17 @@ fn ordered_view_containers(
     containers
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageSvelteContext {
     pub api_version: String,
     name: String,
     label: String,
     components: Vec<PageComponentContext>,
+    /// Body render groups: the view's own components first, then one group
+    /// per nested view container. Each xor group renders its container label
+    /// heading before its content (only when the presentation wrapper is
+    /// active — no-pack output stays byte-identical).
+    groups: Vec<RenderGroup>,
     params: Vec<super::context::ParameterDef>,
     view_events: Vec<RenderEvent>,
     imports: Vec<RenderImport>,
@@ -396,13 +401,23 @@ impl ControlGateContext {
     }
 }
 
-#[derive(Debug, Serialize)]
+/// One body render group: an optional container label heading followed by
+/// the group's components. Group 0 is the view's own components (no
+/// heading); further groups are the view's nested containers in
+/// declaration order.
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderGroup {
+    pub heading: Option<String>,
+    pub components: Vec<PageComponentContext>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderImport {
     pub export_name: String,
     pub import_path: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageComponentContext {
     name: String,
     /// Sanitized JS identifier (const/handler names).
@@ -461,6 +476,9 @@ pub struct PageComponentContext {
     /// handler (`const payload: ...` + per-field coercions); empty keeps
     /// the untyped `formData` body (byte-identical).
     form_payload: String,
+    /// Whether the component belongs to a nested view container: suppresses
+    /// the page-level `<h1>` heading inside the group.
+    in_container: bool,
 }
 
 /// Workflow config for a component's bound entity, pre-rendered into the
@@ -573,7 +591,7 @@ fn js_quote(value: &str) -> String {
 }
 
 /// Submit wiring for a form component: fetch + success navigation.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderSubmit {
     handler_name: String,
     /// URL expression (JS literal) passed to fetch. Edit views PUT here;
@@ -594,7 +612,7 @@ pub struct RenderSubmit {
     client_validate: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderMapping {
     import_name: String,
     import_path: String,
@@ -602,7 +620,7 @@ pub struct RenderMapping {
     row_testid: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderEvent {
     pub handler_name: String,
     pub event_type: String,
@@ -618,7 +636,7 @@ pub struct RenderEvent {
 
 /// Modal wrapper for a `modal: true` view: a mapped `modal-view` component
 /// (`<Dialog bind:open={dialog_open}>`) or the built-in div fallback.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderModal {
     /// Full opening markup line, e.g.
     /// `<Dialog bind:open={dialog_open} testid="x-modal">` or
@@ -636,7 +654,7 @@ pub struct RenderModal {
 /// Presentation-container wrapper for an xor view container: a mapped
 /// `presentation-container` component (`<Card testid="...">`) or the
 /// built-in section fallback. Children render inline inside the wrapper.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderContainer {
     /// Full opening markup line, e.g. `<Card testid="card">` or
     /// `<section data-testid="checkout-container">`.
@@ -648,12 +666,16 @@ pub struct RenderContainer {
     /// Component import when the wrapper is a mapped container; `None` for
     /// the built-in section fallback.
     pub import: Option<RenderImport>,
+    /// Ready-to-render container label heading rendered right after the
+    /// opening line (`<h2 class="container-label" …>`); `None` when the
+    /// wrapper groups nested containers that carry their own headings.
+    pub label_heading: Option<String>,
 }
 
 /// One navigation entry in the landmark shell layout: `href_attr` is the
 /// ready-to-render `href={...}` attribute using the same URL expression the
 /// page goto handlers emit.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderNavItem {
     pub label: String,
     pub href_attr: String,
@@ -661,7 +683,7 @@ pub struct RenderNavItem {
 
 /// Landmark shell nav context: a mapped `shell` component wrapping nav
 /// items built from the landmark views' navigate events.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderShellNav {
     pub import: RenderImport,
     pub testid: Option<String>,
@@ -670,14 +692,14 @@ pub struct RenderShellNav {
 
 /// Render context for the framework layout shell
 /// (`ifml/{fw}/layout.tera` → `src/routes/+layout.svelte`).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LayoutSvelteContext {
     pub shell: RenderShellNav,
 }
 
 /// A mapped action-control button replacing the hardcoded fallback `<button>`
 /// (form submit) or rendering a cancel/back/click action.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderButton {
     pub import_name: String,
     pub import_path: String,
@@ -693,7 +715,7 @@ pub struct RenderButton {
 }
 
 /// Typed-table render context derived from a `ComponentSpec::Table`
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderTable {
     pagination: bool,
     /// `pagination` when the list spec enables pagination.
@@ -704,7 +726,7 @@ pub struct RenderTable {
 /// One typed table column; `binding` is the ready-to-emit data path
 /// (`property` for field/lookup columns, the rendered expression for
 /// expression columns)
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderColumn {
     label: String,
     kind: String,
@@ -714,12 +736,12 @@ pub struct RenderColumn {
 }
 
 /// Typed-form render context derived from a `ComponentSpec::Form`
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderForm {
     fields: Vec<RenderInputField>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderInputField {
     name: String,
     input_type: String,
@@ -738,14 +760,14 @@ pub struct RenderInputField {
 }
 
 /// Typed-chart render context derived from a `ComponentSpec::Chart`
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderChart {
     kind: String,
     label_field: Option<String>,
     value_fields: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageLoadContext {
     pub api_version: String,
     name: String,
@@ -771,14 +793,14 @@ pub struct PageLoadContext {
 }
 
 /// A view parameter resolved in the load function from the query string.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderViewParam {
     name: String,
     /// JS literal emitted as the final `??` fallback.
     default: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageLoadComponentContext {
     /// Sanitized JS identifier for local variable names.
     name: String,
@@ -809,6 +831,7 @@ async fn build_page_context(
 ) -> PageSvelteContext {
     let id_param = id_param_from(&vc.params);
     let mut api_cache: HashMap<String, Option<ResolvedApi>> = HashMap::new();
+    let container = container_context(vc, mappings);
 
     let mut components = Vec::new();
     for c in &vc.components {
@@ -827,6 +850,53 @@ async fn build_page_context(
         components.push(ctx);
     }
 
+    // Body render groups: the view's own components, then one group per
+    // nested container in declaration order. Headings (and the in-container
+    // h1 suppression) are gated on the presentation wrapper being active —
+    // without a mapping pack the page stays plain (byte-identical with
+    // pre-nesting output).
+    let mut groups = vec![RenderGroup {
+        heading: None,
+        components,
+    }];
+    if container.is_some() {
+        for group_decl in &vc.containers {
+            let heading = group_decl.is_xor.then(|| {
+                let lower = group_decl.name.to_lowercase();
+                let label = group_decl
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| group_decl.name.clone());
+                format!("<h2 class=\"container-label\" data-testid=\"{lower}-label\">{label}</h2>")
+            });
+            let mut group_components = Vec::new();
+            for c in &group_decl.components {
+                let mut ctx = page_component_context(
+                    db,
+                    config,
+                    api_version,
+                    vc,
+                    c,
+                    id_param.as_deref(),
+                    mappings,
+                    &mut api_cache,
+                    modal_targets,
+                )
+                .await;
+                ctx.in_container = true;
+                group_components.push(ctx);
+            }
+            groups.push(RenderGroup {
+                heading,
+                components: group_components,
+            });
+        }
+    }
+    let components: Vec<PageComponentContext> = groups
+        .iter()
+        .flat_map(|group| group.components.iter().cloned())
+        .collect();
+
     let view_events: Vec<RenderEvent> = vc
         .events
         .iter()
@@ -843,7 +913,6 @@ async fn build_page_context(
             import_path: imp.import_path.clone(),
         });
     }
-    let container = container_context(vc, mappings);
     if let Some(imp) = container.as_ref().and_then(|c| c.import.as_ref()) {
         let export = imp.export_name.clone();
         if seen_imports
@@ -918,6 +987,7 @@ async fn build_page_context(
         needs_goto,
         needs_on_mount,
         has_submit,
+        groups,
         view_role: semantic_view_role(vc),
         container_role: semantic_container_role(vc),
         roles: vc.roles.clone(),
@@ -1074,6 +1144,7 @@ async fn page_component_context(
         workflow,
         form_state,
         form_payload,
+        in_container: false,
         table,
         form,
         chart,
@@ -1456,16 +1527,22 @@ pub(crate) fn mapped_container_testid(
 }
 
 /// Presentation-container wrapper context for an xor view container; `None`
-/// renders the plain page.
+/// renders the plain page. Also active (without a label heading) when the
+/// view nests xor containers that share the one wrapper.
 fn container_context(
     vc: &IfmlViewContainer,
     mappings: Option<&IfmlComponentMappings>,
 ) -> Option<RenderContainer> {
-    if !container_wrapper_active(vc.is_xor, mappings) {
+    let has_xor_children = vc.containers.iter().any(|c| c.is_xor);
+    if !container_wrapper_active(vc.is_xor || has_xor_children, mappings) {
         return None;
     }
     let view_lower = vc.name.to_lowercase();
     let section_testid = format!("{view_lower}-container");
+    let label_heading = vc.is_xor.then(|| {
+        let label = vc.label.clone().unwrap_or_else(|| vc.name.clone());
+        format!("<h2 class=\"container-label\" data-testid=\"{section_testid}-label\">{label}</h2>")
+    });
     match resolve_container_mapping(vc, mappings) {
         Some(m) => {
             let export = m.export_name();
@@ -1481,6 +1558,7 @@ fn container_context(
                     export_name: export.to_string(),
                     import_path: m.path.clone(),
                 }),
+                label_heading,
             })
         }
         None => Some(RenderContainer {
@@ -1488,15 +1566,37 @@ fn container_context(
             close_line: "</section>".to_string(),
             testid: section_testid,
             import: None,
+            label_heading,
         }),
     }
 }
 
+/// Root identifier of a binding value expression (`row` in `row.id`);
+/// `None` for literals and empty expressions.
+fn binding_root_ident(expr: &str) -> Option<&str> {
+    let root: String = expr
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    if root.is_empty() || root.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        None
+    } else {
+        Some(&expr[..root.len()])
+    }
+}
+
+/// Whether a binding value expression is rooted in an event parameter —
+/// such identifiers are out of scope in the landmark layout, so the nav
+/// link must drop the pair instead of rendering a dead reference.
+fn references_event_param(expr: &str, params: &[String]) -> bool {
+    binding_root_ident(expr).is_some_and(|root| params.iter().any(|p| p == root))
+}
+
 /// Shell nav context for the landmark layout: resolves the `shell` mapping
 /// against the landmark views and builds nav items from their navigate
-/// events (same URL resolution as the page goto handlers). `None` when no
-/// landmark views exist or no `shell` mapping resolves — no layout is
-/// emitted then.
+/// events (same URL resolution as the page goto handlers, minus bindings
+/// rooted in event params). `None` when no landmark views exist or no
+/// `shell` mapping resolves — no layout is emitted then.
 pub(crate) fn shell_nav(
     vcs: &[IfmlViewContainer],
     mappings: Option<&IfmlComponentMappings>,
@@ -1520,7 +1620,12 @@ pub(crate) fn shell_nav(
             .chain(vc.components.iter().flat_map(|c| c.events.iter()))
         {
             if let IfmlAction::Navigate { target, binding } = &evt.action {
-                let url_expr = nav_url_expr(target, binding);
+                let scoped: HashMap<String, String> = binding
+                    .iter()
+                    .filter(|(_, expr)| !references_event_param(expr, &evt.params))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                let url_expr = nav_url_expr(target, &scoped);
                 let label = labels.get(target.as_str()).copied().unwrap_or(target);
                 if seen.insert((label.to_string(), url_expr.clone())) {
                     items.push(RenderNavItem {
@@ -1984,6 +2089,7 @@ entities = ["CustomerType"]
             is_default: false,
             is_landmark: true,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -2038,6 +2144,7 @@ terminal_states = ["done"]
             is_default: false,
             is_landmark: true,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -2333,6 +2440,7 @@ terminal_states = ["done"]
             is_default: false,
             is_landmark: true,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: vec![
@@ -2415,6 +2523,7 @@ terminal_states = ["done"]
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles: vec!["admin".to_string(), "manager".to_string()],
             requires: Vec::new(),
             params: Vec::new(),
@@ -2468,6 +2577,7 @@ terminal_states = ["done"]
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -2506,6 +2616,7 @@ terminal_states = ["done"]
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles,
             requires,
             params: Vec::new(),
@@ -2580,6 +2691,7 @@ terminal_states = ["done"]
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3142,6 +3254,10 @@ testids = { root = "ui-button" }
             api_version: "v1".to_string(),
             name: "View".to_string(),
             label: "View".to_string(),
+            groups: vec![RenderGroup {
+                heading: None,
+                components: components.clone(),
+            }],
             components,
             params: Vec::new(),
             view_params: Vec::new(),
@@ -3240,6 +3356,7 @@ testids = { root = "data-table", row = "data-row" }
             is_default: false,
             is_landmark: true,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3307,6 +3424,7 @@ testids = { root = "data-table", row = "data-row" }
             is_default: false,
             is_landmark: true,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: vec![super::super::context::ParameterDef {
@@ -3422,6 +3540,7 @@ testids = { root = "data-table", row = "data-row" }
             is_default: false,
             is_landmark,
             is_modal,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3529,6 +3648,7 @@ path = "$lib/components/Collection.svelte"
             is_default: false,
             is_landmark: false,
             is_modal,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3776,6 +3896,7 @@ export = "Button"
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3887,6 +4008,94 @@ testids = { root = "card" }
         );
     }
 
+    fn tabs_mappings() -> IfmlComponentMappings {
+        toml::from_str(
+            r#"
+[[component]]
+role = "presentation-container"
+path = "$lib/components/ui/tabs/tabs.svelte"
+export = "Tabs"
+testids = { root = "tabs" }
+"#,
+        )
+        .unwrap()
+    }
+
+    fn xor_container_with_form(name: &str, label: &str, form_name: &str) -> IfmlViewContainer {
+        IfmlViewContainer {
+            name: name.to_string(),
+            label: Some(label.to_string()),
+            is_xor: true,
+            is_default: false,
+            is_landmark: false,
+            is_modal: false,
+            conditional_expression: None,
+            roles: Vec::new(),
+            requires: Vec::new(),
+            params: Vec::new(),
+            components: vec![form_component_named(form_name, Vec::new())],
+            events: Vec::new(),
+            containers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn sibling_xor_containers_render_inside_one_mapped_presentation_container() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let mut vc = plain_vc("Checkout");
+        vc.label = Some("Checkout".to_string());
+        vc.containers = vec![
+            xor_container_with_form("Shipping", "Shipping", "shipping_form"),
+            xor_container_with_form("Payment", "Payment", "payment_form"),
+        ];
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            Some(&tabs_mappings()),
+            &HashSet::new(),
+        ));
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains("import Tabs from '$lib/components/ui/tabs/tabs.svelte';"),
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered.matches("<Tabs testid=\"tabs\">").count(),
+            1,
+            "sibling xor containers must share ONE mapped presentation-container wrapper: {rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"shipping-label\">Shipping<"),
+            "each group renders its container label with a stable testid: {rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"payment-label\">Payment<"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"shipping_form-form\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"payment_form-form\""),
+            "{rendered}"
+        );
+        let open = rendered.find("<Tabs testid=\"tabs\">").expect("open");
+        let shipping = rendered
+            .find("data-testid=\"shipping-label\"")
+            .expect("shipping group");
+        let payment = rendered
+            .find("data-testid=\"payment-label\"")
+            .expect("payment group");
+        let close = rendered.rfind("</Tabs>").expect("close");
+        assert!(
+            open < shipping && shipping < payment && payment < close,
+            "both groups render inside the wrapper in container order: {rendered}"
+        );
+    }
+
     #[test]
     fn shell_nav_builds_items_from_landmark_navigate_events() {
         let mut list = IfmlViewContainer {
@@ -3896,6 +4105,7 @@ testids = { root = "card" }
             is_default: false,
             is_landmark: true,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3919,6 +4129,7 @@ testids = { root = "card" }
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3953,6 +4164,7 @@ testids = { root = "side-nav" }
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3962,6 +4174,67 @@ testids = { root = "side-nav" }
         };
         assert!(shell_nav(std::slice::from_ref(&plain), Some(&container_mappings())).is_none());
         assert!(shell_nav(&[plain], None).is_none());
+    }
+
+    fn nav_shell_mappings() -> IfmlComponentMappings {
+        toml::from_str(
+            r#"
+[[component]]
+role = "shell"
+path = "$lib/components/Nav.svelte"
+export = "Nav"
+testids = { root = "side-nav" }
+"#,
+        )
+        .unwrap()
+    }
+
+    fn landmark_with_select_event(
+        binding: HashMap<String, String>,
+    ) -> super::super::context::IfmlViewContainer {
+        let mut list = plain_vc("CustomerList");
+        list.is_landmark = true;
+        list.events.push(IfmlEvent {
+            name: "comp_grid_select".to_string(),
+            event_type: "select".to_string(),
+            params: vec!["row".to_string()],
+            action: IfmlAction::Navigate {
+                target: "CustomerDetail".to_string(),
+                binding,
+            },
+        });
+        list
+    }
+
+    #[test]
+    fn shell_nav_drops_event_scoped_bindings_from_nav_hrefs() {
+        let list = landmark_with_select_event(HashMap::from([(
+            "customerId".to_string(),
+            "row.id".to_string(),
+        )]));
+        let nav = shell_nav(&[list], Some(&nav_shell_mappings())).expect("shell nav");
+        assert_eq!(nav.items.len(), 1);
+        assert_eq!(
+            nav.items[0].href_attr, "href={\"/customerdetail\"}",
+            "identifiers bound only in event params (row) are not in layout scope; \
+             the nav link must be a plain route link: {:?}",
+            nav.items[0].href_attr
+        );
+    }
+
+    #[test]
+    fn shell_nav_keeps_bindings_that_do_not_reference_event_params() {
+        let list = landmark_with_select_event(HashMap::from([(
+            "tab".to_string(),
+            "'overview'".to_string(),
+        )]));
+        let nav = shell_nav(&[list], Some(&nav_shell_mappings())).expect("shell nav");
+        assert_eq!(nav.items.len(), 1);
+        assert_eq!(
+            nav.items[0].href_attr, "href={`/customerdetail?tab=${'overview'}`}",
+            "static bindings stay on the nav link: {:?}",
+            nav.items[0].href_attr
+        );
     }
 
     #[test]
