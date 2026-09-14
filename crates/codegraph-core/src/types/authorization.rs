@@ -44,13 +44,31 @@ pub struct NeverBothGroup {
     pub capabilities: Vec<String>,
 }
 
+/// A `delegation` of an actors block: grant entries carried from one actor
+/// (the delegating principal, `from_actor`) to another (`to_actor`, typically
+/// an agent). Entries reuse the [`GrantEdge`] shape with `actor` echoing
+/// `from_actor`. Delegations are runtime-gateway concerns: codegraph persists
+/// them as evidence/documentation data only and never wires them into
+/// [`resolve_effective_permits`] or generated guards.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DelegationRecord {
+    pub name: String,
+    pub from_actor: String,
+    pub to_actor: String,
+    pub purpose: Option<String>,
+    pub entries: Vec<GrantEdge>,
+}
+
 /// Model-level policy metadata carrier (a singleton `ActorPolicy` node):
-/// the `.actor` blocks the model was assembled from plus all never_both
-/// groups.
+/// the `.actor` blocks the model was assembled from, all never_both groups,
+/// declared purposes, and delegations. JSON props on the singleton; no
+/// per-item nodes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActorPolicyNode {
     pub blocks: Vec<String>,
     pub never_both: Vec<NeverBothGroup>,
+    pub purposes: Vec<String>,
+    pub delegations: Vec<DelegationRecord>,
 }
 
 /// The full actor policy model handed to `GraphIngestor::ingest_actor_policy`.

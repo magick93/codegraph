@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, GrantEdge, NeverBothGroup,
+    ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, DelegationRecord, GrantEdge,
+    NeverBothGroup,
 };
 use codegraph_ifml_dsl::IfmlModel;
 use rex_driver::compile_actors_str;
@@ -184,6 +185,8 @@ fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
     let mut capabilities = Vec::new();
     let mut grants = Vec::new();
     let mut never_both = Vec::new();
+    let mut purposes = Vec::new();
+    let mut delegations = Vec::new();
     let mut blocks = Vec::new();
     for block in &model.blocks {
         blocks.push(block.name.clone());
@@ -224,12 +227,40 @@ fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
                 capabilities: group.capabilities.clone(),
             });
         }
+        purposes.extend(block.purposes.iter().cloned());
+        for delegation in &block.delegations {
+            delegations.push(DelegationRecord {
+                name: delegation.name.clone(),
+                from_actor: delegation.from.clone(),
+                to_actor: delegation.to.clone(),
+                purpose: delegation.purpose.clone(),
+                entries: delegation
+                    .entries
+                    .iter()
+                    .map(|entry| GrantEdge {
+                        actor: delegation.from.clone(),
+                        capability: entry.capability.clone(),
+                        effect: match entry.effect {
+                            rex_ir::GrantEffect::Permit => "permit".to_string(),
+                            rex_ir::GrantEffect::Forbid => "forbid".to_string(),
+                        },
+                        when: entry.when.clone(),
+                        obligations: entry.obligations.clone(),
+                    })
+                    .collect(),
+            });
+        }
     }
     ActorPolicyModel {
         actors,
         capabilities,
         grants,
-        policy: ActorPolicyNode { blocks, never_both },
+        policy: ActorPolicyNode {
+            blocks,
+            never_both,
+            purposes,
+            delegations,
+        },
     }
 }
 
@@ -248,6 +279,8 @@ fn merge_policies(policies: Vec<ActorPolicyModel>) -> ActorPolicyModel {
         policy: ActorPolicyNode {
             blocks: Vec::new(),
             never_both: Vec::new(),
+            purposes: Vec::new(),
+            delegations: Vec::new(),
         },
     };
     for policy in policies {
@@ -256,6 +289,8 @@ fn merge_policies(policies: Vec<ActorPolicyModel>) -> ActorPolicyModel {
         merged.grants.extend(policy.grants);
         merged.policy.blocks.extend(policy.policy.blocks);
         merged.policy.never_both.extend(policy.policy.never_both);
+        merged.policy.purposes.extend(policy.policy.purposes);
+        merged.policy.delegations.extend(policy.policy.delegations);
     }
     merged
 }

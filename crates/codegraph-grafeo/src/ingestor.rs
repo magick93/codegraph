@@ -1573,6 +1573,10 @@ impl GraphIngestor for GrafeoEngine {
             .map_err(|e| GraphError::Ingest(e.to_string()))?;
         let never_both_json = serde_json::to_string(&model.policy.never_both)
             .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let purposes_json = serde_json::to_string(&model.policy.purposes)
+            .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let delegations_json = serde_json::to_string(&model.policy.delegations)
+            .map_err(|e| GraphError::Ingest(e.to_string()))?;
         session
             .execute("MERGE (:ActorPolicy {name: 'actor_policy'})")
             .map_err(|e| GraphError::Ingest(format!("ingest_actor_policy merge failed: {e}")))?;
@@ -1589,6 +1593,20 @@ impl GraphIngestor for GrafeoEngine {
         );
         session.execute(&set_gql).map_err(|e| {
             GraphError::Ingest(format!("ingest_actor_policy never_both failed: {e}"))
+        })?;
+        let set_gql = format!(
+            "MATCH (p:ActorPolicy {{name: 'actor_policy'}}) SET p.purposes = '{}'",
+            escape_gql(&purposes_json),
+        );
+        session
+            .execute(&set_gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_actor_policy purposes failed: {e}")))?;
+        let set_gql = format!(
+            "MATCH (p:ActorPolicy {{name: 'actor_policy'}}) SET p.delegations = '{}'",
+            escape_gql(&delegations_json),
+        );
+        session.execute(&set_gql).map_err(|e| {
+            GraphError::Ingest(format!("ingest_actor_policy delegations failed: {e}"))
         })?;
 
         Ok(())

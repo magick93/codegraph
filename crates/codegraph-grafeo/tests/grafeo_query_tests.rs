@@ -943,6 +943,20 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
             never_both: vec![NeverBothGroup {
                 capabilities: vec!["approve_expense".to_string()],
             }],
+            purposes: vec!["ExpenseTriage".to_string()],
+            delegations: vec![DelegationRecord {
+                name: "AutoApprove".to_string(),
+                from_actor: "Manager".to_string(),
+                to_actor: "Auditor".to_string(),
+                purpose: Some("ExpenseTriage".to_string()),
+                entries: vec![GrantEdge {
+                    actor: "Manager".to_string(),
+                    capability: "view_report".to_string(),
+                    effect: "permit".to_string(),
+                    when: Some("report.draft == true".to_string()),
+                    obligations: vec!["log_access".to_string()],
+                }],
+            }],
         },
     };
     engine.ingest_actor_policy(&model).await.unwrap();
@@ -983,6 +997,25 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
     assert_eq!(
         policy.never_both[0].capabilities,
         vec!["approve_expense".to_string()]
+    );
+    assert_eq!(policy.purposes, vec!["ExpenseTriage".to_string()]);
+    assert_eq!(policy.delegations.len(), 1);
+    let delegation = &policy.delegations[0];
+    assert_eq!(delegation.name, "AutoApprove");
+    assert_eq!(delegation.from_actor, "Manager");
+    assert_eq!(delegation.to_actor, "Auditor");
+    assert_eq!(delegation.purpose.as_deref(), Some("ExpenseTriage"));
+    assert_eq!(delegation.entries.len(), 1);
+    assert_eq!(delegation.entries[0].actor, "Manager");
+    assert_eq!(delegation.entries[0].capability, "view_report");
+    assert_eq!(delegation.entries[0].effect, "permit");
+    assert_eq!(
+        delegation.entries[0].when.as_deref(),
+        Some("report.draft == true")
+    );
+    assert_eq!(
+        delegation.entries[0].obligations,
+        vec!["log_access".to_string()]
     );
 
     // Admin: own permits only, when/obligations preserved.
