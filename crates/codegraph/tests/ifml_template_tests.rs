@@ -921,6 +921,163 @@ async fn xor_container_without_pack_renders_plain_page() {
 }
 
 #[tokio::test]
+async fn xor_container_wrapper_renders_container_label_heading() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+role = "presentation-container"
+path = "$lib/components/Card.svelte"
+export = "Card"
+testids = { root = "card" }
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_mappings(dir.path(), XOR_IFML, Some(&mappings)).await;
+    let page = read(&svelte, "src/routes/checkout/+page.svelte");
+
+    assert!(
+        page.contains(
+            "<h2 class=\"container-label\" data-testid=\"checkout-container-label\">Checkout</h2>"
+        ),
+        "mapped container wrappers must render the container label as a heading \
+         with a stable testid: {page}"
+    );
+    let open = page.find("<Card testid=\"card\">").unwrap();
+    let heading = page.find("container-label").unwrap();
+    let close = page.rfind("</Card>").unwrap();
+    assert!(open < heading && heading < close, "{page}");
+}
+
+#[tokio::test]
+async fn xor_container_section_fallback_renders_container_label_heading() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+role = "action-control"
+path = "$lib/components/Button.svelte"
+export = "Button"
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_mappings(dir.path(), XOR_IFML, Some(&mappings)).await;
+    let page = read(&svelte, "src/routes/checkout/+page.svelte");
+
+    assert!(
+        page.contains(
+            "<h2 class=\"container-label\" data-testid=\"checkout-container-label\">Checkout</h2>"
+        ),
+        "fallback container wrappers must render the container label as a heading \
+         with a stable testid: {page}"
+    );
+    let open = page
+        .find("<section data-testid=\"checkout-container\">")
+        .unwrap();
+    let heading = page.find("container-label").unwrap();
+    let close = page.rfind("</section>").unwrap();
+    assert!(open < heading && heading < close, "{page}");
+}
+
+const SIBLING_XOR_GROUPS_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "Checkout" {
+    label "Checkout";
+
+    container "Shipping" {
+        label "Shipping";
+        xor: true;
+
+        component "shipping_form" {
+            type: form;
+            data: Customer;
+
+            field name -> input text;
+        }
+    }
+
+    container "Payment" {
+        label "Payment";
+        xor: true;
+
+        component "payment_form" {
+            type: form;
+            data: Customer;
+
+            field name -> input text;
+        }
+    }
+}
+"#;
+
+#[tokio::test]
+async fn sibling_xor_containers_render_one_tabs_group_with_labels() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+role = "presentation-container"
+path = "$lib/components/ui/tabs/tabs.svelte"
+export = "Tabs"
+testids = { root = "tabs" }
+"#,
+    )
+    .unwrap();
+    let svelte =
+        generate_svelte_with_mappings(dir.path(), SIBLING_XOR_GROUPS_IFML, Some(&mappings)).await;
+    let page = read(&svelte, "src/routes/checkout/+page.svelte");
+
+    assert!(
+        page.contains("import Tabs from '$lib/components/ui/tabs/tabs.svelte';"),
+        "{page}"
+    );
+    assert_eq!(
+        page.matches("<Tabs testid=\"tabs\">").count(),
+        1,
+        "sibling xor containers must share ONE mapped presentation-container wrapper: {page}"
+    );
+    assert!(
+        page.contains("data-testid=\"shipping-label\">Shipping<"),
+        "each group renders its container label with a stable testid: {page}"
+    );
+    assert!(
+        page.contains("data-testid=\"payment-label\">Payment<"),
+        "{page}"
+    );
+    assert!(
+        page.contains("data-testid=\"shipping_form-form\""),
+        "{page}"
+    );
+    assert!(page.contains("data-testid=\"payment_form-form\""), "{page}");
+    let open = page.find("<Tabs testid=\"tabs\">").unwrap();
+    let shipping = page.find("data-testid=\"shipping-label\"").unwrap();
+    let payment = page.find("data-testid=\"payment-label\"").unwrap();
+    let close = page.rfind("</Tabs>").unwrap();
+    assert!(
+        open < shipping && shipping < payment && payment < close,
+        "both groups render inside the wrapper in container order: {page}"
+    );
+
+    assert!(
+        !svelte.join("src/routes/shipping/+page.svelte").exists(),
+        "nested containers must not be generated as standalone pages"
+    );
+    assert!(
+        !svelte.join("src/routes/payment/+page.svelte").exists(),
+        "nested containers must not be generated as standalone pages"
+    );
+}
+
+#[tokio::test]
 async fn details_fallback_reads_fields_through_the_item_payload() {
     let dir = tempfile::tempdir().unwrap();
     let svelte = generate_svelte(dir.path(), SPECLESS_IFML).await;
@@ -1372,8 +1529,10 @@ testids = { root = "side-nav" }
         "{layout}"
     );
     assert!(layout.contains("<Nav testid=\"side-nav\">"), "{layout}");
+    // Issue #200: bindings rooted in event params (row) are out of layout
+    // scope — the nav link is a plain route link instead of a dead reference.
     assert!(
-        layout.contains("<a href={`/customerdetail?customerId=${row.id}`}>Customer Detail</a>"),
+        layout.contains("<a href={\"/customerdetail\"}>Customer Detail</a>"),
         "{layout}"
     );
     assert!(layout.contains("</Nav>"), "{layout}");

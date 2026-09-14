@@ -123,6 +123,17 @@ test.describe('IFML sweep', () => {
 		await page.goto(`/refundrequestdetail?id=${id}`);
 		await expect(page.getByTestId('card')).toContainText('Sweep details');
 	});
+
+	test('sibling xor containers render one labeled tabs group on the landmark view', async ({
+		page
+	}) => {
+		await page.goto('/home');
+		await expect(page.getByTestId('shipping-label')).toBeVisible();
+		await expect(page.getByTestId('payment-label')).toBeVisible();
+		await expect(page.getByTestId('shipping-label')).toHaveText('Shipping');
+		await expect(page.getByTestId('payment-label')).toHaveText('Payment');
+		expect(await page.getByTestId('tabs').count()).toBe(1);
+	});
 });
 "#;
 
@@ -180,6 +191,7 @@ pub fn write_extras(svelte: &Path) -> Result<(), String> {
         "navigation-menu",
         "pagination",
         "input",
+        "tabs",
     ] {
         fs::create_dir_all(ui.join(dir)).map_err(|e| e.to_string())?;
     }
@@ -419,6 +431,24 @@ pub fn write_extras(svelte: &Path) -> Result<(), String> {
 </script>
 
 <input data-testid={testid} {type} bind:value />
+"#,
+    )
+    .map_err(|e| e.to_string())?;
+
+    fs::write(
+        ui.join("tabs/tabs.svelte"),
+        r#"<script lang="ts">
+	// Gate-owned stub of the shadcn-svelte Tabs (presentation-container slot
+	// for the issue #200 sibling xor group assertions).
+	let { testid, children }: {
+		testid?: string;
+		children?: import('svelte').Snippet;
+	} = $props();
+</script>
+
+<div data-testid={testid}>
+	{@render children?.()}
+</div>
 "#,
     )
     .map_err(|e| e.to_string())?;
