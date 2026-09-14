@@ -1227,8 +1227,120 @@ Cloudflare Workers Observability (decision #111) — no hand-rolled OTLP:
 - **metrics**: `worker_middleware.tera`'s `metrics_middleware::track_metrics`
   emits a structured `http_request method=… path=… status=… duration_ms=…`
   console line per request (wasm32 only) when observability is enabled. The
-  monolith's Prometheus `metrics` recorder (`metrics_middleware.tera`) is
-  untouched. Analytics-Engine ingestion remains a future TODO.
+   monolith's Prometheus `metrics` recorder (`metrics_middleware.tera`) is
+   untouched. Analytics-Engine ingestion remains a future TODO.
+
+## DB-Level Authorization (#169 db-authz branch)
+
+### Overview
+
+Authorization for generated apps is enforced **in the database** — RLS
+policies in the same SQL round trip that touches the data — replacing the
+per-request middleware authz chain (issue #169). Per request the generated
+stack now spends: 1 auth round trip + 1 context bundle + the statements
+(down from 3 authz-related wire trips + 2 context trips). HTTP semantics
+are preserved: out-of-scope API-key operations still return **403** (via a
+custom Postgres error), cross-tenant access still filters silently
+(404/`[]`).
+
+### Trip accounting (monolith, per request)
+
+| Stage | Before | After |
+|-------|--------|-------|
+| Auth (API key) | 2 (`verify_api_key` + usage log) | 1 (+ async usage log) |
+| Auth (JWT) | 2 (`resolve_user_org` + `get_current_user_role`) | 1 (`resolve_jwt_context`) |
+| Scope check | 0 in-process + 1 (`check_api_key_scope_by_id` in permission middleware) | 0 (RLS in the data statement) |
+| Session context | 2 (`set_config` batch + `SET LOCAL ROLE`) | 1 (single bundled payload) |
+
+### app_user pool (`APP_DATABASE_URL`)
+
+The generated server builds a serving pool from `APP_DATABASE_URL` — the
+NOBYPASSRLS `app_user` role created by migration `0002`. When set, no
+per-transaction `SET LOCAL ROLE` is needed; without it the pool falls back
+to the owner `DATABASE_URL` (**legacy mode**) and the bundle carries the
+role flip (a no-op when already `app_user`). Boot migrations always run on
+the owner connection. `AppState.pool_mode` (`DbPoolMode::AppUser`/`Legacy`)
+records the mode; both generated `doctor` and `codegraph doctor` warn in
+legacy mode. The ops api suite pins the `app_user` password
+(`app_user_pass`, migration default) and exports `APP_DATABASE_URL`.
+Workers topology needs no code change: point the Hyperdrive/`DATABASE_URL`
+binding at `app_user` credentials to get pool mode.
+
+### Request context bundle
+
+`set_rls_session_vars` (generated `command.rs`/`query.rs`) and the tree
+handler deliver ALL session context — `app.current_api_key`,
+`app.current_api_key_id`, `app.organization_id`, `app.correlation_id`,
+`app.user_id`, `app.role` — plus `SET LOCAL ROLE app_user` in ONE
+simple-query payload (`execute_unprepared` / cornucopia `batch_execute`).
+Values are typed UUIDs inlined with quote escaping (the simple protocol
+takes no bind parameters). One round trip per operation.
+
+### Scope enforcement in RLS (`enforce_api_key_scope`)
+
+`public.enforce_api_key_scope(entity_type, entity_id, action)` resolves the
+key from `app.current_api_key_id` (**no bcrypt re-verification per row** —
+the old `check_api_key_scope` path re-ran `verify_api_key`'s bcrypt inside
+policy evaluation). RESTRICTIVE `scope_enforced_*` policies (AND-combined
+with org isolation, `TO app_user, api_key`) are emitted for auditable
+tenant tables. API-key sessions without a matching scope raise **P0403**
+with an `INSUFFICIENT_SCOPE` JSON payload; row-level filtering continues
+below the capability check. Both scope vocabularies are accepted: legacy
+objects `{"entity_type","entity_id","action"}` and strings
+`{domain}.{entity}.{action}`; `write` covers `create`+`update`. `INSERT ..
+RETURNING` also applies the SELECT policy — create-capable keys need
+`read` to get the response body.
+
+### Role enforcement in RLS (`enforce_role_action`)
+
+Entities with `permissions.scope` configured in `domains.toml` (the same
+gate that used to add the router permission layers) emit RESTRICTIVE
+`role_enforced_*` policies calling `public.enforce_role_action(action)` —
+the owner/manager/member/employee matrix from the retired
+`role_allows()`. The org role rides the bundle (`app.role`, resolved once
+at auth time); denial raises **P0403** with a `ROLE_FORBIDDEN` payload.
+Entities without permission config keep tenancy-only behaviour.
+
+### 403 mapping
+
+Generated domain errors gain `Forbidden(String)` and `from_repo_err()`,
+which classifies repo errors by marker: `INSUFFICIENT_SCOPE` /
+`ROLE_FORBIDDEN` (the P0403 payloads) and Postgres' canonical
+`violates row-level security policy` (org-isolation writes) → HTTP 403;
+everything else stays `InternalError`. The tree handler classifies into
+`AppError::forbidden`.
+
+### What was removed
+
+`api/scope.tera` (per-route scope guard, both topologies) and the
+permission middleware's per-request `check_api_key_scope_by_id` DB lookup.
+The permission middleware remains for JWT role checks in-process until
+consumers adopt the role policies; its `RequiredPermission` is a
+**named-field** struct (`resource`, `action`) — construct accordingly.
+
+### Tests
+
+```bash
+# DB-level authorization contract (needs Postgres; pgmq shim makes it
+# portable to plain postgres):
+cargo test -p codegraph-ops --test authz_contract -- --ignored --nocapture
+# Generated app compile gate (needs protoc):
+cargo test -p codegraph --test grafeo_e2e_tests -- grafeo_generated_code_compiles
+```
+
+### Known limitations / follow-ups
+
+- `public_operations` remains graph-only config; route-level public
+  mounting + PUBLIC RLS policies are a follow-up (issue #169 Q3).
+- ActiveModel/SeaORM statement payloads cannot carry the context CTE, so
+  the context bundle is 1 trip per operation rather than 0; zero-trip CTE
+  bundling applies only if repos move off ActiveModel.
+- atproto builds keep the cosmos-extensions AuthorizationService; their
+  scope enforcement rides the same RLS policies. Deep atproto DB-authz
+  (DID-based grants as RLS) is deferred.
+- hr-specs' full e2e (~4,062 specs) is the external acceptance gate;
+  403 semantics are preserved by design (custom P0403 errors), so specs
+  should pass without updates.
 
 ## Branch & PR Workflow
 
