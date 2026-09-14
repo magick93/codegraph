@@ -2,8 +2,9 @@
 //!
 //! Full-stack harness: runs the complete pipeline (schemas + classifier +
 //! domains.toml + profiles.toml + IFML DSL) into a fixed gate root
-//! (`target/ifml-gate/`), writes the gate-provided SvelteKit skeleton the
-//! generator does not emit yet, then drives four validation stages:
+//! (`target/ifml-gate/`), writes the gate-owned extras (vite `/api` proxy,
+//! playwright config, ui stubs, #205 sweep spec), then drives four
+//! validation stages:
 //!
 //! - T0 `gate_full_stack_boots`: migrations on a fresh Postgres DB, build and
 //!   boot the generated axum server, wait for `/health`.
@@ -24,10 +25,10 @@
 //! scaffolding writers) live in `tests/test_framework/`; this file keeps the
 //! gate's fixture knowledge plus the test functions.
 //!
-//! The skeleton (package.json, vite.config.ts, tsconfig, app shell, ui
-//! component stubs, playwright config) is gate-provided scaffolding until the
-//! generator emits a SvelteKit skeleton (G1, Wave B). Generator-emitted files
-//! are never overwritten.
+//! The SvelteKit skeleton (package.json, tsconfig, app shell, …) is expected
+//! from the GENERATOR (G1, Wave B); the gate no longer writes it. The vite
+//! proxy, playwright config, ui stubs, and sweep spec stay gate-owned.
+//! Generator-emitted files are never overwritten.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -570,6 +571,8 @@ fn assert_categories(titles: &[String]) {
     let validation = has(&|t| t == "form validation blocks empty submit");
     let round_trip = has(&|t| t == "form round trip persists changes");
     let workflow = has(&|t| t.starts_with("shows the initial workflow state for "));
+    let create_via_ui = has(&|t| t.starts_with("create round trip persists a new refund request"));
+    let details_values = has(&|t| t.starts_with("details shows the persisted values"));
 
     let missing: Vec<&str> = [
         ("render", render),
@@ -579,6 +582,8 @@ fn assert_categories(titles: &[String]) {
         ("validation", validation),
         ("round trip", round_trip),
         ("workflow", workflow),
+        ("create via ui", create_via_ui),
+        ("details values", details_values),
     ]
     .iter()
     .filter(|(_, present)| !present)
