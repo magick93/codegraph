@@ -408,8 +408,8 @@ view "CustomerEdit" {
     );
     assert!(
         page.contains(
-            "const response = await fetch(`/api/v1/sales/customer/${viewParams.customerId}`, {"
-        ),
+            "response = await fetch(`/api/v1/sales/customer/${viewParams.customerId}`, {"
+        ) && page.contains("if (isEdit) {"),
         "edit submits must read the id from the query-param viewParams: {page}"
     );
     assert!(page.contains("method: 'PUT'"), "{page}");
@@ -906,6 +906,75 @@ async fn xor_container_without_pack_renders_plain_page() {
     assert!(
         list.contains("<table data-testid=\"grid-table\">"),
         "{list}"
+    );
+}
+
+#[tokio::test]
+async fn details_fallback_reads_fields_through_the_item_payload() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), SPECLESS_IFML).await;
+    let details = read(&svelte, "src/routes/customerdetail/+page.svelte");
+    assert!(
+        details.contains("<dd>{data.item.name}</dd>"),
+        "details values must read the envelope-unwrapped item payload: {details}"
+    );
+    assert!(details.contains("<dd>{data.item.email}</dd>"), "{details}");
+}
+
+#[tokio::test]
+async fn create_mode_submit_posts_to_collection_and_edit_puts_to_item() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), EDIT_SAVE_IFML).await;
+    let page = read(&svelte, "src/routes/customeredit/+page.svelte");
+    assert!(
+        page.contains("method: 'POST'"),
+        "opening the id-param form view without ?id (create mode) must POST the \
+         collection URL: {page}"
+    );
+    assert!(
+        page.contains("\"/api/v1/sales/customer\"") || page.contains("`/api/v1/sales/customer`"),
+        "create mode must target the collection URL literal (no trailing empty \
+         item id): {page}"
+    );
+    assert!(
+        page.contains("method: 'PUT'"),
+        "edit mode (?id present) must keep the item PUT: {page}"
+    );
+}
+
+#[tokio::test]
+async fn create_view_submit_targets_the_collection_url_literal() {
+    let dir = tempfile::tempdir().unwrap();
+    let ifml = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerForm" {
+    label "New Customer";
+
+    component "editor" {
+        type: form;
+        data: Customer;
+
+        field name -> input text { required: true; }
+
+        on save -> navigate("CustomerForm");
+    }
+}
+"#;
+    let svelte = generate_svelte(dir.path(), ifml).await;
+    let page = read(&svelte, "src/routes/customerform/+page.svelte");
+    assert!(page.contains("method: 'POST'"), "{page}");
+    assert!(!page.contains("method: 'PUT'"), "{page}");
+    assert!(
+        page.contains("\"/api/v1/sales/customer\"") || page.contains("`/api/v1/sales/customer`"),
+        "create submit must target the collection URL literal: {page}"
+    );
+    assert!(
+        !page.contains("${viewParams"),
+        "a view without id params must not interpolate viewParams into the \
+         submit URL: {page}"
     );
 }
 

@@ -37,7 +37,7 @@ generators = [
 
 [profiles.gate.ui]
 generators = [
-    "ifml_route", "ifml_navigation", "ifml_e2e_test",
+    "ifml_skeleton", "ifml_route", "ifml_navigation", "ifml_e2e_test",
 ]
 
 [profiles.gate.ifml]

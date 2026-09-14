@@ -78,11 +78,29 @@
 		submitting = true;
 		formError = '';
 		try {
+{%- if comp.submit.create_url_expr %}
+			const isEdit = !!viewParams.{{ comp.submit.edit_param }};
+			let response;
+			if (isEdit) {
+				response = await fetch({{ comp.submit.url_expr }}, {
+					method: '{{ comp.submit.method }}',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({% if comp.form_payload %}payload{% else %}formData{% endif %})
+				});
+			} else {
+				response = await fetch({{ comp.submit.create_url_expr }}, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({% if comp.form_payload %}payload{% else %}formData{% endif %})
+				});
+			}
+{%- else %}
 			const response = await fetch({{ comp.submit.url_expr }}, {
 				method: '{{ comp.submit.method }}',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({% if comp.form_payload %}payload{% else %}formData{% endif %})
 			});
+{%- endif %}
 			if (!response.ok) {
 				const body = await response.json().catch(() => null);
 				formError = body?.error ?? body?.message ?? `Request failed (${response.status})`;
@@ -256,7 +274,7 @@
 <dl data-testid="{{ comp.name }}-details">
 	{% for field in comp.fields %}
 	<dt>{{ field }}</dt>
-	<dd>{data.{{ field }}}</dd>
+	<dd>{data.item.{{ field }}}</dd>
 	{% endfor %}
 </dl>{% if comp.workflow %}
 {{ comp.workflow.badge_html }}

@@ -12,6 +12,13 @@ pub fn ifml_capabilities() -> Vec<GeneratorCapability> {
     let mut caps = vec![
         // Base (non-framework-specific) generators
         GeneratorCapability {
+            name: "ifml_skeleton".to_string(),
+            kind: GeneratorKind::Global,
+            target: GeneratorTarget::Ui,
+            features_required: vec!["ifml_backend".to_string()],
+            features_optional: vec![],
+        },
+        GeneratorCapability {
             name: "ifml_route".to_string(),
             kind: GeneratorKind::Global,
             target: GeneratorTarget::Ui,
@@ -33,6 +40,17 @@ pub fn ifml_capabilities() -> Vec<GeneratorCapability> {
             features_optional: vec![],
         },
     ];
+
+    // Framework-specific skeleton generators
+    for framework in &["svelte", "react", "vue", "flutter", "swiftui"] {
+        caps.push(GeneratorCapability {
+            name: format!("ifml_skeleton_{framework}"),
+            kind: GeneratorKind::Global,
+            target: GeneratorTarget::Ui,
+            features_required: vec!["ifml_backend".to_string(), format!("framework_{framework}")],
+            features_optional: vec![],
+        });
+    }
 
     // Framework-specific route generators
     for framework in &["svelte", "react", "vue", "flutter", "swiftui"] {
