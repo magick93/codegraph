@@ -203,6 +203,8 @@ async fn ingest_policy(db: &MockEngine) {
         policy: ActorPolicyNode {
             blocks: vec!["core".to_string()],
             never_both: vec![],
+            purposes: vec![],
+            delegations: vec![],
         },
     })
     .await

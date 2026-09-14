@@ -130,6 +130,17 @@ async fn generate_svelte_with_domains(
     domains_toml: &str,
     mappings: Option<&Path>,
 ) -> std::path::PathBuf {
+    generate_svelte_with_pack(dir, ifml, domains_toml, mappings, None, &[]).await
+}
+
+async fn generate_svelte_with_pack(
+    dir: &Path,
+    ifml: &str,
+    domains_toml: &str,
+    mappings: Option<&Path>,
+    design_system: Option<&str>,
+    template_dirs: &[std::path::PathBuf],
+) -> std::path::PathBuf {
     let ifml_path = dir.join("app.ifml");
     std::fs::write(&ifml_path, ifml).unwrap();
     let output = dir.join("out");
@@ -144,9 +155,9 @@ async fn generate_svelte_with_domains(
         classifier: None,
         frameworks: &["svelte".to_string()],
         profiles_config_path: None,
-        template_dir: &[],
+        template_dir: template_dirs,
         ifml_components: mappings,
-        ifml_design_system: None,
+        ifml_design_system: design_system,
     })
     .await
     .unwrap();
@@ -1384,6 +1395,98 @@ async fn no_shell_mapping_emits_no_layout() {
         !svelte.join("src/routes/+layout.svelte").exists(),
         "no shell mapping must mean no layout emission"
     );
+}
+
+/// A built-in design-system pack can ship template overrides: selecting
+/// `shadcn-svelte` merges its templates into the registry after the built-ins
+/// (pack template > built-in), and the overridden layout renders instead of
+/// the built-in one.
+#[tokio::test]
+async fn design_system_pack_templates_override_builtin_templates() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte_with_pack(
+        dir.path(),
+        SHELL_IFML,
+        domains_toml_without_workflow(),
+        None,
+        Some("shadcn-svelte"),
+        &[],
+    )
+    .await;
+    let layout = read(&svelte, "src/routes/+layout.svelte");
+
+    assert!(
+        layout.contains("data-slot=\"navigation-menu\""),
+        "pack template override must apply: {layout}"
+    );
+    assert!(
+        layout
+            .contains("import NavigationMenu from '$lib/components/ui/navigation-menu/navigation-menu.svelte';"),
+        "pack component mappings still resolve: {layout}"
+    );
+}
+
+/// Precedence: project `--template-dir` overrides shadow pack templates,
+/// which shadow built-ins. The project layout wins over the pack's.
+#[tokio::test]
+async fn project_template_dir_beats_pack_templates() {
+    let dir = tempfile::tempdir().unwrap();
+    let override_dir = dir.path().join("tpl-overrides");
+    std::fs::create_dir_all(override_dir.join("ifml/svelte")).unwrap();
+    std::fs::write(
+        override_dir.join("ifml/svelte/layout.tera"),
+        "<!-- PROJECT OVERRIDE -->\n{{ shell.import.export_name }}",
+    )
+    .unwrap();
+
+    let svelte = generate_svelte_with_pack(
+        dir.path(),
+        SHELL_IFML,
+        domains_toml_without_workflow(),
+        None,
+        Some("shadcn-svelte"),
+        &[override_dir],
+    )
+    .await;
+    let layout = read(&svelte, "src/routes/+layout.svelte");
+
+    assert!(layout.contains("<!-- PROJECT OVERRIDE -->"), "{layout}");
+    assert!(
+        !layout.contains("data-slot="),
+        "pack template must not leak past the project override: {layout}"
+    );
+}
+
+/// No pack selected → no pack template content in any output (pack templates
+/// must not load without the flag).
+#[tokio::test]
+async fn without_design_system_no_pack_template_content_is_emitted() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte_with_pack(
+        dir.path(),
+        SHELL_IFML,
+        domains_toml_without_workflow(),
+        None,
+        None,
+        &[],
+    )
+    .await;
+    assert!(
+        !svelte.join("src/routes/+layout.svelte").exists(),
+        "pack-less runs keep builtin emission behavior"
+    );
+    for entry in walkdir::WalkDir::new(&svelte)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        let content = std::fs::read_to_string(entry.path()).unwrap_or_default();
+        assert!(
+            !content.contains("data-slot=\"navigation-menu\""),
+            "pack template content leaked into pack-less run: {}",
+            entry.path().display()
+        );
+    }
 }
 
 const WORKFLOW_IFML: &str = r#"

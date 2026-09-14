@@ -1,5 +1,6 @@
 pub mod api_paths;
 pub mod context;
+pub mod control_core;
 pub mod dependency_graph;
 pub mod e2e_test;
 pub mod navigation_generator;

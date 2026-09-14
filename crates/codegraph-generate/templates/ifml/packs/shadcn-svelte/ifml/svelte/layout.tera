@@ -1,0 +1,15 @@
+{#- shadcn-svelte pack override of ifml/svelte/layout.tera: adds the shadcn
+    `data-slot` marker on the root element. Selected via
+    `--ifml-design-system shadcn-svelte`; project --template-dir overrides
+    shadow this file. -#}
+<script lang="ts">
+	import {{ shell.import.export_name }} from '{{ shell.import.import_path }}';
+
+	let { children }: { children: import('svelte').Snippet } = $props();
+</script>
+
+<{{ shell.import.export_name }} data-slot="navigation-menu"{% if shell.testid %} testid="{{ shell.testid }}"{% endif %}>
+{% for item in shell.items %}	<a {{ item.href_attr }}>{{ item.label }}</a>
+{% endfor %}</{{ shell.import.export_name }}>
+
+{@render children()}

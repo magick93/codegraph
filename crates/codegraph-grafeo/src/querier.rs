@@ -5,13 +5,13 @@ use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
     resolve_effective_permits, ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode,
     ApiResourceNode, CapabilityNode, CodeList, CollectionNode, ColumnInfo, CompositeColumn,
-    CompositeRange, CompositionNode, CompositionTree, DataBindingResolution, DetectionSource,
-    EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, GrantEdge,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleUseRecord, NamespaceNode,
-    NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    Permit, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
-    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    CompositeRange, CompositionNode, CompositionTree, DataBindingResolution, DelegationRecord,
+    DetectionSource, EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget,
+    GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleUseRecord,
+    NamespaceNode, NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate,
+    PermissionNode, Permit, PipelineNode, PolicyNode, PropertyNode, RelationshipNode,
+    RepositoryNode, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -1772,7 +1772,7 @@ impl GraphQuerier for GrafeoEngine {
     }
 
     async fn get_actor_policy(&self) -> Result<Option<ActorPolicyNode>, GraphError> {
-        let gql = "MATCH (p:ActorPolicy) RETURN p.blocks, p.never_both LIMIT 1";
+        let gql = "MATCH (p:ActorPolicy) RETURN p.blocks, p.never_both, p.purposes, p.delegations LIMIT 1";
         let result = query_gql(self, gql)?;
         if result.rows.is_empty() {
             return Ok(None);
@@ -1787,7 +1787,20 @@ impl GraphQuerier for GrafeoEngine {
             .get_opt_string(row, "p.never_both")?
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        Ok(Some(ActorPolicyNode { blocks, never_both }))
+        let purposes: Vec<String> = reader
+            .get_opt_string(row, "p.purposes")?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let delegations: Vec<DelegationRecord> = reader
+            .get_opt_string(row, "p.delegations")?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        Ok(Some(ActorPolicyNode {
+            blocks,
+            never_both,
+            purposes,
+            delegations,
+        }))
     }
 
     async fn effective_permits(&self, actor: &str) -> Result<Vec<Permit>, GraphError> {

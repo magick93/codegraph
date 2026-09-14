@@ -1,5 +1,6 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use codegraph_config::built_in_pack_names;
 use tera::Tera;
 
 use crate::error::{Error, Result};
@@ -62,6 +63,49 @@ fn merge_tera_dir(tera: &mut Tera, dir: &Path) -> Result<()> {
             .map_err(|e| Error::Template(format!("add override {name}: {e}")))?;
     }
     Ok(())
+}
+
+/// Root of the per-pack template override subtrees
+/// (`templates/ifml/packs/<pack-name>/...`). Names inside a pack mirror the
+/// built-in template names (e.g. `ifml/svelte/layout.tera`).
+fn pack_template_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("templates")
+        .join("ifml")
+        .join("packs")
+}
+
+/// Template override directory shipped for built-in design-system pack
+/// `name`, if the pack ships any.
+///
+/// `Ok(None)` means the pack is known but only carries component mappings;
+/// `Err` rejects unknown pack names so callers surface typos instead of
+/// silently running unpackaged.
+pub fn built_in_pack_template_dir(name: &str) -> Result<Option<PathBuf>> {
+    if !built_in_pack_names().any(|known| known == name) {
+        return Err(Error::Config(format!(
+            "unknown IFML design system pack \"{name}\"; known packs: {}",
+            built_in_pack_names().collect::<Vec<_>>().join(", ")
+        )));
+    }
+    let dir = pack_template_root().join(name);
+    Ok(dir.is_dir().then_some(dir))
+}
+
+/// Create the Tera engine for a generation run: embedded built-ins first,
+/// then the selected design-system pack's template overrides, then the
+/// project's template override dirs. Later layers shadow earlier ones, so
+/// precedence is project template-dir > pack templates > built-ins.
+pub fn create_tera_for_run(design_system: Option<&str>, override_dirs: &[&Path]) -> Result<Tera> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(name) = design_system.filter(|name| !name.is_empty()) {
+        if let Some(dir) = built_in_pack_template_dir(name)? {
+            dirs.push(dir);
+        }
+    }
+    dirs.extend(override_dirs.iter().map(|p| p.to_path_buf()));
+    let refs: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();
+    create_tera_with_overrides(&refs)
 }
 
 fn snake_case_filter(
@@ -175,4 +219,91 @@ fn dollar_quote_filter(
     // causing INSERT statements in codelist migrations to silently fail.
     let escaped = s.replace('\'', "''");
     Ok(tera::Value::String(format!("'{}'", escaped)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Render the IFML layout template with a minimal shell context — the
+    /// smallest template whose pack override proves the merge precedence.
+    fn render_layout(tera: &Tera) -> String {
+        let ctx = tera::Context::from_serialize(serde_json::json!({
+            "shell": {
+                "import": { "export_name": "Nav", "import_path": "$lib/Nav.svelte" },
+                "testid": null,
+                "items": [{ "label": "Home", "href_attr": "href={/}" }]
+            }
+        }))
+        .expect("test shell context serializes");
+        tera.render("ifml/svelte/layout.tera", &ctx)
+            .expect("layout template renders")
+    }
+
+    #[test]
+    fn built_in_pack_template_dir_resolves_shipped_shadcn_svelte_dir() {
+        let dir = built_in_pack_template_dir("shadcn-svelte")
+            .expect("known pack resolves")
+            .expect("shadcn-svelte ships template overrides");
+        assert!(dir.is_dir(), "template dir must exist on disk: {dir:?}");
+        assert!(dir.join("ifml/svelte/layout.tera").is_file());
+    }
+
+    #[test]
+    fn built_in_pack_template_dir_unknown_pack_is_an_error() {
+        let err = built_in_pack_template_dir("material").expect_err("unknown pack must error");
+        assert!(
+            err.to_string()
+                .contains("unknown IFML design system pack \"material\""),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn pack_templates_apply_without_project_overrides() {
+        let tera = create_tera_for_run(Some("shadcn-svelte"), &[]).unwrap();
+        assert!(
+            render_layout(&tera).contains("data-slot=\"navigation-menu\""),
+            "pack override must shadow the built-in layout"
+        );
+    }
+
+    #[test]
+    fn no_pack_selection_renders_builtin_layout() {
+        let tera = create_tera_for_run(None, &[]).unwrap();
+        assert!(
+            !render_layout(&tera).contains("data-slot"),
+            "built-in layout must stay pack-free"
+        );
+    }
+
+    #[test]
+    fn pack_beats_builtin_and_project_dir_beats_pack() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join("ifml/svelte")).unwrap();
+        std::fs::write(
+            project.path().join("ifml/svelte/layout.tera"),
+            "PROJECT {{ shell.import.export_name }}",
+        )
+        .unwrap();
+
+        let tera = create_tera_for_run(Some("shadcn-svelte"), &[project.path()]).unwrap();
+        let out = render_layout(&tera);
+        assert!(out.contains("PROJECT"), "project override must win: {out}");
+        assert!(
+            !out.contains("data-slot"),
+            "pack template must not leak past the project override: {out}"
+        );
+    }
+
+    #[test]
+    fn unknown_design_system_is_an_error_in_create_tera_for_run() {
+        assert!(create_tera_for_run(Some("material"), &[]).is_err());
+    }
+
+    #[test]
+    fn empty_design_system_string_means_no_pack() {
+        let tera = create_tera_for_run(Some(""), &[]).unwrap();
+        assert!(!render_layout(&tera).contains("data-slot"));
+    }
 }
