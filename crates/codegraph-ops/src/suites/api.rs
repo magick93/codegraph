@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::OpsConfig;
-use crate::db::{psql_exec_file_ok, psql_query};
+use crate::db::{psql_exec, psql_exec_file_ok, psql_query};
 use crate::error::{OpsError, OpsResult};
 use crate::ext::run_hooks;
 use crate::migrate::run_api_migrations_with_options;
@@ -413,6 +413,9 @@ async fn stage_preflight(
             .current_dir(&config.root_dir)
             .env("DATABASE_URL", config.api_db.url())
             .env("SUPABASE_JWT_SECRET", config.jwt_secret.clone());
+        if std::env::var_os("APP_DATABASE_URL").is_none() {
+            start_cmd.env("APP_DATABASE_URL", app_pool_url(&config.api_db));
+        }
         if let Some((key, value)) = cornucopia_db_env(config) {
             start_cmd.env(key, value);
         }
@@ -515,6 +518,10 @@ async fn stage_database(
         counters.fail_test("no domain tables found after migration");
     }
 
+    // App pool (#169): pin the app_user password so the server can connect as
+    // the NOBYPASSRLS app role (APP_DATABASE_URL).
+    provision_app_pool(config, counters).await;
+
     // API keys (only if public.create_api_key exists in the scaffold).
     let has_create_key = psql_query(
         &config.api_db,
@@ -583,6 +590,10 @@ async fn stage_server(
         .arg(config.api_db.url())
         .env("DATABASE_URL", config.api_db.url())
         .env("SUPABASE_JWT_SECRET", config.jwt_secret.clone());
+    // App pool (#169): export the app_user URL unless the caller manages it.
+    if std::env::var_os("APP_DATABASE_URL").is_none() {
+        server_cmd.env("APP_DATABASE_URL", app_pool_url(&config.api_db));
+    }
     if let Some((key, value)) = cornucopia_db_env(config) {
         server_cmd.env(key, value);
     }
@@ -1138,6 +1149,47 @@ pub(crate) fn parse_api_key_json(out: &str) -> Option<String> {
     v.get("key").and_then(|k| k.as_str()).map(|s| s.to_string())
 }
 
+/// Default password for the generated `app_user` role — matches the value
+/// seeded by migration `0002_api_key_management.sql`.
+pub(crate) const APP_USER_PASSWORD: &str = "app_user_pass";
+
+/// The `app_user`-pool URL for a manifest DB target (#169): same host, port
+/// and database, connecting as the NOBYPASSRLS `app_user` role.
+pub(crate) fn app_pool_url(db: &crate::pg::PgTarget) -> String {
+    crate::pg::PgTarget {
+        user: "app_user".into(),
+        password: APP_USER_PASSWORD.into(),
+        role: "app_user".into(),
+        ..db.clone()
+    }
+    .url()
+}
+
+/// Provision the `app_user` login password so the server can connect via
+/// [`app_pool_url`]. No-op when the role does not exist (pre-0002 databases)
+/// or when the caller already manages `APP_DATABASE_URL`.
+async fn provision_app_pool(config: &OpsConfig, counters: &mut TestCounters) {
+    if std::env::var_os("APP_DATABASE_URL").is_some() {
+        output::info("APP_DATABASE_URL already set — skipping app_user provisioning");
+        return;
+    }
+    let has_role = psql_query(
+        &config.api_db,
+        "SELECT count(*) FROM pg_roles WHERE rolname = 'app_user';",
+    )
+    .await
+    .unwrap_or_default();
+    if has_role.trim() != "1" {
+        output::warn("app_user role missing — app pool not provisioned");
+        return;
+    }
+    let sql = format!("ALTER ROLE app_user WITH PASSWORD '{APP_USER_PASSWORD}';");
+    match psql_exec(&config.api_db, &sql).await {
+        Ok(()) => counters.pass("app_user pool password provisioned"),
+        Err(e) => counters.fail_test(format!("app_user password provisioning failed: {e}")),
+    }
+}
+
 fn extract_json_field(body: &str, path: &str) -> String {
     let Some(value) = parse_json(body) else {
         return String::new();
@@ -1595,6 +1647,22 @@ mod tests {
     fn strips_ansi_codes() {
         assert_eq!(strip_ansi("\u{1b}[0;31mred\u{1b}[0m plain"), "red plain");
         assert_eq!(strip_ansi("no escapes"), "no escapes");
+    }
+
+    #[test]
+    fn app_pool_url_targets_app_user_role_on_same_database() {
+        let db = crate::pg::PgTarget {
+            host: "db.internal".into(),
+            port: 5433,
+            user: "postgres".into(),
+            password: "secret".into(),
+            db: "appdb".into(),
+            role: "api".into(),
+        };
+        assert_eq!(
+            app_pool_url(&db),
+            "postgres://app_user:app_user_pass@db.internal:5433/appdb"
+        );
     }
 
     #[test]

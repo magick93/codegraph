@@ -668,6 +668,129 @@ async fn scaffold_middleware_supports_dual_auth() {
     );
 }
 
+// === app_user pool plumbing (#169 Phase 2) ===
+
+#[tokio::test]
+async fn scaffold_wires_app_user_pool_and_mode() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-app-user-pool");
+
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
+    let files = gen
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    // server.rs: the app pool connects from APP_DATABASE_URL and falls back
+    // to the owner DATABASE_URL in legacy mode; boot migrations still run on
+    // the owner connection.
+    let server_file = files
+        .iter()
+        .find(|f| f.path.ends_with("src/server.rs"))
+        .expect("Should generate src/server.rs");
+    let server = &server_file.content;
+    assert!(
+        server.contains("APP_DATABASE_URL"),
+        "server.rs should read APP_DATABASE_URL for the app_user pool"
+    );
+    assert!(
+        server.contains("DbPoolMode::AppUser"),
+        "server.rs should select DbPoolMode::AppUser when APP_DATABASE_URL is set"
+    );
+    assert!(
+        server.contains("DbPoolMode::Legacy"),
+        "server.rs should fall back to DbPoolMode::Legacy without APP_DATABASE_URL"
+    );
+    assert!(
+        server.contains("sea_orm::Database::connect(&url)"),
+        "the app pool must connect from the APP_DATABASE_URL value"
+    );
+    assert!(
+        server.contains("pool_mode,"),
+        "AppState must be constructed with the pool mode"
+    );
+
+    // app_state.rs: DbPoolMode enum + AppState field.
+    let app_state_file = files
+        .iter()
+        .find(|f| f.path.ends_with("src/app_state.rs"))
+        .expect("Should generate src/app_state.rs");
+    let app_state = &app_state_file.content;
+    assert!(
+        app_state.contains("pub enum DbPoolMode"),
+        "app_state.rs should define DbPoolMode"
+    );
+    assert!(
+        app_state.contains("pub pool_mode: DbPoolMode"),
+        "AppState should expose the pool mode to the data path"
+    );
+
+    // doctor.rs (admin-CLI builds only): warn when APP_DATABASE_URL is unset
+    // on a postgres target.
+    let gen_admin = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true, // has_admin_cli — emits config.rs / doctor.rs / migration.rs
+        false,
+        "sea-orm",
+    );
+    let admin_files = gen_admin
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+    let doctor_file = admin_files
+        .iter()
+        .find(|f| f.path.ends_with("src/doctor.rs"))
+        .expect("Should generate src/doctor.rs");
+    let doctor = &doctor_file.content;
+    assert!(
+        doctor.contains("APP_DATABASE_URL"),
+        "doctor.rs should check APP_DATABASE_URL"
+    );
+    assert!(
+        doctor.contains("check_app_pool_mode"),
+        "doctor.rs should run the app_pool_mode check"
+    );
+    assert!(
+        doctor.contains("CheckStatus::Warn"),
+        "the unset APP_DATABASE_URL case must be a warning, not a failure"
+    );
+}
+
 // === Entity Model Template Tests ===
 
 #[tokio::test]

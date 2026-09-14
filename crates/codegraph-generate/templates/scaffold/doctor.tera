@@ -41,6 +41,11 @@ pub async fn run_checks() {
     // 3. Database version
     checks.push(check_db_version().await);
 
+{% if project.database_target == "postgres" %}
+    // 4. App pool mode (#169)
+    checks.push(check_app_pool_mode().await);
+{% endif %}
+
     // Print results table
     let max_name = checks.iter().map(|c| c.name.len()).max().unwrap_or(20);
     let mut failed = 0u32;
@@ -118,6 +123,34 @@ async fn check_database() -> CheckResult {
             name: "database_reachable".into(),
             status: CheckStatus::Fail,
             detail: Some(e.to_string()),
+        },
+    }
+}
+
+/// App pool mode (#169): APP_DATABASE_URL pins the serving pool to the
+/// NOBYPASSRLS app_user role so request context rides the statement payload.
+/// Unset means legacy mode — an extra bundled `SET LOCAL ROLE` round trip per
+/// transaction.
+async fn check_app_pool_mode() -> CheckResult {
+    match std::env::var("APP_DATABASE_URL") {
+        Err(_) => CheckResult {
+            name: "app_pool_mode".into(),
+            status: CheckStatus::Warn,
+            detail: Some(
+                "APP_DATABASE_URL not set — legacy mode (per-transaction SET LOCAL ROLE)".into(),
+            ),
+        },
+        Ok(url) => match sea_orm::Database::connect(&url).await {
+            Ok(_) => CheckResult {
+                name: "app_pool_mode".into(),
+                status: CheckStatus::Pass,
+                detail: Some("connected as app_user".into()),
+            },
+            Err(e) => CheckResult {
+                name: "app_pool_mode".into(),
+                status: CheckStatus::Fail,
+                detail: Some(format!("APP_DATABASE_URL connect failed: {e}")),
+            },
         },
     }
 }

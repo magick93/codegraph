@@ -53,8 +53,7 @@ fn admin_target() -> PgTarget {
 }
 
 fn migrations_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../review/generated-candidate/migrations")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../review/generated-candidate/migrations")
 }
 
 /// A no-op pgmq stand-in for plain Postgres targets (CI's `postgres:15`
@@ -184,20 +183,48 @@ async fn setup(admin: &PgTarget) -> (ScratchDb, String, String, String, String) 
 
     // API keys (legacy object-scope model — the vocabulary check_api_key_scope
     // enforces inside RLS policies).
-    let key_full_a = create_api_key(&target, ORG_A, "full", r#"[{"entity_type": "*", "entity_id": "*", "action": "*"}]"#).await;
-    let key_write_only_a = create_api_key(&target, ORG_A, "write-only", r#"[{"entity_type": "code", "entity_id": "*", "action": "write"}]"#).await;
-    let key_read_only_a = create_api_key(&target, ORG_A, "read-only", r#"[{"entity_type": "code", "entity_id": "*", "action": "read"}]"#).await;
-    let key_full_b = create_api_key(&target, ORG_B, "full-b", r#"[{"entity_type": "*", "entity_id": "*", "action": "*"}]"#).await;
+    let key_full_a = create_api_key(
+        &target,
+        ORG_A,
+        "full",
+        r#"[{"entity_type": "*", "entity_id": "*", "action": "*"}]"#,
+    )
+    .await;
+    let key_write_only_a = create_api_key(
+        &target,
+        ORG_A,
+        "write-only",
+        r#"[{"entity_type": "code", "entity_id": "*", "action": "write"}]"#,
+    )
+    .await;
+    let key_read_only_a = create_api_key(
+        &target,
+        ORG_A,
+        "read-only",
+        r#"[{"entity_type": "code", "entity_id": "*", "action": "read"}]"#,
+    )
+    .await;
+    let key_full_b = create_api_key(
+        &target,
+        ORG_B,
+        "full-b",
+        r#"[{"entity_type": "*", "entity_id": "*", "action": "*"}]"#,
+    )
+    .await;
 
-    (scratch, key_full_a, key_write_only_a, key_read_only_a, key_full_b)
+    (
+        scratch,
+        key_full_a,
+        key_write_only_a,
+        key_read_only_a,
+        key_full_b,
+    )
 }
 
 /// Create an API key via the generated SECURITY DEFINER function; returns the
 /// raw `sk_...` key.
 async fn create_api_key(target: &PgTarget, org: &str, name: &str, scopes: &str) -> String {
-    let sql = format!(
-        "SELECT public.create_api_key('{org}', '{name}', '{scopes}'::jsonb)::text;"
-    );
+    let sql = format!("SELECT public.create_api_key('{org}', '{name}', '{scopes}'::jsonb)::text;");
     let out = psql_query(target, &sql)
         .await
         .expect("create_api_key must succeed");
@@ -276,10 +303,17 @@ async fn probe(
                 .filter(|l| {
                     !matches!(
                         l.trim(),
-                        "BEGIN" | "SET" | "DO" | "ROLLBACK" | "" | "SET LOCAL ROLE app_user" | "SET LOCAL ROLE api_key"
+                        "BEGIN"
+                            | "SET"
+                            | "DO"
+                            | "ROLLBACK"
+                            | ""
+                            | "SET LOCAL ROLE app_user"
+                            | "SET LOCAL ROLE api_key"
                     )
                 })
-                .next_back()
+                .rev()
+                .find(|l| !l.trim().is_empty() && l.contains('|'))
                 .unwrap_or("")
                 .to_string()
         })
@@ -303,7 +337,8 @@ fn assert_raised(result: &str, sqlstate: &str, code: &str, context: &str) {
 /// Assert the probe succeeded with the given scalar value.
 fn assert_ok(result: &str, value: &str, context: &str) {
     assert_eq!(
-        result, format!("OK|{value}"),
+        result,
+        format!("OK|{value}"),
         "{context}: expected OK|{value}, got {result:?}"
     );
 }
@@ -380,7 +415,12 @@ async fn org_isolation_blocks_cross_tenant_writes(admin: PgTarget) {
          '22222222-2222-4222-8222-222222222222') RETURNING id",
     )
     .await;
-    assert_raised(&result, "42501", "", "cross-tenant insert under org A session");
+    assert_raised(
+        &result,
+        "42501",
+        "",
+        "cross-tenant insert under org A session",
+    );
 
     scratch.drop_best_effort().await;
 }
@@ -410,7 +450,12 @@ async fn out_of_scope_read_raises_insufficient_scope(admin: PgTarget) {
         COUNT_ALL,
     )
     .await;
-    assert_raised(&result, "P0403", "INSUFFICIENT_SCOPE", "out-of-scope read (legacy)");
+    assert_raised(
+        &result,
+        "P0403",
+        "INSUFFICIENT_SCOPE",
+        "out-of-scope read (legacy)",
+    );
 
     let result = probe(
         &admin,
@@ -422,7 +467,12 @@ async fn out_of_scope_read_raises_insufficient_scope(admin: PgTarget) {
         COUNT_ALL,
     )
     .await;
-    assert_raised(&result, "P0403", "INSUFFICIENT_SCOPE", "out-of-scope read (app_user pool)");
+    assert_raised(
+        &result,
+        "P0403",
+        "INSUFFICIENT_SCOPE",
+        "out-of-scope read (app_user pool)",
+    );
 
     // The Supabase api_key role path must raise too (today it silently
     // filters to 0 rows).
@@ -436,7 +486,12 @@ async fn out_of_scope_read_raises_insufficient_scope(admin: PgTarget) {
         COUNT_ALL,
     )
     .await;
-    assert_raised(&result, "P0403", "INSUFFICIENT_SCOPE", "out-of-scope read (api_key role)");
+    assert_raised(
+        &result,
+        "P0403",
+        "INSUFFICIENT_SCOPE",
+        "out-of-scope read (api_key role)",
+    );
 
     scratch.drop_best_effort().await;
 }
@@ -462,7 +517,12 @@ async fn out_of_scope_write_raises_insufficient_scope(admin: PgTarget) {
          '11111111-1111-4111-8111-111111111111') RETURNING id",
     )
     .await;
-    assert_raised(&result, "P0403", "INSUFFICIENT_SCOPE", "out-of-scope insert (legacy)");
+    assert_raised(
+        &result,
+        "P0403",
+        "INSUFFICIENT_SCOPE",
+        "out-of-scope insert (legacy)",
+    );
 
     let result = probe(
         &admin,
@@ -476,7 +536,12 @@ async fn out_of_scope_write_raises_insufficient_scope(admin: PgTarget) {
          '11111111-1111-4111-8111-111111111111') RETURNING id",
     )
     .await;
-    assert_raised(&result, "P0403", "INSUFFICIENT_SCOPE", "out-of-scope insert (app_user pool)");
+    assert_raised(
+        &result,
+        "P0403",
+        "INSUFFICIENT_SCOPE",
+        "out-of-scope insert (app_user pool)",
+    );
 
     scratch.drop_best_effort().await;
 }
@@ -501,7 +566,12 @@ async fn role_denial_raises_forbidden(admin: PgTarget) {
         "DELETE FROM common.code WHERE id = 'aaaaaaaa-0000-4000-8000-000000000001' RETURNING id",
     )
     .await;
-    assert_raised(&result, "P0403", "ROLE_FORBIDDEN", "member delete denied in-DB");
+    assert_raised(
+        &result,
+        "P0403",
+        "ROLE_FORBIDDEN",
+        "member delete denied in-DB",
+    );
 
     scratch.drop_best_effort().await;
 }
@@ -516,21 +586,58 @@ async fn in_scope_access_still_works(admin: PgTarget) {
     let (scratch, key_full_a, key_write_only_a, key_read_only_a, _) = setup(&admin).await;
 
     // Full-wildcard key: reads its org's rows in both pool modes.
-    let result = probe(&admin, &scratch, &Mode::LegacyAppUser, ORG_A, &key_full_a, USER_A, COUNT_ALL).await;
+    let result = probe(
+        &admin,
+        &scratch,
+        &Mode::LegacyAppUser,
+        ORG_A,
+        &key_full_a,
+        USER_A,
+        COUNT_ALL,
+    )
+    .await;
     assert_ok(&result, "2", "wildcard key read (legacy)");
-    let result = probe(&admin, &scratch, &Mode::AppUserPool, ORG_A, &key_full_a, USER_A, COUNT_ALL).await;
+    let result = probe(
+        &admin,
+        &scratch,
+        &Mode::AppUserPool,
+        ORG_A,
+        &key_full_a,
+        USER_A,
+        COUNT_ALL,
+    )
+    .await;
     assert_ok(&result, "2", "wildcard key read (app_user pool)");
 
     // Read-only key reads; write-only key writes.
-    let result = probe(&admin, &scratch, &Mode::AppUserPool, ORG_A, &key_read_only_a, USER_A, COUNT_ALL).await;
+    let result = probe(
+        &admin,
+        &scratch,
+        &Mode::AppUserPool,
+        ORG_A,
+        &key_read_only_a,
+        USER_A,
+        COUNT_ALL,
+    )
+    .await;
     assert_ok(&result, "2", "read-only key reads its org");
     let result = probe(
-        &admin, &scratch, &Mode::AppUserPool, ORG_A, &key_write_only_a, USER_A,
+        &admin,
+        &scratch,
+        &Mode::AppUserPool,
+        ORG_A,
+        &key_write_only_a,
+        USER_A,
         "INSERT INTO common.code (id, platform_organization_id) \
          VALUES ('aaaaaaaa-9999-4000-8000-000000000004', \
          '11111111-1111-4111-8111-111111111111') RETURNING id",
-    ).await;
-    assert_ok(&result, "aaaaaaaa-9999-4000-8000-000000000004", "write-only key inserts");
+    )
+    .await;
+    assert_ok(
+        &result,
+        "aaaaaaaa-9999-4000-8000-000000000004",
+        "write-only key inserts",
+    );
 
     // JWT identity (no API key) reads its org via org isolation.
     let result = probe(

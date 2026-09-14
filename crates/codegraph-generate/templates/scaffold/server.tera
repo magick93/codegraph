@@ -233,6 +233,25 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     }
     {% endif %}
 
+    // App pool (#169): when APP_DATABASE_URL is set, the serving pool connects
+    // as the NOBYPASSRLS app_user role — request context rides the statement
+    // payload and no per-transaction SET LOCAL ROLE is needed. Without it the
+    // owner DATABASE_URL pool is shared and the data path falls back to the
+    // legacy bundled-context delivery. Boot migrations above keep running on
+    // the owner connection either way.
+    {% if project.database_target == "postgres" %}
+    let (app_db, pool_mode) = match std::env::var("APP_DATABASE_URL") {
+        Ok(url) => (
+            sea_orm::Database::connect(&url).await?,
+            crate::app_state::DbPoolMode::AppUser,
+        ),
+        Err(_) => (db.clone(), crate::app_state::DbPoolMode::Legacy),
+    };
+    tracing::info!(mode = ?pool_mode, "database pool mode");
+    {% else %}
+    let (app_db, pool_mode) = (db.clone(), crate::app_state::DbPoolMode::Legacy);
+    {% endif %}
+
 {% if project.hooks_api_crate %}
     // Hook registry — lifecycle hooks + authz service. Built before AppState so
     // command/query handlers receive their per-entity lifecycle hook.
@@ -298,21 +317,22 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {% for entity in domain.entities %}
         {{ domain.name }}_{{ entity.module_name }}_commands: crate::domain::{{ domain.name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler::new(
             Arc::new(crate::domain::{{ domain.name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 {% if project.hooks_api_crate %}
             hooks_registry.{{ domain.name }}_{{ entity.module_name }}.clone(),
 {% endif %}
         ),
         {{ domain.name }}_{{ entity.module_name }}_queries: crate::domain::{{ domain.name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler::new(
             Arc::new(crate::domain::{{ domain.name }}::{{ entity.module_name }}::repository_impl::{{ entity.name }}RepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 {% if project.hooks_api_crate %}
             hooks_registry.{{ domain.name }}_{{ entity.module_name }}.clone(),
 {% endif %}
         ),
 {% endfor %}
 {% endfor %}
-        db: db.clone(),
+        db: app_db.clone(),
+        pool_mode,
 {% if project.hooks_api_crate %}
         registry: hooks_registry,
 {% endif %}
