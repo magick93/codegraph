@@ -28,9 +28,11 @@ async fn set_rls_session_vars(
 ) -> Result<(), RsvpError> {
     let sql = format!(
         "SELECT set_config('app.current_api_key', '{}', true), \
+                set_config('app.current_api_key_id', '{}', true), \
                 set_config('app.organization_id', '{}', true), \
                 set_config('app.user_id', '{}', true); \
          SET LOCAL ROLE app_user",
+        api_key_id,
         api_key_id,
         organization_id,
         user_id,

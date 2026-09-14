@@ -4227,21 +4227,29 @@ async fn command_inlines_typed_uuid_context_bundle() {
     // parameters) — but ONLY typed Uuid fields, so the interpolation surface
     // is injection-proof by construction.
     assert!(
-        cmd_file.content.contains("set_config('app.current_api_key', '{}', true)"),
+        cmd_file
+            .content
+            .contains("set_config('app.current_api_key', '{}', true)"),
         "Command should inline the api_key context value. Got:\n{}",
         cmd_file.content
     );
     assert!(
-        cmd_file.content.contains("set_config('app.organization_id', '{}', true)"),
+        cmd_file
+            .content
+            .contains("set_config('app.organization_id', '{}', true)"),
         "Command should inline the org_id context value"
     );
     assert!(
-        cmd_file.content.contains("set_config('app.correlation_id', '{}', true)"),
+        cmd_file
+            .content
+            .contains("set_config('app.correlation_id', '{}', true)"),
         "Command should inline the correlation_id context value"
     );
     // The format! args must be the typed Uuid locals, never user strings.
     assert!(
-        cmd_file.content.contains("        api_key_id,\n        organization_id,"),
+        cmd_file
+            .content
+            .contains("        api_key_id,\n        organization_id,"),
         "Command must interpolate typed Uuid locals, not arbitrary strings"
     );
     // One round trip: the role flip rides the same payload.
@@ -4282,16 +4290,22 @@ async fn query_inlines_typed_uuid_context_bundle() {
 
     // Query sets 2 vars inlined (no correlation_id on reads).
     assert!(
-        query_file.content.contains("set_config('app.current_api_key', '{}', true)"),
+        query_file
+            .content
+            .contains("set_config('app.current_api_key', '{}', true)"),
         "Query should inline the api_key context value. Got:\n{}",
         query_file.content
     );
     assert!(
-        query_file.content.contains("set_config('app.organization_id', '{}', true)"),
+        query_file
+            .content
+            .contains("set_config('app.organization_id', '{}', true)"),
         "Query should inline the org_id context value"
     );
     assert!(
-        query_file.content.contains("set_config('app.user_id', '{}', true)"),
+        query_file
+            .content
+            .contains("set_config('app.user_id', '{}', true)"),
         "Query should inline the user_id context value"
     );
     // One round trip: the role flip rides the same payload.
@@ -4301,7 +4315,9 @@ async fn query_inlines_typed_uuid_context_bundle() {
     );
     // Must NOT use parameter placeholders (the bundle rides the simple protocol).
     assert!(
-        !query_file.content.contains("set_config('app.current_api_key', $1"),
+        !query_file
+            .content
+            .contains("set_config('app.current_api_key', $1"),
         "Query must not use parameter placeholders for the context bundle"
     );
 }

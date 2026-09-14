@@ -889,8 +889,10 @@ pub async fn tree(
     // simple-query payload; values are server-side UUIDs (AuthInfo).
     db.execute_unprepared(&format!(
         "SELECT set_config('app.current_api_key', '{}', true), \
+                set_config('app.current_api_key_id', '{}', true), \
                 set_config('app.organization_id', '{}', true); \
          SET LOCAL ROLE app_user",
+        api_key_info.api_key_id,
         api_key_info.api_key_id,
         api_key_info.organization_id,
     )).await

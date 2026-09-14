@@ -147,9 +147,19 @@ impl ScratchDb {
 
 /// Apply the review fixture migrations, pin app_user's password, insert
 /// fixture rows (2 in org A, 1 in org B), and provision the API keys used by
-/// the contract cases. Returns (scratch db, org-A full key, org-A write-only
-/// key, org-A read-only key, org-B full key).
-async fn setup(admin: &PgTarget) -> (ScratchDb, String, String, String, String) {
+/// the contract cases. Returns (scratch db, key pairs) as (id, raw key)
+/// tuples: org-A full / write-only / read-only / org-B full / org-A creator.
+#[allow(clippy::type_complexity)]
+async fn setup(
+    admin: &PgTarget,
+) -> (
+    ScratchDb,
+    (String, String),
+    (String, String),
+    (String, String),
+    (String, String),
+    (String, String),
+) {
     let scratch = ScratchDb::create(admin.clone()).await;
     let target = PgTarget {
         db: scratch.db.clone(),
@@ -181,8 +191,8 @@ async fn setup(admin: &PgTarget) -> (ScratchDb, String, String, String, String) 
     .await
     .expect("insert fixture rows");
 
-    // API keys (legacy object-scope model — the vocabulary check_api_key_scope
-    // enforces inside RLS policies).
+    // API keys (legacy object-scope model — the vocabulary the RLS scope
+    // policies enforce).
     let key_full_a = create_api_key(
         &target,
         ORG_A,
@@ -211,6 +221,16 @@ async fn setup(admin: &PgTarget) -> (ScratchDb, String, String, String, String) 
         r#"[{"entity_type": "*", "entity_id": "*", "action": "*"}]"#,
     )
     .await;
+    // Creator key: create + read (POST responses read the row back via
+    // RETURNING, so create without read cannot return the resource).
+    let key_creator_a = create_api_key(
+        &target,
+        ORG_A,
+        "creator",
+        r#"[{"entity_type": "code", "entity_id": "*", "action": "read"},
+            {"entity_type": "code", "entity_id": "*", "action": "create"}]"#,
+    )
+    .await;
 
     (
         scratch,
@@ -218,19 +238,29 @@ async fn setup(admin: &PgTarget) -> (ScratchDb, String, String, String, String) 
         key_write_only_a,
         key_read_only_a,
         key_full_b,
+        key_creator_a,
     )
 }
 
-/// Create an API key via the generated SECURITY DEFINER function; returns the
-/// raw `sk_...` key.
-async fn create_api_key(target: &PgTarget, org: &str, name: &str, scopes: &str) -> String {
+/// Create an API key via the generated SECURITY DEFINER function; returns
+/// (resolved id, raw `sk_...` key). The id rides the request context as
+/// `app.current_api_key_id` — the RLS scope policies read it instead of
+/// re-verifying the raw key per row.
+async fn create_api_key(
+    target: &PgTarget,
+    org: &str,
+    name: &str,
+    scopes: &str,
+) -> (String, String) {
     let sql = format!("SELECT public.create_api_key('{org}', '{name}', '{scopes}'::jsonb)::text;");
     let out = psql_query(target, &sql)
         .await
         .expect("create_api_key must succeed");
     let json: serde_json::Value =
         serde_json::from_str(&out).expect("create_api_key returns JSONB text");
-    json["key"].as_str().expect("key field").to_string()
+    let id = json["id"].as_str().expect("id field").to_string();
+    let key = json["key"].as_str().expect("key field").to_string();
+    (id, key)
 }
 
 /// Session identity for [`probe`].
@@ -251,7 +281,7 @@ async fn probe(
     scratch: &ScratchDb,
     mode: &Mode,
     org: &str,
-    api_key: &str,
+    key: &(String, String),
     user: &str,
     probe_sql: &str,
 ) -> String {
@@ -274,6 +304,7 @@ async fn probe(
         "BEGIN;\n{}\nDO $probe_wrapper$\nDECLARE v text;\nBEGIN\n\
            PERFORM set_config('app.organization_id', '{}', true);\n\
            PERFORM set_config('app.current_api_key', '{}', true);\n\
+           PERFORM set_config('app.current_api_key_id', '{}', true);\n\
            PERFORM set_config('app.user_id', '{}', true);\n\
            PERFORM set_config('app.role', 'member', true);\n\
            CREATE TEMP TABLE IF NOT EXISTS probe_result(state text, detail text);\n\
@@ -289,7 +320,8 @@ async fn probe(
          ROLLBACK;",
         set_role.unwrap_or(""),
         org,
-        api_key.replace('\'', "''"),
+        key.1.replace('\'', "''"),
+        key.0.replace('\'', "''"),
         user,
         probe_sql,
     );
@@ -354,7 +386,7 @@ async fn org_isolation_filters_cross_tenant_reads(admin: PgTarget) {
         return;
     }
     let _guard = DB_LOCK.lock().await;
-    let (scratch, key_full_a, _, _, _) = setup(&admin).await;
+    let (scratch, key_full_a, _, _, key_full_b, key_creator_a) = setup(&admin).await;
     let result = probe(
         &admin,
         &scratch,
@@ -386,7 +418,7 @@ async fn org_isolation_filters_cross_tenant_reads(admin: PgTarget) {
         &scratch,
         &Mode::AppUserPool,
         ORG_B,
-        "unused",
+        &key_full_b,
         USER_A,
         COUNT_ALL,
     )
@@ -401,7 +433,7 @@ async fn org_isolation_blocks_cross_tenant_writes(admin: PgTarget) {
         return;
     }
     let _guard = DB_LOCK.lock().await;
-    let (scratch, key_full_a, _, _, _) = setup(&admin).await;
+    let (scratch, key_full_a, _, _, _, _) = setup(&admin).await;
     // In-scope key attempting to insert a row pointing at another org.
     let result = probe(
         &admin,
@@ -437,7 +469,7 @@ async fn out_of_scope_read_raises_insufficient_scope(admin: PgTarget) {
         return;
     }
     let _guard = DB_LOCK.lock().await;
-    let (scratch, _, key_write_only_a, _, _) = setup(&admin).await;
+    let (scratch, _, key_write_only_a, _, _, _) = setup(&admin).await;
 
     // Write-only key reading its own org's rows: must raise, not leak.
     let result = probe(
@@ -501,7 +533,7 @@ async fn out_of_scope_write_raises_insufficient_scope(admin: PgTarget) {
         return;
     }
     let _guard = DB_LOCK.lock().await;
-    let (scratch, _, _, key_read_only_a, _) = setup(&admin).await;
+    let (scratch, _, _, key_read_only_a, _, _) = setup(&admin).await;
 
     // Read-only key inserting into its own org: must raise (today it
     // silently succeeds under app_user).
@@ -551,7 +583,7 @@ async fn role_denial_raises_forbidden(admin: PgTarget) {
         return;
     }
     let _guard = DB_LOCK.lock().await;
-    let (scratch, key_full_a, _, _, _) = setup(&admin).await;
+    let (scratch, key_full_a, _, _, _, _) = setup(&admin).await;
 
     // JWT identity with a member-role role claim deleting a row: the DB must
     // raise (today roles are app-level only and the delete succeeds).
@@ -583,7 +615,8 @@ async fn in_scope_access_still_works(admin: PgTarget) {
         return;
     }
     let _guard = DB_LOCK.lock().await;
-    let (scratch, key_full_a, key_write_only_a, key_read_only_a, _) = setup(&admin).await;
+    let (scratch, key_full_a, key_write_only_a, key_read_only_a, _, key_creator_a) =
+        setup(&admin).await;
 
     // Full-wildcard key: reads its org's rows in both pool modes.
     let result = probe(
@@ -626,7 +659,7 @@ async fn in_scope_access_still_works(admin: PgTarget) {
         &scratch,
         &Mode::AppUserPool,
         ORG_A,
-        &key_write_only_a,
+        &key_creator_a,
         USER_A,
         "INSERT INTO common.code (id, platform_organization_id) \
          VALUES ('aaaaaaaa-9999-4000-8000-000000000004', \
@@ -636,7 +669,7 @@ async fn in_scope_access_still_works(admin: PgTarget) {
     assert_ok(
         &result,
         "aaaaaaaa-9999-4000-8000-000000000004",
-        "write-only key inserts",
+        "creator key inserts and reads back",
     );
 
     // JWT identity (no API key) reads its org via org isolation.
@@ -645,7 +678,7 @@ async fn in_scope_access_still_works(admin: PgTarget) {
         &scratch,
         &Mode::AppUserPool,
         ORG_A,
-        "",
+        &(String::new(), String::new()),
         USER_A,
         COUNT_ALL,
     )

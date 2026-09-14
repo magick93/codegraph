@@ -43,44 +43,28 @@ CREATE POLICY "org_isolation_delete" ON common.formatted_date_time
   USING ((platform_organization_id = public.get_current_org_id()
     OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
 
+-- Scope enforcement (#169): RESTRICTIVE policies AND-combine with the
+-- org-isolation policies above for app_user AND api_key sessions, in both
+-- pool modes (app_user pool and legacy SET LOCAL ROLE). API-key sessions
+-- must hold a scope matching this entity: without one the policy raises
+-- P0403 INSUFFICIENT_SCOPE (mapped to HTTP 403) instead of silently
+-- filtering every row. JWT sessions pass through — tenancy only.
+CREATE POLICY "scope_enforced_select" ON common.formatted_date_time
+  AS RESTRICTIVE FOR SELECT TO app_user, api_key
+  USING (public.enforce_api_key_scope('formatted-date-time', id::text, 'read'));
 
--- API key scope-aware policies
-CREATE POLICY "api_key_scoped_select" ON common.formatted_date_time
-  FOR SELECT TO api_key
-  USING (
-    public.get_api_key_org_id() IS NOT NULL
-    AND ((platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id()))
-    AND public.check_api_key_scope('formatted-date-time', id::text, 'read')
-  );
+CREATE POLICY "scope_enforced_insert" ON common.formatted_date_time
+  AS RESTRICTIVE FOR INSERT TO app_user, api_key
+  WITH CHECK (public.enforce_api_key_scope('formatted-date-time', '*', 'create'));
 
-CREATE POLICY "api_key_scoped_insert" ON common.formatted_date_time
-  FOR INSERT TO api_key
-  WITH CHECK (
-    public.get_api_key_org_id() IS NOT NULL
-    AND ((platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id()))
-    AND public.check_api_key_scope('formatted-date-time', '*', 'create')
-  );
+CREATE POLICY "scope_enforced_update" ON common.formatted_date_time
+  AS RESTRICTIVE FOR UPDATE TO app_user, api_key
+  USING (public.enforce_api_key_scope('formatted-date-time', id::text, 'update'))
+  WITH CHECK (public.enforce_api_key_scope('formatted-date-time', id::text, 'update'));
 
-CREATE POLICY "api_key_scoped_update" ON common.formatted_date_time
-  FOR UPDATE TO api_key
-  USING (
-    public.get_api_key_org_id() IS NOT NULL
-    AND ((platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id()))
-    AND public.check_api_key_scope('formatted-date-time', id::text, 'update')
-  )
-  WITH CHECK (
-    public.get_api_key_org_id() IS NOT NULL
-    AND ((platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id()))
-    AND public.check_api_key_scope('formatted-date-time', id::text, 'update')
-  );
-
-CREATE POLICY "api_key_scoped_delete" ON common.formatted_date_time
-  FOR DELETE TO api_key
-  USING (
-    public.get_api_key_org_id() IS NOT NULL
-    AND ((platform_organization_id IS NULL OR platform_organization_id = public.get_api_key_org_id()))
-    AND public.check_api_key_scope('formatted-date-time', id::text, 'delete')
-  );
+CREATE POLICY "scope_enforced_delete" ON common.formatted_date_time
+  AS RESTRICTIVE FOR DELETE TO app_user, api_key
+  USING (public.enforce_api_key_scope('formatted-date-time', id::text, 'delete'));
 
 
 -- Schema + table privileges for app_user and api_key (RLS policies only
