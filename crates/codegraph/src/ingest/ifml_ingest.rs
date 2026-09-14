@@ -40,9 +40,7 @@ pub async fn ingest_ifml_model(
         stats.module_uses += view.module_uses.len();
 
         for container in &view.containers {
-            let _container_id = ingest_container_node(db, container).await?;
-            stats.containers += 1;
-            stats.module_uses += container.module_uses.len();
+            ingest_container_tree_nodes(db, container, &mut stats).await?;
         }
     }
 
@@ -77,9 +75,8 @@ pub async fn ingest_ifml_model(
         }
 
         // Ingest nested container contents
-        for container in &view.containers {
-            ingest_container_contents(db, container, &format!("vc:{}", container.name), &vc_id)
-                .await?;
+        for (i, container) in view.containers.iter().enumerate() {
+            ingest_container_contents(db, container, i, &vc_id).await?;
         }
 
         // Ingest view components
@@ -149,14 +146,31 @@ async fn ingest_view_container(db: &dyn GraphIngestor, view: &ViewDeclaration) -
     Ok(id)
 }
 
+/// Ingest a container and every container nested inside it (nodes only —
+/// contents are wired in pass 2), so parent lookups resolve regardless of
+/// declaration order.
+async fn ingest_container_tree_nodes(
+    db: &dyn GraphIngestor,
+    container: &ContainerDeclaration,
+    stats: &mut IfmlIngestStats,
+) -> Result<()> {
+    let _container_id = ingest_container_node(db, container).await?;
+    stats.containers += 1;
+    stats.module_uses += container.module_uses.len();
+    for nested in &container.containers {
+        Box::pin(ingest_container_tree_nodes(db, nested, stats)).await?;
+    }
+    Ok(())
+}
+
 async fn ingest_container_node(
     db: &dyn GraphIngestor,
     container: &ContainerDeclaration,
 ) -> Result<String> {
     let node = ViewContainerNode {
         name: container.name.clone(),
-        label: None,
-        is_xor: false,
+        label: container.label.clone(),
+        is_xor: container.is_xor,
         is_default: container.is_default,
         is_landmark: false,
         is_modal: false,
@@ -172,28 +186,39 @@ async fn ingest_container_node(
 async fn ingest_container_contents(
     db: &dyn GraphIngestor,
     container: &ContainerDeclaration,
-    container_id: &str,
+    sort_order: usize,
     parent_id: &str,
 ) -> Result<()> {
-    // Link to parent
+    let container_id = format!("vc:{}", container.name);
+
+    // Link to parent; sort_order keeps declaration order so sibling groups
+    // (e.g. xor wizard steps) render in source order.
     db.ingest_edge(
         parent_id,
-        container_id,
+        &container_id,
         EdgeType::ContainsViewContainer,
-        None,
+        Some(&EdgeProperties {
+            sort_order: Some(i32::try_from(sort_order).unwrap_or(i32::MAX)),
+            ..Default::default()
+        }),
     )
     .await
     .map_err(Error::Graph)?;
 
     // Ingest container's components
     for comp in &container.components {
-        let comp_id = ingest_view_component(db, comp, container_id).await?;
+        let comp_id = ingest_view_component(db, comp, &container_id).await?;
         let _ = comp_id;
     }
 
     // Ingest container's events
     for event in &container.events {
-        handle_event(db, event, container_id).await?;
+        handle_event(db, event, &container_id).await?;
+    }
+
+    // Recurse into nested containers
+    for (i, nested) in container.containers.iter().enumerate() {
+        Box::pin(ingest_container_contents(db, nested, i, &container_id)).await?;
     }
 
     Ok(())

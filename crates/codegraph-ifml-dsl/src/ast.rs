@@ -48,9 +48,21 @@ pub struct Position {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContainerDeclaration {
     pub name: String,
+    /// `label "…";` inside the container body; must precede property
+    /// assignments (PEG ordering).
+    #[serde(default)]
+    pub label: Option<String>,
     pub is_default: bool,
+    /// `xor: true;` extracted from the property bag; siblings carrying it
+    /// form one exclusive group.
+    #[serde(default)]
+    pub is_xor: bool,
     pub params: Vec<ParameterDecl>,
     pub properties: Vec<PropertyAssignment>,
+    /// Containers declared inside this container (the grammar allows
+    /// nesting to any depth).
+    #[serde(default)]
+    pub containers: Vec<ContainerDeclaration>,
     pub components: Vec<ComponentDeclaration>,
     pub events: Vec<EventHandler>,
     pub module_uses: Vec<ModuleUse>,
