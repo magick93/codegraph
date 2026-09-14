@@ -3018,8 +3018,8 @@ async fn router_permission_gated_emits_layers_and_helper() {
         "Permission helper should embed the configured scope. Got:\n{content}"
     );
     assert!(
-        content.contains("RequiredPermission(format!(\"{}:{}\", scope, op))"),
-        "Permission helper should build <scope>:<op> strings. Got:\n{content}"
+        content.contains("resource: scope.to_string()"),
+        "Permission helper must build a RequiredPermission from the configured scope. Got:\n{content}"
     );
     // Backward compat: an entity WITHOUT permissions must NOT get the layers.
     let mut plain_config = test_domain_config();

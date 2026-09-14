@@ -124,7 +124,10 @@ async fn candidate_permission(
         _ => None,
     };
     if let Some(op) = op {
-        request.extensions_mut().insert(RequiredPermission(format!("{}:{}", scope, op)));
+        request.extensions_mut().insert(RequiredPermission {
+            resource: scope.to_string(),
+            action: op.to_string(),
+        });
     }
     next.run(request).await
 }

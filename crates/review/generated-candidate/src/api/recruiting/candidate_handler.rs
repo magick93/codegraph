@@ -96,11 +96,11 @@ pub async fn create(
             }
 
 
-            let id = state.recruiting_candidate_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+            let id = state.recruiting_candidate_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
 
                 .map_err(|e: RecruitingError| AppError::internal(format!("Failed to create Candidate: {e}"))
                     .with_correlation_id(correlation_id))?;
-            let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+            let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
                 .map_err(|e: RecruitingError| AppError::internal(format!("Failed to find Candidate: {e}"))
                     .with_correlation_id(correlation_id))?
                 .ok_or_else(|| AppError::internal("Created entity not found")
@@ -121,7 +121,7 @@ pub async fn create(
             }
 
 
-            let result = state.recruiting_candidate_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await;
+            let result = state.recruiting_candidate_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await;
 
 
             let mut success = Vec::new();
@@ -130,7 +130,7 @@ pub async fn create(
             for item_result in result {
                 match item_result {
                     Ok(id) => {
-                        match state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await {
+                        match state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await {
                             Ok(Some(resp)) => success.push(resp),
                             Ok(None) => {
                                 tracing::warn!(entity_id = %id, "Bulk-created entity not found during response assembly");
@@ -187,7 +187,7 @@ pub async fn get_by_id(
 ) -> Result<Json<CandidateWithIncludeResponse>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+    let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: RecruitingError| AppError::internal(format!("Failed to find Candidate: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("Candidate {id} not found"))
@@ -303,10 +303,10 @@ pub async fn update(
             .with_correlation_id(correlation_id));
     }
 
-    state.recruiting_candidate_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+    state.recruiting_candidate_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: RecruitingError| AppError::internal(format!("Failed to update Candidate: {e}"))
             .with_correlation_id(correlation_id))?;
-    let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+    let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: RecruitingError| AppError::internal(format!("Failed to find Candidate: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("Candidate {id} not found"))
@@ -411,7 +411,7 @@ pub async fn list(
     }
 
 
-    let (results, total) = state.recruiting_candidate_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+    let (results, total) = state.recruiting_candidate_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: RecruitingError| AppError::internal(format!("Failed to list Candidate: {e}"))
             .with_correlation_id(correlation_id))?;
 

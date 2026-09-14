@@ -94,11 +94,11 @@ pub async fn create(
             }
 
 
-            let id = state.common_amount_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+            let id = state.common_amount_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
 
                 .map_err(|e: CommonError| AppError::internal(format!("Failed to create Amount: {e}"))
                     .with_correlation_id(correlation_id))?;
-            let response = state.common_amount_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+            let response = state.common_amount_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
                 .map_err(|e: CommonError| AppError::internal(format!("Failed to find Amount: {e}"))
                     .with_correlation_id(correlation_id))?
                 .ok_or_else(|| AppError::internal("Created entity not found")
@@ -119,7 +119,7 @@ pub async fn create(
             }
 
 
-            let result = state.common_amount_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await;
+            let result = state.common_amount_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await;
 
 
             let mut success = Vec::new();
@@ -128,7 +128,7 @@ pub async fn create(
             for item_result in result {
                 match item_result {
                     Ok(id) => {
-                        match state.common_amount_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await {
+                        match state.common_amount_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await {
                             Ok(Some(resp)) => success.push(resp),
                             Ok(None) => {
                                 tracing::warn!(entity_id = %id, "Bulk-created entity not found during response assembly");
@@ -180,7 +180,7 @@ pub async fn get_by_id(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    let response = state.common_amount_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+    let response = state.common_amount_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: CommonError| AppError::internal(format!("Failed to find Amount: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("Amount {id} not found"))
@@ -246,10 +246,10 @@ pub async fn update(
             .with_correlation_id(correlation_id));
     }
 
-    state.common_amount_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+    state.common_amount_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: CommonError| AppError::internal(format!("Failed to update Amount: {e}"))
             .with_correlation_id(correlation_id))?;
-    let response = state.common_amount_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+    let response = state.common_amount_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: CommonError| AppError::internal(format!("Failed to find Amount: {e}"))
             .with_correlation_id(correlation_id))?
         .ok_or_else(|| AppError::not_found(format!("Amount {id} not found"))
@@ -287,7 +287,7 @@ pub async fn delete(
 ) -> Result<StatusCode, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    state.common_amount_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+    state.common_amount_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: CommonError| {
             let msg = e.to_string();
             // Repository errors render as "NOT_FOUND: ..." while some paths
@@ -368,7 +368,7 @@ pub async fn list(
     }
 
 
-    let (results, total) = state.common_amount_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role).await
+    let (results, total) = state.common_amount_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: CommonError| AppError::internal(format!("Failed to list Amount: {e}"))
             .with_correlation_id(correlation_id))?;
 

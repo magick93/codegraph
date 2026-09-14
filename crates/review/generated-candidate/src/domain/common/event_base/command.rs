@@ -45,7 +45,7 @@ async fn set_rls_session_vars(
         api_key_id,
         api_key_id,
         organization_id,
-        correlation_id.replace('\'', "''"),
+        correlation_id,
         user_id,
         role.replace('\'', "''"),
     );
@@ -86,7 +86,7 @@ impl EventBaseCommandHandler {
 
 
     pub async fn create(&self, cmd: CreateEventBaseRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<Uuid, CommonError> {
-        self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id, user_id).await
+        self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id, user_id, role).await
     }
 
 
@@ -123,7 +123,7 @@ impl EventBaseCommandHandler {
             }
 
 
-            match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id, user_id).await {
+            match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id, user_id, role.clone()).await {
 
                 Ok(id) => results.push(Ok(id)),
                 Err(e) => results.push(Err(crate::error::BulkItemError {

@@ -50,7 +50,7 @@ async fn set_rls_session_vars(
         api_key_id,
         api_key_id,
         organization_id,
-        correlation_id.replace('\'', "''"),
+        correlation_id,
         user_id,
         role.replace('\'', "''"),
     );
@@ -77,7 +77,7 @@ async fn set_rls_session_vars(
         api_key_id,
         api_key_id,
         organization_id,
-        correlation_id.replace('\'', "''"),
+        correlation_id,
         user_id,
         role.replace('\'', "''"),
     );
@@ -132,11 +132,11 @@ impl {{ entity_name }}CommandHandler {
 
 {% if parent_ref %}
     pub async fn create(&self, cmd: Create{{ entity_name }}Request, parent_id: Uuid, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<Uuid, {{ domain | pascal_case }}Error> {
-        self.create_single_in_tx(cmd, Some(parent_id), &source, correlation_id, api_key_id, organization_id, user_id).await
+        self.create_single_in_tx(cmd, Some(parent_id), &source, correlation_id, api_key_id, organization_id, user_id, role).await
     }
 {% else %}
     pub async fn create(&self, cmd: Create{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<Uuid, {{ domain | pascal_case }}Error> {
-        self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id, user_id).await
+        self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id, user_id, role).await
     }
 {% endif %}
 
@@ -191,9 +191,9 @@ impl {{ entity_name }}CommandHandler {
             }
 
 {% if parent_ref %}
-            match self.create_single_in_tx(item, Some(parent_id), &source, correlation_id, api_key_id, organization_id, user_id).await {
+            match self.create_single_in_tx(item, Some(parent_id), &source, correlation_id, api_key_id, organization_id, user_id, role.clone()).await {
 {% else %}
-            match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id, user_id).await {
+            match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id, user_id, role.clone()).await {
 {% endif %}
                 Ok(id) => results.push(Ok(id)),
                 Err(e) => results.push(Err(crate::error::BulkItemError {
