@@ -572,9 +572,17 @@ fn js_quote(value: &str) -> String {
 #[derive(Debug, Serialize)]
 pub struct RenderSubmit {
     handler_name: String,
-    /// URL expression (JS literal) passed to fetch.
+    /// URL expression (JS literal) passed to fetch. Edit views PUT here;
+    /// create views POST here directly.
     url_expr: String,
     method: String,
+    /// Create-mode collection URL expression. Views carrying an id param
+    /// branch at runtime: `isEdit` PUTs [`Self::url_expr`] (item), otherwise
+    /// POSTs this (collection). `None` for views without an id param, which
+    /// always POST the collection.
+    create_url_expr: Option<String>,
+    /// Name of the id param gating the edit branch (`!!viewParams.<name>`).
+    edit_param: Option<String>,
     /// Navigation target URL expression from the view's save event.
     navigate_url: Option<String>,
     /// Emit the conservative client-side check that surfaces the first
@@ -1263,12 +1271,19 @@ fn build_submit(
     }
     let api = api?;
     let handler_name = format!("submit_{}", sanitize_ident(&c.name));
-    let (url_expr, method) = match id_param {
+    let (url_expr, method, create_url_expr, edit_param) = match id_param {
         Some(param) if api.has_update => (
             format!("`{}/${{viewParams.{param}}}`", api.base_path),
             "PUT".to_string(),
+            Some(format!("\"{}\"", api.base_path)),
+            Some(param.to_string()),
         ),
-        _ => (format!("\"{}\"", api.base_path), "POST".to_string()),
+        _ => (
+            format!("\"{}\"", api.base_path),
+            "POST".to_string(),
+            None,
+            None,
+        ),
     };
     let navigate_url = events
         .iter()
@@ -1280,6 +1295,8 @@ fn build_submit(
         handler_name,
         url_expr,
         method,
+        create_url_expr,
+        edit_param,
         navigate_url,
         client_validate: form_has_messages(c),
     })
@@ -4019,5 +4036,63 @@ testids = { root = "side-nav" }
         );
         assert!(rendered.contains("</NavigationMenu>"), "{rendered}");
         assert!(rendered.contains("{@render children()}"), "{rendered}");
+    }
+
+    fn id_param() -> super::super::context::ParameterDef {
+        super::super::context::ParameterDef {
+            name: "customerId".to_string(),
+            type_ref: "Uuid".to_string(),
+            default: None,
+        }
+    }
+
+    #[test]
+    fn create_view_submit_posts_to_collection_url() {
+        let ctx = page_context_for(&form_view(false), None);
+        let submit = ctx.components[0].submit.as_ref().expect("form submit");
+        assert_eq!(submit.method, "POST");
+        assert_eq!(submit.url_expr, "\"/api/v1/customer\"");
+        assert!(
+            !submit.url_expr.contains("${"),
+            "create submit URL must not interpolate an id: {}",
+            submit.url_expr
+        );
+    }
+
+    #[test]
+    fn edit_view_submit_puts_to_item_url() {
+        let mut vc = form_view(false);
+        vc.params = vec![id_param()];
+        let ctx = page_context_for(&vc, None);
+        let submit = ctx.components[0].submit.as_ref().expect("form submit");
+        assert_eq!(submit.method, "PUT");
+        assert_eq!(
+            submit.url_expr, "`/api/v1/customer/${viewParams.customerId}`",
+            "edit submit must target the item URL through viewParams"
+        );
+    }
+
+    #[test]
+    fn edit_view_page_branches_to_post_collection_in_create_mode() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let mut vc = form_view(false);
+        vc.params = vec![id_param()];
+        vc.components[0].events.push(save_event());
+        let ctx = page_context_for(&vc, None);
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains("method: 'POST'"),
+            "opening an id-param form view without ?id (create mode) must POST the \
+             collection URL; rendered submit:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\"/api/v1/customer\"") || rendered.contains("`/api/v1/customer`"),
+            "create mode must target the collection URL literal (no trailing \
+             empty item id):\n{rendered}"
+        );
+        assert!(
+            rendered.contains("method: 'PUT'"),
+            "edit mode (?id present) must keep the item PUT:\n{rendered}"
+        );
     }
 }

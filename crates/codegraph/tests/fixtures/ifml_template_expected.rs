@@ -10,6 +10,11 @@
 //! so `params.<name>` fallbacks were dead code and a type error. The load
 //! returns resolved params to the page as `result.params`; param-less views
 //! keep the pre-change byte shape.
+//!
+//! Deliberate contract change (#205 sweep Wave B): details fallbacks read
+//! fields through the envelope-unwrapped item payload (`data.item.<field>`),
+//! matching the mapped-component `item={data.item}` contract and the load's
+//! `result.item`.
 
 pub const SPECLESS_CUSTOMERLIST_PAGE: &str = r##"<script lang="ts">
 	import type { PageData } from './$types';
@@ -94,13 +99,13 @@ pub const SPECLESS_CUSTOMERDETAIL_PAGE: &str = r##"<script lang="ts">
 <dl data-testid="info-details">
 	
 	<dt>name</dt>
-	<dd>{data.name}</dd>
+	<dd>{data.item.name}</dd>
 	
 	<dt>email</dt>
-	<dd>{data.email}</dd>
+	<dd>{data.item.email}</dd>
 	
 	<dt>phone</dt>
-	<dd>{data.phone}</dd>
+	<dd>{data.item.phone}</dd>
 	
 </dl>
 
