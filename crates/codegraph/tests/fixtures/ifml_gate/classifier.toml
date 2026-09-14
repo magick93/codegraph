@@ -1,0 +1,4 @@
+# Classifier configuration for the IFML codegen gate.
+# Every key is optional; codelist refs resolve by their `codelist/` path.
+inline_enum_threshold = 20
+required_extensions = []

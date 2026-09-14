@@ -1,0 +1,13 @@
+import "refunds.mox"
+
+actors Refunds {
+    actor Admin
+    actor Agent
+    agent Helper extends Admin
+
+    capability ApproveRefund on RefundRequest
+
+    grant Admin {
+        permit ApproveRefund
+    }
+}

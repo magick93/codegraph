@@ -1,0 +1,30 @@
+# IFML codegen gate domain configuration.
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+api_version = "v1"
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = []
+
+[domains.refunds]
+label = "Refunds"
+schema_dir = "refunds"
+postgres_schema = "refunds"
+entities = ["RefundRequestType"]
+
+[domains.refunds.entity_config.RefundRequestType]
+role = "root"
+
+[domains.refunds.entity_config.RefundRequestType.workflow]
+status_field = "status"
+states = ["draft", "submitted", "approved", "rejected"]
+initial_state = "draft"
+terminal_states = ["approved", "rejected"]
+generate_action_endpoints = true
+
+[domains.refunds.entity_config.RefundRequestType.workflow.transitions]
+draft = ["submitted"]
+submitted = ["approved", "rejected"]

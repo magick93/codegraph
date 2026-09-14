@@ -1,0 +1,122 @@
+domain "refunds" { schema "refunds"; }
+
+import "policy.actor";
+
+view "Home" {
+    label "Refund Portal";
+    landmark: true;
+
+    component "portal" {
+        type: details;
+        data: RefundRequest;
+        fields: [title];
+
+        on browse -> navigate("RefundRequestList");
+        on help -> navigate("HelpModal");
+    }
+}
+
+view "RefundRequestList" {
+    label "Refund Requests";
+
+    component "grid" {
+        type: list;
+        data: RefundRequest;
+        fields: [title, status, amount, urgent];
+        pagination: true;
+
+        on select(row) -> navigate("RefundRequestDetail", {
+            id: row.id
+        });
+    }
+}
+
+view "RefundRequestDetail" {
+    params { id: Uuid };
+    label "Refund Request";
+
+    component "info" {
+        type: details;
+        data: RefundRequest;
+        fields: [title, requesterEmail, amount, urgent, submittedAt, status, reason];
+
+        on edit -> navigate("RefundRequestForm", {
+            id: params.id
+        });
+    }
+}
+
+view "RefundRequestForm" {
+    params { id: Uuid };
+    label "Edit Refund Request";
+
+    component "editor" {
+        type: form;
+        data: RefundRequest;
+        mode: edit;
+
+        field title -> input text {
+            required: true;
+            validations: [len(title) > 2];
+            messages: ["Title too short"];
+        }
+
+        field amount -> input number {
+            required: true;
+        }
+
+        field requesterEmail -> input email;
+
+        field submittedAt -> input datetime;
+
+        field urgent -> input checkbox;
+
+        field status -> input dropdown {
+            values: ["draft", "submitted", "approved", "rejected"];
+        }
+
+        field reason -> input dropdown {
+            values: ["Damaged", "WrongItem", "LateDelivery", "Other"];
+        }
+
+        on save -> navigate("RefundRequestDetail", {
+            id: params.id
+        });
+
+        on cancel -> navigate("RefundRequestList");
+    }
+}
+
+view "HelpModal" {
+    label "Help";
+    modal: true;
+
+    component "help" {
+        type: details;
+        data: RefundRequest;
+        fields: [title];
+    }
+}
+
+view "ReviewQueue" {
+    label "Review Queue";
+    requires: [ApproveRefund];
+
+    component "queue" {
+        type: list;
+        data: RefundRequest;
+        fields: [title, status];
+        pagination: true;
+    }
+}
+
+view "AdminConsole" {
+    label "Admin Console";
+    roles: [Admin];
+
+    component "panel" {
+        type: details;
+        data: RefundRequest;
+        fields: [title];
+    }
+}
