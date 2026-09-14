@@ -169,7 +169,7 @@ async fn verify_api_key(
             raw_key: token.to_string(),
         },
         role: "api_key".to_string(),
-        scopes: crate::api::scope::parse_scopes(
+        scopes: parse_scopes(
             verify.scopes.unwrap_or(serde_json::Value::Array(vec![])),
         ),
     })
@@ -533,4 +533,31 @@ pub mod permission {
     fn has_permission(_auth_info: &AuthInfo, _required: &str) -> bool {
         true
     }
+}
+
+/// Parse the `verify_api_key()` scopes JSONB into the flat string vocabulary
+/// (string scopes pass through; legacy wildcard objects collapse to "*" —
+/// row-level object scopes are enforced by the RLS policies instead (#169)).
+pub fn parse_scopes(value: serde_json::Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    if let Some(s) = item.as_str() {
+                        return Some(s.to_string());
+                    }
+                    let obj = item.as_object()?;
+                    let entity_type = obj.get("entity_type").and_then(|v| v.as_str())?;
+                    let action = obj.get("action").and_then(|v| v.as_str())?;
+                    if entity_type == "*" && action == "*" {
+                        Some("*".to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }

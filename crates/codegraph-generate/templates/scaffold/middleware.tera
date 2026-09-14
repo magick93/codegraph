@@ -203,7 +203,7 @@ async fn verify_api_key(db: &sea_orm::DatabaseConnection, token: &str) -> Result
         role: "api_key".to_string(),
         // Scopes arrive as raw JSONB (string model or legacy wildcard
         // objects) — parsed by the scope module's shared helper.
-        scopes: crate::api::scope::parse_scopes(
+        scopes: parse_scopes(
             verify.scopes.unwrap_or(serde_json::Value::Array(vec![])),
         ),
     })
@@ -292,6 +292,33 @@ async fn verify_jwt(db: &sea_orm::DatabaseConnection, token: &str, jwt_secret: &
         role,
         scopes: Vec::new(),
     })
+}
+
+/// Parse the `verify_api_key()` scopes JSONB into the flat string vocabulary
+/// (string scopes pass through; legacy wildcard objects collapse to "*" —
+/// row-level object scopes are enforced by the RLS policies instead (#169)).
+pub fn parse_scopes(value: serde_json::Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    if let Some(s) = item.as_str() {
+                        return Some(s.to_string());
+                    }
+                    let obj = item.as_object()?;
+                    let entity_type = obj.get("entity_type").and_then(|v| v.as_str())?;
+                    let action = obj.get("action").and_then(|v| v.as_str())?;
+                    if entity_type == "*" && action == "*" {
+                        Some("*".to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn reject_unauthorized(msg: &str) -> (StatusCode, Json<serde_json::Value>) {

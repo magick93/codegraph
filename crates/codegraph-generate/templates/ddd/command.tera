@@ -229,9 +229,9 @@ impl {{ entity_name }}CommandHandler {
     ) -> Result<Uuid, {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
         let mut client = self.client_source.client().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let tx = client.transaction().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
 {% else %}
         let tx = self.db.begin().await?;
 {% endif %}
@@ -248,7 +248,7 @@ impl {{ entity_name }}CommandHandler {
                 }
                 Err(e) => {
                     tx.rollback().await?;
-                    return Err({{ domain | pascal_case }}Error::InternalError(e.to_string()));
+                    return Err({{ domain | pascal_case }}Error::from_repo_err(e));
                 }
                 Ok({{ project.hooks_api_crate }}::HookControl::Continue) => {}
             }
@@ -264,7 +264,7 @@ impl {{ entity_name }}CommandHandler {
                 } else if e.to_string().contains("not found") {
                     {{ domain | pascal_case }}Error::NotFound
                 } else {
-                    {{ domain | pascal_case }}Error::InternalError(e.to_string())
+                    {{ domain | pascal_case }}Error::from_repo_err(e)
                 }
             })?;
 {% else %}
@@ -275,7 +275,7 @@ impl {{ entity_name }}CommandHandler {
                 } else if e.to_string().contains("not found") {
                     {{ domain | pascal_case }}Error::NotFound
                 } else {
-                    {{ domain | pascal_case }}Error::InternalError(e.to_string())
+                    {{ domain | pascal_case }}Error::from_repo_err(e)
                 }
             })?;
 {% endif %}
@@ -291,7 +291,7 @@ impl {{ entity_name }}CommandHandler {
                 }
                 Err(e) => {
                     tx.rollback().await?;
-                    return Err({{ domain | pascal_case }}Error::InternalError(e.to_string()));
+                    return Err({{ domain | pascal_case }}Error::from_repo_err(e));
                 }
                 Ok({{ project.hooks_api_crate }}::HookControl::Continue) => {}
             }
@@ -333,9 +333,9 @@ impl {{ entity_name }}CommandHandler {
     pub async fn update(&self, id: Uuid, cmd: Update{{ entity_name }}Request, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
         let mut client = self.client_source.client().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let tx = client.transaction().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
 {% else %}
         let tx = self.db.begin().await?;
 {% endif %}
@@ -352,7 +352,7 @@ impl {{ entity_name }}CommandHandler {
                 }
                 Err(e) => {
                     tx.rollback().await?;
-                    return Err({{ domain | pascal_case }}Error::InternalError(e.to_string()));
+                    return Err({{ domain | pascal_case }}Error::from_repo_err(e));
                 }
                 Ok({{ project.hooks_api_crate }}::HookControl::Continue) => {}
             }
@@ -365,7 +365,7 @@ impl {{ entity_name }}CommandHandler {
                 if e.to_string().contains("not found") {
                     {{ domain | pascal_case }}Error::NotFound
                 } else {
-                    {{ domain | pascal_case }}Error::InternalError(e.to_string())
+                    {{ domain | pascal_case }}Error::from_repo_err(e)
                 }
             })?;
 
@@ -380,7 +380,7 @@ impl {{ entity_name }}CommandHandler {
                 }
                 Err(e) => {
                     tx.rollback().await?;
-                    return Err({{ domain | pascal_case }}Error::InternalError(e.to_string()));
+                    return Err({{ domain | pascal_case }}Error::from_repo_err(e));
                 }
                 Ok({{ project.hooks_api_crate }}::HookControl::Continue) => {}
             }
@@ -419,9 +419,9 @@ impl {{ entity_name }}CommandHandler {
     pub async fn delete(&self, id: Uuid, source: {{ project.domain_types_crate }}::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
         let mut client = self.client_source.client().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let tx = client.transaction().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
 {% else %}
         let tx = self.db.begin().await?;
 {% endif %}
@@ -438,7 +438,7 @@ impl {{ entity_name }}CommandHandler {
                 }
                 Err(e) => {
                     tx.rollback().await?;
-                    return Err({{ domain | pascal_case }}Error::InternalError(e.to_string()));
+                    return Err({{ domain | pascal_case }}Error::from_repo_err(e));
                 }
                 Ok({{ project.hooks_api_crate }}::HookControl::Continue) => {}
             }
@@ -451,7 +451,7 @@ impl {{ entity_name }}CommandHandler {
                 if e.to_string().contains("not found") {
                     {{ domain | pascal_case }}Error::NotFound
                 } else {
-                    {{ domain | pascal_case }}Error::InternalError(e.to_string())
+                    {{ domain | pascal_case }}Error::from_repo_err(e)
                 }
             })?;
 
@@ -466,7 +466,7 @@ impl {{ entity_name }}CommandHandler {
                 }
                 Err(e) => {
                     tx.rollback().await?;
-                    return Err({{ domain | pascal_case }}Error::InternalError(e.to_string()));
+                    return Err({{ domain | pascal_case }}Error::from_repo_err(e));
                 }
                 Ok({{ project.hooks_api_crate }}::HookControl::Continue) => {}
             }

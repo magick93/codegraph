@@ -603,9 +603,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         .nest("/webhooks", crate::webhook_router::webhook_routes())
 
 
-        // The pooled DB connection as an extension: the permission middleware
-        // runs from per-route layers where State is not available.
-        .layer(axum::extract::Extension(state.db.clone()))
+        // API-key scope enforcement is DB-level (#169): the RESTRICTIVE
+        // scope_enforced_* RLS policies enforce scopes in the same statement
+        // that touches the data, so the permission middleware needs no pooled
+        // DB connection extension.
 
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
 

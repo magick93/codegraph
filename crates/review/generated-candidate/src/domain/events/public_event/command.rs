@@ -161,7 +161,7 @@ impl PublicEventCommandHandler {
                 } else if e.to_string().contains("not found") {
                     EventsError::NotFound
                 } else {
-                    EventsError::InternalError(e.to_string())
+                    EventsError::from_repo_err(e)
                 }
             })?;
 
@@ -191,7 +191,7 @@ impl PublicEventCommandHandler {
                 if e.to_string().contains("not found") {
                     EventsError::NotFound
                 } else {
-                    EventsError::InternalError(e.to_string())
+                    EventsError::from_repo_err(e)
                 }
             })?;
 
@@ -220,7 +220,7 @@ impl PublicEventCommandHandler {
                 if e.to_string().contains("not found") {
                     EventsError::NotFound
                 } else {
-                    EventsError::InternalError(e.to_string())
+                    EventsError::from_repo_err(e)
                 }
             })?;
 

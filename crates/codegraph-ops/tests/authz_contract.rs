@@ -386,7 +386,7 @@ async fn org_isolation_filters_cross_tenant_reads(admin: PgTarget) {
         return;
     }
     let _guard = DB_LOCK.lock().await;
-    let (scratch, key_full_a, _, _, key_full_b, key_creator_a) = setup(&admin).await;
+    let (scratch, key_full_a, _, _, key_full_b, _key_creator_a) = setup(&admin).await;
     let result = probe(
         &admin,
         &scratch,
@@ -615,7 +615,7 @@ async fn in_scope_access_still_works(admin: PgTarget) {
         return;
     }
     let _guard = DB_LOCK.lock().await;
-    let (scratch, key_full_a, key_write_only_a, key_read_only_a, _, key_creator_a) =
+    let (scratch, key_full_a, _key_write_only_a, key_read_only_a, _, key_creator_a) =
         setup(&admin).await;
 
     // Full-wildcard key: reads its org's rows in both pool modes.

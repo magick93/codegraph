@@ -161,7 +161,7 @@ impl ApplicationCommandHandler {
                 } else if e.to_string().contains("not found") {
                     RecruitingError::NotFound
                 } else {
-                    RecruitingError::InternalError(e.to_string())
+                    RecruitingError::from_repo_err(e)
                 }
             })?;
 
@@ -191,7 +191,7 @@ impl ApplicationCommandHandler {
                 if e.to_string().contains("not found") {
                     RecruitingError::NotFound
                 } else {
-                    RecruitingError::InternalError(e.to_string())
+                    RecruitingError::from_repo_err(e)
                 }
             })?;
 
@@ -220,7 +220,7 @@ impl ApplicationCommandHandler {
                 if e.to_string().contains("not found") {
                     RecruitingError::NotFound
                 } else {
-                    RecruitingError::InternalError(e.to_string())
+                    RecruitingError::from_repo_err(e)
                 }
             })?;
 

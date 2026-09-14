@@ -161,7 +161,7 @@ impl RsvpCommandHandler {
                 } else if e.to_string().contains("not found") {
                     RsvpError::NotFound
                 } else {
-                    RsvpError::InternalError(e.to_string())
+                    RsvpError::from_repo_err(e)
                 }
             })?;
 
@@ -191,7 +191,7 @@ impl RsvpCommandHandler {
                 if e.to_string().contains("not found") {
                     RsvpError::NotFound
                 } else {
-                    RsvpError::InternalError(e.to_string())
+                    RsvpError::from_repo_err(e)
                 }
             })?;
 
@@ -220,7 +220,7 @@ impl RsvpCommandHandler {
                 if e.to_string().contains("not found") {
                     RsvpError::NotFound
                 } else {
-                    RsvpError::InternalError(e.to_string())
+                    RsvpError::from_repo_err(e)
                 }
             })?;
 

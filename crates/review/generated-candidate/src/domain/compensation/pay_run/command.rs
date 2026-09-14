@@ -161,7 +161,7 @@ impl PayRunCommandHandler {
                 } else if e.to_string().contains("not found") {
                     CompensationError::NotFound
                 } else {
-                    CompensationError::InternalError(e.to_string())
+                    CompensationError::from_repo_err(e)
                 }
             })?;
 
@@ -191,7 +191,7 @@ impl PayRunCommandHandler {
                 if e.to_string().contains("not found") {
                     CompensationError::NotFound
                 } else {
-                    CompensationError::InternalError(e.to_string())
+                    CompensationError::from_repo_err(e)
                 }
             })?;
 
@@ -220,7 +220,7 @@ impl PayRunCommandHandler {
                 if e.to_string().contains("not found") {
                     CompensationError::NotFound
                 } else {
-                    CompensationError::InternalError(e.to_string())
+                    CompensationError::from_repo_err(e)
                 }
             })?;
 

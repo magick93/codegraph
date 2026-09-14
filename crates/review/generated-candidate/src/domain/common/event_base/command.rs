@@ -161,7 +161,7 @@ impl EventBaseCommandHandler {
                 } else if e.to_string().contains("not found") {
                     CommonError::NotFound
                 } else {
-                    CommonError::InternalError(e.to_string())
+                    CommonError::from_repo_err(e)
                 }
             })?;
 
@@ -191,7 +191,7 @@ impl EventBaseCommandHandler {
                 if e.to_string().contains("not found") {
                     CommonError::NotFound
                 } else {
-                    CommonError::InternalError(e.to_string())
+                    CommonError::from_repo_err(e)
                 }
             })?;
 
@@ -220,7 +220,7 @@ impl EventBaseCommandHandler {
                 if e.to_string().contains("not found") {
                     CommonError::NotFound
                 } else {
-                    CommonError::InternalError(e.to_string())
+                    CommonError::from_repo_err(e)
                 }
             })?;
 

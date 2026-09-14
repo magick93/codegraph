@@ -79,7 +79,7 @@ impl CodeQueryHandler {
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let mut result = self.repo.find_by_id(&tx, id, include_deleted).await
-            .map_err(|e| CommonError::InternalError(e.to_string()))?;
+            .map_err(|e| CommonError::from_repo_err(e))?;
         tx.commit().await?;
 
 
@@ -97,7 +97,7 @@ impl CodeQueryHandler {
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let result = self.repo.list(&tx, page, page_size, filters, include_deleted).await
-            .map_err(|e| CommonError::InternalError(e.to_string()))?;
+            .map_err(|e| CommonError::from_repo_err(e))?;
         tx.commit().await?;
 
         Ok(result)

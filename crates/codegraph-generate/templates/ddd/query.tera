@@ -123,19 +123,19 @@ impl {{ entity_name }}QueryHandler {
     pub async fn find_by_id(&self, id: Uuid{% if is_auditable %}, include_deleted: bool{% endif %}, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Option<{{ entity_name }}Response>, {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
         let mut client = self.client_source.client().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let tx = client.transaction().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let mut result = self.repo.find_by_id(&tx, id{% if is_auditable %}, include_deleted{% endif %}).await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         tx.commit().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
 {% else %}
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let mut result = self.repo.find_by_id(&tx, id{% if is_auditable %}, include_deleted{% endif %}).await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         tx.commit().await?;
 {% endif %}
 
@@ -173,19 +173,19 @@ impl {{ entity_name }}QueryHandler {
     pub async fn find_by_id_scoped(&self, id: Uuid, parent_id: Uuid{% if is_auditable %}, include_deleted: bool{% endif %}, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Option<{{ entity_name }}Response>, {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
         let mut client = self.client_source.client().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let tx = client.transaction().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let result = self.repo.find_by_id_scoped(&tx, id, parent_id{% if is_auditable %}, include_deleted{% endif %}).await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         tx.commit().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
 {% else %}
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let result = self.repo.find_by_id_scoped(&tx, id, parent_id{% if is_auditable %}, include_deleted{% endif %}).await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         tx.commit().await?;
 {% endif %}
         Ok(result)
@@ -197,19 +197,19 @@ impl {{ entity_name }}QueryHandler {
     pub async fn list_filtered(&self, page: u64, page_size: u64, filters: &std::collections::HashMap<String, String>{% if is_auditable %}, include_deleted: bool{% endif %}, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(Vec<{{ entity_name }}Response>, u64), {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
         let mut client = self.client_source.client().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let tx = client.transaction().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let result = self.repo.list(&tx, page, page_size, filters{% if is_auditable %}, include_deleted{% endif %}).await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         tx.commit().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
 {% else %}
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let result = self.repo.list(&tx, page, page_size, filters{% if is_auditable %}, include_deleted{% endif %}).await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         tx.commit().await?;
 {% endif %}
         Ok(result)
@@ -222,31 +222,31 @@ impl {{ entity_name }}QueryHandler {
     pub async fn search(&self, query: &str, page: u64, page_size: u64{% if is_auditable %}, include_deleted: bool{% endif %}, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(Vec<{{ entity_name }}Response>, u64), {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
         let mut client = self.client_source.client().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let tx = client.transaction().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let (ids, total) = self.repo.search_ids(&tx, query, page, page_size{% if is_auditable %}, include_deleted{% endif %}).await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
             if let Some(resp) = self.repo.find_by_id(&tx, id{% if is_auditable %}, include_deleted{% endif %}).await
-                .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?
+                .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?
             {
                 results.push(resp);
             }
         }
         tx.commit().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
 {% else %}
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let (ids, total) = self.repo.search_ids(&tx, query, page, page_size{% if is_auditable %}, include_deleted{% endif %}).await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
             if let Some(resp) = self.repo.find_by_id(&tx, id{% if is_auditable %}, include_deleted{% endif %}).await
-                .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?
+                .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?
             {
                 results.push(resp);
             }
@@ -263,31 +263,31 @@ impl {{ entity_name }}QueryHandler {
     pub async fn semantic_search(&self, embedding: &[f32], limit: u64{% if is_auditable %}, include_deleted: bool{% endif %}, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Vec<{{ entity_name }}Response>, {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
         let mut client = self.client_source.client().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let tx = client.transaction().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let ids = self.repo.semantic_search_ids(&tx, embedding, limit{% if is_auditable %}, include_deleted{% endif %}).await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
             if let Some(resp) = self.repo.find_by_id(&tx, id{% if is_auditable %}, include_deleted{% endif %}).await
-                .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?
+                .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?
             {
                 results.push(resp);
             }
         }
         tx.commit().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
 {% else %}
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let ids = self.repo.semantic_search_ids(&tx, embedding, limit{% if is_auditable %}, include_deleted{% endif %}).await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
             if let Some(resp) = self.repo.find_by_id(&tx, id{% if is_auditable %}, include_deleted{% endif %}).await
-                .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?
+                .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?
             {
                 results.push(resp);
             }
@@ -306,19 +306,19 @@ impl {{ entity_name }}QueryHandler {
     pub async fn find_tree(&self, id: Uuid, max_depth: Option<i32>, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Vec<{% if tree_include %}serde_json::Value{% else %}{{ entity_name }}Response{% endif %}>, {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
         let mut client = self.client_source.client().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let tx = client.transaction().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let rows = self.repo.find_tree(&tx, id, max_depth).await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         tx.commit().await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
 {% else %}
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
         let rows = self.repo.find_tree(&tx, id, max_depth).await
-            .map_err(|e| {{ domain | pascal_case }}Error::InternalError(e.to_string()))?;
+            .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         tx.commit().await?;
 {% endif %}
         Ok(rows)

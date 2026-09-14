@@ -486,14 +486,19 @@ async fn candidate_ddl_rls_has_authenticated_policies() {
         !rls_file.content.contains("auth.uid()"),
         "Unified RLS should NOT use auth.uid() (uses get_current_org_id instead)"
     );
-    // Auditable entities should have API key scope-aware policies
+    // Auditable entities should have DB-enforced scope policies (#169):
+    // RESTRICTIVE policies for both pool roles calling enforce_api_key_scope().
     assert!(
-        rls_file.content.contains("TO api_key"),
-        "Auditable entities should have api_key scope-aware policies"
+        rls_file.content.contains("TO app_user, api_key"),
+        "Scope policies must apply to both pool roles (app_user + api_key)"
     );
     assert!(
-        rls_file.content.contains("check_api_key_scope"),
-        "API key policies should use check_api_key_scope()"
+        rls_file.content.contains("AS RESTRICTIVE"),
+        "Scope policies must be RESTRICTIVE so they AND-combine with org isolation"
+    );
+    assert!(
+        rls_file.content.contains("enforce_api_key_scope"),
+        "Scope policies should use enforce_api_key_scope()"
     );
     assert!(
         rls_file.content.contains("org_isolation_delete"),
@@ -1146,6 +1151,89 @@ async fn ddd_session_context_is_one_round_trip() {
         assert!(
             !content.contains("from_sql_and_values"),
             "{label}: set_config must not ride a parameterised statement (the bundle is inlined)"
+        );
+    }
+}
+
+// === RLS denial → HTTP 403 mapping (#169 phase 4b) ===
+
+#[tokio::test]
+async fn domain_errors_map_rls_denials_to_forbidden() {
+    let tera = test_tera();
+
+    // errors.tera: Forbidden variant with 403 + the DB-denial classifier.
+    let mut ctx = tera::Context::new();
+    ctx.insert("domain", "recruiting");
+    ctx.insert("errors", &Vec::<serde_json::Value>::new());
+    ctx.insert(
+        "project",
+        &serde_json::json!({
+            "generator_name": "codegraph",
+            "persistence_provider": "sea_orm",
+            "hooks_api_crate": null,
+            "database_target": "postgres",
+        }),
+    );
+    let content = tera
+        .render("ddd/errors.tera", &ctx)
+        .expect("errors.tera must render");
+
+    assert!(
+        content.contains("Forbidden("),
+        "errors.tera should define a Forbidden variant"
+    );
+    assert!(
+        content.contains("StatusCode::FORBIDDEN"),
+        "Forbidden must map to HTTP 403"
+    );
+    assert!(
+        content.contains("INSUFFICIENT_SCOPE"),
+        "the classifier must recognise the P0403 INSUFFICIENT_SCOPE payload"
+    );
+    assert!(
+        content.contains("violates row-level security policy"),
+        "the classifier must recognise org-isolation write denials"
+    );
+}
+
+#[tokio::test]
+async fn command_and_query_route_repo_errors_through_the_classifier() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+
+    let cmd = generate::ddd::command::CommandGenerator::new(&std::path::PathBuf::from(
+        "/tmp/hr-graph-test-harness-rls-403-cmd",
+    ))
+    .generate(
+        &mock,
+        "CandidateType",
+        "recruiting",
+        &config,
+        &tera,
+        &test_project_config(),
+    )
+    .await
+    .unwrap();
+    let query = generate::ddd::query::QueryGenerator::new(&std::path::PathBuf::from(
+        "/tmp/hr-graph-test-harness-rls-403-query",
+    ))
+    .generate(
+        &mock,
+        "CandidateType",
+        "recruiting",
+        &config,
+        &tera,
+        &test_project_config(),
+    )
+    .await
+    .unwrap();
+
+    for (label, files) in [("command.rs", cmd), ("query.rs", query)] {
+        let content = &files[0].content;
+        assert!(
+            content.contains("from_repo_err"),
+            "{label}: repo errors must be classified via from_repo_err"
         );
     }
 }

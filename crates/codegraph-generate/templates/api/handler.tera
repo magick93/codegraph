@@ -900,7 +900,18 @@ pub async fn tree(
 
     let repo = crate::domain::{{ domain }}::{{ module_name }}::repository_impl::{{ entity_name }}RepositoryImpl;
     let rows = repo.find_tree(&db, id, params.depth).await
-        .map_err(|e| AppError::internal(e.to_string()).with_correlation_id(correlation_id))?;
+        .map_err(|e| {
+            let msg = e.to_string();
+            let base = if msg.contains("INSUFFICIENT_SCOPE")
+                || msg.contains("ROLE_FORBIDDEN")
+                || msg.contains("violates row-level security policy")
+            {
+                AppError::forbidden(msg)
+            } else {
+                AppError::internal(msg)
+            };
+            base.with_correlation_id(correlation_id)
+        })?;
     db.commit().await
         .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}")))?;
 

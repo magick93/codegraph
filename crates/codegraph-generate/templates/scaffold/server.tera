@@ -535,9 +535,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         // extractor (route-level layers cannot access router state).
         .layer(axum::Extension(state.registry.authorization.clone()))
 {% endif %}
-        // The pooled DB connection as an extension: the permission middleware
-        // runs from per-route layers where State is not available.
-        .layer(axum::extract::Extension(state.db.clone()))
+        // API-key scope enforcement is DB-level (#169): the RESTRICTIVE
+        // scope_enforced_* RLS policies enforce scopes in the same statement
+        // that touches the data, so the permission middleware needs no pooled
+        // DB connection extension.
 {% if has_atproto %}
         .layer(axum::middleware::from_fn({
             let app_ctx = app_ctx.clone();
