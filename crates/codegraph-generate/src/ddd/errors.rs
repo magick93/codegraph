@@ -60,7 +60,8 @@ impl DomainGenerator for ErrorGenerator {
         // Variants the template always emits itself — graph-seeded built-ins
         // (e.g. domain="common" Conflict/NotFound from the metamodel ingest)
         // must not duplicate them (E0428).
-        const TEMPLATE_BUILTIN_VARIANTS: [&str; 3] = ["Conflict", "NotFound", "InternalError"];
+        const TEMPLATE_BUILTIN_VARIANTS: [&str; 4] =
+            ["Conflict", "NotFound", "Forbidden", "InternalError"];
         let domain_errors: Vec<ErrorDef> = all_errors
             .iter()
             .filter(|e| {

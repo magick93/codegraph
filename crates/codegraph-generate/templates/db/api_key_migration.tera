@@ -358,7 +358,7 @@ GRANT EXECUTE ON FUNCTION public.get_api_key_org_id TO api_key;
 GRANT EXECUTE ON FUNCTION public.get_current_api_key_id TO api_key;
 GRANT EXECUTE ON FUNCTION public.check_api_key_scope TO api_key;
 GRANT EXECUTE ON FUNCTION public.check_api_key_scope_by_id TO api_key;
-GRANT EXECUTE ON FUNCTION public.enforce_api_key_scope TO api_key, app_user;
+GRANT EXECUTE ON FUNCTION public.enforce_api_key_scope TO api_key;
 
 -- Comments
 COMMENT ON SCHEMA api_keys_private IS 'Private schema for secure API key storage and management';
@@ -463,6 +463,7 @@ GRANT EXECUTE ON FUNCTION public.get_api_key_org_id TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_current_api_key_id TO app_user;
 GRANT EXECUTE ON FUNCTION public.check_api_key_scope TO app_user;
 GRANT EXECUTE ON FUNCTION public.check_api_key_scope_by_id TO app_user;
+GRANT EXECUTE ON FUNCTION public.enforce_api_key_scope TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_current_org_id TO app_user;
 GRANT EXECUTE ON FUNCTION public.create_api_key TO app_user;
 GRANT EXECUTE ON FUNCTION public.log_api_key_usage TO app_user;

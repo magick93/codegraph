@@ -255,6 +255,7 @@ impl SeedSink for AppStateSeedSink {
                         api_key_id,
                         organization_id,
                         self.user_id,
+                        "owner".to_string(),
                     )
                     .await
                 {
