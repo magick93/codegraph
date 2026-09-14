@@ -81,6 +81,14 @@ pub trait GlobalGenerator: Send + Sync {
         None
     }
 
+    /// Whether this generator must run (and have its files written) before
+    /// the parallel global phase. Scaffolding generators whose output other
+    /// generators consult via if-absent checks return true — the IFML
+    /// skeleton's package.json supersedes the e2e generator's minimal stub.
+    fn sequential_first(&self) -> bool {
+        false
+    }
+
     async fn generate(
         &self,
         db: &dyn GraphQuerier,

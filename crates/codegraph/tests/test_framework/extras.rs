@@ -1,37 +1,19 @@
-//! Gate-owned scaffolding writers for full-stack SvelteKit tests: the
-//! skeleton configs the generator does not emit yet (package.json,
-//! vite.config.ts with the `/api` proxy, svelte.config.js, tsconfig, app
-//! shell), the playwright config, and the ui stub components. Generator
-//! output is never overwritten; see [`write_extras`].
+//! Gate-owned scaffolding writers for full-stack SvelteKit tests: the vite
+//! `/api` proxy (with Bearer injection), the gate playwright config (the
+//! ONLY playwright config), the ui stub components, and the gate-owned
+//! `tests/ifml/sweep-create.spec.ts` sweep assertions.
+//!
+//! The SvelteKit skeleton (package.json, tsconfig, app.html, app.d.ts,
+//! vite/svelte configs) is GENERATOR-PROVIDED (Wave B, G1): the
+//! `ifml-skeleton` generator emits it and the gate does not write it.
+//! Generator output is never overwritten except the files listed as
+//! gate-owned below; see [`write_extras`].
 
 use std::fs;
 use std::path::Path;
 
-const PACKAGE_JSON: &str = r#"{
-  "name": "ifml-gate-svelte",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "devDependencies": {
-    "@playwright/test": "1.62.0",
-    "@sveltejs/adapter-auto": "^4.0.0",
-    "@sveltejs/kit": "^2.20.0",
-    "@sveltejs/vite-plugin-svelte": "^5.0.0",
-    "@types/node": "^22.0.0",
-    "svelte": "^5.56.0",
-    "svelte-check": "^4.1.0",
-    "typescript": "^5.8.0",
-    "vite": "^6.3.5"
-  }
-}
-"#;
-
-const VITE_CONFIG: &str = r#"// Gate-provided scaffolding (Wave A). Wave B moves this into the generator.
+const VITE_CONFIG: &str = r#"// Gate-owned: unlike the generator's skeleton proxy this
+// injects the gate API key (IFML_GATE_API_KEY) as a Bearer header.
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
@@ -58,58 +40,6 @@ export default defineConfig({
 });
 "#;
 
-const SVELTE_CONFIG: &str = r#"// Gate-provided scaffolding (Wave A). Wave B moves this into the generator.
-import adapter from '@sveltejs/adapter-auto';
-import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
-
-/** @type {import('@sveltejs/kit').Config} */
-const config = {
-	preprocess: vitePreprocess(),
-	kit: { adapter: adapter() }
-};
-
-export default config;
-"#;
-
-const TSCONFIG: &str = r#"// Gate-provided scaffolding (Wave A). Wave B moves this into the generator.
-{
-	"extends": "./.svelte-kit/tsconfig.json",
-	"compilerOptions": {
-		"allowJs": true,
-		"checkJs": true,
-		"esModuleInterop": true,
-		"forceConsistentCasingInFileNames": true,
-		"resolveJsonModule": true,
-		"skipLibCheck": true,
-		"sourceMap": true,
-		"strict": true,
-		"moduleResolution": "bundler"
-	}
-}
-"#;
-
-const APP_HTML: &str = r#"<!-- Gate-provided scaffolding (Wave A). Wave B moves this into the generator. -->
-<!doctype html>
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		%sveltekit.head%
-	</head>
-	<body data-sveltekit-preload-data="hover">
-		<div style="display: contents">%sveltekit.body%</div>
-	</body>
-</html>
-"#;
-
-const APP_D_TS: &str = r#"// Gate-provided scaffolding (Wave A). Wave B moves this into the generator.
-declare global {
-	namespace App {}
-}
-
-export {};
-"#;
-
 const PLAYWRIGHT_CONFIG: &str = r#"// Gate-owned Playwright config (supersedes the generator's minimal config
 // until G1 adds webServer + JSON reporter support to the generator).
 import { defineConfig } from '@playwright/test';
@@ -133,36 +63,92 @@ export default defineConfig({
 });
 "#;
 
-const SKELETON_README: &str = r#"# Gate-provided scaffolding
+/// Gate-owned sweep assertions (#205 Wave A). Written (overwritten) beside
+/// the generated specs after every generation so Wave B fixes them by
+/// changing GENERATORS, never specs. The generator's stale-spec cleanup
+/// removes this file during regeneration; the gate rewrites it afterwards.
+const SWEEP_SPEC: &str = r#"// Gate-owned sweep assertions (issue #205 Wave A). DO NOT EDIT inside the
+// generated tree — this file is rewritten by the gate harness
+// (crates/codegraph/tests/test_framework/extras.rs).
+import { test, expect } from '@playwright/test';
 
-The files in this directory tree marked "Gate-provided scaffolding (Wave A)"
-are written by the IFML codegen validation gate (`crates/codegraph/tests/
-ifml_codegen_gate.rs`), not by the generator. Wave B (G1) moves the skeleton
-into the generator; afterwards the gate stops writing these files.
+const COLLECTION = '/api/v1/refunds/refund-request';
 
-Gate-owned (always overwritten): `package.json`, `vite.config.ts`,
-`playwright.config.ts`, `src/lib/components/ui/**` stub components. Written
-only when absent: `svelte.config.js`, `tsconfig.json`, `src/app.html`,
-`src/app.d.ts`. Everything else is generator output.
+test.describe('IFML sweep', () => {
+	test('create round trip persists a new refund request from the plain form route', async ({
+		page,
+		request
+	}) => {
+		await page.goto('/refundrequestform');
+		const form = page.getByTestId('editor-form');
+		await form.locator('[name="title"]').fill('Sweep create');
+		await form.locator('[name="amount"]').fill('4242');
+		const submitRequest = page.waitForRequest(
+			(req) => req.url().includes('/refund-request') && ['POST', 'PUT'].includes(req.method()),
+			{ timeout: 10_000 }
+		);
+		await form.locator('button').first().click();
+		const submit = await submitRequest;
+		expect(
+			`${submit.method()} ${new URL(submit.url()).pathname}`,
+			`create mode (no ?id) must submit 'POST ${COLLECTION}' with no trailing item id`
+		).toBe(`POST ${COLLECTION}`);
+		await page.waitForURL(/\/refundrequestdetail/);
+		const response = await request.get(COLLECTION);
+		expect(response.ok(), `GET ${COLLECTION} must succeed`).toBeTruthy();
+		const body = await response.json();
+		const items: Array<{ title?: string }> = Array.isArray(body) ? body : (body.data ?? []);
+		expect(
+			items.some((item) => item.title === 'Sweep create'),
+			`the created item must persist in ${COLLECTION}`
+		).toBe(true);
+	});
+
+	test('details shows the persisted values of the loaded item', async ({ page, request }) => {
+		const created = await (
+			await request.post(COLLECTION, {
+				data: {
+					title: 'Sweep details',
+					amount: 42,
+					requesterEmail: 'sweep@example.com',
+					submittedAt: '2024-01-15T10:30:00Z',
+					urgent: true,
+					status: 'draft',
+					reason: 'Damaged'
+				}
+			})
+		).json();
+		const id = created.data?.id ?? created.id;
+		expect(id, `POST ${COLLECTION} must return the created id`).toBeTruthy();
+		await page.goto(`/refundrequestdetail?id=${id}`);
+		await expect(page.getByTestId('card')).toContainText('Sweep details');
+	});
+});
 "#;
 
-/// Write the SvelteKit skeleton the generator does not emit yet. Generator
-/// output is never overwritten; the ui stubs, the playwright config, and
-/// package.json are gate-owned and refreshed every run. package.json must be
-/// gate-owned because the IFML e2e generator emits a minimal e2e-only stub
-/// (playwright + typescript) whenever it is absent, which cannot build the
-/// SvelteKit app.
+const SKELETON_README: &str = r#"# Gate-provided scaffolding
+
+The files in this directory tree marked "Gate-owned" are written by the IFML
+codegen validation gate (`crates/codegraph/tests/ifml_codegen_gate.rs`), not
+by the generator. The SvelteKit skeleton (package.json with the SvelteKit
+toolchain, tsconfig, src/app.html, src/app.d.ts, vite/svelte configs) is
+GENERATOR-PROVIDED since Wave B (G1): the `ifml-skeleton` generator emits it
+and the gate no longer writes any skeleton parts.
+
+Gate-owned (always overwritten): `vite.config.ts` (the `/api` proxy with the
+gate's Bearer key injection), `playwright.config.ts` (the ONLY playwright
+config), `src/lib/components/ui/**` stub components, and
+`tests/ifml/sweep-create.spec.ts` (the #205 sweep assertions). Everything
+else is generator output.
+"#;
+
+/// Write the gate-owned scaffolding. The SvelteKit skeleton (package.json,
+/// vite/svelte configs, tsconfig.json, src/app.html, src/app.d.ts) is NOT
+/// written here — the `ifml-skeleton` generator provides it (Wave B, G1).
+/// Generator output is never overwritten; the vite config (proxy Bearer
+/// injection), the playwright config, the ui stubs, and the sweep spec are
+/// gate-owned and refreshed every run.
 pub fn write_extras(svelte: &Path) -> Result<(), String> {
-    let write_if_absent = |rel: &str, content: &str| -> Result<(), String> {
-        let path = svelte.join(rel);
-        if !path.exists() {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            fs::write(&path, content).map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    };
     let write_owned = |rel: &str, content: &str| -> Result<(), String> {
         let path = svelte.join(rel);
         if let Some(parent) = path.parent() {
@@ -170,15 +156,15 @@ pub fn write_extras(svelte: &Path) -> Result<(), String> {
         }
         fs::write(&path, content).map_err(|e| e.to_string())
     };
-    write_owned("package.json", PACKAGE_JSON)?;
     write_owned("vite.config.ts", VITE_CONFIG)?;
-    write_if_absent("svelte.config.js", SVELTE_CONFIG)?;
-    write_if_absent("tsconfig.json", TSCONFIG)?;
-    write_if_absent("src/app.html", APP_HTML)?;
-    write_if_absent("src/app.d.ts", APP_D_TS)?;
 
     // Gate-owned playwright config: webServer (vite preview) + JSON reporter.
+    // The generator's minimal e2e-only config (written only when absent) is
+    // superseded on every run.
     write_owned("playwright.config.ts", PLAYWRIGHT_CONFIG)?;
+
+    // Gate-owned #205 sweep assertions (create round trip + details values).
+    write_owned("tests/ifml/sweep-create.spec.ts", SWEEP_SPEC)?;
 
     // Gate-owned stub components for the shadcn-svelte pack. They accept the
     // props the generator passes to mapped components (data, fields, testid,
