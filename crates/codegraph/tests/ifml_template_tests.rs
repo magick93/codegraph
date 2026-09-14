@@ -222,7 +222,7 @@ async fn form_spec_renders_typed_inputs() {
     let page = read(&svelte, "src/routes/customeredit/+page.svelte");
 
     assert!(
-        page.contains("<form data-testid=\"editor-form\" on:submit={submit_editor}>"),
+        page.contains("<form data-testid=\"editor-form\" onsubmit={submit_editor}>"),
         "{page}"
     );
     assert!(
@@ -233,27 +233,34 @@ async fn form_spec_renders_typed_inputs() {
     );
     assert!(
         page.contains(
-            "<input name=\"name\" type=\"text\" required data-validate=\"len(name) > 2\" />"
+            "<input name=\"name\" type=\"text\" value={editor_form_state.name} required data-validate=\"len(name) > 2\" />"
         ),
         "{page}"
     );
     assert!(
-        page.contains("<input name=\"email\" type=\"email\" />"),
+        page.contains("<input name=\"email\" type=\"email\" value={editor_form_state.email} />"),
         "{page}"
     );
     assert!(
-        page.contains("<input name=\"start\" type=\"datetime-local\" />"),
+        page.contains(
+            "<input name=\"start\" type=\"datetime-local\" value={editor_form_state.start} />"
+        ),
         "{page}"
     );
     assert!(
-        page.contains("<textarea name=\"bio\"></textarea>"),
+        page.contains("<textarea name=\"bio\" value={editor_form_state.bio}></textarea>"),
         "{page}"
     );
     assert!(
-        page.contains("<input name=\"active\" type=\"checkbox\" />"),
+        page.contains(
+            "<input name=\"active\" type=\"checkbox\" checked={editor_form_state.active === true} />"
+        ),
         "{page}"
     );
-    assert!(page.contains("<select name=\"tier\">"), "{page}");
+    assert!(
+        page.contains("<select name=\"tier\" value={editor_form_state.tier}>"),
+        "{page}"
+    );
     assert!(
         page.contains("<option value=\"gold\">gold</option>"),
         "{page}"
@@ -313,6 +320,13 @@ path = "$lib/components/CustomerForm.svelte"
         page.contains("import DataTable from '$lib/components/DataTable.svelte';"),
         "{page}"
     );
+    assert!(page.contains("<h1>Customers</h1>"), "{page}");
+    let heading = page.find("<h1>").unwrap();
+    let invocation = page.find("<DataTable").unwrap();
+    assert!(
+        heading < invocation,
+        "heading renders above the mapped component: {page}"
+    );
     assert!(page.contains("<DataTable"), "{page}");
     assert!(page.contains("data={data.items}"), "{page}");
     assert!(page.contains("fields={['name', 'status']}"), "{page}");
@@ -334,7 +348,7 @@ path = "$lib/components/CustomerForm.svelte"
         "{form_page}"
     );
     assert!(
-        form_page.contains("on:submit={submit_editor}"),
+        form_page.contains("onsubmit={submit_editor}"),
         "{form_page}"
     );
     assert!(
@@ -388,9 +402,15 @@ view "CustomerEdit" {
     );
     assert!(
         page.contains(
-            "const response = await fetch(`/api/v1/sales/customer/${params.customerId}`, {"
+            "const viewParams = $derived((data.params ?? {}) as Record<string, string>);"
         ),
         "{page}"
+    );
+    assert!(
+        page.contains(
+            "const response = await fetch(`/api/v1/sales/customer/${viewParams.customerId}`, {"
+        ),
+        "edit submits must read the id from the query-param viewParams: {page}"
     );
     assert!(page.contains("method: 'PUT'"), "{page}");
     assert!(page.contains("goto(\"/customerlist\")"), "{page}");
@@ -398,7 +418,7 @@ view "CustomerEdit" {
         !page.contains("checkValidity"),
         "no-message forms must keep the plain submit handler: {page}"
     );
-    assert!(page.contains("on:submit={submit_editor}"), "{page}");
+    assert!(page.contains("onsubmit={submit_editor}"), "{page}");
     assert!(
         page.contains("<span class=\"error\" data-testid=\"editor-error\">{formError}</span>"),
         "{page}"
@@ -412,14 +432,61 @@ view "CustomerEdit" {
 
     let load = read(&svelte, "src/routes/customeredit/+page.ts");
     assert!(
-        load.contains(
-            "const customerId = url.searchParams.get('customerId') ?? params.customerId;"
-        ),
-        "{load}"
+        load.contains("const customerId = viewParams['customerId'];"),
+        "load resolves params from the query string only: {load}"
     );
     assert!(
         load.contains("`/api/v1/sales/customer/${ customerId }`"),
         "{load}"
+    );
+}
+
+#[tokio::test]
+async fn mapped_table_with_select_event_emits_svelte5_onselect_prop() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+kind = "list"
+path = "$lib/components/DataTable.svelte"
+export = "DataTable"
+testids = { root = "data-table", row = "data-row" }
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_mappings(dir.path(), SPECLESS_IFML, Some(&mappings)).await;
+    let page = read(&svelte, "src/routes/customerlist/+page.svelte");
+
+    assert!(
+        page.contains("onselect={comp_grid_select}"),
+        "row-select handlers must ride the Svelte 5 event-property form so components receive them: {page}"
+    );
+    assert!(
+        !page.contains("on:select"),
+        "on:select directives are dropped on components: {page}"
+    );
+}
+
+#[tokio::test]
+async fn form_payload_coerces_typed_values_from_dsl_input_types() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), SPECFUL_IFML).await;
+    let page = read(&svelte, "src/routes/customeredit/+page.svelte");
+    assert!(
+        page.contains("payload.active = formData.active === 'on';"),
+        "checkbox inputs coerce to booleans: {page}"
+    );
+    assert!(
+        page.contains(
+            "payload.start = formData.start === '' ? null : new Date(String(formData.start)).toISOString();"
+        ),
+        "datetime inputs coerce to ISO strings: {page}"
+    );
+    assert!(
+        page.contains("body: JSON.stringify(payload)"),
+        "the submit body uses the coerced payload: {page}"
     );
 }
 
@@ -485,7 +552,7 @@ view "CustomerEdit" {
 
     assert!(
         page.contains(
-            "<input name=\"title\" type=\"text\" required data-validate=\"len(title) > 2\" data-validate-message=\"Title too short\" />"
+            "<input name=\"title\" type=\"text\" value={editor_form_state.title} required data-validate=\"len(title) > 2\" data-validate-message=\"Title too short\" />"
         ),
         "{page}"
     );
@@ -520,7 +587,15 @@ view "CustomerForm" {
     let page = read(&svelte, "src/routes/customerform/+page.svelte");
 
     assert!(
-        page.contains("<form data-testid=\"editor-form\" on:submit={submit_editor}>"),
+        page.contains("<form data-testid=\"editor-form\" onsubmit={submit_editor}>"),
+        "{page}"
+    );
+    assert!(
+        page.contains("<input name=\"name\" value={editor_form_state.name} />"),
+        "form inputs pre-fill from the loaded entity: {page}"
+    );
+    assert!(
+        page.contains("<input name=\"email\" value={editor_form_state.email} />"),
         "{page}"
     );
     assert!(
@@ -882,7 +957,9 @@ async fn role_guarded_view_emits_load_guard_and_roles_helper() {
     );
     assert!(load.contains("const roles = currentRoles();"), "{load}");
     assert!(
-        load.contains("if (viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {"),
+        load.contains(
+            "if (browser && viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {"
+        ),
         "{load}"
     );
     assert!(
@@ -966,7 +1043,7 @@ async fn requires_guarded_view_emits_can_checks_and_capability_roles_helper() {
         "{load}"
     );
     assert!(
-        load.contains("if (viewRequires.length && !viewRequires.some((c) => can(c))) {"),
+        load.contains("if (browser && viewRequires.length && !viewRequires.some((c) => can(c))) {"),
         "{load}"
     );
     assert!(
@@ -1293,7 +1370,7 @@ async fn workflow_view_renders_state_badges() {
     let list = read(&svelte, "src/routes/customerlist/+page.svelte");
     assert!(
         list.contains(
-            "<td><span class=\"workflow-state\" data-testid=\"grid-state\" data-workflow-state={item.status} data-workflow-terminal={['done'].includes(item.status) ? \"true\" : \"false\"}>{item.status}</span></td>"
+            "<td><span class=\"workflow-state\" data-testid=\"grid-state\" data-workflow-state={item.status} data-workflow-terminal={['done'].includes(item.status as string) ? \"true\" : \"false\"}>{item.status}</span></td>"
         ),
         "list rows must carry a per-row state badge: {list}"
     );
@@ -1301,17 +1378,23 @@ async fn workflow_view_renders_state_badges() {
     let details = read(&svelte, "src/routes/customerdetail/+page.svelte");
     assert!(
         details.contains(
-            "<span class=\"workflow-state\" data-testid=\"info-state\" data-workflow-state={data.status} data-workflow-terminal={['done'].includes(data.status) ? \"true\" : \"false\"}>{data.status}</span>"
+            "<span class=\"workflow-state\" data-testid=\"info-state\" data-workflow-state={data.item?.workflow_state?.current_state} data-workflow-terminal={['done'].includes(data.item?.workflow_state?.current_state as string) ? \"true\" : \"false\"}>{data.item?.workflow_state?.current_state}</span>"
         ),
-        "details pages must carry a single state badge: {details}"
+        "details badges read the merged workflow state: {details}"
     );
 
     let form = read(&svelte, "src/routes/customeredit/+page.svelte");
     assert!(
         form.contains(
-            "<span class=\"workflow-state\" data-testid=\"editor-state\" data-workflow-state={data.formData?.status} data-workflow-terminal={['done'].includes(data.formData?.status) ? \"true\" : \"false\"}>{data.formData?.status}</span>"
+            "<span class=\"workflow-state\" data-testid=\"editor-state\" data-workflow-state={editor_form_state.workflow_state?.current_state} data-workflow-terminal={['done'].includes(editor_form_state.workflow_state?.current_state as string) ? \"true\" : \"false\"}>{editor_form_state.workflow_state?.current_state}</span>"
         ),
-        "form pages must carry a single optional-chained state badge: {form}"
+        "form badges read the typed form state's merged workflow state: {form}"
+    );
+    assert!(
+        form.contains(
+            "const editor_form_state = $derived((data.formData ?? {}) as Record<string, any>);"
+        ),
+        "the form state const must be typed so property access typechecks: {form}"
     );
 }
 

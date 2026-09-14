@@ -603,10 +603,11 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         ctx.workers_topology,
     );
 
-    // Clean stale IFML route directories from previous runs.  The IFML-only
-    // path (`run_ifml_generators`) handles this per framework with the full
-    // set of active views from the current model; the monolithic pipeline
-    // regenerates routes in place, so nothing to clean here.
+    // Clean stale IFML route directories from previous runs.  Both the
+    // IFML-only path (`run_ifml_generators`) and the full pipeline clean per
+    // framework with the active views from the current model, so removed
+    // views do not leave stale `src/routes/{view}` dirs behind.
+    clean_stale_ifml_output(&ctx).await;
 
     // Clean generated migration files (seq >= 10) left by previous runs.
     clean_stale_migrations(&ctx);
@@ -1483,6 +1484,42 @@ fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn GlobalGene
     }
 
     global_gens
+}
+
+/// Clean stale IFML route directories for the full pipeline path: mirrors
+/// `run_ifml_generators` — per configured framework, only when the build
+/// plan includes that framework's `ifml_route` generator, and only when the
+/// IFML model has at least one view (an empty model means nothing is
+/// IFML-owned, so nothing may be removed).
+async fn clean_stale_ifml_output(ctx: &GeneratorContext<'_>) {
+    let frameworks = if ctx.ifml_frameworks.is_empty() {
+        vec!["svelte".to_string()]
+    } else {
+        ctx.ifml_frameworks.clone()
+    };
+    let route_frameworks: Vec<&String> = frameworks
+        .iter()
+        .filter(|fw| ctx.plan_has_global(&format!("ifml_route_{}", fw)))
+        .collect();
+    if route_frameworks.is_empty() {
+        return;
+    }
+    let querier = ifml::IfmlGraphQuerier::new(ctx.db());
+    let Ok(model) = querier.get_ifml_model().await else {
+        return;
+    };
+    if model.view_containers.is_empty() {
+        return;
+    }
+    let active_views: Vec<String> = model
+        .view_containers
+        .iter()
+        .map(|vc| vc.name.clone())
+        .collect();
+    for fw in route_frameworks {
+        let fw_output = ctx.output_dir.join(fw);
+        clean_stale_ifml_routes(&fw_output, fw, &active_views);
+    }
 }
 
 /// Clean generated migration files (seq >= 10) from previous runs.  New runs

@@ -235,10 +235,18 @@ impl<'a> IfmlGraphQuerier<'a> {
             .iter()
             .map(|p| (p.name.clone(), p.rust_field_type.clone()))
             .collect();
-        Ok(comp
-            .fields
-            .clone()
-            .unwrap_or_default()
+        // Typed form specs declare fields outside `fields`; fall back to the
+        // spec's field names so fixtures and payload typing resolve too.
+        let field_names = match comp.fields.clone().unwrap_or_default() {
+            fields if !fields.is_empty() => fields,
+            _ => match parse_component_spec(comp.spec.as_deref()) {
+                Some(codegraph_ifml_dsl::ComponentSpec::Form(form)) => {
+                    form.fields.iter().map(|f| f.name.clone()).collect()
+                }
+                _ => Vec::new(),
+            },
+        };
+        Ok(field_names
             .iter()
             .filter_map(|f| props_by_name.get(f).map(|t| (f.clone(), t.clone())))
             .collect())

@@ -4,6 +4,7 @@ import { error } from '@sveltejs/kit';
 {% endif %}
 {%- if view_roles or view_requires %}
 import { redirect } from '@sveltejs/kit';
+import { browser } from '$app/environment';
 {%- if view_roles %}
 import { currentRoles } from '$lib/roles';
 {%- endif %}
@@ -21,23 +22,23 @@ export const load: PageLoad = async ({ params, url, fetch }) => {
 	const roles = currentRoles();
 {%- endif %}
 {%- if view_requires %}
-	if (viewRequires.length && !viewRequires.some((c) => can(c))) {
+	if (browser && viewRequires.length && !viewRequires.some((c) => can(c))) {
 		throw redirect(303, '{{ denial_target }}');
 	}
 {%- endif %}
 {%- if view_roles %}
-	if (viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {
+	if (browser && viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {
 		throw redirect(303, '{{ denial_target }}');
 	}
 {%- endif %}
 {%- endif %}
 	const result: Record<string, unknown> = {};
-{%- if param_defaults %}
-	const paramDefaults: Record<string, string> = {};
-{%- for pd in param_defaults %}
-	paramDefaults['{{ pd.name }}'] = url.searchParams.get('{{ pd.name }}') ?? params.{{ pd.name }} ?? {{ pd.default }};
+{%- if view_params %}
+	const viewParams: Record<string, string> = {};
+{%- for p in view_params %}
+	viewParams['{{ p.name }}'] = url.searchParams.get('{{ p.name }}'){% if p.default %} ?? {{ p.default }}{% else %} ?? ''{% endif %};
 {%- endfor %}
-	result.params = paramDefaults;
+	result.params = viewParams;
 {%- endif %}
 {% for comp in components %}
 {%- if comp.fetch_list %}
@@ -48,22 +49,40 @@ export const load: PageLoad = async ({ params, url, fetch }) => {
 	const {{ comp.name }}Data = await {{ comp.name }}Response.json();
 	result.items = Array.isArray({{ comp.name }}Data) ? {{ comp.name }}Data : {{ comp.name }}Data.data ?? [];
 {%- elif comp.fetch_item %}
-	const {{ comp.id_param }} = url.searchParams.get('{{ comp.id_param }}') ?? params.{{ comp.id_param }}{% if comp.id_default %} ?? {{ comp.id_default }}{% endif %};
+	const {{ comp.id_param }} = viewParams['{{ comp.id_param }}'];
 	if ({{ comp.id_param }}) {
 		const {{ comp.name }}Response = await fetch(`{{ comp.api.base_path }}/${ {{ comp.id_param }} }`);
 		if (!{{ comp.name }}Response.ok) {
 			error({{ comp.name }}Response.status, 'Failed to load {{ comp.entity | lower }}');
 		}
-		result.item = await {{ comp.name }}Response.json();
+		const {{ comp.name }}Json = await {{ comp.name }}Response.json();
+		const {{ comp.name }}Item = {{ comp.name }}Json.data ?? {{ comp.name }}Json;
+{%- if comp.workflow %}
+		const {{ comp.name }}WfResponse = await fetch(`{{ comp.api.base_path }}/${ {{ comp.id_param }} }/workflow`);
+		if ({{ comp.name }}WfResponse.ok) {
+			const {{ comp.name }}WfJson = await {{ comp.name }}WfResponse.json();
+			{{ comp.name }}Item.workflow_state = {{ comp.name }}WfJson.data ?? {{ comp.name }}WfJson;
+		}
+{%- endif %}
+		result.item = {{ comp.name }}Item;
 	}
 {%- elif comp.fetch_form %}
-	const {{ comp.id_param }} = url.searchParams.get('{{ comp.id_param }}') ?? params.{{ comp.id_param }}{% if comp.id_default %} ?? {{ comp.id_default }}{% endif %};
+	const {{ comp.id_param }} = viewParams['{{ comp.id_param }}'];
 	if ({{ comp.id_param }}) {
 		const {{ comp.name }}Response = await fetch(`{{ comp.api.base_path }}/${ {{ comp.id_param }} }`);
 		if (!{{ comp.name }}Response.ok) {
 			error({{ comp.name }}Response.status, 'Failed to load {{ comp.entity | lower }}');
 		}
-		result.formData = await {{ comp.name }}Response.json();
+		const {{ comp.name }}Json = await {{ comp.name }}Response.json();
+		const {{ comp.name }}Data = {{ comp.name }}Json.data ?? {{ comp.name }}Json;
+{%- if comp.workflow %}
+		const {{ comp.name }}WfResponse = await fetch(`{{ comp.api.base_path }}/${ {{ comp.id_param }} }/workflow`);
+		if ({{ comp.name }}WfResponse.ok) {
+			const {{ comp.name }}WfJson = await {{ comp.name }}WfResponse.json();
+			{{ comp.name }}Data.workflow_state = {{ comp.name }}WfJson.data ?? {{ comp.name }}WfJson;
+		}
+{%- endif %}
+		result.formData = {{ comp.name }}Data;
 	}
 {%- endif %}
 {%- endfor %}
