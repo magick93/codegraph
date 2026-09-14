@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/common/identifier",
 
     tag = "Identifier",
+    operation_id = "common_identifier_create",
     request_body(
         content = CreateIdentifierBody,
         description = "A single Identifier object or an array of Identifier objects",
@@ -154,6 +155,7 @@ pub async fn create(
 /// Get Identifier by ID.
 #[utoipa::path(
     get,
+    operation_id = "common_identifier_get_by_id",
 
     path = "/api/v1/common/identifier/{identifier_id}",
 
@@ -206,6 +208,7 @@ pub async fn get_by_id(
     params(("identifier_id" = Uuid, Path, description = "Identifier ID")),
 
     tag = "Identifier",
+    operation_id = "common_identifier_update",
     request_body = UpdateIdentifierRequest,
     responses(
         (status = 200, description = "Updated", body = IdentifierResponse),
@@ -263,6 +266,7 @@ pub async fn update(
     params(("identifier_id" = Uuid, Path, description = "Identifier ID")),
 
     tag = "Identifier",
+    operation_id = "common_identifier_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -299,6 +303,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -337,6 +342,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "Identifier",
+    operation_id = "common_identifier_list",
     responses(
         (status = 200, description = "OK", body = Vec<IdentifierResponse>),
     )

@@ -57,6 +57,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/recruiting/candidate",
 
     tag = "Candidate",
+    operation_id = "recruiting_candidate_create",
     request_body(
         content = CreateCandidateBody,
         description = "A single Candidate object or an array of Candidate objects",
@@ -156,6 +157,7 @@ pub async fn create(
 /// Get Candidate by ID.
 #[utoipa::path(
     get,
+    operation_id = "recruiting_candidate_get_by_id",
 
     path = "/api/v1/recruiting/candidate/{candidate_id}",
 
@@ -267,6 +269,7 @@ pub async fn get_by_id(
     params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
 
     tag = "Candidate",
+    operation_id = "recruiting_candidate_update",
     request_body = UpdateCandidateRequest,
     responses(
         (status = 200, description = "Updated", body = CandidateResponse),
@@ -318,6 +321,7 @@ pub async fn update(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -377,6 +381,7 @@ const ALLOWED_INCLUDE_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "Candidate",
+    operation_id = "recruiting_candidate_list",
     responses(
         (status = 200, description = "OK", body = Vec<CandidateResponse>),
     )

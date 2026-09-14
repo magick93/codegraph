@@ -8,7 +8,7 @@ const BASE_PATH = '/common/distribution-base';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
@@ -16,6 +16,8 @@ function testData(): Record<string, unknown> {
     'description': 'Test Description',
     'end_date': '2025-01-15',
     'start_date': '2025-01-15',
+
+
   };
 }
 
@@ -23,6 +25,8 @@ test.describe('DistributionBase Employee View', () => {
   let createdId: string;
 
   test.beforeAll(async ({ orgContext }) => {
+
+
 
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());

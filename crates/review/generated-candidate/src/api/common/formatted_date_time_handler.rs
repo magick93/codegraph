@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/common/formatted-date-time",
 
     tag = "FormattedDateTime",
+    operation_id = "common_formatted_date_time_create",
     request_body(
         content = CreateFormattedDateTimeBody,
         description = "A single FormattedDateTime object or an array of FormattedDateTime objects",
@@ -154,6 +155,7 @@ pub async fn create(
 /// Get FormattedDateTime by ID.
 #[utoipa::path(
     get,
+    operation_id = "common_formatted_date_time_get_by_id",
 
     path = "/api/v1/common/formatted-date-time/{formatted_date_time_id}",
 
@@ -206,6 +208,7 @@ pub async fn get_by_id(
     params(("formatted_date_time_id" = Uuid, Path, description = "FormattedDateTime ID")),
 
     tag = "FormattedDateTime",
+    operation_id = "common_formatted_date_time_update",
     request_body = UpdateFormattedDateTimeRequest,
     responses(
         (status = 200, description = "Updated", body = FormattedDateTimeResponse),
@@ -263,6 +266,7 @@ pub async fn update(
     params(("formatted_date_time_id" = Uuid, Path, description = "FormattedDateTime ID")),
 
     tag = "FormattedDateTime",
+    operation_id = "common_formatted_date_time_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -299,6 +303,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -331,6 +336,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "FormattedDateTime",
+    operation_id = "common_formatted_date_time_list",
     responses(
         (status = 200, description = "OK", body = Vec<FormattedDateTimeResponse>),
     )

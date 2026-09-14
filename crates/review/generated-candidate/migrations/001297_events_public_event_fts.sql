@@ -17,13 +17,13 @@ RETURNS TRIGGER AS $$
 BEGIN
     NEW.search_tsv :=
 
-        setweight(to_tsvector('english', COALESCE(NEW.title, '')), 'D') ||
-
-
         setweight(to_tsvector('english', COALESCE(NEW.family_name, '')), 'D') ||
 
 
-        setweight(to_tsvector('english', COALESCE(NEW.given_name, '')), 'D')
+        setweight(to_tsvector('english', COALESCE(NEW.given_name, '')), 'D') ||
+
+
+        setweight(to_tsvector('english', COALESCE(NEW.title, '')), 'D')
 
     ;
     RETURN NEW;
@@ -39,13 +39,13 @@ CREATE TRIGGER trg_public_event_search_tsv
 UPDATE events.public_event
 SET search_tsv =
 
-    setweight(to_tsvector('english', COALESCE(title, '')), 'D') ||
-
-
     setweight(to_tsvector('english', COALESCE(family_name, '')), 'D') ||
 
 
-    setweight(to_tsvector('english', COALESCE(given_name, '')), 'D')
+    setweight(to_tsvector('english', COALESCE(given_name, '')), 'D') ||
+
+
+    setweight(to_tsvector('english', COALESCE(title, '')), 'D')
 
 ;
 

@@ -4,8 +4,29 @@
 import { test, expect } from '@playwright/test';
 import { PublicEventFixture } from '../../fixtures/events/events_public_event';
 
+import { uniqueSuffix } from '../../test-utils';
+
+
 
 const authToken = process.env.TEST_AUTH_TOKEN || '';
+
+
+// Rows created by the Create/Update suites are removed in afterAll —
+// children first, then the FK parent rows captured in beforeAll — so
+// repeated runs don't accumulate orphans. 404/403 responses are ignored:
+// the row is already gone or the caller may not delete it.
+const createdIds: string[] = [];
+
+
+
+
+test.afterAll(async ({ request }) => {
+  for (const id of createdIds) {
+    await request.delete(`/api/v1/events/public-event/${id}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+  }
+});
 
 
 test.describe('PublicEvent — Create', () => {
@@ -18,6 +39,7 @@ test.describe('PublicEvent — Create', () => {
     expect(response.status()).toBe(201);
     const { data } = await response.json();
     expect(data).toHaveProperty('id');
+    createdIds.push(data.id);
 
 
 
@@ -83,6 +105,63 @@ test.describe('PublicEvent — Read', () => {
         expect(response.status()).toBe(404);
   });
 });
+
+
+
+
+test.describe('PublicEvent — Update', () => {
+  test('PUT /api/v1/events/public-event/:id updates a PublicEvent', async ({ request }) => {
+    const created = await request.post('/api/v1/events/public-event', {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      data: PublicEventFixture.valid(),
+    });
+    expect(created.status()).toBe(201);
+    const { data: createdData } = await created.json();
+    createdIds.push(createdData.id);
+
+    // A fresh unique value proves the update reached storage, not just the echo.
+    const base = "test";
+    const newValue = `${base} ${uniqueSuffix()}`;
+    const response = await request.put(`/api/v1/events/public-event/${createdData.id}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      data: { familyName: newValue },
+    });
+    expect(response.status()).toBe(200);
+    const { data } = await response.json();
+    expect(data.familyName).toBe(newValue);
+
+    const check = await request.get(`/api/v1/events/public-event/${createdData.id}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+    expect(check.status()).toBe(200);
+    const checkData = await check.json();
+    expect(checkData.data.familyName).toBe(newValue);
+    // The single-field update must not disturb the other required fields.
+
+
+
+
+
+    expect(checkData.data.givenName).toBe(createdData.givenName);
+
+
+
+
+
+    expect(checkData.data.title).toBe(createdData.title);
+
+
+
+
+
+
+
+
+
+  });
+
+});
+
 
 
 

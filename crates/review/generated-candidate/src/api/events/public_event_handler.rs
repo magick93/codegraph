@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/events/public-event",
 
     tag = "PublicEvent",
+    operation_id = "events_public_event_create",
     request_body(
         content = CreatePublicEventBody,
         description = "A single PublicEvent object or an array of PublicEvent objects",
@@ -154,6 +155,7 @@ pub async fn create(
 /// Get PublicEvent by ID.
 #[utoipa::path(
     get,
+    operation_id = "events_public_event_get_by_id",
 
     path = "/api/v1/events/public-event/{public_event_id}",
 
@@ -206,6 +208,7 @@ pub async fn get_by_id(
     params(("public_event_id" = Uuid, Path, description = "PublicEvent ID")),
 
     tag = "PublicEvent",
+    operation_id = "events_public_event_update",
     request_body = UpdatePublicEventRequest,
     responses(
         (status = 200, description = "Updated", body = PublicEventResponse),
@@ -263,6 +266,7 @@ pub async fn update(
     params(("public_event_id" = Uuid, Path, description = "PublicEvent ID")),
 
     tag = "PublicEvent",
+    operation_id = "events_public_event_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -299,6 +303,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -331,6 +336,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "PublicEvent",
+    operation_id = "events_public_event_list",
     responses(
         (status = 200, description = "OK", body = Vec<PublicEventResponse>),
     )

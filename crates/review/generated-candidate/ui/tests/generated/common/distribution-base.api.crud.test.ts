@@ -21,7 +21,7 @@ const BASE_PATH = '/common/distribution-base';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 
@@ -39,6 +39,8 @@ function testData(): Record<string, unknown> {
 
 
     'start_date': '2025-01-15',
+
+
 
 
   };
@@ -59,6 +61,8 @@ function updatedData(): Record<string, unknown> {
 
 
     'start_date': '2025-06-20',
+
+
 
 
   };

@@ -4,8 +4,29 @@
 import { test, expect } from '@playwright/test';
 import { CandidateFixture } from '../../fixtures/recruiting/recruiting_candidate';
 
+import { uniqueSuffix } from '../../test-utils';
+
+
 
 const authToken = process.env.TEST_AUTH_TOKEN || '';
+
+
+// Rows created by the Create/Update suites are removed in afterAll —
+// children first, then the FK parent rows captured in beforeAll — so
+// repeated runs don't accumulate orphans. 404/403 responses are ignored:
+// the row is already gone or the caller may not delete it.
+const createdIds: string[] = [];
+
+
+
+
+test.afterAll(async ({ request }) => {
+  for (const id of createdIds) {
+    await request.delete(`/api/v1/recruiting/candidate/${id}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+  }
+});
 
 
 test.describe('Candidate — Create', () => {
@@ -18,6 +39,7 @@ test.describe('Candidate — Create', () => {
     expect(response.status()).toBe(201);
     const { data } = await response.json();
     expect(data).toHaveProperty('id');
+    createdIds.push(data.id);
 
 
 
@@ -103,6 +125,83 @@ test.describe('Candidate — Read', () => {
         expect(response.status()).toBe(404);
   });
 });
+
+
+
+
+test.describe('Candidate — Update', () => {
+  test('PUT /api/v1/recruiting/candidate/:id updates a Candidate', async ({ request }) => {
+    const created = await request.post('/api/v1/recruiting/candidate', {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      data: CandidateFixture.valid(),
+    });
+    expect(created.status()).toBe(201);
+    const { data: createdData } = await created.json();
+    createdIds.push(createdData.id);
+
+    // A fresh unique value proves the update reached storage, not just the echo.
+    const base = "test";
+    const newValue = `${base} ${uniqueSuffix()}`;
+    const response = await request.put(`/api/v1/recruiting/candidate/${createdData.id}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      data: { familyName: newValue },
+    });
+    expect(response.status()).toBe(200);
+    const { data } = await response.json();
+    expect(data.familyName).toBe(newValue);
+
+    const check = await request.get(`/api/v1/recruiting/candidate/${createdData.id}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+    expect(check.status()).toBe(200);
+    const checkData = await check.json();
+    expect(checkData.data.familyName).toBe(newValue);
+    // The single-field update must not disturb the other required fields.
+
+
+
+    expect(checkData.data.candidateId).toBe(createdData.candidateId);
+
+
+
+
+
+
+
+    expect(checkData.data.givenName).toBe(createdData.givenName);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  });
+
+});
+
 
 
 

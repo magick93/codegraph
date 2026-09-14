@@ -8,13 +8,15 @@ const BASE_PATH = '/common/effective-date';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
   return {
     'valid_from': '2025-01-15',
     'valid_to': '2025-01-15',
+
+
   };
 }
 
@@ -22,6 +24,8 @@ function updatedData(): Record<string, unknown> {
   return {
     'valid_from': '2025-06-20',
     'valid_to': '2025-06-20',
+
+
   };
 }
 

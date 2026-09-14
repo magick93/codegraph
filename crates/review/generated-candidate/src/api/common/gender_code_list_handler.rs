@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/common/gender-code-list",
 
     tag = "GenderCodeList",
+    operation_id = "common_gender_code_list_create",
     request_body(
         content = CreateGenderCodeListBody,
         description = "A single GenderCodeList object or an array of GenderCodeList objects",
@@ -154,6 +155,7 @@ pub async fn create(
 /// Get GenderCodeList by ID.
 #[utoipa::path(
     get,
+    operation_id = "common_gender_code_list_get_by_id",
 
     path = "/api/v1/common/gender-code-list/{gender_code_list_id}",
 
@@ -206,6 +208,7 @@ pub async fn get_by_id(
     params(("gender_code_list_id" = Uuid, Path, description = "GenderCodeList ID")),
 
     tag = "GenderCodeList",
+    operation_id = "common_gender_code_list_update",
     request_body = UpdateGenderCodeListRequest,
     responses(
         (status = 200, description = "Updated", body = GenderCodeListResponse),
@@ -263,6 +266,7 @@ pub async fn update(
     params(("gender_code_list_id" = Uuid, Path, description = "GenderCodeList ID")),
 
     tag = "GenderCodeList",
+    operation_id = "common_gender_code_list_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -299,6 +303,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -331,6 +336,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "GenderCodeList",
+    operation_id = "common_gender_code_list_list",
     responses(
         (status = 200, description = "OK", body = Vec<GenderCodeListResponse>),
     )

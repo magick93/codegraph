@@ -5,7 +5,26 @@ import { test, expect } from '@playwright/test';
 import { GenderCodeListFixture } from '../../fixtures/common/common_gender_code_list';
 
 
+
 const authToken = process.env.TEST_AUTH_TOKEN || '';
+
+
+// Rows created by the Create/Update suites are removed in afterAll —
+// children first, then the FK parent rows captured in beforeAll — so
+// repeated runs don't accumulate orphans. 404/403 responses are ignored:
+// the row is already gone or the caller may not delete it.
+const createdIds: string[] = [];
+
+
+
+
+test.afterAll(async ({ request }) => {
+  for (const id of createdIds) {
+    await request.delete(`/api/v1/common/gender-code-list/${id}`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+  }
+});
 
 
 test.describe('GenderCodeList — Create', () => {
@@ -18,6 +37,7 @@ test.describe('GenderCodeList — Create', () => {
     expect(response.status()).toBe(201);
     const { data } = await response.json();
     expect(data).toHaveProperty('id');
+    createdIds.push(data.id);
 
   });
 
@@ -50,6 +70,10 @@ test.describe('GenderCodeList — Read', () => {
         expect(response.status()).toBe(404);
   });
 });
+
+
+
+
 
 
 

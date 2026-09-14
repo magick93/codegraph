@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/compensation/pay-runs",
 
     tag = "Pay Runs",
+    operation_id = "compensation_pay_run_create",
     request_body(
         content = CreatePayRunBody,
         description = "A single PayRun object or an array of PayRun objects",
@@ -154,6 +155,7 @@ pub async fn create(
 /// Get PayRun by ID.
 #[utoipa::path(
     get,
+    operation_id = "compensation_pay_run_get_by_id",
 
     path = "/api/v1/compensation/pay-runs/{pay_run_id}",
 
@@ -206,6 +208,7 @@ pub async fn get_by_id(
     params(("pay_run_id" = Uuid, Path, description = "PayRun ID")),
 
     tag = "Pay Runs",
+    operation_id = "compensation_pay_run_update",
     request_body = UpdatePayRunRequest,
     responses(
         (status = 200, description = "Updated", body = PayRunResponse),
@@ -263,6 +266,7 @@ pub async fn update(
     params(("pay_run_id" = Uuid, Path, description = "PayRun ID")),
 
     tag = "Pay Runs",
+    operation_id = "compensation_pay_run_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -299,6 +303,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -335,6 +340,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "Pay Runs",
+    operation_id = "compensation_pay_run_list",
     responses(
         (status = 200, description = "OK", body = Vec<PayRunResponse>),
     )

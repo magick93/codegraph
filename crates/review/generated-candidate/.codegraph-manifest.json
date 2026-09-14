@@ -117,6 +117,7 @@
     "e2e-tests/specs/recruiting/recruiting_application.spec.ts",
     "e2e-tests/specs/recruiting/recruiting_candidate.spec.ts",
     "e2e-tests/specs/rsvp/rsvp_rsvp.spec.ts",
+    "e2e-tests/test-utils.ts",
     "e2e-tests/tsconfig.json",
     "e2e/Cargo.toml",
     "e2e/src/factories/common/amount_factory.rs",

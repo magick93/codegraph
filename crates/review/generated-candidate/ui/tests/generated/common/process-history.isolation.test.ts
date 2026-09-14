@@ -8,7 +8,7 @@ const BASE_PATH = '/common/process-history';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
@@ -16,6 +16,8 @@ function testData(): Record<string, unknown> {
     'action_date': '2025-03-10T09:00:00Z',
     'descriptions': ['ACME Isolation Descriptions'],
     'id': 'ACME Isolation Id',
+
+
   };
 }
 
@@ -24,6 +26,8 @@ test.describe('ProcessHistory Cross-Org Isolation', () => {
   const data = testData();
 
   test.beforeAll(async ({ orgContext }) => {
+
+
 
 
     // Create entity as ACME owner

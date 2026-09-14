@@ -15,22 +15,22 @@ CREATE TABLE IF NOT EXISTS events.public_event (
     platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
 
 
-    is_published BOOLEAN,
+    birth_date DATE,
 
 
     capacity BIGINT,
-
-
-    title TEXT NOT NULL,
-
-
-    birth_date DATE,
 
 
     family_name TEXT NOT NULL,
 
 
     given_name TEXT NOT NULL,
+
+
+    is_published BOOLEAN,
+
+
+    title TEXT NOT NULL,
 
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -61,15 +61,15 @@ CREATE TABLE IF NOT EXISTS events.public_event_eventbasetype (
 
     platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
 
-    capacity BIGINT,
-
-    title TEXT NOT NULL,
-
     birth_date DATE,
+
+    capacity BIGINT,
 
     family_name TEXT NOT NULL,
 
     given_name TEXT NOT NULL,
+
+    title TEXT NOT NULL,
 
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -84,13 +84,13 @@ CREATE INDEX idx_public_event_eventbasetype_parent ON events.public_event_eventb
 
 
 
-COMMENT ON COLUMN events.public_event_eventbasetype.title IS $$Event title$$;
-
-
 COMMENT ON COLUMN events.public_event_eventbasetype.family_name IS $$Last name$$;
 
 
 COMMENT ON COLUMN events.public_event_eventbasetype.given_name IS $$First name$$;
+
+
+COMMENT ON COLUMN events.public_event_eventbasetype.title IS $$Event title$$;
 
 
 
@@ -128,11 +128,11 @@ COMMENT ON COLUMN events.public_event_eventbasetype_personbasetype.given_name IS
 
 
 
-COMMENT ON COLUMN events.public_event.title IS $$Event title$$;
-
-
 COMMENT ON COLUMN events.public_event.family_name IS $$Last name$$;
 
 
 COMMENT ON COLUMN events.public_event.given_name IS $$First name$$;
+
+
+COMMENT ON COLUMN events.public_event.title IS $$Event title$$;
 

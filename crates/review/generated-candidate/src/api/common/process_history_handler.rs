@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/common/process-history",
 
     tag = "ProcessHistory",
+    operation_id = "common_process_history_create",
     request_body(
         content = CreateProcessHistoryBody,
         description = "A single ProcessHistory object or an array of ProcessHistory objects",
@@ -154,6 +155,7 @@ pub async fn create(
 /// Get ProcessHistory by ID.
 #[utoipa::path(
     get,
+    operation_id = "common_process_history_get_by_id",
 
     path = "/api/v1/common/process-history/{process_history_id}",
 
@@ -212,6 +214,7 @@ pub async fn get_by_id(
     params(("process_history_id" = Uuid, Path, description = "ProcessHistory ID")),
 
     tag = "ProcessHistory",
+    operation_id = "common_process_history_update",
     request_body = UpdateProcessHistoryRequest,
     responses(
         (status = 200, description = "Updated", body = ProcessHistoryResponse),
@@ -269,6 +272,7 @@ pub async fn update(
     params(("process_history_id" = Uuid, Path, description = "ProcessHistory ID")),
 
     tag = "ProcessHistory",
+    operation_id = "common_process_history_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -305,6 +309,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -337,6 +342,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "ProcessHistory",
+    operation_id = "common_process_history_list",
     responses(
         (status = 200, description = "OK", body = Vec<ProcessHistoryResponse>),
     )

@@ -27,7 +27,7 @@ export class PublicEventApi {
 
 
   async update(id: string, data: any): Promise<{ status: number; body: any }> {
-    const response = await this.request.patch(`${this.baseUrl}/api/v1/events/public-event/${id}`, { data });
+    const response = await this.request.put(`${this.baseUrl}/api/v1/events/public-event/${id}`, { data });
     return { status: response.status(), body: await response.json().catch(() => ({})) };
   }
 

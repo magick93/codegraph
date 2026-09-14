@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/common/event-base",
 
     tag = "EventBase",
+    operation_id = "common_event_base_create",
     request_body(
         content = CreateEventBaseBody,
         description = "A single EventBase object or an array of EventBase objects",
@@ -154,6 +155,7 @@ pub async fn create(
 /// Get EventBase by ID.
 #[utoipa::path(
     get,
+    operation_id = "common_event_base_get_by_id",
 
     path = "/api/v1/common/event-base/{event_base_id}",
 
@@ -206,6 +208,7 @@ pub async fn get_by_id(
     params(("event_base_id" = Uuid, Path, description = "EventBase ID")),
 
     tag = "EventBase",
+    operation_id = "common_event_base_update",
     request_body = UpdateEventBaseRequest,
     responses(
         (status = 200, description = "Updated", body = EventBaseResponse),
@@ -263,6 +266,7 @@ pub async fn update(
     params(("event_base_id" = Uuid, Path, description = "EventBase ID")),
 
     tag = "EventBase",
+    operation_id = "common_event_base_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -299,6 +303,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -331,6 +336,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "EventBase",
+    operation_id = "common_event_base_list",
     responses(
         (status = 200, description = "OK", body = Vec<EventBaseResponse>),
     )

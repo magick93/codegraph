@@ -17,16 +17,16 @@ RETURNS TRIGGER AS $$
 BEGIN
     NEW.search_tsv :=
 
-        setweight(to_tsvector('english', COALESCE(NEW.family_name, '')), 'D') ||
-
-
-        setweight(to_tsvector('english', COALESCE(NEW.given_name, '')), 'D') ||
-
-
         setweight(to_tsvector('english', COALESCE(NEW.compensation_expectation_currency, '')), 'D') ||
 
 
+        setweight(to_tsvector('english', COALESCE(NEW.family_name, '')), 'D') ||
+
+
         setweight(to_tsvector('english', COALESCE(NEW.gender, '')), 'D') ||
+
+
+        setweight(to_tsvector('english', COALESCE(NEW.given_name, '')), 'D') ||
 
 
         setweight(to_tsvector('english', COALESCE(NEW.status, '')), 'D') ||
@@ -48,16 +48,16 @@ CREATE TRIGGER trg_candidate_search_tsv
 UPDATE recruiting.candidate
 SET search_tsv =
 
-    setweight(to_tsvector('english', COALESCE(family_name, '')), 'D') ||
-
-
-    setweight(to_tsvector('english', COALESCE(given_name, '')), 'D') ||
-
-
     setweight(to_tsvector('english', COALESCE(compensation_expectation_currency, '')), 'D') ||
 
 
+    setweight(to_tsvector('english', COALESCE(family_name, '')), 'D') ||
+
+
     setweight(to_tsvector('english', COALESCE(gender, '')), 'D') ||
+
+
+    setweight(to_tsvector('english', COALESCE(given_name, '')), 'D') ||
 
 
     setweight(to_tsvector('english', COALESCE(status, '')), 'D') ||

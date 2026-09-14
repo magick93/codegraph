@@ -8,7 +8,7 @@ const BASE_PATH = '/common/gender-code-list';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
@@ -16,6 +16,8 @@ function testData(): Record<string, unknown> {
     'code': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     'display_name': 'Test Display Name',
     'sort_order': 42,
+
+
   };
 }
 
@@ -24,6 +26,8 @@ function updatedData(): Record<string, unknown> {
     'code': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     'display_name': 'Updated Display Name',
     'sort_order': 99,
+
+
   };
 }
 

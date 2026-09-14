@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/common/amount",
 
     tag = "Amount",
+    operation_id = "common_amount_create",
     request_body(
         content = CreateAmountBody,
         description = "A single Amount object or an array of Amount objects",
@@ -154,6 +155,7 @@ pub async fn create(
 /// Get Amount by ID.
 #[utoipa::path(
     get,
+    operation_id = "common_amount_get_by_id",
 
     path = "/api/v1/common/amount/{amount_id}",
 
@@ -210,6 +212,7 @@ pub async fn get_by_id(
     params(("amount_id" = Uuid, Path, description = "Amount ID")),
 
     tag = "Amount",
+    operation_id = "common_amount_update",
     request_body = UpdateAmountRequest,
     responses(
         (status = 200, description = "Updated", body = AmountResponse),
@@ -267,6 +270,7 @@ pub async fn update(
     params(("amount_id" = Uuid, Path, description = "Amount ID")),
 
     tag = "Amount",
+    operation_id = "common_amount_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -303,6 +307,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -337,6 +342,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "Amount",
+    operation_id = "common_amount_list",
     responses(
         (status = 200, description = "OK", body = Vec<AmountResponse>),
     )

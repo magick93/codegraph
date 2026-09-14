@@ -57,6 +57,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/recruiting/applications",
 
     tag = "Applications",
+    operation_id = "recruiting_application_create",
     request_body(
         content = CreateApplicationBody,
         description = "A single Application object or an array of Application objects",
@@ -156,6 +157,7 @@ pub async fn create(
 /// Get Application by ID.
 #[utoipa::path(
     get,
+    operation_id = "recruiting_application_get_by_id",
 
     path = "/api/v1/recruiting/applications/{application_id}",
 
@@ -265,6 +267,7 @@ pub async fn get_by_id(
     params(("application_id" = Uuid, Path, description = "Application ID")),
 
     tag = "Applications",
+    operation_id = "recruiting_application_update",
     request_body = UpdateApplicationRequest,
     responses(
         (status = 200, description = "Updated", body = ApplicationResponse),
@@ -322,6 +325,7 @@ pub async fn update(
     params(("application_id" = Uuid, Path, description = "Application ID")),
 
     tag = "Applications",
+    operation_id = "recruiting_application_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -358,6 +362,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -409,6 +414,7 @@ const ALLOWED_INCLUDE_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "Applications",
+    operation_id = "recruiting_application_list",
     responses(
         (status = 200, description = "OK", body = Vec<ApplicationResponse>),
     )

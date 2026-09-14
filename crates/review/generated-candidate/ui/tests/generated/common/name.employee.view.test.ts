@@ -8,7 +8,7 @@ const BASE_PATH = '/common/name';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
@@ -16,6 +16,8 @@ function testData(): Record<string, unknown> {
     'family_name': 'Test Family Name',
     'formatted_name': 'Test Formatted Name',
     'given_name': 'Test Given Name',
+
+
   };
 }
 
@@ -23,6 +25,8 @@ test.describe('Name Employee View', () => {
   let createdId: string;
 
   test.beforeAll(async ({ orgContext }) => {
+
+
 
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());

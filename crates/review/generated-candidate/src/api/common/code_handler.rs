@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/common/code",
 
     tag = "Code",
+    operation_id = "common_code_create",
     request_body(
         content = CreateCodeBody,
         description = "A single Code object or an array of Code objects",
@@ -154,6 +155,7 @@ pub async fn create(
 /// Get Code by ID.
 #[utoipa::path(
     get,
+    operation_id = "common_code_get_by_id",
 
     path = "/api/v1/common/code/{code_id}",
 
@@ -206,6 +208,7 @@ pub async fn get_by_id(
     params(("code_id" = Uuid, Path, description = "Code ID")),
 
     tag = "Code",
+    operation_id = "common_code_update",
     request_body = UpdateCodeRequest,
     responses(
         (status = 200, description = "Updated", body = CodeResponse),
@@ -263,6 +266,7 @@ pub async fn update(
     params(("code_id" = Uuid, Path, description = "Code ID")),
 
     tag = "Code",
+    operation_id = "common_code_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -299,6 +303,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -331,6 +336,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "Code",
+    operation_id = "common_code_list",
     responses(
         (status = 200, description = "OK", body = Vec<CodeResponse>),
     )

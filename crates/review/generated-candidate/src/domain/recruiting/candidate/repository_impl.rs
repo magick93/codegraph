@@ -33,13 +33,13 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         let model = crate::entity::recruiting_candidate::ActiveModel {
             id: Set(id),
             birth_date: Set(cmd.birth_date),
-            family_name: Set(cmd.family_name),
-            given_name: Set(cmd.given_name),
             candidate_id: Set(cmd.candidate_id),
             compensation_expectation: Set(cmd.compensation_expectation),
             compensation_expectation_currency: Set(cmd.compensation_expectation_currency.map(|v| v.to_string())),
             external_identifier: Set(cmd.external_identifier.as_ref().and_then(|v| serde_json::to_value(v).ok())),
+            family_name: Set(cmd.family_name),
             gender: Set(cmd.gender.map(|v| v.to_string())),
+            given_name: Set(cmd.given_name),
             position_titles: Set(cmd.position_titles),
             referred_by_application_id: Set(cmd.referred_by_application_id),
             status: Set(cmd.status.map(|v| v.to_string())),
@@ -64,8 +64,8 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             let child_id_candidate_distribution_guidelines = Uuid::new_v4();
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                "INSERT INTO recruiting.candidate_distribution_guidelines (id, candidate_id, do_not_redistribute_indicator, scope, description, end_date, start_date) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                vec![child_id_candidate_distribution_guidelines.into(), id.into(), item.do_not_redistribute_indicator.map(|v| sea_orm::Value::Bool(Some(v))).unwrap_or(sea_orm::Value::Bool(None)), item.scope.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), item.description.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), item.end_date.map(|v| sea_orm::Value::ChronoDate(Some(Box::new(v)))).unwrap_or(sea_orm::Value::ChronoDate(None)), sea_orm::Value::ChronoDate(Some(Box::new(item.start_date)))],
+                "INSERT INTO recruiting.candidate_distribution_guidelines (id, candidate_id, description, do_not_redistribute_indicator, end_date, scope, start_date) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                vec![child_id_candidate_distribution_guidelines.into(), id.into(), item.description.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), item.do_not_redistribute_indicator.map(|v| sea_orm::Value::Bool(Some(v))).unwrap_or(sea_orm::Value::Bool(None)), item.end_date.map(|v| sea_orm::Value::ChronoDate(Some(Box::new(v)))).unwrap_or(sea_orm::Value::ChronoDate(None)), item.scope.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), sea_orm::Value::ChronoDate(Some(Box::new(item.start_date)))],
             );
             tx.execute(stmt).await?;
         }
@@ -150,7 +150,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         let distribution_guidelines_rows = {
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                "SELECT id, do_not_redistribute_indicator, scope, description, end_date, start_date FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1 ORDER BY created_at",
+                "SELECT id, description, do_not_redistribute_indicator, end_date, scope, start_date FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1 ORDER BY created_at",
                 vec![id.into()],
             );
             let rows = db.query_all(stmt).await?;
@@ -158,10 +158,10 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             for child_row in &rows {
                 use sea_orm::TryGetable;
                 items.push(CandidateDistributionGuidelinesResponse {
-                    do_not_redistribute_indicator: Option::<bool>::try_get_by(child_row, "do_not_redistribute_indicator").ok().flatten(),
-                    scope: Option::<String>::try_get_by(child_row, "scope").ok().flatten(),
                     description: Option::<String>::try_get_by(child_row, "description").ok().flatten(),
+                    do_not_redistribute_indicator: Option::<bool>::try_get_by(child_row, "do_not_redistribute_indicator").ok().flatten(),
                     end_date: Option::<chrono::NaiveDate>::try_get_by(child_row, "end_date").ok().flatten(),
+                    scope: Option::<String>::try_get_by(child_row, "scope").ok().flatten(),
                     start_date: chrono::NaiveDate::try_get_by(child_row, "start_date").map_err(|e| format!("{e:?}"))?,
                 ..Default::default()
                 });
@@ -230,13 +230,13 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         Ok(Some(CandidateResponse {
             id: row.id,
             birth_date: row.birth_date,
-            family_name: row.family_name,
-            given_name: row.given_name,
             candidate_id: row.candidate_id,
             compensation_expectation: row.compensation_expectation,
             compensation_expectation_currency: row.compensation_expectation_currency.and_then(|v| v.parse().ok()),
             external_identifier: row.external_identifier.and_then(|v| serde_json::from_value(v).ok()),
+            family_name: row.family_name,
             gender: row.gender.and_then(|v| v.parse().ok()),
+            given_name: row.given_name,
             position_titles: row.position_titles,
             referred_by_application_id: row.referred_by_application_id,
             status: row.status.and_then(|v| v.parse().ok()),
@@ -266,13 +266,13 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             ..Default::default()
         };
         if let Some(v) = cmd.birth_date { model.birth_date = Set(Some(v)); }
-        if let Some(v) = cmd.family_name { model.family_name = Set(v); }
-        if let Some(v) = cmd.given_name { model.given_name = Set(v); }
         if let Some(v) = cmd.candidate_id { model.candidate_id = Set(v); }
         if let Some(v) = cmd.compensation_expectation { model.compensation_expectation = Set(Some(v)); }
         if let Some(v) = cmd.compensation_expectation_currency { model.compensation_expectation_currency = Set(Some(v.to_string())); }
         if let Some(v) = cmd.external_identifier { model.external_identifier = Set(serde_json::to_value(v).ok()); }
+        if let Some(v) = cmd.family_name { model.family_name = Set(v); }
         if let Some(v) = cmd.gender { model.gender = Set(Some(v.to_string())); }
+        if let Some(v) = cmd.given_name { model.given_name = Set(v); }
         if let Some(v) = cmd.position_titles { model.position_titles = Set(Some(v)); }
         if let Some(v) = cmd.referred_by_application_id { model.referred_by_application_id = Set(Some(v)); }
         if let Some(v) = cmd.status { model.status = Set(Some(v.to_string())); }
@@ -303,8 +303,8 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             let child_id = Uuid::new_v4();
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
-                "INSERT INTO recruiting.candidate_distribution_guidelines (id, candidate_id, do_not_redistribute_indicator, scope, description, end_date, start_date) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                vec![child_id.into(), id.into(), item.do_not_redistribute_indicator.map(|v| sea_orm::Value::Bool(Some(v))).unwrap_or(sea_orm::Value::Bool(None)), item.scope.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), item.description.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), item.end_date.map(|v| sea_orm::Value::ChronoDate(Some(Box::new(v)))).unwrap_or(sea_orm::Value::ChronoDate(None)), sea_orm::Value::ChronoDate(Some(Box::new(item.start_date)))],
+                "INSERT INTO recruiting.candidate_distribution_guidelines (id, candidate_id, description, do_not_redistribute_indicator, end_date, scope, start_date) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                vec![child_id.into(), id.into(), item.description.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), item.do_not_redistribute_indicator.map(|v| sea_orm::Value::Bool(Some(v))).unwrap_or(sea_orm::Value::Bool(None)), item.end_date.map(|v| sea_orm::Value::ChronoDate(Some(Box::new(v)))).unwrap_or(sea_orm::Value::ChronoDate(None)), item.scope.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), sea_orm::Value::ChronoDate(Some(Box::new(item.start_date)))],
             );
             tx.execute(stmt).await?;
         }
@@ -420,7 +420,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             let distribution_guidelines_rows = {
                 let stmt = Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    "SELECT id, do_not_redistribute_indicator, scope, description, end_date, start_date FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1 ORDER BY created_at",
+                    "SELECT id, description, do_not_redistribute_indicator, end_date, scope, start_date FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
                 let rows = db.query_all(stmt).await?;
@@ -428,10 +428,10 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 for child_row in &rows {
                     use sea_orm::TryGetable;
                     items.push(CandidateDistributionGuidelinesResponse {
-                        do_not_redistribute_indicator: Option::<bool>::try_get_by(child_row, "do_not_redistribute_indicator").ok().flatten(),
-                        scope: Option::<String>::try_get_by(child_row, "scope").ok().flatten(),
                         description: Option::<String>::try_get_by(child_row, "description").ok().flatten(),
+                        do_not_redistribute_indicator: Option::<bool>::try_get_by(child_row, "do_not_redistribute_indicator").ok().flatten(),
                         end_date: Option::<chrono::NaiveDate>::try_get_by(child_row, "end_date").ok().flatten(),
+                        scope: Option::<String>::try_get_by(child_row, "scope").ok().flatten(),
                         start_date: chrono::NaiveDate::try_get_by(child_row, "start_date").map_err(|e| format!("{e:?}"))?,
                     ..Default::default()
                     });
@@ -499,13 +499,13 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             results.push(CandidateResponse {
                 id: row.id,
                 birth_date: row.birth_date,
-                family_name: row.family_name,
-                given_name: row.given_name,
                 candidate_id: row.candidate_id,
                 compensation_expectation: row.compensation_expectation,
                 compensation_expectation_currency: row.compensation_expectation_currency.and_then(|v| v.parse().ok()),
                 external_identifier: row.external_identifier.and_then(|v| serde_json::from_value(v).ok()),
+                family_name: row.family_name,
                 gender: row.gender.and_then(|v| v.parse().ok()),
+                given_name: row.given_name,
                 position_titles: row.position_titles,
                 referred_by_application_id: row.referred_by_application_id,
                 status: row.status.and_then(|v| v.parse().ok()),

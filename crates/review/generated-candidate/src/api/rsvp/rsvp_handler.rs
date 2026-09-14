@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/rsvp/rsvp",
 
     tag = "Rsvp",
+    operation_id = "rsvp_rsvp_create",
     request_body(
         content = CreateRsvpBody,
         description = "A single Rsvp object or an array of Rsvp objects",
@@ -154,6 +155,7 @@ pub async fn create(
 /// Get Rsvp by ID.
 #[utoipa::path(
     get,
+    operation_id = "rsvp_rsvp_get_by_id",
 
     path = "/api/v1/rsvp/rsvp/{rsvp_id}",
 
@@ -206,6 +208,7 @@ pub async fn get_by_id(
     params(("rsvp_id" = Uuid, Path, description = "Rsvp ID")),
 
     tag = "Rsvp",
+    operation_id = "rsvp_rsvp_update",
     request_body = UpdateRsvpRequest,
     responses(
         (status = 200, description = "Updated", body = RsvpResponse),
@@ -263,6 +266,7 @@ pub async fn update(
     params(("rsvp_id" = Uuid, Path, description = "Rsvp ID")),
 
     tag = "Rsvp",
+    operation_id = "rsvp_rsvp_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -299,6 +303,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -333,6 +338,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "Rsvp",
+    operation_id = "rsvp_rsvp_list",
     responses(
         (status = 200, description = "OK", body = Vec<RsvpResponse>),
     )

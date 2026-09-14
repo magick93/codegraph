@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/common/date",
 
     tag = "Date",
+    operation_id = "common_date_create",
     request_body(
         content = CreateDateBody,
         description = "A single Date object or an array of Date objects",
@@ -154,6 +155,7 @@ pub async fn create(
 /// Get Date by ID.
 #[utoipa::path(
     get,
+    operation_id = "common_date_get_by_id",
 
     path = "/api/v1/common/date/{date_id}",
 
@@ -206,6 +208,7 @@ pub async fn get_by_id(
     params(("date_id" = Uuid, Path, description = "Date ID")),
 
     tag = "Date",
+    operation_id = "common_date_update",
     request_body = UpdateDateRequest,
     responses(
         (status = 200, description = "Updated", body = DateResponse),
@@ -263,6 +266,7 @@ pub async fn update(
     params(("date_id" = Uuid, Path, description = "Date ID")),
 
     tag = "Date",
+    operation_id = "common_date_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -299,6 +303,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -331,6 +336,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "Date",
+    operation_id = "common_date_list",
     responses(
         (status = 200, description = "OK", body = Vec<DateResponse>),
     )

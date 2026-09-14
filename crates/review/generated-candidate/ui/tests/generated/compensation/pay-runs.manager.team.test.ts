@@ -8,7 +8,7 @@ const BASE_PATH = '/compensation/pay-runs';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
@@ -17,6 +17,8 @@ function testData(): Record<string, unknown> {
     'run_date': '2025-01-15',
     'total_amount': 42,
     'total_amount_currency': 'USD',
+
+
   };
 }
 
@@ -24,6 +26,8 @@ test.describe('PayRun Manager Team', () => {
   let createdId: string;
 
   test.beforeAll(async ({ orgContext }) => {
+
+
 
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
