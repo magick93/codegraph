@@ -7,6 +7,15 @@ fn walk_templates(dir: &Path, base: &Path, names: &mut Vec<(String, String)>) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
+            if path
+                .strip_prefix(base)
+                .map(|relative| relative.starts_with(Path::new("ifml").join("packs")))
+                .unwrap_or(false)
+            {
+                // Pack template overrides are resolved from disk on demand
+                // (built_in_pack_template_dir); never embed them as built-ins.
+                continue;
+            }
             if path.is_dir() {
                 walk_templates(&path, base, names);
             } else if path.extension().and_then(|e| e.to_str()) == Some("tera") {

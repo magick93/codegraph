@@ -148,6 +148,13 @@ fn kind_matches(m: &IfmlComponentMapping, component_type: &str, kind: &str) -> b
 }
 
 /// Built-in design-system packs: (name, embedded TOML source).
+///
+/// A pack pairs component mappings with optional template overrides shipped
+/// under codegraph-generate's `templates/ifml/packs/<name>/` (resolved via
+/// `built_in_pack_template_dir`). When a pack is selected its templates merge
+/// into the Tera registry after the built-ins and before project
+/// `--template-dir` overrides, giving precedence project template-dir >
+/// pack templates > built-ins.
 pub const BUILT_IN_PACKS: &[(&str, &str)] =
     &[("shadcn-svelte", include_str!("packs/shadcn-svelte.toml"))];
 
@@ -577,6 +584,67 @@ path = "$lib/components/Grid.svelte"
                 .unwrap()
                 .export_name(),
             "Dialog"
+        );
+    }
+
+    /// Packs are framework-agnostic: `path`/`export` are opaque strings, so a
+    /// react-flavored pack (jsx import paths, no `.svelte` suffix) works
+    /// through the exact same TOML schema, merge, and resolution mechanism as
+    /// the shipped shadcn-svelte pack. Non-svelte packs ship once the
+    /// non-svelte skeletons do.
+    #[test]
+    fn react_flavored_pack_uses_the_same_mechanism() {
+        let pack = mappings(
+            r#"
+[[component]]
+role = "action-control"
+kind = "button"
+path = "@/components/ui/button"
+export = "Button"
+testids = { root = "button" }
+
+[[component]]
+role = "modal-view"
+path = "@/components/ui/dialog"
+export = "Dialog"
+"#,
+        );
+        assert_eq!(
+            pack.resolve_by_role("V", SemanticRole::ActionControl)
+                .unwrap()
+                .path,
+            "@/components/ui/button"
+        );
+        assert_eq!(
+            pack.resolve_by_role("V", SemanticRole::ModalView)
+                .unwrap()
+                .export_name(),
+            "Dialog"
+        );
+
+        let project = mappings(
+            r#"
+[[component]]
+role = "modal-view"
+path = "@/components/MyDialog"
+"#,
+        );
+        let merged = IfmlComponentMappings::merge_with_pack(project, &pack);
+        assert_eq!(
+            merged
+                .resolve_by_role("V", SemanticRole::ModalView)
+                .unwrap()
+                .path,
+            "@/components/MyDialog",
+            "project entries shadow the react pack per tier"
+        );
+        assert_eq!(
+            merged
+                .resolve_by_role("V", SemanticRole::ActionControl)
+                .unwrap()
+                .export_name(),
+            "Button",
+            "uncovered slots fall through to the react pack"
         );
     }
 }
