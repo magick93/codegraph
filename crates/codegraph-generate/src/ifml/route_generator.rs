@@ -6,8 +6,7 @@ use async_trait::async_trait;
 use codegraph_config::{DomainConfig, IfmlComponentMapping, IfmlComponentMappings, SemanticRole};
 use codegraph_core::traits::GraphQuerier;
 use codegraph_ifml_dsl::{
-    BinOp, ChartKind, ChartSpec, ColumnDef, ComponentSpec, Expression, FormSpec, InputFieldType,
-    TableSpec, UnaryOp,
+    BinOp, ChartKind, ChartSpec, ColumnDef, ComponentSpec, Expression, FormSpec, TableSpec, UnaryOp,
 };
 use serde::Serialize;
 
@@ -18,7 +17,12 @@ use crate::GenerationEntry;
 
 use super::api_paths::{id_param_from, resolve_entity_api, ResolvedApi};
 use super::context::{IfmlAction, IfmlComponent, IfmlEvent, IfmlViewContainer};
+use super::control_core;
 use super::querier::*;
+
+/// The shared control-inference entry over `(rust_type, field_name)` pairs
+/// (`fields_with_types`), re-exported for conformance testing (issue #201).
+pub use super::control_core::control_for_field;
 
 pub struct IfmlRouteGenerator {
     output_dir: PathBuf,
@@ -1118,8 +1122,7 @@ fn form_payload_block(c: &IfmlComponent, form: Option<&RenderForm>) -> String {
             format!("{value} === '' ? null : {value} === 'true'")
         } else if is_numeric_rust_type(&rust_type) {
             format!("{value} === '' ? null : Number({value})")
-        } else if rust_type.contains("datetime")
-            || rust_type.contains("timestamp")
+        } else if control_core::is_temporal_rust_type(&rust_type)
             || matches!(input_type, "datetime-local" | "date" | "time")
         {
             format!("{value} === '' ? null : new Date(String({value})).toISOString()")
@@ -1134,14 +1137,7 @@ fn form_payload_block(c: &IfmlComponent, form: Option<&RenderForm>) -> String {
 }
 
 pub(crate) fn is_numeric_rust_type(rust_type: &str) -> bool {
-    [
-        "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
-    ]
-    .iter()
-    .any(|n| rust_type.contains(n))
-        || rust_type.contains("decimal")
-        || rust_type.contains("integer")
-        || rust_type.contains("bigint")
+    control_core::is_numeric_rust_type(rust_type)
 }
 
 /// The layout kind used for mapping resolution: the typed spec kind when a
@@ -1179,10 +1175,7 @@ fn component_role(c: &IfmlComponent) -> Option<SemanticRole> {
 /// Per-input slot role inside a form: dropdowns and radio groups are
 /// selection fields.
 fn input_field_role(input_type: &str) -> Option<SemanticRole> {
-    match input_type {
-        "dropdown" | "radio" => Some(SemanticRole::SelectionField),
-        _ => None,
-    }
+    control_core::input_field_role(input_type)
 }
 
 /// Event/button slot role: submit-style and click events drive actions.
@@ -1699,24 +1692,7 @@ fn render_form(spec: &FormSpec) -> RenderForm {
             .fields
             .iter()
             .map(|field| {
-                let (input_type, is_textarea, is_select, is_radio) = match field.input {
-                    InputFieldType::TextArea => ("textarea".to_string(), true, false, false),
-                    InputFieldType::Dropdown => ("dropdown".to_string(), false, true, false),
-                    InputFieldType::RadioGroup => ("radio".to_string(), false, false, true),
-                    InputFieldType::Custom(ref custom) => (custom.clone(), false, false, false),
-                    InputFieldType::Text => ("text".to_string(), false, false, false),
-                    InputFieldType::Password => ("password".to_string(), false, false, false),
-                    InputFieldType::Email => ("email".to_string(), false, false, false),
-                    InputFieldType::Number => ("number".to_string(), false, false, false),
-                    InputFieldType::Date => ("date".to_string(), false, false, false),
-                    InputFieldType::Time => ("time".to_string(), false, false, false),
-                    InputFieldType::DateTime => ("datetime-local".to_string(), false, false, false),
-                    InputFieldType::Checkbox | InputFieldType::Toggle => {
-                        ("checkbox".to_string(), false, false, false)
-                    }
-                    InputFieldType::File => ("file".to_string(), false, false, false),
-                    InputFieldType::Hidden => ("hidden".to_string(), false, false, false),
-                };
+                let html = control_core::html_input_for_dsl(&field.input);
                 let validations: Vec<String> =
                     field.validations.iter().map(render_expression).collect();
                 let message = if validations.is_empty() {
@@ -1726,11 +1702,11 @@ fn render_form(spec: &FormSpec) -> RenderForm {
                 };
                 RenderInputField {
                     name: field.name.clone(),
-                    input_role: input_field_role(&input_type),
-                    input_type,
-                    is_textarea,
-                    is_select,
-                    is_radio,
+                    input_role: input_field_role(&html.input_type),
+                    input_type: html.input_type,
+                    is_textarea: html.is_textarea,
+                    is_select: html.is_select,
+                    is_radio: html.is_radio,
                     required: field.required,
                     values: field.values.clone(),
                     data_validate: validations.join(" && "),
@@ -1916,6 +1892,7 @@ mod tests {
     use super::*;
     use crate::template_engine::create_tera;
     use codegraph_core::mock::MockEngine;
+    use codegraph_ifml_dsl::InputFieldType;
     use codegraph_ifml_dsl::PropertyRef;
 
     fn table_spec() -> ComponentSpec {
