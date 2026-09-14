@@ -1081,6 +1081,75 @@ async fn candidate_command() {
     );
 }
 
+// === RLS session-context single-round-trip bundle (#169 phase 3) ===
+
+#[tokio::test]
+async fn ddd_session_context_is_one_round_trip() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+
+    for (label, files) in [
+        (
+            "command.rs",
+            generate::ddd::command::CommandGenerator::new(&std::path::PathBuf::from(
+                "/tmp/hr-graph-test-harness-rls-cmd",
+            ))
+            .generate(
+                &mock,
+                "CandidateType",
+                "recruiting",
+                &config,
+                &tera,
+                &test_project_config(),
+            )
+            .await
+            .unwrap(),
+        ),
+        (
+            "query.rs",
+            generate::ddd::query::QueryGenerator::new(&std::path::PathBuf::from(
+                "/tmp/hr-graph-test-harness-rls-query",
+            ))
+            .generate(
+                &mock,
+                "CandidateType",
+                "recruiting",
+                &config,
+                &tera,
+                &test_project_config(),
+            )
+            .await
+            .unwrap(),
+        ),
+    ] {
+        assert_eq!(files.len(), 1, "{label}: expected one file");
+        let content = &files[0].content;
+        assert!(
+            content.contains("set_rls_session_vars"),
+            "{label}: should keep the set_rls_session_vars helper"
+        );
+        // The context must be delivered as ONE simple-query payload: set_config
+        // calls and the role flip bundled into a single execute_unprepared.
+        assert!(
+            content.contains("execute_unprepared"),
+            "{label}: set_rls_session_vars must use one execute_unprepared round trip"
+        );
+        assert!(
+            content.contains("SET LOCAL ROLE app_user"),
+            "{label}: the role flip must ride the same bundle"
+        );
+        assert!(
+            !content.contains(".to_string(),\n        \"SET LOCAL ROLE"),
+            "{label}: the role flip must NOT be a standalone Statement::from_string execute"
+        );
+        assert!(
+            !content.contains("from_sql_and_values"),
+            "{label}: set_config must not ride a parameterised statement (the bundle is inlined)"
+        );
+    }
+}
+
 // === Query Template Tests ===
 
 #[tokio::test]
@@ -4127,10 +4196,10 @@ async fn workflow_seed_global() {
     );
 }
 
-// === Security: Parameterized set_config Tests ===
+// === Security: session-context inlining tests (#169) ===
 
 #[tokio::test]
-async fn command_uses_parameterized_set_config() {
+async fn command_inlines_typed_uuid_context_bundle() {
     let mock = setup_mock().await;
     let config = test_domain_config();
     let tera = test_tera();
@@ -4154,40 +4223,40 @@ async fn command_uses_parameterized_set_config() {
         .find(|f| f.path.to_string_lossy().contains("command"))
         .expect("Should have a command file");
 
-    // Must use parameterized set_config with $1, $2, $3
+    // The context bundle inlines values (simple query protocol takes no bind
+    // parameters) — but ONLY typed Uuid fields, so the interpolation surface
+    // is injection-proof by construction.
     assert!(
-        cmd_file
-            .content
-            .contains("set_config('app.current_api_key', $1, true)"),
-        "Command should use parameterized set_config for api_key. Got:\n{}",
+        cmd_file.content.contains("set_config('app.current_api_key', '{}', true)"),
+        "Command should inline the api_key context value. Got:\n{}",
         cmd_file.content
     );
     assert!(
-        cmd_file
-            .content
-            .contains("set_config('app.organization_id', $2, true)"),
-        "Command should use parameterized set_config for org_id"
+        cmd_file.content.contains("set_config('app.organization_id', '{}', true)"),
+        "Command should inline the org_id context value"
     );
     assert!(
-        cmd_file
-            .content
-            .contains("set_config('app.correlation_id', $3, true)"),
-        "Command should use parameterized set_config for correlation_id"
+        cmd_file.content.contains("set_config('app.correlation_id', '{}', true)"),
+        "Command should inline the correlation_id context value"
     );
-    // Must NOT use format!() string interpolation for set_config
+    // The format! args must be the typed Uuid locals, never user strings.
     assert!(
-        !cmd_file.content.contains("format!(\"SELECT set_config"),
-        "Command must not use format!() for set_config (SQL injection risk)"
+        cmd_file.content.contains("        api_key_id,\n        organization_id,"),
+        "Command must interpolate typed Uuid locals, not arbitrary strings"
     );
-    // Must use Statement::from_sql_and_values
+    // One round trip: the role flip rides the same payload.
     assert!(
-        cmd_file.content.contains("Statement::from_sql_and_values"),
-        "Command should use Statement::from_sql_and_values for parameterized query"
+        cmd_file.content.contains("SET LOCAL ROLE app_user"),
+        "Command should keep the app_user role flip in the bundle"
+    );
+    assert!(
+        !cmd_file.content.contains("$1"),
+        "Command must not use parameter placeholders ($1) for the context bundle"
     );
 }
 
 #[tokio::test]
-async fn query_uses_parameterized_set_config() {
+async fn query_inlines_typed_uuid_context_bundle() {
     let mock = setup_mock().await;
     let config = test_domain_config();
     let tera = test_tera();
@@ -4211,42 +4280,29 @@ async fn query_uses_parameterized_set_config() {
         .find(|f| f.path.to_string_lossy().contains("query"))
         .expect("Should have a query file");
 
-    // Query sets 2 vars (no correlation_id on reads)
+    // Query sets 2 vars inlined (no correlation_id on reads).
     assert!(
-        query_file
-            .content
-            .contains("set_config('app.current_api_key', $1, true)"),
-        "Query should use parameterized set_config for api_key. Got:\n{}",
+        query_file.content.contains("set_config('app.current_api_key', '{}', true)"),
+        "Query should inline the api_key context value. Got:\n{}",
         query_file.content
     );
     assert!(
-        query_file
-            .content
-            .contains("set_config('app.organization_id', $2, true)"),
-        "Query should use parameterized set_config for org_id"
-    );
-    // Must set user_id as $3 (template now passes all 3 session vars)
-    assert!(
-        query_file
-            .content
-            .contains("set_config('app.user_id', $3, true)"),
-        "Query should use parameterized set_config for user_id"
-    );
-    // Must NOT have $4 (only 3 vars: api_key, org_id, user_id)
-    assert!(
-        !query_file.content.contains("$4"),
-        "Query should only set 3 vars (api_key, org_id, user_id)"
-    );
-    // Must NOT use format!()
-    assert!(
-        !query_file.content.contains("format!(\"SELECT set_config"),
-        "Query must not use format!() for set_config"
+        query_file.content.contains("set_config('app.organization_id', '{}', true)"),
+        "Query should inline the org_id context value"
     );
     assert!(
-        query_file
-            .content
-            .contains("Statement::from_sql_and_values"),
-        "Query should use Statement::from_sql_and_values"
+        query_file.content.contains("set_config('app.user_id', '{}', true)"),
+        "Query should inline the user_id context value"
+    );
+    // One round trip: the role flip rides the same payload.
+    assert!(
+        query_file.content.contains("SET LOCAL ROLE app_user"),
+        "Query should keep the app_user role flip in the bundle"
+    );
+    // Must NOT use parameter placeholders (the bundle rides the simple protocol).
+    assert!(
+        !query_file.content.contains("set_config('app.current_api_key', $1"),
+        "Query must not use parameter placeholders for the context bundle"
     );
 }
 
