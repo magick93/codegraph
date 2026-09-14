@@ -18,6 +18,9 @@ entities = ["CandidateType", "ApplicationType"]
 operations = ["create", "read", "update", "list"]
 role = "root"
 
+[domains.recruiting.entity_config.CandidateType.permissions]
+scope = "recruiting.candidate"
+
 [domains.recruiting.entity_config.CandidateType.workflow]
 status_field = "candidate_status_code"
 states = ["new", "screening", "interviewing", "offer", "hired", "rejected", "withdrawn"]

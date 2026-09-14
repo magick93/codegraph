@@ -67,6 +67,7 @@ CREATE POLICY "scope_enforced_delete" ON common.effective_date
   USING (public.enforce_api_key_scope('effective-date', id::text, 'delete'));
 
 
+
 -- Schema + table privileges for app_user and api_key (RLS policies only
 -- filter rows; these grants enable access). Idempotent, so it's safe to
 -- emit from every entity migration in a domain.

@@ -2952,7 +2952,13 @@ async fn router_permission_gated_emits_layers_and_helper() {
         "Permission helper should build <scope>:<op> strings. Got:\n{content}"
     );
     // Backward compat: an entity WITHOUT permissions must NOT get the layers.
-    let plain_config = test_domain_config();
+    let mut plain_config = test_domain_config();
+    if let Some(recruiting) = plain_config.domains.get_mut("recruiting") {
+        if let Some(cfg) = recruiting.entity_config.get_mut("CandidateType") {
+            cfg.permissions.scope = None;
+            cfg.permissions.record_scoped = false;
+        }
+    }
     let plain = generate::api::router::RouterGenerator::new(&output_dir);
     let files = plain
         .generate(

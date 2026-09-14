@@ -585,9 +585,25 @@ async fn role_denial_raises_forbidden(admin: PgTarget) {
     let _guard = DB_LOCK.lock().await;
     let (scratch, key_full_a, _, _, _, _) = setup(&admin).await;
 
-    // JWT identity with a member-role role claim deleting a row: the DB must
-    // raise (today roles are app-level only and the delete succeeds).
-    // `app.role` is the session var the Phase-5 role policies read.
+    // A candidate row in org A to delete (candidate has permissions.scope
+    // configured in the fixture, so it carries role_enforced_* policies).
+    psql_exec(
+        &PgTarget {
+            db: scratch.db.clone(),
+            role: "fixture".into(),
+            ..admin.clone()
+        },
+        &format!(
+            "INSERT INTO recruiting.candidate (id, platform_organization_id, candidate_id, family_name, given_name) \
+             VALUES ('cccccccc-0000-4000-8000-000000000001', '{ORG_A}', 'C-001', 'NZ', 'Test');"
+        ),
+    )
+    .await
+    .expect("insert candidate fixture row");
+
+    // JWT identity with a member-role claim deleting the row: the DB must
+    // raise (before #169 roles were app-level only and the delete succeeded).
+    // `app.role` is the session var the role_enforced_* policies read.
     let result = probe(
         &admin,
         &scratch,
@@ -595,7 +611,7 @@ async fn role_denial_raises_forbidden(admin: PgTarget) {
         ORG_A,
         &key_full_a,
         USER_A,
-        "DELETE FROM common.code WHERE id = 'aaaaaaaa-0000-4000-8000-000000000001' RETURNING id",
+        "DELETE FROM recruiting.candidate WHERE id = 'cccccccc-0000-4000-8000-000000000001' RETURNING id",
     )
     .await;
     assert_raised(

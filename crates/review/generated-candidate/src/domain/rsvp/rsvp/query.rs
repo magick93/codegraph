@@ -25,17 +25,20 @@ async fn set_rls_session_vars(
     api_key_id: Uuid,
     organization_id: Uuid,
     user_id: Uuid,
+    role: &str,
 ) -> Result<(), RsvpError> {
     let sql = format!(
         "SELECT set_config('app.current_api_key', '{}', true), \
                 set_config('app.current_api_key_id', '{}', true), \
                 set_config('app.organization_id', '{}', true), \
-                set_config('app.user_id', '{}', true); \
+                set_config('app.user_id', '{}', true), \
+                set_config('app.role', '{}', true); \
          SET LOCAL ROLE app_user",
         api_key_id,
         api_key_id,
         organization_id,
         user_id,
+        role.replace('\'', "''"),
     );
     tx.execute_unprepared(&sql).await?;
     Ok(())
@@ -74,10 +77,10 @@ impl RsvpQueryHandler {
 
 
 
-    pub async fn find_by_id(&self, id: Uuid, include_deleted: bool, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Option<RsvpResponse>, RsvpError> {
+    pub async fn find_by_id(&self, id: Uuid, include_deleted: bool, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<Option<RsvpResponse>, RsvpError> {
 
         let tx = self.db.begin().await?;
-        set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, user_id, &role).await?;
         let mut result = self.repo.find_by_id(&tx, id, include_deleted).await
             .map_err(|e| RsvpError::from_repo_err(e))?;
         tx.commit().await?;
@@ -92,10 +95,10 @@ impl RsvpQueryHandler {
 
 
 
-    pub async fn list_filtered(&self, page: u64, page_size: u64, filters: &std::collections::HashMap<String, String>, include_deleted: bool, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(Vec<RsvpResponse>, u64), RsvpError> {
+    pub async fn list_filtered(&self, page: u64, page_size: u64, filters: &std::collections::HashMap<String, String>, include_deleted: bool, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<(Vec<RsvpResponse>, u64), RsvpError> {
 
         let tx = self.db.begin().await?;
-        set_rls_session_vars(&tx, api_key_id, organization_id, user_id).await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, user_id, &role).await?;
         let result = self.repo.list(&tx, page, page_size, filters, include_deleted).await
             .map_err(|e| RsvpError::from_repo_err(e))?;
         tx.commit().await?;

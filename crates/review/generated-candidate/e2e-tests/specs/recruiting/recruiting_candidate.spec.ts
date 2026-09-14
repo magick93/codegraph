@@ -8,7 +8,7 @@ import { uniqueSuffix } from '../../test-utils';
 
 
 
-const authToken = process.env.TEST_AUTH_TOKEN || '';
+const authToken = 'test-mode:did:plc:test.generated';
 
 
 // Rows created by the Create/Update suites are removed in afterAll —

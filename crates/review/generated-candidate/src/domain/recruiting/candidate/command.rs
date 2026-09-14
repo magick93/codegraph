@@ -32,19 +32,22 @@ async fn set_rls_session_vars(
     organization_id: Uuid,
     correlation_id: Uuid,
     user_id: Uuid,
+    role: &str,
 ) -> Result<(), RecruitingError> {
     let sql = format!(
         "SELECT set_config('app.current_api_key', '{}', true), \
                 set_config('app.current_api_key_id', '{}', true), \
                 set_config('app.organization_id', '{}', true), \
                 set_config('app.correlation_id', '{}', true), \
-                set_config('app.user_id', '{}', true); \
+                set_config('app.user_id', '{}', true), \
+                set_config('app.role', '{}', true); \
          SET LOCAL ROLE app_user",
         api_key_id,
         api_key_id,
         organization_id,
         correlation_id.replace('\'', "''"),
         user_id,
+        role.replace('\'', "''"),
     );
     tx.execute_unprepared(&sql).await?;
     Ok(())
@@ -82,7 +85,7 @@ impl CandidateCommandHandler {
 
 
 
-    pub async fn create(&self, cmd: CreateCandidateRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Uuid, RecruitingError> {
+    pub async fn create(&self, cmd: CreateCandidateRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<Uuid, RecruitingError> {
         self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id, user_id).await
     }
 
@@ -98,6 +101,7 @@ impl CandidateCommandHandler {
         api_key_id: Uuid,
         organization_id: Uuid,
         user_id: Uuid,
+        role: String,
     ) -> Vec<Result<Uuid, crate::error::BulkItemError>> {
         
 
@@ -145,11 +149,12 @@ impl CandidateCommandHandler {
         api_key_id: Uuid,
         organization_id: Uuid,
         user_id: Uuid,
+        role: String,
     ) -> Result<Uuid, RecruitingError> {
 
         let tx = self.db.begin().await?;
 
-        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id, &role).await?;
 
         
 
@@ -178,11 +183,11 @@ impl CandidateCommandHandler {
 
 
 
-    pub async fn update(&self, id: Uuid, cmd: UpdateCandidateRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), RecruitingError> {
+    pub async fn update(&self, id: Uuid, cmd: UpdateCandidateRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<(), RecruitingError> {
 
         let tx = self.db.begin().await?;
 
-        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id, &role).await?;
 
         
 

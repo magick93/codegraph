@@ -476,6 +476,10 @@ pub struct DdlContext {
     pub embeddings: Vec<EmbeddingContext>,
     /// Whether this entity tracks soft deletes and audit columns.
     pub is_auditable: bool,
+    /// Whether the entity has `permissions.scope` configured (#169): gates
+    /// the RESTRICTIVE role_enforced_* RLS policies that replace the request
+    /// path's permission middleware.
+    pub role_enforced: bool,
     pub is_codelist: bool,
     /// Whether this entity supports demo data flagging.
     pub has_demo_flag: bool,
@@ -883,6 +887,7 @@ pub(crate) fn child_table_rls_context(parent: &DdlContext, child: &ChildTableDef
         fts: None,
         embeddings: Vec::new(),
         is_auditable: false,
+        role_enforced: false,
         is_codelist: false,
         has_demo_flag: false,
     }
@@ -1183,6 +1188,16 @@ impl DdlGenerator {
             .and_then(|d| d.auditable)
             .unwrap_or(true);
 
+        // Role enforcement (#169): same gate the router used for its
+        // permission layers — entities with `permissions.scope` configured.
+        let role_enforced = config
+            .domains
+            .get(&domain)
+            .and_then(|d| d.get_entity_config(schema_title))
+            .and_then(|ec| ec.permissions.scope.as_ref())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+
         // Detect whether this entity has a _codelist.sql migration (codelist seed data).
         // The codelist generator only creates these for codelist entities in the
         // 'common' domain. Entities outside 'common' are always created by the entity
@@ -1224,6 +1239,7 @@ impl DdlGenerator {
             fts,
             embeddings,
             is_auditable,
+            role_enforced,
             has_demo_flag: is_auditable,
             is_codelist: schema.is_codelist,
         })
@@ -2265,6 +2281,7 @@ mod tests {
             fts: None,
             embeddings: vec![],
             is_auditable: true,
+            role_enforced: true,
             is_codelist: false,
             has_demo_flag: false,
         };

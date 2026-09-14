@@ -54,3 +54,41 @@ END;
 $fn$;
 
 GRANT EXECUTE ON FUNCTION public.get_current_account_role() TO authenticated;
+
+-- Role enforcement for the request data path (#169).
+-- The request context bundle carries the caller's basejump org role
+-- (resolved once at auth time by public.get_current_user_role) in the
+-- `app.role` session variable. RESTRICTIVE role_enforced_* RLS policies
+-- call this per statement touching permission-gated entities:
+-- - API-key sessions (role 'api_key') pass through — their scopes are
+--   enforced by public.enforce_api_key_scope.
+-- - Sessions without a role claim pass through (tenancy-only tables).
+-- - Otherwise the same role→action matrix the request path used maps the
+--   role; denial raises P0403 with a ROLE_FORBIDDEN payload (mapped to
+--   HTTP 403 by the generated error classifier).
+CREATE OR REPLACE FUNCTION public.enforce_role_action(p_action text)
+ RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER
+AS $function$
+DECLARE
+    v_role TEXT;
+BEGIN
+    v_role := coalesce(current_setting('app.role', true), '');
+    IF v_role = '' OR v_role = 'api_key' THEN
+        RETURN TRUE;
+    END IF;
+    IF v_role IN ('owner', 'manager') THEN
+        RETURN TRUE;
+    END IF;
+    IF v_role = 'member' AND p_action IN ('create', 'read', 'update', 'list') THEN
+        RETURN TRUE;
+    END IF;
+    IF v_role = 'employee' AND p_action IN ('read', 'list') THEN
+        RETURN TRUE;
+    END IF;
+    RAISE EXCEPTION USING
+        ERRCODE = 'P0403',
+        MESSAGE = json_build_object('code', 'ROLE_FORBIDDEN', 'role', v_role, 'action', p_action)::text;
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.enforce_role_action(text) TO app_user, api_key;
