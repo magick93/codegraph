@@ -266,7 +266,31 @@ singularization, plain/dotted-identifier bindings only, no `type: list` inferenc
 NavigationFlow, API-created fixtures, `waitForURL` with bound params), validation
 negatives and CRUD round-trips only when the bound entity is schema-backed (runs
 without schemas degrade to render tests). Emitted `playwright.config.ts`/`package.json`
-never overwrite existing files.
+never overwrite existing files; the config gains env-gated Bearer auth
+(`IFML_API_KEY` → `extraHTTPHeaders`) for runs against an authenticated API.
+
+### IFML validation gate (full-stack)
+
+`crates/codegraph/tests/ifml_codegen_gate.rs` — TDD acceptance gate that runs the
+FULL pipeline over the kitchen-sink fixture (`tests/fixtures/ifml_gate/`: shadcn
+pack, modal view, requires/roles + rexlang `policy.actor`, workflow, codelists)
+into `target/ifml-gate/` and asserts the generated app works against a real
+backend: T0 migrations apply + axum boots (`/health`), T1 `svelte-check` zero
+errors, T2 `vite build`, T3 Playwright specs pass (render/click-through/
+validation/CRUD round-trip/persona allow+deny/workflow) against the API through a
+vite `/api` proxy, T4 view-removal + regen stays green. Reusable harness lives in
+`tests/test_framework/` (`NodeProject`, `postgres.rs` GateDb, `axum_server.rs`,
+`playwright.rs`, `extras.rs` — the gate-provided SvelteKit skeleton + ui stubs;
+moving the skeleton into the generator is a follow-up). Run:
+
+```bash
+cargo test -p codegraph --test ifml_codegen_gate -- --ignored --nocapture
+```
+
+Requires node 22 + chromium (auto-installed) + Postgres (`DATABASE_URL`, default
+`postgres://postgres:postgres@localhost:5432/postgres`; a `postgres:16` docker
+container on 127.0.0.1:15432 is bootstrapped as fallback). Unique DB per run,
+dropped on finish; warm run ~110s. Local/nightly only — CI stays node-free.
 
 ## gRPC Code Generation
 

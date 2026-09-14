@@ -421,8 +421,14 @@ async fn emits_render_click_through_and_form_tests_with_schemas() {
         edit_spec.contains("request.post('/api/v1/sales/customer'"),
         "{edit_spec}"
     );
+    // Validation negatives run on the create path (empty form): no fixture
+    // navigation, plain route.
     assert!(
-        edit_spec.contains("page.goto(`/customeredit?customerId=${created.id}`)"),
+        edit_spec.contains("test('form validation blocks empty submit', async ({ page }) => {"),
+        "{edit_spec}"
+    );
+    assert!(
+        edit_spec.contains("await page.goto('/customeredit');"),
         "{edit_spec}"
     );
     assert!(
@@ -430,17 +436,19 @@ async fn emits_render_click_through_and_form_tests_with_schemas() {
         "{edit_spec}"
     );
     assert!(
-        edit_spec.contains("locator('[name=\"name\"]')).toBeInvalid()"),
-        "{edit_spec}"
+        edit_spec
+            .contains("locator('[name=\"name\"]')).toHaveJSProperty('validity.valid', false);"),
+        "invalid-state assertions use the Playwright JS-property matcher: {edit_spec}"
     );
+    assert!(!edit_spec.contains("toBeInvalid"), "{edit_spec}");
     assert!(edit_spec.contains("fill('Updated name')"), "{edit_spec}");
     assert!(
         edit_spec.contains("waitForURL(new RegExp('/customerlist$'))"),
         "{edit_spec}"
     );
     assert!(
-        edit_spec.contains("expect(persisted.name).toBe('Updated name')"),
-        "{edit_spec}"
+        edit_spec.contains("expect((persisted.data ?? persisted).name).toBe('Updated name')"),
+        "persistence reads through the API envelope: {edit_spec}"
     );
 
     assert!(content_of(&files, "playwright.config.ts").contains("baseURL"));
@@ -772,6 +780,162 @@ testids = { root = "card" }
 }
 
 #[tokio::test]
+async fn form_fixtures_derive_typed_values_from_spec_fields() {
+    let engine = MockEngine::new();
+    engine.ingest_schema(&customer_schema()).await.unwrap();
+    engine
+        .ingest_property(
+            "CustomerType",
+            "sales/customer_type.json",
+            &property("amount", "i64"),
+        )
+        .await
+        .unwrap();
+    engine
+        .ingest_property(
+            "CustomerType",
+            "sales/customer_type.json",
+            &property("urgent", "bool"),
+        )
+        .await
+        .unwrap();
+    engine
+        .ingest_property(
+            "CustomerType",
+            "sales/customer_type.json",
+            &property("submittedAt", "Option< DateTime < Utc > >"),
+        )
+        .await
+        .unwrap();
+    engine
+        .ingest_property(
+            "CustomerType",
+            "sales/customer_type.json",
+            &property("reason", "RefundReasonCodeList"),
+        )
+        .await
+        .unwrap();
+
+    ingest_view(&engine, "CustomerEdit", None).await;
+    // Typed form specs declare fields in the spec, not in `fields`.
+    let typed_spec = r#"{"Form":{"fields":[
+        {"name":"name","input":"Text","required":true,"validations":[],"values":[]},
+        {"name":"amount","input":"Number","required":false,"validations":[],"values":[]},
+        {"name":"urgent","input":"Checkbox","required":false,"validations":[],"values":[]},
+        {"name":"submittedAt","input":"DateTime","required":false,"validations":[],"values":[]},
+        {"name":"reason","input":"Dropdown","required":false,"validations":[],"values":["Damaged","WrongItem"]}
+    ]}}"#;
+    engine
+        .ingest_view_component(&ViewComponentNode {
+            name: "editor".to_string(),
+            component_type: "form".to_string(),
+            mode: Some("edit".to_string()),
+            entity: Some("Customer".to_string()),
+            fields: None,
+            filter: None,
+            api_operation: None,
+            spec: Some(typed_spec.to_string()),
+            conditional_expression: None,
+            domain: None,
+        })
+        .await
+        .unwrap();
+    engine
+        .ingest_edge(
+            "vc:CustomerEdit",
+            "comp:editor",
+            EdgeType::ContainsViewComponent,
+            None,
+        )
+        .await
+        .unwrap();
+    ingest_event(&engine, "editor", "comp_editor_save", "save").await;
+    ingest_navigation_flow(&engine, "comp_editor_save", "CustomerList", None).await;
+    ingest_id_param(&engine, "CustomerEdit", "customerId").await;
+    ingest_view(&engine, "CustomerList", Some("Customer Management")).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let files = generate(&engine, dir.path(), None).await;
+    let edit_spec = content_of(&files, "tests/ifml/customer-edit.spec.ts");
+
+    assert!(edit_spec.contains("'name': 'Test name'"), "{edit_spec}");
+    assert!(
+        edit_spec.contains("'amount': 42"),
+        "numeric fields must post numbers: {edit_spec}"
+    );
+    assert!(
+        edit_spec.contains("'urgent': true"),
+        "boolean fields must post booleans: {edit_spec}"
+    );
+    assert!(
+        edit_spec.contains("'submittedAt': '2024-01-15T10:30:00Z'"),
+        "datetime fields must post ISO strings: {edit_spec}"
+    );
+    assert!(
+        edit_spec.contains("'reason': 'Damaged'"),
+        "codelist fields must post the first declared value: {edit_spec}"
+    );
+}
+
+#[tokio::test]
+async fn stale_specs_are_removed_on_regeneration() {
+    let engine = MockEngine::new();
+    ingest_customer_schema(&engine).await;
+    ingest_ifml_model(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+    let specs_dir = dir.path().join("tests").join("ifml");
+    std::fs::create_dir_all(&specs_dir).unwrap();
+    std::fs::write(specs_dir.join("removed-view.spec.ts"), "// stale").unwrap();
+    std::fs::write(specs_dir.join("removed-view.workflow.spec.ts"), "// stale").unwrap();
+    std::fs::write(specs_dir.join("customer-list.spec.ts"), "// existing").unwrap();
+    std::fs::write(dir.path().join("unrelated.txt"), "keep").unwrap();
+
+    generate(&engine, dir.path(), None).await;
+
+    assert!(
+        !specs_dir.join("removed-view.spec.ts").exists(),
+        "stale view spec must be removed"
+    );
+    assert!(
+        !specs_dir.join("removed-view.workflow.spec.ts").exists(),
+        "stale workflow spec must be removed"
+    );
+    assert!(
+        specs_dir.join("customer-list.spec.ts").exists(),
+        "active view specs are regenerated"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("unrelated.txt")).unwrap(),
+        "keep",
+        "non-spec files are never touched"
+    );
+}
+
+#[tokio::test]
+async fn playwright_config_gates_bearer_auth_behind_env() {
+    let engine = MockEngine::new();
+    ingest_ifml_model(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate(&engine, dir.path(), None).await;
+    let config = content_of(&files, "playwright.config.ts");
+
+    assert!(config.contains("baseURL"), "{config}");
+    assert!(
+        config.contains("extraHTTPHeaders"),
+        "config must carry the extraHTTPHeaders hook: {config}"
+    );
+    assert!(
+        config.contains("process.env.IFML_API_KEY"),
+        "auth must be env-gated: {config}"
+    );
+    assert!(
+        config.contains("Bearer ${process.env.IFML_API_KEY}"),
+        "the key rides the authorization header: {config}"
+    );
+}
+
+#[tokio::test]
 async fn workflow_spec_emitted_for_schema_backed_workflow_entity() {
     let engine = MockEngine::new();
     ingest_customer_schema(&engine).await;
@@ -810,8 +974,9 @@ async fn workflow_spec_emitted_for_schema_backed_workflow_entity() {
 
     let detail_spec = content_of(&files, "tests/ifml/customer-detail.workflow.spec.ts");
     assert!(
-        detail_spec.contains("page.goto(`/customerdetail?customerId=${created.id}`)"),
-        "{detail_spec}"
+        detail_spec
+            .contains("page.goto(`/customerdetail?customerId=${created.data?.id ?? created.id}`)"),
+        "workflow specs must read the fixture id through the API envelope: {detail_spec}"
     );
     assert!(
         detail_spec.contains("page.getByTestId('info-state')"),
@@ -820,7 +985,8 @@ async fn workflow_spec_emitted_for_schema_backed_workflow_entity() {
 
     let edit_spec = content_of(&files, "tests/ifml/customer-edit.workflow.spec.ts");
     assert!(
-        edit_spec.contains("page.getByTestId('editor-state')"),
+        edit_spec
+            .contains("page.goto(`/customeredit?customerId=${created.data?.id ?? created.id}`)"),
         "{edit_spec}"
     );
 }
@@ -867,6 +1033,7 @@ async fn workflow_spec_requires_schema_backing() {
 /// CustomerList (unguarded denial target) plus a roles-guarded AdminConsole.
 async fn ingest_guarded_model(db: &MockEngine, roles: &[&str], requires: &[&str]) {
     ingest_view(db, "CustomerList", Some("Customer Management")).await;
+    ingest_component(db, "CustomerList", "grid", "list", &["name"], None).await;
     ingest_guarded_view(
         db,
         "AdminConsole",
@@ -952,16 +1119,28 @@ async fn no_policy_emits_no_persona_tests() {
     let dir = tempfile::tempdir().unwrap();
 
     let files = generate(&engine, dir.path(), None).await;
-    let spec = content_of(&files, "tests/ifml/admin-console.spec.ts");
+
+    // Guarded views get no plain render test (they redirect unauthenticated
+    // visitors) and no personas without a policy: nothing spec-worthy covers
+    // the view, so no spec file is emitted at all.
     assert!(
-        !spec.contains("__USER_ROLES__") && !spec.contains("actor "),
-        "no policy must mean no persona tests: {spec}"
+        !files
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with("admin-console.spec.ts")),
+        "guarded view without policy must not emit a spec: {files:?}"
     );
     assert!(
         !files
             .iter()
             .any(|f| f.content.contains("__USER_CAPABILITIES__")),
         "no policy must mean no capability seeding anywhere"
+    );
+    // Unguarded views keep their render specs.
+    assert!(
+        files
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with("customer-list.spec.ts")),
+        "unguarded views still render-spec"
     );
 }
 

@@ -4,6 +4,12 @@
 //! (pagination + error handling included), and the malformed `{item.x`
 //! markup is fixed. The templates must reproduce these files verbatim when
 //! no component specs or mappings are present.
+//!
+//! Deliberate contract change (ifml-gate Wave B): view params resolve from
+//! `url.searchParams` only — SvelteKit views have no dynamic route segments,
+//! so `params.<name>` fallbacks were dead code and a type error. The load
+//! returns resolved params to the page as `result.params`; param-less views
+//! keep the pre-change byte shape.
 
 pub const SPECLESS_CUSTOMERLIST_PAGE: &str = r##"<script lang="ts">
 	import type { PageData } from './$types';
@@ -78,6 +84,7 @@ pub const SPECLESS_CUSTOMERDETAIL_PAGE: &str = r##"<script lang="ts">
 	import type { PageData } from './$types';
 
 	let { data, params }: { data: PageData; params: Record<string, string> } = $props();
+	const viewParams = $derived((data.params ?? {}) as Record<string, string>);
 </script>
 
 <svelte:head>
@@ -107,14 +114,19 @@ import { error } from '@sveltejs/kit';
 
 export const load: PageLoad = async ({ params, url, fetch }) => {
 	const result: Record<string, unknown> = {};
+	const viewParams: Record<string, string> = {};
+	viewParams['customerId'] = url.searchParams.get('customerId') ?? '';
+	result.params = viewParams;
 
-	const customerId = url.searchParams.get('customerId') ?? params.customerId;
+	const customerId = viewParams['customerId'];
 	if (customerId) {
 		const infoResponse = await fetch(`/api/v1/sales/customer/${ customerId }`);
 		if (!infoResponse.ok) {
 			error(infoResponse.status, 'Failed to load customer');
 		}
-		result.item = await infoResponse.json();
+		const infoJson = await infoResponse.json();
+		const infoItem = infoJson.data ?? infoJson;
+		result.item = infoItem;
 	}
 
 	return result;

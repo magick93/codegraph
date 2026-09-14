@@ -1,0 +1,6 @@
+package refunds
+
+class RefundRequest {
+    String title
+    int amount
+}

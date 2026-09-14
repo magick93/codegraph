@@ -1,0 +1,44 @@
+# Profile for the IFML codegen validation gate: API + server scaffold plus
+# the IFML svelte generators only (no entity-scoped ui generators).
+
+[profiles.gate.meta]
+name = "gate"
+version = "1.0.0"
+description = "IFML codegen gate — bootable API crate + IFML svelte UI"
+app_name = "ifml-gate-app"
+generator_name = "codegraph-gate"
+api_title = "IFML Gate API"
+domain_types_crate = "gate_domain_types"
+domain_types_base = "domain-types"
+
+[profiles.gate.features]
+auth = true
+pagination = true
+validation_level = "strict"
+database_target = "postgres"
+persistence_provider = "sea_orm"
+deployment_topology = "monolith"
+ifml_backend = true
+framework_svelte = true
+ifml_design_system = "shadcn-svelte"
+
+[profiles.gate.api]
+generators = [
+    # Entity
+    "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
+    "query", "handler", "workflow_action",
+    "domain_types_dto", "domain_types_query_service",
+    # Domain
+    "errors", "router", "links",
+    # Global
+    "scaffold", "platform_schema", "workflow_seed", "openapi",
+    "domain_types_scaffold",
+]
+
+[profiles.gate.ui]
+generators = [
+    "ifml_route", "ifml_navigation", "ifml_e2e_test",
+]
+
+[profiles.gate.ifml]
+frameworks = [{ name = "svelte" }]

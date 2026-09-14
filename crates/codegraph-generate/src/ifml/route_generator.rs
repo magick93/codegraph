@@ -307,6 +307,10 @@ pub struct PageSvelteContext {
     /// resolved mapping or a non-empty mapping pack; `None` renders the
     /// plain page.
     container: Option<RenderContainer>,
+    /// View parameter names; non-empty emits the page-level `viewParams`
+    /// derived const (query-param resolution — SvelteKit views have no
+    /// dynamic segments here, so route params are always empty).
+    view_params: Vec<String>,
 }
 
 /// Markup gate for a view's interactive controls (form submit/cancel buttons
@@ -397,6 +401,8 @@ pub struct RenderImport {
 #[derive(Debug, Serialize)]
 pub struct PageComponentContext {
     name: String,
+    /// Sanitized JS identifier (const/handler names).
+    js_name: String,
     component_type: String,
     /// Semantic slot role of the whole component (`collection`, `display`,
     /// `selection-field`); forms keep `None` — their inputs carry roles.
@@ -411,7 +417,8 @@ pub struct PageComponentContext {
     mapping: Option<RenderMapping>,
     events: Vec<RenderEvent>,
     /// Ready-to-render event callback props for mapped components,
-    /// e.g. `on:select={comp_grid_select}`.
+    /// e.g. `onselect={comp_grid_select}` (Svelte 5 event-property form —
+    /// `on:select` directives are not forwarded to components).
     event_props: Vec<String>,
     /// Ready-to-render data prop for mapped components, e.g. `data={data.items}`.
     data_prop: String,
@@ -442,6 +449,14 @@ pub struct PageComponentContext {
     /// Workflow state display for the bound entity, resolved from the
     /// owning domain's config; `None` renders no badge (byte-identical).
     workflow: Option<RenderWorkflow>,
+    /// Whether the fallback form branch renders: emits the typed
+    /// `{js_name}_form_state` const used by value bindings and the
+    /// workflow badge.
+    form_state: bool,
+    /// Ready-to-render typed payload construction lines for the submit
+    /// handler (`const payload: ...` + per-field coercions); empty keeps
+    /// the untyped `formData` body (byte-identical).
+    form_payload: String,
 }
 
 /// Workflow config for a component's bound entity, pre-rendered into the
@@ -504,14 +519,18 @@ fn component_workflow(config: &DomainConfig, c: &IfmlComponent) -> Option<Render
 }
 
 /// The JS expression reading the entity's current state in each markup
-/// context: list/table rows iterate `item`, details reads `data`, forms
-/// read the edit-mode payload `data.formData` (optional-chained so create
-/// mode renders an empty badge instead of throwing).
+/// context: list/table rows iterate `item` and read the entity's status
+/// column; forms and details read the workflow state merged into the load
+/// payload by the `/workflow` fetch (`{...}.workflow_state?.current_state`)
+/// — the entity payload's status column is not seeded at create time.
 fn workflow_value_path(c: &IfmlComponent, status_field: &str) -> String {
     if is_form_component(c) {
-        format!("data.formData?.{status_field}")
+        format!(
+            "{}_form_state.workflow_state?.current_state",
+            sanitize_ident(&c.name)
+        )
     } else if c.component_type == "details" {
-        format!("data.{status_field}")
+        "data.item?.workflow_state?.current_state".to_string()
     } else {
         format!("item.{status_field}")
     }
@@ -528,7 +547,7 @@ fn workflow_badge_html(component: &str, value_path: &str, terminal_states: &[Str
             .collect::<Vec<_>>()
             .join(", ");
         html.push_str(&format!(
-            " data-workflow-terminal={{[{list}].includes({value_path}) ? \"true\" : \"false\"}}"
+            " data-workflow-terminal={{[{list}].includes({value_path} as string) ? \"true\" : \"false\"}}"
         ));
     }
     html.push_str(&format!(">{{{value_path}}}</span>"));
@@ -720,9 +739,11 @@ pub struct PageLoadContext {
     name: String,
     components: Vec<PageLoadComponentContext>,
     has_fetch: bool,
-    /// View parameters carrying a DSL default, rendered as
-    /// `url.searchParams.get(name) ?? params.name ?? <default>` fallbacks.
-    param_defaults: Vec<RenderParamDefault>,
+    /// All view parameters, resolved from `url.searchParams` (views have no
+    /// dynamic route segments); entries with a DSL default carry the JS
+    /// literal as the final `??` fallback. Resolved params are returned to
+    /// the page as `result.params`.
+    view_params: Vec<RenderViewParam>,
     /// Roles allowed to view this page; non-empty emits the load-level
     /// role guard plus the `$lib/roles` helper import.
     view_roles: Vec<String>,
@@ -737,11 +758,12 @@ pub struct PageLoadContext {
     denial_target: String,
 }
 
-/// A view parameter default: JS literal emitted as the final `??` fallback.
+/// A view parameter resolved in the load function from the query string.
 #[derive(Debug, Serialize)]
-pub struct RenderParamDefault {
+pub struct RenderViewParam {
     name: String,
-    default: String,
+    /// JS literal emitted as the final `??` fallback.
+    default: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -755,8 +777,10 @@ pub struct PageLoadComponentContext {
     route_name: String,
     api: Option<ResolvedApi>,
     id_param: Option<String>,
-    /// Default literal for the id param, when the view declares one.
-    id_default: Option<String>,
+    /// Whether the bound entity carries a workflow: the load merges the
+    /// `/workflow` state into the payload so badges can read the
+    /// authoritative current state.
+    workflow: bool,
     paginate: bool,
     fetch_list: bool,
     fetch_item: bool,
@@ -869,6 +893,14 @@ async fn build_page_context(
         label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
         components,
         params: vc.params.clone(),
+        view_params: {
+            let mut seen: HashSet<String> = HashSet::new();
+            vc.params
+                .iter()
+                .filter(|p| seen.insert(p.name.clone()))
+                .map(|p| p.name.clone())
+                .collect()
+        },
         view_events,
         imports,
         needs_goto,
@@ -918,7 +950,7 @@ async fn page_component_context(
         .filter(|e| {
             e.action_kind == "navigate" && e.event_type != "submit" && e.event_type != "save"
         })
-        .map(|e| format!("on:{}={{{}}}", e.event_type, e.handler_name))
+        .map(|e| format!("on{}={{{}}}", e.event_type, e.handler_name))
         .collect();
 
     let entity = c.entity.clone().unwrap_or_default();
@@ -950,7 +982,7 @@ async fn page_component_context(
     let submit_handler = submit.as_ref().map(|s| s.handler_name.clone());
     let submit_prop = submit_handler
         .as_ref()
-        .map(|handler| format!("on:submit={{{handler}}}"));
+        .map(|handler| format!("onsubmit={{{handler}}}"));
     let button_mapping = if mapping.is_none() {
         mappings.and_then(|m| {
             m.resolve_slot(
@@ -995,9 +1027,16 @@ async fn page_component_context(
             .join(", ")
     );
     let workflow = component_workflow(config, c);
+    let form_state = is_form_component(c) && mapping.is_none();
+    let form_payload = if form_state {
+        form_payload_block(c, form.as_ref())
+    } else {
+        String::new()
+    };
 
     PageComponentContext {
         name: c.name.clone(),
+        js_name: sanitize_ident(&c.name),
         component_type: c.component_type.clone(),
         role: slot_role,
         entity,
@@ -1021,10 +1060,80 @@ async fn page_component_context(
         submit_button,
         buttons,
         workflow,
+        form_state,
+        form_payload,
         table,
         form,
         chart,
     }
+}
+
+/// Typed submit-payload construction for a fallback form: coerces FormData
+/// string values to the bound schema's types (numbers, booleans, datetimes)
+/// so the generated API accepts the body. Empty when no type information is
+/// available (byte-identical untyped `formData` body).
+fn form_payload_block(c: &IfmlComponent, form: Option<&RenderForm>) -> String {
+    let field_names: Vec<String> = match form {
+        Some(form) if !form.fields.is_empty() => {
+            form.fields.iter().map(|f| f.name.clone()).collect()
+        }
+        _ => c.fields.clone(),
+    };
+    if field_names.is_empty() {
+        return String::new();
+    }
+    let types: HashMap<&str, &str> = c
+        .fields_with_types
+        .iter()
+        .map(|(f, t)| (f.as_str(), t.as_str()))
+        .collect();
+    let input_types: HashMap<&str, &str> = form
+        .map(|form| {
+            form.fields
+                .iter()
+                .map(|f| (f.name.as_str(), f.input_type.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut lines = Vec::new();
+    for name in &field_names {
+        let rust_type = types
+            .get(name.as_str())
+            .copied()
+            .unwrap_or("String")
+            .to_ascii_lowercase();
+        let input_type = input_types.get(name.as_str()).copied().unwrap_or("");
+        let value = format!("formData.{name}");
+        let expr = if input_type == "checkbox" {
+            format!("{value} === 'on'")
+        } else if rust_type.contains("bool") {
+            format!("{value} === '' ? null : {value} === 'true'")
+        } else if is_numeric_rust_type(&rust_type) {
+            format!("{value} === '' ? null : Number({value})")
+        } else if rust_type.contains("datetime")
+            || rust_type.contains("timestamp")
+            || matches!(input_type, "datetime-local" | "date" | "time")
+        {
+            format!("{value} === '' ? null : new Date(String({value})).toISOString()")
+        } else {
+            value
+        };
+        lines.push(format!("\t\tpayload.{name} = {expr};"));
+    }
+    let mut block = String::from("\t\tconst payload: Record<string, unknown> = {};\n");
+    block.push_str(&lines.join("\n"));
+    block
+}
+
+pub(crate) fn is_numeric_rust_type(rust_type: &str) -> bool {
+    [
+        "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
+    ]
+    .iter()
+    .any(|n| rust_type.contains(n))
+        || rust_type.contains("decimal")
+        || rust_type.contains("integer")
+        || rust_type.contains("bigint")
 }
 
 /// The layout kind used for mapping resolution: the typed spec kind when a
@@ -1156,7 +1265,7 @@ fn build_submit(
     let handler_name = format!("submit_{}", sanitize_ident(&c.name));
     let (url_expr, method) = match id_param {
         Some(param) if api.has_update => (
-            format!("`{}/${{params.{param}}}`", api.base_path),
+            format!("`{}/${{viewParams.{param}}}`", api.base_path),
             "PUT".to_string(),
         ),
         _ => (format!("\"{}\"", api.base_path), "POST".to_string()),
@@ -1457,13 +1566,22 @@ fn button_context(
             e.action_kind == "navigate"
                 && matches!(e.event_type.as_str(), "cancel" | "back" | "click")
         })
-        .map(|e| RenderButton {
-            import_name: export.clone(),
-            import_path: import_path.clone(),
-            label: humanize_event_label(&e.event_type),
-            onclick_prop: Some(onclick_prop(&e.handler_name)),
-            disabled_prop: None,
-            testid_prop: testid_prop(format!("{}-{}", c.name, e.event_type)),
+        .map(|e| {
+            // Secondary buttons must not share the submit button's root
+            // testid (duplicate selectors); prefer a per-event mapping key,
+            // else the component-scoped slot name the fallback markup uses.
+            let testid = m
+                .testid(&e.event_type)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{}-{}", c.name, e.event_type));
+            RenderButton {
+                import_name: export.clone(),
+                import_path: import_path.clone(),
+                label: humanize_event_label(&e.event_type),
+                onclick_prop: Some(onclick_prop(&e.handler_name)),
+                disabled_prop: None,
+                testid_prop: format!("testid=\"{testid}\""),
+            }
         })
         .collect();
     (Some(submit_button), buttons)
@@ -1672,7 +1790,9 @@ fn bin_op_symbol(op: &BinOp) -> &'static str {
 
 /// Build the `+page.ts` load context. Only the first list/details/form
 /// component contributes a fetch per page, mirroring the single-return load
-/// contract; each fetch resolves the entity API path from the graph.
+/// contract; each fetch resolves the entity API path from the graph. View
+/// parameters resolve from the query string only (views have no dynamic
+/// route segments) and are returned to the page as `result.params`.
 fn build_load_context(
     api_version: &str,
     vc: &IfmlViewContainer,
@@ -1680,20 +1800,18 @@ fn build_load_context(
     denial_target: &str,
 ) -> PageLoadContext {
     let id_param = id_param_from(&vc.params);
-    let param_defaults: Vec<RenderParamDefault> = vc
+    // The graph may carry duplicate HasParameter edges (see
+    // ingest_parameter_definition); params dedupe by name for resolution.
+    let mut seen_params: HashSet<String> = HashSet::new();
+    let view_params: Vec<RenderViewParam> = vc
         .params
         .iter()
-        .filter_map(|p| {
-            p.default.as_ref().map(|d| RenderParamDefault {
-                name: p.name.clone(),
-                default: d.clone(),
-            })
+        .filter(|p| seen_params.insert(p.name.clone()))
+        .map(|p| RenderViewParam {
+            name: p.name.clone(),
+            default: p.default.clone(),
         })
         .collect();
-    let id_default = id_param
-        .as_deref()
-        .and_then(|name| vc.params.iter().find(|p| p.name == name))
-        .and_then(|p| p.default.clone());
     let mut load_components = Vec::new();
     let mut has_list = false;
     let mut has_details = false;
@@ -1729,7 +1847,7 @@ fn build_load_context(
             route_name: comp.entity.to_lowercase(),
             api: comp.api.clone(),
             id_param: id_param.clone(),
-            id_default: id_default.clone(),
+            workflow: comp.workflow.is_some(),
             paginate: fetch_list && (comp.table.as_ref().map(|t| t.pagination).unwrap_or(true)),
             fetch_list,
             fetch_item,
@@ -1742,7 +1860,7 @@ fn build_load_context(
         name: vc.name.clone(),
         components: load_components,
         has_fetch,
-        param_defaults,
+        view_params,
         view_roles: vc.roles.clone(),
         view_requires: vc.requires.clone(),
         guard_consts: guard_consts(vc),
@@ -1966,7 +2084,7 @@ terminal_states = ["done"]
         );
         assert!(
             wf.badge_html.contains(
-                " data-workflow-terminal={['done'].includes(item.status) ? \"true\" : \"false\"}"
+                " data-workflow-terminal={['done'].includes(item.status as string) ? \"true\" : \"false\"}"
             ),
             "{}",
             wf.badge_html
@@ -1981,8 +2099,8 @@ terminal_states = ["done"]
         let wf = ctx.workflow.expect("form workflow");
         assert!(
             wf.badge_html
-                .contains("data-workflow-state={data.formData?.status}"),
-            "{}",
+                .contains("data-workflow-state={editor_form_state.workflow_state?.current_state}"),
+            "form badges read the merged workflow state: {}",
             wf.badge_html
         );
 
@@ -1991,7 +2109,8 @@ terminal_states = ["done"]
         let ctx = page_component_context_with_config(&details, &workflow_config());
         let wf = ctx.workflow.expect("details workflow");
         assert!(
-            wf.badge_html.contains("data-workflow-state={data.status}"),
+            wf.badge_html
+                .contains("data-workflow-state={data.item?.workflow_state?.current_state}"),
             "{}",
             wf.badge_html
         );
@@ -2022,6 +2141,59 @@ terminal_states = ["done"]
         assert_eq!(table.columns[1].binding, "status");
         assert_eq!(table.columns[2].kind, "expr");
         assert_eq!(table.columns[2].binding, "tenure_years(Customer.hire_date)");
+    }
+
+    #[test]
+    fn form_payload_coerces_by_input_and_rust_types() {
+        let mut c = component_with_spec(Some(ComponentSpec::Form(FormSpec {
+            fields: vec![
+                field_def("title", InputFieldType::Text),
+                field_def("amount", InputFieldType::Number),
+                field_def("urgent", InputFieldType::Checkbox),
+                field_def("submittedAt", InputFieldType::DateTime),
+            ],
+        })));
+        c.fields_with_types = vec![
+            ("title".to_string(), "String".to_string()),
+            ("amount".to_string(), "Option< i64 >".to_string()),
+            ("urgent".to_string(), "bool".to_string()),
+            (
+                "submittedAt".to_string(),
+                "Option< DateTime < Utc > >".to_string(),
+            ),
+        ];
+        let form = match &c.spec {
+            Some(ComponentSpec::Form(form)) => Some(render_form(form)),
+            _ => None,
+        };
+        let block = form_payload_block(&c, form.as_ref());
+        assert!(
+            block.contains("\t\tpayload.title = formData.title;"),
+            "{block}"
+        );
+        assert!(
+            block.contains(
+                "\t\tpayload.amount = formData.amount === '' ? null : Number(formData.amount);"
+            ),
+            "{block}"
+        );
+        assert!(
+            block.contains("\t\tpayload.urgent = formData.urgent === 'on';"),
+            "{block}"
+        );
+        assert!(
+            block.contains(
+                "\t\tpayload.submittedAt = formData.submittedAt === '' ? null : new Date(String(formData.submittedAt)).toISOString();"
+            ),
+            "{block}"
+        );
+
+        let no_types = component_with_spec(None);
+        assert_eq!(
+            form_payload_block(&no_types, None),
+            String::new(),
+            "components without form fields keep the untyped body"
+        );
     }
 
     #[test]
@@ -2188,20 +2360,26 @@ terminal_states = ["done"]
         let ctx = build_load_context("v1", &vc, &[list, details], "/");
         let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
         assert!(
-            rendered.contains(
-                "paramDefaults['slug'] = url.searchParams.get('slug') ?? params.slug ?? 'home';"
-            ),
+            rendered.contains("viewParams['slug'] = url.searchParams.get('slug') ?? 'home';"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("result.params = paramDefaults;"),
+            rendered.contains("result.params = viewParams;"),
             "{rendered}"
         );
         assert!(
             rendered.contains(
-                "const customerId = url.searchParams.get('customerId') ?? params.customerId ?? '00000000-0000-0000-0000-000000000000';"
+                "viewParams['customerId'] = url.searchParams.get('customerId') ?? '00000000-0000-0000-0000-000000000000';"
             ),
             "{rendered}"
+        );
+        assert!(
+            rendered.contains("const customerId = viewParams['customerId'];"),
+            "fetch ids must resolve from viewParams only (no route params): {rendered}"
+        );
+        assert!(
+            !rendered.contains("params."),
+            "route params are dead for query-param views: {rendered}"
         );
 
         let bare_vc = IfmlViewContainer {
@@ -2215,7 +2393,22 @@ terminal_states = ["done"]
         let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
         let ctx = build_load_context("v1", &bare_vc, &[list], "/");
         let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
-        assert!(!rendered.contains("paramDefaults"), "{rendered}");
+        assert!(
+            rendered
+                .contains("viewParams['customerId'] = url.searchParams.get('customerId') ?? '';"),
+            "params without defaults fall back to the empty string: {rendered}"
+        );
+    }
+
+    #[test]
+    fn paramless_view_load_stays_free_of_param_resolution() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
+        let vc = plain_vc("CustomerList");
+        let ctx = build_load_context("v1", &vc, &[list], "/");
+        let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+        assert!(!rendered.contains("viewParams"), "{rendered}");
+        assert!(!rendered.contains("result.params"), "{rendered}");
     }
 
     #[test]
@@ -2254,8 +2447,9 @@ terminal_states = ["done"]
             "{rendered}"
         );
         assert!(
-            rendered
-                .contains("if (viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {"),
+            rendered.contains(
+                "if (browser && viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {"
+            ),
             "{rendered}"
         );
         assert!(rendered.contains("throw redirect(303, '/');"), "{rendered}");
@@ -2487,7 +2681,9 @@ terminal_states = ["done"]
             "{rendered}"
         );
         assert!(
-            rendered.contains("if (viewRequires.length && !viewRequires.some((c) => can(c))) {"),
+            rendered.contains(
+                "if (browser && viewRequires.length && !viewRequires.some((c) => can(c))) {"
+            ),
             "{rendered}"
         );
         assert!(
@@ -2767,7 +2963,7 @@ testids = { root = "ui-button" }
         );
         assert!(
             rendered.contains(
-                "{#if viewRequires.some((c) => can(c))}<Button onclick={comp_editor_cancel} testid=\"ui-button\">Cancel</Button>{/if}"
+                "{#if viewRequires.some((c) => can(c))}<Button onclick={comp_editor_cancel} testid=\"editor-cancel\">Cancel</Button>{/if}"
             ),
             "{rendered}"
         );
@@ -2954,6 +3150,7 @@ testids = { root = "ui-button" }
             label: "View".to_string(),
             components,
             params: Vec::new(),
+            view_params: Vec::new(),
             view_events: Vec::new(),
             imports: Vec::new(),
             needs_goto: false,
@@ -3081,12 +3278,23 @@ testids = { root = "data-table", row = "data-row" }
             "{rendered}"
         );
         assert!(
-            rendered.contains("on:select={comp_grid_select}"),
-            "{rendered}"
+            rendered.contains("onselect={comp_grid_select}"),
+            "Svelte 5 event-property form must reach the component: {rendered}"
+        );
+        assert!(
+            rendered.contains("<h1>CustomerList</h1>"),
+            "mapped component branches must keep the view heading: {rendered}"
+        );
+        let heading = rendered.find("<h1>").expect("heading");
+        let invocation = rendered.find("<DataTable").expect("invocation");
+        assert!(
+            heading < invocation,
+            "heading renders above the mapped component: {rendered}"
         );
         assert!(rendered.contains("testid=\"data-table\""), "{rendered}");
         assert!(rendered.contains("rowTestid=\"data-row\""), "{rendered}");
         assert!(!rendered.contains("<table"), "{rendered}");
+        assert!(!rendered.contains("on:select"), "{rendered}");
     }
 
     #[test]
@@ -3403,9 +3611,9 @@ testids = { root = "ui-button" }
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
             rendered.contains(
-                "<Button onclick={comp_editor_cancel} testid=\"ui-button\">Cancel</Button>"
+                "<Button onclick={comp_editor_cancel} testid=\"editor-cancel\">Cancel</Button>"
             ),
-            "{rendered}"
+            "secondary buttons must not share the submit button's root testid: {rendered}"
         );
     }
 

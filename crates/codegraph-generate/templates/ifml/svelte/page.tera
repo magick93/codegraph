@@ -14,6 +14,14 @@
 {%- endfor %}
 
 	let { data, params }: { data: PageData; params: Record<string, string> } = $props();
+{%- if view_params %}
+	const viewParams = $derived((data.params ?? {}) as Record<string, string>);
+{%- endif %}
+{%- for comp in components %}
+{%- if comp.form_state %}
+	const {{ comp.js_name }}_form_state = $derived((data.formData ?? {}) as Record<string, any>);
+{%- endif %}
+{%- endfor %}
 {%- if control_gate.consts %}
 
 	{{ control_gate.consts }}
@@ -64,13 +72,16 @@
 {%- else %}
 		const formData = Object.fromEntries(new FormData(event.currentTarget as HTMLFormElement));
 {%- endif %}
+{%- if comp.form_payload %}
+{{ comp.form_payload }}
+{%- endif %}
 		submitting = true;
 		formError = '';
 		try {
 			const response = await fetch({{ comp.submit.url_expr }}, {
 				method: '{{ comp.submit.method }}',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(formData)
+				body: JSON.stringify({% if comp.form_payload %}payload{% else %}formData{% endif %})
 			});
 			if (!response.ok) {
 				const body = await response.json().catch(() => null);
@@ -100,6 +111,7 @@
 {%- endif %}
 {%- for comp in components %}
 {% if comp.mapping %}
+<h1>{{ label }}</h1>
 <{{ comp.mapping.import_name }}
 {%- if comp.data_prop %}
 	{{ comp.data_prop }}
@@ -157,7 +169,7 @@
 	{% if field.is_select %}
 	<label>
 		{{ field.name }}
-		<select name="{{ field.name }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %}>
+		<select name="{{ field.name }}" value={{"{"}}{{ comp.js_name }}_form_state.{{ field.name }}}{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %}>
 			{% for value in field.values %}
 			<option value="{{ value }}">{{ value }}</option>
 			{% endfor %}
@@ -176,12 +188,12 @@
 	{% elif field.is_textarea %}
 	<label>
 		{{ field.name }}
-		<textarea name="{{ field.name }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %}></textarea>
+		<textarea name="{{ field.name }}" value={{"{"}}{{ comp.js_name }}_form_state.{{ field.name }}}{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %}></textarea>
 	</label>
 	{% else %}
 	<label>
 		{{ field.name }}
-		<input name="{{ field.name }}" type="{{ field.input_type }}"{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %} />
+		<input name="{{ field.name }}" type="{{ field.input_type }}"{% if field.input_type == "checkbox" %} checked={{"{"}}{{ comp.js_name }}_form_state.{{ field.name }} === true}{% else %} value={{"{"}}{{ comp.js_name }}_form_state.{{ field.name }}}{% endif %}{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %} />
 	</label>
 	{% endif %}
 	{% endfor %}
@@ -226,7 +238,7 @@
 	{% for field in comp.fields %}
 	<label>
 		{{ field }}
-		<input name="{{ field }}" />
+		<input name="{{ field }}" value={{"{"}}{{ comp.js_name }}_form_state.{{ field }}} />
 	</label>
 	{% endfor %}
 {% if comp.submit_handler %}

@@ -1,0 +1,7 @@
+{
+  "$id": "codelist/RefundReasonCodeList.json",
+  "title": "RefundReasonCodeList",
+  "description": "Reason codes for refund requests",
+  "type": "string",
+  "enum": ["Damaged", "WrongItem", "LateDelivery", "Other"]
+}

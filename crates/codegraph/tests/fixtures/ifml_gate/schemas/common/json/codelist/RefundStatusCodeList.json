@@ -1,0 +1,7 @@
+{
+  "$id": "codelist/RefundStatusCodeList.json",
+  "title": "RefundStatusCodeList",
+  "description": "Workflow states for refund requests",
+  "type": "string",
+  "enum": ["draft", "submitted", "approved", "rejected"]
+}

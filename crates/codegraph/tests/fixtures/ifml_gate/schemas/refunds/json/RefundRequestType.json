@@ -1,0 +1,42 @@
+{
+  "$id": "RefundRequestType.json",
+  "title": "RefundRequestType",
+  "description": "A customer refund request tracked through an approval workflow",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Short summary of the refund request"
+    },
+    "requesterEmail": {
+      "type": "string",
+      "format": "email",
+      "description": "Email of the requesting customer"
+    },
+    "amount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Refund amount in cents"
+    },
+    "urgent": {
+      "type": "boolean",
+      "description": "Whether the refund must be expedited"
+    },
+    "submittedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the request was submitted"
+    },
+    "status": {
+      "$ref": "../../common/json/codelist/RefundStatusCodeList.json",
+      "description": "Workflow status of the request"
+    },
+    "reason": {
+      "$ref": "../../common/json/codelist/RefundReasonCodeList.json",
+      "description": "Reason code for the refund"
+    }
+  },
+  "required": [
+    "title"
+  ]
+}
