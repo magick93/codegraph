@@ -240,35 +240,31 @@ async fn verify_jwt(db: &sea_orm::DatabaseConnection, token: &str, jwt_secret: &
         .parse()
         .map_err(|_| reject_unauthorized("JWT sub is not a valid UUID"))?;
 
-    // Resolve organization via SECURITY DEFINER function (bypasses basejump RLS)
+    // Resolve org + role in ONE round trip (#169): the merged SECURITY
+    // DEFINER RPC bundles what used to be resolve_user_org and
+    // get_current_user_role wire calls.
     let row = db
         .query_one(Statement::from_sql_and_values(
             sea_orm::DatabaseBackend::Postgres,
-            "SELECT public.resolve_user_org($1)",
+            "SELECT public.resolve_jwt_context($1) as ctx",
             [user_id.into()],
         ))
         .await
-        .map_err(|e| reject_unauthorized(&format!("Org lookup failed: {e}")))?
+        .map_err(|e| reject_unauthorized(&format!("Identity resolution failed: {e}")))?
         .ok_or_else(|| reject_unauthorized("User has no organization membership"))?;
 
-    let organization_id: Uuid = row
+    let ctx_json: serde_json::Value = row
         .try_get_by_index(0)
-        .map_err(|e| reject_unauthorized(&format!("Org parse error: {e}")))?;
-
-    let role = db
-        .query_one(Statement::from_sql_and_values(
-            sea_orm::DatabaseBackend::Postgres,
-            // SECURITY DEFINER lookup: app_user has no direct SELECT on
-            // basejump.account_user, so a plain query fails silently here and
-            // every JWT user would degrade to "member".
-            "SELECT public.get_current_user_role($1, $2)",
-            [organization_id.into(), user_id.into()],
-        ))
-        .await
-        .ok()
-        .flatten()
-        .and_then(|r| r.try_get_by_index::<String>(0).ok())
-        .unwrap_or_else(|| "member".to_string());
+        .map_err(|e| reject_unauthorized(&format!("Identity parse error: {e}")))?;
+    let organization_id: Uuid = serde_json::from_value(
+        ctx_json.get("organization_id").cloned().unwrap_or_default(),
+    )
+    .map_err(|_| reject_unauthorized("Missing organization_id in identity context"))?;
+    let role = ctx_json
+        .get("role")
+        .and_then(|v| v.as_str())
+        .unwrap_or("member")
+        .to_string();
 
     Ok(AuthInfo {
         organization_id,

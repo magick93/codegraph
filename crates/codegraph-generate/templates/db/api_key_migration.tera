@@ -410,6 +410,26 @@ RETURNS text AS $$
   LIMIT 1;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
+-- resolve_jwt_context(): one-round-trip JWT identity resolution (#169).
+-- Merges the former resolve_user_org + get_current_user_role wire calls:
+-- the auth middleware spends exactly ONE DB round trip resolving the JWT
+-- subject's organization and org role. Returns NULL when the user has no
+-- (acceptable) organization membership.
+CREATE OR REPLACE FUNCTION public.resolve_jwt_context(p_user_id uuid)
+RETURNS jsonb AS $$
+DECLARE
+    v_org uuid;
+    v_role text;
+BEGIN
+    v_org := public.resolve_user_org(p_user_id);
+    IF v_org IS NULL THEN
+        RETURN NULL;
+    END IF;
+    v_role := public.get_current_user_role(v_org, p_user_id);
+    RETURN jsonb_build_object('organization_id', v_org, 'role', coalesce(v_role, 'member'));
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
 -- Grant to all roles
 GRANT EXECUTE ON FUNCTION public.get_current_org_id TO authenticated, api_key, anon;
 GRANT EXECUTE ON FUNCTION public.resolve_user_org TO authenticated, api_key, anon;
@@ -436,6 +456,7 @@ END $$;
 GRANT USAGE ON SCHEMA public TO app_user;
 GRANT EXECUTE ON FUNCTION public.resolve_user_org TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_current_user_role TO app_user;
+GRANT EXECUTE ON FUNCTION public.resolve_jwt_context TO app_user;
 GRANT EXECUTE ON FUNCTION public.verify_api_key TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_verified_api_key_info TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_api_key_org_id TO app_user;

@@ -1238,8 +1238,78 @@ async fn command_and_query_route_repo_errors_through_the_classifier() {
     }
 }
 
-// === Query Template Tests ===
+// === Single-trip JWT auth (#169 phase 6) ===
 
+#[tokio::test]
+async fn jwt_auth_resolves_context_in_one_round_trip() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-jwt-single-trip");
+
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
+    let files = gen
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let middleware = &files
+        .iter()
+        .find(|f| f.path.ends_with("middleware/mod.rs"))
+        .expect("Should generate middleware/mod.rs")
+        .content;
+
+    // The JWT path must spend exactly ONE DB round trip: the merged
+    // resolve_jwt_context RPC (org + role in one payload).
+    assert!(
+        middleware.contains("resolve_jwt_context"),
+        "verify_jwt must use the merged resolve_jwt_context RPC"
+    );
+    assert!(
+        !middleware.contains("resolve_user_org("),
+        "verify_jwt must not do a separate org lookup round trip"
+    );
+    assert!(
+        !middleware.contains("get_current_user_role("),
+        "verify_jwt must not do a separate role lookup round trip"
+    );
+
+    // The generated migration exposes the merged SECURITY DEFINER function.
+    let migration = &files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("api_key_management"))
+        .expect("Should generate the api key migration")
+        .content;
+    assert!(
+        migration.contains("CREATE OR REPLACE FUNCTION public.resolve_jwt_context"),
+        "the migration must define public.resolve_jwt_context"
+    );
+    assert!(
+        migration.contains("GRANT EXECUTE ON FUNCTION public.resolve_jwt_context TO app_user"),
+        "app_user must be able to call resolve_jwt_context"
+    );
+}
+
+// === Query Template Tests ===
 #[tokio::test]
 async fn candidate_query() {
     let mock = setup_mock().await;
