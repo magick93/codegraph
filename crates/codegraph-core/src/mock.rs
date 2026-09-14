@@ -31,6 +31,10 @@ pub struct MockEngine {
     #[allow(dead_code)]
     data_bindings: Mutex<HashMap<String, DataBindingNode>>,
     view_container_components: Mutex<HashMap<String, Vec<String>>>,
+    /// Nested ViewContainers per parent, from ContainsViewContainer edges.
+    /// Kept separate from [`Self::view_container_components`] so container
+    /// children are never returned as components.
+    view_container_children: Mutex<HashMap<String, Vec<String>>>,
     events_by_parent: Mutex<HashMap<String, Vec<String>>>,
     navigation_flows: Mutex<Vec<(String, String, Option<String>)>>,
     params_by_parent: Mutex<HashMap<String, Vec<String>>>,
@@ -88,6 +92,7 @@ impl MockEngine {
             parameter_definitions: Mutex::new(HashMap::new()),
             data_bindings: Mutex::new(HashMap::new()),
             view_container_components: Mutex::new(HashMap::new()),
+            view_container_children: Mutex::new(HashMap::new()),
             events_by_parent: Mutex::new(HashMap::new()),
             navigation_flows: Mutex::new(Vec::new()),
             params_by_parent: Mutex::new(HashMap::new()),
@@ -563,8 +568,14 @@ impl GraphIngestor for MockEngine {
         props: Option<&EdgeProperties>,
     ) -> Result<(), GraphError> {
         match edge_type {
-            EdgeType::ContainsViewContainer | EdgeType::ContainsViewComponent => {
+            EdgeType::ContainsViewComponent => {
                 let mut map = self.view_container_components.lock().unwrap();
+                map.entry(strip_ifml_prefix(from_id).to_string())
+                    .or_default()
+                    .push(strip_ifml_prefix(to_id).to_string());
+            }
+            EdgeType::ContainsViewContainer => {
+                let mut map = self.view_container_children.lock().unwrap();
                 map.entry(strip_ifml_prefix(from_id).to_string())
                     .or_default()
                     .push(strip_ifml_prefix(to_id).to_string());
@@ -1230,6 +1241,22 @@ impl GraphQuerier for MockEngine {
         Ok(names
             .iter()
             .filter_map(|n| components.get(n).cloned())
+            .collect())
+    }
+
+    async fn get_ifml_container_children(
+        &self,
+        parent: &str,
+    ) -> Result<Vec<ViewContainerNode>, GraphError> {
+        let containers = self.view_containers.lock().unwrap();
+        let map = self.view_container_children.lock().unwrap();
+        let names = map
+            .get(strip_ifml_prefix(parent))
+            .cloned()
+            .unwrap_or_default();
+        Ok(names
+            .iter()
+            .filter_map(|n| containers.get(n).cloned())
             .collect())
     }
 

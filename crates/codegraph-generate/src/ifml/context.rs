@@ -38,6 +38,9 @@ pub struct IfmlViewContainer {
     pub is_default: bool,
     pub is_landmark: bool,
     pub is_modal: bool,
+    /// Rendered guard expression (`if …;`) on the container; `None` when
+    /// unconditional.
+    pub conditional_expression: Option<String>,
     /// Roles allowed to view this page; empty when unrestricted
     pub roles: Vec<String>,
     /// Capabilities required to view this page; empty when unrestricted
@@ -45,6 +48,8 @@ pub struct IfmlViewContainer {
     pub params: Vec<ParameterDef>,
     pub components: Vec<IfmlComponent>,
     pub events: Vec<IfmlEvent>,
+    /// Containers nested inside this one (container-in-container); empty
+    /// for plain pages.
     pub containers: Vec<IfmlViewContainer>,
 }
 

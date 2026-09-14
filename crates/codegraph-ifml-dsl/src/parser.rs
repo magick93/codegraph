@@ -1163,7 +1163,9 @@ fn parse_view_body_content(pair: Pair<Rule>) -> ViewBodyParts {
 
 type ContainerBodyParts = (
     Vec<ParameterDecl>,
+    Option<String>,
     Vec<PropertyAssignment>,
+    Vec<ContainerDeclaration>,
     Vec<ComponentDeclaration>,
     Vec<EventHandler>,
     Vec<ModuleUse>,
@@ -1172,7 +1174,9 @@ type ContainerBodyParts = (
 
 fn parse_container_body_content(pair: Pair<Rule>) -> ContainerBodyParts {
     let mut params = Vec::new();
+    let mut label = None;
     let mut properties = Vec::new();
+    let mut containers = Vec::new();
     let mut components = Vec::new();
     let mut events = Vec::new();
     let mut module_uses = Vec::new();
@@ -1185,7 +1189,13 @@ fn parse_container_body_content(pair: Pair<Rule>) -> ContainerBodyParts {
                     params = parse_parameter_block(block);
                 }
             }
+            Rule::label_declaration => {
+                if let Some(s) = child.into_inner().next() {
+                    label = Some(parse_string(&s));
+                }
+            }
             Rule::property_assignment => properties.push(parse_property_assignment(child)),
+            Rule::container_declaration => containers.push(parse_container_declaration(child)),
             Rule::component_declaration => components.push(parse_component_declaration(child)),
             Rule::event_handler => events.push(parse_event_handler(child)),
             Rule::module_use_statement => module_uses.push(parse_module_use_statement(child)),
@@ -1198,7 +1208,9 @@ fn parse_container_body_content(pair: Pair<Rule>) -> ContainerBodyParts {
 
     (
         params,
+        label,
         properties,
+        containers,
         components,
         events,
         module_uses,
@@ -1214,9 +1226,12 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
     } else {
         return ContainerDeclaration {
             name,
+            label: None,
             is_default: false,
+            is_xor: false,
             params: Vec::new(),
             properties: Vec::new(),
+            containers: Vec::new(),
             components: Vec::new(),
             events: Vec::new(),
             module_uses: Vec::new(),
@@ -1225,28 +1240,22 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
         };
     };
 
-    let (params, properties, components, events, module_uses, condition) =
+    let (params, label, properties, containers, components, events, module_uses, condition) =
         parse_container_body_content(body);
 
-    let is_default = properties
-        .iter()
-        .find(|p| p.key == "default")
-        .and_then(|p| {
-            if let ValueExpression::Bool(val) = p.value {
-                Some(val)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(false);
+    let is_default = extract_bool_property(&properties, "default");
+    let is_xor = extract_bool_property(&properties, "xor");
 
     let position = extract_position_property(&properties);
 
     ContainerDeclaration {
         name,
+        label,
         is_default,
+        is_xor,
         params,
         properties,
+        containers,
         components,
         events,
         module_uses,
@@ -2854,6 +2863,60 @@ view "Wizard" {
             &container.condition,
             Some(Expression::BinOp { op: BinOp::Ne, .. })
         ));
+    }
+
+    #[test]
+    fn test_container_label_xor_and_nesting() {
+        let input = r#"
+view "Checkout" {
+    container "Shipping" {
+        label "Shipping";
+        xor: true;
+
+        container "Address" {
+            label "Address";
+            default: true;
+
+            component "form" {
+                type: form;
+                data: Customer;
+            }
+        }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let shipping = &model.views[0].containers[0];
+        assert_eq!(shipping.label.as_deref(), Some("Shipping"));
+        assert!(shipping.is_xor);
+        assert!(!shipping.is_default);
+        assert_eq!(shipping.containers.len(), 1);
+        let address = &shipping.containers[0];
+        assert_eq!(address.name, "Address");
+        assert_eq!(address.label.as_deref(), Some("Address"));
+        assert!(address.is_default);
+        assert!(!address.is_xor);
+        assert_eq!(address.components.len(), 1);
+    }
+
+    #[test]
+    fn test_container_without_label_defaults() {
+        let input = r#"
+view "V" {
+    container "Plain" {
+        component "grid" {
+            type: list;
+            data: Customer;
+        }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let container = &model.views[0].containers[0];
+        assert_eq!(container.label, None);
+        assert!(!container.is_xor);
+        assert!(!container.is_default);
+        assert!(container.containers.is_empty());
     }
 
     #[test]

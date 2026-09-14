@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
     resolve_effective_permits, DataBindingResolution, EventNode, NavigationFlowRecord,
+    ViewContainerNode,
 };
 use codegraph_ifml_dsl::ComponentSpec;
 
@@ -273,6 +274,89 @@ impl<'a> IfmlGraphQuerier<'a> {
     pub fn new(db: &'a dyn GraphQuerier) -> Self {
         Self { db }
     }
+    /// Assemble one container subtree (params, components, events, flags
+    /// plus nested containers) from the adjacency map. Traversal is an
+    /// explicit post-order stack so children are built before their parents
+    /// without async recursion; children keep name order for deterministic
+    /// output.
+    async fn load_container_tree(
+        &self,
+        root: &ViewContainerNode,
+        children_of: &HashMap<String, Vec<ViewContainerNode>>,
+        index: &ActionIndex,
+        bindings: &[DataBindingResolution],
+    ) -> Result<IfmlViewContainer, GraphError> {
+        let mut built: HashMap<String, IfmlViewContainer> = HashMap::new();
+        let mut stack: Vec<(ViewContainerNode, bool)> = vec![(root.clone(), false)];
+        while let Some((node, expanded)) = stack.pop() {
+            if expanded {
+                let mut containers = Vec::new();
+                if let Some(children) = children_of.get(&node.name) {
+                    for child in children {
+                        if let Some(built_child) = built.remove(&child.name) {
+                            containers.push(built_child);
+                        }
+                    }
+                }
+                let container = self
+                    .build_container(&node, containers, index, bindings)
+                    .await?;
+                built.insert(node.name.clone(), container);
+            } else {
+                stack.push((node.clone(), true));
+                if let Some(children) = children_of.get(&node.name) {
+                    for child in children {
+                        stack.push((child.clone(), false));
+                    }
+                }
+            }
+        }
+        built
+            .remove(&root.name)
+            .ok_or_else(|| GraphError::NotFound(format!("container tree root {}", root.name)))
+    }
+
+    /// Resolve one container node (no nesting) into its render context.
+    async fn build_container(
+        &self,
+        vc: &ViewContainerNode,
+        containers: Vec<IfmlViewContainer>,
+        index: &ActionIndex,
+        bindings: &[DataBindingResolution],
+    ) -> Result<IfmlViewContainer, GraphError> {
+        let params: Vec<ParameterDef> = self
+            .db
+            .get_parameters_for_view(&vc.name)
+            .await?
+            .into_iter()
+            .map(|p| ParameterDef {
+                name: p.name,
+                type_ref: p.type_ref,
+                default: None,
+            })
+            .collect();
+        let components = self.get_components_for(&vc.name, index, bindings).await?;
+        let raw_events = self.db.get_ifml_events(&format!("vc:{}", vc.name)).await?;
+        let events: Vec<IfmlEvent> = raw_events
+            .into_iter()
+            .map(|evt| index.build_event(evt))
+            .collect();
+        Ok(IfmlViewContainer {
+            name: vc.name.clone(),
+            label: vc.label.clone(),
+            is_xor: vc.is_xor,
+            is_default: vc.is_default,
+            is_landmark: vc.is_landmark,
+            is_modal: vc.is_modal,
+            conditional_expression: vc.conditional_expression.clone(),
+            roles: vc.roles.clone().unwrap_or_default(),
+            requires: vc.requires.clone().unwrap_or_default(),
+            params,
+            components,
+            events,
+            containers,
+        })
+    }
 }
 
 #[async_trait]
@@ -299,41 +383,31 @@ impl<'a> IfmlQuerier for IfmlGraphQuerier<'a> {
         let index = self.action_index().await?;
         let bindings = self.db.get_data_bindings().await?;
         let raw_containers = self.db.get_ifml_view_containers().await?;
-        let mut containers = Vec::new();
 
+        // A container with an incoming ContainsViewContainer edge is nested;
+        // only roots surface as top-level view containers.
+        let mut nested: HashSet<String> = HashSet::new();
+        let mut children_of: HashMap<String, Vec<ViewContainerNode>> = HashMap::new();
         for vc in &raw_containers {
-            let params = self
-                .db
-                .get_parameters_for_view(&vc.name)
-                .await?
-                .into_iter()
-                .map(|p| ParameterDef {
-                    name: p.name,
-                    type_ref: p.type_ref,
-                    default: None,
-                })
-                .collect();
-            let components = self.get_components_for(&vc.name, &index, &bindings).await?;
-            let raw_events = self.db.get_ifml_events(&format!("vc:{}", vc.name)).await?;
-            let events: Vec<IfmlEvent> = raw_events
-                .into_iter()
-                .map(|evt| index.build_event(evt))
-                .collect();
+            let children = self.db.get_ifml_container_children(&vc.name).await?;
+            for child in &children {
+                nested.insert(child.name.clone());
+                children_of
+                    .entry(vc.name.clone())
+                    .or_default()
+                    .push(child.clone());
+            }
+        }
 
-            containers.push(IfmlViewContainer {
-                name: vc.name.clone(),
-                label: vc.label.clone(),
-                is_xor: vc.is_xor,
-                is_default: vc.is_default,
-                is_landmark: vc.is_landmark,
-                is_modal: vc.is_modal,
-                roles: vc.roles.clone().unwrap_or_default(),
-                requires: vc.requires.clone().unwrap_or_default(),
-                params,
-                components,
-                events,
-                containers: Vec::new(),
-            });
+        let mut containers = Vec::new();
+        for vc in &raw_containers {
+            if nested.contains(&vc.name) {
+                continue;
+            }
+            containers.push(
+                self.load_container_tree(vc, &children_of, &index, &bindings)
+                    .await?,
+            );
         }
 
         Ok(containers)
@@ -764,6 +838,168 @@ mod tests {
         assert_eq!(
             policy.capabilities,
             vec!["approve_expense".to_string(), "manage_refunds".to_string()]
+        );
+    }
+
+    async fn ingest_nested_container(
+        db: &MockEngine,
+        parent: &str,
+        name: &str,
+        label: Option<&str>,
+        is_default: bool,
+    ) {
+        db.ingest_view_container(&ViewContainerNode {
+            name: name.to_string(),
+            label: label.map(str::to_string),
+            is_xor: false,
+            is_default,
+            is_landmark: false,
+            is_modal: false,
+            conditional_expression: None,
+            domain: None,
+            module_uses: None,
+            roles: None,
+            requires: None,
+        })
+        .await
+        .unwrap();
+        db.ingest_edge(
+            &format!("vc:{parent}"),
+            &format!("vc:{name}"),
+            EdgeType::ContainsViewContainer,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn nested_containers_nest_under_their_view_not_top_level() {
+        let engine = MockEngine::new();
+        ingest_view_container(&engine, "Dashboard", true).await;
+        ingest_nested_container(&engine, "Dashboard", "Sidebar", Some("Navigation"), true).await;
+
+        let querier = IfmlGraphQuerier::new(&engine);
+        let containers = querier.get_view_containers().await.unwrap();
+        let mut top_names: Vec<&str> = containers.iter().map(|c| c.name.as_str()).collect();
+        top_names.sort();
+        assert_eq!(
+            top_names,
+            vec!["Dashboard"],
+            "nested containers must not appear as top-level view containers: {top_names:?}"
+        );
+        assert_eq!(containers[0].containers.len(), 1, "{containers:?}");
+        let sidebar = &containers[0].containers[0];
+        assert_eq!(sidebar.name, "Sidebar");
+        assert_eq!(sidebar.label.as_deref(), Some("Navigation"));
+        assert!(sidebar.is_default, "container default flag must round-trip");
+    }
+
+    #[tokio::test]
+    async fn nested_container_contents_attach_to_the_container() {
+        let engine = MockEngine::new();
+        ingest_view_container(&engine, "Dashboard", true).await;
+        ingest_nested_container(&engine, "Dashboard", "Sidebar", None, false).await;
+        ingest_component(&engine, "Sidebar", "nav", "menu").await;
+        ingest_component(&engine, "Dashboard", "grid", "list").await;
+        engine
+            .ingest_event(&EventNode {
+                name: "vc_Sidebar_toggle".to_string(),
+                event_type: "click".to_string(),
+                params: None,
+                conditional_expression: None,
+                domain: None,
+            })
+            .await
+            .unwrap();
+        engine
+            .ingest_edge(
+                "vc:Sidebar",
+                "evt:vc_Sidebar_toggle",
+                EdgeType::HasEvent,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let querier = IfmlGraphQuerier::new(&engine);
+        let containers = querier.get_view_containers().await.unwrap();
+        assert_eq!(
+            containers.len(),
+            1,
+            "only the view itself is a top-level entry: {containers:?}"
+        );
+        let dashboard = &containers[0];
+        assert_eq!(
+            dashboard
+                .components
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["grid"],
+            "view-level components stay on the view"
+        );
+        assert_eq!(dashboard.containers.len(), 1, "{dashboard:?}");
+        let sidebar = &dashboard.containers[0];
+        assert_eq!(
+            sidebar
+                .components
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["nav"],
+            "container components attach to their owning container"
+        );
+        assert_eq!(
+            sidebar
+                .events
+                .iter()
+                .map(|e| e.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["vc_Sidebar_toggle"],
+            "container events attach to their owning container"
+        );
+    }
+
+    #[tokio::test]
+    async fn nested_container_conditional_expression_round_trips() {
+        let engine = MockEngine::new();
+        ingest_view_container(&engine, "Dashboard", true).await;
+        engine
+            .ingest_view_container(&ViewContainerNode {
+                name: "Promo".to_string(),
+                label: Some("Promo".to_string()),
+                is_xor: false,
+                is_default: false,
+                is_landmark: false,
+                is_modal: false,
+                conditional_expression: Some("user.subscribed == true".to_string()),
+                domain: None,
+                module_uses: None,
+                roles: None,
+                requires: None,
+            })
+            .await
+            .unwrap();
+        engine
+            .ingest_edge(
+                "vc:Dashboard",
+                "vc:Promo",
+                EdgeType::ContainsViewContainer,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let querier = IfmlGraphQuerier::new(&engine);
+        let containers = querier.get_view_containers().await.unwrap();
+        assert_eq!(containers.len(), 1);
+        let promo = &containers[0].containers[0];
+        assert_eq!(promo.name, "Promo");
+        assert_eq!(
+            promo.conditional_expression.as_deref(),
+            Some("user.subscribed == true"),
+            "container guards must round-trip into the view tree"
         );
     }
 

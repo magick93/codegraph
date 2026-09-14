@@ -295,7 +295,18 @@ async fn run_pipeline() -> Result<(), String> {
         ..Default::default()
     };
 
+    // Built-in shadcn-svelte pack, shadowed by the fixture's mapping
+    // overrides (ifml-components.toml) so gate assertions can pin specific
+    // wrapper components (issue #200: the Tabs presentation-container).
     let pack = codegraph_config::built_in_pack("shadcn-svelte").map_err(|e| e.to_string())?;
+    let fixture_mappings_path = home.join("ifml-components.toml");
+    let pack = if fixture_mappings_path.exists() {
+        let project = codegraph_config::IfmlComponentMappings::load(&fixture_mappings_path)
+            .map_err(|e| e.to_string())?;
+        codegraph_config::IfmlComponentMappings::merge_with_pack(project, &pack)
+    } else {
+        pack
+    };
     let hooks_tmp = tempfile::tempdir().map_err(|e| e.to_string())?;
 
     let report =
@@ -603,6 +614,39 @@ fn assert_categories(titles: &[String]) {
         assert!(
             help_modal.contains("<Dialog"),
             "HelpModal page should invoke the mapped Dialog component:\n{help_modal}"
+        );
+    }
+
+    // Issue #200: sibling xor containers render ONE labeled wrapper inside
+    // the landmark view's page and never as standalone routes. Structural
+    // here; visibility is asserted by the gate-owned sweep spec.
+    assert!(
+        !svelte_dir()
+            .join("src/routes/shipping/+page.svelte")
+            .exists(),
+        "nested containers must not be generated as standalone routes"
+    );
+    assert!(
+        !svelte_dir()
+            .join("src/routes/payment/+page.svelte")
+            .exists(),
+        "nested containers must not be generated as standalone routes"
+    );
+    let home_path = svelte_dir().join("src/routes/home/+page.svelte");
+    if home_path.exists() {
+        let home = fs::read_to_string(&home_path).unwrap_or_default();
+        assert!(
+            home.contains("data-testid=\"shipping-label\""),
+            "Home page should carry the Shipping container label heading:\n{home}"
+        );
+        assert!(
+            home.contains("data-testid=\"payment-label\""),
+            "Home page should carry the Payment container label heading:\n{home}"
+        );
+        assert_eq!(
+            home.matches("<Tabs testid=\"tabs\">").count(),
+            1,
+            "sibling xor containers must share exactly one mapped wrapper:\n{home}"
         );
     }
 }

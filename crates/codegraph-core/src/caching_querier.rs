@@ -532,6 +532,13 @@ impl GraphQuerier for CachingQuerier<'_> {
         self.inner.get_ifml_view_components(container_name).await
     }
 
+    async fn get_ifml_container_children(
+        &self,
+        parent: &str,
+    ) -> Result<Vec<ViewContainerNode>, GraphError> {
+        self.inner.get_ifml_container_children(parent).await
+    }
+
     async fn get_ifml_events(&self, parent_id: &str) -> Result<Vec<EventNode>, GraphError> {
         self.inner.get_ifml_events(parent_id).await
     }

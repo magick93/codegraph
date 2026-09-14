@@ -1,5 +1,6 @@
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{ModuleUseRecord, ViewContainerNode};
+use codegraph_generate::ifml::querier::{IfmlGraphQuerier, IfmlQuerier};
 
 fn container<'a>(containers: &'a [ViewContainerNode], name: &str) -> &'a ViewContainerNode {
     containers
@@ -134,6 +135,69 @@ view "Storefront" {
 
     let storefront = container(&containers, "Storefront");
     assert_eq!(storefront.roles, None);
+}
+
+#[tokio::test]
+async fn test_nested_container_round_trips_as_view_tree() {
+    let ifml = r#"
+view "Dashboard" {
+    label "Dashboard";
+    landmark: true;
+
+    container "Sidebar" {
+        default: true;
+
+        component "nav" {
+            type: menu;
+        }
+    }
+
+    component "grid" {
+        type: list;
+        data: Product;
+        fields: [name];
+    }
+}
+"#;
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
+    let model = codegraph_ifml_dsl::parse_ifml(ifml).expect("Should parse IFML");
+    codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
+        .await
+        .expect("Should ingest");
+
+    let querier = IfmlGraphQuerier::new(&engine);
+    let containers = querier.get_view_containers().await.unwrap();
+    let mut top_names: Vec<&str> = containers.iter().map(|c| c.name.as_str()).collect();
+    top_names.sort();
+    assert_eq!(
+        top_names,
+        vec!["Dashboard"],
+        "the nested container must not surface as a top-level view container: {top_names:?}"
+    );
+
+    let dashboard = &containers[0];
+    assert_eq!(
+        dashboard
+            .components
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["grid"],
+        "view-level components stay on the view"
+    );
+    assert_eq!(dashboard.containers.len(), 1, "{dashboard:?}");
+    let sidebar = &dashboard.containers[0];
+    assert_eq!(sidebar.name, "Sidebar");
+    assert!(sidebar.is_default, "container default flag must round-trip");
+    assert_eq!(
+        sidebar
+            .components
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["nav"],
+        "the container's component is queryable under the parent view's tree"
+    );
 }
 
 #[tokio::test]

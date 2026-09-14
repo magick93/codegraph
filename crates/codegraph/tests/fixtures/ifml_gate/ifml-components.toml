@@ -1,0 +1,10 @@
+# Gate-owned mapping override (issue #200): sibling xor groups must share
+# ONE mapped presentation-container wrapper. Mapping the role to a Tabs stub
+# (instead of the shadcn pack's Card, which the display slots also use) keeps
+# the "exactly one wrapper" gate assertion unambiguous. Loaded by the gate
+# harness and merged BEFORE the built-in pack, so this entry shadows it.
+[[component]]
+role = "presentation-container"
+path = "$lib/components/ui/tabs/tabs.svelte"
+export = "Tabs"
+testids = { root = "tabs" }

@@ -14,6 +14,16 @@ view "Home" {
         on browse -> navigate("RefundRequestList");
         on help -> navigate("HelpModal");
     }
+
+    container "Shipping" {
+        label "Shipping";
+        xor: true;
+    }
+
+    container "Payment" {
+        label "Payment";
+        xor: true;
+    }
 }
 
 view "RefundRequestList" {
