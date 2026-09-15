@@ -15,7 +15,7 @@ use super::context::{IfmlAction, IfmlComponent, IfmlModel, IfmlViewContainer, Po
 use super::querier::{IfmlGraphQuerier, IfmlQuerier};
 use super::route_generator::{
     denial_target, mapped_container_testid, modal_wrapper_active, modal_wrapper_testid, shell_nav,
-    workflow_for_entity,
+    workflow_for_entity, RenderWorkflow,
 };
 
 /// Global generator emitting IFML-driven Playwright E2E specs.
@@ -325,8 +325,9 @@ impl IfmlE2eTestGenerator {
     /// bound entity has a workflow in domain config. Mirrors the fetch
     /// wiring of the route generator's load context — only components that
     /// actually load entity data can show the current state. Schema-backed
-    /// only, and skipped for mapped components (they render no fallback
-    /// badge markup).
+    /// only. Guarded views are skipped: the workflow spec navigates without
+    /// persona seeding, so the load guard would redirect (access is covered
+    /// by the actor-persona tests).
     async fn build_view_workflow_tests(
         &self,
         db: &dyn GraphQuerier,
@@ -334,6 +335,9 @@ impl IfmlE2eTestGenerator {
         api_version: &str,
         vc: &IfmlViewContainer,
     ) -> Vec<WorkflowTest> {
+        if !vc.roles.is_empty() || !vc.requires.is_empty() {
+            return Vec::new();
+        }
         let id_param = id_param_from(&vc.params);
         let mut has_list = false;
         let mut has_details = false;
@@ -374,12 +378,17 @@ impl IfmlE2eTestGenerator {
     ) -> Option<WorkflowTest> {
         let entity = c.entity.as_deref()?;
         let kind = component_kind(c);
-        if self
+        let is_mapped = self
             .mappings
             .as_ref()
             .and_then(|m| m.resolve(&vc.name, &c.name, &c.component_type, &kind))
-            .is_some()
-        {
+            .is_some();
+        // Mapped collections are skipped: their badge is a per-row sibling
+        // over shared list rows, so neither the row identity nor the status
+        // column (unset on creates) can back a strict assertion. Mapped
+        // details/forms keep their workflow spec — their badge and
+        // transition buttons are fetch-backed siblings.
+        if is_collection(c) && is_mapped {
             return None;
         }
         let workflow = workflow_for_entity(config, entity)?;
@@ -394,17 +403,61 @@ impl IfmlE2eTestGenerator {
             return None;
         }
 
+        // Transition round trip: details/form components carry transition
+        // buttons (mapped components render them as siblings), lists stay
+        // badge-only. The buttons POST to the generated transition
+        // endpoint, which only exists with generate_action_endpoints.
+        let transition = if is_collection(c) || !workflow.generate_action_endpoints {
+            None
+        } else {
+            pick_transition(&workflow).map(|(from, to)| TransitionStep {
+                from,
+                to_testid: format!(
+                    "{}-transition-{}",
+                    c.name,
+                    codegraph_naming::to_kebab_case(&to)
+                ),
+                to,
+            })
+        };
+
         Some(WorkflowTest {
             component_name: c.name.clone(),
             route: view_route(&vc.name),
             id_param: id_param.map(str::to_string),
             state_testid: format!("{}-state", c.name),
-            initial_state: workflow.initial_state,
+            initial_state: workflow.initial_state.clone(),
+            is_collection: is_collection(c),
+            transition,
             fixture: Fixture {
                 base_path: api.base_path,
-                entries: fixture_entries(c),
+                entries: self.valid_fixture_entries(db, c, &workflow).await,
             },
         })
+    }
+
+    /// Fixture payload for a workflow spec: `fixture_entries` plus valid
+    /// values for constrained columns — the workflow status field seeds the
+    /// initial state, and other codelist-backed fields use their first
+    /// enum value (the create would otherwise violate the column's FK to
+    /// the codelist table).
+    async fn valid_fixture_entries(
+        &self,
+        db: &dyn GraphQuerier,
+        c: &IfmlComponent,
+        workflow: &RenderWorkflow,
+    ) -> Vec<(String, String)> {
+        let mut entries = fixture_entries(c);
+        for (field, value) in entries.iter_mut() {
+            if *field == workflow.status_field {
+                *value = format!("'{}'", js_string(&workflow.initial_state));
+                continue;
+            }
+            if let Some(code) = codelist_fixture_value(db, c.entity.as_deref(), field).await {
+                *value = format!("'{}'", js_string(&code));
+            }
+        }
+        entries
     }
 
     /// Actor-persona guard tests for a view: one per human actor, asserting
@@ -529,12 +582,23 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             return Ok(vec![]);
         }
 
-        // Remove stale per-view spec files for views no longer in the model
-        // (view removal / rename across regenerations into the same root).
+        // Remove stale per-view spec files for views no longer in the model,
+        // and stale workflow specs whose view no longer carries workflow
+        // tests (e.g. the workflow config or a mapped collection changed
+        // across regenerations into the same root).
         let active_specs: std::collections::HashSet<String> = model
             .view_containers
             .iter()
             .map(|vc| format!("{}.spec.ts", codegraph_naming::to_kebab_case(&vc.name)))
+            .collect();
+        let active_workflow_specs: std::collections::HashSet<String> = workflow_specs
+            .iter()
+            .map(|(view_name, _)| {
+                format!(
+                    "{}.workflow.spec.ts",
+                    codegraph_naming::to_kebab_case(view_name)
+                )
+            })
             .collect();
         let specs_dir = self.output_dir.join("tests").join("ifml");
         if specs_dir.is_dir() {
@@ -547,11 +611,13 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                     if !name.ends_with(".spec.ts") {
                         continue;
                     }
-                    let base_spec = name
-                        .strip_suffix(".workflow.spec.ts")
-                        .map(|base| format!("{base}.spec.ts"))
-                        .unwrap_or_else(|| name.to_string());
-                    if !active_specs.contains(&base_spec) {
+                    if name.strip_suffix(".workflow.spec.ts").is_some() {
+                        if !active_workflow_specs.contains(name) {
+                            let _ = std::fs::remove_file(&path);
+                        }
+                        continue;
+                    }
+                    if !active_specs.contains(name) {
                         let _ = std::fs::remove_file(&path);
                     }
                 }
@@ -699,7 +765,8 @@ pub struct RoundTripTest {
 /// One workflow state assertion inside a view's `{view}.workflow.spec.ts`:
 /// create a fixture via the API, open the view, and assert the state badge
 /// shows the configured initial state (mirrors the non-IFML
-/// `{entity}.workflow.test.ts` convention).
+/// `{entity}.workflow.test.ts` convention). Details/form components also
+/// carry a transition round trip when a valid (from → to) edge exists.
 #[derive(Debug)]
 pub struct WorkflowTest {
     /// Human-readable component name used in the test title.
@@ -708,7 +775,42 @@ pub struct WorkflowTest {
     pub id_param: Option<String>,
     pub state_testid: String,
     pub initial_state: String,
+    /// Collection badges render per row (`{#each}`): state assertions use
+    /// `.first()` to stay strict-mode-safe.
+    pub is_collection: bool,
+    /// Transition round trip (details/form only): initial state → first
+    /// valid target via the `{component}-transition-{target}` button.
+    pub transition: Option<TransitionStep>,
     pub fixture: Fixture,
+}
+
+/// The transition a workflow spec exercises: click the enabled
+/// `{component}-transition-{target}` button, assert the badge shows the
+/// target state, and confirm persistence via a GET.
+#[derive(Debug)]
+pub struct TransitionStep {
+    pub from: String,
+    pub to: String,
+    pub to_testid: String,
+}
+
+/// The (from → to) edge a spec can safely exercise: with a populated
+/// transitions map, the initial state's first (sorted) target; with an
+/// empty map, the first non-terminal state other than the initial one.
+fn pick_transition(workflow: &RenderWorkflow) -> Option<(String, String)> {
+    if workflow.transition_map.is_empty() {
+        return workflow
+            .states
+            .iter()
+            .find(|s| !workflow.terminal_states.contains(s) && **s != workflow.initial_state)
+            .map(|s| (workflow.initial_state.clone(), s.clone()));
+    }
+    let targets = workflow.transition_map.get(&workflow.initial_state)?;
+    let mut sorted: Vec<&String> = targets.iter().collect();
+    sorted.sort();
+    sorted
+        .first()
+        .map(|to| (workflow.initial_state.clone(), (*to).clone()))
 }
 
 #[derive(Debug)]
@@ -806,11 +908,59 @@ fn render_workflow_spec(vc: &IfmlViewContainer, tests: &[WorkflowTest]) -> Strin
             None => s.push_str(&format!("\t\tawait page.goto('{}');\n", workflow.route)),
         }
         s.push_str(&format!(
-            "\t\tawait expect(page.getByTestId('{}')).toContainText('{}');\n",
+            "\t\tawait expect(page.getByTestId('{}'){}).toContainText('{}');\n",
             workflow.state_testid,
+            if workflow.is_collection {
+                ".first()"
+            } else {
+                ""
+            },
             js_string(&workflow.initial_state)
         ));
         s.push_str("\t});\n\n");
+
+        if let Some(transition) = &workflow.transition {
+            s.push_str(&format!(
+                "\ttest('transitions {} from {} to {}', async ({{ page, request }}) => {{\n",
+                js_string(&workflow.component_name),
+                js_string(&transition.from),
+                js_string(&transition.to)
+            ));
+            s.push_str(&format!(
+                "\t\tconst created = await (await request.post('{}', {{ data: {} }})).json();\n",
+                workflow.fixture.base_path,
+                workflow.fixture.data_literal()
+            ));
+            let id_expr = "created.data?.id ?? created.id";
+            match &workflow.id_param {
+                Some(id_param) => s.push_str(&format!(
+                    "\t\tawait page.goto(`{}?{}=${{{}}}`);\n",
+                    workflow.route, id_param, id_expr
+                )),
+                None => s.push_str(&format!("\t\tawait page.goto('{}');\n", workflow.route)),
+            }
+            s.push_str(&format!(
+                "\t\tawait page.getByTestId('{}').click();\n",
+                transition.to_testid
+            ));
+            s.push_str(&format!(
+                "\t\tawait expect(page.getByTestId('{}')).toContainText('{}');\n",
+                workflow.state_testid,
+                js_string(&transition.to)
+            ));
+            // Persistence check via the generated workflow-state endpoint
+            // (`current_state` is authoritative; the entity status column is
+            // the fallback for pipelines that sync it).
+            s.push_str(&format!(
+                "\t\tconst fetched = await (await request.get(`{}/${{{}}}/workflow`)).json();\n",
+                workflow.fixture.base_path, id_expr
+            ));
+            s.push_str(&format!(
+                "\t\texpect(fetched.data?.current_state ?? fetched.data?.status).toBe('{}');\n",
+                js_string(&transition.to)
+            ));
+            s.push_str("\t});\n\n");
+        }
     }
 
     while s.ends_with("\n\n") {
@@ -1191,6 +1341,35 @@ fn js_value_for_type(field: &str, rust_type: &str) -> String {
         return "'2024-01-15T10:30:00Z'".to_string();
     }
     format!("'Test {field}'")
+}
+
+/// The first enum value of the codelist backing `field` on `entity`'s
+/// schema, when the property references one. `None` keeps the generic
+/// fixture value.
+async fn codelist_fixture_value(
+    db: &dyn GraphQuerier,
+    entity: Option<&str>,
+    field: &str,
+) -> Option<String> {
+    let entity = entity?;
+    let schema = match db.get_schema(entity).await {
+        Ok(Some(schema)) => Some(schema),
+        Ok(None) => db.get_schema(&format!("{entity}Type")).await.ok()?,
+        Err(_) => None,
+    }?;
+    let props = db.get_properties(&schema.title).await.ok()?;
+    let target = props
+        .iter()
+        .find(|p| p.name == field)?
+        .ref_target
+        .as_deref()?;
+    let stem = target.rsplit('/').next()?.strip_suffix(".json")?;
+    let codelist = db.get_schema(stem).await.ok()??;
+    if !codelist.is_codelist {
+        return None;
+    }
+    let values = db.get_enum_values(stem).await.ok()?;
+    values.into_iter().next().map(|v| v.value)
 }
 
 /// The view-level or component-level `on save`/`on submit` navigation target:

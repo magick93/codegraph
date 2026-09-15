@@ -85,6 +85,9 @@ pub struct IfmlEvent {
     pub name: String,
     pub event_type: String,
     pub params: Vec<String>,
+    /// Capability requirements on the event; empty when unguarded.
+    #[serde(default)]
+    pub requires: Vec<String>,
     pub action: IfmlAction,
 }
 

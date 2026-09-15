@@ -1746,3 +1746,195 @@ async fn no_workflow_config_renders_no_badges() {
         );
     }
 }
+
+// ── Transition buttons (issue #198 workflow UI v2, RED) ─────────────
+
+fn domains_toml_with_transitions() -> &'static str {
+    r#"
+[defaults]
+api_version = "v1"
+
+[domains.sales]
+label = "Sales"
+schema_dir = "sales"
+postgres_schema = "sales"
+entities = ["CustomerType"]
+
+[domains.sales.entity_config.CustomerType.workflow]
+status_field = "status"
+initial_state = "draft"
+states = ["draft", "submitted", "approved", "rejected"]
+terminal_states = ["approved", "rejected"]
+generate_action_endpoints = true
+
+[domains.sales.entity_config.CustomerType.workflow.transitions]
+draft = ["submitted"]
+submitted = ["approved", "rejected"]
+"#
+}
+
+/// Details/form components bound to a workflow entity WITH transitions must
+/// render one transition button per valid (from → to) edge: humanized target
+/// label, `{component}-transition-{target}` testid, `data-transition-from` /
+/// `data-transition-to` hooks, a client-side disabled binding on the
+/// current state, and a handler POSTing `{ target_state }` to the generated
+/// transition endpoint before refreshing the load data.
+#[tokio::test]
+async fn transition_buttons_render_with_state_gating() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte_with_domains(
+        dir.path(),
+        WORKFLOW_IFML,
+        domains_toml_with_transitions(),
+        None,
+    )
+    .await;
+
+    let details = read(&svelte, "src/routes/customerdetail/+page.svelte");
+    assert!(
+        details.contains("data-testid=\"info-transition-submitted\""),
+        "details pages render one button per valid target state: {details}"
+    );
+    assert!(
+        details.contains("data-transition-from=\"draft\"")
+            && details.contains("data-transition-to=\"submitted\""),
+        "buttons expose from/to states for e2e hooks: {details}"
+    );
+    assert!(
+        details.contains(">Submitted</button>"),
+        "buttons are labeled by the humanized target state: {details}"
+    );
+    assert!(
+        details
+            .contains("disabled={(data.item?.workflow_state?.current_state"),
+            "the button is disabled client-side unless the current state matches the from-state: {details}"
+    );
+    assert!(
+        details.contains("async function transition_info("),
+        "clicking invokes a per-component transition handler: {details}"
+    );
+    assert!(
+        details.contains("'/actions/transition'") || details.contains("/actions/transition"),
+        "the handler posts to the generated transition endpoint: {details}"
+    );
+    assert!(
+        details.contains("target_state"),
+        "the payload carries the target state (workflow_action contract): {details}"
+    );
+    assert!(
+        details.contains("invalidateAll()"),
+        "the handler refreshes the load data so the badge shows the new state: {details}"
+    );
+
+    let form = read(&svelte, "src/routes/customeredit/+page.svelte");
+    assert!(
+        form.contains("data-testid=\"editor-transition-submitted\""),
+        "form components carry transition buttons too: {form}"
+    );
+
+    let list = read(&svelte, "src/routes/customerlist/+page.svelte");
+    assert!(
+        !list.contains("-transition-"),
+        "list rows carry state badges only, no transition buttons: {list}"
+    );
+}
+
+/// With schemas resolved, the transition handler must target the REAL
+/// generated endpoint (workflow_action.tera contract):
+/// `POST /api/{version}/{domain}/{path_segment}/{id}/actions/transition`.
+#[tokio::test]
+async fn transition_handler_posts_to_the_resolved_transition_endpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let schemas_dir = dir.path().join("schemas").join("sales").join("json");
+    std::fs::create_dir_all(&schemas_dir).unwrap();
+    std::fs::write(
+        schemas_dir.join("CustomerType.json"),
+        r#"{
+  "$id": "CustomerType.json",
+  "title": "CustomerType",
+  "description": "A customer",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "format": "uuid", "description": "Unique identifier" },
+    "name": { "type": "string", "description": "Customer name" },
+    "status": { "type": "string", "enum": ["draft", "submitted"], "description": "Workflow status" }
+  }
+}"#,
+    )
+    .unwrap();
+    let classifier_path = dir.path().join("classifier.toml");
+    std::fs::write(&classifier_path, "# minimal classifier config\n").unwrap();
+
+    let ifml_path = dir.path().join("app.ifml");
+    std::fs::write(&ifml_path, WORKFLOW_IFML).unwrap();
+    let output = dir.path().join("out");
+    let domains_toml_path = dir.path().join("domains.toml");
+    std::fs::write(&domains_toml_path, domains_toml_with_transitions()).unwrap();
+    let schemas = dir.path().join("schemas");
+
+    codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+        config_path: &domains_toml_path,
+        output: &output,
+        ifml_files: &[ifml_path],
+        schemas: Some(&schemas),
+        classifier: Some(&classifier_path),
+        frameworks: &["svelte".to_string()],
+        profiles_config_path: None,
+        template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+    })
+    .await
+    .unwrap();
+
+    let details = read(
+        &output.join("svelte"),
+        "src/routes/customerdetail/+page.svelte",
+    );
+    assert!(
+        details.contains("`/api/v1/sales/customer/${viewParams.customerId}/actions/transition`"),
+        "the transition handler must target the workflow_action route:\n{details}"
+    );
+}
+
+// ── Mapped-component badge parity (issue #198, RED) ─────────────────
+
+/// A mapped component must still surface the workflow badge: the badge
+/// renders as a sibling element next to the mapped invocation with the same
+/// `{component}-state` testid/attrs contract as fallback markup.
+#[tokio::test]
+async fn mapped_component_renders_workflow_badge_sibling() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+kind = "list"
+path = "$lib/components/DataTable.svelte"
+export = "DataTable"
+testids = { root = "data-table", row = "data-row" }
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_domains(
+        dir.path(),
+        WORKFLOW_IFML,
+        domains_toml_with_workflow(),
+        Some(&mappings),
+    )
+    .await;
+
+    let list = read(&svelte, "src/routes/customerlist/+page.svelte");
+    let invocation = list
+        .find("<DataTable")
+        .expect("mapped invocation must render");
+    assert!(
+        list[invocation..].contains("<span class=\"workflow-state\" data-testid=\"grid-state\""),
+        "the workflow badge renders as a sibling after the mapped invocation: {list}"
+    );
+    assert!(
+        list[invocation..].contains("data-workflow-state={item.status}"),
+        "the sibling badge keeps the same attrs contract as fallback markup: {list}"
+    );
+}

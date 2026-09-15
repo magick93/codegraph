@@ -3,6 +3,9 @@
 {%- if needs_goto %}
 	import { goto } from '$app/navigation';
 {%- endif %}
+{%- if needs_invalidate %}
+	import { invalidateAll } from '$app/navigation';
+{%- endif %}
 {%- if needs_on_mount %}
 	import { onMount } from 'svelte';
 {%- endif %}
@@ -18,7 +21,7 @@
 	const viewParams = $derived((data.params ?? {}) as Record<string, string>);
 {%- endif %}
 {%- for comp in components %}
-{%- if comp.form_state %}
+{%- if comp.form_state or comp.component_type == "form" %}
 	const {{ comp.js_name }}_form_state = $derived((data.formData ?? {}) as Record<string, any>);
 {%- endif %}
 {%- endfor %}
@@ -115,6 +118,23 @@
 	}
 {%- endif %}
 {%- endfor %}
+{%- for comp in components %}
+{%- if comp.workflow %}
+{%- if comp.transition_url_expr %}
+
+	async function transition_{{ comp.js_name }}(to: string) {
+		const response = await fetch({{ comp.transition_url_expr }}, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ target_state: to })
+		});
+		if (response.ok) {
+			await invalidateAll();
+		}
+	}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
 </script>
 
 <svelte:head>
@@ -168,6 +188,23 @@
 	{{ p }}
 {%- endfor %}
 />
+{% if comp.workflow %}{%- if comp.workflow.each %}
+{%- if comp.fetch_list %}
+{% raw %}	{#each data.items as item}{% endraw %}
+	{{ comp.workflow.badge_html }}
+{% raw %}	{/each}{% endraw %}
+{%- endif %}
+{%- else %}
+{%- if comp.fetch_item %}
+	{{ comp.workflow.badge_html }}
+{%- endif %}
+{%- endif %}
+{%- if comp.transition_url_expr %}
+{%- for t in comp.workflow.transitions %}
+	{{ t.html }}
+{%- endfor %}
+{%- endif %}
+{%- endif %}
 {% elif comp.table %}
 {%- if not comp.in_container %}
 <h1>{{ label }}</h1>
@@ -229,12 +266,17 @@
 {% if comp.submit_handler %}
 {% raw %}	{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
 {% endif %}
-	{{ control_gate.open }}{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}{{ control_gate.close }}{% if comp.workflow %}
+	{{ comp.submit_gate.open }}{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}{{ comp.submit_gate.close }}{% if comp.workflow %}
 	{{ comp.workflow.badge_html }}
+{%- if comp.transition_url_expr %}
+{%- for t in comp.workflow.transitions %}
+	{{ t.html }}
+{%- endfor %}
+{%- endif %}
 {% endif %}
 </form>
 {%- for btn in comp.buttons %}
-{{ control_gate.open }}<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>{{ control_gate.close }}
+{{ btn.gate_open }}<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>{{ btn.gate_close }}
 {%- endfor %}
 
 {% elif comp.chart %}
@@ -275,12 +317,17 @@
 {% if comp.submit_handler %}
 {% raw %}	{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
 {% endif %}
-	{{ control_gate.open }}{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}{{ control_gate.close }}{% if comp.workflow %}
+	{{ comp.submit_gate.open }}{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}{{ comp.submit_gate.close }}{% if comp.workflow %}
 	{{ comp.workflow.badge_html }}
+{%- if comp.transition_url_expr %}
+{%- for t in comp.workflow.transitions %}
+	{{ t.html }}
+{%- endfor %}
+{%- endif %}
 {% endif %}
 </form>
 {%- for btn in comp.buttons %}
-{{ control_gate.open }}<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>{{ control_gate.close }}
+{{ btn.gate_open }}<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>{{ btn.gate_close }}
 {%- endfor %}
 
 {% elif comp.component_type == "details" %}
@@ -291,6 +338,11 @@
 	{% endfor %}
 </dl>{% if comp.workflow %}
 {{ comp.workflow.badge_html }}
+{%- if comp.transition_url_expr %}
+{%- for t in comp.workflow.transitions %}
+{{ t.html }}
+{%- endfor %}
+{%- endif %}
 {% endif %}
 
 {% endif %}
