@@ -9,8 +9,19 @@
     throw new Error('{{ dependency_errors | join(sep="; ") }}');
 {% endif %}
 {% for step in dependency_steps %}
+{% if step.optional %}
+    // Dependency has no create route (e.g. seeded reference data) — tolerate
+    // the failure and leave the FK unset when the row does not pre-exist.
+    try {
+      const dep_{{ loop.index }} = await createEntityAsAcme(orgContext, '{{ step.api_path }}', { {{ step.fields_json }}{% for fk in step.fk_map %}, '{{ fk[0] }}': depIds['{{ fk[1] }}']{% endfor %} });
+      depIds['{{ step.dep_id }}'] = {% if step.is_array %}[dep_{{ loop.index }}['id'] as string]{% else %}dep_{{ loop.index }}['id'] as string{% endif %};
+    } catch (e) {
+      console.warn(`optional dependency {{ step.dep_id }} unavailable: ${e}`);
+    }
+{% else %}
     const dep_{{ loop.index }} = await createEntityAsAcme(orgContext, '{{ step.api_path }}', { {{ step.fields_json }}{% for fk in step.fk_map %}, '{{ fk[0] }}': depIds['{{ fk[1] }}']{% endfor %} });
     depIds['{{ step.dep_id }}'] = {% if step.is_array %}[dep_{{ loop.index }}['id'] as string]{% else %}dep_{{ loop.index }}['id'] as string{% endif %};
+{% endif %}
 {% endfor %}
 {%- elif dep_section == "after_all" -%}
     const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';

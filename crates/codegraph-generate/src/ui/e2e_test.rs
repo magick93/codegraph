@@ -46,6 +46,11 @@ pub struct DependencyStep {
     pub fk_map: Vec<[String; 2]>,
     /// Whether this dep is referenced through a junction array.
     pub is_array: bool,
+    /// True when the dependency entity has no `create` operation — its POST
+    /// route does not exist (405). The emitted spec tolerates the failure
+    /// (warn + leave the FK unset) because such rows may pre-exist via seed
+    /// data; required-FK entities still fail their own create loudly.
+    pub optional: bool,
 }
 
 /// Configuration for generated include E2E tests.
@@ -945,6 +950,8 @@ struct DepNode {
     api_path: String,
     fields_json: String,
     is_array: bool,
+    /// No `create` operation — POST will 405; the step is emitted tolerantly.
+    optional: bool,
     /// `(fk_field_name, child_key)` for each required entity ref.
     children: Vec<(String, String)>,
 }
@@ -1082,6 +1089,15 @@ async fn build_required_dependencies(
             }
         }
 
+        let dep_operations = crate::api::api_model::resolve_entity_operations(
+            db,
+            config,
+            &target_domain,
+            &target.title,
+        )
+        .await;
+        let optional = !dep_operations.iter().any(|op| op == "create");
+
         nodes.insert(
             key.clone(),
             DepNode {
@@ -1090,6 +1106,7 @@ async fn build_required_dependencies(
                 api_path,
                 fields_json,
                 is_array,
+                optional,
                 children,
             },
         );
@@ -1130,6 +1147,7 @@ async fn build_required_dependencies(
             fields_json: node.fields_json.clone(),
             fk_map,
             is_array: node.is_array,
+            optional: node.optional,
         });
     }
 
