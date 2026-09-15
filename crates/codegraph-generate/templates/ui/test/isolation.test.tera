@@ -95,6 +95,7 @@ test.describe('{{ entity_name }} Cross-Org Isolation', () => {
 {% endif %}
 {% set dep_section = "before_all" %}
 {% include "ui/test/_dep_setup.tera" %}
+{% if has_create %}
     // Create entity as ACME owner
     const entity = await createEntityAsAcme(
       orgContext,
@@ -102,6 +103,9 @@ test.describe('{{ entity_name }} Cross-Org Isolation', () => {
       testData(),
     );
     acmeEntityId = entity.id as string;
+{% else %}
+    // Read-only entity (no create route): row-dependent tests are gated off.
+{% endif %}
   });
 
 {% if has_entity_ref_deps %}
@@ -134,7 +138,7 @@ test.describe('{{ entity_name }} Cross-Org Isolation', () => {
   });
 {% endif %}
 
-{% if has_read %}
+{% if has_read and has_create %}
   test('HighFive owner cannot access ACME {{ entity_name }} by direct URL', async ({ highfiveOwnerPage }) => {
 {% if parent and parent.grandparent %}
     const response = await highfiveOwnerPage.goto(`${UI_PATH}/${acmeEntityId}`);
