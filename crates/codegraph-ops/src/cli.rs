@@ -55,6 +55,12 @@ pub struct Cli {
     #[arg(long, global = true)]
     skip_build: bool,
 
+    /// Tolerate generation errors (skipped entities) instead of failing the
+    /// suite. Default: any generation error is fatal, so silent template
+    /// breakage cannot shrink test coverage.
+    #[arg(long, global = true)]
+    allow_gen_errors: bool,
+
     /// Skip generation only.
     #[arg(long, global = true)]
     skip_generate: bool,
@@ -232,6 +238,7 @@ pub async fn main() -> i32 {
                 metrics_file: cli.metrics.as_ref().map(|p| p.display().to_string()),
                 retry: cli.retry,
                 results_file: cli.results.as_ref().map(|p| p.display().to_string()),
+                allow_gen_errors: cli.allow_gen_errors,
             };
             output::bold("Running API integration tests");
             run_api(&config, &args).await
@@ -251,6 +258,7 @@ pub async fn main() -> i32 {
                     metrics_file: None,
                     retry: cli.retry,
                     results_file: cli.results.as_ref().map(|p| p.display().to_string()),
+                    allow_gen_errors: cli.allow_gen_errors,
                 };
                 if let Err(e) = run_api(&config, &args).await {
                     return report_error("api", e);
@@ -372,6 +380,7 @@ async fn run_full(cli: &Cli, config: &OpsConfig) -> i32 {
         metrics_file: cli.metrics.as_ref().map(|p| p.display().to_string()),
         retry: cli.retry,
         results_file: cli.results.as_ref().map(|p| p.display().to_string()),
+        allow_gen_errors: cli.allow_gen_errors,
     };
     let api_code = match run_api(config, &api_args).await {
         Ok(()) => None,

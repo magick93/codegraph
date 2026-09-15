@@ -31,6 +31,8 @@ pub struct ApiArgs {
     pub retry: u32,
     /// Write a machine-readable `--results` JSON report to this path.
     pub results_file: Option<String>,
+    /// Tolerate generation errors (skipped entities) instead of failing.
+    pub allow_gen_errors: bool,
 }
 
 /// True when a failed hurl file may be retried: the number of attempts used
@@ -193,9 +195,12 @@ async fn stage_generate_build(config: &OpsConfig, args: &ApiArgs) -> OpsResult<(
             match (&config.manifest.graph_binary, &config.manifest.schemas_dir) {
                 (Some(graph), Some(_)) => {
                     run_hooks(config, "pre_generate").await?;
-                    if let Err(e) = regenerate(config, graph) {
+                    let gen_output = regenerate(config, graph).map_err(|e| {
                         output::fail(e.to_string());
-                        return Err(e);
+                        e
+                    })?;
+                    if !args.allow_gen_errors {
+                        assert_generation_clean(&gen_output)?;
                     }
                     run_hooks(config, "post_generate").await?;
                     output::ok("Templates regenerated");
@@ -1518,6 +1523,43 @@ fn regenerate_args(config: &OpsConfig, graph_binary: &str) -> Vec<String> {
 /// stand in for it and reported SIGKILLed/panicked regens as "✓ Templates
 /// regenerated" (no literal "error" anywhere) while "0 errors" read as a
 /// failure. On non-zero exit the error carries the output tail.
+/// Fail when the generation report carries errors ("Generated N files |
+/// E errors | …" and/or the driver's "completed with errors" notice). Silent
+/// template breakage otherwise shrinks the generated tree — and the test
+/// coverage — without anyone noticing.
+pub(crate) fn assert_generation_clean(gen_output: &str) -> OpsResult<()> {
+    let errored = gen_output.contains("Generation completed with errors")
+        || regex_free_has_error_count(gen_output);
+    if errored {
+        return Err(OpsError::TestFailure(
+            "generation reported errors (entities were skipped) — fix the templates or pass \
+             --allow-gen-errors"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// True when a "Generated N files | E errors | W warnings" summary line shows
+/// a non-zero error count.
+fn regex_free_has_error_count(gen_output: &str) -> bool {
+    for line in gen_output.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("Generated ") {
+            for segment in rest.split('|') {
+                let segment = segment.trim();
+                if let Some(count) = segment.strip_suffix("errors") {
+                    let count = count.trim();
+                    if count.parse::<u32>().map(|c| c > 0).unwrap_or(false) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 fn regenerate(config: &OpsConfig, graph_binary: &str) -> OpsResult<String> {
     let args = regenerate_args(config, graph_binary);
     let out = Command::new("cargo")
@@ -1647,6 +1689,20 @@ mod tests {
     fn strips_ansi_codes() {
         assert_eq!(strip_ansi("\u{1b}[0;31mred\u{1b}[0m plain"), "red plain");
         assert_eq!(strip_ansi("no escapes"), "no escapes");
+    }
+
+    #[test]
+    fn generation_error_summary_is_fatal() {
+        assert!(assert_generation_clean("Generated 10568 files | 0 errors | 0 warnings").is_ok());
+        assert!(assert_generation_clean("no summary at all").is_ok());
+        let err = assert_generation_clean(
+            "Generated 10567 files | 1 errors | 0 warnings\nGeneration completed with errors.",
+        )
+        .expect_err("error summary must be fatal");
+        assert!(err.to_string().contains("generation reported errors"));
+        let err = assert_generation_clean("Generated 10 files | 2 errors | 0 warnings")
+            .expect_err("non-zero error count must be fatal");
+        assert!(err.to_string().contains("--allow-gen-errors"));
     }
 
     #[test]
