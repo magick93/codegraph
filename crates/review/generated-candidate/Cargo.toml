@@ -3,7 +3,7 @@
 
 [workspace]
 resolver = "2"
-members = [".", "cli", "migration", "testkit"]
+members = [".", "cli", "migration"]
 
 
 [package]
@@ -69,13 +69,12 @@ hex = "0.4"
 rand = "0.8"
 fastrand = "2"
 
-domain-types = { path = "domain-types" }
+
 
 migration = { path = "migration" }
 
 
-codegraph-workflow = { path = "/home/anton/git/codegraph-dbauthz/crates/codegraph-workflow" }
-codegraph-type-contracts = { path = "/home/anton/git/codegraph-dbauthz/crates/codegraph-type-contracts" }
+
 
 
 

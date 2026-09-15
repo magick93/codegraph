@@ -98,6 +98,7 @@ fn domain_config(domain: &str, entities: &[&str]) -> DomainConfig {
             generation_mode: "full".into(),
             api_version: "v1".into(),
         },
+        rbac: None,
         domains,
     }
 }

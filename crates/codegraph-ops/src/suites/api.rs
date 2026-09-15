@@ -203,10 +203,8 @@ async fn stage_generate_build(config: &OpsConfig, args: &ApiArgs) -> OpsResult<(
             match (&config.manifest.graph_binary, &config.manifest.schemas_dir) {
                 (Some(graph), Some(_)) => {
                     run_hooks(config, "pre_generate").await?;
-                    let gen_output = regenerate(config, graph).map_err(|e| {
-                        output::fail(e.to_string());
-                        e
-                    })?;
+                    let gen_output =
+                        regenerate(config, graph).inspect_err(|e| output::fail(e.to_string()))?;
                     if !args.allow_gen_errors {
                         assert_generation_clean(&gen_output)?;
                     }

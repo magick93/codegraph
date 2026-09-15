@@ -11,13 +11,6 @@ entity = "common/code"
 route = "common/code"
 create_body = "{}"
 
-[hurl]
-dir = "hurl"
-skip = []
-org_id_a = "00000000-0000-0000-0000-000000000001"
-org_id_b = "00000000-0000-0000-0000-000000000002"
-limited_key = true
-
 [servers]
 api_port = 3000
 ui_port = 5173
