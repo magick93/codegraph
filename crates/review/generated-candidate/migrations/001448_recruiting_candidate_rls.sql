@@ -67,28 +67,41 @@ CREATE POLICY "scope_enforced_delete" ON recruiting.candidate
   USING (public.enforce_api_key_scope('candidate', id::text, 'delete'));
 
 
--- Role enforcement (#169): for permission-gated entities the same role→action
--- matrix the request path used moves into the database. The caller's org role
--- rides the request context bundle (`app.role`, resolved once at auth time);
--- denial raises P0403 ROLE_FORBIDDEN → HTTP 403. API-key sessions pass
--- through here (scopes above) and entities without permission config keep
--- their previous behaviour (tenancy only).
-CREATE POLICY "role_enforced_select" ON recruiting.candidate
-  AS RESTRICTIVE FOR SELECT TO app_user, api_key
-  USING (public.enforce_role_action('read'));
+-- Role enforcement (#169): minimum-role gates move into the database. The
+-- caller's org role rides the request context bundle (`app.role`, resolved
+-- once at auth time); `role_at_least` ranks it against the configured
+-- `[rbac] roles_hierarchy` (defaults below) and raises P0403 ROLE_FORBIDDEN
+-- → HTTP 403 on denial. API-key sessions pass through here (scopes above);
+-- entities without permission config keep tenancy-only behaviour.
+
 
 CREATE POLICY "role_enforced_insert" ON recruiting.candidate
   AS RESTRICTIVE FOR INSERT TO app_user, api_key
-  WITH CHECK (public.enforce_role_action('create'));
+  WITH CHECK (public.role_at_least('member'));
+
+
+
+CREATE POLICY "role_enforced_select" ON recruiting.candidate
+  AS RESTRICTIVE FOR SELECT TO app_user, api_key
+  USING (public.role_at_least('employee'));
+
+
 
 CREATE POLICY "role_enforced_update" ON recruiting.candidate
   AS RESTRICTIVE FOR UPDATE TO app_user, api_key
-  USING (public.enforce_role_action('update'))
-  WITH CHECK (public.enforce_role_action('update'));
+  USING (public.role_at_least('member'))
+  WITH CHECK (public.role_at_least('member'));
+
+
 
 CREATE POLICY "role_enforced_delete" ON recruiting.candidate
   AS RESTRICTIVE FOR DELETE TO app_user, api_key
-  USING (public.enforce_role_action('delete'));
+  USING (public.role_at_least('manager'));
+
+
+
+
+
 
 
 -- Schema + table privileges for app_user and api_key (RLS policies only

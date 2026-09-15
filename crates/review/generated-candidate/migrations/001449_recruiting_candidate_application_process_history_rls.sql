@@ -45,6 +45,7 @@ CREATE POLICY "org_isolation_delete" ON recruiting.candidate_application_process
 
 
 
+
 -- Schema + table privileges for app_user and api_key (RLS policies only
 -- filter rows; these grants enable access). Idempotent, so it's safe to
 -- emit from every entity migration in a domain.

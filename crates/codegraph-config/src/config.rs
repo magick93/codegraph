@@ -24,6 +24,10 @@ pub struct DomainConfig {
     #[serde(default)]
     pub defaults: DefaultsConfig,
     pub domains: HashMap<String, DomainEntry>,
+    /// Role hierarchy for the DB-level role policies (#169). Absent → the
+    /// basejump default hierarchy.
+    #[serde(default)]
+    pub rbac: Option<RbacConfig>,
 }
 
 fn default_app_name() -> String {
@@ -527,6 +531,61 @@ pub struct PermissionConfig {
     /// (the AuthorizationService resolves the target record's owner DID).
     #[serde(default)]
     pub record_scoped: bool,
+    /// Per-operation minimum role for the DB-level `role_enforced_*` RLS
+    /// policies (#169). Keys are operations ("create", "read", "update",
+    /// "delete", "list"), values are role names ranked by the `[rbac]`
+    /// roles_hierarchy. When absent, defaults are synthesized from the
+    /// built-in matrix: delete → "manager", create/update → "member",
+    /// read/list → "employee".
+    #[serde(default)]
+    pub min_roles: Option<HashMap<String, String>>,
+    /// Optional per-row user scoping (#169, ported from hr-specs' RBAC fork):
+    /// names a UUID column that is auto-stamped from `app.user_id` on INSERT;
+    /// a RESTRICTIVE `user_scope_enforced_select` policy then limits reads of
+    /// those rows to the owning user unless the caller's role ranks above
+    /// "member".
+    #[serde(default)]
+    pub user_scope_column: Option<String>,
+}
+
+/// Role hierarchy for the DB-level role policies (#169). Roles earlier in the
+/// list outrank later ones. Custom roles (e.g. "hr_admin") are added to the
+/// `basejump.account_role` enum by the generated RBAC migration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RbacConfig {
+    #[serde(default)]
+    pub roles_hierarchy: Option<Vec<String>>,
+}
+
+impl RbacConfig {
+    /// The hierarchy in force: configured roles, else the basejump defaults.
+    pub fn hierarchy_or_default(&self) -> Vec<String> {
+        self.roles_hierarchy
+            .clone()
+            .unwrap_or_else(default_roles_hierarchy)
+    }
+}
+
+/// Default role hierarchy — the basejump roles the fixed matrix was built on.
+pub fn default_roles_hierarchy() -> Vec<String> {
+    vec![
+        "owner".to_string(),
+        "manager".to_string(),
+        "member".to_string(),
+        "employee".to_string(),
+    ]
+}
+
+/// Default per-operation minimum roles — the built-in matrix expressed as
+/// hierarchy minima ("delete needs manager or better", etc.).
+pub fn default_min_roles() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("create", "member"),
+        ("read", "employee"),
+        ("update", "member"),
+        ("delete", "manager"),
+        ("list", "employee"),
+    ]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -632,7 +691,59 @@ pub fn parse_domain_config(path: &Path) -> Result<DomainConfig, DomainConfigErro
 
 /// Parse a TOML string into a `DomainConfig`.
 pub fn parse_domain_config_str(content: &str) -> Result<DomainConfig, DomainConfigError> {
-    Ok(toml::from_str(content)?)
+    let config: DomainConfig = toml::from_str(content)?;
+    validate_rbac_config(&config)?;
+    Ok(config)
+}
+
+/// Validate the #169 RBAC config: `min_roles` keys are known operations and
+/// `min_roles` values rank in the configured hierarchy. Unknown roles would
+/// silently deny every request once the policies are generated, so this is a
+/// hard parse error.
+fn validate_rbac_config(config: &DomainConfig) -> Result<(), DomainConfigError> {
+    const OPS: [&str; 5] = ["create", "read", "update", "delete", "list"];
+
+    let hierarchy = config
+        .rbac
+        .as_ref()
+        .map(|r| r.hierarchy_or_default())
+        .unwrap_or_else(default_roles_hierarchy);
+    if hierarchy.is_empty() {
+        return Err(DomainConfigError::Invalid(
+            "[rbac] roles_hierarchy must not be empty".into(),
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for role in &hierarchy {
+        if !seen.insert(role.as_str()) {
+            return Err(DomainConfigError::Invalid(format!(
+                "[rbac] roles_hierarchy lists {role:?} more than once"
+            )));
+        }
+    }
+
+    for (domain, entry) in &config.domains {
+        for (entity, ec) in &entry.entity_config {
+            let Some(min_roles) = &ec.permissions.min_roles else {
+                continue;
+            };
+            for (op, role) in min_roles {
+                if !OPS.contains(&op.as_str()) {
+                    return Err(DomainConfigError::Invalid(format!(
+                        "[domains.{domain}.entity_config.{entity}.permissions.min_roles] \
+                         unknown operation {op:?} (expected one of {OPS:?})"
+                    )));
+                }
+                if !hierarchy.contains(role) {
+                    return Err(DomainConfigError::Invalid(format!(
+                        "[domains.{domain}.entity_config.{entity}.permissions.min_roles] \
+                         role {role:?} is not in the [rbac] roles_hierarchy"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A single schema type's UI override — maps render contexts to component paths.

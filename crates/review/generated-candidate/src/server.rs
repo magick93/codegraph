@@ -517,12 +517,7 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     let webhook_dispatcher = crate::webhook_dispatch::WebhookDispatcher::new(db.clone())?;
     let wd_token = shutdown_token.child_token();
     tokio::spawn(async move {
-        tokio::select! {
-            _ = wd_token.cancelled() => {
-                tracing::info!("webhook dispatcher shutting down");
-            }
-            _ = webhook_dispatcher.run() => {}
-        }
+        webhook_dispatcher.run(wd_token).await;
     });
 
 

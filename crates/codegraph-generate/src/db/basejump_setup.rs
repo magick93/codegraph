@@ -55,7 +55,7 @@ impl GlobalGenerator for BasejumpSetupGenerator {
     async fn generate(
         &self,
         _db: &dyn GraphQuerier,
-        _config: &DomainConfig,
+        config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
         project: &ProjectConfig,
@@ -65,11 +65,17 @@ impl GlobalGenerator for BasejumpSetupGenerator {
             return Ok(vec![]);
         }
 
-        let empty_ctx: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let rbac_ctx = serde_json::json!({
+            "roles_hierarchy": config
+                .rbac
+                .as_ref()
+                .map(|r| r.hierarchy_or_default())
+                .unwrap_or_else(codegraph_config::config::default_roles_hierarchy),
+        });
         let rbac_roles = render_template_with_project(
             tera,
             &db_template_for(&*self.dialect, "rbac_roles"),
-            &empty_ctx,
+            &rbac_ctx,
             project,
         )?;
 

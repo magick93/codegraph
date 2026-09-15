@@ -295,3 +295,31 @@ export async function createEntityAsHighfive(
   const result = await response.json();
   return result.data ?? result;
 }
+
+/**
+ * Safe cleanup: delete multiple entities, swallowing errors.
+ * Use in afterAll/afterEach to clean up created test data without
+ * failing the test if any individual deletion fails.
+ */
+export async function safeCleanup(
+  created: { path: string; id: string }[],
+): Promise<void> {
+  for (const { path, id } of created) {
+    try {
+      await deleteEntityViaApi(path, id);
+    } catch {
+      console.warn(`safeCleanup: failed to delete ${path}/${id}`);
+    }
+  }
+}
+
+/**
+ * Create an entity via API as the ACME owner (using ACME API key).
+ * Convenience wrapper — uses the first valid API key from the API_KEY env var.
+ */
+export async function createEntityViaAcmeApi(
+  path: string,
+  data: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  return createEntityViaApi(path, data);
+}
