@@ -5,3 +5,6 @@
 
 # Generated fixture output accidentally committed; regenerated, never tracked
 /crates/crates/
+
+# nested build artifacts (never commit)
+crates/review/generated-candidate/target/
