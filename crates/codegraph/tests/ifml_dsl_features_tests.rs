@@ -253,3 +253,58 @@ view "EditCustomer" {
     assert_eq!(components.len(), 1);
     assert_eq!(components[0].name, "form");
 }
+
+#[tokio::test]
+async fn test_event_requires_round_trip_through_graph() {
+    let ifml = r#"
+view "Refunds" {
+    component "grid" {
+        type: list;
+        data: Refund;
+
+        on select(row) requires: [RaiseRefund] -> navigate("Review", { id: row.id });
+        on click -> stay;
+    }
+}
+"#;
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
+    let model =
+        codegraph_ifml_dsl::parse_ifml(ifml).expect("Should parse IFML with event requires");
+
+    codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
+        .await
+        .expect("Should ingest");
+
+    // The event-level capabilities must persist on the Event node as a JSON
+    // prop (ModuleUseRecord pattern — no DDL change) and surface on the
+    // queried EventNode. Read through serde so the assertion compiles before
+    // the `requires` field lands on EventNode (RED: the parse above fails
+    // until the grammar learns the clause).
+    let events = engine
+        .get_ifml_events("comp:grid")
+        .await
+        .expect("component events should be queryable");
+    assert_eq!(events.len(), 2, "{events:?}");
+
+    let select = events
+        .iter()
+        .find(|e| e.name == "select" || e.event_type == "select")
+        .expect("select event ingested");
+    let select_json = serde_json::to_value(select).unwrap();
+    assert_eq!(
+        select_json["requires"],
+        serde_json::json!(["RaiseRefund"]),
+        "event-level requires must round-trip through the graph: {select_json}"
+    );
+
+    let click = events
+        .iter()
+        .find(|e| e.event_type == "click")
+        .expect("click event ingested");
+    let click_json = serde_json::to_value(click).unwrap();
+    assert_eq!(
+        click_json["requires"],
+        serde_json::json!([]),
+        "events without requires carry an empty list: {click_json}"
+    );
+}

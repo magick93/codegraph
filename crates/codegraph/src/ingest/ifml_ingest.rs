@@ -407,6 +407,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
             Some(event.params.clone())
         },
         conditional_expression: event.condition.as_ref().map(render_expression),
+        requires: event.requires.clone(),
         domain: None,
     };
 
@@ -474,6 +475,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                             event_type: outcome_str.clone(),
                             params: None,
                             conditional_expression: None,
+                            requires: Vec::new(),
                             domain: None,
                         })
                         .await

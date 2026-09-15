@@ -57,6 +57,10 @@ pub struct EventNode {
     pub event_type: String,
     pub params: Option<Vec<String>>,
     pub conditional_expression: Option<String>,
+    /// Capability requirements on the event (`requires: [Cap]` in the DSL);
+    /// persisted as a JSON prop on the Event node.
+    #[serde(default)]
+    pub requires: Vec<String>,
     pub domain: Option<String>,
 }
 
