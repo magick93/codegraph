@@ -42,6 +42,10 @@ pub struct EntityViewSpec {
     pub name: String,
     pub list_fields: Vec<String>,
     pub form_fields: Vec<FormFieldSpec>,
+    /// View-level guard expression for the Form view when the entity's
+    /// workflow declares terminal states:
+    /// `item.<status_field> != "<terminal>" && ...`. `None` stays unguarded.
+    pub form_guard: Option<String>,
 }
 
 /// `domain "name" { schema "schema"; }` header.
@@ -183,10 +187,28 @@ pub async fn ifml_scaffold(args: IfmlScaffoldArgs<'_>) -> Result<()> {
                 continue;
             }
             let props = be.querier().get_properties(&schema.title).await?;
+            let form_guard = entry
+                .get_entity_config(&schema.title)
+                .and_then(|ec| ec.workflow.as_ref())
+                .filter(|wf| !wf.terminal_states.is_empty())
+                .map(|wf| {
+                    wf.terminal_states
+                        .iter()
+                        .map(|state| {
+                            format!(
+                                "item.{} != \"{}\"",
+                                wf.status_field,
+                                state.replace('"', "\\\"")
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" && ")
+                });
             specs.push(EntityViewSpec {
                 name: entity_name(&schema.title, suffix),
                 list_fields: scalar_list_fields(&props),
                 form_fields: build_form_fields(be.querier(), schema, &props).await?,
+                form_guard,
             });
         }
     }
@@ -435,6 +457,9 @@ fn render_entity_views(out: &mut String, e: &EntityViewSpec) {
 
     out.push_str(&format!("view \"{}Form\" {{\n", e.name));
     out.push_str(&format!("    label \"Edit {}\";\n\n", e.name));
+    if let Some(guard) = &e.form_guard {
+        out.push_str(&format!("    if {guard};\n"));
+    }
     out.push_str("    component \"form\" {\n");
     out.push_str("        type: form;\n");
     out.push_str(&format!("        data: {};\n\n", e.name));
@@ -504,6 +529,7 @@ mod tests {
                     values: Vec::new(),
                 })
                 .collect(),
+            form_guard: None,
         }
     }
 

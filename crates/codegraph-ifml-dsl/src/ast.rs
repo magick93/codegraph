@@ -299,6 +299,10 @@ pub enum ValueExpression {
 pub struct EventHandler {
     pub event_type: EventType,
     pub params: Vec<String>,
+    /// Capability requirements declared as `requires: [CapA, CapB];` between
+    /// the event param and the if-condition; empty when unguarded.
+    #[serde(default)]
+    pub requires: Vec<String>,
     pub condition: Option<Expression>,
     pub action: EventAction,
 }

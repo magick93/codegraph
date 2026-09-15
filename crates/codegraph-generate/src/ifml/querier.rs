@@ -101,6 +101,7 @@ impl ActionIndex {
             name: evt.name,
             event_type: evt.event_type,
             params: evt.params.unwrap_or_default(),
+            requires: evt.requires,
         }
     }
 
@@ -529,6 +530,7 @@ mod tests {
             event_type: event_type.to_string(),
             params: None,
             conditional_expression: None,
+            requires: Vec::new(),
             domain: None,
         })
         .await
@@ -908,6 +910,7 @@ mod tests {
                 event_type: "click".to_string(),
                 params: None,
                 conditional_expression: None,
+                requires: Vec::new(),
                 domain: None,
             })
             .await

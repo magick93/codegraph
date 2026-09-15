@@ -1013,7 +1013,7 @@ impl GraphQuerier for GrafeoEngine {
             "MATCH (parent)-[:HasEvent]->(evt:Event) \
              WHERE parent.name = '{escaped}' \
              RETURN evt.name, evt.event_type, evt.params, \
-             evt.conditional_expression, evt.domain ORDER BY evt.name"
+             evt.conditional_expression, evt.requires, evt.domain ORDER BY evt.name"
         );
         let result = query_gql(self, &gql)?;
         let reader = RowReader::from_columns(&result.columns);
@@ -1022,11 +1022,16 @@ impl GraphQuerier for GrafeoEngine {
             let params_str: Option<String> = reader.get_opt_string(row, "evt.params")?;
             let params: Option<Vec<String>> =
                 params_str.and_then(|s| serde_json::from_str(&s).ok());
+            let requires: Vec<String> = reader
+                .get_opt_string(row, "evt.requires")?
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
             nodes.push(EventNode {
                 name: reader.get_string(row, "evt.name")?,
                 event_type: reader.get_string(row, "evt.event_type")?,
                 params,
                 conditional_expression: reader.get_opt_string(row, "evt.conditional_expression")?,
+                requires,
                 domain: reader.get_opt_string(row, "evt.domain")?,
             });
         }

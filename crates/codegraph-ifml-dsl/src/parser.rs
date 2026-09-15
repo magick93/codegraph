@@ -725,12 +725,19 @@ fn parse_event_handler(pair: Pair<Rule>) -> EventHandler {
         .unwrap_or(EventType::Custom("unknown".to_string()));
 
     let mut params = Vec::new();
+    let mut requires: Vec<String> = Vec::new();
     let mut condition = None;
     let mut action = EventAction::Stay;
 
     for child in inner {
         match child.as_rule() {
             Rule::event_param => params = parse_event_param(child),
+            Rule::event_requires => {
+                requires = child
+                    .into_inner()
+                    .map(|cap| cap.as_str().to_string())
+                    .collect();
+            }
             Rule::event_condition => {
                 condition = child.into_inner().next().map(parse_expression);
             }
@@ -741,6 +748,7 @@ fn parse_event_handler(pair: Pair<Rule>) -> EventHandler {
     EventHandler {
         event_type,
         params,
+        requires,
         condition,
         action,
     }
@@ -3780,6 +3788,102 @@ view "RefundQueue" {
         assert_eq!(
             round_tripped.views[0].requires,
             vec!["RaiseRefund".to_string()]
+        );
+    }
+
+    // ── Event-level capability requirements (issue #208 slice) ──────
+    //
+    // Pinned syntax (prefix form): the `requires:` clause sits between the
+    // event param and the `if` condition / `->` action, mirroring the
+    // view-level declaration order where `requires:` precedes the guarded
+    // body:
+    //
+    //     on select(row) requires: [RaiseRefund] -> navigate("Review");
+    //     on save requires: [A, B] if row.ready == true -> stay;
+    //
+    // The extracted capabilities surface as `EventHandler.requires`
+    // (serde default empty). These tests read the field through serde so the
+    // assertions compile before the field exists (RED: the parse itself
+    // fails until the grammar learns the clause).
+
+    fn event_requires_json(source: &str) -> serde_json::Value {
+        let model = parse_ifml(source)
+            .unwrap_or_else(|e| panic!("event-level requires should parse: {e}\nsource:{source}"));
+        let events = &model.views[0].components[0].events;
+        assert!(!events.is_empty(), "component must carry events");
+        serde_json::to_value(&events[0]).expect("serialize event handler")
+    }
+
+    #[test]
+    fn test_event_requires_prefix_form_parses() {
+        let json = event_requires_json(
+            r#"
+view "Refunds" {
+    component "grid" {
+        type: list;
+        data: Refund;
+
+        on select(row) requires: [RaiseRefund] -> navigate("Review", { id: row.id });
+    }
+}
+"#,
+        );
+        assert_eq!(
+            json["requires"],
+            serde_json::json!(["RaiseRefund"]),
+            "the requires clause must extract into EventHandler.requires: {json}"
+        );
+        assert_eq!(json["event_type"], serde_json::json!("Select"));
+        assert_eq!(
+            json["action"]["Navigate"]["target"],
+            serde_json::json!("Review"),
+            "the action must survive the requires clause: {json}"
+        );
+    }
+
+    #[test]
+    fn test_event_requires_coexists_with_condition_and_multiple_caps() {
+        let json = event_requires_json(
+            r#"
+view "Refunds" {
+    component "editor" {
+        type: form;
+        data: Refund;
+
+        on save requires: [RaiseRefund, ApproveRefund] if row.ready == true -> stay;
+    }
+}
+"#,
+        );
+        assert_eq!(
+            json["requires"],
+            serde_json::json!(["RaiseRefund", "ApproveRefund"]),
+            "multiple capabilities extract in declaration order: {json}"
+        );
+        assert!(
+            json["condition"].is_object(),
+            "the if-condition must stay in `condition`, not leak into requires: {json}"
+        );
+    }
+
+    #[test]
+    fn test_event_without_requires_defaults_to_empty_list() {
+        let json = event_requires_json(
+            r#"
+view "Refunds" {
+    component "grid" {
+        type: list;
+        data: Refund;
+
+        on click -> stay;
+    }
+}
+"#,
+        );
+        assert_eq!(
+            json["requires"],
+            serde_json::json!([]),
+            "events without requires carry an empty list (serde default): {json}"
         );
     }
 }

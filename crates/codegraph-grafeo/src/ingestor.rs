@@ -1024,14 +1024,20 @@ impl GraphIngestor for GrafeoEngine {
             .params
             .as_ref()
             .map(|p| serde_json::to_string(p).unwrap_or_default());
+        let requires_json = if node.requires.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&node.requires).unwrap_or_default())
+        };
         let gql = format!(
             "INSERT (:Event {{ \
-                name: '{}', event_type: '{}', params: {}, conditional_expression: {}, domain: {} \
+                name: '{}', event_type: '{}', params: {}, conditional_expression: {}, requires: {}, domain: {} \
             }})",
             escape_gql(&node.name),
             escape_gql(&node.event_type),
             opt_str(&params_json),
             opt_str(&node.conditional_expression),
+            opt_str(&requires_json),
             opt_str(&node.domain),
         );
         session

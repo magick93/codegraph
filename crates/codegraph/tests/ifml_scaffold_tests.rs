@@ -379,3 +379,123 @@ async fn scaffold_with_unknown_domain_filter_errors() {
     );
     assert!(!output.exists(), "no file should be written on error");
 }
+
+// ── Workflow state guards (issue #198 v2, RED — pinned rule flagged for
+//    review) ──────────────────────────────────────────────────────────────
+//
+// Pinned minimal rule: for an entity whose domains.toml workflow declares
+// terminal states, the scaffolded FORM view carries a view-level condition
+// `if item.<status_field> != "<terminal>" (&& ...)*` — editing a
+// terminal-state entity is invalid, so the authoring loop starts from a
+// guarded form. List and Detail views stay unguarded (browsing terminal
+// items is fine). This is the minimal sensible rule; anything richer
+// (per-transition view guards, details guards) needs product judgment.
+
+const WORKFLOW_TODO_SCHEMA: &str = r#"{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RefundType",
+  "description": "A refund request with a workflow.",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "title": { "type": "string" },
+    "status": { "type": "string", "enum": ["draft", "submitted", "archived", "done"] }
+  },
+  "required": ["id", "title"]
+}"#;
+
+const PLAIN_NOTE_SCHEMA: &str = r#"{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NoteType",
+  "description": "A standalone note without a workflow.",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "body": { "type": "string" }
+  },
+  "required": ["id"]
+}"#;
+
+#[tokio::test]
+async fn scaffold_emits_terminal_state_guard_for_workflow_forms() {
+    let dir = tempfile::tempdir().unwrap();
+    let schemas_dir = dir.path().join("schemas/billing");
+    fs::create_dir_all(&schemas_dir).unwrap();
+    fs::write(schemas_dir.join("RefundType.json"), WORKFLOW_TODO_SCHEMA).unwrap();
+    let misc_dir = dir.path().join("schemas/misc");
+    fs::create_dir_all(&misc_dir).unwrap();
+    fs::write(misc_dir.join("NoteType.json"), PLAIN_NOTE_SCHEMA).unwrap();
+
+    fs::write(
+        dir.path().join("domains.toml"),
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.billing]
+label = "Billing"
+schema_dir = "billing"
+postgres_schema = "billing"
+entities = ["RefundType"]
+
+[domains.billing.entity_config.RefundType.workflow]
+status_field = "status"
+initial_state = "draft"
+states = ["draft", "submitted", "archived", "done"]
+terminal_states = ["archived", "done"]
+generate_action_endpoints = true
+
+[domains.billing.entity_config.RefundType.workflow.transitions]
+draft = ["submitted"]
+submitted = ["archived", "done"]
+
+[domains.misc]
+label = "Misc"
+schema_dir = "misc"
+postgres_schema = "misc"
+entities = ["NoteType"]
+"#,
+    )
+    .unwrap();
+    fs::write(dir.path().join("classifier.toml"), "").unwrap();
+
+    let output = dir.path().join("app.ifml");
+    ifml_scaffold(IfmlScaffoldArgs {
+        schemas: &dir.path().join("schemas"),
+        classifier: &dir.path().join("classifier.toml"),
+        config_path: &dir.path().join("domains.toml"),
+        output: &output,
+        force: false,
+        domains: &[],
+    })
+    .await
+    .expect("scaffold should succeed");
+
+    let content = fs::read_to_string(&output).unwrap();
+    let model = codegraph_ifml_dsl::parse_ifml(&content).expect("emitted DSL must parse");
+
+    let form = find_view(&model, "RefundForm");
+    let condition = form
+        .condition
+        .as_ref()
+        .expect("workflow form carries a guard");
+    assert_eq!(
+        codegraph_ifml_dsl::render_expression(condition),
+        r#"item.status != "archived" && item.status != "done""#,
+        "the form view guards against terminal states: {content}"
+    );
+
+    for unguarded in [
+        "RefundList",
+        "RefundDetail",
+        "NoteList",
+        "NoteDetail",
+        "NoteForm",
+    ] {
+        let view = find_view(&model, unguarded);
+        assert!(
+            view.condition.is_none(),
+            "non-form views stay unguarded: {unguarded}: {content}"
+        );
+    }
+}
