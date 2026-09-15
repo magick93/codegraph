@@ -192,6 +192,12 @@ pub struct OpsHurl {
     pub org_id_a: Option<String>,
     /// Org B id used to provision the second tenant's API key (RLS tests).
     pub org_id_b: Option<String>,
+    /// Provision a third, read-only API key for org A and expose it to hurl
+    /// as the `api_key_limited` variable, so contract files can assert the
+    /// scope-denial path (out-of-scope writes → 403 INSUFFICIENT_SCOPE, the
+    /// HTTP mapping of the `scope_enforced_*` RLS policies).
+    #[serde(default)]
+    pub limited_key: bool,
 }
 
 impl Default for OpsHurl {
@@ -201,6 +207,7 @@ impl Default for OpsHurl {
             skip: Vec::new(),
             org_id_a: Some("00000000-0000-0000-0000-000000000001".to_string()),
             org_id_b: Some("00000000-0000-0000-0000-000000000002".to_string()),
+            limited_key: false,
         }
     }
 }
@@ -370,6 +377,51 @@ route = "recruiting/candidates"
         assert_eq!(
             m.smoke.unwrap().route.as_deref(),
             Some("recruiting/candidates")
+        );
+    }
+
+    #[test]
+    fn hurl_limited_key_defaults_to_false() {
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+
+[hurl]
+dir = "hurl"
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        let hurl = m.hurl.expect("hurl section should parse");
+        assert!(
+            !hurl.limited_key,
+            "limited_key must default to false so legacy manifests keep their behavior"
+        );
+    }
+
+    #[test]
+    fn hurl_limited_key_parses_when_requested() {
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+
+[hurl]
+dir = "hurl"
+skip = []
+org_id_a = "00000000-0000-0000-0000-000000000001"
+org_id_b = "00000000-0000-0000-0000-000000000002"
+limited_key = true
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        let hurl = m.hurl.expect("hurl section should parse");
+        assert!(hurl.limited_key);
+        assert_eq!(hurl.dir, PathBuf::from("hurl"));
+        assert!(hurl.skip.is_empty());
+        assert_eq!(
+            hurl.org_id_a.as_deref(),
+            Some("00000000-0000-0000-0000-000000000001")
+        );
+        assert_eq!(
+            hurl.org_id_b.as_deref(),
+            Some("00000000-0000-0000-0000-000000000002")
         );
     }
 }

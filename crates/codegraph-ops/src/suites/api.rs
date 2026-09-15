@@ -135,14 +135,22 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     let binary = stage_preflight(config, args, &mut counters).await?;
 
     // ---- 2. Database ----
-    let (migration_dir, auth_header, api_key_b) =
+    let (migration_dir, auth_header, api_key_b, api_key_limited) =
         stage_database(config, args, &mut counters).await?;
 
     // ---- 3. Server ----
     let mut supervisor = stage_server(config, args, &binary, &mut counters).await?;
 
     // ---- 4. Hurl API tests ----
-    stage_hurl(config, args, auth_header.as_ref(), &mut counters).await?;
+    stage_hurl(
+        config,
+        args,
+        auth_header.as_ref(),
+        api_key_b.as_ref(),
+        api_key_limited.as_ref(),
+        &mut counters,
+    )
+    .await?;
 
     // ---- 5. Curl smoke tests ----
     stage_curl_smoke(config, auth_header.as_ref(), &mut counters).await;
@@ -476,7 +484,7 @@ async fn stage_database(
     config: &OpsConfig,
     args: &ApiArgs,
     counters: &mut TestCounters,
-) -> OpsResult<(PathBuf, Option<String>, Option<String>)> {
+) -> OpsResult<(PathBuf, Option<String>, Option<String>, Option<String>)> {
     // ---- 2. Database ----
     output::section("2. Database");
     config.metrics.begin("DB migrate");
@@ -536,6 +544,7 @@ async fn stage_database(
     .unwrap_or_default();
     let mut auth_header: Option<String> = None;
     let mut api_key_b: Option<String> = None;
+    let mut api_key_limited: Option<String> = None;
     if has_create_key.trim() == "0" || has_create_key.is_empty() {
         output::warn("create_api_key() not found — API-key auth checks skipped");
     } else {
@@ -565,10 +574,29 @@ async fn stage_database(
                 api_key_b = Some(key);
             }
         }
+        // Limited (read-only) key for scope-denial contract files (#169):
+        // opted in via `hurl.limited_key = true`, exposed to hurl as
+        // `api_key_limited`.
+        if config
+            .manifest
+            .hurl
+            .as_ref()
+            .map(|h| h.limited_key)
+            .unwrap_or(false)
+        {
+            if let Ok(key) =
+                provision_read_only_api_key(config, &org_a, "ops-test-key-limited").await
+            {
+                counters.pass("Read-only (limited) API key provisioned");
+                api_key_limited = Some(key);
+            } else {
+                counters.fail_test("could not provision read-only API key");
+            }
+        }
     }
     config.metrics.end();
 
-    Ok((migration_dir, auth_header, api_key_b))
+    Ok((migration_dir, auth_header, api_key_b, api_key_limited))
 }
 
 async fn stage_server(
@@ -630,6 +658,8 @@ async fn stage_hurl(
     config: &OpsConfig,
     args: &ApiArgs,
     auth_header: Option<&String>,
+    api_key_b: Option<&String>,
+    api_key_limited: Option<&String>,
     counters: &mut TestCounters,
 ) -> OpsResult<()> {
     // ---- 4. Hurl API tests ----
@@ -672,6 +702,16 @@ async fn stage_hurl(
                     if let Some(h) = &auth_header {
                         let key = h.trim_start_matches("Authorization: Bearer ").to_string();
                         cmd.arg("--variable").arg(format!("api_key={key}"));
+                        // Alias matching the cross-tenant file vocabulary
+                        // (`api_key_a`), so the same hurl file works in the
+                        // main loop and in the RLS-isolation stage.
+                        cmd.arg("--variable").arg(format!("api_key_a={key}"));
+                    }
+                    if let Some(key) = api_key_b {
+                        cmd.arg("--variable").arg(format!("api_key_b={key}"));
+                    }
+                    if let Some(key) = api_key_limited {
+                        cmd.arg("--variable").arg(format!("api_key_limited={key}"));
                     }
                     cmd.arg(&f);
                     let (passed, reqs, output_text) = match cmd.output() {
@@ -1131,15 +1171,45 @@ pub(crate) fn cornucopia_db_env(config: &OpsConfig) -> Option<(String, String)> 
     }
 }
 
+/// Full-wildcard scope set: every entity, every action.
+pub(crate) const FULL_WILDCARD_SCOPES: &str =
+    r#"[{"entity_type":"*","entity_id":"*","action":"*"}]"#;
+
+/// Read-only scope set: every entity, `read` action only. Out-of-scope
+/// writes raise the `scope_enforced_*` RLS policies' P0403 (HTTP 403).
+pub(crate) const READ_ONLY_SCOPES: &str =
+    r#"[{"entity_type":"*","entity_id":"*","action":"read"}]"#;
+
 /// Provision an API key via public.create_api_key(org, name, permissions).
 pub(crate) async fn provision_api_key(
     config: &OpsConfig,
     org_id: &str,
     name: &str,
 ) -> OpsResult<String> {
+    provision_api_key_with_scopes(config, org_id, name, FULL_WILDCARD_SCOPES).await
+}
+
+/// Provision a read-only API key: wildcard entity/id scope limited to the
+/// `read` action. Out-of-scope writes against it must raise the
+/// `scope_enforced_*` policies' P0403 INSUFFICIENT_SCOPE (HTTP 403).
+pub(crate) async fn provision_read_only_api_key(
+    config: &OpsConfig,
+    org_id: &str,
+    name: &str,
+) -> OpsResult<String> {
+    provision_api_key_with_scopes(config, org_id, name, READ_ONLY_SCOPES).await
+}
+
+/// Provision an API key with explicit scope JSON (legacy object vocabulary —
+/// the same vocabulary the RLS scope policies enforce).
+pub(crate) async fn provision_api_key_with_scopes(
+    config: &OpsConfig,
+    org_id: &str,
+    name: &str,
+    scopes_json: &str,
+) -> OpsResult<String> {
     let sql = format!(
-        "SELECT public.create_api_key('{org_id}'::uuid, '{name}', \
-         '[{{\"entity_type\":\"*\",\"entity_id\":\"*\",\"action\":\"*\"}}]'::jsonb);"
+        "SELECT public.create_api_key('{org_id}'::uuid, '{name}', '{scopes_json}'::jsonb);"
     );
     let out = psql_query(&config.api_db, &sql).await?;
     parse_api_key_json(&out).ok_or_else(|| OpsError::TestFailure("could not parse API key".into()))
@@ -1924,5 +1994,29 @@ trailing context line
         let path = dir.path().join("a/b/c/run.log");
         write_hurl_log(&path, "combined output").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "combined output");
+    }
+
+    #[test]
+    fn scope_constants_are_well_formed_json() {
+        let full: serde_json::Value = serde_json::from_str(FULL_WILDCARD_SCOPES)
+            .expect("FULL_WILDCARD_SCOPES must be valid JSON");
+        assert_eq!(full[0]["entity_type"], "*");
+        assert_eq!(full[0]["action"], "*");
+
+        let read_only: serde_json::Value =
+            serde_json::from_str(READ_ONLY_SCOPES).expect("READ_ONLY_SCOPES must be valid JSON");
+        assert_eq!(read_only[0]["entity_type"], "*");
+        assert_eq!(read_only[0]["action"], "read");
+    }
+
+    #[test]
+    fn create_api_key_sql_embeds_scopes_verbatim() {
+        let scopes = READ_ONLY_SCOPES;
+        let sql = format!(
+            "SELECT public.create_api_key('{}'::uuid, 'n', '{scopes}'::jsonb);",
+            "00000000-0000-0000-0000-000000000001"
+        );
+        assert!(sql.contains(r#"[{"entity_type":"*","entity_id":"*","action":"read"}]"#));
+        assert!(sql.ends_with("'::jsonb);"));
     }
 }
