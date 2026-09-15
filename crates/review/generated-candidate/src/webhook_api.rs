@@ -41,12 +41,23 @@ pub struct CreateSubscription {
 }
 
 #[derive(Debug, Serialize)]
+pub struct DeliverySummary {
+    pub id: Uuid,
+    pub response_status: Option<i32>,
+    pub response_body: Option<String>,
+    pub attempt: i32,
+    pub delivered_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct WebhookEndpointResponse {
     pub id: Uuid,
     pub url: String,
     pub description: Option<String>,
     pub headers: serde_json::Value,
     pub is_active: bool,
+    pub last_delivery: Option<DeliverySummary>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -106,9 +117,18 @@ pub async fn list_endpoints(
         .query_all(Statement::from_string(
             DatabaseBackend::Postgres,
             r#"
-            SELECT id, url, description, headers, is_active, created_at, updated_at
-            FROM platform.webhook_endpoint
-            ORDER BY created_at DESC
+            SELECT e.id, e.url, e.description, e.headers, e.is_active, e.created_at, e.updated_at,
+                   d.id AS del_id, d.response_status AS del_status, d.response_body AS del_body,
+                   d.attempt AS del_attempt, d.delivered_at AS del_delivered, d.created_at AS del_created
+            FROM platform.webhook_endpoint e
+            LEFT JOIN LATERAL (
+                SELECT id, response_status, response_body, attempt, delivered_at, created_at
+                FROM platform.webhook_delivery
+                WHERE endpoint_id = e.id
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) d ON true
+            ORDER BY e.created_at DESC
             "#,
         ))
         .await
@@ -135,6 +155,17 @@ pub async fn list_endpoints(
                 description: r.try_get_by_index(2).ok().flatten(),
                 headers: r.try_get_by_index(3).ok()?,
                 is_active: r.try_get_by_index(4).ok()?,
+                last_delivery: match r.try_get_by_index::<Option<Uuid>>(7) {
+                    Ok(Some(del_id)) => Some(DeliverySummary {
+                        id: del_id,
+                        response_status: r.try_get_by_index(8).ok().flatten(),
+                        response_body: r.try_get_by_index(9).ok().flatten(),
+                        attempt: r.try_get_by_index(10).ok().unwrap_or(1),
+                        delivered_at: r.try_get_by_index(11).ok().flatten(),
+                        created_at: r.try_get_by_index(12).ok().unwrap_or(chrono::Utc::now()),
+                    }),
+                    _ => None,
+                },
                 created_at: r.try_get_by_index(5).ok()?,
                 updated_at: r.try_get_by_index(6).ok()?,
             })
@@ -215,6 +246,7 @@ pub async fn create_endpoint(
             description: body.description,
             headers,
             is_active: true,
+            last_delivery: None,
             created_at: now,
             updated_at: now,
         }),
@@ -251,9 +283,17 @@ pub async fn get_endpoint(
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
-            SELECT id, url, description, headers, is_active, created_at, updated_at
-            FROM platform.webhook_endpoint
-            WHERE id = $1
+            SELECT e.id, e.url, e.description, e.headers, e.is_active, e.created_at, e.updated_at,
+                   d.id, d.response_status, d.response_body, d.attempt, d.delivered_at, d.created_at
+            FROM platform.webhook_endpoint e
+            LEFT JOIN LATERAL (
+                SELECT id, response_status, response_body, attempt, delivered_at, created_at
+                FROM platform.webhook_delivery
+                WHERE endpoint_id = e.id
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) d ON true
+            WHERE e.id = $1
             "#,
             [id.into()],
         ))
@@ -279,6 +319,17 @@ pub async fn get_endpoint(
             description: r.try_get_by_index(2).ok().flatten(),
             headers: r.try_get_by_index(3).map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "failed to parse endpoint data"}))))?,
             is_active: r.try_get_by_index(4).map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "failed to parse endpoint data"}))))?,
+            last_delivery: match r.try_get_by_index::<Option<Uuid>>(7).ok().flatten() {
+                Some(del_id) => Some(DeliverySummary {
+                    id: del_id,
+                    response_status: r.try_get_by_index(8).ok().flatten(),
+                    response_body: r.try_get_by_index(9).ok().flatten(),
+                    attempt: r.try_get_by_index(10).ok().unwrap_or(1),
+                    delivered_at: r.try_get_by_index(11).ok().flatten(),
+                    created_at: r.try_get_by_index(12).ok().unwrap_or(chrono::Utc::now()),
+                }),
+                None => None,
+            },
             created_at: r.try_get_by_index(5).map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "failed to parse endpoint data"}))))?,
             updated_at: r.try_get_by_index(6).map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "failed to parse endpoint data"}))))?,
         })),

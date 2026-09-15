@@ -8,7 +8,7 @@ const BASE_PATH = '/common/currency-code-list';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
@@ -16,6 +16,8 @@ function testData(): Record<string, unknown> {
     'code': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     'display_name': 'Test Display Name',
     'sort_order': 42,
+
+
   };
 }
 
@@ -23,6 +25,8 @@ test.describe('CurrencyCodeList Employee View', () => {
   let createdId: string;
 
   test.beforeAll(async ({ orgContext }) => {
+
+
 
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());

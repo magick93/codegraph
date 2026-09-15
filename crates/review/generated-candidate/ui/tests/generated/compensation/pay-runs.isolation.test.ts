@@ -8,7 +8,7 @@ const BASE_PATH = '/compensation/pay-runs';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
@@ -17,6 +17,8 @@ function testData(): Record<string, unknown> {
     'run_date': '2025-03-10',
     'total_amount': 77,
     'total_amount_currency': 'USD',
+
+
   };
 }
 
@@ -25,6 +27,8 @@ test.describe('PayRun Cross-Org Isolation', () => {
   const data = testData();
 
   test.beforeAll(async ({ orgContext }) => {
+
+
 
 
     // Create entity as ACME owner

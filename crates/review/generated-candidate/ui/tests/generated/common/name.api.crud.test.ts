@@ -21,7 +21,7 @@ const BASE_PATH = '/common/name';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 
@@ -39,6 +39,8 @@ function testData(): Record<string, unknown> {
 
 
     'given_name': 'Test Given Name',
+
+
 
 
   };
@@ -59,6 +61,8 @@ function updatedData(): Record<string, unknown> {
 
 
     'given_name': 'Updated Given Name',
+
+
 
 
   };

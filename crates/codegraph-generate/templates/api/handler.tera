@@ -97,15 +97,19 @@ pub async fn create(
             }
 
 {% if role == "child" %}
-            let id = state.{{ domain }}_{{ module_name }}_commands.create(item, parent_id, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+            let id = state.{{ domain }}_{{ module_name }}_commands.create(item, parent_id, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
 {% else %}
-            let id = state.{{ domain }}_{{ module_name }}_commands.create(item, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+            let id = state.{{ domain }}_{{ module_name }}_commands.create(item, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
 {% endif %}
-                .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to create {{ entity_name }}: {e}"))
-                    .with_correlation_id(correlation_id))?;
-            let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id(id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-                .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
-                    .with_correlation_id(correlation_id))?
+                .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to create {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?;
+            let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id(id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+                .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?
                 .ok_or_else(|| AppError::internal("Created entity not found")
                     .with_correlation_id(correlation_id))?;
             Ok((StatusCode::CREATED, Json(serde_json::json!({
@@ -124,9 +128,9 @@ pub async fn create(
             }
 
 {% if role == "child" %}
-            let result = state.{{ domain }}_{{ module_name }}_commands.bulk_create(items, parent_id, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await;
+            let result = state.{{ domain }}_{{ module_name }}_commands.bulk_create(items, parent_id, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await;
 {% else %}
-            let result = state.{{ domain }}_{{ module_name }}_commands.bulk_create(items, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await;
+            let result = state.{{ domain }}_{{ module_name }}_commands.bulk_create(items, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await;
 {% endif %}
 
             let mut success = Vec::new();
@@ -135,7 +139,7 @@ pub async fn create(
             for item_result in result {
                 match item_result {
                     Ok(id) => {
-                        match state.{{ domain }}_{{ module_name }}_queries.find_by_id(id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await {
+                        match state.{{ domain }}_{{ module_name }}_queries.find_by_id(id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await {
                             Ok(Some(resp)) => success.push(resp),
                             Ok(None) => {
                                 tracing::warn!(entity_id = %id, "Bulk-created entity not found during response assembly");
@@ -209,9 +213,11 @@ pub async fn get_by_id(
 ) -> Result<Json<{% if has_include %}{{ entity_name }}WithIncludeResponse{% else %}serde_json::Value{% endif %}>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 {% if role == "child" %}
-    let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
-            .with_correlation_id(correlation_id))?
+    let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found under parent {parent_id}"))
             .with_correlation_id(correlation_id))?;
 {% if ancestor_path_params >= 2 %}
@@ -249,9 +255,11 @@ pub async fn get_by_id(
     );
 {% endif %}
 {% else %}
-    let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id(id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
-            .with_correlation_id(correlation_id))?
+    let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id(id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found"))
             .with_correlation_id(correlation_id))?;
     let linked = {{ entity_name }}LinkedResponse::root(response, "{{ domain }}", "{{ path_segment }}");
@@ -401,9 +409,11 @@ pub async fn update(
     let correlation_id = extract_correlation_id(&headers);
 {% if role == "child" %}
     // Verify ownership before update: entity must belong to the parent
-    state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
-            .with_correlation_id(correlation_id))?
+    state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found under parent {parent_id}"))
             .with_correlation_id(correlation_id))?;
 {% endif %}
@@ -421,12 +431,16 @@ pub async fn update(
             .with_correlation_id(correlation_id));
     }
 
-    state.{{ domain }}_{{ module_name }}_commands.update(id, body, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to update {{ entity_name }}: {e}"))
-            .with_correlation_id(correlation_id))?;
-    let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id(id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
-            .with_correlation_id(correlation_id))?
+    state.{{ domain }}_{{ module_name }}_commands.update(id, body, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to update {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?;
+    let response = state.{{ domain }}_{{ module_name }}_queries.find_by_id(id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found"))
             .with_correlation_id(correlation_id))?;
     Ok(Json(serde_json::json!({
@@ -475,13 +489,15 @@ pub async fn delete(
     let correlation_id = extract_correlation_id(&headers);
 {% if role == "child" %}
     // Verify ownership before delete: entity must belong to the parent
-    state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to find {{ entity_name }}: {e}"))
-            .with_correlation_id(correlation_id))?
+    state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found under parent {parent_id}"))
             .with_correlation_id(correlation_id))?;
 {% endif %}
-    state.{{ domain }}_{{ module_name }}_commands.delete(id, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+    state.{{ domain }}_{{ module_name }}_commands.delete(id, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: {{ domain | pascal_case }}Error| {
             let msg = e.to_string();
             // Repository errors render as "NOT_FOUND: ..." while some paths
@@ -589,9 +605,11 @@ pub async fn list(
     // When ?q= is provided, delegate to full-text search with ranking
     if let Some(ref q) = params.q {
         if !q.is_empty() {
-            let (results, total) = state.{{ domain }}_{{ module_name }}_queries.search(q, params.page, params.page_size{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-                .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to search {{ entity_name }}: {e}"))
-                    .with_correlation_id(correlation_id))?;
+            let (results, total) = state.{{ domain }}_{{ module_name }}_queries.search(q, params.page, params.page_size{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+                .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to search {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?;
             return Ok(Json(serde_json::json!({
                 "data": results,
                 "total": total,
@@ -620,9 +638,11 @@ pub async fn list(
     // Scope results to the parent entity
     filters.insert("{{ parent_ref }}".to_string(), parent_id.to_string());
 {% endif %}
-    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.list_filtered(params.page, params.page_size, &filters{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to list {{ entity_name }}: {e}"))
-            .with_correlation_id(correlation_id))?;
+    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.list_filtered(params.page, params.page_size, &filters{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to list {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?;
 {% if has_include %}
     let include_paths: Vec<String> = params.include
         .as_ref()
@@ -776,9 +796,11 @@ pub async fn search(
         return Err(AppError::bad_request("Missing or empty q parameter")
             .with_correlation_id(correlation_id));
     }
-    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.search(&params.q, params.page, params.page_size{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to search {{ entity_name }}: {e}"))
-            .with_correlation_id(correlation_id))?;
+    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.search(&params.q, params.page, params.page_size{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to search {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?;
     Ok(Json(serde_json::json!({
         "data": results,
         "total": total,
@@ -821,9 +843,11 @@ pub async fn semantic_search(
     Json(body): Json<SemanticSearchRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
-    let results = state.{{ domain }}_{{ module_name }}_queries.semantic_search(&body.embedding, body.limit{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: {{ domain | pascal_case }}Error| AppError::internal(format!("Failed to run semantic search for {{ entity_name }}: {e}"))
-            .with_correlation_id(correlation_id))?;
+    let results = state.{{ domain }}_{{ module_name }}_queries.semantic_search(&body.embedding, body.limit{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to run semantic search for {{ entity_name }}")
+                        .with_correlation_id(correlation_id)
+                })?;
     Ok(Json(serde_json::json!({
         "data": results,
         "meta": { "correlation_id": correlation_id.to_string() }
@@ -885,25 +909,33 @@ pub async fn tree(
         .map_err(|e| AppError::internal(format!("Failed to begin transaction: {e}")))?;
 
     // Set RLS session vars so Postgres policies can enforce tenant isolation.
-    db.execute(sea_orm::Statement::from_sql_and_values(
-        sea_orm::DatabaseBackend::Postgres,
-        "SELECT set_config('app.current_api_key', $1, true), \
-                set_config('app.organization_id', $2, true)",
-        [
-            api_key_info.api_key_id.to_string().into(),
-            api_key_info.organization_id.to_string().into(),
-        ],
+    // One round trip (#169): set_config + SET LOCAL ROLE bundled into a single
+    // simple-query payload; values are server-side UUIDs (AuthInfo).
+    db.execute_unprepared(&format!(
+        "SELECT set_config('app.current_api_key', '{}', true), \
+                set_config('app.current_api_key_id', '{}', true), \
+                set_config('app.organization_id', '{}', true); \
+         SET LOCAL ROLE app_user",
+        api_key_info.api_key_id,
+        api_key_info.api_key_id,
+        api_key_info.organization_id,
     )).await
-        .map_err(|e| AppError::internal(format!("Failed to set RLS vars: {e}")))?;
-    db.execute(sea_orm::Statement::from_string(
-        sea_orm::DatabaseBackend::Postgres,
-        "SET LOCAL ROLE app_user".to_string(),
-    )).await
-        .map_err(|e| AppError::internal(format!("Failed to set role: {e}")))?;
+        .map_err(|e| AppError::internal(format!("Failed to set RLS context: {e}")))?;
 
     let repo = crate::domain::{{ domain }}::{{ module_name }}::repository_impl::{{ entity_name }}RepositoryImpl;
     let rows = repo.find_tree(&db, id, params.depth).await
-        .map_err(|e| AppError::internal(e.to_string()).with_correlation_id(correlation_id))?;
+        .map_err(|e| {
+            let msg = e.to_string();
+            let base = if msg.contains("INSUFFICIENT_SCOPE")
+                || msg.contains("ROLE_FORBIDDEN")
+                || msg.contains("violates row-level security policy")
+            {
+                AppError::forbidden(msg)
+            } else {
+                AppError::internal(msg)
+            };
+            base.with_correlation_id(correlation_id)
+        })?;
     db.commit().await
         .map_err(|e| AppError::internal(format!("Failed to commit transaction: {e}")))?;
 
@@ -916,7 +948,7 @@ pub async fn tree(
     // Cornucopia provider: the query handler owns the client, transaction
     // and RLS session vars; the recursive CTE is a compiled query in the
     // SQL-first repository.
-    let rows = state.{{ domain }}_{{ module_name }}_queries.find_tree(id, params.depth, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+    let rows = state.{{ domain }}_{{ module_name }}_queries.find_tree(id, params.depth, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e| AppError::internal(format!("Failed to fetch subtree: {e}")).with_correlation_id(correlation_id))?;
 
     if rows.is_empty() {

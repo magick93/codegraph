@@ -4,12 +4,12 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use migration::MigratorTrait;
 use tokio_util::sync::CancellationToken;
 
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
+use migration::MigratorTrait;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::{SwaggerUi, Url};
 use tower_http::cors::{Any, CorsLayer};
@@ -203,13 +203,38 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     let db = sea_orm::Database::connect(&db_url).await?;
 
-    // Apply pending migrations on startup (idempotent — applied files are
-    // tracked in the seaql_migrations table). Manual runs:
-    //   DATABASE_URL=... sea-orm-cli migrate up
+    // Apply pending migrations on startup. When the admin CLI is enabled the
+    // app has src/migration.rs — the SAME engine `cosmos-app migrate` uses
+    // (raw SQL files, dollar-quote-aware statement splitting, tracked in
+    // schema_migrations). Sharing one engine and one tracking table keeps
+    // boot idempotent against CLI runs — running the SeaORM Migrator here
+    // instead would re-apply every file a CLI run already applied (its
+    // seaql_migrations tracking is invisible to this runner) and die on the
+    // first seeded codelist. Without the CLI module, fall back to the
+    // always-generated SeaORM migration crate.
+    
     if let Err(e) = migration::Migrator::up(&db, None).await {
         tracing::error!("Failed to apply database migrations: {e}");
         return Err(e.into());
     }
+    
+
+    // App pool (#169): when APP_DATABASE_URL is set, the serving pool connects
+    // as the NOBYPASSRLS app_user role — request context rides the statement
+    // payload and no per-transaction SET LOCAL ROLE is needed. Without it the
+    // owner DATABASE_URL pool is shared and the data path falls back to the
+    // legacy bundled-context delivery. Boot migrations above keep running on
+    // the owner connection either way.
+    
+    let (app_db, pool_mode) = match std::env::var("APP_DATABASE_URL") {
+        Ok(url) => (
+            sea_orm::Database::connect(&url).await?,
+            crate::app_state::DbPoolMode::AppUser,
+        ),
+        Err(_) => (db.clone(), crate::app_state::DbPoolMode::Legacy),
+    };
+    tracing::info!(mode = ?pool_mode, "database pool mode");
+    
 
 
 
@@ -220,177 +245,177 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
         common_code_commands: crate::domain::common::code::command::CodeCommandHandler::new(
             Arc::new(crate::domain::common::code::repository_impl::CodeRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_code_queries: crate::domain::common::code::query::CodeQueryHandler::new(
             Arc::new(crate::domain::common::code::repository_impl::CodeRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_currency_code_list_commands: crate::domain::common::currency_code_list::command::CurrencyCodeListCommandHandler::new(
             Arc::new(crate::domain::common::currency_code_list::repository_impl::CurrencyCodeListRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_currency_code_list_queries: crate::domain::common::currency_code_list::query::CurrencyCodeListQueryHandler::new(
             Arc::new(crate::domain::common::currency_code_list::repository_impl::CurrencyCodeListRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_date_commands: crate::domain::common::date::command::DateCommandHandler::new(
             Arc::new(crate::domain::common::date::repository_impl::DateRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_date_queries: crate::domain::common::date::query::DateQueryHandler::new(
             Arc::new(crate::domain::common::date::repository_impl::DateRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_distribution_base_commands: crate::domain::common::distribution_base::command::DistributionBaseCommandHandler::new(
             Arc::new(crate::domain::common::distribution_base::repository_impl::DistributionBaseRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_distribution_base_queries: crate::domain::common::distribution_base::query::DistributionBaseQueryHandler::new(
             Arc::new(crate::domain::common::distribution_base::repository_impl::DistributionBaseRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_effective_date_commands: crate::domain::common::effective_date::command::EffectiveDateCommandHandler::new(
             Arc::new(crate::domain::common::effective_date::repository_impl::EffectiveDateRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_effective_date_queries: crate::domain::common::effective_date::query::EffectiveDateQueryHandler::new(
             Arc::new(crate::domain::common::effective_date::repository_impl::EffectiveDateRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_event_base_commands: crate::domain::common::event_base::command::EventBaseCommandHandler::new(
             Arc::new(crate::domain::common::event_base::repository_impl::EventBaseRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_event_base_queries: crate::domain::common::event_base::query::EventBaseQueryHandler::new(
             Arc::new(crate::domain::common::event_base::repository_impl::EventBaseRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_formatted_date_time_commands: crate::domain::common::formatted_date_time::command::FormattedDateTimeCommandHandler::new(
             Arc::new(crate::domain::common::formatted_date_time::repository_impl::FormattedDateTimeRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_formatted_date_time_queries: crate::domain::common::formatted_date_time::query::FormattedDateTimeQueryHandler::new(
             Arc::new(crate::domain::common::formatted_date_time::repository_impl::FormattedDateTimeRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_gender_code_list_commands: crate::domain::common::gender_code_list::command::GenderCodeListCommandHandler::new(
             Arc::new(crate::domain::common::gender_code_list::repository_impl::GenderCodeListRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_gender_code_list_queries: crate::domain::common::gender_code_list::query::GenderCodeListQueryHandler::new(
             Arc::new(crate::domain::common::gender_code_list::repository_impl::GenderCodeListRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_identifier_commands: crate::domain::common::identifier::command::IdentifierCommandHandler::new(
             Arc::new(crate::domain::common::identifier::repository_impl::IdentifierRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_identifier_queries: crate::domain::common::identifier::query::IdentifierQueryHandler::new(
             Arc::new(crate::domain::common::identifier::repository_impl::IdentifierRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_name_commands: crate::domain::common::name::command::NameCommandHandler::new(
             Arc::new(crate::domain::common::name::repository_impl::NameRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_name_queries: crate::domain::common::name::query::NameQueryHandler::new(
             Arc::new(crate::domain::common::name::repository_impl::NameRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_person_base_commands: crate::domain::common::person_base::command::PersonBaseCommandHandler::new(
             Arc::new(crate::domain::common::person_base::repository_impl::PersonBaseRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_person_base_queries: crate::domain::common::person_base::query::PersonBaseQueryHandler::new(
             Arc::new(crate::domain::common::person_base::repository_impl::PersonBaseRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_position_schedule_type_code_list_commands: crate::domain::common::position_schedule_type_code_list::command::PositionScheduleTypeCodeListCommandHandler::new(
             Arc::new(crate::domain::common::position_schedule_type_code_list::repository_impl::PositionScheduleTypeCodeListRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_position_schedule_type_code_list_queries: crate::domain::common::position_schedule_type_code_list::query::PositionScheduleTypeCodeListQueryHandler::new(
             Arc::new(crate::domain::common::position_schedule_type_code_list::repository_impl::PositionScheduleTypeCodeListRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_string_type_array_commands: crate::domain::common::string_type_array::command::StringTypeArrayCommandHandler::new(
             Arc::new(crate::domain::common::string_type_array::repository_impl::StringTypeArrayRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_string_type_array_queries: crate::domain::common::string_type_array::query::StringTypeArrayQueryHandler::new(
             Arc::new(crate::domain::common::string_type_array::repository_impl::StringTypeArrayRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_amount_commands: crate::domain::common::amount::command::AmountCommandHandler::new(
             Arc::new(crate::domain::common::amount::repository_impl::AmountRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_amount_queries: crate::domain::common::amount::query::AmountQueryHandler::new(
             Arc::new(crate::domain::common::amount::repository_impl::AmountRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_process_history_item_commands: crate::domain::common::process_history_item::command::ProcessHistoryItemCommandHandler::new(
             Arc::new(crate::domain::common::process_history_item::repository_impl::ProcessHistoryItemRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_process_history_item_queries: crate::domain::common::process_history_item::query::ProcessHistoryItemQueryHandler::new(
             Arc::new(crate::domain::common::process_history_item::repository_impl::ProcessHistoryItemRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         common_process_history_commands: crate::domain::common::process_history::command::ProcessHistoryCommandHandler::new(
             Arc::new(crate::domain::common::process_history::repository_impl::ProcessHistoryRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         common_process_history_queries: crate::domain::common::process_history::query::ProcessHistoryQueryHandler::new(
             Arc::new(crate::domain::common::process_history::repository_impl::ProcessHistoryRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
@@ -398,12 +423,12 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
         compensation_pay_run_commands: crate::domain::compensation::pay_run::command::PayRunCommandHandler::new(
             Arc::new(crate::domain::compensation::pay_run::repository_impl::PayRunRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         compensation_pay_run_queries: crate::domain::compensation::pay_run::query::PayRunQueryHandler::new(
             Arc::new(crate::domain::compensation::pay_run::repository_impl::PayRunRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
@@ -411,12 +436,12 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
         events_public_event_commands: crate::domain::events::public_event::command::PublicEventCommandHandler::new(
             Arc::new(crate::domain::events::public_event::repository_impl::PublicEventRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         events_public_event_queries: crate::domain::events::public_event::query::PublicEventQueryHandler::new(
             Arc::new(crate::domain::events::public_event::repository_impl::PublicEventRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
@@ -424,23 +449,23 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
         recruiting_application_commands: crate::domain::recruiting::application::command::ApplicationCommandHandler::new(
             Arc::new(crate::domain::recruiting::application::repository_impl::ApplicationRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         recruiting_application_queries: crate::domain::recruiting::application::query::ApplicationQueryHandler::new(
             Arc::new(crate::domain::recruiting::application::repository_impl::ApplicationRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
         recruiting_candidate_commands: crate::domain::recruiting::candidate::command::CandidateCommandHandler::new(
             Arc::new(crate::domain::recruiting::candidate::repository_impl::CandidateRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         recruiting_candidate_queries: crate::domain::recruiting::candidate::query::CandidateQueryHandler::new(
             Arc::new(crate::domain::recruiting::candidate::repository_impl::CandidateRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
@@ -448,17 +473,18 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
         rsvp_rsvp_commands: crate::domain::rsvp::rsvp::command::RsvpCommandHandler::new(
             Arc::new(crate::domain::rsvp::rsvp::repository_impl::RsvpRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
         rsvp_rsvp_queries: crate::domain::rsvp::rsvp::query::RsvpQueryHandler::new(
             Arc::new(crate::domain::rsvp::rsvp::repository_impl::RsvpRepositoryImpl),
-            db.clone(),
+            app_db.clone(),
 
         ),
 
 
-        db: db.clone(),
+        db: app_db.clone(),
+        pool_mode,
 
 
 
@@ -491,12 +517,7 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     let webhook_dispatcher = crate::webhook_dispatch::WebhookDispatcher::new(db.clone())?;
     let wd_token = shutdown_token.child_token();
     tokio::spawn(async move {
-        tokio::select! {
-            _ = wd_token.cancelled() => {
-                tracing::info!("webhook dispatcher shutting down");
-            }
-            _ = webhook_dispatcher.run() => {}
-        }
+        webhook_dispatcher.run(wd_token).await;
     });
 
 
@@ -577,9 +598,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         .nest("/webhooks", crate::webhook_router::webhook_routes())
 
 
-        // The pooled DB connection as an extension: the permission middleware
-        // runs from per-route layers where State is not available.
-        .layer(axum::extract::Extension(state.db.clone()))
+        // API-key scope enforcement is DB-level (#169): the RESTRICTIVE
+        // scope_enforced_* RLS policies enforce scopes in the same statement
+        // that touches the data, so the permission middleware needs no pooled
+        // DB connection extension.
 
         .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::auth_middleware));
 

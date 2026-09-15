@@ -1068,10 +1068,12 @@ mod tests {
     }
 
     /// Every entity router must mount the generated API-key scope guard wired to
-    /// `crate::api::scope::require_scope_for_request` with its domain + resolved
-    /// api_key_scope, alongside (not instead of) the permission layer.
+    /// API-key scope enforcement is DB-level (#169): the router must NOT emit
+    /// any per-route scope middleware — the RESTRICTIVE scope_enforced_* RLS
+    /// policies raise P0403 INSUFFICIENT_SCOPE in-DB and the generated error
+    /// mapper maps that to HTTP 403.
     #[test]
-    fn router_renders_api_key_scope_guard_for_entities() {
+    fn router_omits_scope_guard_enforced_in_db() {
         let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         let tera = crate::template_engine::create_tera(&template_dir).unwrap();
         let project = ProjectConfig::default();
@@ -1085,32 +1087,21 @@ mod tests {
         .unwrap();
 
         assert!(
-            rendered.contains("crate::api::scope::require_scope_for_request"),
-            "router must call the shared scope guard"
+            !rendered.contains("require_scope_for_request"),
+            "router must not reference the retired scope guard"
         );
         assert!(
-            rendered.contains("public_event_scope_guard"),
-            "router must emit a per-entity scope guard fn"
+            !rendered.contains("scope_guard"),
+            "router must not emit per-entity scope guard fns"
         );
-        assert!(
-            rendered.contains("\"events\"") && rendered.contains("\"public_event\""),
-            "scope guard must receive domain + api_key_scope, got:\n{}",
-            rendered
-        );
-        // Permission gating stays intact alongside scope enforcement.
+        // Permission gating (JWT roles until phase 5 moves it into RLS) stays.
         assert!(
             rendered.contains("crate::middleware::permission::require_permission"),
             "permission middleware must survive"
         );
-        assert!(
-            rendered.contains("crate::middleware::permission::require_permission")
-                && rendered.contains("scope_guard"),
-            "both permission and scope layers must be present"
-        );
     }
 
-    /// The router template must emit a scope guard even when the entity has no
-    /// permission gating (all generated routes are scope-enforced).
+    /// No scope middleware regardless of permission gating.
     #[test]
     fn router_renders_scope_guard_without_permissions() {
         let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
@@ -1124,41 +1115,8 @@ mod tests {
         let rendered =
             render_template_with_project(&tera, "api/router.tera", &ctx, &project).unwrap();
 
-        assert!(rendered.contains("public_event_scope_guard"));
-        assert!(rendered.contains("crate::api::scope::require_scope_for_request"));
+        assert!(!rendered.contains("public_event_scope_guard"));
+        assert!(!rendered.contains("require_scope_for_request"));
         assert!(!rendered.contains("public_event_permission"));
-    }
-
-    /// The api/scope.tera template must expose the shared guard entrypoint in
-    /// both persistence variants (sea_orm monolith + cornucopia worker).
-    #[test]
-    fn scope_template_renders_shared_guard_entrypoint() {
-        let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-        let tera = crate::template_engine::create_tera(&template_dir).unwrap();
-
-        let sea_orm = ProjectConfig::default(); // persistence_provider = sea_orm
-        let sea_rendered =
-            render_template_with_project(&tera, "api/scope.tera", &serde_json::json!({}), &sea_orm)
-                .unwrap();
-        assert!(sea_rendered.contains("pub async fn require_scope_for_request("));
-        assert!(
-            sea_rendered.contains("DatabaseConnection extension missing; denying scoped request")
-        );
-        assert!(sea_rendered.contains("INSUFFICIENT_SCOPE"));
-
-        let cornucopia = ProjectConfig {
-            persistence_provider: "cornucopia".to_string(),
-            ..Default::default()
-        };
-        let corn_rendered = render_template_with_project(
-            &tera,
-            "api/scope.tera",
-            &serde_json::json!({}),
-            &cornucopia,
-        )
-        .unwrap();
-        assert!(corn_rendered.contains("pub async fn require_scope_for_request("));
-        assert!(corn_rendered.contains("ClientSource extension missing; denying scoped request"));
-        assert!(corn_rendered.contains("INSUFFICIENT_SCOPE"));
     }
 }

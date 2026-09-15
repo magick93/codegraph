@@ -31,6 +31,9 @@ struct SeedCtx {
     api_key_id: Uuid,
     organization_id: Uuid,
     user_id: Uuid,
+    /// Role claim for the RLS role policies (#169). Seeds run as a
+    /// full-access identity so the value resolves to "owner" semantics.
+    role: String,
 }
 
 fn count_ok(results: &[Result<Uuid, crate::error::BulkItemError>]) -> usize {
@@ -151,6 +154,7 @@ impl SeedSink for AppStateSeedSink {
             api_key_id,
             organization_id,
             user_id: self.user_id,
+            role: "owner".to_string(),
         };
         let mut summary = PersistSummary::default();
 
@@ -166,6 +170,7 @@ impl SeedSink for AppStateSeedSink {
                         ctx.api_key_id,
                         ctx.organization_id,
                         ctx.user_id,
+                        ctx.role.clone(),
                     )
                     .await;
                 let ids: Vec<Uuid> = results
@@ -187,6 +192,7 @@ impl SeedSink for AppStateSeedSink {
                         ctx.api_key_id,
                         ctx.organization_id,
                         ctx.user_id,
+                        ctx.role.clone(),
                     )
                     .await;
                 summary.$field = count_ok(&results);
@@ -207,6 +213,7 @@ impl SeedSink for AppStateSeedSink {
                             ctx.api_key_id,
                             ctx.organization_id,
                             ctx.user_id,
+                            ctx.role.clone(),
                         )
                         .await;
                     ok += count_ok(&results);
@@ -248,6 +255,7 @@ impl SeedSink for AppStateSeedSink {
                         api_key_id,
                         organization_id,
                         self.user_id,
+                        "owner".to_string(),
                     )
                     .await
                 {
@@ -370,6 +378,7 @@ impl SeedSink for AppStateSeedSink {
                     ctx.api_key_id,
                     ctx.organization_id,
                     ctx.user_id,
+                    ctx.role.clone(),
                 )
                 .await
             {

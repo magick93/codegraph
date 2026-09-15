@@ -21,12 +21,6 @@ CREATE TABLE IF NOT EXISTS recruiting.candidate (
     birth_date DATE,
 
 
-    family_name TEXT NOT NULL,
-
-
-    given_name TEXT NOT NULL,
-
-
     candidate_id TEXT NOT NULL,
 
 
@@ -39,7 +33,13 @@ CREATE TABLE IF NOT EXISTS recruiting.candidate (
     external_identifier JSONB,
 
 
+    family_name TEXT NOT NULL,
+
+
     gender TEXT,
+
+
+    given_name TEXT NOT NULL,
 
 
     position_titles TEXT[],
@@ -131,13 +131,13 @@ CREATE TABLE IF NOT EXISTS recruiting.candidate_distribution_guidelines (
 
     platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
 
-    do_not_redistribute_indicator BOOLEAN,
-
-    scope TEXT,
-
     description TEXT,
 
+    do_not_redistribute_indicator BOOLEAN,
+
     end_date DATE,
+
+    scope TEXT,
 
     start_date DATE NOT NULL,
 
@@ -154,16 +154,16 @@ CREATE INDEX idx_candidate_distribution_guidelines_parent ON recruiting.candidat
 
 
 
-COMMENT ON COLUMN recruiting.candidate_distribution_guidelines.do_not_redistribute_indicator IS $$Do not redistribute flag$$;
-
-
-COMMENT ON COLUMN recruiting.candidate_distribution_guidelines.scope IS $$Distribution scope$$;
-
-
 COMMENT ON COLUMN recruiting.candidate_distribution_guidelines.description IS $$Distribution description$$;
 
 
+COMMENT ON COLUMN recruiting.candidate_distribution_guidelines.do_not_redistribute_indicator IS $$Do not redistribute flag$$;
+
+
 COMMENT ON COLUMN recruiting.candidate_distribution_guidelines.end_date IS $$Distribution end date$$;
+
+
+COMMENT ON COLUMN recruiting.candidate_distribution_guidelines.scope IS $$Distribution scope$$;
 
 
 COMMENT ON COLUMN recruiting.candidate_distribution_guidelines.start_date IS $$Distribution start date$$;
@@ -329,12 +329,6 @@ COMMENT ON COLUMN recruiting.candidate_personbasetype.given_name IS $$First name
 
 
 
-COMMENT ON COLUMN recruiting.candidate.family_name IS $$Last name$$;
-
-
-COMMENT ON COLUMN recruiting.candidate.given_name IS $$First name$$;
-
-
 COMMENT ON COLUMN recruiting.candidate.candidate_id IS $$Unique candidate identifier$$;
 
 
@@ -347,7 +341,13 @@ COMMENT ON COLUMN recruiting.candidate.compensation_expectation_currency IS $$Ex
 COMMENT ON COLUMN recruiting.candidate.external_identifier IS $$External identifier (structured wrapper / JSONB)$$;
 
 
+COMMENT ON COLUMN recruiting.candidate.family_name IS $$Last name$$;
+
+
 COMMENT ON COLUMN recruiting.candidate.gender IS $$Gender codelist reference$$;
+
+
+COMMENT ON COLUMN recruiting.candidate.given_name IS $$First name$$;
 
 
 COMMENT ON COLUMN recruiting.candidate.position_titles IS $$Preferred position titles (array_wrapper)$$;

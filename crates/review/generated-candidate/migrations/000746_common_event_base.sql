@@ -15,19 +15,19 @@ CREATE TABLE IF NOT EXISTS common.event_base (
     platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
 
 
-    capacity BIGINT,
-
-
-    title TEXT NOT NULL,
-
-
     birth_date DATE,
+
+
+    capacity BIGINT,
 
 
     family_name TEXT NOT NULL,
 
 
     given_name TEXT NOT NULL,
+
+
+    title TEXT NOT NULL,
 
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -85,11 +85,11 @@ COMMENT ON COLUMN common.event_base_personbasetype.given_name IS $$First name$$;
 
 
 
-COMMENT ON COLUMN common.event_base.title IS $$Event title$$;
-
-
 COMMENT ON COLUMN common.event_base.family_name IS $$Last name$$;
 
 
 COMMENT ON COLUMN common.event_base.given_name IS $$First name$$;
+
+
+COMMENT ON COLUMN common.event_base.title IS $$Event title$$;
 

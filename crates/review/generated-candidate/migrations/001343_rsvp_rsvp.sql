@@ -64,15 +64,15 @@ CREATE TABLE IF NOT EXISTS rsvp.rsvp_event (
 
     platform_organization_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'::UUID,
 
-    capacity BIGINT,
-
-    title TEXT NOT NULL,
-
     birth_date DATE,
+
+    capacity BIGINT,
 
     family_name TEXT NOT NULL,
 
     given_name TEXT NOT NULL,
+
+    title TEXT NOT NULL,
 
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -87,13 +87,13 @@ CREATE INDEX idx_rsvp_event_parent ON rsvp.rsvp_event(rsvp_id);
 
 
 
-COMMENT ON COLUMN rsvp.rsvp_event.title IS $$Event title$$;
-
-
 COMMENT ON COLUMN rsvp.rsvp_event.family_name IS $$Last name$$;
 
 
 COMMENT ON COLUMN rsvp.rsvp_event.given_name IS $$First name$$;
+
+
+COMMENT ON COLUMN rsvp.rsvp_event.title IS $$Event title$$;
 
 
 

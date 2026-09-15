@@ -8,7 +8,7 @@ const BASE_PATH = '/rsvp/rsvp';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
@@ -16,6 +16,8 @@ function testData(): Record<string, unknown> {
     // 'event': ValueObject — omit, serde default
     'status': 'Confirmed',
     'timestamp': '2025-01-15T10:30:00Z',
+
+
   };
 }
 
@@ -24,6 +26,8 @@ function updatedData(): Record<string, unknown> {
     // 'event': ValueObject — omit, serde default
     'status': 'Cancelled',
     'timestamp': '2025-06-20T14:00:00Z',
+
+
   };
 }
 

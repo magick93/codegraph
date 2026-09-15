@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/common/position-schedule-type-code-list",
 
     tag = "PositionScheduleTypeCodeList",
+    operation_id = "common_position_schedule_type_code_list_create",
     request_body(
         content = CreatePositionScheduleTypeCodeListBody,
         description = "A single PositionScheduleTypeCodeList object or an array of PositionScheduleTypeCodeList objects",
@@ -93,13 +94,17 @@ pub async fn create(
             }
 
 
-            let id = state.common_position_schedule_type_code_list_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+            let id = state.common_position_schedule_type_code_list_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
 
-                .map_err(|e: CommonError| AppError::internal(format!("Failed to create PositionScheduleTypeCodeList: {e}"))
-                    .with_correlation_id(correlation_id))?;
-            let response = state.common_position_schedule_type_code_list_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-                .map_err(|e: CommonError| AppError::internal(format!("Failed to find PositionScheduleTypeCodeList: {e}"))
-                    .with_correlation_id(correlation_id))?
+                .map_err(|e: CommonError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to create PositionScheduleTypeCodeList")
+                        .with_correlation_id(correlation_id)
+                })?;
+            let response = state.common_position_schedule_type_code_list_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+                .map_err(|e: CommonError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find PositionScheduleTypeCodeList")
+                        .with_correlation_id(correlation_id)
+                })?
                 .ok_or_else(|| AppError::internal("Created entity not found")
                     .with_correlation_id(correlation_id))?;
             Ok((StatusCode::CREATED, Json(serde_json::json!({
@@ -118,7 +123,7 @@ pub async fn create(
             }
 
 
-            let result = state.common_position_schedule_type_code_list_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await;
+            let result = state.common_position_schedule_type_code_list_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await;
 
 
             let mut success = Vec::new();
@@ -127,7 +132,7 @@ pub async fn create(
             for item_result in result {
                 match item_result {
                     Ok(id) => {
-                        match state.common_position_schedule_type_code_list_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await {
+                        match state.common_position_schedule_type_code_list_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await {
                             Ok(Some(resp)) => success.push(resp),
                             Ok(None) => {
                                 tracing::warn!(entity_id = %id, "Bulk-created entity not found during response assembly");
@@ -154,6 +159,7 @@ pub async fn create(
 /// Get PositionScheduleTypeCodeList by ID.
 #[utoipa::path(
     get,
+    operation_id = "common_position_schedule_type_code_list_get_by_id",
 
     path = "/api/v1/common/position-schedule-type-code-list/{position_schedule_type_code_list_id}",
 
@@ -178,9 +184,11 @@ pub async fn get_by_id(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    let response = state.common_position_schedule_type_code_list_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: CommonError| AppError::internal(format!("Failed to find PositionScheduleTypeCodeList: {e}"))
-            .with_correlation_id(correlation_id))?
+    let response = state.common_position_schedule_type_code_list_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: CommonError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find PositionScheduleTypeCodeList")
+                        .with_correlation_id(correlation_id)
+                })?
         .ok_or_else(|| AppError::not_found(format!("PositionScheduleTypeCodeList {id} not found"))
             .with_correlation_id(correlation_id))?;
     let linked = PositionScheduleTypeCodeListLinkedResponse::root(response, "common", "position-schedule-type-code-list");
@@ -206,6 +214,7 @@ pub async fn get_by_id(
     params(("position_schedule_type_code_list_id" = Uuid, Path, description = "PositionScheduleTypeCodeList ID")),
 
     tag = "PositionScheduleTypeCodeList",
+    operation_id = "common_position_schedule_type_code_list_update",
     request_body = UpdatePositionScheduleTypeCodeListRequest,
     responses(
         (status = 200, description = "Updated", body = PositionScheduleTypeCodeListResponse),
@@ -239,12 +248,16 @@ pub async fn update(
             .with_correlation_id(correlation_id));
     }
 
-    state.common_position_schedule_type_code_list_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: CommonError| AppError::internal(format!("Failed to update PositionScheduleTypeCodeList: {e}"))
-            .with_correlation_id(correlation_id))?;
-    let response = state.common_position_schedule_type_code_list_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: CommonError| AppError::internal(format!("Failed to find PositionScheduleTypeCodeList: {e}"))
-            .with_correlation_id(correlation_id))?
+    state.common_position_schedule_type_code_list_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: CommonError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to update PositionScheduleTypeCodeList")
+                        .with_correlation_id(correlation_id)
+                })?;
+    let response = state.common_position_schedule_type_code_list_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: CommonError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find PositionScheduleTypeCodeList")
+                        .with_correlation_id(correlation_id)
+                })?
         .ok_or_else(|| AppError::not_found(format!("PositionScheduleTypeCodeList {id} not found"))
             .with_correlation_id(correlation_id))?;
     Ok(Json(serde_json::json!({
@@ -263,6 +276,7 @@ pub async fn update(
     params(("position_schedule_type_code_list_id" = Uuid, Path, description = "PositionScheduleTypeCodeList ID")),
 
     tag = "PositionScheduleTypeCodeList",
+    operation_id = "common_position_schedule_type_code_list_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -279,7 +293,7 @@ pub async fn delete(
 ) -> Result<StatusCode, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    state.common_position_schedule_type_code_list_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+    state.common_position_schedule_type_code_list_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: CommonError| {
             let msg = e.to_string();
             // Repository errors render as "NOT_FOUND: ..." while some paths
@@ -299,6 +313,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -331,6 +346,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "PositionScheduleTypeCodeList",
+    operation_id = "common_position_schedule_type_code_list_list",
     responses(
         (status = 200, description = "OK", body = Vec<PositionScheduleTypeCodeListResponse>),
     )
@@ -356,9 +372,11 @@ pub async fn list(
     }
 
 
-    let (results, total) = state.common_position_schedule_type_code_list_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: CommonError| AppError::internal(format!("Failed to list PositionScheduleTypeCodeList: {e}"))
-            .with_correlation_id(correlation_id))?;
+    let (results, total) = state.common_position_schedule_type_code_list_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: CommonError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to list PositionScheduleTypeCodeList")
+                        .with_correlation_id(correlation_id)
+                })?;
 
     Ok(Json(serde_json::json!({
         "data": results,

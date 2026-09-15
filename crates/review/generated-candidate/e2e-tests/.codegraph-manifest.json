@@ -68,6 +68,7 @@
     "specs/recruiting/recruiting_application.spec.ts",
     "specs/recruiting/recruiting_candidate.spec.ts",
     "specs/rsvp/rsvp_rsvp.spec.ts",
+    "test-utils.ts",
     "tsconfig.json"
   ],
   "generatedBy": "codegraph v0.1.0",

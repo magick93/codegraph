@@ -17,7 +17,7 @@ const BASE_PATH = '/recruiting/candidate';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 
@@ -82,7 +82,7 @@ function testData(): Record<string, unknown> {
 
 
 
-    ...(depIds['referred_by_application_id'] ? { 'referred_by_application_id': depIds['referred_by_application_id'] } : {}),
+    // 'referred_by_application_id': entity ref — emitted by _dep_setup.tera
 
 
 
@@ -93,38 +93,14 @@ function testData(): Record<string, unknown> {
     'uri': 'Test Uri',
 
 
+
+
   };
 }
 
 test.describe('Candidate Workflow', () => {
   let entityId: string;
 
-
-  test.beforeAll(async ({ orgContext }) => {
-
-
-    try {
-      const dep_1 = await createEntityAsAcme(orgContext, '/recruiting/applications', { 'applied_date': '2025-01-15' });
-      depIds['referred_by_application_id'] = dep_1['id'] as string;
-    } catch (_e) {
-      // Dependency entity may already exist or have its own required fields
-    }
-
-  });
-
-  test.afterAll(async ({ orgContext }) => {
-    const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
-
-    if (depIds['referred_by_application_id']) {
-      try {
-        await fetch(`${baseUrl}/api/v1/recruiting/applications/${depIds['referred_by_application_id']}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
-        });
-      } catch { /* best effort */ }
-    }
-
-  });
 
 
   test.beforeEach(async ({ orgContext }) => {

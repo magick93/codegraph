@@ -27,7 +27,7 @@ export class CurrencyCodeListApi {
 
 
   async update(id: string, data: any): Promise<{ status: number; body: any }> {
-    const response = await this.request.patch(`${this.baseUrl}/api/v1/common/currency-code-list/${id}`, { data });
+    const response = await this.request.put(`${this.baseUrl}/api/v1/common/currency-code-list/${id}`, { data });
     return { status: response.status(), body: await response.json().catch(() => ({})) };
   }
 

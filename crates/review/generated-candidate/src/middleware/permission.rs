@@ -5,12 +5,11 @@
 //! Enforces authorization in the request path BEFORE handlers run:
 //! - JWT auth: the caller's basejump org role (resolved by the auth
 //!   middleware) is mapped to allowed actions.
-//! - API key auth: the key's scopes are checked via
-//!   public.check_api_key_scope_by_id(key_id, resource, action) — exactly one
-//!   query per request, never cached.
+//! - API key auth: passes through — scope enforcement is DB-level (#169),
+//!   the RESTRICTIVE scope_enforced_* RLS policies raise P0403
+//!   INSUFFICIENT_SCOPE in the same statement that touches the data.
 //!
-//! The data path (SET LOCAL ROLE app_user) is unchanged. Row-level API-key
-//! scoping still happens in the api_key_scoped_* RLS policies.
+//! The data path (bundled SET LOCAL ROLE / app_user pool) is unchanged.
 
 use axum::{
     extract::Request,
@@ -18,7 +17,6 @@ use axum::{
     response::{IntoResponse, Response},
     Extension,
 };
-use sea_orm::{ConnectionTrait, Statement};
 
 use super::{AuthInfo, AuthMode};
 
@@ -59,9 +57,6 @@ impl<S: Clone + 'static> PermissionGuard<S> for axum::routing::MethodRouter<S> {
 }
 
 pub async fn require_permission(
-    // The pooled DB connection, inserted as a request extension for all API
-    // routes by the server assembly (see server.rs).
-    Extension(db): Extension<sea_orm::DatabaseConnection>,
     Extension(auth_info): Extension<AuthInfo>,
     request: Request,
     next: Next,
@@ -71,7 +66,7 @@ pub async fn require_permission(
         return next.run(request).await;
     };
 
-    if !has_permission(&db, &auth_info, &required).await {
+    if !has_permission(&auth_info, &required) {
         return crate::error::AppError::forbidden(format!(
             "Missing required permission: {}:{}",
             required.resource, required.action
@@ -95,37 +90,15 @@ fn role_allows(role: &str, action: &str) -> bool {
     }
 }
 
-async fn has_permission(
-    db: &sea_orm::DatabaseConnection,
-    auth_info: &AuthInfo,
-    required: &RequiredPermission,
-) -> bool {
+/// Authorization decision for one request (#169): JWT callers are checked
+/// against their org role in-process; API-key callers pass through — their
+/// scope enforcement is DB-level (the RESTRICTIVE scope_enforced_* RLS
+/// policies raise P0403 INSUFFICIENT_SCOPE in the same statement that touches
+/// the data), so no per-request lookup round trip is spent here.
+fn has_permission(auth_info: &AuthInfo, required: &RequiredPermission) -> bool {
     match &auth_info.auth_mode {
         AuthMode::Jwt { .. } => role_allows(&auth_info.role, &required.action),
-        AuthMode::ApiKey { .. } => {
-            let result = db
-                .query_one(Statement::from_sql_and_values(
-                    sea_orm::DatabaseBackend::Postgres,
-                    "SELECT public.check_api_key_scope_by_id($1, $2, $3)",
-                    [
-                        auth_info.api_key_id.into(),
-                        required.resource.clone().into(),
-                        required.action.clone().into(),
-                    ],
-                ))
-                .await;
-            match result {
-                Ok(Some(row)) => row.try_get_by_index::<bool>(0).unwrap_or(false),
-                _ => {
-                    tracing::warn!(
-                        resource = %required.resource,
-                        action = %required.action,
-                        "api key scope check failed — denying"
-                    );
-                    false
-                }
-            }
-        }
+        AuthMode::ApiKey { .. } => true,
     }
 }
 

@@ -318,6 +318,7 @@ mod tests {
         );
         DomainConfig {
             defaults: DefaultsConfig::default(),
+            rbac: None,
             domains,
         }
     }

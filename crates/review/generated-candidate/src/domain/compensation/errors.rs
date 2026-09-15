@@ -11,6 +11,8 @@ pub enum CompensationError {
     #[error("Not found")]
     NotFound,
     #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
     InternalError(String),
 }
 
@@ -20,6 +22,7 @@ impl CompensationError {
 
             Self::Conflict => "CONFLICT",
             Self::NotFound => "NOT_FOUND",
+            Self::Forbidden(_) => "FORBIDDEN",
             Self::InternalError(_) => "INTERNAL_ERROR",
         }
     }
@@ -29,7 +32,27 @@ impl CompensationError {
 
             Self::Conflict => StatusCode::CONFLICT,
             Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+
+    /// Classify a repository error surfaced inside a command/query (#169).
+    /// RLS denials raised by the generated policies carry machine-readable
+    /// payloads: P0403 errors embed an INSUFFICIENT_SCOPE / ROLE_FORBIDDEN
+    /// JSON payload; org-isolation write violations surface as Postgres'
+    /// canonical "violates row-level security policy" message. Both mean the
+    /// caller is not permitted the operation → HTTP 403. Everything else is
+    /// an internal error.
+    pub fn from_repo_err(e: impl std::fmt::Display) -> Self {
+        let msg = e.to_string();
+        if msg.contains("INSUFFICIENT_SCOPE")
+            || msg.contains("ROLE_FORBIDDEN")
+            || msg.contains("violates row-level security policy")
+        {
+            Self::Forbidden(msg)
+        } else {
+            Self::InternalError(msg)
         }
     }
 }

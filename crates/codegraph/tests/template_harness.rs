@@ -486,14 +486,19 @@ async fn candidate_ddl_rls_has_authenticated_policies() {
         !rls_file.content.contains("auth.uid()"),
         "Unified RLS should NOT use auth.uid() (uses get_current_org_id instead)"
     );
-    // Auditable entities should have API key scope-aware policies
+    // Auditable entities should have DB-enforced scope policies (#169):
+    // RESTRICTIVE policies for both pool roles calling enforce_api_key_scope().
     assert!(
-        rls_file.content.contains("TO api_key"),
-        "Auditable entities should have api_key scope-aware policies"
+        rls_file.content.contains("TO app_user, api_key"),
+        "Scope policies must apply to both pool roles (app_user + api_key)"
     );
     assert!(
-        rls_file.content.contains("check_api_key_scope"),
-        "API key policies should use check_api_key_scope()"
+        rls_file.content.contains("AS RESTRICTIVE"),
+        "Scope policies must be RESTRICTIVE so they AND-combine with org isolation"
+    );
+    assert!(
+        rls_file.content.contains("enforce_api_key_scope"),
+        "Scope policies should use enforce_api_key_scope()"
     );
     assert!(
         rls_file.content.contains("org_isolation_delete"),
@@ -665,6 +670,129 @@ async fn scaffold_middleware_supports_dual_auth() {
     assert!(
         app_state_file.content.contains("jwt_secret: String"),
         "AppState should have jwt_secret: String field"
+    );
+}
+
+// === app_user pool plumbing (#169 Phase 2) ===
+
+#[tokio::test]
+async fn scaffold_wires_app_user_pool_and_mode() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-app-user-pool");
+
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
+    let files = gen
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    // server.rs: the app pool connects from APP_DATABASE_URL and falls back
+    // to the owner DATABASE_URL in legacy mode; boot migrations still run on
+    // the owner connection.
+    let server_file = files
+        .iter()
+        .find(|f| f.path.ends_with("src/server.rs"))
+        .expect("Should generate src/server.rs");
+    let server = &server_file.content;
+    assert!(
+        server.contains("APP_DATABASE_URL"),
+        "server.rs should read APP_DATABASE_URL for the app_user pool"
+    );
+    assert!(
+        server.contains("DbPoolMode::AppUser"),
+        "server.rs should select DbPoolMode::AppUser when APP_DATABASE_URL is set"
+    );
+    assert!(
+        server.contains("DbPoolMode::Legacy"),
+        "server.rs should fall back to DbPoolMode::Legacy without APP_DATABASE_URL"
+    );
+    assert!(
+        server.contains("sea_orm::Database::connect(&url)"),
+        "the app pool must connect from the APP_DATABASE_URL value"
+    );
+    assert!(
+        server.contains("pool_mode,"),
+        "AppState must be constructed with the pool mode"
+    );
+
+    // app_state.rs: DbPoolMode enum + AppState field.
+    let app_state_file = files
+        .iter()
+        .find(|f| f.path.ends_with("src/app_state.rs"))
+        .expect("Should generate src/app_state.rs");
+    let app_state = &app_state_file.content;
+    assert!(
+        app_state.contains("pub enum DbPoolMode"),
+        "app_state.rs should define DbPoolMode"
+    );
+    assert!(
+        app_state.contains("pub pool_mode: DbPoolMode"),
+        "AppState should expose the pool mode to the data path"
+    );
+
+    // doctor.rs (admin-CLI builds only): warn when APP_DATABASE_URL is unset
+    // on a postgres target.
+    let gen_admin = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true, // has_admin_cli — emits config.rs / doctor.rs / migration.rs
+        false,
+        "sea-orm",
+    );
+    let admin_files = gen_admin
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+    let doctor_file = admin_files
+        .iter()
+        .find(|f| f.path.ends_with("src/doctor.rs"))
+        .expect("Should generate src/doctor.rs");
+    let doctor = &doctor_file.content;
+    assert!(
+        doctor.contains("APP_DATABASE_URL"),
+        "doctor.rs should check APP_DATABASE_URL"
+    );
+    assert!(
+        doctor.contains("check_app_pool_mode"),
+        "doctor.rs should run the app_pool_mode check"
+    );
+    assert!(
+        doctor.contains("CheckStatus::Warn"),
+        "the unset APP_DATABASE_URL case must be a warning, not a failure"
     );
 }
 
@@ -958,8 +1086,230 @@ async fn candidate_command() {
     );
 }
 
-// === Query Template Tests ===
+// === RLS session-context single-round-trip bundle (#169 phase 3) ===
 
+#[tokio::test]
+async fn ddd_session_context_is_one_round_trip() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+
+    for (label, files) in [
+        (
+            "command.rs",
+            generate::ddd::command::CommandGenerator::new(&std::path::PathBuf::from(
+                "/tmp/hr-graph-test-harness-rls-cmd",
+            ))
+            .generate(
+                &mock,
+                "CandidateType",
+                "recruiting",
+                &config,
+                &tera,
+                &test_project_config(),
+            )
+            .await
+            .unwrap(),
+        ),
+        (
+            "query.rs",
+            generate::ddd::query::QueryGenerator::new(&std::path::PathBuf::from(
+                "/tmp/hr-graph-test-harness-rls-query",
+            ))
+            .generate(
+                &mock,
+                "CandidateType",
+                "recruiting",
+                &config,
+                &tera,
+                &test_project_config(),
+            )
+            .await
+            .unwrap(),
+        ),
+    ] {
+        assert_eq!(files.len(), 1, "{label}: expected one file");
+        let content = &files[0].content;
+        assert!(
+            content.contains("set_rls_session_vars"),
+            "{label}: should keep the set_rls_session_vars helper"
+        );
+        // The context must be delivered as ONE simple-query payload: set_config
+        // calls and the role flip bundled into a single execute_unprepared.
+        assert!(
+            content.contains("execute_unprepared"),
+            "{label}: set_rls_session_vars must use one execute_unprepared round trip"
+        );
+        assert!(
+            content.contains("SET LOCAL ROLE app_user"),
+            "{label}: the role flip must ride the same bundle"
+        );
+        assert!(
+            !content.contains(".to_string(),\n        \"SET LOCAL ROLE"),
+            "{label}: the role flip must NOT be a standalone Statement::from_string execute"
+        );
+        assert!(
+            !content.contains("from_sql_and_values"),
+            "{label}: set_config must not ride a parameterised statement (the bundle is inlined)"
+        );
+    }
+}
+
+// === RLS denial → HTTP 403 mapping (#169 phase 4b) ===
+
+#[tokio::test]
+async fn domain_errors_map_rls_denials_to_forbidden() {
+    let tera = test_tera();
+
+    // errors.tera: Forbidden variant with 403 + the DB-denial classifier.
+    let mut ctx = tera::Context::new();
+    ctx.insert("domain", "recruiting");
+    ctx.insert("errors", &Vec::<serde_json::Value>::new());
+    ctx.insert(
+        "project",
+        &serde_json::json!({
+            "generator_name": "codegraph",
+            "persistence_provider": "sea_orm",
+            "hooks_api_crate": null,
+            "database_target": "postgres",
+        }),
+    );
+    let content = tera
+        .render("ddd/errors.tera", &ctx)
+        .expect("errors.tera must render");
+
+    assert!(
+        content.contains("Forbidden("),
+        "errors.tera should define a Forbidden variant"
+    );
+    assert!(
+        content.contains("StatusCode::FORBIDDEN"),
+        "Forbidden must map to HTTP 403"
+    );
+    assert!(
+        content.contains("INSUFFICIENT_SCOPE"),
+        "the classifier must recognise the P0403 INSUFFICIENT_SCOPE payload"
+    );
+    assert!(
+        content.contains("violates row-level security policy"),
+        "the classifier must recognise org-isolation write denials"
+    );
+}
+
+#[tokio::test]
+async fn command_and_query_route_repo_errors_through_the_classifier() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+
+    let cmd = generate::ddd::command::CommandGenerator::new(&std::path::PathBuf::from(
+        "/tmp/hr-graph-test-harness-rls-403-cmd",
+    ))
+    .generate(
+        &mock,
+        "CandidateType",
+        "recruiting",
+        &config,
+        &tera,
+        &test_project_config(),
+    )
+    .await
+    .unwrap();
+    let query = generate::ddd::query::QueryGenerator::new(&std::path::PathBuf::from(
+        "/tmp/hr-graph-test-harness-rls-403-query",
+    ))
+    .generate(
+        &mock,
+        "CandidateType",
+        "recruiting",
+        &config,
+        &tera,
+        &test_project_config(),
+    )
+    .await
+    .unwrap();
+
+    for (label, files) in [("command.rs", cmd), ("query.rs", query)] {
+        let content = &files[0].content;
+        assert!(
+            content.contains("from_repo_err"),
+            "{label}: repo errors must be classified via from_repo_err"
+        );
+    }
+}
+
+// === Single-trip JWT auth (#169 phase 6) ===
+
+#[tokio::test]
+async fn jwt_auth_resolves_context_in_one_round_trip() {
+    let mock = setup_mock().await;
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-jwt-single-trip");
+
+    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+        &output_dir,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        "sea-orm",
+    );
+    let files = gen
+        .generate(
+            &mock,
+            &config,
+            &test_generation_order(),
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let middleware = &files
+        .iter()
+        .find(|f| f.path.ends_with("middleware/mod.rs"))
+        .expect("Should generate middleware/mod.rs")
+        .content;
+
+    // The JWT path must spend exactly ONE DB round trip: the merged
+    // resolve_jwt_context RPC (org + role in one payload).
+    assert!(
+        middleware.contains("resolve_jwt_context"),
+        "verify_jwt must use the merged resolve_jwt_context RPC"
+    );
+    assert!(
+        !middleware.contains("resolve_user_org("),
+        "verify_jwt must not do a separate org lookup round trip"
+    );
+    assert!(
+        !middleware.contains("get_current_user_role("),
+        "verify_jwt must not do a separate role lookup round trip"
+    );
+
+    // The generated migration exposes the merged SECURITY DEFINER function.
+    let migration = &files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("api_key_management"))
+        .expect("Should generate the api key migration")
+        .content;
+    assert!(
+        migration.contains("CREATE OR REPLACE FUNCTION public.resolve_jwt_context"),
+        "the migration must define public.resolve_jwt_context"
+    );
+    assert!(
+        migration.contains("GRANT EXECUTE ON FUNCTION public.resolve_jwt_context TO app_user"),
+        "app_user must be able to call resolve_jwt_context"
+    );
+}
+
+// === Query Template Tests ===
 #[tokio::test]
 async fn candidate_query() {
     let mock = setup_mock().await;
@@ -2668,11 +3018,17 @@ async fn router_permission_gated_emits_layers_and_helper() {
         "Permission helper should embed the configured scope. Got:\n{content}"
     );
     assert!(
-        content.contains("RequiredPermission(format!(\"{}:{}\", scope, op))"),
-        "Permission helper should build <scope>:<op> strings. Got:\n{content}"
+        content.contains("resource: scope.to_string()"),
+        "Permission helper must build a RequiredPermission from the configured scope. Got:\n{content}"
     );
     // Backward compat: an entity WITHOUT permissions must NOT get the layers.
-    let plain_config = test_domain_config();
+    let mut plain_config = test_domain_config();
+    if let Some(recruiting) = plain_config.domains.get_mut("recruiting") {
+        if let Some(cfg) = recruiting.entity_config.get_mut("CandidateType") {
+            cfg.permissions.scope = None;
+            cfg.permissions.record_scoped = false;
+        }
+    }
     let plain = generate::api::router::RouterGenerator::new(&output_dir);
     let files = plain
         .generate(
@@ -4004,10 +4360,10 @@ async fn workflow_seed_global() {
     );
 }
 
-// === Security: Parameterized set_config Tests ===
+// === Security: session-context inlining tests (#169) ===
 
 #[tokio::test]
-async fn command_uses_parameterized_set_config() {
+async fn command_inlines_typed_uuid_context_bundle() {
     let mock = setup_mock().await;
     let config = test_domain_config();
     let tera = test_tera();
@@ -4031,40 +4387,48 @@ async fn command_uses_parameterized_set_config() {
         .find(|f| f.path.to_string_lossy().contains("command"))
         .expect("Should have a command file");
 
-    // Must use parameterized set_config with $1, $2, $3
+    // The context bundle inlines values (simple query protocol takes no bind
+    // parameters) — but ONLY typed Uuid fields, so the interpolation surface
+    // is injection-proof by construction.
     assert!(
         cmd_file
             .content
-            .contains("set_config('app.current_api_key', $1, true)"),
-        "Command should use parameterized set_config for api_key. Got:\n{}",
+            .contains("set_config('app.current_api_key', '{}', true)"),
+        "Command should inline the api_key context value. Got:\n{}",
         cmd_file.content
     );
     assert!(
         cmd_file
             .content
-            .contains("set_config('app.organization_id', $2, true)"),
-        "Command should use parameterized set_config for org_id"
+            .contains("set_config('app.organization_id', '{}', true)"),
+        "Command should inline the org_id context value"
     );
     assert!(
         cmd_file
             .content
-            .contains("set_config('app.correlation_id', $3, true)"),
-        "Command should use parameterized set_config for correlation_id"
+            .contains("set_config('app.correlation_id', '{}', true)"),
+        "Command should inline the correlation_id context value"
     );
-    // Must NOT use format!() string interpolation for set_config
+    // The format! args must be the typed Uuid locals, never user strings.
     assert!(
-        !cmd_file.content.contains("format!(\"SELECT set_config"),
-        "Command must not use format!() for set_config (SQL injection risk)"
+        cmd_file
+            .content
+            .contains("        api_key_id,\n        organization_id,"),
+        "Command must interpolate typed Uuid locals, not arbitrary strings"
     );
-    // Must use Statement::from_sql_and_values
+    // One round trip: the role flip rides the same payload.
     assert!(
-        cmd_file.content.contains("Statement::from_sql_and_values"),
-        "Command should use Statement::from_sql_and_values for parameterized query"
+        cmd_file.content.contains("SET LOCAL ROLE app_user"),
+        "Command should keep the app_user role flip in the bundle"
+    );
+    assert!(
+        !cmd_file.content.contains("$1"),
+        "Command must not use parameter placeholders ($1) for the context bundle"
     );
 }
 
 #[tokio::test]
-async fn query_uses_parameterized_set_config() {
+async fn query_inlines_typed_uuid_context_bundle() {
     let mock = setup_mock().await;
     let config = test_domain_config();
     let tera = test_tera();
@@ -4088,42 +4452,37 @@ async fn query_uses_parameterized_set_config() {
         .find(|f| f.path.to_string_lossy().contains("query"))
         .expect("Should have a query file");
 
-    // Query sets 2 vars (no correlation_id on reads)
+    // Query sets 2 vars inlined (no correlation_id on reads).
     assert!(
         query_file
             .content
-            .contains("set_config('app.current_api_key', $1, true)"),
-        "Query should use parameterized set_config for api_key. Got:\n{}",
+            .contains("set_config('app.current_api_key', '{}', true)"),
+        "Query should inline the api_key context value. Got:\n{}",
         query_file.content
     );
     assert!(
         query_file
             .content
-            .contains("set_config('app.organization_id', $2, true)"),
-        "Query should use parameterized set_config for org_id"
-    );
-    // Must set user_id as $3 (template now passes all 3 session vars)
-    assert!(
-        query_file
-            .content
-            .contains("set_config('app.user_id', $3, true)"),
-        "Query should use parameterized set_config for user_id"
-    );
-    // Must NOT have $4 (only 3 vars: api_key, org_id, user_id)
-    assert!(
-        !query_file.content.contains("$4"),
-        "Query should only set 3 vars (api_key, org_id, user_id)"
-    );
-    // Must NOT use format!()
-    assert!(
-        !query_file.content.contains("format!(\"SELECT set_config"),
-        "Query must not use format!() for set_config"
+            .contains("set_config('app.organization_id', '{}', true)"),
+        "Query should inline the org_id context value"
     );
     assert!(
         query_file
             .content
-            .contains("Statement::from_sql_and_values"),
-        "Query should use Statement::from_sql_and_values"
+            .contains("set_config('app.user_id', '{}', true)"),
+        "Query should inline the user_id context value"
+    );
+    // One round trip: the role flip rides the same payload.
+    assert!(
+        query_file.content.contains("SET LOCAL ROLE app_user"),
+        "Query should keep the app_user role flip in the bundle"
+    );
+    // Must NOT use parameter placeholders (the bundle rides the simple protocol).
+    assert!(
+        !query_file
+            .content
+            .contains("set_config('app.current_api_key', $1"),
+        "Query must not use parameter placeholders for the context bundle"
     );
 }
 

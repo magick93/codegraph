@@ -8,11 +8,13 @@ const BASE_PATH = '/common/code';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
   return {
+
+
   };
 }
 
@@ -20,6 +22,8 @@ test.describe('Code Manager Team', () => {
   let createdId: string;
 
   test.beforeAll(async ({ orgContext }) => {
+
+
 
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());

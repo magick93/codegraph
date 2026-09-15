@@ -57,6 +57,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/recruiting/candidate",
 
     tag = "Candidate",
+    operation_id = "recruiting_candidate_create",
     request_body(
         content = CreateCandidateBody,
         description = "A single Candidate object or an array of Candidate objects",
@@ -95,13 +96,17 @@ pub async fn create(
             }
 
 
-            let id = state.recruiting_candidate_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+            let id = state.recruiting_candidate_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
 
-                .map_err(|e: RecruitingError| AppError::internal(format!("Failed to create Candidate: {e}"))
-                    .with_correlation_id(correlation_id))?;
-            let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-                .map_err(|e: RecruitingError| AppError::internal(format!("Failed to find Candidate: {e}"))
-                    .with_correlation_id(correlation_id))?
+                .map_err(|e: RecruitingError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to create Candidate")
+                        .with_correlation_id(correlation_id)
+                })?;
+            let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+                .map_err(|e: RecruitingError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find Candidate")
+                        .with_correlation_id(correlation_id)
+                })?
                 .ok_or_else(|| AppError::internal("Created entity not found")
                     .with_correlation_id(correlation_id))?;
             Ok((StatusCode::CREATED, Json(serde_json::json!({
@@ -120,7 +125,7 @@ pub async fn create(
             }
 
 
-            let result = state.recruiting_candidate_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await;
+            let result = state.recruiting_candidate_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await;
 
 
             let mut success = Vec::new();
@@ -129,7 +134,7 @@ pub async fn create(
             for item_result in result {
                 match item_result {
                     Ok(id) => {
-                        match state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await {
+                        match state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await {
                             Ok(Some(resp)) => success.push(resp),
                             Ok(None) => {
                                 tracing::warn!(entity_id = %id, "Bulk-created entity not found during response assembly");
@@ -156,6 +161,7 @@ pub async fn create(
 /// Get Candidate by ID.
 #[utoipa::path(
     get,
+    operation_id = "recruiting_candidate_get_by_id",
 
     path = "/api/v1/recruiting/candidate/{candidate_id}",
 
@@ -185,9 +191,11 @@ pub async fn get_by_id(
 ) -> Result<Json<CandidateWithIncludeResponse>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: RecruitingError| AppError::internal(format!("Failed to find Candidate: {e}"))
-            .with_correlation_id(correlation_id))?
+    let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: RecruitingError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find Candidate")
+                        .with_correlation_id(correlation_id)
+                })?
         .ok_or_else(|| AppError::not_found(format!("Candidate {id} not found"))
             .with_correlation_id(correlation_id))?;
     let linked = CandidateLinkedResponse::root(response, "recruiting", "candidate");
@@ -267,6 +275,7 @@ pub async fn get_by_id(
     params(("candidate_id" = Uuid, Path, description = "Candidate ID")),
 
     tag = "Candidate",
+    operation_id = "recruiting_candidate_update",
     request_body = UpdateCandidateRequest,
     responses(
         (status = 200, description = "Updated", body = CandidateResponse),
@@ -300,12 +309,16 @@ pub async fn update(
             .with_correlation_id(correlation_id));
     }
 
-    state.recruiting_candidate_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: RecruitingError| AppError::internal(format!("Failed to update Candidate: {e}"))
-            .with_correlation_id(correlation_id))?;
-    let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: RecruitingError| AppError::internal(format!("Failed to find Candidate: {e}"))
-            .with_correlation_id(correlation_id))?
+    state.recruiting_candidate_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: RecruitingError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to update Candidate")
+                        .with_correlation_id(correlation_id)
+                })?;
+    let response = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: RecruitingError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find Candidate")
+                        .with_correlation_id(correlation_id)
+                })?
         .ok_or_else(|| AppError::not_found(format!("Candidate {id} not found"))
             .with_correlation_id(correlation_id))?;
     Ok(Json(serde_json::json!({
@@ -318,6 +331,7 @@ pub async fn update(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -377,6 +391,7 @@ const ALLOWED_INCLUDE_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "Candidate",
+    operation_id = "recruiting_candidate_list",
     responses(
         (status = 200, description = "OK", body = Vec<CandidateResponse>),
     )
@@ -406,9 +421,11 @@ pub async fn list(
     }
 
 
-    let (results, total) = state.recruiting_candidate_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: RecruitingError| AppError::internal(format!("Failed to list Candidate: {e}"))
-            .with_correlation_id(correlation_id))?;
+    let (results, total) = state.recruiting_candidate_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: RecruitingError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to list Candidate")
+                        .with_correlation_id(correlation_id)
+                })?;
 
     let include_paths: Vec<String> = params.include
         .as_ref()

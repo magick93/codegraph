@@ -43,8 +43,12 @@
 		!isArray && value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 	);
 
-	const visibleByDefault = $derived(subFields.filter((f: SubFieldDef) => f.showByDefault));
-	const hiddenFields = $derived(subFields.filter((f: SubFieldDef) => !f.showByDefault));
+	const visibleByDefault = $derived(
+		[...new Map(subFields.filter((f: SubFieldDef) => f.showByDefault).map(f => [f.name, f])).values()]
+	);
+	const hiddenFields = $derived(
+		[...new Map(subFields.filter((f: SubFieldDef) => !f.showByDefault).map(f => [f.name, f])).values()]
+	);
 
 	function handleScalarChange(name: string, val: string) {
 		scalarValue = { ...scalarValue, [name]: val };
@@ -154,10 +158,14 @@
 				<div class="flex gap-2 items-end">
 					{#each visibleByDefault as sf (sf.name)}
 						<div class="flex-1 space-y-1">
-							<label class="text-xs text-muted-foreground uppercase tracking-wide">
+							<label
+								for="{fieldName}-{idx}-{sf.name}"
+								class="text-xs text-muted-foreground uppercase tracking-wide"
+							>
 								{sf.label}{#if sf.required} *{/if}
 							</label>
 							<Input
+								id="{fieldName}-{idx}-{sf.name}"
 								data-testid="{fieldName}-{idx}-{sf.name}"
 								value={item[sf.name] ?? ''}
 								oninput={(e) =>
@@ -191,10 +199,13 @@
 					<div class="grid grid-cols-2 gap-2 border-t pt-2">
 						{#each hiddenFields as sf (sf.name)}
 							<div class="space-y-1">
-								<label class="text-xs text-muted-foreground uppercase tracking-wide"
+								<label
+									for="{fieldName}-{idx}-{sf.name}"
+									class="text-xs text-muted-foreground uppercase tracking-wide"
 									>{sf.label}</label
 								>
 								<Input
+									id="{fieldName}-{idx}-{sf.name}"
 									value={item[sf.name] ?? ''}
 									oninput={(e) =>
 										handleArrayItemChange(

@@ -148,6 +148,7 @@ mod tests {
         let config = codegraph_config::DomainConfig {
             defaults: Default::default(),
             domains: std::collections::HashMap::new(),
+            rbac: None,
         };
         let files = GlobalGenerator::generate(
             &emitter,
@@ -215,6 +216,7 @@ mod tests {
         let config = codegraph_config::DomainConfig {
             defaults: Default::default(),
             domains: std::collections::HashMap::new(),
+            rbac: None,
         };
         let files = GlobalGenerator::generate(
             &emitter,

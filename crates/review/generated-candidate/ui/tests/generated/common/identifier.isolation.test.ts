@@ -8,7 +8,7 @@ const BASE_PATH = '/common/identifier';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
@@ -17,6 +17,8 @@ function testData(): Record<string, unknown> {
     'scheme_id': 'ACME Isolation Scheme Id',
     'scheme_version_id': 'ACME Isolation Scheme Version Id',
     'value': 'ACME Isolation Value',
+
+
   };
 }
 
@@ -25,6 +27,8 @@ test.describe('Identifier Cross-Org Isolation', () => {
   const data = testData();
 
   test.beforeAll(async ({ orgContext }) => {
+
+
 
 
     // Create entity as ACME owner

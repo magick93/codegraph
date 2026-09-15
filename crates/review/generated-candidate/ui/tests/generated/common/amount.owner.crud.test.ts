@@ -8,13 +8,15 @@ const BASE_PATH = '/common/amount';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
   return {
     'currency': 'USD',
     'value': 42,
+
+
   };
 }
 
@@ -22,6 +24,8 @@ function updatedData(): Record<string, unknown> {
   return {
     'currency': 'AUD',
     'value': 99,
+
+
   };
 }
 

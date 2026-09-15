@@ -55,6 +55,7 @@ fn extract_correlation_id(headers: &HeaderMap) -> Uuid {
     path = "/api/v1/common/process-history-item",
 
     tag = "ProcessHistoryItem",
+    operation_id = "common_process_history_item_create",
     request_body(
         content = CreateProcessHistoryItemBody,
         description = "A single ProcessHistoryItem object or an array of ProcessHistoryItem objects",
@@ -93,13 +94,17 @@ pub async fn create(
             }
 
 
-            let id = state.common_process_history_item_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+            let id = state.common_process_history_item_commands.create(item, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
 
-                .map_err(|e: CommonError| AppError::internal(format!("Failed to create ProcessHistoryItem: {e}"))
-                    .with_correlation_id(correlation_id))?;
-            let response = state.common_process_history_item_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-                .map_err(|e: CommonError| AppError::internal(format!("Failed to find ProcessHistoryItem: {e}"))
-                    .with_correlation_id(correlation_id))?
+                .map_err(|e: CommonError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to create ProcessHistoryItem")
+                        .with_correlation_id(correlation_id)
+                })?;
+            let response = state.common_process_history_item_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+                .map_err(|e: CommonError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find ProcessHistoryItem")
+                        .with_correlation_id(correlation_id)
+                })?
                 .ok_or_else(|| AppError::internal("Created entity not found")
                     .with_correlation_id(correlation_id))?;
             Ok((StatusCode::CREATED, Json(serde_json::json!({
@@ -118,7 +123,7 @@ pub async fn create(
             }
 
 
-            let result = state.common_process_history_item_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await;
+            let result = state.common_process_history_item_commands.bulk_create(items, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await;
 
 
             let mut success = Vec::new();
@@ -127,7 +132,7 @@ pub async fn create(
             for item_result in result {
                 match item_result {
                     Ok(id) => {
-                        match state.common_process_history_item_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await {
+                        match state.common_process_history_item_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await {
                             Ok(Some(resp)) => success.push(resp),
                             Ok(None) => {
                                 tracing::warn!(entity_id = %id, "Bulk-created entity not found during response assembly");
@@ -154,6 +159,7 @@ pub async fn create(
 /// Get ProcessHistoryItem by ID.
 #[utoipa::path(
     get,
+    operation_id = "common_process_history_item_get_by_id",
 
     path = "/api/v1/common/process-history-item/{process_history_item_id}",
 
@@ -178,9 +184,11 @@ pub async fn get_by_id(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    let response = state.common_process_history_item_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: CommonError| AppError::internal(format!("Failed to find ProcessHistoryItem: {e}"))
-            .with_correlation_id(correlation_id))?
+    let response = state.common_process_history_item_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: CommonError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find ProcessHistoryItem")
+                        .with_correlation_id(correlation_id)
+                })?
         .ok_or_else(|| AppError::not_found(format!("ProcessHistoryItem {id} not found"))
             .with_correlation_id(correlation_id))?;
     let linked = ProcessHistoryItemLinkedResponse::root(response, "common", "process-history-item");
@@ -212,6 +220,7 @@ pub async fn get_by_id(
     params(("process_history_item_id" = Uuid, Path, description = "ProcessHistoryItem ID")),
 
     tag = "ProcessHistoryItem",
+    operation_id = "common_process_history_item_update",
     request_body = UpdateProcessHistoryItemRequest,
     responses(
         (status = 200, description = "Updated", body = ProcessHistoryItemResponse),
@@ -245,12 +254,16 @@ pub async fn update(
             .with_correlation_id(correlation_id));
     }
 
-    state.common_process_history_item_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: CommonError| AppError::internal(format!("Failed to update ProcessHistoryItem: {e}"))
-            .with_correlation_id(correlation_id))?;
-    let response = state.common_process_history_item_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: CommonError| AppError::internal(format!("Failed to find ProcessHistoryItem: {e}"))
-            .with_correlation_id(correlation_id))?
+    state.common_process_history_item_commands.update(id, body, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: CommonError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to update ProcessHistoryItem")
+                        .with_correlation_id(correlation_id)
+                })?;
+    let response = state.common_process_history_item_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: CommonError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find ProcessHistoryItem")
+                        .with_correlation_id(correlation_id)
+                })?
         .ok_or_else(|| AppError::not_found(format!("ProcessHistoryItem {id} not found"))
             .with_correlation_id(correlation_id))?;
     Ok(Json(serde_json::json!({
@@ -269,6 +282,7 @@ pub async fn update(
     params(("process_history_item_id" = Uuid, Path, description = "ProcessHistoryItem ID")),
 
     tag = "ProcessHistoryItem",
+    operation_id = "common_process_history_item_delete",
     responses(
         (status = 204, description = "Deleted"),
         (status = 404, description = "Not found"),
@@ -285,7 +299,7 @@ pub async fn delete(
 ) -> Result<StatusCode, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 
-    state.common_process_history_item_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+    state.common_process_history_item_commands.delete(id, domain_types::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: CommonError| {
             let msg = e.to_string();
             // Repository errors render as "NOT_FOUND: ..." while some paths
@@ -305,6 +319,7 @@ pub async fn delete(
 
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListParams {
     #[serde(default = "default_page")]
     pub page: u64,
@@ -337,6 +352,7 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     params(ListParams),
 
     tag = "ProcessHistoryItem",
+    operation_id = "common_process_history_item_list",
     responses(
         (status = 200, description = "OK", body = Vec<ProcessHistoryItemResponse>),
     )
@@ -362,9 +378,11 @@ pub async fn list(
     }
 
 
-    let (results, total) = state.common_process_history_item_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
-        .map_err(|e: CommonError| AppError::internal(format!("Failed to list ProcessHistoryItem: {e}"))
-            .with_correlation_id(correlation_id))?;
+    let (results, total) = state.common_process_history_item_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: CommonError| {
+                    AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to list ProcessHistoryItem")
+                        .with_correlation_id(correlation_id)
+                })?;
 
     Ok(Json(serde_json::json!({
         "data": results,

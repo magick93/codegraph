@@ -505,14 +505,10 @@ impl GlobalGenerator for ScaffoldGenerator {
             content: meta_content,
         });
 
-        // Shared API-key scope guard backing the generated per-route scope
-        // middleware (api/router.tera). Emitted per topology by the monolith
-        // scaffold here and by the workers scaffold for each worker crate.
-        let scope_content = render_template_with_project(tera, "api/scope.tera", &ctx, project)?;
-        files.push(GeneratedFile {
-            path: self.output_dir.join("src").join("api").join("scope.rs"),
-            content: scope_content,
-        });
+        // API-key scope enforcement is DB-level (#169): the RESTRICTIVE
+        // scope_enforced_* RLS policies raise P0403 INSUFFICIENT_SCOPE and
+        // the generated error mapper turns that into HTTP 403. The former
+        // per-route scope guard (api/scope.tera) is retired.
 
         let integrations_rs = render_template_with_project(
             tera,

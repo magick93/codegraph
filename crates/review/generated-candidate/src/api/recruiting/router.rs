@@ -52,27 +52,12 @@ fn application_routes() -> Router<AppState> {
 
 
 
-        // API-key scope enforcement (recruiting.application):
-        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
-        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
-        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
-        // DatabaseConnection / worker ClientSource) injected into request
-        // extensions by the server and delegates to crate::api::scope.
-        .layer(axum::middleware::from_fn(application_scope_guard))
+        // API-key scope enforcement is DB-level (#169): RESTRICTIVE
+        // scope_enforced_* RLS policies raise P0403 INSUFFICIENT_SCOPE for
+        // out-of-scope keys, mapped to HTTP 403 by the generated error
+        // mapper. No per-router scope middleware.
 }
 
-async fn application_scope_guard(
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    crate::api::scope::require_scope_for_request(
-        request,
-        next,
-        "recruiting",
-        "application",
-    )
-    .await
-}
 
 
 fn candidate_routes() -> Router<AppState> {
@@ -110,25 +95,41 @@ fn candidate_routes() -> Router<AppState> {
 
 
 
-        // API-key scope enforcement (recruiting.candidate):
-        // sk_... machine credentials must hold {domain}.{entity}.{read|write}
-        // for this entity (GET/HEAD -> read, else write); JWT / magic-link /
-        // test-mode callers pass. The guard reads AuthInfo + the DB (monolith
-        // DatabaseConnection / worker ClientSource) injected into request
-        // extensions by the server and delegates to crate::api::scope.
-        .layer(axum::middleware::from_fn(candidate_scope_guard))
+        // Permission gating (recruiting.candidate): the outer
+        // candidate_permission layer sets the RequiredPermission
+        // extension; the inner require_permission layer consumes it.
+        .layer(axum::middleware::from_fn(crate::middleware::permission::require_permission))
+        .layer(axum::middleware::from_fn(candidate_permission))
+
+        // API-key scope enforcement is DB-level (#169): RESTRICTIVE
+        // scope_enforced_* RLS policies raise P0403 INSUFFICIENT_SCOPE for
+        // out-of-scope keys, mapped to HTTP 403 by the generated error
+        // mapper. No per-router scope middleware.
 }
 
-async fn candidate_scope_guard(
-    request: axum::extract::Request,
+async fn candidate_permission(
+    mut request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    crate::api::scope::require_scope_for_request(
-        request,
-        next,
-        "recruiting",
-        "candidate",
-    )
-    .await
+    use crate::middleware::permission::RequiredPermission;
+    let scope = "recruiting.candidate";
+    let op = match request.method().as_str() {
+        "POST" => Some("create"),
+        "PUT" => Some("update"),
+        "DELETE" => Some("delete"),
+        "GET" => {
+            let last = request.uri().path().rsplit('/').next().unwrap_or("");
+            if last.len() == 36 && last.matches('-').count() >= 4 { Some("read") } else { Some("list") }
+        }
+        _ => None,
+    };
+    if let Some(op) = op {
+        request.extensions_mut().insert(RequiredPermission {
+            resource: scope.to_string(),
+            action: op.to_string(),
+        });
+    }
+    next.run(request).await
 }
+
 

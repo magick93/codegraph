@@ -458,6 +458,17 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
         }
     }
 
+    match std::env::var("APP_DATABASE_URL") {
+        Ok(_) => println!("PASS APP_DATABASE_URL — app_user pool enabled"),
+        Err(_) => {
+            soft_warnings += 1;
+            println!("WARN APP_DATABASE_URL not set — server runs in legacy mode");
+            println!(
+                "     hint: set APP_DATABASE_URL to postgres://app_user:<pass>@host/db so request context rides the statement payload (#169)"
+            );
+        }
+    }
+
     println!();
     if hard_failures > 0 {
         Err(Error::Config(format!(

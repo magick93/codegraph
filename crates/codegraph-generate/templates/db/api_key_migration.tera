@@ -265,6 +265,90 @@ BEGIN
 END;
 $function$;
 
+-- Function: Enforce API key scope inside RLS policies (#169).
+-- The DB-level counterpart of the retired per-router scope middleware.
+-- Sessions carry the resolved key id in `app.current_api_key_id` (set by the
+-- request context bundle; no bcrypt re-verification per row). Semantics:
+-- - JWT / workflow sessions (no API key in context): pass through — tenancy
+--   is enforced by the org-isolation policies, scope is not their concept.
+-- - API-key sessions WITHOUT a scope matching (entity_type, action) under
+--   the wildcard rules: RAISE P0403 INSUFFICIENT_SCOPE, so out-of-scope
+--   requests fail 403 instead of silently returning empty results.
+-- - Otherwise: row-level bool (entity_id wildcard containment).
+-- Both scope vocabularies are accepted: legacy objects
+-- {"entity_type","entity_id","action"} and strings '{*|domain}.{*|entity}.{*|action}'.
+CREATE OR REPLACE FUNCTION public.enforce_api_key_scope(p_entity_type text, p_entity_id text, p_action text)
+ RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER
+AS $function$
+DECLARE
+    v_scopes JSONB;
+    v_key_id UUID;
+    s JSONB;
+    parts TEXT[];
+    v_et TEXT;
+    v_eid TEXT;
+    v_act TEXT;
+    v_cap BOOLEAN := FALSE;
+    v_row BOOLEAN := FALSE;
+BEGIN
+    v_key_id := nullif(current_setting('app.current_api_key_id', true), '')::uuid;
+    IF v_key_id IS NULL OR v_key_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
+        IF coalesce(current_setting('app.current_api_key', true), '') = '' THEN
+            RETURN TRUE; -- JWT session: tenancy only
+        END IF;
+        -- Legacy session (raw key set, no id var): resolve once via verify.
+        v_key_id := public.get_current_api_key_id();
+        IF v_key_id IS NULL THEN RETURN TRUE; END IF;
+    END IF;
+
+    SELECT scopes INTO v_scopes
+    FROM api_keys_private.api_keys
+    WHERE id = v_key_id AND is_active = TRUE AND (expires_at IS NULL OR expires_at > now());
+
+    IF v_scopes IS NULL OR v_scopes = '[]'::jsonb THEN
+        RAISE EXCEPTION USING
+            ERRCODE = 'P0403',
+            MESSAGE = json_build_object('code', 'INSUFFICIENT_SCOPE', 'scope', p_entity_type || '.' || p_action)::text;
+    END IF;
+
+    FOR s IN SELECT * FROM jsonb_array_elements(v_scopes) LOOP
+        IF jsonb_typeof(s) = 'object' THEN
+            v_et := s->>'entity_type';
+            v_eid := s->>'entity_id';
+            v_act := s->>'action';
+        ELSE
+            parts := string_to_array(s #>> '{}', '.');
+            v_eid := '*';
+            IF (s #>> '{}') = '*' THEN
+                v_et := '*'; v_act := '*';
+            ELSIF cardinality(parts) = 3 THEN
+                v_et := parts[2]; v_act := parts[3];
+            ELSE
+                v_et := NULL; v_act := NULL;
+            END IF;
+        END IF;
+        IF v_et IN (p_entity_type, '*') AND (
+               coalesce(v_act, '') IN (p_action, '*')
+               -- Compat: keys provisioned against the app-level vocabulary
+               -- used 'write' for mutating operations; it covers both.
+               OR (p_action IN ('create', 'update') AND v_act = 'write')
+           ) THEN
+            v_cap := TRUE;
+            IF coalesce(v_eid, '*') = '*' OR v_eid = p_entity_id OR p_entity_id = '*' THEN
+                v_row := TRUE;
+            END IF;
+        END IF;
+    END LOOP;
+
+    IF NOT v_cap THEN
+        RAISE EXCEPTION USING
+            ERRCODE = 'P0403',
+            MESSAGE = json_build_object('code', 'INSUFFICIENT_SCOPE', 'scope', p_entity_type || '.' || p_action)::text;
+    END IF;
+    RETURN v_row;
+END;
+$function$;
+
 -- Step 6: Grant execute permissions
 GRANT EXECUTE ON FUNCTION public.create_api_key TO authenticated;
 GRANT EXECUTE ON FUNCTION public.verify_api_key TO service_role, api_key;
@@ -274,6 +358,7 @@ GRANT EXECUTE ON FUNCTION public.get_api_key_org_id TO api_key;
 GRANT EXECUTE ON FUNCTION public.get_current_api_key_id TO api_key;
 GRANT EXECUTE ON FUNCTION public.check_api_key_scope TO api_key;
 GRANT EXECUTE ON FUNCTION public.check_api_key_scope_by_id TO api_key;
+GRANT EXECUTE ON FUNCTION public.enforce_api_key_scope TO api_key;
 
 -- Comments
 COMMENT ON SCHEMA api_keys_private IS 'Private schema for secure API key storage and management';
@@ -325,6 +410,26 @@ RETURNS text AS $$
   LIMIT 1;
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
 
+-- resolve_jwt_context(): one-round-trip JWT identity resolution (#169).
+-- Merges the former resolve_user_org + get_current_user_role wire calls:
+-- the auth middleware spends exactly ONE DB round trip resolving the JWT
+-- subject's organization and org role. Returns NULL when the user has no
+-- (acceptable) organization membership.
+CREATE OR REPLACE FUNCTION public.resolve_jwt_context(p_user_id uuid)
+RETURNS jsonb AS $$
+DECLARE
+    v_org uuid;
+    v_role text;
+BEGIN
+    v_org := public.resolve_user_org(p_user_id);
+    IF v_org IS NULL THEN
+        RETURN NULL;
+    END IF;
+    v_role := public.get_current_user_role(v_org, p_user_id);
+    RETURN jsonb_build_object('organization_id', v_org, 'role', coalesce(v_role, 'member'));
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
 -- Grant to all roles
 GRANT EXECUTE ON FUNCTION public.get_current_org_id TO authenticated, api_key, anon;
 GRANT EXECUTE ON FUNCTION public.resolve_user_org TO authenticated, api_key, anon;
@@ -351,12 +456,14 @@ END $$;
 GRANT USAGE ON SCHEMA public TO app_user;
 GRANT EXECUTE ON FUNCTION public.resolve_user_org TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_current_user_role TO app_user;
+GRANT EXECUTE ON FUNCTION public.resolve_jwt_context TO app_user;
 GRANT EXECUTE ON FUNCTION public.verify_api_key TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_verified_api_key_info TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_api_key_org_id TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_current_api_key_id TO app_user;
 GRANT EXECUTE ON FUNCTION public.check_api_key_scope TO app_user;
 GRANT EXECUTE ON FUNCTION public.check_api_key_scope_by_id TO app_user;
+GRANT EXECUTE ON FUNCTION public.enforce_api_key_scope TO app_user;
 GRANT EXECUTE ON FUNCTION public.get_current_org_id TO app_user;
 GRANT EXECUTE ON FUNCTION public.create_api_key TO app_user;
 GRANT EXECUTE ON FUNCTION public.log_api_key_usage TO app_user;

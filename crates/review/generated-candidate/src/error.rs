@@ -63,6 +63,26 @@ impl AppError {
         Self { status: StatusCode::UNAUTHORIZED, code: "UNAUTHORIZED", message: message.into(), details: None, correlation_id: None }
     }
 
+    /// Map a domain error onto the HTTP envelope by its own status/code
+    /// (#169): RLS denials (Forbidden) → 403, NotFound → 404, Conflict →
+    /// 409, Validation → 422; everything else folds into an internal error
+    /// carrying the domain message with the caller's context prefix.
+    pub fn from_domain_error(
+        status: StatusCode,
+        message: String,
+        context: impl Into<String>,
+    ) -> Self {
+        let context = context.into();
+        let full = format!("{context}: {message}");
+        match status {
+            StatusCode::FORBIDDEN => Self::forbidden(message),
+            StatusCode::NOT_FOUND => Self::not_found(full),
+            StatusCode::CONFLICT => Self::conflict(full),
+            StatusCode::UNPROCESSABLE_ENTITY => Self::validation(message, vec![]),
+            _ => Self::internal(full),
+        }
+    }
+
     pub fn forbidden(message: impl Into<String>) -> Self {
         Self { status: StatusCode::FORBIDDEN, code: "FORBIDDEN", message: message.into(), details: None, correlation_id: None }
     }

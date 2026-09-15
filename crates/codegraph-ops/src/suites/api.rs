@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::OpsConfig;
-use crate::db::{psql_exec_file_ok, psql_query};
+use crate::db::{psql_exec, psql_exec_file_ok, psql_query};
 use crate::error::{OpsError, OpsResult};
 use crate::ext::run_hooks;
 use crate::migrate::run_api_migrations_with_options;
@@ -31,6 +31,8 @@ pub struct ApiArgs {
     pub retry: u32,
     /// Write a machine-readable `--results` JSON report to this path.
     pub results_file: Option<String>,
+    /// Tolerate generation errors (skipped entities) instead of failing.
+    pub allow_gen_errors: bool,
 }
 
 /// True when a failed hurl file may be retried: the number of attempts used
@@ -133,14 +135,22 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     let binary = stage_preflight(config, args, &mut counters).await?;
 
     // ---- 2. Database ----
-    let (migration_dir, auth_header, api_key_b) =
+    let (migration_dir, auth_header, api_key_b, api_key_limited) =
         stage_database(config, args, &mut counters).await?;
 
     // ---- 3. Server ----
     let mut supervisor = stage_server(config, args, &binary, &mut counters).await?;
 
     // ---- 4. Hurl API tests ----
-    stage_hurl(config, args, auth_header.as_ref(), &mut counters).await?;
+    stage_hurl(
+        config,
+        args,
+        auth_header.as_ref(),
+        api_key_b.as_ref(),
+        api_key_limited.as_ref(),
+        &mut counters,
+    )
+    .await?;
 
     // ---- 5. Curl smoke tests ----
     stage_curl_smoke(config, auth_header.as_ref(), &mut counters).await;
@@ -193,9 +203,10 @@ async fn stage_generate_build(config: &OpsConfig, args: &ApiArgs) -> OpsResult<(
             match (&config.manifest.graph_binary, &config.manifest.schemas_dir) {
                 (Some(graph), Some(_)) => {
                     run_hooks(config, "pre_generate").await?;
-                    if let Err(e) = regenerate(config, graph) {
-                        output::fail(e.to_string());
-                        return Err(e);
+                    let gen_output =
+                        regenerate(config, graph).inspect_err(|e| output::fail(e.to_string()))?;
+                    if !args.allow_gen_errors {
+                        assert_generation_clean(&gen_output)?;
                     }
                     run_hooks(config, "post_generate").await?;
                     output::ok("Templates regenerated");
@@ -413,6 +424,9 @@ async fn stage_preflight(
             .current_dir(&config.root_dir)
             .env("DATABASE_URL", config.api_db.url())
             .env("SUPABASE_JWT_SECRET", config.jwt_secret.clone());
+        if std::env::var_os("APP_DATABASE_URL").is_none() {
+            start_cmd.env("APP_DATABASE_URL", app_pool_url(&config.api_db));
+        }
         if let Some((key, value)) = cornucopia_db_env(config) {
             start_cmd.env(key, value);
         }
@@ -468,7 +482,7 @@ async fn stage_database(
     config: &OpsConfig,
     args: &ApiArgs,
     counters: &mut TestCounters,
-) -> OpsResult<(PathBuf, Option<String>, Option<String>)> {
+) -> OpsResult<(PathBuf, Option<String>, Option<String>, Option<String>)> {
     // ---- 2. Database ----
     output::section("2. Database");
     config.metrics.begin("DB migrate");
@@ -515,6 +529,10 @@ async fn stage_database(
         counters.fail_test("no domain tables found after migration");
     }
 
+    // App pool (#169): pin the app_user password so the server can connect as
+    // the NOBYPASSRLS app role (APP_DATABASE_URL).
+    provision_app_pool(config, counters).await;
+
     // API keys (only if public.create_api_key exists in the scaffold).
     let has_create_key = psql_query(
         &config.api_db,
@@ -524,6 +542,7 @@ async fn stage_database(
     .unwrap_or_default();
     let mut auth_header: Option<String> = None;
     let mut api_key_b: Option<String> = None;
+    let mut api_key_limited: Option<String> = None;
     if has_create_key.trim() == "0" || has_create_key.is_empty() {
         output::warn("create_api_key() not found — API-key auth checks skipped");
     } else {
@@ -553,10 +572,29 @@ async fn stage_database(
                 api_key_b = Some(key);
             }
         }
+        // Limited (read-only) key for scope-denial contract files (#169):
+        // opted in via `hurl.limited_key = true`, exposed to hurl as
+        // `api_key_limited`.
+        if config
+            .manifest
+            .hurl
+            .as_ref()
+            .map(|h| h.limited_key)
+            .unwrap_or(false)
+        {
+            if let Ok(key) =
+                provision_read_only_api_key(config, &org_a, "ops-test-key-limited").await
+            {
+                counters.pass("Read-only (limited) API key provisioned");
+                api_key_limited = Some(key);
+            } else {
+                counters.fail_test("could not provision read-only API key");
+            }
+        }
     }
     config.metrics.end();
 
-    Ok((migration_dir, auth_header, api_key_b))
+    Ok((migration_dir, auth_header, api_key_b, api_key_limited))
 }
 
 async fn stage_server(
@@ -583,6 +621,10 @@ async fn stage_server(
         .arg(config.api_db.url())
         .env("DATABASE_URL", config.api_db.url())
         .env("SUPABASE_JWT_SECRET", config.jwt_secret.clone());
+    // App pool (#169): export the app_user URL unless the caller manages it.
+    if std::env::var_os("APP_DATABASE_URL").is_none() {
+        server_cmd.env("APP_DATABASE_URL", app_pool_url(&config.api_db));
+    }
     if let Some((key, value)) = cornucopia_db_env(config) {
         server_cmd.env(key, value);
     }
@@ -614,6 +656,8 @@ async fn stage_hurl(
     config: &OpsConfig,
     args: &ApiArgs,
     auth_header: Option<&String>,
+    api_key_b: Option<&String>,
+    api_key_limited: Option<&String>,
     counters: &mut TestCounters,
 ) -> OpsResult<()> {
     // ---- 4. Hurl API tests ----
@@ -656,6 +700,16 @@ async fn stage_hurl(
                     if let Some(h) = &auth_header {
                         let key = h.trim_start_matches("Authorization: Bearer ").to_string();
                         cmd.arg("--variable").arg(format!("api_key={key}"));
+                        // Alias matching the cross-tenant file vocabulary
+                        // (`api_key_a`), so the same hurl file works in the
+                        // main loop and in the RLS-isolation stage.
+                        cmd.arg("--variable").arg(format!("api_key_a={key}"));
+                    }
+                    if let Some(key) = api_key_b {
+                        cmd.arg("--variable").arg(format!("api_key_b={key}"));
+                    }
+                    if let Some(key) = api_key_limited {
+                        cmd.arg("--variable").arg(format!("api_key_limited={key}"));
                     }
                     cmd.arg(&f);
                     let (passed, reqs, output_text) = match cmd.output() {
@@ -1115,15 +1169,45 @@ pub(crate) fn cornucopia_db_env(config: &OpsConfig) -> Option<(String, String)> 
     }
 }
 
+/// Full-wildcard scope set: every entity, every action.
+pub(crate) const FULL_WILDCARD_SCOPES: &str =
+    r#"[{"entity_type":"*","entity_id":"*","action":"*"}]"#;
+
+/// Read-only scope set: every entity, `read` action only. Out-of-scope
+/// writes raise the `scope_enforced_*` RLS policies' P0403 (HTTP 403).
+pub(crate) const READ_ONLY_SCOPES: &str =
+    r#"[{"entity_type":"*","entity_id":"*","action":"read"}]"#;
+
 /// Provision an API key via public.create_api_key(org, name, permissions).
 pub(crate) async fn provision_api_key(
     config: &OpsConfig,
     org_id: &str,
     name: &str,
 ) -> OpsResult<String> {
+    provision_api_key_with_scopes(config, org_id, name, FULL_WILDCARD_SCOPES).await
+}
+
+/// Provision a read-only API key: wildcard entity/id scope limited to the
+/// `read` action. Out-of-scope writes against it must raise the
+/// `scope_enforced_*` policies' P0403 INSUFFICIENT_SCOPE (HTTP 403).
+pub(crate) async fn provision_read_only_api_key(
+    config: &OpsConfig,
+    org_id: &str,
+    name: &str,
+) -> OpsResult<String> {
+    provision_api_key_with_scopes(config, org_id, name, READ_ONLY_SCOPES).await
+}
+
+/// Provision an API key with explicit scope JSON (legacy object vocabulary —
+/// the same vocabulary the RLS scope policies enforce).
+pub(crate) async fn provision_api_key_with_scopes(
+    config: &OpsConfig,
+    org_id: &str,
+    name: &str,
+    scopes_json: &str,
+) -> OpsResult<String> {
     let sql = format!(
-        "SELECT public.create_api_key('{org_id}'::uuid, '{name}', \
-         '[{{\"entity_type\":\"*\",\"entity_id\":\"*\",\"action\":\"*\"}}]'::jsonb);"
+        "SELECT public.create_api_key('{org_id}'::uuid, '{name}', '{scopes_json}'::jsonb);"
     );
     let out = psql_query(&config.api_db, &sql).await?;
     parse_api_key_json(&out).ok_or_else(|| OpsError::TestFailure("could not parse API key".into()))
@@ -1136,6 +1220,47 @@ pub(crate) fn parse_api_key_json(out: &str) -> Option<String> {
     }
     let v = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
     v.get("key").and_then(|k| k.as_str()).map(|s| s.to_string())
+}
+
+/// Default password for the generated `app_user` role — matches the value
+/// seeded by migration `0002_api_key_management.sql`.
+pub(crate) const APP_USER_PASSWORD: &str = "app_user_pass";
+
+/// The `app_user`-pool URL for a manifest DB target (#169): same host, port
+/// and database, connecting as the NOBYPASSRLS `app_user` role.
+pub(crate) fn app_pool_url(db: &crate::pg::PgTarget) -> String {
+    crate::pg::PgTarget {
+        user: "app_user".into(),
+        password: APP_USER_PASSWORD.into(),
+        role: "app_user".into(),
+        ..db.clone()
+    }
+    .url()
+}
+
+/// Provision the `app_user` login password so the server can connect via
+/// [`app_pool_url`]. No-op when the role does not exist (pre-0002 databases)
+/// or when the caller already manages `APP_DATABASE_URL`.
+async fn provision_app_pool(config: &OpsConfig, counters: &mut TestCounters) {
+    if std::env::var_os("APP_DATABASE_URL").is_some() {
+        output::info("APP_DATABASE_URL already set — skipping app_user provisioning");
+        return;
+    }
+    let has_role = psql_query(
+        &config.api_db,
+        "SELECT count(*) FROM pg_roles WHERE rolname = 'app_user';",
+    )
+    .await
+    .unwrap_or_default();
+    if has_role.trim() != "1" {
+        output::warn("app_user role missing — app pool not provisioned");
+        return;
+    }
+    let sql = format!("ALTER ROLE app_user WITH PASSWORD '{APP_USER_PASSWORD}';");
+    match psql_exec(&config.api_db, &sql).await {
+        Ok(()) => counters.pass("app_user pool password provisioned"),
+        Err(e) => counters.fail_test(format!("app_user password provisioning failed: {e}")),
+    }
 }
 
 fn extract_json_field(body: &str, path: &str) -> String {
@@ -1466,6 +1591,43 @@ fn regenerate_args(config: &OpsConfig, graph_binary: &str) -> Vec<String> {
 /// stand in for it and reported SIGKILLed/panicked regens as "✓ Templates
 /// regenerated" (no literal "error" anywhere) while "0 errors" read as a
 /// failure. On non-zero exit the error carries the output tail.
+/// Fail when the generation report carries errors ("Generated N files |
+/// E errors | …" and/or the driver's "completed with errors" notice). Silent
+/// template breakage otherwise shrinks the generated tree — and the test
+/// coverage — without anyone noticing.
+pub(crate) fn assert_generation_clean(gen_output: &str) -> OpsResult<()> {
+    let errored = gen_output.contains("Generation completed with errors")
+        || regex_free_has_error_count(gen_output);
+    if errored {
+        return Err(OpsError::TestFailure(
+            "generation reported errors (entities were skipped) — fix the templates or pass \
+             --allow-gen-errors"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// True when a "Generated N files | E errors | W warnings" summary line shows
+/// a non-zero error count.
+fn regex_free_has_error_count(gen_output: &str) -> bool {
+    for line in gen_output.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("Generated ") {
+            for segment in rest.split('|') {
+                let segment = segment.trim();
+                if let Some(count) = segment.strip_suffix("errors") {
+                    let count = count.trim();
+                    if count.parse::<u32>().map(|c| c > 0).unwrap_or(false) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 fn regenerate(config: &OpsConfig, graph_binary: &str) -> OpsResult<String> {
     let args = regenerate_args(config, graph_binary);
     let out = Command::new("cargo")
@@ -1595,6 +1757,36 @@ mod tests {
     fn strips_ansi_codes() {
         assert_eq!(strip_ansi("\u{1b}[0;31mred\u{1b}[0m plain"), "red plain");
         assert_eq!(strip_ansi("no escapes"), "no escapes");
+    }
+
+    #[test]
+    fn generation_error_summary_is_fatal() {
+        assert!(assert_generation_clean("Generated 10568 files | 0 errors | 0 warnings").is_ok());
+        assert!(assert_generation_clean("no summary at all").is_ok());
+        let err = assert_generation_clean(
+            "Generated 10567 files | 1 errors | 0 warnings\nGeneration completed with errors.",
+        )
+        .expect_err("error summary must be fatal");
+        assert!(err.to_string().contains("generation reported errors"));
+        let err = assert_generation_clean("Generated 10 files | 2 errors | 0 warnings")
+            .expect_err("non-zero error count must be fatal");
+        assert!(err.to_string().contains("--allow-gen-errors"));
+    }
+
+    #[test]
+    fn app_pool_url_targets_app_user_role_on_same_database() {
+        let db = crate::pg::PgTarget {
+            host: "db.internal".into(),
+            port: 5433,
+            user: "postgres".into(),
+            password: "secret".into(),
+            db: "appdb".into(),
+            role: "api".into(),
+        };
+        assert_eq!(
+            app_pool_url(&db),
+            "postgres://app_user:app_user_pass@db.internal:5433/appdb"
+        );
     }
 
     #[test]
@@ -1800,5 +1992,29 @@ trailing context line
         let path = dir.path().join("a/b/c/run.log");
         write_hurl_log(&path, "combined output").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "combined output");
+    }
+
+    #[test]
+    fn scope_constants_are_well_formed_json() {
+        let full: serde_json::Value = serde_json::from_str(FULL_WILDCARD_SCOPES)
+            .expect("FULL_WILDCARD_SCOPES must be valid JSON");
+        assert_eq!(full[0]["entity_type"], "*");
+        assert_eq!(full[0]["action"], "*");
+
+        let read_only: serde_json::Value =
+            serde_json::from_str(READ_ONLY_SCOPES).expect("READ_ONLY_SCOPES must be valid JSON");
+        assert_eq!(read_only[0]["entity_type"], "*");
+        assert_eq!(read_only[0]["action"], "read");
+    }
+
+    #[test]
+    fn create_api_key_sql_embeds_scopes_verbatim() {
+        let scopes = READ_ONLY_SCOPES;
+        let sql = format!(
+            "SELECT public.create_api_key('{}'::uuid, 'n', '{scopes}'::jsonb);",
+            "00000000-0000-0000-0000-000000000001"
+        );
+        assert!(sql.contains(r#"[{"entity_type":"*","entity_id":"*","action":"read"}]"#));
+        assert!(sql.ends_with("'::jsonb);"));
     }
 }

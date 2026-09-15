@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, TransactionTrait};
+use sea_orm::{ConnectionTrait, DatabaseConnection, TransactionTrait};
 
 use uuid::Uuid;
 
@@ -18,9 +18,13 @@ use super::dto_update::UpdateApplicationRequest;
 
 use super::super::errors::RecruitingError;
 
-/// Set API key + org session variables within a transaction so Postgres RLS policies
-/// can enforce tenant isolation and scope checks. Uses `set_config(..., true)` which
-/// is equivalent to `SET LOCAL` but supports parameterised values (no SQL injection).
+/// Set API key + org + user request context within a transaction so Postgres
+/// RLS policies can enforce tenant isolation and scope checks (#169). The
+/// whole bundle — every `set_config(..., true)` plus the role flip — rides a
+/// SINGLE simple-query payload: one round trip per operation. Values are
+/// server-side UUIDs, inlined with quotes escaped (the simple protocol takes
+/// no bind parameters); `SET LOCAL ROLE app_user` is a no-op when the pool
+/// already connects as app_user.
 
 async fn set_rls_session_vars(
     tx: &impl ConnectionTrait,
@@ -28,24 +32,24 @@ async fn set_rls_session_vars(
     organization_id: Uuid,
     correlation_id: Uuid,
     user_id: Uuid,
+    role: &str,
 ) -> Result<(), RecruitingError> {
-    tx.execute(Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        "SELECT set_config('app.current_api_key', $1, true), \
-                set_config('app.organization_id', $2, true), \
-                set_config('app.correlation_id', $3, true), \
-                set_config('app.user_id', $4, true)",
-        [
-            api_key_id.to_string().into(),
-            organization_id.to_string().into(),
-            correlation_id.to_string().into(),
-            user_id.to_string().into(),
-        ],
-    )).await?;
-    tx.execute(Statement::from_string(
-        DatabaseBackend::Postgres,
-        "SET LOCAL ROLE app_user".to_string(),
-    )).await?;
+    let sql = format!(
+        "SELECT set_config('app.current_api_key', '{}', true), \
+                set_config('app.current_api_key_id', '{}', true), \
+                set_config('app.organization_id', '{}', true), \
+                set_config('app.correlation_id', '{}', true), \
+                set_config('app.user_id', '{}', true), \
+                set_config('app.role', '{}', true); \
+         SET LOCAL ROLE app_user",
+        api_key_id,
+        api_key_id,
+        organization_id,
+        correlation_id,
+        user_id,
+        role.replace('\'', "''"),
+    );
+    tx.execute_unprepared(&sql).await?;
     Ok(())
 }
 
@@ -81,8 +85,8 @@ impl ApplicationCommandHandler {
 
 
 
-    pub async fn create(&self, cmd: CreateApplicationRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<Uuid, RecruitingError> {
-        self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id, user_id).await
+    pub async fn create(&self, cmd: CreateApplicationRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<Uuid, RecruitingError> {
+        self.create_single_in_tx(cmd, &source, correlation_id, api_key_id, organization_id, user_id, role).await
     }
 
 
@@ -97,6 +101,7 @@ impl ApplicationCommandHandler {
         api_key_id: Uuid,
         organization_id: Uuid,
         user_id: Uuid,
+        role: String,
     ) -> Vec<Result<Uuid, crate::error::BulkItemError>> {
         
 
@@ -118,7 +123,7 @@ impl ApplicationCommandHandler {
             }
 
 
-            match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id, user_id).await {
+            match self.create_single_in_tx(item, &source, correlation_id, api_key_id, organization_id, user_id, role.clone()).await {
 
                 Ok(id) => results.push(Ok(id)),
                 Err(e) => results.push(Err(crate::error::BulkItemError {
@@ -144,11 +149,12 @@ impl ApplicationCommandHandler {
         api_key_id: Uuid,
         organization_id: Uuid,
         user_id: Uuid,
+        role: String,
     ) -> Result<Uuid, RecruitingError> {
 
         let tx = self.db.begin().await?;
 
-        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id, &role).await?;
 
         
 
@@ -160,7 +166,7 @@ impl ApplicationCommandHandler {
                 } else if e.to_string().contains("not found") {
                     RecruitingError::NotFound
                 } else {
-                    RecruitingError::InternalError(e.to_string())
+                    RecruitingError::from_repo_err(e)
                 }
             })?;
 
@@ -177,11 +183,11 @@ impl ApplicationCommandHandler {
 
 
 
-    pub async fn update(&self, id: Uuid, cmd: UpdateApplicationRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), RecruitingError> {
+    pub async fn update(&self, id: Uuid, cmd: UpdateApplicationRequest, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<(), RecruitingError> {
 
         let tx = self.db.begin().await?;
 
-        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id, &role).await?;
 
         
 
@@ -190,7 +196,7 @@ impl ApplicationCommandHandler {
                 if e.to_string().contains("not found") {
                     RecruitingError::NotFound
                 } else {
-                    RecruitingError::InternalError(e.to_string())
+                    RecruitingError::from_repo_err(e)
                 }
             })?;
 
@@ -206,11 +212,11 @@ impl ApplicationCommandHandler {
 
 
 
-    pub async fn delete(&self, id: Uuid, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid) -> Result<(), RecruitingError> {
+    pub async fn delete(&self, id: Uuid, source: domain_types::SourceContext, correlation_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<(), RecruitingError> {
 
         let tx = self.db.begin().await?;
 
-        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id).await?;
+        set_rls_session_vars(&tx, api_key_id, organization_id, correlation_id, user_id, &role).await?;
 
         
 
@@ -219,7 +225,7 @@ impl ApplicationCommandHandler {
                 if e.to_string().contains("not found") {
                     RecruitingError::NotFound
                 } else {
-                    RecruitingError::InternalError(e.to_string())
+                    RecruitingError::from_repo_err(e)
                 }
             })?;
 

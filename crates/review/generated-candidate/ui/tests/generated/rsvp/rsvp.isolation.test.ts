@@ -8,7 +8,7 @@ const BASE_PATH = '/rsvp/rsvp';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
@@ -16,6 +16,8 @@ function testData(): Record<string, unknown> {
     // 'event': ValueObject — omit, serde default
     'status': 'Confirmed',
     'timestamp': '2025-03-10T09:00:00Z',
+
+
   };
 }
 
@@ -24,6 +26,8 @@ test.describe('Rsvp Cross-Org Isolation', () => {
   const data = testData();
 
   test.beforeAll(async ({ orgContext }) => {
+
+
 
 
     // Create entity as ACME owner

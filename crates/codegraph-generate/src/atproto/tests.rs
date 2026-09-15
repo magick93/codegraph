@@ -622,6 +622,7 @@ mod integration_tests {
         codegraph_config::DomainConfig {
             defaults: Default::default(),
             domains,
+            rbac: None,
         }
     }
 
@@ -984,6 +985,7 @@ mod atproto_client_tests {
         codegraph_config::DomainConfig {
             defaults: Default::default(),
             domains,
+            rbac: None,
         }
     }
 
@@ -1419,6 +1421,7 @@ mod atproto_types_tests {
         codegraph_config::DomainConfig {
             defaults: Default::default(),
             domains,
+            rbac: None,
         }
     }
 

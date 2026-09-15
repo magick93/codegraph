@@ -518,15 +518,9 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
                 content: middleware,
             });
 
-            // Shared API-key scope guard backing the generated per-route scope
-            // middleware (api/router.tera). Each worker crate gets its own copy
-            // over its cornucopia client stack; `generate_mod_files` declares it
-            // in the crate's `api/mod.rs`.
-            let scope = render_template_with_project(tera, "api/scope.tera", domain, project)?;
-            files.push(GeneratedFile {
-                path: base.join("src").join("api").join("scope.rs"),
-                content: scope,
-            });
+            // API-key scope enforcement is DB-level (#169): RESTRICTIVE
+            // scope_enforced_* RLS policies + the error mapper replace the
+            // former per-worker scope guard module.
 
             // Shared API metadata type — routed handlers reference
             // `crate::api::meta::Meta`, so each worker crate needs its own

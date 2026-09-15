@@ -148,6 +148,7 @@ mod tests {
         codegraph_config::DomainConfig {
             defaults: Default::default(),
             domains,
+            rbac: None,
         }
     }
 

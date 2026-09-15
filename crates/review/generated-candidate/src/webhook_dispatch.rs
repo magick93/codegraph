@@ -6,6 +6,7 @@ use hmac::{Hmac, Mac};
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use sha2::Sha256;
 use tokio::time::{interval, Duration};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -32,14 +33,26 @@ impl WebhookDispatcher {
         })
     }
 
-    /// Start the dispatch loop. Runs forever until cancelled.
-    pub async fn run(&self) {
+    /// Start the dispatch loop. Runs until the shutdown token is cancelled,
+    /// draining one final batch of pending messages before exiting.
+    pub async fn run(&self, shutdown: CancellationToken) {
         tracing::info!("webhook dispatch worker started");
         let mut ticker = interval(self.poll_interval);
         loop {
-            ticker.tick().await;
-            if let Err(e) = self.dispatch_pending().await {
-                tracing::warn!(error = %e, "webhook dispatch cycle failed");
+            tokio::select! {
+                _ = ticker.tick() => {
+                    if let Err(e) = self.dispatch_pending().await {
+                        tracing::warn!(error = %e, "webhook dispatch cycle failed");
+                    }
+                }
+                _ = shutdown.cancelled() => {
+                    tracing::info!("webhook dispatcher shutting down");
+                    // Drain one final batch before exit
+                    if let Err(e) = self.dispatch_pending().await {
+                        tracing::warn!(error = %e, "final webhook dispatch cycle failed");
+                    }
+                    return;
+                }
             }
         }
     }

@@ -8,7 +8,7 @@ const BASE_PATH = '/common/gender-code-list';
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 
-const depIds: Record<string, string> = {};
+const depIds: Record<string, string | string[]> = {};
 
 
 function testData(): Record<string, unknown> {
@@ -16,6 +16,8 @@ function testData(): Record<string, unknown> {
     'code': `TestCode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     'display_name': 'ACME Isolation Display Name',
     'sort_order': 77,
+
+
   };
 }
 
@@ -24,6 +26,8 @@ test.describe('GenderCodeList Cross-Org Isolation', () => {
   const data = testData();
 
   test.beforeAll(async ({ orgContext }) => {
+
+
 
 
     // Create entity as ACME owner

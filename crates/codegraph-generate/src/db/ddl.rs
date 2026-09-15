@@ -448,6 +448,13 @@ fn dollar_quote(val: &str) -> String {
     }
 }
 
+/// One per-operation minimum role for the role_enforced_* policies (#169).
+#[derive(Debug, Serialize)]
+pub struct RoleMinimum {
+    pub operation: String,
+    pub min_role: String,
+}
+
 /// Context for DDL table generation.
 #[derive(Debug, Serialize)]
 pub struct DdlContext {
@@ -476,6 +483,22 @@ pub struct DdlContext {
     pub embeddings: Vec<EmbeddingContext>,
     /// Whether this entity tracks soft deletes and audit columns.
     pub is_auditable: bool,
+    /// Whether the entity has `permissions.scope` configured (#169): gates
+    /// the RESTRICTIVE role_enforced_* RLS policies that replace the request
+    /// path's permission middleware.
+    pub role_enforced: bool,
+    /// Per-operation minimum roles for the role_enforced_* policies (#169),
+    /// in canonical op order (create, read, update, delete, list). Defaults
+    /// are synthesized from the built-in matrix when `permissions.min_roles`
+    /// is not configured.
+    pub role_minima: Vec<RoleMinimum>,
+    /// The configured role hierarchy (#169) — drives `role_rank()` and the
+    /// custom-role `ALTER TYPE` values in the RBAC migration.
+    pub roles_hierarchy: Vec<String>,
+    /// Optional per-row user scoping (#169): when configured, the RLS file
+    /// adds the column + auto-set trigger and a RESTRICTIVE
+    /// `user_scope_enforced_select` policy.
+    pub user_scope_column: Option<String>,
     pub is_codelist: bool,
     /// Whether this entity supports demo data flagging.
     pub has_demo_flag: bool,
@@ -883,6 +906,10 @@ pub(crate) fn child_table_rls_context(parent: &DdlContext, child: &ChildTableDef
         fts: None,
         embeddings: Vec::new(),
         is_auditable: false,
+        role_enforced: false,
+        role_minima: Vec::new(),
+        roles_hierarchy: Vec::new(),
+        user_scope_column: None,
         is_codelist: false,
         has_demo_flag: false,
     }
@@ -1183,6 +1210,52 @@ impl DdlGenerator {
             .and_then(|d| d.auditable)
             .unwrap_or(true);
 
+        // Role enforcement (#169): same gate the router used for its
+        // permission layers — entities with `permissions.scope` configured —
+        // plus any entity carrying explicit `min_roles`. The per-op minima
+        // default to the built-in matrix when not configured.
+        let entity_cfg = config
+            .domains
+            .get(&domain)
+            .and_then(|d| d.get_entity_config(schema_title));
+        let min_roles_cfg = entity_cfg.and_then(|ec| ec.permissions.min_roles.clone());
+        let role_enforced = entity_cfg
+            .map(|ec| {
+                ec.permissions
+                    .scope
+                    .as_ref()
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false)
+                    || min_roles_cfg
+                        .as_ref()
+                        .map(|m| !m.is_empty())
+                        .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
+        let roles_hierarchy = config
+            .rbac
+            .as_ref()
+            .map(|r| r.hierarchy_or_default())
+            .unwrap_or_else(codegraph_config::config::default_roles_hierarchy);
+
+        // Canonical op order; explicit config wins over the synthesized
+        // defaults.
+        let mut role_minima: Vec<RoleMinimum> = Vec::new();
+        for (op, default_min) in codegraph_config::config::default_min_roles() {
+            let min_role = min_roles_cfg
+                .as_ref()
+                .and_then(|m| m.get(op))
+                .cloned()
+                .unwrap_or_else(|| default_min.to_string());
+            role_minima.push(RoleMinimum {
+                operation: op.to_string(),
+                min_role,
+            });
+        }
+
+        let user_scope_column = entity_cfg.and_then(|ec| ec.permissions.user_scope_column.clone());
+
         // Detect whether this entity has a _codelist.sql migration (codelist seed data).
         // The codelist generator only creates these for codelist entities in the
         // 'common' domain. Entities outside 'common' are always created by the entity
@@ -1224,6 +1297,10 @@ impl DdlGenerator {
             fts,
             embeddings,
             is_auditable,
+            role_enforced,
+            role_minima,
+            roles_hierarchy,
+            user_scope_column,
             has_demo_flag: is_auditable,
             is_codelist: schema.is_codelist,
         })
@@ -2265,6 +2342,10 @@ mod tests {
             fts: None,
             embeddings: vec![],
             is_auditable: true,
+            role_enforced: true,
+            role_minima: Vec::new(),
+            roles_hierarchy: Vec::new(),
+            user_scope_column: None,
             is_codelist: false,
             has_demo_flag: false,
         };
@@ -2308,5 +2389,120 @@ mod tests {
         assert!(sql.contains("CREATE POLICY \"org_isolation_delete\""));
         // Children are not api-key-scoped resources.
         assert!(!sql.contains("api_key_scoped_"));
+    }
+
+    /// #169: role_enforced_* policies rank the caller's role against the
+    /// configured per-op minima via role_at_least(); defaults come from the
+    /// built-in matrix, explicit min_roles win.
+    #[test]
+    fn rls_role_enforced_policies_use_configured_minima() {
+        let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let tera = crate::template_engine::create_tera(&template_dir).unwrap();
+        let project = crate::ProjectConfig::default();
+
+        let mut ctx = DdlContext {
+            schema_name: "compensation".to_string(),
+            table_name: "pay_run".to_string(),
+            display_name: "Pay Run".to_string(),
+            domain: "compensation".to_string(),
+            columns: vec![],
+            primary_key: "id".to_string(),
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            indexes: vec![],
+            has_updated_at: true,
+            is_tenant_scoped: true,
+            tenant_table: "platform.organization".to_string(),
+            extensions: vec![],
+            child_tables: vec![],
+            comments: vec![],
+            has_workflow: false,
+            resource_name: "pay-run".to_string(),
+            fts: None,
+            embeddings: vec![],
+            is_auditable: true,
+            role_enforced: true,
+            role_minima: vec![
+                RoleMinimum {
+                    operation: "create".into(),
+                    min_role: "payroll_admin".into(),
+                },
+                RoleMinimum {
+                    operation: "read".into(),
+                    min_role: "employee".into(),
+                },
+                RoleMinimum {
+                    operation: "update".into(),
+                    min_role: "payroll_admin".into(),
+                },
+                RoleMinimum {
+                    operation: "delete".into(),
+                    min_role: "admin".into(),
+                },
+                RoleMinimum {
+                    operation: "list".into(),
+                    min_role: "employee".into(),
+                },
+            ],
+            roles_hierarchy: vec![
+                "owner".into(),
+                "admin".into(),
+                "hr_admin".into(),
+                "payroll_admin".into(),
+                "manager".into(),
+                "member".into(),
+                "employee".into(),
+            ],
+            user_scope_column: None,
+            is_codelist: false,
+            has_demo_flag: false,
+        };
+        let sql = render_template_with_project(&tera, "db/rls.tera", &ctx, &project).unwrap();
+
+        assert!(sql.contains("public.role_at_least('payroll_admin')"));
+        assert!(sql.contains("public.role_at_least('admin')"));
+        assert!(sql.contains("CREATE POLICY \"role_enforced_select\""));
+        assert!(sql.contains("CREATE POLICY \"role_enforced_delete\""));
+        assert!(
+            !sql.contains("enforce_role_action"),
+            "the fixed matrix fn is retired"
+        );
+        assert!(!sql.contains("user_scope_enforced_select"));
+
+        // User-scope column config: column + auto-set trigger + RESTRICTIVE policy.
+        ctx.user_scope_column = Some("requested_by_user_id".to_string());
+        let sql = render_template_with_project(&tera, "db/rls.tera", &ctx, &project).unwrap();
+        assert!(sql.contains("ADD COLUMN IF NOT EXISTS requested_by_user_id UUID"));
+        assert!(sql.contains("CREATE TRIGGER trg_pay_run_set_req_user_id"));
+        assert!(sql.contains("CREATE POLICY \"user_scope_enforced_select\""));
+        assert!(sql.contains("role_rank(coalesce(current_setting('app.role', true), '')) < public.role_rank('member')"));
+    }
+
+    /// #169: the RBAC migration generalizes the role enum over the configured
+    /// hierarchy and emits role_rank/role_at_least.
+    #[test]
+    fn rbac_roles_renders_hierarchy_rank_helpers() {
+        let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let tera = crate::template_engine::create_tera(&template_dir).unwrap();
+        let project = crate::ProjectConfig::default();
+
+        let ctx = serde_json::json!({
+            "roles_hierarchy": ["owner", "admin", "hr_admin", "payroll_admin", "manager", "member", "employee"],
+        });
+        let sql =
+            render_template_with_project(&tera, "db/rbac_roles.tera", &ctx, &project).unwrap();
+
+        // Custom roles get enum-extension guards.
+        assert!(sql.contains("AND enumlabel = 'hr_admin'"));
+        assert!(sql.contains("AND enumlabel = 'payroll_admin'"));
+        assert!(sql.contains("AND enumlabel = 'manager'"));
+        // rank fn covers every role in order; 'member' normalizes to 'employee'.
+        assert!(sql.contains("CREATE OR REPLACE FUNCTION public.role_rank(p_role text)"));
+        assert!(sql.contains("IF r = 'hr_admin' THEN"));
+        assert!(sql.contains("IF r = 'member' THEN"));
+        assert!(sql.contains("CREATE OR REPLACE FUNCTION public.role_at_least(p_min_role text)"));
+        assert!(sql.contains("'ROLE_FORBIDDEN'"));
+        // The retired fixed-matrix function is gone.
+        assert!(!sql.contains("enforce_role_action"));
     }
 }

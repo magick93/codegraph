@@ -100,7 +100,7 @@ pub async fn transition(
     Json(body): Json<TransitionRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers, body.correlation_id);
-    let entity = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id).await
+    let entity = state.recruiting_candidate_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e| AppError::internal(format!("Failed to find Candidate: {e}")))?
         .ok_or_else(|| AppError::not_found(format!("Candidate {id} not found")))?;
     let entity_data = serde_json::to_value(&entity)

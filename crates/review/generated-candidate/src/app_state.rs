@@ -7,6 +7,21 @@ use sea_orm::DatabaseConnection;
 
 
 
+/// Which role the serving pool connects as.
+///
+/// - `AppUser` — the pool was built from `APP_DATABASE_URL` (the NOBYPASSRLS
+///   `app_user` role): statements run as `app_user` directly, request context
+///   rides the statement payload (`WITH rls_ctx AS (SELECT set_config(...))`),
+///   and no per-transaction role flip is needed.
+/// - `Legacy` — the pool shares the owner `DATABASE_URL`: the data path must
+///   deliver context per transaction (bundled `set_config` + `SET LOCAL ROLE
+///   app_user`) for RLS to see it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DbPoolMode {
+    AppUser,
+    Legacy,
+}
+
 #[derive(Clone)]
 pub struct AppState {
 
@@ -85,6 +100,7 @@ pub struct AppState {
 
     #[allow(dead_code)]
     pub db: DatabaseConnection,
+    pub pool_mode: DbPoolMode,
     pub jwt_secret: String,
     pub workflow_service: Arc<dyn codegraph_workflow::WorkflowService>,
 
