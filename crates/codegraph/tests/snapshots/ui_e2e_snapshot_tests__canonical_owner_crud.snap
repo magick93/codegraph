@@ -51,14 +51,20 @@ test.describe('Worker Owner CRUD', () => {
 
 
 
+
     const dep_1 = await createEntityAsAcme(orgContext, '/platform/tenant', { 'legal_name': 'Test Legal Name' });
     depIds['tenant_id'] = dep_1['id'] as string;
+
+
 
     const dep_2 = await createEntityAsAcme(orgContext, '/hr/person', { 'full_name': 'Test Full Name', 'tenant_id': depIds['tenant_id'] });
     depIds['person_id'] = dep_2['id'] as string;
 
+
+
     const dep_3 = await createEntityAsAcme(orgContext, '/hr/party', { 'party_name': 'Test Party Name' });
     depIds['parties'] = [dep_3['id'] as string];
+
 
   });
 
