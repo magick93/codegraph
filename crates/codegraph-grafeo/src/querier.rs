@@ -5,13 +5,13 @@ use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
     resolve_effective_permits, ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode,
     ApiResourceNode, CapabilityNode, CodeList, CollectionNode, ColumnInfo, CompositeColumn,
-    CompositeRange, CompositionNode, CompositionTree, DataBindingResolution, DetectionSource,
-    EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, GrantEdge,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleUseRecord, NamespaceNode,
-    NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    Permit, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
-    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    CompositeRange, CompositionNode, CompositionTree, DataBindingResolution, DelegationRecord,
+    DetectionSource, EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget,
+    GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleUseRecord,
+    NamespaceNode, NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate,
+    PermissionNode, Permit, PipelineNode, PolicyNode, PropertyNode, RelationshipNode,
+    RepositoryNode, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -946,27 +946,28 @@ impl GraphQuerier for GrafeoEngine {
         let reader = RowReader::from_columns(&result.columns);
         let mut nodes = Vec::new();
         for row in &result.rows {
-            let module_uses_str: Option<String> = reader.get_opt_string(row, "vc.module_uses")?;
-            let module_uses: Option<Vec<ModuleUseRecord>> =
-                module_uses_str.and_then(|s| serde_json::from_str(&s).ok());
-            let roles_str: Option<String> = reader.get_opt_string(row, "vc.roles")?;
-            let roles: Option<Vec<String>> = roles_str.and_then(|s| serde_json::from_str(&s).ok());
-            let requires_str: Option<String> = reader.get_opt_string(row, "vc.requires")?;
-            let requires: Option<Vec<String>> =
-                requires_str.and_then(|s| serde_json::from_str(&s).ok());
-            nodes.push(ViewContainerNode {
-                name: reader.get_string(row, "vc.name")?,
-                label: reader.get_opt_string(row, "vc.label")?,
-                is_xor: reader.get_bool(row, "vc.is_xor")?,
-                is_default: reader.get_bool(row, "vc.is_default")?,
-                is_landmark: reader.get_bool(row, "vc.is_landmark")?,
-                is_modal: reader.get_bool(row, "vc.is_modal")?,
-                conditional_expression: reader.get_opt_string(row, "vc.conditional_expression")?,
-                domain: reader.get_opt_string(row, "vc.domain")?,
-                module_uses,
-                roles,
-                requires,
-            });
+            nodes.push(view_container_from_row(&reader, row, "vc")?);
+        }
+        Ok(nodes)
+    }
+
+    async fn get_ifml_container_children(
+        &self,
+        parent: &str,
+    ) -> Result<Vec<ViewContainerNode>, GraphError> {
+        let escaped = strip_ifml_prefix(parent).replace('\'', "\\'");
+        let gql = format!(
+            "MATCH (p:ViewContainer {{name: '{escaped}'}})-[e:ContainsViewContainer]->(c:ViewContainer) RETURN \
+             c.name, c.label, c.is_xor, c.is_default, \
+             c.is_landmark, c.is_modal, c.conditional_expression, c.domain, \
+             c.module_uses, c.roles, c.requires \
+             ORDER BY e.sort_order, c.name"
+        );
+        let result = query_gql(self, &gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            nodes.push(view_container_from_row(&reader, row, "c")?);
         }
         Ok(nodes)
     }
@@ -1012,7 +1013,7 @@ impl GraphQuerier for GrafeoEngine {
             "MATCH (parent)-[:HasEvent]->(evt:Event) \
              WHERE parent.name = '{escaped}' \
              RETURN evt.name, evt.event_type, evt.params, \
-             evt.conditional_expression, evt.domain ORDER BY evt.name"
+             evt.conditional_expression, evt.requires, evt.domain ORDER BY evt.name"
         );
         let result = query_gql(self, &gql)?;
         let reader = RowReader::from_columns(&result.columns);
@@ -1021,11 +1022,16 @@ impl GraphQuerier for GrafeoEngine {
             let params_str: Option<String> = reader.get_opt_string(row, "evt.params")?;
             let params: Option<Vec<String>> =
                 params_str.and_then(|s| serde_json::from_str(&s).ok());
+            let requires: Vec<String> = reader
+                .get_opt_string(row, "evt.requires")?
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
             nodes.push(EventNode {
                 name: reader.get_string(row, "evt.name")?,
                 event_type: reader.get_string(row, "evt.event_type")?,
                 params,
                 conditional_expression: reader.get_opt_string(row, "evt.conditional_expression")?,
+                requires,
                 domain: reader.get_opt_string(row, "evt.domain")?,
             });
         }
@@ -1772,7 +1778,7 @@ impl GraphQuerier for GrafeoEngine {
     }
 
     async fn get_actor_policy(&self) -> Result<Option<ActorPolicyNode>, GraphError> {
-        let gql = "MATCH (p:ActorPolicy) RETURN p.blocks, p.never_both LIMIT 1";
+        let gql = "MATCH (p:ActorPolicy) RETURN p.blocks, p.never_both, p.purposes, p.delegations LIMIT 1";
         let result = query_gql(self, gql)?;
         if result.rows.is_empty() {
             return Ok(None);
@@ -1787,7 +1793,20 @@ impl GraphQuerier for GrafeoEngine {
             .get_opt_string(row, "p.never_both")?
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        Ok(Some(ActorPolicyNode { blocks, never_both }))
+        let purposes: Vec<String> = reader
+            .get_opt_string(row, "p.purposes")?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let delegations: Vec<DelegationRecord> = reader
+            .get_opt_string(row, "p.delegations")?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        Ok(Some(ActorPolicyNode {
+            blocks,
+            never_both,
+            purposes,
+            delegations,
+        }))
     }
 
     async fn effective_permits(&self, actor: &str) -> Result<Vec<Permit>, GraphError> {
@@ -1799,6 +1818,36 @@ impl GraphQuerier for GrafeoEngine {
 
 /// Maximum nesting depth for recursive composition tree building.
 const MAX_COMPOSITION_DEPTH: usize = 10;
+
+/// Map a `ViewContainer` query row to its node. `alias` is the query's
+/// column prefix (`vc` or `c`).
+fn view_container_from_row(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+    alias: &str,
+) -> Result<ViewContainerNode, GraphError> {
+    let col = |name: &str| format!("{alias}.{name}");
+    let module_uses_str: Option<String> = reader.get_opt_string(row, &col("module_uses"))?;
+    let module_uses: Option<Vec<ModuleUseRecord>> =
+        module_uses_str.and_then(|s| serde_json::from_str(&s).ok());
+    let roles_str: Option<String> = reader.get_opt_string(row, &col("roles"))?;
+    let roles: Option<Vec<String>> = roles_str.and_then(|s| serde_json::from_str(&s).ok());
+    let requires_str: Option<String> = reader.get_opt_string(row, &col("requires"))?;
+    let requires: Option<Vec<String>> = requires_str.and_then(|s| serde_json::from_str(&s).ok());
+    Ok(ViewContainerNode {
+        name: reader.get_string(row, &col("name"))?,
+        label: reader.get_opt_string(row, &col("label"))?,
+        is_xor: reader.get_bool(row, &col("is_xor"))?,
+        is_default: reader.get_bool(row, &col("is_default"))?,
+        is_landmark: reader.get_bool(row, &col("is_landmark"))?,
+        is_modal: reader.get_bool(row, &col("is_modal"))?,
+        conditional_expression: reader.get_opt_string(row, &col("conditional_expression"))?,
+        domain: reader.get_opt_string(row, &col("domain"))?,
+        module_uses,
+        roles,
+        requires,
+    })
+}
 
 /// Map of ViewComponent name → owning ViewContainer name, resolved from
 /// ContainsViewComponent edges.

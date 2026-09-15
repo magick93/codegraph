@@ -133,8 +133,10 @@ object_member_value = { logical_or | array_literal }
 
 // ── Event handlers ────────────────────────────────────────────────
 event_handler = {
-    "on" ~ event_type ~ event_param? ~ event_condition? ~ "->" ~ event_action ~ ";"
+    "on" ~ event_type ~ event_param? ~ event_requires? ~ event_condition? ~ "->" ~ event_action ~ ";"
 }
+
+event_requires = { "requires" ~ ":" ~ "[" ~ identifier ~ ("," ~ identifier)* ~ "]" }
 
 event_condition = { "if" ~ expression }
 

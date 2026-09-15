@@ -130,6 +130,17 @@ async fn generate_svelte_with_domains(
     domains_toml: &str,
     mappings: Option<&Path>,
 ) -> std::path::PathBuf {
+    generate_svelte_with_pack(dir, ifml, domains_toml, mappings, None, &[]).await
+}
+
+async fn generate_svelte_with_pack(
+    dir: &Path,
+    ifml: &str,
+    domains_toml: &str,
+    mappings: Option<&Path>,
+    design_system: Option<&str>,
+    template_dirs: &[std::path::PathBuf],
+) -> std::path::PathBuf {
     let ifml_path = dir.join("app.ifml");
     std::fs::write(&ifml_path, ifml).unwrap();
     let output = dir.join("out");
@@ -144,9 +155,9 @@ async fn generate_svelte_with_domains(
         classifier: None,
         frameworks: &["svelte".to_string()],
         profiles_config_path: None,
-        template_dir: &[],
+        template_dir: template_dirs,
         ifml_components: mappings,
-        ifml_design_system: None,
+        ifml_design_system: design_system,
     })
     .await
     .unwrap();
@@ -408,8 +419,8 @@ view "CustomerEdit" {
     );
     assert!(
         page.contains(
-            "const response = await fetch(`/api/v1/sales/customer/${viewParams.customerId}`, {"
-        ),
+            "response = await fetch(`/api/v1/sales/customer/${viewParams.customerId}`, {"
+        ) && page.contains("if (isEdit) {"),
         "edit submits must read the id from the query-param viewParams: {page}"
     );
     assert!(page.contains("method: 'PUT'"), "{page}");
@@ -909,6 +920,232 @@ async fn xor_container_without_pack_renders_plain_page() {
     );
 }
 
+#[tokio::test]
+async fn xor_container_wrapper_renders_container_label_heading() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+role = "presentation-container"
+path = "$lib/components/Card.svelte"
+export = "Card"
+testids = { root = "card" }
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_mappings(dir.path(), XOR_IFML, Some(&mappings)).await;
+    let page = read(&svelte, "src/routes/checkout/+page.svelte");
+
+    assert!(
+        page.contains(
+            "<h2 class=\"container-label\" data-testid=\"checkout-container-label\">Checkout</h2>"
+        ),
+        "mapped container wrappers must render the container label as a heading \
+         with a stable testid: {page}"
+    );
+    let open = page.find("<Card testid=\"card\">").unwrap();
+    let heading = page.find("container-label").unwrap();
+    let close = page.rfind("</Card>").unwrap();
+    assert!(open < heading && heading < close, "{page}");
+}
+
+#[tokio::test]
+async fn xor_container_section_fallback_renders_container_label_heading() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+role = "action-control"
+path = "$lib/components/Button.svelte"
+export = "Button"
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_mappings(dir.path(), XOR_IFML, Some(&mappings)).await;
+    let page = read(&svelte, "src/routes/checkout/+page.svelte");
+
+    assert!(
+        page.contains(
+            "<h2 class=\"container-label\" data-testid=\"checkout-container-label\">Checkout</h2>"
+        ),
+        "fallback container wrappers must render the container label as a heading \
+         with a stable testid: {page}"
+    );
+    let open = page
+        .find("<section data-testid=\"checkout-container\">")
+        .unwrap();
+    let heading = page.find("container-label").unwrap();
+    let close = page.rfind("</section>").unwrap();
+    assert!(open < heading && heading < close, "{page}");
+}
+
+const SIBLING_XOR_GROUPS_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "Checkout" {
+    label "Checkout";
+
+    container "Shipping" {
+        label "Shipping";
+        xor: true;
+
+        component "shipping_form" {
+            type: form;
+            data: Customer;
+
+            field name -> input text;
+        }
+    }
+
+    container "Payment" {
+        label "Payment";
+        xor: true;
+
+        component "payment_form" {
+            type: form;
+            data: Customer;
+
+            field name -> input text;
+        }
+    }
+}
+"#;
+
+#[tokio::test]
+async fn sibling_xor_containers_render_one_tabs_group_with_labels() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+role = "presentation-container"
+path = "$lib/components/ui/tabs/tabs.svelte"
+export = "Tabs"
+testids = { root = "tabs" }
+"#,
+    )
+    .unwrap();
+    let svelte =
+        generate_svelte_with_mappings(dir.path(), SIBLING_XOR_GROUPS_IFML, Some(&mappings)).await;
+    let page = read(&svelte, "src/routes/checkout/+page.svelte");
+
+    assert!(
+        page.contains("import Tabs from '$lib/components/ui/tabs/tabs.svelte';"),
+        "{page}"
+    );
+    assert_eq!(
+        page.matches("<Tabs testid=\"tabs\">").count(),
+        1,
+        "sibling xor containers must share ONE mapped presentation-container wrapper: {page}"
+    );
+    assert!(
+        page.contains("data-testid=\"shipping-label\">Shipping<"),
+        "each group renders its container label with a stable testid: {page}"
+    );
+    assert!(
+        page.contains("data-testid=\"payment-label\">Payment<"),
+        "{page}"
+    );
+    assert!(
+        page.contains("data-testid=\"shipping_form-form\""),
+        "{page}"
+    );
+    assert!(page.contains("data-testid=\"payment_form-form\""), "{page}");
+    let open = page.find("<Tabs testid=\"tabs\">").unwrap();
+    let shipping = page.find("data-testid=\"shipping-label\"").unwrap();
+    let payment = page.find("data-testid=\"payment-label\"").unwrap();
+    let close = page.rfind("</Tabs>").unwrap();
+    assert!(
+        open < shipping && shipping < payment && payment < close,
+        "both groups render inside the wrapper in container order: {page}"
+    );
+
+    assert!(
+        !svelte.join("src/routes/shipping/+page.svelte").exists(),
+        "nested containers must not be generated as standalone pages"
+    );
+    assert!(
+        !svelte.join("src/routes/payment/+page.svelte").exists(),
+        "nested containers must not be generated as standalone pages"
+    );
+}
+
+#[tokio::test]
+async fn details_fallback_reads_fields_through_the_item_payload() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), SPECLESS_IFML).await;
+    let details = read(&svelte, "src/routes/customerdetail/+page.svelte");
+    assert!(
+        details.contains("<dd>{data.item.name}</dd>"),
+        "details values must read the envelope-unwrapped item payload: {details}"
+    );
+    assert!(details.contains("<dd>{data.item.email}</dd>"), "{details}");
+}
+
+#[tokio::test]
+async fn create_mode_submit_posts_to_collection_and_edit_puts_to_item() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), EDIT_SAVE_IFML).await;
+    let page = read(&svelte, "src/routes/customeredit/+page.svelte");
+    assert!(
+        page.contains("method: 'POST'"),
+        "opening the id-param form view without ?id (create mode) must POST the \
+         collection URL: {page}"
+    );
+    assert!(
+        page.contains("\"/api/v1/sales/customer\"") || page.contains("`/api/v1/sales/customer`"),
+        "create mode must target the collection URL literal (no trailing empty \
+         item id): {page}"
+    );
+    assert!(
+        page.contains("method: 'PUT'"),
+        "edit mode (?id present) must keep the item PUT: {page}"
+    );
+}
+
+#[tokio::test]
+async fn create_view_submit_targets_the_collection_url_literal() {
+    let dir = tempfile::tempdir().unwrap();
+    let ifml = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerForm" {
+    label "New Customer";
+
+    component "editor" {
+        type: form;
+        data: Customer;
+
+        field name -> input text { required: true; }
+
+        on save -> navigate("CustomerForm");
+    }
+}
+"#;
+    let svelte = generate_svelte(dir.path(), ifml).await;
+    let page = read(&svelte, "src/routes/customerform/+page.svelte");
+    assert!(page.contains("method: 'POST'"), "{page}");
+    assert!(!page.contains("method: 'PUT'"), "{page}");
+    assert!(
+        page.contains("\"/api/v1/sales/customer\"") || page.contains("`/api/v1/sales/customer`"),
+        "create submit must target the collection URL literal: {page}"
+    );
+    assert!(
+        !page.contains("${viewParams"),
+        "a view without id params must not interpolate viewParams into the \
+         submit URL: {page}"
+    );
+}
+
 const ROLES_IFML: &str = r#"
 domain "sales" {
     schema "sales";
@@ -1292,8 +1529,10 @@ testids = { root = "side-nav" }
         "{layout}"
     );
     assert!(layout.contains("<Nav testid=\"side-nav\">"), "{layout}");
+    // Issue #200: bindings rooted in event params (row) are out of layout
+    // scope — the nav link is a plain route link instead of a dead reference.
     assert!(
-        layout.contains("<a href={`/customerdetail?customerId=${row.id}`}>Customer Detail</a>"),
+        layout.contains("<a href={\"/customerdetail\"}>Customer Detail</a>"),
         "{layout}"
     );
     assert!(layout.contains("</Nav>"), "{layout}");
@@ -1315,6 +1554,98 @@ async fn no_shell_mapping_emits_no_layout() {
         !svelte.join("src/routes/+layout.svelte").exists(),
         "no shell mapping must mean no layout emission"
     );
+}
+
+/// A built-in design-system pack can ship template overrides: selecting
+/// `shadcn-svelte` merges its templates into the registry after the built-ins
+/// (pack template > built-in), and the overridden layout renders instead of
+/// the built-in one.
+#[tokio::test]
+async fn design_system_pack_templates_override_builtin_templates() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte_with_pack(
+        dir.path(),
+        SHELL_IFML,
+        domains_toml_without_workflow(),
+        None,
+        Some("shadcn-svelte"),
+        &[],
+    )
+    .await;
+    let layout = read(&svelte, "src/routes/+layout.svelte");
+
+    assert!(
+        layout.contains("data-slot=\"navigation-menu\""),
+        "pack template override must apply: {layout}"
+    );
+    assert!(
+        layout
+            .contains("import NavigationMenu from '$lib/components/ui/navigation-menu/navigation-menu.svelte';"),
+        "pack component mappings still resolve: {layout}"
+    );
+}
+
+/// Precedence: project `--template-dir` overrides shadow pack templates,
+/// which shadow built-ins. The project layout wins over the pack's.
+#[tokio::test]
+async fn project_template_dir_beats_pack_templates() {
+    let dir = tempfile::tempdir().unwrap();
+    let override_dir = dir.path().join("tpl-overrides");
+    std::fs::create_dir_all(override_dir.join("ifml/svelte")).unwrap();
+    std::fs::write(
+        override_dir.join("ifml/svelte/layout.tera"),
+        "<!-- PROJECT OVERRIDE -->\n{{ shell.import.export_name }}",
+    )
+    .unwrap();
+
+    let svelte = generate_svelte_with_pack(
+        dir.path(),
+        SHELL_IFML,
+        domains_toml_without_workflow(),
+        None,
+        Some("shadcn-svelte"),
+        &[override_dir],
+    )
+    .await;
+    let layout = read(&svelte, "src/routes/+layout.svelte");
+
+    assert!(layout.contains("<!-- PROJECT OVERRIDE -->"), "{layout}");
+    assert!(
+        !layout.contains("data-slot="),
+        "pack template must not leak past the project override: {layout}"
+    );
+}
+
+/// No pack selected → no pack template content in any output (pack templates
+/// must not load without the flag).
+#[tokio::test]
+async fn without_design_system_no_pack_template_content_is_emitted() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte_with_pack(
+        dir.path(),
+        SHELL_IFML,
+        domains_toml_without_workflow(),
+        None,
+        None,
+        &[],
+    )
+    .await;
+    assert!(
+        !svelte.join("src/routes/+layout.svelte").exists(),
+        "pack-less runs keep builtin emission behavior"
+    );
+    for entry in walkdir::WalkDir::new(&svelte)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        let content = std::fs::read_to_string(entry.path()).unwrap_or_default();
+        assert!(
+            !content.contains("data-slot=\"navigation-menu\""),
+            "pack template content leaked into pack-less run: {}",
+            entry.path().display()
+        );
+    }
 }
 
 const WORKFLOW_IFML: &str = r#"
@@ -1414,4 +1745,196 @@ async fn no_workflow_config_renders_no_badges() {
             "no-workflow runs must stay badge-free: {route}: {page}"
         );
     }
+}
+
+// ── Transition buttons (issue #198 workflow UI v2, RED) ─────────────
+
+fn domains_toml_with_transitions() -> &'static str {
+    r#"
+[defaults]
+api_version = "v1"
+
+[domains.sales]
+label = "Sales"
+schema_dir = "sales"
+postgres_schema = "sales"
+entities = ["CustomerType"]
+
+[domains.sales.entity_config.CustomerType.workflow]
+status_field = "status"
+initial_state = "draft"
+states = ["draft", "submitted", "approved", "rejected"]
+terminal_states = ["approved", "rejected"]
+generate_action_endpoints = true
+
+[domains.sales.entity_config.CustomerType.workflow.transitions]
+draft = ["submitted"]
+submitted = ["approved", "rejected"]
+"#
+}
+
+/// Details/form components bound to a workflow entity WITH transitions must
+/// render one transition button per valid (from → to) edge: humanized target
+/// label, `{component}-transition-{target}` testid, `data-transition-from` /
+/// `data-transition-to` hooks, a client-side disabled binding on the
+/// current state, and a handler POSTing `{ target_state }` to the generated
+/// transition endpoint before refreshing the load data.
+#[tokio::test]
+async fn transition_buttons_render_with_state_gating() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte_with_domains(
+        dir.path(),
+        WORKFLOW_IFML,
+        domains_toml_with_transitions(),
+        None,
+    )
+    .await;
+
+    let details = read(&svelte, "src/routes/customerdetail/+page.svelte");
+    assert!(
+        details.contains("data-testid=\"info-transition-submitted\""),
+        "details pages render one button per valid target state: {details}"
+    );
+    assert!(
+        details.contains("data-transition-from=\"draft\"")
+            && details.contains("data-transition-to=\"submitted\""),
+        "buttons expose from/to states for e2e hooks: {details}"
+    );
+    assert!(
+        details.contains(">Submitted</button>"),
+        "buttons are labeled by the humanized target state: {details}"
+    );
+    assert!(
+        details
+            .contains("disabled={(data.item?.workflow_state?.current_state"),
+            "the button is disabled client-side unless the current state matches the from-state: {details}"
+    );
+    assert!(
+        details.contains("async function transition_info("),
+        "clicking invokes a per-component transition handler: {details}"
+    );
+    assert!(
+        details.contains("'/actions/transition'") || details.contains("/actions/transition"),
+        "the handler posts to the generated transition endpoint: {details}"
+    );
+    assert!(
+        details.contains("target_state"),
+        "the payload carries the target state (workflow_action contract): {details}"
+    );
+    assert!(
+        details.contains("invalidateAll()"),
+        "the handler refreshes the load data so the badge shows the new state: {details}"
+    );
+
+    let form = read(&svelte, "src/routes/customeredit/+page.svelte");
+    assert!(
+        form.contains("data-testid=\"editor-transition-submitted\""),
+        "form components carry transition buttons too: {form}"
+    );
+
+    let list = read(&svelte, "src/routes/customerlist/+page.svelte");
+    assert!(
+        !list.contains("-transition-"),
+        "list rows carry state badges only, no transition buttons: {list}"
+    );
+}
+
+/// With schemas resolved, the transition handler must target the REAL
+/// generated endpoint (workflow_action.tera contract):
+/// `POST /api/{version}/{domain}/{path_segment}/{id}/actions/transition`.
+#[tokio::test]
+async fn transition_handler_posts_to_the_resolved_transition_endpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let schemas_dir = dir.path().join("schemas").join("sales").join("json");
+    std::fs::create_dir_all(&schemas_dir).unwrap();
+    std::fs::write(
+        schemas_dir.join("CustomerType.json"),
+        r#"{
+  "$id": "CustomerType.json",
+  "title": "CustomerType",
+  "description": "A customer",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "format": "uuid", "description": "Unique identifier" },
+    "name": { "type": "string", "description": "Customer name" },
+    "status": { "type": "string", "enum": ["draft", "submitted"], "description": "Workflow status" }
+  }
+}"#,
+    )
+    .unwrap();
+    let classifier_path = dir.path().join("classifier.toml");
+    std::fs::write(&classifier_path, "# minimal classifier config\n").unwrap();
+
+    let ifml_path = dir.path().join("app.ifml");
+    std::fs::write(&ifml_path, WORKFLOW_IFML).unwrap();
+    let output = dir.path().join("out");
+    let domains_toml_path = dir.path().join("domains.toml");
+    std::fs::write(&domains_toml_path, domains_toml_with_transitions()).unwrap();
+    let schemas = dir.path().join("schemas");
+
+    codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+        config_path: &domains_toml_path,
+        output: &output,
+        ifml_files: &[ifml_path],
+        schemas: Some(&schemas),
+        classifier: Some(&classifier_path),
+        frameworks: &["svelte".to_string()],
+        profiles_config_path: None,
+        template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+    })
+    .await
+    .unwrap();
+
+    let details = read(
+        &output.join("svelte"),
+        "src/routes/customerdetail/+page.svelte",
+    );
+    assert!(
+        details.contains("`/api/v1/sales/customer/${viewParams.customerId}/actions/transition`"),
+        "the transition handler must target the workflow_action route:\n{details}"
+    );
+}
+
+// ── Mapped-component badge parity (issue #198, RED) ─────────────────
+
+/// A mapped component must still surface the workflow badge: the badge
+/// renders as a sibling element next to the mapped invocation with the same
+/// `{component}-state` testid/attrs contract as fallback markup.
+#[tokio::test]
+async fn mapped_component_renders_workflow_badge_sibling() {
+    let dir = tempfile::tempdir().unwrap();
+    let mappings = dir.path().join("ifml-components.toml");
+    std::fs::write(
+        &mappings,
+        r#"
+[[component]]
+kind = "list"
+path = "$lib/components/DataTable.svelte"
+export = "DataTable"
+testids = { root = "data-table", row = "data-row" }
+"#,
+    )
+    .unwrap();
+    let svelte = generate_svelte_with_domains(
+        dir.path(),
+        WORKFLOW_IFML,
+        domains_toml_with_workflow(),
+        Some(&mappings),
+    )
+    .await;
+
+    let list = read(&svelte, "src/routes/customerlist/+page.svelte");
+    let invocation = list
+        .find("<DataTable")
+        .expect("mapped invocation must render");
+    assert!(
+        list[invocation..].contains("<span class=\"workflow-state\" data-testid=\"grid-state\""),
+        "the workflow badge renders as a sibling after the mapped invocation: {list}"
+    );
+    assert!(
+        list[invocation..].contains("data-workflow-state={item.status}"),
+        "the sibling badge keeps the same attrs contract as fallback markup: {list}"
+    );
 }

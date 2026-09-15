@@ -183,6 +183,15 @@ pub trait GraphQuerier: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Get the ViewContainer nodes nested inside a parent ViewContainer via
+    /// ContainsViewContainer edges.
+    async fn get_ifml_container_children(
+        &self,
+        _parent: &str,
+    ) -> Result<Vec<ViewContainerNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
     /// Get all Event nodes for a given parent element.
     async fn get_ifml_events(&self, _parent_id: &str) -> Result<Vec<EventNode>, GraphError> {
         Ok(Vec::new())

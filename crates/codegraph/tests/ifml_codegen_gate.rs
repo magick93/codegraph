@@ -2,8 +2,9 @@
 //!
 //! Full-stack harness: runs the complete pipeline (schemas + classifier +
 //! domains.toml + profiles.toml + IFML DSL) into a fixed gate root
-//! (`target/ifml-gate/`), writes the gate-provided SvelteKit skeleton the
-//! generator does not emit yet, then drives four validation stages:
+//! (`target/ifml-gate/`), writes the gate-owned extras (vite `/api` proxy,
+//! playwright config, ui stubs, #205 sweep spec), then drives four
+//! validation stages:
 //!
 //! - T0 `gate_full_stack_boots`: migrations on a fresh Postgres DB, build and
 //!   boot the generated axum server, wait for `/health`.
@@ -24,10 +25,10 @@
 //! scaffolding writers) live in `tests/test_framework/`; this file keeps the
 //! gate's fixture knowledge plus the test functions.
 //!
-//! The skeleton (package.json, vite.config.ts, tsconfig, app shell, ui
-//! component stubs, playwright config) is gate-provided scaffolding until the
-//! generator emits a SvelteKit skeleton (G1, Wave B). Generator-emitted files
-//! are never overwritten.
+//! The SvelteKit skeleton (package.json, tsconfig, app shell, …) is expected
+//! from the GENERATOR (G1, Wave B); the gate no longer writes it. The vite
+//! proxy, playwright config, ui stubs, and sweep spec stay gate-owned.
+//! Generator-emitted files are never overwritten.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -294,7 +295,18 @@ async fn run_pipeline() -> Result<(), String> {
         ..Default::default()
     };
 
+    // Built-in shadcn-svelte pack, shadowed by the fixture's mapping
+    // overrides (ifml-components.toml) so gate assertions can pin specific
+    // wrapper components (issue #200: the Tabs presentation-container).
     let pack = codegraph_config::built_in_pack("shadcn-svelte").map_err(|e| e.to_string())?;
+    let fixture_mappings_path = home.join("ifml-components.toml");
+    let pack = if fixture_mappings_path.exists() {
+        let project = codegraph_config::IfmlComponentMappings::load(&fixture_mappings_path)
+            .map_err(|e| e.to_string())?;
+        codegraph_config::IfmlComponentMappings::merge_with_pack(project, &pack)
+    } else {
+        pack
+    };
     let hooks_tmp = tempfile::tempdir().map_err(|e| e.to_string())?;
 
     let report =
@@ -570,6 +582,9 @@ fn assert_categories(titles: &[String]) {
     let validation = has(&|t| t == "form validation blocks empty submit");
     let round_trip = has(&|t| t == "form round trip persists changes");
     let workflow = has(&|t| t.starts_with("shows the initial workflow state for "));
+    let workflow_transition = has(&|t| t.starts_with("transitions ") && t.contains(" to "));
+    let create_via_ui = has(&|t| t.starts_with("create round trip persists a new refund request"));
+    let details_values = has(&|t| t.starts_with("details shows the persisted values"));
 
     let missing: Vec<&str> = [
         ("render", render),
@@ -579,6 +594,9 @@ fn assert_categories(titles: &[String]) {
         ("validation", validation),
         ("round trip", round_trip),
         ("workflow", workflow),
+        ("workflow transition", workflow_transition),
+        ("create via ui", create_via_ui),
+        ("details values", details_values),
     ]
     .iter()
     .filter(|(_, present)| !present)
@@ -598,6 +616,62 @@ fn assert_categories(titles: &[String]) {
         assert!(
             help_modal.contains("<Dialog"),
             "HelpModal page should invoke the mapped Dialog component:\n{help_modal}"
+        );
+    }
+
+    // Issue #200: sibling xor containers render ONE labeled wrapper inside
+    // the landmark view's page and never as standalone routes. Structural
+    // here; visibility is asserted by the gate-owned sweep spec.
+    assert!(
+        !svelte_dir()
+            .join("src/routes/shipping/+page.svelte")
+            .exists(),
+        "nested containers must not be generated as standalone routes"
+    );
+    assert!(
+        !svelte_dir()
+            .join("src/routes/payment/+page.svelte")
+            .exists(),
+        "nested containers must not be generated as standalone routes"
+    );
+
+    // Issue #198 workflow UI v2: the details view of the workflow-bound
+    // entity must render transition buttons (per valid from → to edge) with
+    // the e2e-hook contract. The fixture's first transition is
+    // draft → submitted; the fixture workflow config already sets
+    // generate_action_endpoints = true so the POST target exists.
+    let detail_path = svelte_dir().join("src/routes/refundrequestdetail/+page.svelte");
+    if detail_path.exists() {
+        let detail = fs::read_to_string(&detail_path).unwrap_or_default();
+        assert!(
+            detail.contains("data-testid=\"info-transition-submitted\""),
+            "workflow-bound details page should render the draft→submitted transition button:\n{detail}"
+        );
+        assert!(
+            detail.contains("data-transition-from=\"draft\"")
+                && detail.contains("data-transition-to=\"submitted\""),
+            "transition buttons carry data-transition-from/to hooks:\n{detail}"
+        );
+        assert!(
+            detail.contains("/actions/transition"),
+            "the transition handler must call the generated workflow_action endpoint:\n{detail}"
+        );
+    }
+    let home_path = svelte_dir().join("src/routes/home/+page.svelte");
+    if home_path.exists() {
+        let home = fs::read_to_string(&home_path).unwrap_or_default();
+        assert!(
+            home.contains("data-testid=\"shipping-label\""),
+            "Home page should carry the Shipping container label heading:\n{home}"
+        );
+        assert!(
+            home.contains("data-testid=\"payment-label\""),
+            "Home page should carry the Payment container label heading:\n{home}"
+        );
+        assert_eq!(
+            home.matches("<Tabs testid=\"tabs\">").count(),
+            1,
+            "sibling xor containers must share exactly one mapped wrapper:\n{home}"
         );
     }
 }

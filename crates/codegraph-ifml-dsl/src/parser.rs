@@ -725,12 +725,19 @@ fn parse_event_handler(pair: Pair<Rule>) -> EventHandler {
         .unwrap_or(EventType::Custom("unknown".to_string()));
 
     let mut params = Vec::new();
+    let mut requires: Vec<String> = Vec::new();
     let mut condition = None;
     let mut action = EventAction::Stay;
 
     for child in inner {
         match child.as_rule() {
             Rule::event_param => params = parse_event_param(child),
+            Rule::event_requires => {
+                requires = child
+                    .into_inner()
+                    .map(|cap| cap.as_str().to_string())
+                    .collect();
+            }
             Rule::event_condition => {
                 condition = child.into_inner().next().map(parse_expression);
             }
@@ -741,6 +748,7 @@ fn parse_event_handler(pair: Pair<Rule>) -> EventHandler {
     EventHandler {
         event_type,
         params,
+        requires,
         condition,
         action,
     }
@@ -1163,7 +1171,9 @@ fn parse_view_body_content(pair: Pair<Rule>) -> ViewBodyParts {
 
 type ContainerBodyParts = (
     Vec<ParameterDecl>,
+    Option<String>,
     Vec<PropertyAssignment>,
+    Vec<ContainerDeclaration>,
     Vec<ComponentDeclaration>,
     Vec<EventHandler>,
     Vec<ModuleUse>,
@@ -1172,7 +1182,9 @@ type ContainerBodyParts = (
 
 fn parse_container_body_content(pair: Pair<Rule>) -> ContainerBodyParts {
     let mut params = Vec::new();
+    let mut label = None;
     let mut properties = Vec::new();
+    let mut containers = Vec::new();
     let mut components = Vec::new();
     let mut events = Vec::new();
     let mut module_uses = Vec::new();
@@ -1185,7 +1197,13 @@ fn parse_container_body_content(pair: Pair<Rule>) -> ContainerBodyParts {
                     params = parse_parameter_block(block);
                 }
             }
+            Rule::label_declaration => {
+                if let Some(s) = child.into_inner().next() {
+                    label = Some(parse_string(&s));
+                }
+            }
             Rule::property_assignment => properties.push(parse_property_assignment(child)),
+            Rule::container_declaration => containers.push(parse_container_declaration(child)),
             Rule::component_declaration => components.push(parse_component_declaration(child)),
             Rule::event_handler => events.push(parse_event_handler(child)),
             Rule::module_use_statement => module_uses.push(parse_module_use_statement(child)),
@@ -1198,7 +1216,9 @@ fn parse_container_body_content(pair: Pair<Rule>) -> ContainerBodyParts {
 
     (
         params,
+        label,
         properties,
+        containers,
         components,
         events,
         module_uses,
@@ -1214,9 +1234,12 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
     } else {
         return ContainerDeclaration {
             name,
+            label: None,
             is_default: false,
+            is_xor: false,
             params: Vec::new(),
             properties: Vec::new(),
+            containers: Vec::new(),
             components: Vec::new(),
             events: Vec::new(),
             module_uses: Vec::new(),
@@ -1225,28 +1248,22 @@ fn parse_container_declaration(pair: Pair<Rule>) -> ContainerDeclaration {
         };
     };
 
-    let (params, properties, components, events, module_uses, condition) =
+    let (params, label, properties, containers, components, events, module_uses, condition) =
         parse_container_body_content(body);
 
-    let is_default = properties
-        .iter()
-        .find(|p| p.key == "default")
-        .and_then(|p| {
-            if let ValueExpression::Bool(val) = p.value {
-                Some(val)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(false);
+    let is_default = extract_bool_property(&properties, "default");
+    let is_xor = extract_bool_property(&properties, "xor");
 
     let position = extract_position_property(&properties);
 
     ContainerDeclaration {
         name,
+        label,
         is_default,
+        is_xor,
         params,
         properties,
+        containers,
         components,
         events,
         module_uses,
@@ -2857,6 +2874,60 @@ view "Wizard" {
     }
 
     #[test]
+    fn test_container_label_xor_and_nesting() {
+        let input = r#"
+view "Checkout" {
+    container "Shipping" {
+        label "Shipping";
+        xor: true;
+
+        container "Address" {
+            label "Address";
+            default: true;
+
+            component "form" {
+                type: form;
+                data: Customer;
+            }
+        }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let shipping = &model.views[0].containers[0];
+        assert_eq!(shipping.label.as_deref(), Some("Shipping"));
+        assert!(shipping.is_xor);
+        assert!(!shipping.is_default);
+        assert_eq!(shipping.containers.len(), 1);
+        let address = &shipping.containers[0];
+        assert_eq!(address.name, "Address");
+        assert_eq!(address.label.as_deref(), Some("Address"));
+        assert!(address.is_default);
+        assert!(!address.is_xor);
+        assert_eq!(address.components.len(), 1);
+    }
+
+    #[test]
+    fn test_container_without_label_defaults() {
+        let input = r#"
+view "V" {
+    container "Plain" {
+        component "grid" {
+            type: list;
+            data: Customer;
+        }
+    }
+}
+"#;
+        let model = parse_ifml(input).unwrap();
+        let container = &model.views[0].containers[0];
+        assert_eq!(container.label, None);
+        assert!(!container.is_xor);
+        assert!(!container.is_default);
+        assert!(container.containers.is_empty());
+    }
+
+    #[test]
     fn test_component_condition_statement() {
         let input = r#"
 view "Dashboard" {
@@ -3717,6 +3788,102 @@ view "RefundQueue" {
         assert_eq!(
             round_tripped.views[0].requires,
             vec!["RaiseRefund".to_string()]
+        );
+    }
+
+    // ── Event-level capability requirements (issue #208 slice) ──────
+    //
+    // Pinned syntax (prefix form): the `requires:` clause sits between the
+    // event param and the `if` condition / `->` action, mirroring the
+    // view-level declaration order where `requires:` precedes the guarded
+    // body:
+    //
+    //     on select(row) requires: [RaiseRefund] -> navigate("Review");
+    //     on save requires: [A, B] if row.ready == true -> stay;
+    //
+    // The extracted capabilities surface as `EventHandler.requires`
+    // (serde default empty). These tests read the field through serde so the
+    // assertions compile before the field exists (RED: the parse itself
+    // fails until the grammar learns the clause).
+
+    fn event_requires_json(source: &str) -> serde_json::Value {
+        let model = parse_ifml(source)
+            .unwrap_or_else(|e| panic!("event-level requires should parse: {e}\nsource:{source}"));
+        let events = &model.views[0].components[0].events;
+        assert!(!events.is_empty(), "component must carry events");
+        serde_json::to_value(&events[0]).expect("serialize event handler")
+    }
+
+    #[test]
+    fn test_event_requires_prefix_form_parses() {
+        let json = event_requires_json(
+            r#"
+view "Refunds" {
+    component "grid" {
+        type: list;
+        data: Refund;
+
+        on select(row) requires: [RaiseRefund] -> navigate("Review", { id: row.id });
+    }
+}
+"#,
+        );
+        assert_eq!(
+            json["requires"],
+            serde_json::json!(["RaiseRefund"]),
+            "the requires clause must extract into EventHandler.requires: {json}"
+        );
+        assert_eq!(json["event_type"], serde_json::json!("Select"));
+        assert_eq!(
+            json["action"]["Navigate"]["target"],
+            serde_json::json!("Review"),
+            "the action must survive the requires clause: {json}"
+        );
+    }
+
+    #[test]
+    fn test_event_requires_coexists_with_condition_and_multiple_caps() {
+        let json = event_requires_json(
+            r#"
+view "Refunds" {
+    component "editor" {
+        type: form;
+        data: Refund;
+
+        on save requires: [RaiseRefund, ApproveRefund] if row.ready == true -> stay;
+    }
+}
+"#,
+        );
+        assert_eq!(
+            json["requires"],
+            serde_json::json!(["RaiseRefund", "ApproveRefund"]),
+            "multiple capabilities extract in declaration order: {json}"
+        );
+        assert!(
+            json["condition"].is_object(),
+            "the if-condition must stay in `condition`, not leak into requires: {json}"
+        );
+    }
+
+    #[test]
+    fn test_event_without_requires_defaults_to_empty_list() {
+        let json = event_requires_json(
+            r#"
+view "Refunds" {
+    component "grid" {
+        type: list;
+        data: Refund;
+
+        on click -> stay;
+    }
+}
+"#,
+        );
+        assert_eq!(
+            json["requires"],
+            serde_json::json!([]),
+            "events without requires carry an empty list (serde default): {json}"
         );
     }
 }

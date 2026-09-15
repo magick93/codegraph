@@ -937,7 +937,12 @@ impl GraphIngestor for GrafeoEngine {
         };
 
         let props_str = build_edge_props_string(props);
-        let gql = format!("{match_clause} INSERT (a)-[:{label}{props_str}]->(b)");
+        let write = if matches!(edge_type, EdgeType::HasParameter) {
+            "MERGE"
+        } else {
+            "INSERT"
+        };
+        let gql = format!("{match_clause} {write} (a)-[:{label}{props_str}]->(b)");
         session
             .execute(&gql)
             .map_err(|e| GraphError::Ingest(format!("ingest_edge {label} failed: {e}")))?;
@@ -960,11 +965,10 @@ impl GraphIngestor for GrafeoEngine {
             .as_ref()
             .map(|r| serde_json::to_string(r).unwrap_or_default());
         let gql = format!(
-            "INSERT (:ViewContainer {{ \
-                name: '{}', label: {}, is_xor: {}, is_default: {}, \
-                is_landmark: {}, is_modal: {}, conditional_expression: {}, domain: {}, \
-                module_uses: {}, roles: {}, requires: {} \
-            }})",
+            "MERGE (vc:ViewContainer {{name: '{}'}}) \
+             SET vc.label = {}, vc.is_xor = {}, vc.is_default = {}, \
+                 vc.is_landmark = {}, vc.is_modal = {}, vc.conditional_expression = {}, \
+                 vc.domain = {}, vc.module_uses = {}, vc.roles = {}, vc.requires = {}",
             escape_gql(&node.name),
             opt_str(&node.label),
             node.is_xor,
@@ -1020,14 +1024,20 @@ impl GraphIngestor for GrafeoEngine {
             .params
             .as_ref()
             .map(|p| serde_json::to_string(p).unwrap_or_default());
+        let requires_json = if node.requires.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&node.requires).unwrap_or_default())
+        };
         let gql = format!(
             "INSERT (:Event {{ \
-                name: '{}', event_type: '{}', params: {}, conditional_expression: {}, domain: {} \
+                name: '{}', event_type: '{}', params: {}, conditional_expression: {}, requires: {}, domain: {} \
             }})",
             escape_gql(&node.name),
             escape_gql(&node.event_type),
             opt_str(&params_json),
             opt_str(&node.conditional_expression),
+            opt_str(&requires_json),
             opt_str(&node.domain),
         );
         session
@@ -1056,15 +1066,34 @@ impl GraphIngestor for GrafeoEngine {
     ) -> Result<String, GraphError> {
         let session = self.db().session();
         let id = format!("param:{}", node.name);
-        let gql = format!(
-            "INSERT (:ParameterDefinition {{ \
-                name: '{}', direction: '{}', type_ref: '{}', domain: {} \
-            }})",
-            escape_gql(&node.name),
-            escape_gql(&node.direction),
-            escape_gql(&node.type_ref),
-            opt_str(&node.domain),
-        );
+        let exists = session
+            .execute(&format!(
+                "MATCH (p:ParameterDefinition {{name: '{}'}}) RETURN p.name LIMIT 1",
+                escape_gql(&node.name)
+            ))
+            .map_err(|e| GraphError::Ingest(format!("ingest_parameter_definition failed: {e}")))?
+            .rows()
+            .is_empty();
+        let gql = if !exists {
+            format!(
+                "MATCH (p:ParameterDefinition {{name: '{}'}}) \
+                 SET p.direction = '{}', p.type_ref = '{}', p.domain = {}",
+                escape_gql(&node.name),
+                escape_gql(&node.direction),
+                escape_gql(&node.type_ref),
+                opt_str(&node.domain),
+            )
+        } else {
+            format!(
+                "INSERT (:ParameterDefinition {{ \
+                    name: '{}', direction: '{}', type_ref: '{}', domain: {} \
+                }})",
+                escape_gql(&node.name),
+                escape_gql(&node.direction),
+                escape_gql(&node.type_ref),
+                opt_str(&node.domain),
+            )
+        };
         session
             .execute(&gql)
             .map_err(|e| GraphError::Ingest(format!("ingest_parameter_definition failed: {e}")))?;
@@ -1550,6 +1579,10 @@ impl GraphIngestor for GrafeoEngine {
             .map_err(|e| GraphError::Ingest(e.to_string()))?;
         let never_both_json = serde_json::to_string(&model.policy.never_both)
             .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let purposes_json = serde_json::to_string(&model.policy.purposes)
+            .map_err(|e| GraphError::Ingest(e.to_string()))?;
+        let delegations_json = serde_json::to_string(&model.policy.delegations)
+            .map_err(|e| GraphError::Ingest(e.to_string()))?;
         session
             .execute("MERGE (:ActorPolicy {name: 'actor_policy'})")
             .map_err(|e| GraphError::Ingest(format!("ingest_actor_policy merge failed: {e}")))?;
@@ -1566,6 +1599,20 @@ impl GraphIngestor for GrafeoEngine {
         );
         session.execute(&set_gql).map_err(|e| {
             GraphError::Ingest(format!("ingest_actor_policy never_both failed: {e}"))
+        })?;
+        let set_gql = format!(
+            "MATCH (p:ActorPolicy {{name: 'actor_policy'}}) SET p.purposes = '{}'",
+            escape_gql(&purposes_json),
+        );
+        session
+            .execute(&set_gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_actor_policy purposes failed: {e}")))?;
+        let set_gql = format!(
+            "MATCH (p:ActorPolicy {{name: 'actor_policy'}}) SET p.delegations = '{}'",
+            escape_gql(&delegations_json),
+        );
+        session.execute(&set_gql).map_err(|e| {
+            GraphError::Ingest(format!("ingest_actor_policy delegations failed: {e}"))
         })?;
 
         Ok(())

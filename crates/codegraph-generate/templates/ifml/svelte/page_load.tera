@@ -32,7 +32,7 @@ export const load: PageLoad = async ({ params, url, fetch }) => {
 	}
 {%- endif %}
 {%- endif %}
-	const result: Record<string, unknown> = {};
+	const result: Record<string, {% if has_workflow %}any{% else %}unknown{% endif %}> = {};
 {%- if view_params %}
 	const viewParams: Record<string, string> = {};
 {%- for p in view_params %}

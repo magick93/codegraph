@@ -943,6 +943,20 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
             never_both: vec![NeverBothGroup {
                 capabilities: vec!["approve_expense".to_string()],
             }],
+            purposes: vec!["ExpenseTriage".to_string()],
+            delegations: vec![DelegationRecord {
+                name: "AutoApprove".to_string(),
+                from_actor: "Manager".to_string(),
+                to_actor: "Auditor".to_string(),
+                purpose: Some("ExpenseTriage".to_string()),
+                entries: vec![GrantEdge {
+                    actor: "Manager".to_string(),
+                    capability: "view_report".to_string(),
+                    effect: "permit".to_string(),
+                    when: Some("report.draft == true".to_string()),
+                    obligations: vec!["log_access".to_string()],
+                }],
+            }],
         },
     };
     engine.ingest_actor_policy(&model).await.unwrap();
@@ -984,6 +998,25 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
         policy.never_both[0].capabilities,
         vec!["approve_expense".to_string()]
     );
+    assert_eq!(policy.purposes, vec!["ExpenseTriage".to_string()]);
+    assert_eq!(policy.delegations.len(), 1);
+    let delegation = &policy.delegations[0];
+    assert_eq!(delegation.name, "AutoApprove");
+    assert_eq!(delegation.from_actor, "Manager");
+    assert_eq!(delegation.to_actor, "Auditor");
+    assert_eq!(delegation.purpose.as_deref(), Some("ExpenseTriage"));
+    assert_eq!(delegation.entries.len(), 1);
+    assert_eq!(delegation.entries[0].actor, "Manager");
+    assert_eq!(delegation.entries[0].capability, "view_report");
+    assert_eq!(delegation.entries[0].effect, "permit");
+    assert_eq!(
+        delegation.entries[0].when.as_deref(),
+        Some("report.draft == true")
+    );
+    assert_eq!(
+        delegation.entries[0].obligations,
+        vec!["log_access".to_string()]
+    );
 
     // Admin: own permits only, when/obligations preserved.
     let admin_permits = engine.effective_permits("Admin").await.unwrap();
@@ -1011,4 +1044,66 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
     // Auditor: no grants at all.
     let auditor_permits = engine.effective_permits("Auditor").await.unwrap();
     assert!(auditor_permits.is_empty());
+}
+
+// --- IFML ingest idempotence ---
+
+/// Re-ingesting a view container with a parameter (as happens when the same
+/// .ifml is ingested twice into one graph) must not duplicate the
+/// ParameterDefinition node or the HasParameter edge. Wave B note: the
+/// generator-side defensive dedupe in
+/// `crates/codegraph-generate/src/ifml/querier.rs` (get_view_containers,
+/// ~line 305) can be dropped once this holds.
+#[tokio::test]
+async fn test_parameter_ingest_is_idempotent() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    let container = ViewContainerNode {
+        name: "RefundRequestForm".to_string(),
+        label: None,
+        is_xor: false,
+        is_default: false,
+        is_landmark: false,
+        is_modal: false,
+        conditional_expression: None,
+        domain: Some("refunds".to_string()),
+        module_uses: None,
+        roles: None,
+        requires: None,
+    };
+    let param = ParameterDefinitionNode {
+        name: "id".to_string(),
+        direction: "in".to_string(),
+        type_ref: "Uuid".to_string(),
+        domain: Some("refunds".to_string()),
+    };
+
+    for _ in 0..2 {
+        engine.ingest_view_container(&container).await.unwrap();
+        engine.ingest_parameter_definition(&param).await.unwrap();
+        engine
+            .ingest_edge(
+                "vc:RefundRequestForm",
+                "param:id",
+                EdgeType::HasParameter,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+
+    let all = engine.get_ifml_parameters().await.unwrap();
+    assert_eq!(
+        all.len(),
+        1,
+        "duplicate ParameterDefinition nodes must collapse: {all:?}"
+    );
+    let for_view = engine
+        .get_parameters_for_view("RefundRequestForm")
+        .await
+        .unwrap();
+    assert_eq!(
+        for_view.len(),
+        1,
+        "duplicate HasParameter edges must collapse: {for_view:?}"
+    );
 }

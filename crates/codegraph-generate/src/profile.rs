@@ -432,7 +432,7 @@ impl BuildPlan {
     ///
     /// Used by the `ifml_generate` driver when no profiles.toml is provided
     /// (or when the provided profile does not declare per-framework IFML
-    /// generators). Each framework gets `ifml_route_{fw}`,
+    /// generators). Each framework gets `ifml_skeleton_{fw}`, `ifml_route_{fw}`,
     /// `ifml_navigation_{fw}`, and `ifml_e2e_test_{fw}` in the global
     /// generator list, the `ifml_backend` + `framework_{fw}` features, and a
     /// default `IfmlFrameworkTarget`. Unknown framework names are rejected
@@ -452,6 +452,7 @@ impl BuildPlan {
                 )));
             }
             features.insert(format!("framework_{fw}"), toml::Value::Boolean(true));
+            global_generators.push(format!("ifml_skeleton_{fw}"));
             global_generators.push(route_name);
             global_generators.push(format!("ifml_navigation_{fw}"));
             global_generators.push(format!("ifml_e2e_test_{fw}"));
@@ -485,8 +486,9 @@ impl BuildPlan {
     ///
     /// When `ifml_frameworks` is non-empty, each `ifml_route` generator is
     /// replaced with `ifml_route_{framework}` for every configured framework,
-    /// and similarly for `ifml_navigation`. If no frameworks are configured,
-    /// sections are returned unchanged (backward compatible).
+    /// and similarly for `ifml_skeleton`, `ifml_navigation`, and
+    /// `ifml_e2e_test`. If no frameworks are configured, sections are
+    /// returned unchanged (backward compatible).
     fn expand_ifml_sections(
         sections: &HashMap<String, ResolvedSection>,
         ifml_frameworks: &[IfmlFrameworkTarget],
@@ -502,10 +504,12 @@ impl BuildPlan {
                     .generators
                     .iter()
                     .flat_map(|gen| match gen.as_str() {
-                        "ifml_route" | "ifml_navigation" | "ifml_e2e_test" => ifml_frameworks
-                            .iter()
-                            .map(|fw| format!("{}_{}", gen, fw.name))
-                            .collect::<Vec<_>>(),
+                        "ifml_skeleton" | "ifml_route" | "ifml_navigation" | "ifml_e2e_test" => {
+                            ifml_frameworks
+                                .iter()
+                                .map(|fw| format!("{}_{}", gen, fw.name))
+                                .collect::<Vec<_>>()
+                        }
                         _ => vec![gen.clone()],
                     })
                     .collect();

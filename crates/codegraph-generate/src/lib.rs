@@ -1438,6 +1438,12 @@ fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn GlobalGene
     };
     for fw in &ifml_frameworks {
         let fw_output = output_dir.join(fw);
+        if ctx.build_plan.is_none() || ctx.plan_has_global(&format!("ifml_skeleton_{}", fw)) {
+            global_gens.push(
+                Box::new(ifml::skeleton::IfmlSkeletonGenerator::new(&fw_output, fw))
+                    as Box<dyn GlobalGenerator>,
+            );
+        }
         if ctx.build_plan.is_none() || ctx.plan_has_global(&format!("ifml_route_{}", fw)) {
             global_gens.push(Box::new(
                 ifml::route_generator::IfmlRouteGenerator::new(&fw_output, fw)
@@ -1899,14 +1905,31 @@ async fn run_domain_phase(
 }
 
 /// Run global generators in parallel; any failure is fatal.
+///
+/// Generators flagged [`GlobalGenerator::sequential_first`] run (and write)
+/// before the parallel wave: later generators' if-absent checks consult their
+/// output (the IFML skeleton's package.json supersedes the e2e generator's
+/// minimal stub).
 async fn run_global_phase(
     ctx: &GeneratorContext<'_>,
     global_gens: &[Box<dyn GlobalGenerator>],
     order: &[GenerationEntry],
     report: &mut report::GenerationReport,
 ) -> Result<()> {
+    let (first, parallel): (Vec<_>, Vec<_>) =
+        global_gens.iter().partition(|gen| gen.sequential_first());
+    for gen in &first {
+        let files = gen
+            .generate(ctx.db(), ctx.config, order, ctx.tera, ctx.project)
+            .await?;
+        for file in &files {
+            write_output(file)?;
+        }
+        report.files.extend(files);
+    }
+
     let global_results: Vec<_> = futures::future::join_all(
-        global_gens
+        parallel
             .iter()
             .map(|gen| gen.generate(ctx.db(), ctx.config, order, ctx.tera, ctx.project)),
     )
@@ -2029,6 +2052,12 @@ pub async fn run_ifml_generators(
     for fw in &frameworks {
         let fw_output = output_dir.join(fw);
         clean_stale_ifml_routes(&fw_output, fw, &active_views);
+        if build_plan.is_none() || plan_has_global(&format!("ifml_skeleton_{fw}")) {
+            global_gens.push(
+                Box::new(ifml::skeleton::IfmlSkeletonGenerator::new(&fw_output, fw))
+                    as Box<dyn GlobalGenerator>,
+            );
+        }
         if build_plan.is_none() || plan_has_global(&format!("ifml_route_{fw}")) {
             global_gens.push(Box::new(
                 ifml::route_generator::IfmlRouteGenerator::new(&fw_output, fw)
@@ -2050,14 +2079,27 @@ pub async fn run_ifml_generators(
         }
     }
 
+    // Scaffolding generators (sequential_first) run and write before the
+    // parallel wave so later generators' if-absent checks (the e2e
+    // generator's package.json stub) resolve in their favor.
+    let (first, parallel): (Vec<_>, Vec<_>) =
+        global_gens.iter().partition(|gen| gen.sequential_first());
+    let mut report = report::GenerationReport::new();
+    for gen in &first {
+        let files = gen.generate(db, config, &[], tera, project).await?;
+        for file in &files {
+            write_output(file)?;
+        }
+        report.files.extend(files);
+    }
+
     let global_results: Vec<_> = futures::future::join_all(
-        global_gens
+        parallel
             .iter()
             .map(|gen| gen.generate(db, config, &[], tera, project)),
     )
     .await;
 
-    let mut report = report::GenerationReport::new();
     for result in global_results {
         let files = result?;
         for file in &files {

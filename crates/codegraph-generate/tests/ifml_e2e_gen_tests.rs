@@ -203,6 +203,8 @@ async fn ingest_policy(db: &MockEngine) {
         policy: ActorPolicyNode {
             blocks: vec!["core".to_string()],
             never_both: vec![],
+            purposes: vec![],
+            delegations: vec![],
         },
     })
     .await
@@ -247,6 +249,7 @@ async fn ingest_event(db: &MockEngine, parent: &str, name: &str, event_type: &st
         event_type: event_type.to_string(),
         params: None,
         conditional_expression: None,
+        requires: Vec::new(),
         domain: None,
     })
     .await

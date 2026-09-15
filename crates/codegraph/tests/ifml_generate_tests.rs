@@ -346,3 +346,63 @@ async fn ifml_generate_multiple_frameworks() {
     assert!(output.join("react/app/customer-list/page.tsx").exists());
     assert!(output.join("react/app/customer-detail/page.tsx").exists());
 }
+
+/// `ifml-generate` must emit a buildable SvelteKit skeleton: package.json
+/// with the SvelteKit toolchain, vite config proxying `/api`, svelte config,
+/// tsconfig, and the app shell. Existing skeleton files are never
+/// overwritten.
+#[tokio::test]
+async fn ifml_generate_emits_buildable_sveltekit_skeleton() {
+    let dir = tempfile::tempdir().unwrap();
+    write_domains_toml(dir.path());
+    let ifml_path = dir.path().join("app.ifml");
+    std::fs::write(&ifml_path, APP_IFML).unwrap();
+    let output = dir.path().join("out");
+    let domains_toml = dir.path().join("domains.toml");
+
+    let run = || async {
+        codegraph::driver::ifml_generate(make_args(
+            &domains_toml,
+            &output,
+            std::slice::from_ref(&ifml_path),
+            &frameworks(&["svelte"]),
+        ))
+        .await
+        .unwrap();
+    };
+    run().await;
+
+    let svelte = output.join("svelte");
+    for rel in [
+        "package.json",
+        "vite.config.ts",
+        "svelte.config.js",
+        "tsconfig.json",
+        "src/app.html",
+        "src/app.d.ts",
+    ] {
+        assert!(
+            svelte.join(rel).exists(),
+            "ifml-generate must emit the SvelteKit skeleton file {rel}"
+        );
+    }
+    let pkg = std::fs::read_to_string(svelte.join("package.json")).unwrap();
+    assert!(
+        pkg.contains("@sveltejs/kit"),
+        "package.json must carry the SvelteKit toolchain (build/dev/preview \
+         scripts + kit deps): {pkg}"
+    );
+    let vite = std::fs::read_to_string(svelte.join("vite.config.ts")).unwrap();
+    assert!(
+        vite.contains("/api"),
+        "vite.config.ts must proxy /api to the generated backend: {vite}"
+    );
+
+    std::fs::write(svelte.join("src/app.html"), "<!-- custom shell -->").unwrap();
+    run().await;
+    assert_eq!(
+        std::fs::read_to_string(svelte.join("src/app.html")).unwrap(),
+        "<!-- custom shell -->",
+        "existing skeleton files must never be overwritten"
+    );
+}

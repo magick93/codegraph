@@ -1,120 +1,26 @@
-//! Canonical schema-property → IFML control inference (issue #196).
+//! Schema-property → IFML control inference (issues #196, #201).
 //!
-//! One mapping decides which of the 14 IFML DSL input types a schema property
-//! renders as, plus the semantic slot role (`field` / `selection-field`,
-//! mirroring [`SemanticRole`]) and optional dropdown values. The scaffold
-//! consumes this today; the route generator's fallback form rendering is
-//! slated to consume the same mapping so control choice is domain-driven in
-//! one place.
-//!
-//! Heuristics are table-driven and ordered so that every decision the
-//! scaffold made before this module existed still resolves identically: new
-//! recognizers only fire where inference previously fell through to `text`
-//! (or on classification kinds the scaffold fixtures do not carry).
+//! Thin classifier-context wrapper over the shared pure core in
+//! [`codegraph_generate::ifml::control_core`]: `PropertyNode` signals are
+//! projected onto the core's `FieldSignals` (kind → `FieldKind`, bounds →
+//! `has_bounds`), and the core's ordered heuristics produce the decision.
+//! Dropdown value resolution and the entity-reference options note stay
+//! graph-side; the route generator consumes the same core through
+//! `control_for_field`, so input-type + role decisions cannot diverge.
 
-use codegraph_config::SemanticRole;
 use codegraph_core::types::PropertyNode;
+use codegraph_generate::ifml::control_core::infer_control as core_infer_control;
 use codegraph_type_contracts::RefClassificationKind;
 
-/// Upper bound on dropdown value lists emitted by inference.
-pub(crate) const MAX_CONTROL_VALUES: usize = 20;
-
-/// Note attached to entity-reference selections whose options cannot be
-/// resolved from the property alone (the options endpoint resolution is a
-/// follow-up).
-pub const NOTE_OPTIONS_ENDPOINT: &str =
-    "options endpoint for the referenced entity is not resolved yet";
-
-/// The 14 input types of the IFML DSL grammar, in keyword form. Mirrors
-/// `codegraph_ifml_dsl::InputFieldType` (static variants only; that enum's
-/// `Custom` catch-all is not inferred).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ControlInputType {
-    Text,
-    TextArea,
-    Password,
-    Email,
-    Number,
-    Date,
-    Time,
-    DateTime,
-    Dropdown,
-    Radio,
-    Checkbox,
-    Toggle,
-    File,
-    Hidden,
-}
-
-impl ControlInputType {
-    /// The DSL keyword for this input type, as accepted by the grammar and
-    /// rendered by the scaffold.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ControlInputType::Text => "text",
-            ControlInputType::TextArea => "textarea",
-            ControlInputType::Password => "password",
-            ControlInputType::Email => "email",
-            ControlInputType::Number => "number",
-            ControlInputType::Date => "date",
-            ControlInputType::Time => "time",
-            ControlInputType::DateTime => "datetime",
-            ControlInputType::Dropdown => "dropdown",
-            ControlInputType::Radio => "radio",
-            ControlInputType::Checkbox => "checkbox",
-            ControlInputType::Toggle => "toggle",
-            ControlInputType::File => "file",
-            ControlInputType::Hidden => "hidden",
-        }
-    }
-}
-
-/// The control a schema property should render as.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ControlInference {
-    /// DSL input type for `field <name> -> input <type>`.
-    pub input: ControlInputType,
-    /// Semantic slot role: [`SemanticRole::SelectionField`] for codelists,
-    /// inline enums, and entity references; [`SemanticRole::Field`] otherwise.
-    pub role: SemanticRole,
-    /// Dropdown values when they are trivially available on the property;
-    /// codelist resolution is caller-side (see [`ControlInference::with_values`]).
-    pub values: Vec<String>,
-    /// Whether the underlying schema property is required.
-    pub required: bool,
-    /// Follow-up note for consumers that surface unresolved resolution steps.
-    pub note: Option<&'static str>,
-}
-
-impl ControlInference {
-    /// Attach externally resolved values, capped at [`MAX_CONTROL_VALUES`].
-    pub fn with_values(mut self, values: Vec<String>) -> Self {
-        self.values = values.into_iter().take(MAX_CONTROL_VALUES).collect();
-        self
-    }
-
-    /// The DSL keyword for the inferred input type.
-    pub fn input_str(&self) -> &'static str {
-        self.input.as_str()
-    }
-}
+pub use codegraph_generate::ifml::control_core::MAX_CONTROL_VALUES;
+pub use codegraph_generate::ifml::control_core::{
+    control_for_field, ControlInference, ControlInputType, FieldKind, FieldSignals, HtmlInput,
+    NOTE_OPTIONS_ENDPOINT,
+};
 
 /// Infer the control for one schema property.
 pub fn infer_control(prop: &PropertyNode) -> ControlInference {
-    let kind = prop.effective_kind();
-    let (input, note) = infer_input_with_note(prop, kind.as_ref());
-    let role = if input == ControlInputType::Dropdown {
-        SemanticRole::SelectionField
-    } else {
-        SemanticRole::Field
-    };
-    ControlInference {
-        input,
-        role,
-        values: Vec::new(),
-        required: prop.is_required,
-        note,
-    }
+    core_infer_control(&signals_for(prop))
 }
 
 /// Infer just the DSL input-type keyword for one schema property.
@@ -132,80 +38,34 @@ pub fn is_codelist_kind(kind: Option<&RefClassificationKind>) -> bool {
     )
 }
 
-fn infer_input_with_note(
-    prop: &PropertyNode,
-    kind: Option<&RefClassificationKind>,
-) -> (ControlInputType, Option<&'static str>) {
-    if prop.is_array {
-        return (ControlInputType::TextArea, None);
+fn signals_for(prop: &PropertyNode) -> FieldSignals<'_> {
+    let kind = prop.effective_kind();
+    FieldSignals {
+        name: &prop.name,
+        rust_type: &prop.rust_field_type,
+        prop_type: Some(prop.prop_type.as_str()),
+        format: prop.format.as_deref(),
+        is_array: prop.is_array,
+        has_bounds: prop.minimum.is_some() || prop.maximum.is_some(),
+        kind: field_kind(kind.as_ref()),
+        is_required: prop.is_required,
     }
+}
+
+fn field_kind(kind: Option<&RefClassificationKind>) -> Option<FieldKind> {
     if is_codelist_kind(kind) {
-        return (ControlInputType::Dropdown, None);
+        Some(FieldKind::Codelist)
+    } else if kind == Some(&RefClassificationKind::EntityReference) {
+        Some(FieldKind::EntityRef)
+    } else {
+        None
     }
-    if kind == Some(&RefClassificationKind::EntityReference) {
-        return (ControlInputType::Dropdown, Some(NOTE_OPTIONS_ENDPOINT));
-    }
-    if prop.name.to_ascii_lowercase().contains("email") {
-        return (ControlInputType::Email, None);
-    }
-    if prop.name.to_ascii_lowercase().contains("password")
-        || prop.name.to_ascii_lowercase().contains("secret")
-    {
-        return (ControlInputType::Password, None);
-    }
-    match prop.prop_type.as_str() {
-        "boolean" => return (ControlInputType::Checkbox, None),
-        "integer" | "number" => return (ControlInputType::Number, None),
-        _ => {}
-    }
-    if prop.minimum.is_some() || prop.maximum.is_some() {
-        return (ControlInputType::Number, None);
-    }
-    if prop.rust_field_type.contains("Uuid") {
-        return (ControlInputType::Hidden, None);
-    }
-    if let Some(fmt) = prop.format.as_deref() {
-        if fmt.contains("date") || fmt.contains("time") {
-            return (ControlInputType::DateTime, None);
-        }
-    }
-    if prop.rust_field_type.contains("Date") || prop.rust_field_type.contains("Time") {
-        return (ControlInputType::DateTime, None);
-    }
-    recognize_fallthrough(prop)
 }
-
-/// Recognizers for plain string properties that carry a semantic name or
-/// format. They run last so they only claim what previously fell through to
-/// `text`.
-fn recognize_fallthrough(prop: &PropertyNode) -> (ControlInputType, Option<&'static str>) {
-    if let Some(fmt) = prop.format.as_deref() {
-        if fmt.contains("email") {
-            return (ControlInputType::Email, None);
-        }
-    }
-    let name = prop.name.to_ascii_lowercase();
-    if TEMPORAL_SUFFIXES.iter().any(|s| name.ends_with(s)) {
-        return (ControlInputType::DateTime, None);
-    }
-    if CONTACT_RECOGNIZERS.iter().any(|s| name.contains(s)) {
-        return (ControlInputType::Text, None);
-    }
-    (ControlInputType::Text, None)
-}
-
-/// Name suffixes that denote an instant/date in domain models
-/// (`created_at`, `due_date`, `window_from`, ...).
-const TEMPORAL_SUFFIXES: &[&str] = &["_at", "_date", "_time", "_until", "_from"];
-
-/// Contact-ish name fragments with no dedicated DSL input type; recognized so
-/// the mapping is explicit and testable rather than an accident of the
-/// `text` fallback.
-const CONTACT_RECOGNIZERS: &[&str] = &["phone", "url"];
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codegraph_config::SemanticRole;
     use codegraph_ifml_dsl::InputFieldType;
     use rust_decimal::Decimal;
 

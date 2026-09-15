@@ -5,7 +5,9 @@
 # `--ifml-design-system shadcn-svelte` or `ifml_design_system = "shadcn-svelte"`
 # in profiles.toml features. Project-provided ifml-components.toml entries take
 # precedence per resolution tier (name -> type -> role -> kind), so override any
-# entry here by declaring the same selector with your own component.
+# entry here by declaring the same selector with your own component. The pack
+# also ships template overrides (codegraph-generate templates/ifml/packs/
+# shadcn-svelte/), shadowed by project --template-dir overrides.
 
 # Submit/cancel/back/click event controls; `type: button` components.
 [[component]]

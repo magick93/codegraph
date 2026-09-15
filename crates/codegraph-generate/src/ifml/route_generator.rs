@@ -6,8 +6,7 @@ use async_trait::async_trait;
 use codegraph_config::{DomainConfig, IfmlComponentMapping, IfmlComponentMappings, SemanticRole};
 use codegraph_core::traits::GraphQuerier;
 use codegraph_ifml_dsl::{
-    BinOp, ChartKind, ChartSpec, ColumnDef, ComponentSpec, Expression, FormSpec, InputFieldType,
-    TableSpec, UnaryOp,
+    BinOp, ChartKind, ChartSpec, ColumnDef, ComponentSpec, Expression, FormSpec, TableSpec, UnaryOp,
 };
 use serde::Serialize;
 
@@ -18,7 +17,12 @@ use crate::GenerationEntry;
 
 use super::api_paths::{id_param_from, resolve_entity_api, ResolvedApi};
 use super::context::{IfmlAction, IfmlComponent, IfmlEvent, IfmlViewContainer};
+use super::control_core;
 use super::querier::*;
+
+/// The shared control-inference entry over `(rust_type, field_name)` pairs
+/// (`fields_with_types`), re-exported for conformance testing (issue #201).
+pub use super::control_core::control_for_field;
 
 pub struct IfmlRouteGenerator {
     output_dir: PathBuf,
@@ -274,17 +278,25 @@ fn ordered_view_containers(
     containers
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageSvelteContext {
     pub api_version: String,
     name: String,
     label: String,
     components: Vec<PageComponentContext>,
+    /// Body render groups: the view's own components first, then one group
+    /// per nested view container. Each xor group renders its container label
+    /// heading before its content (only when the presentation wrapper is
+    /// active — no-pack output stays byte-identical).
+    groups: Vec<RenderGroup>,
     params: Vec<super::context::ParameterDef>,
     view_events: Vec<RenderEvent>,
     imports: Vec<RenderImport>,
     needs_goto: bool,
     needs_on_mount: bool,
+    /// Whether any component carries a transition handler (`invalidateAll`
+    /// import).
+    needs_invalidate: bool,
     has_submit: bool,
     /// Semantic slot role of the view: `modal-view` for modals, else
     /// `shell` for landmarks.
@@ -390,15 +402,61 @@ impl ControlGateContext {
             close: "{/if}".to_string(),
         }
     }
+
+    /// This gate AND-composed with an event-level `requires` check:
+    /// `{#if viewChecks && ['Cap'].some((c) => can(c))}`. An empty requires
+    /// list clones the gate unchanged; an inactive view gate yields the
+    /// event check alone.
+    fn compose_with_event(&self, requires: &[String]) -> Self {
+        if requires.is_empty() {
+            return self.clone();
+        }
+        let list = requires
+            .iter()
+            .map(|c| js_quote(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let check = format!("[{list}].some((c) => can(c))");
+        let inner = if self.open.is_empty() {
+            check
+        } else {
+            let view_expr = self
+                .open
+                .strip_prefix("{#if ")
+                .and_then(|s| s.strip_suffix('}'))
+                .unwrap_or_default();
+            format!("{view_expr} && {check}")
+        };
+        let mut imports = self.imports.clone();
+        if !imports.iter().any(|name| name == "can") {
+            imports.push("can".to_string());
+        }
+        Self {
+            imports,
+            consts: self.consts.clone(),
+            open: format!("{{#if {inner}}}"),
+            close: "{/if}".to_string(),
+        }
+    }
 }
 
-#[derive(Debug, Serialize)]
+/// One body render group: an optional container label heading followed by
+/// the group's components. Group 0 is the view's own components (no
+/// heading); further groups are the view's nested containers in
+/// declaration order.
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderGroup {
+    pub heading: Option<String>,
+    pub components: Vec<PageComponentContext>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderImport {
     pub export_name: String,
     pub import_path: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageComponentContext {
     name: String,
     /// Sanitized JS identifier (const/handler names).
@@ -449,6 +507,21 @@ pub struct PageComponentContext {
     /// Workflow state display for the bound entity, resolved from the
     /// owning domain's config; `None` renders no badge (byte-identical).
     workflow: Option<RenderWorkflow>,
+    /// Load fetch wiring for this component (mirrors the `+page.ts`
+    /// contract: first list/details/form wins, details/form need an id
+    /// param). Gates mapped-branch badges and transition buttons on the
+    /// component's value path actually being fetch-backed.
+    fetch_list: bool,
+    fetch_item: bool,
+    fetch_form: bool,
+    /// Fetch URL (JS template literal) for the component's transition
+    /// handler: `{base}/${id}/actions/transition`; `None` when the component
+    /// carries no transition buttons.
+    transition_url_expr: Option<String>,
+    /// Markup gate for the submit control: the view gate AND-composed with
+    /// the primary save/submit event's `requires` check. Equals the view
+    /// gate (byte-identical) when no event-level requires exist.
+    submit_gate: ControlGateContext,
     /// Whether the fallback form branch renders: emits the typed
     /// `{js_name}_form_state` const used by value bindings and the
     /// workflow badge.
@@ -457,6 +530,9 @@ pub struct PageComponentContext {
     /// handler (`const payload: ...` + per-field coercions); empty keeps
     /// the untyped `formData` body (byte-identical).
     form_payload: String,
+    /// Whether the component belongs to a nested view container: suppresses
+    /// the page-level `<h1>` heading inside the group.
+    in_container: bool,
 }
 
 /// Workflow config for a component's bound entity, pre-rendered into the
@@ -467,10 +543,39 @@ pub struct RenderWorkflow {
     pub states: Vec<String>,
     pub terminal_states: Vec<String>,
     pub initial_state: String,
+    /// Raw from → [targets] edges from the config; `None` targets resolve
+    /// per the empty-map rule (any non-terminal state). Skipped in output.
+    #[serde(skip_serializing)]
+    pub transition_map: HashMap<String, Vec<String>>,
+    /// Whether the config generates workflow action endpoints: gates the
+    /// transition buttons and handler (the POST target must exist).
+    #[serde(skip_serializing)]
+    pub generate_action_endpoints: bool,
+    /// Ready-to-render transition buttons for details/form components:
+    /// one per valid (from → to) edge, disabled client-side unless the
+    /// current state matches the from-state (empty map: unless terminal).
+    pub transitions: Vec<RenderTransition>,
     /// Ready-to-render badge: `<span class="workflow-state"
     /// data-testid="{component}-state" data-workflow-state={...}>...</span>`
     /// plus the terminal marker attribute when terminal states are known.
     pub badge_html: String,
+    /// Whether the badge reads a per-row `item` binding (collections): the
+    /// mapped-component sibling renders inside `{#each data.items as item}`.
+    pub each: bool,
+}
+
+/// One workflow transition button: humanized target label, e2e testid
+/// (`{component}-transition-{target}`), the (from → to) edge, the
+/// client-side disabled expression over the component's state value path,
+/// and the ready-to-render `<button>` markup.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RenderTransition {
+    pub label: String,
+    pub testid: String,
+    pub from: String,
+    pub to: String,
+    pub disabled_expr: String,
+    pub html: String,
 }
 
 /// Resolve the workflow config for a component's bound entity: the domain
@@ -497,7 +602,11 @@ pub(crate) fn workflow_for_entity(config: &DomainConfig, entity: &str) -> Option
                     states: wf.states.clone(),
                     terminal_states: wf.terminal_states.clone(),
                     initial_state: wf.initial_state.clone(),
+                    transition_map: wf.transitions.clone(),
+                    generate_action_endpoints: wf.generate_action_endpoints,
+                    transitions: Vec::new(),
                     badge_html: String::new(),
+                    each: false,
                 });
         }
     }
@@ -515,7 +624,80 @@ fn component_workflow(config: &DomainConfig, c: &IfmlComponent) -> Option<Render
     let mut wf = workflow_for_entity(config, entity)?;
     let value_path = workflow_value_path(c, &wf.status_field);
     wf.badge_html = workflow_badge_html(&c.name, &value_path, &wf.terminal_states);
+    wf.each = is_collection(c);
+    if is_form_component(c) || c.component_type == "details" {
+        wf.transitions = render_transitions(&wf, &c.name, &value_path);
+    }
     Some(wf)
+}
+
+/// One transition button per valid (from → to) edge. A populated
+/// `transitions` map enumerates its edges sorted for deterministic output;
+/// an empty map targets every non-terminal state with no from-restriction
+/// (buttons disable once the current state is terminal).
+fn render_transitions(
+    wf: &RenderWorkflow,
+    component: &str,
+    value_path: &str,
+) -> Vec<RenderTransition> {
+    let edges: Vec<(String, String)> = if wf.transition_map.is_empty() {
+        wf.states
+            .iter()
+            .filter(|s| !wf.terminal_states.contains(s))
+            .map(|s| (String::new(), s.clone()))
+            .collect()
+    } else {
+        let mut edges: Vec<(String, String)> = wf
+            .transition_map
+            .iter()
+            .flat_map(|(from, tos)| tos.iter().map(move |to| (from.clone(), to.clone())))
+            .collect();
+        edges.sort();
+        edges
+    };
+    edges
+        .into_iter()
+        .map(|(from, to)| {
+            let kebab = codegraph_naming::to_kebab_case(&to);
+            let testid = format!("{component}-transition-{kebab}");
+            let label = humanize_state_label(&to);
+            let disabled_expr = if from.is_empty() {
+                let terminals = wf
+                    .terminal_states
+                    .iter()
+                    .map(|s| js_quote(s))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("[{terminals}].includes({value_path} as string)")
+            } else {
+                format!("{value_path} !== {}", js_quote(&from))
+            };
+            let handler = sanitize_ident(&format!("transition_{component}"));
+            let disabled_binding = format!("({disabled_expr})");
+            let html = format!(
+                "<button type=\"button\" data-testid=\"{testid}\" data-transition-from=\"{from}\" data-transition-to=\"{to}\" disabled={{{disabled_binding}}} onclick={{() => {handler}('{to}')}}>{label}</button>"
+            );
+            RenderTransition {
+                label,
+                testid,
+                from,
+                to,
+                disabled_expr,
+                html,
+            }
+        })
+        .collect()
+}
+
+/// Humanized state name for a transition button label: `submitted` →
+/// `Submitted`, `awaiting_review` → `Awaiting review`.
+fn humanize_state_label(state: &str) -> String {
+    let spaced = state.replace(['_', '-'], " ");
+    let mut chars = spaced.chars();
+    match chars.next() {
+        Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 /// The JS expression reading the entity's current state in each markup
@@ -569,12 +751,20 @@ fn js_quote(value: &str) -> String {
 }
 
 /// Submit wiring for a form component: fetch + success navigation.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderSubmit {
     handler_name: String,
-    /// URL expression (JS literal) passed to fetch.
+    /// URL expression (JS literal) passed to fetch. Edit views PUT here;
+    /// create views POST here directly.
     url_expr: String,
     method: String,
+    /// Create-mode collection URL expression. Views carrying an id param
+    /// branch at runtime: `isEdit` PUTs [`Self::url_expr`] (item), otherwise
+    /// POSTs this (collection). `None` for views without an id param, which
+    /// always POST the collection.
+    create_url_expr: Option<String>,
+    /// Name of the id param gating the edit branch (`!!viewParams.<name>`).
+    edit_param: Option<String>,
     /// Navigation target URL expression from the view's save event.
     navigate_url: Option<String>,
     /// Emit the conservative client-side check that surfaces the first
@@ -582,7 +772,7 @@ pub struct RenderSubmit {
     client_validate: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderMapping {
     import_name: String,
     import_path: String,
@@ -590,7 +780,7 @@ pub struct RenderMapping {
     row_testid: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderEvent {
     pub handler_name: String,
     pub event_type: String,
@@ -599,6 +789,9 @@ pub struct RenderEvent {
     pub target: String,
     /// JS string expression evaluating to the navigation target URL.
     pub url_expr: String,
+    /// Capability requirements on the event (`requires: [Cap]`); empty when
+    /// unguarded. Gates the event's control behind `can(...)`.
+    pub requires: Vec<String>,
     /// Semantic slot role: `action-control` for save/submit/cancel/back/click
     /// button-style events.
     pub role: Option<SemanticRole>,
@@ -606,7 +799,7 @@ pub struct RenderEvent {
 
 /// Modal wrapper for a `modal: true` view: a mapped `modal-view` component
 /// (`<Dialog bind:open={dialog_open}>`) or the built-in div fallback.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderModal {
     /// Full opening markup line, e.g.
     /// `<Dialog bind:open={dialog_open} testid="x-modal">` or
@@ -624,7 +817,7 @@ pub struct RenderModal {
 /// Presentation-container wrapper for an xor view container: a mapped
 /// `presentation-container` component (`<Card testid="...">`) or the
 /// built-in section fallback. Children render inline inside the wrapper.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderContainer {
     /// Full opening markup line, e.g. `<Card testid="card">` or
     /// `<section data-testid="checkout-container">`.
@@ -636,12 +829,16 @@ pub struct RenderContainer {
     /// Component import when the wrapper is a mapped container; `None` for
     /// the built-in section fallback.
     pub import: Option<RenderImport>,
+    /// Ready-to-render container label heading rendered right after the
+    /// opening line (`<h2 class="container-label" …>`); `None` when the
+    /// wrapper groups nested containers that carry their own headings.
+    pub label_heading: Option<String>,
 }
 
 /// One navigation entry in the landmark shell layout: `href_attr` is the
 /// ready-to-render `href={...}` attribute using the same URL expression the
 /// page goto handlers emit.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderNavItem {
     pub label: String,
     pub href_attr: String,
@@ -649,7 +846,7 @@ pub struct RenderNavItem {
 
 /// Landmark shell nav context: a mapped `shell` component wrapping nav
 /// items built from the landmark views' navigate events.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderShellNav {
     pub import: RenderImport,
     pub testid: Option<String>,
@@ -658,14 +855,14 @@ pub struct RenderShellNav {
 
 /// Render context for the framework layout shell
 /// (`ifml/{fw}/layout.tera` → `src/routes/+layout.svelte`).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LayoutSvelteContext {
     pub shell: RenderShellNav,
 }
 
 /// A mapped action-control button replacing the hardcoded fallback `<button>`
 /// (form submit) or rendering a cancel/back/click action.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderButton {
     pub import_name: String,
     pub import_path: String,
@@ -678,10 +875,18 @@ pub struct RenderButton {
     pub disabled_prop: Option<String>,
     /// Ready-to-render `testid="..."` prop.
     pub testid_prop: String,
+    /// Capability requirements of the source event; composed with the view
+    /// gate into `gate_open`/`gate_close` by the page post-pass.
+    pub event_requires: Vec<String>,
+    /// Ready-to-render gate markers around the button: the view gate
+    /// AND-composed with the event's `requires` check; empty when no gate
+    /// applies.
+    pub gate_open: String,
+    pub gate_close: String,
 }
 
 /// Typed-table render context derived from a `ComponentSpec::Table`
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderTable {
     pagination: bool,
     /// `pagination` when the list spec enables pagination.
@@ -692,7 +897,7 @@ pub struct RenderTable {
 /// One typed table column; `binding` is the ready-to-emit data path
 /// (`property` for field/lookup columns, the rendered expression for
 /// expression columns)
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderColumn {
     label: String,
     kind: String,
@@ -702,12 +907,12 @@ pub struct RenderColumn {
 }
 
 /// Typed-form render context derived from a `ComponentSpec::Form`
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderForm {
     fields: Vec<RenderInputField>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderInputField {
     name: String,
     input_type: String,
@@ -726,19 +931,23 @@ pub struct RenderInputField {
 }
 
 /// Typed-chart render context derived from a `ComponentSpec::Chart`
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderChart {
     kind: String,
     label_field: Option<String>,
     value_fields: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageLoadContext {
     pub api_version: String,
     name: String,
     components: Vec<PageLoadComponentContext>,
     has_fetch: bool,
+    /// Whether any component carries a workflow: the load result types its
+    /// values `any` instead of `unknown` so workflow value paths in the
+    /// page markup typecheck. Absent for byte-identical non-workflow loads.
+    has_workflow: bool,
     /// All view parameters, resolved from `url.searchParams` (views have no
     /// dynamic route segments); entries with a DSL default carry the JS
     /// literal as the final `??` fallback. Resolved params are returned to
@@ -759,14 +968,14 @@ pub struct PageLoadContext {
 }
 
 /// A view parameter resolved in the load function from the query string.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RenderViewParam {
     name: String,
     /// JS literal emitted as the final `??` fallback.
     default: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageLoadComponentContext {
     /// Sanitized JS identifier for local variable names.
     name: String,
@@ -797,6 +1006,7 @@ async fn build_page_context(
 ) -> PageSvelteContext {
     let id_param = id_param_from(&vc.params);
     let mut api_cache: HashMap<String, Option<ResolvedApi>> = HashMap::new();
+    let container = container_context(vc, mappings);
 
     let mut components = Vec::new();
     for c in &vc.components {
@@ -815,6 +1025,53 @@ async fn build_page_context(
         components.push(ctx);
     }
 
+    // Body render groups: the view's own components, then one group per
+    // nested container in declaration order. Headings (and the in-container
+    // h1 suppression) are gated on the presentation wrapper being active —
+    // without a mapping pack the page stays plain (byte-identical with
+    // pre-nesting output).
+    let mut groups = vec![RenderGroup {
+        heading: None,
+        components,
+    }];
+    if container.is_some() {
+        for group_decl in &vc.containers {
+            let heading = group_decl.is_xor.then(|| {
+                let lower = group_decl.name.to_lowercase();
+                let label = group_decl
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| group_decl.name.clone());
+                format!("<h2 class=\"container-label\" data-testid=\"{lower}-label\">{label}</h2>")
+            });
+            let mut group_components = Vec::new();
+            for c in &group_decl.components {
+                let mut ctx = page_component_context(
+                    db,
+                    config,
+                    api_version,
+                    vc,
+                    c,
+                    id_param.as_deref(),
+                    mappings,
+                    &mut api_cache,
+                    modal_targets,
+                )
+                .await;
+                ctx.in_container = true;
+                group_components.push(ctx);
+            }
+            groups.push(RenderGroup {
+                heading,
+                components: group_components,
+            });
+        }
+    }
+    let components: Vec<PageComponentContext> = groups
+        .iter()
+        .flat_map(|group| group.components.iter().cloned())
+        .collect();
+
     let view_events: Vec<RenderEvent> = vc
         .events
         .iter()
@@ -831,7 +1088,6 @@ async fn build_page_context(
             import_path: imp.import_path.clone(),
         });
     }
-    let container = container_context(vc, mappings);
     if let Some(imp) = container.as_ref().and_then(|c| c.import.as_ref()) {
         let export = imp.export_name.clone();
         if seen_imports
@@ -885,7 +1141,80 @@ async fn build_page_context(
     let needs_on_mount = view_events
         .iter()
         .any(|e| e.action_kind == "navigate" && e.event_type == "load");
-    let control_gate = ControlGateContext::for_view(vc, &components);
+    let mut control_gate = ControlGateContext::for_view(vc, &components);
+
+    // Load fetch wiring (same rules the load context applies) plus
+    // event-level capability gates. Fetch flags gate the mapped-branch
+    // badge and transition buttons on the component's value path actually
+    // being fetch-backed; the transition handler URL resolves from the
+    // component's API path and the view's id param. Event gates compose
+    // the view gate with each component's save/submit requires (submit
+    // control) and each secondary button's event requires; buttons without
+    // requires reuse the view gate verbatim (byte-identical).
+    let id_param = id_param_from(&vc.params);
+    let mut fetch_state = FetchState::default();
+    let mut needs_can_import = false;
+    for group in &mut groups {
+        for comp in &mut group.components {
+            let is_list = comp.table.is_some() || comp.component_type == "list";
+            let is_details = comp.component_type == "details";
+            let is_form = comp.form.is_some() || comp.component_type == "form";
+            let has_api = comp.api.is_some() && !comp.entity.is_empty();
+            let (fetch_list, fetch_item, fetch_form) =
+                fetch_state.next(is_list, is_details, is_form, has_api, id_param.as_deref());
+            comp.fetch_list = fetch_list;
+            comp.fetch_item = fetch_item;
+            comp.fetch_form = fetch_form;
+
+            if let Some(workflow) = &comp.workflow {
+                let fetch_backed = match comp.component_type.as_str() {
+                    "form" => fetch_form,
+                    "details" => fetch_item,
+                    _ => fetch_list,
+                };
+                if fetch_backed
+                    && workflow.generate_action_endpoints
+                    && !workflow.transitions.is_empty()
+                {
+                    if let Some(api) = &comp.api {
+                        if let Some(param) = &id_param {
+                            comp.transition_url_expr = Some(format!(
+                                "`{}/${{viewParams.{param}}}/actions/transition`",
+                                api.base_path
+                            ));
+                        }
+                    }
+                }
+            }
+
+            let primary = primary_event_requires(&comp.events);
+            comp.submit_gate = control_gate.compose_with_event(&primary);
+            if !primary.is_empty() {
+                needs_can_import = true;
+            }
+            for btn in &mut comp.buttons {
+                if btn.event_requires.is_empty() {
+                    btn.gate_open = control_gate.open.clone();
+                    btn.gate_close = control_gate.close.clone();
+                } else {
+                    needs_can_import = true;
+                    let gate = control_gate.compose_with_event(&btn.event_requires);
+                    btn.gate_open = gate.open;
+                    btn.gate_close = gate.close;
+                }
+            }
+        }
+    }
+    if needs_can_import && !control_gate.imports.iter().any(|name| name == "can") {
+        control_gate.imports.push("can".to_string());
+    }
+    let components: Vec<PageComponentContext> = groups
+        .iter()
+        .flat_map(|group| group.components.iter().cloned())
+        .collect();
+    let needs_invalidate = components
+        .iter()
+        .any(|comp| comp.transition_url_expr.is_some());
 
     PageSvelteContext {
         api_version: api_version.to_string(),
@@ -905,7 +1234,9 @@ async fn build_page_context(
         imports,
         needs_goto,
         needs_on_mount,
+        needs_invalidate,
         has_submit,
+        groups,
         view_role: semantic_view_role(vc),
         container_role: semantic_container_role(vc),
         roles: vc.roles.clone(),
@@ -1060,11 +1391,57 @@ async fn page_component_context(
         submit_button,
         buttons,
         workflow,
+        fetch_list: false,
+        fetch_item: false,
+        fetch_form: false,
+        transition_url_expr: None,
+        submit_gate: ControlGateContext::default(),
         form_state,
         form_payload,
+        in_container: false,
         table,
         form,
         chart,
+    }
+}
+
+/// Running view-level fetch state: which component kinds have already
+/// claimed the load's single fetch per kind.
+#[derive(Default)]
+struct FetchState {
+    has_list: bool,
+    has_details: bool,
+    has_form: bool,
+}
+
+impl FetchState {
+    /// The load fetch flags for one component: the first list/details/form
+    /// contributes a fetch; details and form fetches additionally require
+    /// an id param.
+    fn next(
+        &mut self,
+        is_list: bool,
+        is_details: bool,
+        is_form: bool,
+        has_api: bool,
+        id_param: Option<&str>,
+    ) -> (bool, bool, bool) {
+        let mut fetch_list = false;
+        let mut fetch_item = false;
+        let mut fetch_form = false;
+        if has_api {
+            if is_list && !self.has_list {
+                fetch_list = true;
+            } else if is_details && !self.has_details && id_param.is_some() {
+                fetch_item = true;
+            } else if is_form && !self.has_form && id_param.is_some() {
+                fetch_form = true;
+            }
+        }
+        self.has_list |= fetch_list;
+        self.has_details |= fetch_item;
+        self.has_form |= fetch_form;
+        (fetch_list, fetch_item, fetch_form)
     }
 }
 
@@ -1110,8 +1487,7 @@ fn form_payload_block(c: &IfmlComponent, form: Option<&RenderForm>) -> String {
             format!("{value} === '' ? null : {value} === 'true'")
         } else if is_numeric_rust_type(&rust_type) {
             format!("{value} === '' ? null : Number({value})")
-        } else if rust_type.contains("datetime")
-            || rust_type.contains("timestamp")
+        } else if control_core::is_temporal_rust_type(&rust_type)
             || matches!(input_type, "datetime-local" | "date" | "time")
         {
             format!("{value} === '' ? null : new Date(String({value})).toISOString()")
@@ -1126,14 +1502,7 @@ fn form_payload_block(c: &IfmlComponent, form: Option<&RenderForm>) -> String {
 }
 
 pub(crate) fn is_numeric_rust_type(rust_type: &str) -> bool {
-    [
-        "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
-    ]
-    .iter()
-    .any(|n| rust_type.contains(n))
-        || rust_type.contains("decimal")
-        || rust_type.contains("integer")
-        || rust_type.contains("bigint")
+    control_core::is_numeric_rust_type(rust_type)
 }
 
 /// The layout kind used for mapping resolution: the typed spec kind when a
@@ -1171,10 +1540,7 @@ fn component_role(c: &IfmlComponent) -> Option<SemanticRole> {
 /// Per-input slot role inside a form: dropdowns and radio groups are
 /// selection fields.
 fn input_field_role(input_type: &str) -> Option<SemanticRole> {
-    match input_type {
-        "dropdown" | "radio" => Some(SemanticRole::SelectionField),
-        _ => None,
-    }
+    control_core::input_field_role(input_type)
 }
 
 /// Event/button slot role: submit-style and click events drive actions.
@@ -1263,12 +1629,19 @@ fn build_submit(
     }
     let api = api?;
     let handler_name = format!("submit_{}", sanitize_ident(&c.name));
-    let (url_expr, method) = match id_param {
+    let (url_expr, method, create_url_expr, edit_param) = match id_param {
         Some(param) if api.has_update => (
             format!("`{}/${{viewParams.{param}}}`", api.base_path),
             "PUT".to_string(),
+            Some(format!("\"{}\"", api.base_path)),
+            Some(param.to_string()),
         ),
-        _ => (format!("\"{}\"", api.base_path), "POST".to_string()),
+        _ => (
+            format!("\"{}\"", api.base_path),
+            "POST".to_string(),
+            None,
+            None,
+        ),
     };
     let navigate_url = events
         .iter()
@@ -1280,6 +1653,8 @@ fn build_submit(
         handler_name,
         url_expr,
         method,
+        create_url_expr,
+        edit_param,
         navigate_url,
         client_validate: form_has_messages(c),
     })
@@ -1316,6 +1691,7 @@ fn render_event(evt: &IfmlEvent, modal_targets: &HashSet<String>) -> RenderEvent
         action_kind: action_kind.to_string(),
         target,
         url_expr,
+        requires: evt.requires.clone(),
         role: event_role(&evt.event_type),
     }
 }
@@ -1446,16 +1822,22 @@ pub(crate) fn mapped_container_testid(
 }
 
 /// Presentation-container wrapper context for an xor view container; `None`
-/// renders the plain page.
+/// renders the plain page. Also active (without a label heading) when the
+/// view nests xor containers that share the one wrapper.
 fn container_context(
     vc: &IfmlViewContainer,
     mappings: Option<&IfmlComponentMappings>,
 ) -> Option<RenderContainer> {
-    if !container_wrapper_active(vc.is_xor, mappings) {
+    let has_xor_children = vc.containers.iter().any(|c| c.is_xor);
+    if !container_wrapper_active(vc.is_xor || has_xor_children, mappings) {
         return None;
     }
     let view_lower = vc.name.to_lowercase();
     let section_testid = format!("{view_lower}-container");
+    let label_heading = vc.is_xor.then(|| {
+        let label = vc.label.clone().unwrap_or_else(|| vc.name.clone());
+        format!("<h2 class=\"container-label\" data-testid=\"{section_testid}-label\">{label}</h2>")
+    });
     match resolve_container_mapping(vc, mappings) {
         Some(m) => {
             let export = m.export_name();
@@ -1471,6 +1853,7 @@ fn container_context(
                     export_name: export.to_string(),
                     import_path: m.path.clone(),
                 }),
+                label_heading,
             })
         }
         None => Some(RenderContainer {
@@ -1478,15 +1861,37 @@ fn container_context(
             close_line: "</section>".to_string(),
             testid: section_testid,
             import: None,
+            label_heading,
         }),
     }
 }
 
+/// Root identifier of a binding value expression (`row` in `row.id`);
+/// `None` for literals and empty expressions.
+fn binding_root_ident(expr: &str) -> Option<&str> {
+    let root: String = expr
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    if root.is_empty() || root.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        None
+    } else {
+        Some(&expr[..root.len()])
+    }
+}
+
+/// Whether a binding value expression is rooted in an event parameter —
+/// such identifiers are out of scope in the landmark layout, so the nav
+/// link must drop the pair instead of rendering a dead reference.
+fn references_event_param(expr: &str, params: &[String]) -> bool {
+    binding_root_ident(expr).is_some_and(|root| params.iter().any(|p| p == root))
+}
+
 /// Shell nav context for the landmark layout: resolves the `shell` mapping
 /// against the landmark views and builds nav items from their navigate
-/// events (same URL resolution as the page goto handlers). `None` when no
-/// landmark views exist or no `shell` mapping resolves — no layout is
-/// emitted then.
+/// events (same URL resolution as the page goto handlers, minus bindings
+/// rooted in event params). `None` when no landmark views exist or no
+/// `shell` mapping resolves — no layout is emitted then.
 pub(crate) fn shell_nav(
     vcs: &[IfmlViewContainer],
     mappings: Option<&IfmlComponentMappings>,
@@ -1510,7 +1915,12 @@ pub(crate) fn shell_nav(
             .chain(vc.components.iter().flat_map(|c| c.events.iter()))
         {
             if let IfmlAction::Navigate { target, binding } = &evt.action {
-                let url_expr = nav_url_expr(target, binding);
+                let scoped: HashMap<String, String> = binding
+                    .iter()
+                    .filter(|(_, expr)| !references_event_param(expr, &evt.params))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                let url_expr = nav_url_expr(target, &scoped);
                 let label = labels.get(target.as_str()).copied().unwrap_or(target);
                 if seen.insert((label.to_string(), url_expr.clone())) {
                     items.push(RenderNavItem {
@@ -1559,6 +1969,9 @@ fn button_context(
             .is_some()
             .then(|| "disabled={submitting}".to_string()),
         testid_prop: testid_prop(format!("{}-submit", c.name)),
+        event_requires: primary_event_requires(events),
+        gate_open: String::new(),
+        gate_close: String::new(),
     };
     let buttons = events
         .iter()
@@ -1581,10 +1994,23 @@ fn button_context(
                 onclick_prop: Some(onclick_prop(&e.handler_name)),
                 disabled_prop: None,
                 testid_prop: format!("testid=\"{testid}\""),
+                event_requires: e.requires.clone(),
+                gate_open: String::new(),
+                gate_close: String::new(),
             }
         })
         .collect();
     (Some(submit_button), buttons)
+}
+
+/// Capability requirements of the save/submit event driving the primary
+/// form button; empty when unguarded.
+fn primary_event_requires(events: &[RenderEvent]) -> Vec<String> {
+    events
+        .iter()
+        .find(|e| e.event_type == "save" || e.event_type == "submit")
+        .map(|e| e.requires.clone())
+        .unwrap_or_default()
 }
 
 /// Label for the primary form button: the save/submit event's humanized
@@ -1682,24 +2108,7 @@ fn render_form(spec: &FormSpec) -> RenderForm {
             .fields
             .iter()
             .map(|field| {
-                let (input_type, is_textarea, is_select, is_radio) = match field.input {
-                    InputFieldType::TextArea => ("textarea".to_string(), true, false, false),
-                    InputFieldType::Dropdown => ("dropdown".to_string(), false, true, false),
-                    InputFieldType::RadioGroup => ("radio".to_string(), false, false, true),
-                    InputFieldType::Custom(ref custom) => (custom.clone(), false, false, false),
-                    InputFieldType::Text => ("text".to_string(), false, false, false),
-                    InputFieldType::Password => ("password".to_string(), false, false, false),
-                    InputFieldType::Email => ("email".to_string(), false, false, false),
-                    InputFieldType::Number => ("number".to_string(), false, false, false),
-                    InputFieldType::Date => ("date".to_string(), false, false, false),
-                    InputFieldType::Time => ("time".to_string(), false, false, false),
-                    InputFieldType::DateTime => ("datetime-local".to_string(), false, false, false),
-                    InputFieldType::Checkbox | InputFieldType::Toggle => {
-                        ("checkbox".to_string(), false, false, false)
-                    }
-                    InputFieldType::File => ("file".to_string(), false, false, false),
-                    InputFieldType::Hidden => ("hidden".to_string(), false, false, false),
-                };
+                let html = control_core::html_input_for_dsl(&field.input);
                 let validations: Vec<String> =
                     field.validations.iter().map(render_expression).collect();
                 let message = if validations.is_empty() {
@@ -1709,11 +2118,11 @@ fn render_form(spec: &FormSpec) -> RenderForm {
                 };
                 RenderInputField {
                     name: field.name.clone(),
-                    input_role: input_field_role(&input_type),
-                    input_type,
-                    is_textarea,
-                    is_select,
-                    is_radio,
+                    input_role: input_field_role(&html.input_type),
+                    input_type: html.input_type,
+                    is_textarea: html.is_textarea,
+                    is_select: html.is_select,
+                    is_radio: html.is_radio,
                     required: field.required,
                     values: field.values.clone(),
                     data_validate: validations.join(" && "),
@@ -1813,9 +2222,7 @@ fn build_load_context(
         })
         .collect();
     let mut load_components = Vec::new();
-    let mut has_list = false;
-    let mut has_details = false;
-    let mut has_form_fetch = false;
+    let mut fetch_state = FetchState::default();
     let mut has_fetch = false;
 
     for comp in components {
@@ -1823,21 +2230,13 @@ fn build_load_context(
         let is_details = comp.component_type == "details";
         let is_form = comp.form.is_some() || comp.component_type == "form";
 
-        let mut fetch_list = false;
-        let mut fetch_item = false;
-        let mut fetch_form = false;
-        if comp.api.is_some() && !comp.entity.is_empty() {
-            if is_list && !has_list {
-                fetch_list = true;
-            } else if is_details && !has_details && id_param.is_some() {
-                fetch_item = true;
-            } else if is_form && !has_form_fetch && id_param.is_some() {
-                fetch_form = true;
-            }
-        }
-        has_list |= fetch_list;
-        has_details |= fetch_item;
-        has_form_fetch |= fetch_form;
+        let (fetch_list, fetch_item, fetch_form) = fetch_state.next(
+            is_list,
+            is_details,
+            is_form,
+            comp.api.is_some() && !comp.entity.is_empty(),
+            id_param.as_deref(),
+        );
         has_fetch |= fetch_list || fetch_item || fetch_form;
 
         load_components.push(PageLoadComponentContext {
@@ -1855,11 +2254,13 @@ fn build_load_context(
         });
     }
 
+    let has_workflow = load_components.iter().any(|comp| comp.workflow);
     PageLoadContext {
         api_version: api_version.to_string(),
         name: vc.name.clone(),
         components: load_components,
         has_fetch,
+        has_workflow,
         view_params,
         view_roles: vc.roles.clone(),
         view_requires: vc.requires.clone(),
@@ -1899,6 +2300,7 @@ mod tests {
     use super::*;
     use crate::template_engine::create_tera;
     use codegraph_core::mock::MockEngine;
+    use codegraph_ifml_dsl::InputFieldType;
     use codegraph_ifml_dsl::PropertyRef;
 
     fn table_spec() -> ComponentSpec {
@@ -1990,6 +2392,7 @@ entities = ["CustomerType"]
             is_default: false,
             is_landmark: true,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -2044,6 +2447,7 @@ terminal_states = ["done"]
             is_default: false,
             is_landmark: true,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -2125,6 +2529,295 @@ terminal_states = ["done"]
         chart.component_type = "chart".to_string();
         let ctx = page_component_context_with_config(&chart, &workflow_config());
         assert!(ctx.workflow.is_none(), "charts carry no state badge");
+    }
+
+    fn workflow_transitions_config() -> DomainConfig {
+        toml::from_str(
+            r#"
+[defaults]
+api_version = "v1"
+
+[domains.sales]
+label = "Sales"
+schema_dir = "sales"
+postgres_schema = "sales"
+entities = ["CustomerType"]
+
+[domains.sales.entity_config.CustomerType.workflow]
+status_field = "status"
+initial_state = "draft"
+states = ["draft", "submitted", "approved", "rejected"]
+terminal_states = ["approved", "rejected"]
+generate_action_endpoints = true
+
+[domains.sales.entity_config.CustomerType.workflow.transitions]
+draft = ["submitted"]
+submitted = ["approved", "rejected"]
+"#,
+        )
+        .unwrap()
+    }
+
+    fn details_component_named(name: &str) -> IfmlComponent {
+        let mut c = component_with_spec(None);
+        c.name = name.to_string();
+        c.component_type = "details".to_string();
+        c
+    }
+
+    fn context_json(c: &IfmlComponent, config: &DomainConfig) -> serde_json::Value {
+        let ctx = page_component_context_with_config(c, config);
+        serde_json::to_value(&ctx).expect("serialize page component context")
+    }
+
+    // ── Transition buttons (issue #198 workflow UI v2, RED) ─────────
+    //
+    // Pin: a details/form component whose entity has a workflow WITH
+    // transitions carries one RenderTransition per (from → to) edge in the
+    // `transitions` map, each labeled by the humanized target state with
+    // testid `{component}-transition-{target_kebab}`, a client-side
+    // disabled expression (current state ≠ from), and ready-to-render
+    // button markup carrying `data-transition-from`/`data-transition-to`.
+    // The assertions read the context through serde so they compile before
+    // `RenderWorkflow.transitions` exists (RED: the key is missing).
+
+    #[test]
+    fn transition_context_built_from_transitions_map_for_details() {
+        let c = details_component_named("info");
+        let json = context_json(&c, &workflow_transitions_config());
+
+        let transitions = &json["workflow"]["transitions"];
+        assert!(
+            transitions.is_array(),
+            "details components need a transition collection: {json}"
+        );
+        let transitions = transitions.as_array().unwrap();
+        assert_eq!(
+            transitions.len(),
+            3,
+            "one entry per transition edge (draft→submitted, submitted→approved, submitted→rejected): {json}"
+        );
+
+        let first = &transitions[0];
+        assert_eq!(first["from"], serde_json::json!("draft"));
+        assert_eq!(first["to"], serde_json::json!("submitted"));
+        assert_eq!(
+            first["testid"],
+            serde_json::json!("info-transition-submitted"),
+            "testid contract: {{component}}-transition-{{target_kebab}}: {json}"
+        );
+        assert_eq!(
+            first["label"],
+            serde_json::json!("Submitted"),
+            "labels are the humanized target state: {json}"
+        );
+
+        for entry in transitions {
+            let disabled = entry["disabled_expr"].as_str().unwrap_or_default();
+            assert!(
+                disabled.contains("data.item?.workflow_state?.current_state"),
+                "the disabled expression reads the merged workflow state: {entry}"
+            );
+            let from = entry["from"].as_str().unwrap_or_default();
+            assert!(
+                disabled.contains(&format!("'{from}'")),
+                "the button is disabled unless the current state equals the from-state: {entry}"
+            );
+            let html = entry["html"].as_str().unwrap_or_default();
+            let to = entry["to"].as_str().unwrap_or_default();
+            let testid = entry["testid"].as_str().unwrap_or_default();
+            assert!(
+                html.contains(&format!("data-testid=\"{testid}\"")),
+                "button markup carries the testid: {entry}"
+            );
+            assert!(
+                html.contains(&format!("data-transition-from=\"{from}\"")),
+                "button markup exposes the from-state for e2e hooks: {entry}"
+            );
+            assert!(
+                html.contains(&format!("data-transition-to=\"{to}\"")),
+                "button markup exposes the target state for e2e hooks: {entry}"
+            );
+            assert!(
+                html.contains("disabled={"),
+                "the disabled state must be a client-side binding: {entry}"
+            );
+            assert!(
+                html.contains("onclick="),
+                "clicking posts to the transition endpoint: {entry}"
+            );
+        }
+
+        let rejected = transitions
+            .iter()
+            .find(|e| e["to"] == serde_json::json!("rejected"))
+            .expect("rejected is a valid target from submitted");
+        assert_eq!(rejected["from"], serde_json::json!("submitted"));
+        assert_eq!(
+            rejected["label"],
+            serde_json::json!("Rejected"),
+            "humanized target label: {rejected}"
+        );
+    }
+
+    #[test]
+    fn transition_disabled_expr_follows_form_value_path() {
+        let mut c = details_component_named("editor");
+        c.component_type = "form".to_string();
+        let json = context_json(&c, &workflow_transitions_config());
+
+        let transitions = json["workflow"]["transitions"]
+            .as_array()
+            .expect("form components carry transition buttons");
+        let first = &transitions[0];
+        let disabled = first["disabled_expr"].as_str().unwrap_or_default();
+        assert!(
+            disabled.contains("editor_form_state.workflow_state?.current_state"),
+            "form transition buttons read the typed form state's merged workflow state: {first}"
+        );
+    }
+
+    #[test]
+    fn empty_transitions_map_targets_all_non_terminal_states() {
+        let c = details_component_named("info");
+        let json = context_json(&c, &workflow_config());
+
+        let transitions = json["workflow"]["transitions"]
+            .as_array()
+            .expect("an empty transitions map still yields buttons");
+        let targets: Vec<&str> = transitions
+            .iter()
+            .filter_map(|e| e["to"].as_str())
+            .collect();
+        assert_eq!(
+            targets,
+            vec!["received", "review"],
+            "every non-terminal state is a valid target when the map is empty: {json}"
+        );
+        for entry in transitions {
+            assert_eq!(
+                entry["from"],
+                serde_json::json!(""),
+                "no from-state restriction: any non-terminal state may transition: {entry}"
+            );
+            let disabled = entry["disabled_expr"].as_str().unwrap_or_default();
+            assert!(
+                disabled.contains("'done'"),
+                "buttons disable once the current state is terminal: {entry}"
+            );
+        }
+    }
+
+    #[test]
+    fn list_components_carry_no_transition_buttons() {
+        let mut c = component_with_spec(None);
+        c.component_type = "list".to_string();
+        let json = context_json(&c, &workflow_transitions_config());
+
+        assert!(
+            json["workflow"]["transitions"]
+                .as_array()
+                .map(|t| t.is_empty())
+                .unwrap_or(true),
+            "list components render state badges only — no transition buttons: {json}"
+        );
+    }
+
+    // ── Event-level capability gating (issue #208 slice, RED) ───────
+    //
+    // Pin: events carrying `requires` gate their control behind `can(...)`
+    // exactly like the view-level control gate, AND-composed with the view
+    // gate when the view is also guarded. The IfmlEvent literal below must
+    // gain `requires: vec!["RaiseRefund".to_string()]` when the field lands
+    // on the context type (Wave B struct evolution) — until then the event
+    // is indistinguishable from an ungated one and the gates do not render,
+    // which is the RED failure mode.
+
+    fn gated_save_event() -> IfmlEvent {
+        IfmlEvent {
+            name: "save".to_string(),
+            event_type: "save".to_string(),
+            params: Vec::new(),
+            requires: vec!["RaiseRefund".to_string()],
+            action: IfmlAction::Navigate {
+                target: "CustomerList".to_string(),
+                binding: HashMap::new(),
+            },
+        }
+    }
+
+    fn action_control_mappings() -> IfmlComponentMappings {
+        toml::from_str(
+            r#"
+[[component]]
+role = "action-control"
+path = "$lib/components/Button.svelte"
+export = "Button"
+testids = { root = "ui-button" }
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn event_requires_gate_the_fallback_submit_control() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let vc = guarded_view(
+            "RefundEdit",
+            Vec::new(),
+            Vec::new(),
+            vec![form_component_named("editor", vec![gated_save_event()])],
+        );
+        let ctx = page_context_for(&vc, None);
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains(
+                "{#if ['RaiseRefund'].some((c) => can(c))}<button type=\"submit\" data-testid=\"editor-submit\" disabled={submitting}>Submit</button>{/if}"
+            ),
+            "an event-level requires gates the submit button via can() even in unguarded views:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("import { can } from '$lib/roles';"),
+            "the gate needs the can() helper import: {rendered}"
+        );
+    }
+
+    #[test]
+    fn event_requires_and_compose_with_the_view_gate() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let vc = guarded_view(
+            "RefundEdit",
+            Vec::new(),
+            vec!["ViewRefunds".to_string()],
+            vec![form_component_named("editor", vec![gated_save_event()])],
+        );
+        let ctx = page_context_for(&vc, None);
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains(
+                "{#if viewRequires.some((c) => can(c)) && ['RaiseRefund'].some((c) => can(c))}"
+            ),
+            "event and view gates AND-compose, mirroring the load guard:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn event_requires_gate_mapped_action_control_buttons_too() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let vc = guarded_view(
+            "RefundEdit",
+            Vec::new(),
+            Vec::new(),
+            vec![form_component_named("editor", vec![gated_save_event()])],
+        );
+        let ctx = page_context_for(&vc, Some(&action_control_mappings()));
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains(
+                "{#if ['RaiseRefund'].some((c) => can(c))}<Button onclick={submit_editor} disabled={submitting} testid=\"ui-button\">Save</Button>{/if}"
+            ),
+            "mapped action-control buttons carry the event-level gate:\n{rendered}"
+        );
     }
 
     #[test]
@@ -2339,6 +3032,7 @@ terminal_states = ["done"]
             is_default: false,
             is_landmark: true,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: vec![
@@ -2421,6 +3115,7 @@ terminal_states = ["done"]
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles: vec!["admin".to_string(), "manager".to_string()],
             requires: Vec::new(),
             params: Vec::new(),
@@ -2474,6 +3169,7 @@ terminal_states = ["done"]
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -2512,6 +3208,7 @@ terminal_states = ["done"]
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles,
             requires,
             params: Vec::new(),
@@ -2586,6 +3283,7 @@ terminal_states = ["done"]
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -2941,6 +3639,7 @@ testids = { root = "ui-button" }
                 name: "comp_editor_cancel".to_string(),
                 event_type: "cancel".to_string(),
                 params: vec![],
+                requires: Vec::new(),
                 action: IfmlAction::Navigate {
                     target: "CustomerList".to_string(),
                     binding: HashMap::new(),
@@ -3132,6 +3831,7 @@ testids = { root = "ui-button" }
             name: "comp_grid_select".to_string(),
             event_type: "select".to_string(),
             params: vec!["row".to_string()],
+            requires: Vec::new(),
             action: IfmlAction::Navigate {
                 target: "CustomerDetail".to_string(),
                 binding: HashMap::new(),
@@ -3148,6 +3848,10 @@ testids = { root = "ui-button" }
             api_version: "v1".to_string(),
             name: "View".to_string(),
             label: "View".to_string(),
+            groups: vec![RenderGroup {
+                heading: None,
+                components: components.clone(),
+            }],
             components,
             params: Vec::new(),
             view_params: Vec::new(),
@@ -3155,6 +3859,7 @@ testids = { root = "ui-button" }
             imports: Vec::new(),
             needs_goto: false,
             needs_on_mount: false,
+            needs_invalidate: false,
             has_submit: false,
             view_role: None,
             container_role: None,
@@ -3224,6 +3929,7 @@ testids = { root = "ui-button" }
             name: "comp_grid_select".to_string(),
             event_type: "select".to_string(),
             params: vec![],
+            requires: Vec::new(),
             action: IfmlAction::Navigate {
                 target: "CustomerDetail".to_string(),
                 binding: HashMap::new(),
@@ -3246,6 +3952,7 @@ testids = { root = "data-table", row = "data-row" }
             is_default: false,
             is_landmark: true,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3313,6 +4020,7 @@ testids = { root = "data-table", row = "data-row" }
             is_default: false,
             is_landmark: true,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: vec![super::super::context::ParameterDef {
@@ -3354,6 +4062,7 @@ testids = { root = "data-table", row = "data-row" }
             name: format!("comp_form_{event_type}"),
             event_type: event_type.to_string(),
             params: Vec::new(),
+            requires: Vec::new(),
             action: IfmlAction::Navigate {
                 target: "CustomerList".to_string(),
                 binding: HashMap::new(),
@@ -3428,6 +4137,7 @@ testids = { root = "data-table", row = "data-row" }
             is_default: false,
             is_landmark,
             is_modal,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3516,6 +4226,7 @@ path = "$lib/components/Collection.svelte"
             name: "comp_editor_save".to_string(),
             event_type: "save".to_string(),
             params: Vec::new(),
+            requires: Vec::new(),
             action: IfmlAction::Navigate {
                 target: "CustomerList".to_string(),
                 binding: HashMap::new(),
@@ -3535,6 +4246,7 @@ path = "$lib/components/Collection.svelte"
             is_default: false,
             is_landmark: false,
             is_modal,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3595,6 +4307,7 @@ testids = { root = "ui-button" }
             name: "comp_editor_cancel".to_string(),
             event_type: "cancel".to_string(),
             params: Vec::new(),
+            requires: Vec::new(),
             action: IfmlAction::Navigate {
                 target: "CustomerList".to_string(),
                 binding: HashMap::new(),
@@ -3744,6 +4457,7 @@ export = "Button"
             name: "comp_grid_select".to_string(),
             event_type: "select".to_string(),
             params: vec!["row".to_string()],
+            requires: Vec::new(),
             action: IfmlAction::Navigate {
                 target: "CustomerDialog".to_string(),
                 binding: HashMap::new(),
@@ -3782,6 +4496,7 @@ export = "Button"
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3893,6 +4608,94 @@ testids = { root = "card" }
         );
     }
 
+    fn tabs_mappings() -> IfmlComponentMappings {
+        toml::from_str(
+            r#"
+[[component]]
+role = "presentation-container"
+path = "$lib/components/ui/tabs/tabs.svelte"
+export = "Tabs"
+testids = { root = "tabs" }
+"#,
+        )
+        .unwrap()
+    }
+
+    fn xor_container_with_form(name: &str, label: &str, form_name: &str) -> IfmlViewContainer {
+        IfmlViewContainer {
+            name: name.to_string(),
+            label: Some(label.to_string()),
+            is_xor: true,
+            is_default: false,
+            is_landmark: false,
+            is_modal: false,
+            conditional_expression: None,
+            roles: Vec::new(),
+            requires: Vec::new(),
+            params: Vec::new(),
+            components: vec![form_component_named(form_name, Vec::new())],
+            events: Vec::new(),
+            containers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn sibling_xor_containers_render_inside_one_mapped_presentation_container() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let mut vc = plain_vc("Checkout");
+        vc.label = Some("Checkout".to_string());
+        vc.containers = vec![
+            xor_container_with_form("Shipping", "Shipping", "shipping_form"),
+            xor_container_with_form("Payment", "Payment", "payment_form"),
+        ];
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            Some(&tabs_mappings()),
+            &HashSet::new(),
+        ));
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains("import Tabs from '$lib/components/ui/tabs/tabs.svelte';"),
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered.matches("<Tabs testid=\"tabs\">").count(),
+            1,
+            "sibling xor containers must share ONE mapped presentation-container wrapper: {rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"shipping-label\">Shipping<"),
+            "each group renders its container label with a stable testid: {rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"payment-label\">Payment<"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"shipping_form-form\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"payment_form-form\""),
+            "{rendered}"
+        );
+        let open = rendered.find("<Tabs testid=\"tabs\">").expect("open");
+        let shipping = rendered
+            .find("data-testid=\"shipping-label\"")
+            .expect("shipping group");
+        let payment = rendered
+            .find("data-testid=\"payment-label\"")
+            .expect("payment group");
+        let close = rendered.rfind("</Tabs>").expect("close");
+        assert!(
+            open < shipping && shipping < payment && payment < close,
+            "both groups render inside the wrapper in container order: {rendered}"
+        );
+    }
+
     #[test]
     fn shell_nav_builds_items_from_landmark_navigate_events() {
         let mut list = IfmlViewContainer {
@@ -3902,6 +4705,7 @@ testids = { root = "card" }
             is_default: false,
             is_landmark: true,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3913,6 +4717,7 @@ testids = { root = "card" }
             name: "comp_grid_select".to_string(),
             event_type: "select".to_string(),
             params: vec!["row".to_string()],
+            requires: Vec::new(),
             action: IfmlAction::Navigate {
                 target: "CustomerDetail".to_string(),
                 binding: HashMap::new(),
@@ -3925,6 +4730,7 @@ testids = { root = "card" }
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3959,6 +4765,7 @@ testids = { root = "side-nav" }
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3968,6 +4775,68 @@ testids = { root = "side-nav" }
         };
         assert!(shell_nav(std::slice::from_ref(&plain), Some(&container_mappings())).is_none());
         assert!(shell_nav(&[plain], None).is_none());
+    }
+
+    fn nav_shell_mappings() -> IfmlComponentMappings {
+        toml::from_str(
+            r#"
+[[component]]
+role = "shell"
+path = "$lib/components/Nav.svelte"
+export = "Nav"
+testids = { root = "side-nav" }
+"#,
+        )
+        .unwrap()
+    }
+
+    fn landmark_with_select_event(
+        binding: HashMap<String, String>,
+    ) -> super::super::context::IfmlViewContainer {
+        let mut list = plain_vc("CustomerList");
+        list.is_landmark = true;
+        list.events.push(IfmlEvent {
+            name: "comp_grid_select".to_string(),
+            event_type: "select".to_string(),
+            params: vec!["row".to_string()],
+            requires: Vec::new(),
+            action: IfmlAction::Navigate {
+                target: "CustomerDetail".to_string(),
+                binding,
+            },
+        });
+        list
+    }
+
+    #[test]
+    fn shell_nav_drops_event_scoped_bindings_from_nav_hrefs() {
+        let list = landmark_with_select_event(HashMap::from([(
+            "customerId".to_string(),
+            "row.id".to_string(),
+        )]));
+        let nav = shell_nav(&[list], Some(&nav_shell_mappings())).expect("shell nav");
+        assert_eq!(nav.items.len(), 1);
+        assert_eq!(
+            nav.items[0].href_attr, "href={\"/customerdetail\"}",
+            "identifiers bound only in event params (row) are not in layout scope; \
+             the nav link must be a plain route link: {:?}",
+            nav.items[0].href_attr
+        );
+    }
+
+    #[test]
+    fn shell_nav_keeps_bindings_that_do_not_reference_event_params() {
+        let list = landmark_with_select_event(HashMap::from([(
+            "tab".to_string(),
+            "'overview'".to_string(),
+        )]));
+        let nav = shell_nav(&[list], Some(&nav_shell_mappings())).expect("shell nav");
+        assert_eq!(nav.items.len(), 1);
+        assert_eq!(
+            nav.items[0].href_attr, "href={`/customerdetail?tab=${'overview'}`}",
+            "static bindings stay on the nav link: {:?}",
+            nav.items[0].href_attr
+        );
     }
 
     #[test]
@@ -4019,5 +4888,63 @@ testids = { root = "side-nav" }
         );
         assert!(rendered.contains("</NavigationMenu>"), "{rendered}");
         assert!(rendered.contains("{@render children()}"), "{rendered}");
+    }
+
+    fn id_param() -> super::super::context::ParameterDef {
+        super::super::context::ParameterDef {
+            name: "customerId".to_string(),
+            type_ref: "Uuid".to_string(),
+            default: None,
+        }
+    }
+
+    #[test]
+    fn create_view_submit_posts_to_collection_url() {
+        let ctx = page_context_for(&form_view(false), None);
+        let submit = ctx.components[0].submit.as_ref().expect("form submit");
+        assert_eq!(submit.method, "POST");
+        assert_eq!(submit.url_expr, "\"/api/v1/customer\"");
+        assert!(
+            !submit.url_expr.contains("${"),
+            "create submit URL must not interpolate an id: {}",
+            submit.url_expr
+        );
+    }
+
+    #[test]
+    fn edit_view_submit_puts_to_item_url() {
+        let mut vc = form_view(false);
+        vc.params = vec![id_param()];
+        let ctx = page_context_for(&vc, None);
+        let submit = ctx.components[0].submit.as_ref().expect("form submit");
+        assert_eq!(submit.method, "PUT");
+        assert_eq!(
+            submit.url_expr, "`/api/v1/customer/${viewParams.customerId}`",
+            "edit submit must target the item URL through viewParams"
+        );
+    }
+
+    #[test]
+    fn edit_view_page_branches_to_post_collection_in_create_mode() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let mut vc = form_view(false);
+        vc.params = vec![id_param()];
+        vc.components[0].events.push(save_event());
+        let ctx = page_context_for(&vc, None);
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+        assert!(
+            rendered.contains("method: 'POST'"),
+            "opening an id-param form view without ?id (create mode) must POST the \
+             collection URL; rendered submit:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\"/api/v1/customer\"") || rendered.contains("`/api/v1/customer`"),
+            "create mode must target the collection URL literal (no trailing \
+             empty item id):\n{rendered}"
+        );
+        assert!(
+            rendered.contains("method: 'PUT'"),
+            "edit mode (?id present) must keep the item PUT:\n{rendered}"
+        );
     }
 }

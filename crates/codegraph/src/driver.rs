@@ -371,15 +371,11 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
 
     let override_dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
 
-    // When the profile-template-pack PR lands, template_pack from the resolved
-    // profile variant can be appended to override_dirs here.
-
-    let tera = if override_dirs.is_empty() {
-        let td = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-        crate::generate::template_engine::create_tera(&td)?
-    } else {
-        crate::generate::template_engine::create_tera_with_overrides(&override_dirs)?
-    };
+    // Precedence: project template dirs > design-system pack templates >
+    // embedded built-ins.
+    let design_system = effective_design_system(ifml_design_system, build_plan.as_ref());
+    let tera =
+        crate::generate::template_engine::create_tera_for_run(design_system, &override_dirs)?;
 
     let ext_config = match extension_points_path {
         Some(path) => Some(
@@ -391,10 +387,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
 
     run_validation(be.querier(), &domain_config).await?;
 
-    let ifml_component_mappings = load_ifml_component_mappings(
-        ifml_components,
-        effective_design_system(ifml_design_system, build_plan.as_ref()),
-    )?;
+    let ifml_component_mappings = load_ifml_component_mappings(ifml_components, design_system)?;
 
     let report = crate::generate::run_generators_with_opts(crate::generate::GeneratorOpts {
         db: be.querier(),
@@ -684,17 +677,11 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
     };
 
     let override_dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
-    let tera = if override_dirs.is_empty() {
-        let td = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-        crate::generate::template_engine::create_tera(&td)?
-    } else {
-        crate::generate::template_engine::create_tera_with_overrides(&override_dirs)?
-    };
+    let design_system = effective_design_system(ifml_design_system, build_plan.as_ref());
+    let tera =
+        crate::generate::template_engine::create_tera_for_run(design_system, &override_dirs)?;
 
-    let ifml_component_mappings = load_ifml_component_mappings(
-        ifml_components,
-        effective_design_system(ifml_design_system, build_plan.as_ref()),
-    )?;
+    let ifml_component_mappings = load_ifml_component_mappings(ifml_components, design_system)?;
 
     let report = crate::generate::run_ifml_generators(
         be.querier(),
@@ -738,13 +725,8 @@ pub async fn generate(
     let ui_overrides = load_ui_overrides(config_path)?;
     let ui_domains = load_ui_domains(config_path)?;
 
-    let tera = if template_dir.is_empty() {
-        let td = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-        crate::generate::template_engine::create_tera(&td)?
-    } else {
-        let dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
-        crate::generate::template_engine::create_tera_with_overrides(&dirs)?
-    };
+    let dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
+    let tera = crate::generate::template_engine::create_tera_for_run(ifml_design_system, &dirs)?;
 
     let ext_config = match extension_points_path {
         Some(path) => Some(

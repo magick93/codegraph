@@ -282,6 +282,91 @@ view "Queue" {
         .any(|c| c.name == "EscalateTicket"));
 }
 
+const DELEGATION_MOX: &str = r#"
+package support
+
+class Ticket {
+    String title
+    boolean internal
+}
+"#;
+
+const DELEGATION_ACTOR: &str = r#"
+import "support.mox"
+
+actors Support {
+    actor Customer
+    agent Helper
+
+    capability ReadTicket on Ticket
+
+    purpose CustomerCare
+
+    grant Helper {
+        permit ReadTicket
+    }
+
+    delegation AutoRead {
+        from Customer
+        to Helper
+        purpose CustomerCare
+        permit ReadTicket when (!internal) obligation log
+    }
+}
+"#;
+
+#[tokio::test]
+async fn delegation_and_purposes_persist_through_policy_import() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_file(
+        tmp.path(),
+        "app.ifml",
+        "import \"policies/support.actor\"\n\nview \"Queue\" {}\n",
+    );
+    write_file(tmp.path(), "policies/support.actor", DELEGATION_ACTOR);
+    write_file(tmp.path(), "policies/support.mox", DELEGATION_MOX);
+
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    let imported = ingest_ifml_file(&engine, &tmp.path().join("app.ifml")).await;
+    assert_eq!(imported, 1);
+
+    let grants = engine.get_grants().await.expect("grants");
+    assert_eq!(grants.len(), 1, "delegation entries must not become grants");
+    assert_eq!(grants[0].actor, "Helper");
+
+    let policy = engine
+        .get_actor_policy()
+        .await
+        .expect("policy")
+        .expect("policy node present");
+    assert_eq!(policy.purposes, vec!["CustomerCare".to_string()]);
+    assert_eq!(policy.delegations.len(), 1);
+    let delegation = &policy.delegations[0];
+    assert_eq!(delegation.name, "AutoRead");
+    assert_eq!(delegation.from_actor, "Customer");
+    assert_eq!(delegation.to_actor, "Helper");
+    assert_eq!(delegation.purpose.as_deref(), Some("CustomerCare"));
+    assert_eq!(delegation.entries.len(), 1);
+    assert_eq!(delegation.entries[0].actor, "Customer");
+    assert_eq!(delegation.entries[0].capability, "ReadTicket");
+    assert_eq!(delegation.entries[0].effect, "permit");
+    assert_eq!(delegation.entries[0].when.as_deref(), Some("!internal"));
+    assert_eq!(delegation.entries[0].obligations, vec!["log".to_string()]);
+
+    let permits = engine.effective_permits("Helper").await.expect("permits");
+    assert_eq!(
+        permits.len(),
+        1,
+        "only the explicit grant resolves, not the delegation entry"
+    );
+    assert_eq!(permits[0].capability, "ReadTicket");
+    assert_eq!(
+        permits[0].when, None,
+        "delegation when/obligations must not merge into effective permits"
+    );
+    assert!(permits[0].obligations.is_empty());
+}
+
 #[tokio::test]
 async fn missing_domain_file_warns_without_failing() {
     let tmp = tempfile::tempdir().expect("tempdir");

@@ -23,7 +23,7 @@ pub use api::{
 pub use atproto::{CollectionNode, LexiconNode, NamespaceNode, RepositoryNode};
 pub use authorization::{
     resolve_effective_permits, ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode,
-    GrantEdge, NeverBothGroup, Permit,
+    DelegationRecord, GrantEdge, NeverBothGroup, Permit,
 };
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};

@@ -269,6 +269,20 @@ without schemas degrade to render tests). Emitted `playwright.config.ts`/`packag
 never overwrite existing files; the config gains env-gated Bearer auth
 (`IFML_API_KEY` → `extraHTTPHeaders`) for runs against an authenticated API.
 
+### IFML app skeleton (`ifml-skeleton` generator)
+
+`IfmlSkeletonGenerator` (Global, `ifml_skeleton`/`ifml_skeleton_{fw}` capabilities;
+runs first via `GlobalGenerator::sequential_first()` so the e2e generator's
+if-absent stubs never clobber it) emits a buildable SvelteKit app skeleton
+never-overwrite: `package.json` (svelte ^5.56, kit, vite, adapter-auto,
+svelte-check, typescript, @playwright/test; dev/build/preview/check/test:e2e
+scripts), `vite.config.ts` (`sveltekit()` + `/api` proxy → `IFML_API_ORIGIN`
+env, default `http://127.0.0.1:3000`), `svelte.config.js`, `tsconfig.json`,
+`src/app.html`, `src/app.d.ts`. Svelte-only; other frameworks keep the
+e2e-generator stubs. Forms branch at runtime: id-param views emit
+`const isEdit = !!viewParams[<param>]` → POST collection (create) vs PUT item
+(update); details fallback reads `data.item.<field>`.
+
 ### IFML validation gate (full-stack)
 
 `crates/codegraph/tests/ifml_codegen_gate.rs` — TDD acceptance gate that runs the
@@ -277,11 +291,12 @@ pack, modal view, requires/roles + rexlang `policy.actor`, workflow, codelists)
 into `target/ifml-gate/` and asserts the generated app works against a real
 backend: T0 migrations apply + axum boots (`/health`), T1 `svelte-check` zero
 errors, T2 `vite build`, T3 Playwright specs pass (render/click-through/
-validation/CRUD round-trip/persona allow+deny/workflow) against the API through a
-vite `/api` proxy, T4 view-removal + regen stays green. Reusable harness lives in
-`tests/test_framework/` (`NodeProject`, `postgres.rs` GateDb, `axum_server.rs`,
-`playwright.rs`, `extras.rs` — the gate-provided SvelteKit skeleton + ui stubs;
-moving the skeleton into the generator is a follow-up). Run:
+validation/CRUD round-trip/create-POST-persists/details values/persona
+allow+deny/workflow) against the API through a vite `/api` proxy, T4 view-removal
++ regen stays green. Reusable harness lives in `tests/test_framework/`
+(`NodeProject`, `postgres.rs` GateDb, `axum_server.rs`, `playwright.rs`,
+`extras.rs` — ui stubs + gate playwright config + key-injecting proxy; the
+SvelteKit skeleton itself is generator-provided). Run:
 
 ```bash
 cargo test -p codegraph --test ifml_codegen_gate -- --ignored --nocapture
@@ -290,7 +305,9 @@ cargo test -p codegraph --test ifml_codegen_gate -- --ignored --nocapture
 Requires node 22 + chromium (auto-installed) + Postgres (`DATABASE_URL`, default
 `postgres://postgres:postgres@localhost:5432/postgres`; a `postgres:16` docker
 container on 127.0.0.1:15432 is bootstrapped as fallback). Unique DB per run,
-dropped on finish; warm run ~110s. Local/nightly only — CI stays node-free.
+dropped on finish; warm run ~110s. Runs locally and on the nightly
+`.github/workflows/ifml-gate.yml` (workflow_dispatch + 03:00 UTC cron, postgres:16
+service, gate logs artifact on failure) — PR CI stays node-free.
 
 ## gRPC Code Generation
 
