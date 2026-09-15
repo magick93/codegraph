@@ -582,6 +582,7 @@ fn assert_categories(titles: &[String]) {
     let validation = has(&|t| t == "form validation blocks empty submit");
     let round_trip = has(&|t| t == "form round trip persists changes");
     let workflow = has(&|t| t.starts_with("shows the initial workflow state for "));
+    let workflow_transition = has(&|t| t.starts_with("transitions ") && t.contains(" to "));
     let create_via_ui = has(&|t| t.starts_with("create round trip persists a new refund request"));
     let details_values = has(&|t| t.starts_with("details shows the persisted values"));
 
@@ -593,6 +594,7 @@ fn assert_categories(titles: &[String]) {
         ("validation", validation),
         ("round trip", round_trip),
         ("workflow", workflow),
+        ("workflow transition", workflow_transition),
         ("create via ui", create_via_ui),
         ("details values", details_values),
     ]
@@ -632,6 +634,29 @@ fn assert_categories(titles: &[String]) {
             .exists(),
         "nested containers must not be generated as standalone routes"
     );
+
+    // Issue #198 workflow UI v2: the details view of the workflow-bound
+    // entity must render transition buttons (per valid from → to edge) with
+    // the e2e-hook contract. The fixture's first transition is
+    // draft → submitted; the fixture workflow config already sets
+    // generate_action_endpoints = true so the POST target exists.
+    let detail_path = svelte_dir().join("src/routes/refundrequestdetail/+page.svelte");
+    if detail_path.exists() {
+        let detail = fs::read_to_string(&detail_path).unwrap_or_default();
+        assert!(
+            detail.contains("data-testid=\"info-transition-submitted\""),
+            "workflow-bound details page should render the draft→submitted transition button:\n{detail}"
+        );
+        assert!(
+            detail.contains("data-transition-from=\"draft\"")
+                && detail.contains("data-transition-to=\"submitted\""),
+            "transition buttons carry data-transition-from/to hooks:\n{detail}"
+        );
+        assert!(
+            detail.contains("/actions/transition"),
+            "the transition handler must call the generated workflow_action endpoint:\n{detail}"
+        );
+    }
     let home_path = svelte_dir().join("src/routes/home/+page.svelte");
     if home_path.exists() {
         let home = fs::read_to_string(&home_path).unwrap_or_default();
