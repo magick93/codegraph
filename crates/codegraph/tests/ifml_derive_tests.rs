@@ -109,6 +109,53 @@ const ODD_PAGE: &str = r#"<script lang="ts">
 </div>
 "#;
 
+/// A form page whose handlers are `const` arrow functions instead of
+/// `function` declarations (issue #203 upgrade 1): handler bodies must still
+/// resolve to goto()/fetch() analysis, including from inline arrow handlers.
+/// The save handler's goto binding is three segments deep (issue #203
+/// upgrade 4): it must project onto the closest two segments so the DSL
+/// (which binds at most two) accepts it.
+const ARROW_PAGE: &str = r#"<script lang="ts">
+	import { goto } from '$app/navigation';
+
+	let title = $state('');
+
+	const save = async () => {
+		const response = await fetch('/api/v1/todo-lists', {
+			method: 'POST',
+			body: JSON.stringify({ title })
+		});
+		if (!response.ok) return;
+		goto('/todolist?backTo=form.draft.origin');
+	};
+
+	const cancel = () => goto('/todolist');
+</script>
+
+<div class="page">
+	<form on:submit|preventDefault={save}>
+		<label>
+			Title
+			<input name="title" type="text" required bind:value={title} />
+		</label>
+		<Button onclick={() => save(title)}>Save</Button>
+		<button on:click={() => cancel()}>Cancel</button>
+	</form>
+</div>
+"#;
+
+/// A page with two distinct confident fetches (issue #203 upgrade 5): still
+/// no `data:` inference, but the skip must be observable.
+const MULTI_FETCH_PAGE: &str = r#"<script lang="ts">
+	const customers = await fetch('/api/v1/customers');
+	const vendors = await fetch('/api/v1/vendors');
+</script>
+
+<div class="page">
+	<p>Overview of both feeds.</p>
+</div>
+"#;
+
 fn derived(content: &str, route: &str) -> (String, codegraph::ifml_derive::DerivedView) {
     let name = view_name_from_route(route);
     let view = derive_view(&name, route, content);
@@ -138,6 +185,45 @@ fn form_page_derives_form_view_with_fields_and_navigations() {
     // submit_editor resolves identically from on:submit and Button onclick;
     // the duplicate is deduped.
     assert_eq!(out.matches("submit_editor").count(), 0);
+    // A single non-array fetch without an each block is details-shaped
+    // (issue #203 upgrade 2): data on the form, never a list component.
+    assert!(!out.contains("type: list;"));
+}
+
+#[test]
+fn arrow_const_handlers_resolve_to_bodies_with_deep_binding_projection() {
+    let (out, view) = derived(ARROW_PAGE, "todo-editor");
+    assert_eq!(view.name, "TodoEditor");
+    // const save = async () => { ... goto(...) } must resolve through the
+    // inline arrow `onclick={() => save(title)}` (issue #203 upgrade 1).
+    assert!(
+        out.contains(r#"on save -> navigate("Todolist", { backTo: draft.origin });"#),
+        "const arrow handler must resolve to its goto analysis:\n{out}"
+    );
+    // const cancel = () => goto('/todolist') — expression-bodied arrow.
+    assert!(
+        out.contains(r#"on cancel -> navigate("Todolist");"#),
+        "expression-bodied const arrow must resolve:\n{out}"
+    );
+    assert!(
+        !out.contains(r#"action("save")"#),
+        "no action fallback:\n{out}"
+    );
+    assert!(
+        !out.contains(r#"action("cancel")"#),
+        "no action fallback:\n{out}"
+    );
+    // fetch('/api/v1/todo-lists') inside the const body still feeds data:.
+    assert!(out.contains("data: TodoList;"));
+    // The 3-segment binding form.draft.origin projects onto draft.origin
+    // (issue #203 upgrade 4) and the projection is observable.
+    assert!(
+        view.skipped
+            .iter()
+            .any(|s| s.contains("form.draft.origin") && s.contains("draft.origin")),
+        "deep binding projection must be noted: {:?}",
+        view.skipped
+    );
 }
 
 #[test]
@@ -154,20 +240,54 @@ fn form_page_skips_nameless_controls() {
 }
 
 #[test]
-fn list_page_derives_select_navigation_and_action_fallback() {
+fn list_page_derives_list_component_with_row_select() {
     let (out, view) = derived(LIST_PAGE, "");
     assert_eq!(view.name, "Index");
     assert!(out.contains(r#"view "Index""#));
-    assert!(
-        out.contains(r#"on select(row) -> navigate("Customerdetail", { customerId: item.id });"#),
-        "row click through each-block must yield a select navigation:\n{out}"
-    );
+    // A single confident fetch + {#each} render ⇒ a list component
+    // (issue #203 upgrade 2); the each variable is the generic `item`, so the
+    // name falls back to the singularized fetch stem.
+    let comp_at = out
+        .find(r#"component "customer" {"#)
+        .expect("list component");
+    let type_at = out.find("type: list;").expect("list type");
+    let data_at = out.find("data: Customer;").expect("list data");
+    let select_at = out
+        .find(r#"on select(row) -> navigate("Customerdetail", { customerId: item.id });"#)
+        .expect("row select inside the list component");
+    assert!(comp_at < type_at && type_at < data_at && data_at < select_at);
+    // The select event lives on the component, not duplicated at view level.
+    assert_eq!(out.matches("on select(row)").count(), 1);
+    let list_comp = view
+        .components
+        .iter()
+        .find(|c| c.name == "customer")
+        .expect("list component in view struct");
+    assert_eq!(list_comp.data.as_deref(), Some("Customer"));
+    assert_eq!(list_comp.events.len(), 1);
+    // Non-row buttons stay view-level (undefined handler → action fallback).
     assert!(
         out.contains(r#"on click -> action("refresh_list");"#),
         "undefined handler falls back to action:\n{out}"
     );
-    // fetch('/api/v1/customers') with no component: view-level data fallback.
-    assert!(out.contains("data: Customer;"));
+}
+
+#[test]
+fn multi_fetch_records_observable_skip_note() {
+    let (out, view) = derived(MULTI_FETCH_PAGE, "overview");
+    // Two distinct confident fetches stay skipped for `data:`, but the skip
+    // is now asserted and reported (issue #203 upgrade 5).
+    let note = view
+        .skipped
+        .iter()
+        .find(|s| s.contains("multiple distinct fetch"))
+        .expect("multi-fetch skip must be recorded");
+    assert!(
+        note.contains("Customer"),
+        "note names both entities: {note}"
+    );
+    assert!(note.contains("Vendor"), "note names both entities: {note}");
+    assert!(!out.contains("data:"), "no data inferred:\n{out}");
 }
 
 #[test]
@@ -226,12 +346,15 @@ async fn derived_model_ingests_into_mock_graph() {
         .expect("derived model must ingest");
 
     let containers = engine.get_ifml_view_containers().await.unwrap();
-    // 2 view containers + 1 nested "Main" container from the form page.
+    // 2 view containers + the nested "Main" container (both pages nest a
+    // container of the same name, which dedupes to one node).
     assert_eq!(containers.len(), 3);
     let components = engine.get_ifml_view_components("Main").await.unwrap();
-    // The derived form component lives inside the derived "Main" container.
-    assert_eq!(components.len(), 1);
-    assert_eq!(components[0].name, "form");
+    // The form page contributes its form component and the list page its
+    // list component; both live under the shared "Main" container id.
+    let mut names: Vec<&str> = components.iter().map(|c| c.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, vec!["customer", "form"]);
 }
 
 fn write_page(root: &Path, route_dir: &str, content: &str) {
