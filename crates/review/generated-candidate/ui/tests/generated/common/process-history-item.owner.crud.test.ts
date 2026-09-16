@@ -42,8 +42,6 @@ test.describe('ProcessHistoryItem Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create ProcessHistoryItem via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -74,16 +72,12 @@ test.describe('ProcessHistoryItem Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees ProcessHistoryItem in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="process_history_item-table"]');
     const empty = ownerPage.locator('[data-testid="process_history_item-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view ProcessHistoryItem detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -95,8 +89,6 @@ test.describe('ProcessHistoryItem Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="process_history_item-field-descriptions"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="process_history_item-field-id"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit ProcessHistoryItem', async ({ ownerPage, orgContext }) => {
@@ -134,8 +126,6 @@ test.describe('ProcessHistoryItem Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete ProcessHistoryItem', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -154,5 +144,4 @@ test.describe('ProcessHistoryItem Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="process_history_item-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

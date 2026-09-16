@@ -42,8 +42,6 @@ test.describe('GenderCodeList Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create GenderCodeList via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -70,16 +68,12 @@ test.describe('GenderCodeList Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees GenderCodeList in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="gender_code_list-table"]');
     const empty = ownerPage.locator('[data-testid="gender_code_list-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view GenderCodeList detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -91,8 +85,6 @@ test.describe('GenderCodeList Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="gender_code_list-field-display_name"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="gender_code_list-field-sort_order"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit GenderCodeList', async ({ ownerPage, orgContext }) => {
@@ -120,8 +112,6 @@ test.describe('GenderCodeList Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete GenderCodeList', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -140,5 +130,4 @@ test.describe('GenderCodeList Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="gender_code_list-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

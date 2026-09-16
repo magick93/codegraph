@@ -36,8 +36,6 @@ test.describe('FormattedDateTime Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create FormattedDateTime via API', async ({ orgContext }) => {
     // All properties are complex types (value objects / child tables) — no simple form fields.
     // Use direct API call via orgContext (authenticated as ACME owner).
@@ -47,16 +45,12 @@ test.describe('FormattedDateTime Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees FormattedDateTime in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="formatted_date_time-table"]');
     const empty = ownerPage.locator('[data-testid="formatted_date_time-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view FormattedDateTime detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -67,12 +61,8 @@ test.describe('FormattedDateTime Owner CRUD', () => {
   });
 
 
-
-
   // All properties are complex types — no simple form fields to edit.
   // Edit-via-form test skipped; CRUD coverage provided by API create + detail + delete tests.
-
-
 
 
   test('owner can delete FormattedDateTime', async ({ ownerPage, orgContext }) => {
@@ -93,5 +83,4 @@ test.describe('FormattedDateTime Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="formatted_date_time-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

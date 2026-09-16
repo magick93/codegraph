@@ -40,8 +40,6 @@ test.describe('EffectiveDate Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create EffectiveDate via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -65,16 +63,12 @@ test.describe('EffectiveDate Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees EffectiveDate in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="effective_date-table"]');
     const empty = ownerPage.locator('[data-testid="effective_date-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view EffectiveDate detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -85,8 +79,6 @@ test.describe('EffectiveDate Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="effective_date-field-valid_from"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="effective_date-field-valid_to"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit EffectiveDate', async ({ ownerPage, orgContext }) => {
@@ -110,8 +102,6 @@ test.describe('EffectiveDate Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete EffectiveDate', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -130,5 +120,4 @@ test.describe('EffectiveDate Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="effective_date-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

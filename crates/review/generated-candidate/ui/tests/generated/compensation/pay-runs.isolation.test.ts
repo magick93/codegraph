@@ -38,7 +38,7 @@ test.describe('PayRun Cross-Org Isolation', () => {
       testData(),
     );
     acmeEntityId = entity.id as string;
-  });
+});
 
 
 
@@ -57,8 +57,6 @@ test.describe('PayRun Cross-Org Isolation', () => {
     }
   });
 
-
-
   test('HighFive owner cannot access ACME PayRun by direct URL', async ({ highfiveOwnerPage }) => {
 
     const response = await highfiveOwnerPage.goto(`${BASE_PATH}/${acmeEntityId}`);
@@ -70,5 +68,4 @@ test.describe('PayRun Cross-Org Isolation', () => {
       || content?.includes('Error');
     expect(notFound).toBe(true);
   });
-
 });

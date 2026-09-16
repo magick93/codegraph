@@ -42,8 +42,6 @@ test.describe('PositionScheduleTypeCodeList Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create PositionScheduleTypeCodeList via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -70,16 +68,12 @@ test.describe('PositionScheduleTypeCodeList Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees PositionScheduleTypeCodeList in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="position_schedule_type_code_list-table"]');
     const empty = ownerPage.locator('[data-testid="position_schedule_type_code_list-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view PositionScheduleTypeCodeList detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -91,8 +85,6 @@ test.describe('PositionScheduleTypeCodeList Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="position_schedule_type_code_list-field-display_name"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="position_schedule_type_code_list-field-sort_order"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit PositionScheduleTypeCodeList', async ({ ownerPage, orgContext }) => {
@@ -120,8 +112,6 @@ test.describe('PositionScheduleTypeCodeList Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete PositionScheduleTypeCodeList', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -140,5 +130,4 @@ test.describe('PositionScheduleTypeCodeList Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="position_schedule_type_code_list-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

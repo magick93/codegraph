@@ -70,8 +70,6 @@ test.describe('Candidate Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create Candidate via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -136,16 +134,12 @@ test.describe('Candidate Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees Candidate in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="candidate-table"]');
     const empty = ownerPage.locator('[data-testid="candidate-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view Candidate detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -171,8 +165,6 @@ test.describe('Candidate Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="candidate-field-status"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="candidate-field-uri"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit Candidate', async ({ ownerPage, orgContext }) => {
@@ -248,8 +240,5 @@ test.describe('Candidate Owner CRUD', () => {
     await ownerPage.locator('[data-testid="candidate-submit-btn"]').click();
     await expectToast(ownerPage, 'updated', 'success');
   });
-
-
-
 
 });

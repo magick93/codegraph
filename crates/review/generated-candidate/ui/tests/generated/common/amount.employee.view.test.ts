@@ -30,7 +30,7 @@ test.describe('Amount Employee View', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -42,8 +42,6 @@ test.describe('Amount Employee View', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('employee can view Amount detail', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
@@ -52,14 +50,10 @@ test.describe('Amount Employee View', () => {
     await expect(employeePage.locator('[data-testid="amount-field-value"]')).toBeVisible();
   });
 
-
-
   test('employee cannot access create form', async ({ employeePage }) => {
     await employeePage.goto(BASE_PATH);
     await expect(employeePage.locator('[data-testid="amount-create-btn"]')).toBeHidden();
   });
-
-
 
   test('employee cannot access edit form', async ({ employeePage }) => {
 
@@ -68,13 +62,10 @@ test.describe('Amount Employee View', () => {
     await expect(employeePage.locator('[data-testid="amount-edit-btn"]')).toBeHidden();
   });
 
-
-
   test('employee cannot delete Amount', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
 
     await expect(employeePage.locator('[data-testid="amount-delete-btn"]')).toBeHidden();
   });
-
 });

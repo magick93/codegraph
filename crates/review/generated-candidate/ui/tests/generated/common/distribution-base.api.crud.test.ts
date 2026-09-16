@@ -80,8 +80,6 @@ test.describe('DistributionBase CRUD', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('create entity via form', async ({ ownerPage: page }) => {
 
     await page.goto(`${BASE_PATH}/new`);
@@ -154,8 +152,6 @@ test.describe('DistributionBase CRUD', () => {
   });
 
 
-
-
   test('bulk create via API returns 207 with success array', async ({ orgContext }) => {
     const items = [testData(), testData()];
     const result = await bulkCreateEntitiesAsAcme(orgContext, BASE_PATH, items);
@@ -183,8 +179,6 @@ test.describe('DistributionBase CRUD', () => {
     expect(res.status).toBe(400);
   });
 
-
-
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -206,8 +200,6 @@ test.describe('DistributionBase CRUD', () => {
     await expect(page.getByText('Created At')).toBeVisible();
     await expect(page.getByText('Updated')).toBeVisible();
   });
-
-
 
 
   test('edit entity via form', async ({ ownerPage: page, orgContext }) => {
@@ -274,10 +266,6 @@ test.describe('DistributionBase CRUD', () => {
   });
 
 
-
-
-
-
   test('delete entity', async ({ ownerPage: page, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -305,8 +293,6 @@ test.describe('DistributionBase CRUD', () => {
       await expect(table).not.toContainText(myId);
     }
   });
-
-
 
   test('404 for non-existent entity', async ({ ownerPage: page }) => {
 

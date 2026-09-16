@@ -44,8 +44,6 @@ test.describe('Application Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create Application via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -75,16 +73,12 @@ test.describe('Application Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees Application in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="application-table"]');
     const empty = ownerPage.locator('[data-testid="application-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view Application detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -97,8 +91,6 @@ test.describe('Application Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="application-field-candidate_id"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="application-field-status"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit Application', async ({ ownerPage, orgContext }) => {
@@ -129,8 +121,6 @@ test.describe('Application Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete Application', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -149,5 +139,4 @@ test.describe('Application Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="application-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

@@ -39,7 +39,7 @@ test.describe('EventBase Cross-Org Isolation', () => {
       testData(),
     );
     acmeEntityId = entity.id as string;
-  });
+});
 
 
 
@@ -58,8 +58,6 @@ test.describe('EventBase Cross-Org Isolation', () => {
     }
   });
 
-
-
   test('HighFive owner cannot access ACME EventBase by direct URL', async ({ highfiveOwnerPage }) => {
 
     const response = await highfiveOwnerPage.goto(`${BASE_PATH}/${acmeEntityId}`);
@@ -71,5 +69,4 @@ test.describe('EventBase Cross-Org Isolation', () => {
       || content?.includes('Error');
     expect(notFound).toBe(true);
   });
-
 });

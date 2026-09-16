@@ -40,8 +40,6 @@ test.describe('Amount Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create Amount via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -65,16 +63,12 @@ test.describe('Amount Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees Amount in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="amount-table"]');
     const empty = ownerPage.locator('[data-testid="amount-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view Amount detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -85,8 +79,6 @@ test.describe('Amount Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="amount-field-currency"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="amount-field-value"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit Amount', async ({ ownerPage, orgContext }) => {
@@ -109,8 +101,6 @@ test.describe('Amount Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete Amount', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -129,5 +119,4 @@ test.describe('Amount Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="amount-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

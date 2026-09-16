@@ -45,7 +45,7 @@ test.describe('Candidate Manager Team', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -56,8 +56,6 @@ test.describe('Candidate Manager Team', () => {
     const empty = managerPage.locator('[data-testid="candidate-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('manager can view Candidate detail', async ({ managerPage }) => {
 
@@ -82,8 +80,6 @@ test.describe('Candidate Manager Team', () => {
     await expect(managerPage.locator('[data-testid="candidate-field-uri"]')).toBeVisible();
   });
 
-
-
   test('manager can edit Candidate', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}/edit`);
@@ -91,5 +87,4 @@ test.describe('Candidate Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="candidate-form"]')).toBeVisible();
   });
-
 });

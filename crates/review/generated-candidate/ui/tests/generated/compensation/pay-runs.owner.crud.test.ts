@@ -44,8 +44,6 @@ test.describe('PayRun Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create PayRun via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -75,16 +73,12 @@ test.describe('PayRun Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees PayRun in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="pay_run-table"]');
     const empty = ownerPage.locator('[data-testid="pay_run-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view PayRun detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -97,8 +91,6 @@ test.describe('PayRun Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="pay_run-field-total_amount"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="pay_run-field-total_amount_currency"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit PayRun', async ({ ownerPage, orgContext }) => {
@@ -129,8 +121,6 @@ test.describe('PayRun Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete PayRun', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -149,5 +139,4 @@ test.describe('PayRun Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="pay_run-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

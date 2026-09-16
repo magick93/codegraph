@@ -31,7 +31,7 @@ test.describe('Rsvp Manager Team', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -43,8 +43,6 @@ test.describe('Rsvp Manager Team', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('manager can view Rsvp detail', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}`);
@@ -54,8 +52,6 @@ test.describe('Rsvp Manager Team', () => {
     await expect(managerPage.locator('[data-testid="rsvp-field-timestamp"]')).toBeVisible();
   });
 
-
-
   test('manager can edit Rsvp', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}/edit`);
@@ -63,5 +59,4 @@ test.describe('Rsvp Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="rsvp-form"]')).toBeVisible();
   });
-
 });

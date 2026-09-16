@@ -42,8 +42,6 @@ test.describe('PersonBase Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create PersonBase via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -70,16 +68,12 @@ test.describe('PersonBase Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees PersonBase in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="person_base-table"]');
     const empty = ownerPage.locator('[data-testid="person_base-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view PersonBase detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -91,8 +85,6 @@ test.describe('PersonBase Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="person_base-field-family_name"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="person_base-field-given_name"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit PersonBase', async ({ ownerPage, orgContext }) => {
@@ -120,8 +112,6 @@ test.describe('PersonBase Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete PersonBase', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -140,5 +130,4 @@ test.describe('PersonBase Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="person_base-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

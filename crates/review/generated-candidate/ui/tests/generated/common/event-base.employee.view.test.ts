@@ -33,7 +33,7 @@ test.describe('EventBase Employee View', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -44,8 +44,6 @@ test.describe('EventBase Employee View', () => {
     const empty = employeePage.locator('[data-testid="event_base-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('employee can view EventBase detail', async ({ employeePage }) => {
 
@@ -58,14 +56,10 @@ test.describe('EventBase Employee View', () => {
     await expect(employeePage.locator('[data-testid="event_base-field-given_name"]')).toBeVisible();
   });
 
-
-
   test('employee cannot access create form', async ({ employeePage }) => {
     await employeePage.goto(BASE_PATH);
     await expect(employeePage.locator('[data-testid="event_base-create-btn"]')).toBeHidden();
   });
-
-
 
   test('employee cannot access edit form', async ({ employeePage }) => {
 
@@ -74,13 +68,10 @@ test.describe('EventBase Employee View', () => {
     await expect(employeePage.locator('[data-testid="event_base-edit-btn"]')).toBeHidden();
   });
 
-
-
   test('employee cannot delete EventBase', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
 
     await expect(employeePage.locator('[data-testid="event_base-delete-btn"]')).toBeHidden();
   });
-
 });
