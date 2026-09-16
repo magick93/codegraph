@@ -90,8 +90,12 @@ test.describe('{{ entity_name }} Employee View', () => {
 {% endif %}
 {% set dep_section = "before_all" %}
 {% include "ui/test/_dep_setup.tera" %}
+{%- if has_create %}
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
+{% else %}
+    // Read-only entity (no create route): row-dependent tests are gated off.
+{% endif -%}
   });
 
 {% if has_entity_ref_deps %}
@@ -110,7 +114,7 @@ test.describe('{{ entity_name }} Employee View', () => {
   });
 {% endif %}
 
-{% if has_read %}
+{%- if has_read and has_create %}
   test('employee can view {{ entity_name }} detail', async ({ employeePage }) => {
 {% if parent and parent.grandparent %}
     await employeePage.goto(`${UI_PATH}/${createdId}`);
@@ -121,16 +125,16 @@ test.describe('{{ entity_name }} Employee View', () => {
     await expect(employeePage.locator('[data-testid="{{ module_name }}-field-{{ field.name }}"]')).toBeVisible();
 {%- endfor %}
   });
-{% endif %}
+{% endif -%}
 
-{% if has_create %}
+{%- if has_create %}
   test('employee cannot access create form', async ({ employeePage }) => {
     await employeePage.goto({% if parent and parent.grandparent %}UI_PATH{% else %}BASE_PATH{% endif %});
     await expect(employeePage.locator('[data-testid="{{ module_name }}-create-btn"]')).toBeHidden();
   });
-{% endif %}
+{% endif -%}
 
-{% if has_update %}
+{%- if has_update and has_create %}
   test('employee cannot access edit form', async ({ employeePage }) => {
 {% if parent and parent.grandparent %}
     await employeePage.goto(`${UI_PATH}/${createdId}`);
@@ -139,9 +143,9 @@ test.describe('{{ entity_name }} Employee View', () => {
 {% endif %}
     await expect(employeePage.locator('[data-testid="{{ module_name }}-edit-btn"]')).toBeHidden();
   });
-{% endif %}
+{% endif -%}
 
-{% if has_delete %}
+{%- if has_delete and has_create %}
   test('employee cannot delete {{ entity_name }}', async ({ employeePage }) => {
 {% if parent and parent.grandparent %}
     await employeePage.goto(`${UI_PATH}/${createdId}`);
@@ -150,5 +154,5 @@ test.describe('{{ entity_name }} Employee View', () => {
 {% endif %}
     await expect(employeePage.locator('[data-testid="{{ module_name }}-delete-btn"]')).toBeHidden();
   });
-{% endif %}
+{% endif -%}
 });

@@ -32,7 +32,7 @@ test.describe('Identifier Manager Team', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -44,8 +44,6 @@ test.describe('Identifier Manager Team', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('manager can view Identifier detail', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}`);
@@ -56,8 +54,6 @@ test.describe('Identifier Manager Team', () => {
     await expect(managerPage.locator('[data-testid="identifier-field-value"]')).toBeVisible();
   });
 
-
-
   test('manager can edit Identifier', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}/edit`);
@@ -65,5 +61,4 @@ test.describe('Identifier Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="identifier-form"]')).toBeVisible();
   });
-
 });

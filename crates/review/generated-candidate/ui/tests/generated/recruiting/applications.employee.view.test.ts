@@ -32,7 +32,7 @@ test.describe('Application Employee View', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -44,8 +44,6 @@ test.describe('Application Employee View', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('employee can view Application detail', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
@@ -56,14 +54,10 @@ test.describe('Application Employee View', () => {
     await expect(employeePage.locator('[data-testid="application-field-status"]')).toBeVisible();
   });
 
-
-
   test('employee cannot access create form', async ({ employeePage }) => {
     await employeePage.goto(BASE_PATH);
     await expect(employeePage.locator('[data-testid="application-create-btn"]')).toBeHidden();
   });
-
-
 
   test('employee cannot access edit form', async ({ employeePage }) => {
 
@@ -72,13 +66,10 @@ test.describe('Application Employee View', () => {
     await expect(employeePage.locator('[data-testid="application-edit-btn"]')).toBeHidden();
   });
 
-
-
   test('employee cannot delete Application', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
 
     await expect(employeePage.locator('[data-testid="application-delete-btn"]')).toBeHidden();
   });
-
 });

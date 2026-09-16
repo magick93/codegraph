@@ -36,8 +36,6 @@ test.describe('StringTypeArray Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create StringTypeArray via API', async ({ orgContext }) => {
     // All properties are complex types (value objects / child tables) — no simple form fields.
     // Use direct API call via orgContext (authenticated as ACME owner).
@@ -47,16 +45,12 @@ test.describe('StringTypeArray Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees StringTypeArray in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="string_type_array-table"]');
     const empty = ownerPage.locator('[data-testid="string_type_array-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view StringTypeArray detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -67,12 +61,8 @@ test.describe('StringTypeArray Owner CRUD', () => {
   });
 
 
-
-
   // All properties are complex types — no simple form fields to edit.
   // Edit-via-form test skipped; CRUD coverage provided by API create + detail + delete tests.
-
-
 
 
   test('owner can delete StringTypeArray', async ({ ownerPage, orgContext }) => {
@@ -93,5 +83,4 @@ test.describe('StringTypeArray Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="string_type_array-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

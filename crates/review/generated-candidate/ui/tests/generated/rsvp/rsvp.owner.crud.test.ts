@@ -42,8 +42,6 @@ test.describe('Rsvp Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create Rsvp via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -68,16 +66,12 @@ test.describe('Rsvp Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees Rsvp in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="rsvp-table"]');
     const empty = ownerPage.locator('[data-testid="rsvp-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view Rsvp detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -89,8 +83,6 @@ test.describe('Rsvp Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="rsvp-field-status"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="rsvp-field-timestamp"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit Rsvp', async ({ ownerPage, orgContext }) => {
@@ -114,8 +106,6 @@ test.describe('Rsvp Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete Rsvp', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -134,5 +124,4 @@ test.describe('Rsvp Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="rsvp-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

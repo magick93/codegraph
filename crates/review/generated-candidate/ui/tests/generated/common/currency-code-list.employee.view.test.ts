@@ -31,7 +31,7 @@ test.describe('CurrencyCodeList Employee View', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -43,8 +43,6 @@ test.describe('CurrencyCodeList Employee View', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('employee can view CurrencyCodeList detail', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
@@ -54,14 +52,10 @@ test.describe('CurrencyCodeList Employee View', () => {
     await expect(employeePage.locator('[data-testid="currency_code_list-field-sort_order"]')).toBeVisible();
   });
 
-
-
   test('employee cannot access create form', async ({ employeePage }) => {
     await employeePage.goto(BASE_PATH);
     await expect(employeePage.locator('[data-testid="currency_code_list-create-btn"]')).toBeHidden();
   });
-
-
 
   test('employee cannot access edit form', async ({ employeePage }) => {
 
@@ -70,13 +64,10 @@ test.describe('CurrencyCodeList Employee View', () => {
     await expect(employeePage.locator('[data-testid="currency_code_list-edit-btn"]')).toBeHidden();
   });
 
-
-
   test('employee cannot delete CurrencyCodeList', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
 
     await expect(employeePage.locator('[data-testid="currency_code_list-delete-btn"]')).toBeHidden();
   });
-
 });

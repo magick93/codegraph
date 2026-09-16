@@ -31,7 +31,7 @@ test.describe('PersonBase Manager Team', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -43,8 +43,6 @@ test.describe('PersonBase Manager Team', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('manager can view PersonBase detail', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}`);
@@ -54,8 +52,6 @@ test.describe('PersonBase Manager Team', () => {
     await expect(managerPage.locator('[data-testid="person_base-field-given_name"]')).toBeVisible();
   });
 
-
-
   test('manager can edit PersonBase', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}/edit`);
@@ -63,5 +59,4 @@ test.describe('PersonBase Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="person_base-form"]')).toBeVisible();
   });
-
 });

@@ -30,7 +30,7 @@ test.describe('Amount Manager Team', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -42,8 +42,6 @@ test.describe('Amount Manager Team', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('manager can view Amount detail', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}`);
@@ -52,8 +50,6 @@ test.describe('Amount Manager Team', () => {
     await expect(managerPage.locator('[data-testid="amount-field-value"]')).toBeVisible();
   });
 
-
-
   test('manager can edit Amount', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}/edit`);
@@ -61,5 +57,4 @@ test.describe('Amount Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="amount-form"]')).toBeVisible();
   });
-
 });

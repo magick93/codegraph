@@ -32,7 +32,7 @@ test.describe('PayRun Employee View', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -44,8 +44,6 @@ test.describe('PayRun Employee View', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('employee can view PayRun detail', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
@@ -56,14 +54,10 @@ test.describe('PayRun Employee View', () => {
     await expect(employeePage.locator('[data-testid="pay_run-field-total_amount_currency"]')).toBeVisible();
   });
 
-
-
   test('employee cannot access create form', async ({ employeePage }) => {
     await employeePage.goto(BASE_PATH);
     await expect(employeePage.locator('[data-testid="pay_run-create-btn"]')).toBeHidden();
   });
-
-
 
   test('employee cannot access edit form', async ({ employeePage }) => {
 
@@ -72,13 +66,10 @@ test.describe('PayRun Employee View', () => {
     await expect(employeePage.locator('[data-testid="pay_run-edit-btn"]')).toBeHidden();
   });
 
-
-
   test('employee cannot delete PayRun', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
 
     await expect(employeePage.locator('[data-testid="pay_run-delete-btn"]')).toBeHidden();
   });
-
 });

@@ -31,7 +31,7 @@ test.describe('Name Manager Team', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -43,8 +43,6 @@ test.describe('Name Manager Team', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('manager can view Name detail', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}`);
@@ -54,8 +52,6 @@ test.describe('Name Manager Team', () => {
     await expect(managerPage.locator('[data-testid="name-field-given_name"]')).toBeVisible();
   });
 
-
-
   test('manager can edit Name', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}/edit`);
@@ -63,5 +59,4 @@ test.describe('Name Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="name-form"]')).toBeVisible();
   });
-
 });

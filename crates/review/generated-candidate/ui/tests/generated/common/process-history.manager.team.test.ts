@@ -31,7 +31,7 @@ test.describe('ProcessHistory Manager Team', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -43,8 +43,6 @@ test.describe('ProcessHistory Manager Team', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('manager can view ProcessHistory detail', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}`);
@@ -54,8 +52,6 @@ test.describe('ProcessHistory Manager Team', () => {
     await expect(managerPage.locator('[data-testid="process_history-field-id"]')).toBeVisible();
   });
 
-
-
   test('manager can edit ProcessHistory', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}/edit`);
@@ -63,5 +59,4 @@ test.describe('ProcessHistory Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="process_history-form"]')).toBeVisible();
   });
-
 });

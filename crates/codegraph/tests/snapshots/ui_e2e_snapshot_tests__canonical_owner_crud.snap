@@ -120,8 +120,6 @@ const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
     updated = updatedData();
   });
 
-
-
   test('owner can create Worker via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -148,16 +146,12 @@ const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
   });
 
 
-
-
   test('owner sees Worker in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="worker-table"]');
     const empty = ownerPage.locator('[data-testid="worker-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view Worker detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -169,8 +163,6 @@ const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
     await expect(ownerPage.locator('[data-testid="worker-field-person_id"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="worker-field-parties"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit Worker', async ({ ownerPage, orgContext }) => {
@@ -198,8 +190,6 @@ const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
   });
 
 
-
-
   test('owner can delete Worker', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -218,5 +208,4 @@ const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
     const empty = ownerPage.locator('[data-testid="worker-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

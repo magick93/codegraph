@@ -42,8 +42,6 @@ test.describe('Name Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create Name via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -70,16 +68,12 @@ test.describe('Name Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees Name in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="name-table"]');
     const empty = ownerPage.locator('[data-testid="name-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view Name detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -91,8 +85,6 @@ test.describe('Name Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="name-field-formatted_name"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="name-field-given_name"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit Name', async ({ ownerPage, orgContext }) => {
@@ -120,8 +112,6 @@ test.describe('Name Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete Name', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -140,5 +130,4 @@ test.describe('Name Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="name-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

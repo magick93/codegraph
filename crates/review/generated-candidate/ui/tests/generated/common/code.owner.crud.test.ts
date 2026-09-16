@@ -36,8 +36,6 @@ test.describe('Code Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create Code via API', async ({ orgContext }) => {
     // All properties are complex types (value objects / child tables) — no simple form fields.
     // Use direct API call via orgContext (authenticated as ACME owner).
@@ -47,16 +45,12 @@ test.describe('Code Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees Code in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="code-table"]');
     const empty = ownerPage.locator('[data-testid="code-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view Code detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -67,12 +61,8 @@ test.describe('Code Owner CRUD', () => {
   });
 
 
-
-
   // All properties are complex types — no simple form fields to edit.
   // Edit-via-form test skipped; CRUD coverage provided by API create + detail + delete tests.
-
-
 
 
   test('owner can delete Code', async ({ ownerPage, orgContext }) => {
@@ -93,5 +83,4 @@ test.describe('Code Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="code-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

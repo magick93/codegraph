@@ -48,8 +48,6 @@ test.describe('PublicEvent Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create PublicEvent via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -85,16 +83,12 @@ test.describe('PublicEvent Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees PublicEvent in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="public_event-table"]');
     const empty = ownerPage.locator('[data-testid="public_event-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view PublicEvent detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -109,8 +103,6 @@ test.describe('PublicEvent Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="public_event-field-family_name"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="public_event-field-given_name"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit PublicEvent', async ({ ownerPage, orgContext }) => {
@@ -152,8 +144,6 @@ test.describe('PublicEvent Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete PublicEvent', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -172,5 +162,4 @@ test.describe('PublicEvent Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="public_event-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

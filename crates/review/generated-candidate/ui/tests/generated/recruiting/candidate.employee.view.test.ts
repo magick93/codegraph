@@ -45,7 +45,7 @@ test.describe('Candidate Employee View', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -56,8 +56,6 @@ test.describe('Candidate Employee View', () => {
     const empty = employeePage.locator('[data-testid="candidate-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('employee can view Candidate detail', async ({ employeePage }) => {
 
@@ -82,14 +80,10 @@ test.describe('Candidate Employee View', () => {
     await expect(employeePage.locator('[data-testid="candidate-field-uri"]')).toBeVisible();
   });
 
-
-
   test('employee cannot access create form', async ({ employeePage }) => {
     await employeePage.goto(BASE_PATH);
     await expect(employeePage.locator('[data-testid="candidate-create-btn"]')).toBeHidden();
   });
-
-
 
   test('employee cannot access edit form', async ({ employeePage }) => {
 
@@ -97,7 +91,4 @@ test.describe('Candidate Employee View', () => {
 
     await expect(employeePage.locator('[data-testid="candidate-edit-btn"]')).toBeHidden();
   });
-
-
-
 });

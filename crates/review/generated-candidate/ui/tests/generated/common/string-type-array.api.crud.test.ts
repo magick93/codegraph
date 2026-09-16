@@ -56,8 +56,6 @@ test.describe('StringTypeArray CRUD', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('create entity via API', async ({ orgContext }) => {
     // All properties are complex types (value objects / child tables) — no simple form fields.
     // Create via API instead of form fill.
@@ -73,8 +71,6 @@ test.describe('StringTypeArray CRUD', () => {
     const empty = page.locator('[data-testid="string_type_array-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
 
   test('bulk create via API returns 207 with success array', async ({ orgContext }) => {
@@ -104,8 +100,6 @@ test.describe('StringTypeArray CRUD', () => {
     expect(res.status).toBe(400);
   });
 
-
-
   test('detail page shows all fields', async ({ ownerPage: page, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -123,14 +117,8 @@ test.describe('StringTypeArray CRUD', () => {
   });
 
 
-
-
   // All properties are complex types — no simple form fields to edit.
   // Edit-via-form test skipped; CRUD coverage provided by API create + detail + delete tests.
-
-
-
-
 
 
   test('delete entity', async ({ ownerPage: page, orgContext }) => {
@@ -160,8 +148,6 @@ test.describe('StringTypeArray CRUD', () => {
       await expect(table).not.toContainText(myId);
     }
   });
-
-
 
   test('404 for non-existent entity', async ({ ownerPage: page }) => {
 

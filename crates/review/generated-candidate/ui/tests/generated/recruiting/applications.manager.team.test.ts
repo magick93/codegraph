@@ -32,7 +32,7 @@ test.describe('Application Manager Team', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -44,8 +44,6 @@ test.describe('Application Manager Team', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('manager can view Application detail', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}`);
@@ -56,8 +54,6 @@ test.describe('Application Manager Team', () => {
     await expect(managerPage.locator('[data-testid="application-field-status"]')).toBeVisible();
   });
 
-
-
   test('manager can edit Application', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}/edit`);
@@ -65,5 +61,4 @@ test.describe('Application Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="application-form"]')).toBeVisible();
   });
-
 });

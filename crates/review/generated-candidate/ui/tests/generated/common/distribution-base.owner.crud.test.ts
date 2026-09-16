@@ -42,8 +42,6 @@ test.describe('DistributionBase Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create DistributionBase via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -70,16 +68,12 @@ test.describe('DistributionBase Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees DistributionBase in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="distribution_base-table"]');
     const empty = ownerPage.locator('[data-testid="distribution_base-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view DistributionBase detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -91,8 +85,6 @@ test.describe('DistributionBase Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="distribution_base-field-end_date"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="distribution_base-field-start_date"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit DistributionBase', async ({ ownerPage, orgContext }) => {
@@ -120,8 +112,6 @@ test.describe('DistributionBase Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete DistributionBase', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -140,5 +130,4 @@ test.describe('DistributionBase Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="distribution_base-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

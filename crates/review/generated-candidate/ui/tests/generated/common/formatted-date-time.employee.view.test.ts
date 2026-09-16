@@ -28,7 +28,7 @@ test.describe('FormattedDateTime Employee View', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -40,22 +40,16 @@ test.describe('FormattedDateTime Employee View', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('employee can view FormattedDateTime detail', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
 
   });
 
-
-
   test('employee cannot access create form', async ({ employeePage }) => {
     await employeePage.goto(BASE_PATH);
     await expect(employeePage.locator('[data-testid="formatted_date_time-create-btn"]')).toBeHidden();
   });
-
-
 
   test('employee cannot access edit form', async ({ employeePage }) => {
 
@@ -64,13 +58,10 @@ test.describe('FormattedDateTime Employee View', () => {
     await expect(employeePage.locator('[data-testid="formatted_date_time-edit-btn"]')).toBeHidden();
   });
 
-
-
   test('employee cannot delete FormattedDateTime', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
 
     await expect(employeePage.locator('[data-testid="formatted_date_time-delete-btn"]')).toBeHidden();
   });
-
 });

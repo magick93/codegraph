@@ -30,7 +30,7 @@ test.describe('EffectiveDate Manager Team', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -42,8 +42,6 @@ test.describe('EffectiveDate Manager Team', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('manager can view EffectiveDate detail', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}`);
@@ -52,8 +50,6 @@ test.describe('EffectiveDate Manager Team', () => {
     await expect(managerPage.locator('[data-testid="effective_date-field-valid_to"]')).toBeVisible();
   });
 
-
-
   test('manager can edit EffectiveDate', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}/edit`);
@@ -61,5 +57,4 @@ test.describe('EffectiveDate Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="effective_date-form"]')).toBeVisible();
   });
-
 });

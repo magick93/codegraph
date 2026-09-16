@@ -28,7 +28,7 @@ test.describe('Date Manager Team', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -40,15 +40,11 @@ test.describe('Date Manager Team', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('manager can view Date detail', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}`);
 
   });
-
-
 
   test('manager can edit Date', async ({ managerPage }) => {
 
@@ -57,5 +53,4 @@ test.describe('Date Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="date-form"]')).toBeVisible();
   });
-
 });

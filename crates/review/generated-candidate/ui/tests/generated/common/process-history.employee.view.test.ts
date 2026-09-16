@@ -31,7 +31,7 @@ test.describe('ProcessHistory Employee View', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -43,8 +43,6 @@ test.describe('ProcessHistory Employee View', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('employee can view ProcessHistory detail', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
@@ -54,14 +52,10 @@ test.describe('ProcessHistory Employee View', () => {
     await expect(employeePage.locator('[data-testid="process_history-field-id"]')).toBeVisible();
   });
 
-
-
   test('employee cannot access create form', async ({ employeePage }) => {
     await employeePage.goto(BASE_PATH);
     await expect(employeePage.locator('[data-testid="process_history-create-btn"]')).toBeHidden();
   });
-
-
 
   test('employee cannot access edit form', async ({ employeePage }) => {
 
@@ -70,13 +64,10 @@ test.describe('ProcessHistory Employee View', () => {
     await expect(employeePage.locator('[data-testid="process_history-edit-btn"]')).toBeHidden();
   });
 
-
-
   test('employee cannot delete ProcessHistory', async ({ employeePage }) => {
 
     await employeePage.goto(`${BASE_PATH}/${createdId}`);
 
     await expect(employeePage.locator('[data-testid="process_history-delete-btn"]')).toBeHidden();
   });
-
 });

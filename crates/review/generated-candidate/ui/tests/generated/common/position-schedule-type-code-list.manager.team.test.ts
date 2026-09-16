@@ -31,7 +31,7 @@ test.describe('PositionScheduleTypeCodeList Manager Team', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -43,8 +43,6 @@ test.describe('PositionScheduleTypeCodeList Manager Team', () => {
     await expect(table.or(empty)).toBeVisible();
   });
 
-
-
   test('manager can view PositionScheduleTypeCodeList detail', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}`);
@@ -54,8 +52,6 @@ test.describe('PositionScheduleTypeCodeList Manager Team', () => {
     await expect(managerPage.locator('[data-testid="position_schedule_type_code_list-field-sort_order"]')).toBeVisible();
   });
 
-
-
   test('manager can edit PositionScheduleTypeCodeList', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}/edit`);
@@ -63,5 +59,4 @@ test.describe('PositionScheduleTypeCodeList Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="position_schedule_type_code_list-form"]')).toBeVisible();
   });
-
 });

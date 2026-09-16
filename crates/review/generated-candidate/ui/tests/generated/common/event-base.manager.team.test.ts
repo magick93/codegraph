@@ -33,7 +33,7 @@ test.describe('EventBase Manager Team', () => {
 
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
-  });
+});
 
 
 
@@ -44,8 +44,6 @@ test.describe('EventBase Manager Team', () => {
     const empty = managerPage.locator('[data-testid="event_base-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('manager can view EventBase detail', async ({ managerPage }) => {
 
@@ -58,8 +56,6 @@ test.describe('EventBase Manager Team', () => {
     await expect(managerPage.locator('[data-testid="event_base-field-given_name"]')).toBeVisible();
   });
 
-
-
   test('manager can edit EventBase', async ({ managerPage }) => {
 
     await managerPage.goto(`${BASE_PATH}/${createdId}/edit`);
@@ -67,5 +63,4 @@ test.describe('EventBase Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="event_base-form"]')).toBeVisible();
   });
-
 });

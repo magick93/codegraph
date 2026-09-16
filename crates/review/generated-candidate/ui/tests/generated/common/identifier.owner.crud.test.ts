@@ -44,8 +44,6 @@ test.describe('Identifier Owner CRUD', () => {
     updated = updatedData();
   });
 
-
-
   test('owner can create Identifier via form', async ({ ownerPage }) => {
 
     await ownerPage.goto(`${BASE_PATH}/new`);
@@ -75,16 +73,12 @@ test.describe('Identifier Owner CRUD', () => {
   });
 
 
-
-
   test('owner sees Identifier in list', async ({ ownerPage }) => {
     await ownerPage.goto(BASE_PATH);
     const table = ownerPage.locator('[data-testid="identifier-table"]');
     const empty = ownerPage.locator('[data-testid="identifier-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
-
 
   test('owner can view Identifier detail', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
@@ -97,8 +91,6 @@ test.describe('Identifier Owner CRUD', () => {
     await expect(ownerPage.locator('[data-testid="identifier-field-scheme_version_id"]')).toBeVisible();
     await expect(ownerPage.locator('[data-testid="identifier-field-value"]')).toBeVisible();
   });
-
-
 
 
   test('owner can edit Identifier', async ({ ownerPage, orgContext }) => {
@@ -130,8 +122,6 @@ test.describe('Identifier Owner CRUD', () => {
   });
 
 
-
-
   test('owner can delete Identifier', async ({ ownerPage, orgContext }) => {
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
@@ -150,5 +140,4 @@ test.describe('Identifier Owner CRUD', () => {
     const empty = ownerPage.locator('[data-testid="identifier-empty"]');
     await expect(table.or(empty)).toBeVisible();
   });
-
 });

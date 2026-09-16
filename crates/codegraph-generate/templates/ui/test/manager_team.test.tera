@@ -90,8 +90,12 @@ test.describe('{{ entity_name }} Manager Team', () => {
 {% endif %}
 {% set dep_section = "before_all" %}
 {% include "ui/test/_dep_setup.tera" %}
+{%- if has_create %}
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     createdId = entity.id as string;
+{% else %}
+    // Read-only entity (no create route): row-dependent tests are gated off.
+{% endif -%}
   });
 
 {% if has_entity_ref_deps %}
@@ -110,7 +114,7 @@ test.describe('{{ entity_name }} Manager Team', () => {
   });
 {% endif %}
 
-{% if has_read %}
+{%- if has_read and has_create %}
   test('manager can view {{ entity_name }} detail', async ({ managerPage }) => {
 {% if parent and parent.grandparent %}
     await managerPage.goto(`${UI_PATH}/${createdId}`);
@@ -121,9 +125,9 @@ test.describe('{{ entity_name }} Manager Team', () => {
     await expect(managerPage.locator('[data-testid="{{ module_name }}-field-{{ field.name }}"]')).toBeVisible();
 {%- endfor %}
   });
-{% endif %}
+{% endif -%}
 
-{% if has_update %}
+{%- if has_update and has_create %}
   test('manager can edit {{ entity_name }}', async ({ managerPage }) => {
 {% if parent and parent.grandparent %}
     await managerPage.goto(`${UI_PATH}/${createdId}/edit`);
@@ -133,5 +137,5 @@ test.describe('{{ entity_name }} Manager Team', () => {
     // Manager should see the edit form — verifies team-scoped write access
     await expect(managerPage.locator('[data-testid="{{ module_name }}-form"]')).toBeVisible();
   });
-{% endif %}
+{% endif -%}
 });
