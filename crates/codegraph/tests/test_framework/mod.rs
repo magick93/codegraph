@@ -3,6 +3,7 @@
 pub mod axum_server;
 pub mod extras;
 pub mod node_project;
+pub mod normalize;
 pub mod playwright;
 pub mod postgres;
 pub mod process;
