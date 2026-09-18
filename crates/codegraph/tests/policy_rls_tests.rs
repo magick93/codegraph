@@ -239,55 +239,9 @@ fn collect_tree(root: &Path) -> BTreeMap<String, Vec<u8>> {
     out
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// Generated `Cargo.toml` files embed two environment-dependent values that
-/// are inputs, not generator output: the local checkout root (path-mode deps
-/// like `path = "/home/<user>/git/codegraph/crates/..."`) and, in git-rev
-/// mode, the binary's own rev (`CODEGRAPH_GIT_REV`). Normalize both before
-/// hashing so the flag-off byte-identity comparison is environment-independent;
-/// everything else in those files stays hash-guarded.
-fn normalize_for_hash(path: &str, bytes: &[u8]) -> Vec<u8> {
-    if !path.ends_with("Cargo.toml") {
-        return bytes.to_vec();
-    }
-    let text = String::from_utf8_lossy(bytes);
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("manifest dir two levels below workspace root")
-        .to_string_lossy()
-        .into_owned();
-    let text = text.replace(root.trim_start_matches('/'), "<CODEGRAPH_ROOT>");
-    let text = text.replace(&root, "<CODEGRAPH_ROOT>");
-    let needle = "rev = \"";
-    let placeholder = "0".repeat(40);
-    let mut out = String::with_capacity(text.len());
-    let mut rest: &str = &text;
-    while let Some(i) = rest.find(needle) {
-        let start = i + needle.len();
-        let end = start + 40;
-        let is_pin = end < rest.len()
-            && rest[end..].starts_with('"')
-            && rest[start..end].bytes().all(|b| b.is_ascii_hexdigit());
-        if is_pin {
-            out.push_str(&rest[..start]);
-            out.push_str(&placeholder);
-            rest = &rest[end..];
-        } else {
-            out.push_str(&rest[..=i]);
-            rest = &rest[i + needle.len()..];
-        }
-    }
-    out.push_str(rest);
-    out.into_bytes()
-}
-
 use std::fs;
+
+use test_framework::normalize::{normalize_for_hash, sha256_hex};
 
 /// FLAG-OFF BYTE-IDENTITY (pinned decision #4): with `rls_from_policy`
 /// absent (the default profile does not enable it and does not list
@@ -296,8 +250,9 @@ use std::fs;
 /// policy IS present in the graph. Hashes (not raw bytes) keep the snapshot
 /// reviewable; any byte change to any file changes exactly that file's hash.
 /// Git rev pins in generated `Cargo.toml` files are normalized before hashing
-/// (see `normalize_rev_pins`) — they embed the generating binary's own rev,
-/// which varies per checkout and is not generator output.
+/// (see `test_framework::normalize::normalize_for_hash`) — they embed the
+/// generating binary's own rev, which varies per checkout and is not
+/// generator output.
 #[test]
 fn flag_off_full_output_matches_master_baseline() {
     let dir = tempfile::TempDir::new().unwrap();
