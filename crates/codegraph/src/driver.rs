@@ -34,6 +34,10 @@ pub struct RunArgs<'a> {
     pub template_dir: &'a [PathBuf],
     pub ifml_files: &'a [PathBuf],
     pub openapi_files: &'a [PathBuf],
+    /// rexlang `.mox` domain model files to compile in-process and ingest
+    /// into the graph (vocabularies with facets, class operations, derived
+    /// features). Absent/empty = no mox ingest, generators unchanged.
+    pub mox_files: &'a [PathBuf],
     pub ifml_framework: &'a [String],
     /// Optional `ifml-components.toml` mapping IFML components to
     /// handcrafted framework components. Absent = all built-in templates.
@@ -125,6 +129,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         template_dir,
         ifml_files,
         openapi_files,
+        mox_files,
         ifml_framework,
         ifml_components,
         ifml_design_system,
@@ -294,6 +299,17 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
                     .await?;
             println!("  ingested {}: {stats}", openapi_path.display());
         }
+    }
+
+    // Pass 1e: Ingest rexlang .mox domain sources (if provided) —
+    // vocabularies with facets, class operations, derived features.
+    // Diagnostics warn and never fail the run.
+    if !mox_files.is_empty() {
+        println!("Pass 1e: {} mox files to ingest", mox_files.len());
+        let mox_stats =
+            crate::ingest::mox_ingest::ingest_mox_files(be.ingestor(), be.querier(), mox_files)
+                .await?;
+        println!("Pass 1e complete: {mox_stats}");
     }
 
     // Auto-classify

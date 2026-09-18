@@ -306,6 +306,38 @@ fn node_type_ddl() -> Vec<&'static str> {
             blocks STRING,
             never_both STRING
         )",
+        // Vocabulary — mox domain metamodel
+        "CREATE NODE TYPE IF NOT EXISTS Vocabulary (
+            name STRING NOT NULL,
+            package STRING NOT NULL,
+            source STRING NOT NULL,
+            version STRING,
+            key_facet STRING NOT NULL,
+            facets_json STRING NOT NULL,
+            entries_json STRING NOT NULL
+        )",
+        // MoxPackage — mox domain metamodel package carrier
+        "CREATE NODE TYPE IF NOT EXISTS MoxPackage (
+            name STRING NOT NULL
+        )",
+        // Operation — mox domain metamodel (class behavior, verbatim bodies)
+        "CREATE NODE TYPE IF NOT EXISTS Operation (
+            name STRING NOT NULL,
+            class STRING NOT NULL,
+            package STRING NOT NULL,
+            description STRING,
+            return_type STRING NOT NULL,
+            params_json STRING NOT NULL,
+            bodies_json STRING NOT NULL
+        )",
+        // DerivedFeature — mox domain metamodel (computed, never stored)
+        "CREATE NODE TYPE IF NOT EXISTS DerivedFeature (
+            name STRING NOT NULL,
+            class STRING NOT NULL,
+            package STRING NOT NULL,
+            type_ref STRING NOT NULL,
+            expr STRING
+        )",
     ]
 }
 
@@ -372,5 +404,8 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS HasRole",
         // Authorization metamodel edge types
         "CREATE EDGE TYPE IF NOT EXISTS Grant (effect STRING NOT NULL, when_expr STRING, obligations STRING)",
+        // mox domain metamodel edge types
+        "CREATE EDGE TYPE IF NOT EXISTS BelongsToClass ()",
+        "CREATE EDGE TYPE IF NOT EXISTS VocabularyInPackage ()",
     ]
 }

@@ -3,9 +3,9 @@ use crate::types::{
     ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode,
     CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue,
     ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode,
-    MembershipNode, NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode,
-    PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode,
-    TenantNode, ViewComponentNode, ViewContainerNode,
+    MembershipNode, MoxDomainModel, NamespaceNode, ParameterDefinitionNode, PermissionNode,
+    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaNode,
+    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -156,4 +156,14 @@ pub trait GraphIngestor: Send + Sync {
     /// Ingest a full actor policy model: actors, capabilities, grant edges,
     /// and the model-level ActorPolicy carrier (blocks + never_both groups).
     async fn ingest_actor_policy(&self, model: &ActorPolicyModel) -> Result<(), GraphError>;
+
+    // ── mox domain metamodel ─────────────────────────────────────────
+
+    /// Ingest a full mox domain model: packages, vocabularies (with facets
+    /// and vendored entries), class operations, derived features, and the
+    /// (class → schema) BelongsToClass links resolved by name matching.
+    async fn ingest_mox_domain(&self, model: &MoxDomainModel) -> Result<(), GraphError> {
+        let _ = model;
+        Ok(())
+    }
 }
