@@ -1374,6 +1374,11 @@ fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn GlobalGene
         Box::new(grpc::scaffold::GrpcScaffoldGenerator::new(output_dir))
             as Box<dyn GlobalGenerator>,
     );
+    // Policy-driven RLS from the actor policy graph (issue #219) — gated by
+    // the `rls_from_policy` capability (Postgres only; sqlite is a no-op).
+    global_gens.push(Box::new(
+        db::policy_rls::PolicyRlsGenerator::new(output_dir).with_dialect(ctx.make_dialect()),
+    ) as Box<dyn GlobalGenerator>);
     // atproto global generators
     global_gens.push(Box::new(atproto::scaffold_gen::LexiconScaffoldEmitter::new(
         output_dir,

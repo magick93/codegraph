@@ -53,3 +53,4 @@ tree-sitter-language = "0.1"
 salsa = "0.22"
 rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "931f02fd45e6255f0c82bf2946b6a14e1dc7c70b" }
 rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "931f02fd45e6255f0c82bf2946b6a14e1dc7c70b" }
+rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "931f02fd45e6255f0c82bf2946b6a14e1dc7c70b" }

@@ -1359,6 +1359,45 @@ cargo test -p codegraph --test grafeo_e2e_tests -- grafeo_generated_code_compile
   403 semantics are preserved by design (custom P0403 errors), so specs
   should pass without updates.
 
+## Policy-Driven RLS (`rls_from_policy`, issue #219)
+
+### Overview
+
+The `policy_rls` global generator turns the rexlang actor policy graph
+(`ActorNode` / `CapabilityNode` / `GrantEdge`, ingested from `.actor`
+imports — see the rexlang authorization section) into ONE Postgres
+migration, `020000_policy_rls.sql` (after the per-entity RLS band). Opt-in
+via `rls_from_policy = true` under `[features]` in profiles.toml plus
+`"policy_rls"` in an `[api]` generators list; the capability requires the
+feature (gRPC/ops precedent) and is skipped on plan-less runs. Flag off ⇒
+byte-identical output (enforced by a full-pipeline hash snapshot captured
+from pre-feature master).
+
+### Mapping table
+
+| Policy element | SQL effect |
+|----------------|-----------|
+| human actor (`kind: human` or unspecified) | Postgres group role, snake_case via `codegraph-naming`, created `NOLOGIN` (attach with `GRANT <role> TO <user>`) |
+| agent actor | existing gateway role `app_user` (never holds DB credentials) |
+| `permit` on capability bound to class C | permissive `CREATE POLICY ... FOR ALL TO <roles> USING (p) WITH CHECK (p)` on C's table + `GRANT SELECT, INSERT, UPDATE, DELETE` |
+| multiple permit grants with different `when`s | predicates OR-combined; any unconditional grant ⇒ `true` |
+| `forbid` | `REVOKE ALL ON C's table FROM <roles>` (auditable; conditional forbids are refused) |
+| class `pkg::Name` | last `::` segment, matched against schema titles exactly, then with the configured `Type` suffix |
+
+### `when` → SQL closed subset
+
+`db/expr_sql.rs` parses the stored expression source with `rex-expr` (parse
+only, no model) and lowers: own-table field refs (→ quoted column, resolved
+through the class's schema properties), string/number/boolean literals,
+`==`/`=`/`!=`/`<`/`<=`/`>`/`>=`, `&&`/`||`/`!`, parentheses, and `field ==
+null` / `field != null` → `IS NULL` / `IS NOT NULL`. EVERYTHING else —
+arithmetic, `?.`, `?:`, `let`, lambdas, collection algebra, `if`, calls,
+list literals, dotted navigation, unknown fields — is a HARD generation
+error naming the capability (rexlang Cedar-backend philosophy). Postgres
+only; sqlite is a documented no-op. Policy-derived RLS is ADDITIVE with the
+domains.toml-driven RLS: permissive policies OR-combine (only widening);
+RESTRICTIVE policies from `rls.tera` still AND on top.
+
 ## Branch & PR Workflow
 
 - **`master` is the single trunk.** All PRs target `master`; feature branches are
