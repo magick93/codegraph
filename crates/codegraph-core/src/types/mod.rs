@@ -8,6 +8,7 @@ mod discovery;
 mod edge;
 mod field_def;
 mod ifml;
+mod mox;
 mod persistence;
 mod policy;
 mod property;
@@ -38,6 +39,10 @@ pub use ifml::{
     strip_ifml_prefix, ActionNode, DataBindingNode, DataBindingResolution, DataFlowData, EventNode,
     ModuleUseRecord, NavigationFlowData, NavigationFlowRecord, ParameterDefinitionNode,
     ViewComponentNode, ViewContainerNode,
+};
+pub use mox::{
+    MoxDerivedFeatureNode, MoxDomainModel, MoxEntry, MoxFacet, MoxOperationNode, MoxPackageNode,
+    MoxParam, MoxVocabularyNode,
 };
 pub use persistence::{
     AuditEffect, AuditTimestampKind, AuditUserKind, PersistenceChildTable, PersistenceColumn,

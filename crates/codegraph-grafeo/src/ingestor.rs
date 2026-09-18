@@ -6,9 +6,9 @@ use codegraph_core::types::{
     ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode,
     CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue,
     ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode,
-    MembershipNode, NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode,
-    PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode,
-    TenantNode, ViewComponentNode, ViewContainerNode,
+    MembershipNode, MoxDomainModel, NamespaceNode, ParameterDefinitionNode, PermissionNode,
+    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaNode,
+    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -1614,6 +1614,120 @@ impl GraphIngestor for GrafeoEngine {
         session.execute(&set_gql).map_err(|e| {
             GraphError::Ingest(format!("ingest_actor_policy delegations failed: {e}"))
         })?;
+
+        Ok(())
+    }
+
+    // ── mox domain metamodel ─────────────────────────────────────────
+
+    async fn ingest_mox_domain(&self, model: &MoxDomainModel) -> Result<(), GraphError> {
+        let session = self.db().session();
+
+        for package in &model.packages {
+            let gql = format!(
+                "MERGE (:MoxPackage {{ name: '{}' }})",
+                escape_gql(&package.name)
+            );
+            session.execute(&gql).map_err(|e| {
+                GraphError::Ingest(format!("ingest_mox_domain package failed: {e}"))
+            })?;
+        }
+
+        for vocab in &model.vocabularies {
+            let facets_json = serde_json::to_string(&vocab.facets)
+                .map_err(|e| GraphError::Ingest(e.to_string()))?;
+            let entries_json = serde_json::to_string(&vocab.entries)
+                .map_err(|e| GraphError::Ingest(e.to_string()))?;
+            let gql = format!(
+                "INSERT (:Vocabulary {{ \
+                    name: '{}', package: '{}', source: '{}', version: {}, \
+                    key_facet: '{}', facets_json: '{}', entries_json: '{}' \
+                }})",
+                escape_gql(&vocab.name),
+                escape_gql(&vocab.package),
+                escape_gql(&vocab.source),
+                opt_str(&vocab.version),
+                escape_gql(&vocab.key_facet),
+                escape_gql(&facets_json),
+                escape_gql(&entries_json),
+            );
+            session.execute(&gql).map_err(|e| {
+                GraphError::Ingest(format!("ingest_mox_domain vocabulary failed: {e}"))
+            })?;
+            let gql = format!(
+                "MATCH (v:Vocabulary {{ name: '{}', package: '{}' }}), \
+                        (p:MoxPackage {{ name: '{}' }}) \
+                 INSERT (v)-[:VocabularyInPackage]->(p)",
+                escape_gql(&vocab.name),
+                escape_gql(&vocab.package),
+                escape_gql(&vocab.package),
+            );
+            session.execute(&gql).map_err(|e| {
+                GraphError::Ingest(format!("ingest_mox_domain vocab-package link failed: {e}"))
+            })?;
+        }
+
+        for op in &model.operations {
+            let params_json =
+                serde_json::to_string(&op.params).map_err(|e| GraphError::Ingest(e.to_string()))?;
+            let bodies_json =
+                serde_json::to_string(&op.bodies).map_err(|e| GraphError::Ingest(e.to_string()))?;
+            let gql = format!(
+                "INSERT (:Operation {{ \
+                    name: '{}', class: '{}', package: '{}', description: {}, \
+                    return_type: '{}', params_json: '{}', bodies_json: '{}' \
+                }})",
+                escape_gql(&op.name),
+                escape_gql(&op.class),
+                escape_gql(&op.package),
+                opt_str(&op.description),
+                escape_gql(&op.return_type),
+                escape_gql(&params_json),
+                escape_gql(&bodies_json),
+            );
+            session.execute(&gql).map_err(|e| {
+                GraphError::Ingest(format!("ingest_mox_domain operation failed: {e}"))
+            })?;
+        }
+
+        for feature in &model.derived_features {
+            let gql = format!(
+                "INSERT (:DerivedFeature {{ \
+                    name: '{}', class: '{}', package: '{}', type_ref: '{}', expr: {} \
+                }})",
+                escape_gql(&feature.name),
+                escape_gql(&feature.class),
+                escape_gql(&feature.package),
+                escape_gql(&feature.type_ref),
+                opt_str(&feature.expr),
+            );
+            session.execute(&gql).map_err(|e| {
+                GraphError::Ingest(format!("ingest_mox_domain derived feature failed: {e}"))
+            })?;
+        }
+
+        for (class, schema_title) in &model.class_links {
+            let gql = format!(
+                "MATCH (o:Operation {{ class: '{class}' }}), (s:Schema {{ title: '{title}' }}) \
+                 INSERT (o)-[:BelongsToClass]->(s)",
+                class = escape_gql(class),
+                title = escape_gql(schema_title),
+            );
+            session.execute(&gql).map_err(|e| {
+                GraphError::Ingest(format!(
+                    "ingest_mox_domain operation class link failed: {e}"
+                ))
+            })?;
+            let gql = format!(
+                "MATCH (d:DerivedFeature {{ class: '{class}' }}), (s:Schema {{ title: '{title}' }}) \
+                 INSERT (d)-[:BelongsToClass]->(s)",
+                class = escape_gql(class),
+                title = escape_gql(schema_title),
+            );
+            session.execute(&gql).map_err(|e| {
+                GraphError::Ingest(format!("ingest_mox_domain derived class link failed: {e}"))
+            })?;
+        }
 
         Ok(())
     }

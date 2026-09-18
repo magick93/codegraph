@@ -102,6 +102,10 @@ pub enum Commands {
         /// Paths to OpenAPI 3.0/3.1 spec files (JSON) to import into the graph
         #[arg(long)]
         openapi_files: Vec<PathBuf>,
+        /// Paths to rexlang .mox domain model files to ingest into the graph
+        /// (vocabularies with facets, class operations, derived features)
+        #[arg(long)]
+        mox_files: Vec<PathBuf>,
         /// IFML framework targets for code generation (e.g. svelte, react)
         #[arg(long)]
         ifml_framework: Vec<String>,

@@ -8,10 +8,11 @@ use codegraph_core::types::{
     CompositeRange, CompositionNode, CompositionTree, DataBindingResolution, DelegationRecord,
     DetectionSource, EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget,
     GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleUseRecord,
-    NamespaceNode, NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate,
-    PermissionNode, Permit, PipelineNode, PolicyNode, PropertyNode, RelationshipNode,
-    RepositoryNode, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, ViewComponentNode, ViewContainerNode,
+    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceNode,
+    NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate, PermissionNode,
+    Permit, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
+    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -1814,10 +1815,111 @@ impl GraphQuerier for GrafeoEngine {
         let grants = self.get_grants().await?;
         Ok(resolve_effective_permits(&actors, &grants, actor))
     }
+
+    // ── mox domain metamodel queries ──────────────────────────────────
+
+    async fn get_mox_vocabularies(&self) -> Result<Vec<MoxVocabularyNode>, GraphError> {
+        let gql = "MATCH (v:Vocabulary) RETURN v.name, v.package, v.source, v.version, \
+                   v.key_facet, v.facets_json, v.entries_json ORDER BY v.package, v.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            let facets_json = reader.get_string(row, "v.facets_json")?;
+            let entries_json = reader.get_string(row, "v.entries_json")?;
+            nodes.push(MoxVocabularyNode {
+                name: reader.get_string(row, "v.name")?,
+                package: reader.get_string(row, "v.package")?,
+                source: reader.get_string(row, "v.source")?,
+                version: reader.get_opt_string(row, "v.version")?,
+                key_facet: reader.get_string(row, "v.key_facet")?,
+                facets: serde_json::from_str(&facets_json)
+                    .map_err(|e| GraphError::Query(format!("invalid vocabulary facets: {e}")))?,
+                entries: serde_json::from_str(&entries_json)
+                    .map_err(|e| GraphError::Query(format!("invalid vocabulary entries: {e}")))?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_mox_operations(&self) -> Result<Vec<MoxOperationNode>, GraphError> {
+        let gql = "MATCH (o:Operation) RETURN o.name, o.class, o.package, o.description, \
+                   o.return_type, o.params_json, o.bodies_json ORDER BY o.class, o.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut nodes = Vec::new();
+        for row in &result.rows {
+            let params_json = reader.get_string(row, "o.params_json")?;
+            let bodies_json = reader.get_string(row, "o.bodies_json")?;
+            nodes.push(MoxOperationNode {
+                name: reader.get_string(row, "o.name")?,
+                class: reader.get_string(row, "o.class")?,
+                package: reader.get_string(row, "o.package")?,
+                description: reader.get_opt_string(row, "o.description")?,
+                return_type: reader.get_string(row, "o.return_type")?,
+                params: serde_json::from_str(&params_json)
+                    .map_err(|e| GraphError::Query(format!("invalid operation params: {e}")))?,
+                bodies: serde_json::from_str(&bodies_json)
+                    .map_err(|e| GraphError::Query(format!("invalid operation bodies: {e}")))?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    async fn get_mox_derived_features(&self) -> Result<Vec<MoxDerivedFeatureNode>, GraphError> {
+        let gql = "MATCH (d:DerivedFeature) RETURN d.name, d.class, d.package, d.type_ref, d.expr \
+                   ORDER BY d.class, d.name";
+        let result = query_gql(self, gql)?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| mox_derived_feature_from_row(&reader, row, "d"))
+            .collect()
+    }
+
+    async fn get_mox_derived_features_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<MoxDerivedFeatureNode>, GraphError> {
+        let params = HashMap::from([(
+            "title".to_string(),
+            grafeo::Value::String(schema_title.into()),
+        )]);
+        let result = query_gql_params(
+            self,
+            "MATCH (d:DerivedFeature)-[:BelongsToClass]->(s:Schema {title: $title}) \
+             RETURN d.name, d.class, d.package, d.type_ref, d.expr ORDER BY d.name",
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| mox_derived_feature_from_row(&reader, row, "d"))
+            .collect()
+    }
 }
 
 /// Maximum nesting depth for recursive composition tree building.
 const MAX_COMPOSITION_DEPTH: usize = 10;
+
+/// Map a `DerivedFeature` query row to its node. `alias` is the query's
+/// column prefix.
+fn mox_derived_feature_from_row(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+    alias: &str,
+) -> Result<MoxDerivedFeatureNode, GraphError> {
+    let col = |name: &str| format!("{alias}.{name}");
+    Ok(MoxDerivedFeatureNode {
+        name: reader.get_string(row, &col("name"))?,
+        class: reader.get_string(row, &col("class"))?,
+        package: reader.get_string(row, &col("package"))?,
+        type_ref: reader.get_string(row, &col("type_ref"))?,
+        expr: reader.get_opt_string(row, &col("expr"))?,
+    })
+}
 
 /// Map a `ViewContainer` query row to its node. `alias` is the query's
 /// column prefix (`vc` or `c`).

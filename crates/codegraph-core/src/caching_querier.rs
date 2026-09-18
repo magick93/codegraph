@@ -9,11 +9,11 @@ use crate::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode, CapabilityNode,
     CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree,
     DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, GrantEdge,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
-    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
-    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
+    MoxOperationNode, MoxVocabularyNode, NamespaceNode, NavigationFlowRecord,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
+    PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -797,5 +797,28 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn effective_permits(&self, actor: &str) -> Result<Vec<Permit>, GraphError> {
         self.inner.effective_permits(actor).await
+    }
+
+    // ── mox domain queries ─────────────────────────────────────────────
+
+    async fn get_mox_vocabularies(&self) -> Result<Vec<MoxVocabularyNode>, GraphError> {
+        self.inner.get_mox_vocabularies().await
+    }
+
+    async fn get_mox_operations(&self) -> Result<Vec<MoxOperationNode>, GraphError> {
+        self.inner.get_mox_operations().await
+    }
+
+    async fn get_mox_derived_features(&self) -> Result<Vec<MoxDerivedFeatureNode>, GraphError> {
+        self.inner.get_mox_derived_features().await
+    }
+
+    async fn get_mox_derived_features_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<MoxDerivedFeatureNode>, GraphError> {
+        self.inner
+            .get_mox_derived_features_for_schema(schema_title)
+            .await
     }
 }

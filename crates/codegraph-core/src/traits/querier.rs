@@ -3,11 +3,11 @@ use crate::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode, CapabilityNode,
     CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree,
     DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, GrantEdge,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, NamespaceNode,
-    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
-    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
+    MoxOperationNode, MoxVocabularyNode, NamespaceNode, NavigationFlowRecord,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
+    PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -424,6 +424,38 @@ pub trait GraphQuerier: Send + Sync {
     /// (see `resolve_effective_permits` for the exact rules).
     async fn effective_permits(&self, _actor: &str) -> Result<Vec<Permit>, GraphError> {
         Ok(Vec::new())
+    }
+
+    // ── mox domain query methods (default: no mox data) ──────────────
+
+    /// All ingested mox vocabularies, with facets and vendored entries.
+    async fn get_mox_vocabularies(&self) -> Result<Vec<MoxVocabularyNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// All ingested mox class operations (bodies carried verbatim as text).
+    async fn get_mox_operations(&self) -> Result<Vec<MoxOperationNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// All ingested mox derived features.
+    async fn get_mox_derived_features(&self) -> Result<Vec<MoxDerivedFeatureNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Mox derived features linked to a schema entity via BelongsToClass
+    /// edges (i.e. those whose class name matched a schema-ingested entity
+    /// at ingest time).
+    async fn get_mox_derived_features_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<MoxDerivedFeatureNode>, GraphError> {
+        Ok(self
+            .get_mox_derived_features()
+            .await?
+            .into_iter()
+            .filter(|d| d.class == schema_title)
+            .collect())
     }
 }
 
