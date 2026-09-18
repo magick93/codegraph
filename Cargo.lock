@@ -3484,7 +3484,7 @@ dependencies = [
 [[package]]
 name = "rex-driver"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=dd5aee7ae3158a45fbe08414da3a1c9fd1991639#dd5aee7ae3158a45fbe08414da3a1c9fd1991639"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=931f02fd45e6255f0c82bf2946b6a14e1dc7c70b#931f02fd45e6255f0c82bf2946b6a14e1dc7c70b"
 dependencies = [
  "ariadne",
  "rex-expr",
@@ -3500,7 +3500,7 @@ dependencies = [
 [[package]]
 name = "rex-expr"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=dd5aee7ae3158a45fbe08414da3a1c9fd1991639#dd5aee7ae3158a45fbe08414da3a1c9fd1991639"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=931f02fd45e6255f0c82bf2946b6a14e1dc7c70b#931f02fd45e6255f0c82bf2946b6a14e1dc7c70b"
 dependencies = [
  "chumsky",
  "logos",
@@ -3511,7 +3511,7 @@ dependencies = [
 [[package]]
 name = "rex-ir"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=dd5aee7ae3158a45fbe08414da3a1c9fd1991639#dd5aee7ae3158a45fbe08414da3a1c9fd1991639"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=931f02fd45e6255f0c82bf2946b6a14e1dc7c70b#931f02fd45e6255f0c82bf2946b6a14e1dc7c70b"
 dependencies = [
  "serde",
  "serde_json",
@@ -3521,7 +3521,7 @@ dependencies = [
 [[package]]
 name = "rex-syntax"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=dd5aee7ae3158a45fbe08414da3a1c9fd1991639#dd5aee7ae3158a45fbe08414da3a1c9fd1991639"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=931f02fd45e6255f0c82bf2946b6a14e1dc7c70b#931f02fd45e6255f0c82bf2946b6a14e1dc7c70b"
 dependencies = [
  "chumsky",
  "logos",
@@ -3531,7 +3531,7 @@ dependencies = [
 [[package]]
 name = "rex-vocab"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=dd5aee7ae3158a45fbe08414da3a1c9fd1991639#dd5aee7ae3158a45fbe08414da3a1c9fd1991639"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=931f02fd45e6255f0c82bf2946b6a14e1dc7c70b#931f02fd45e6255f0c82bf2946b6a14e1dc7c70b"
 dependencies = [
  "anyhow",
  "rex-ir",
