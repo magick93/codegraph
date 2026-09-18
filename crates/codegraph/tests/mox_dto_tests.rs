@@ -124,27 +124,28 @@ async fn run_generation_and_read_dtos(
         codegraph_config::config::parse_domain_config(Path::new("tests/fixtures/domains.toml"))
             .unwrap();
 
-    let report = codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
-        db: engine,
-        config: &config,
-        output_dir,
-        tera: &tera,
-        ui_overrides: &Default::default(),
-        ui_domains: &Default::default(),
-        schema_base_dir: Path::new(""),
-        seed_config: None,
-        domain_types_base: Some(domain_types_dir),
-        hooks_base: Some(hooks_tmp),
-        ext_points: None,
-        build_plan: Some(&plan),
-        ifml_frameworks: vec![],
-        ifml_components: None,
-        project_config: Some(&project_config),
-        emdash_plugins: None,
-        domain_config_dir: None,
-    })
-    .await
-    .unwrap();
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: engine,
+            config: &config,
+            output_dir,
+            tera: &tera,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: Path::new(""),
+            seed_config: None,
+            domain_types_base: Some(domain_types_dir),
+            hooks_base: Some(hooks_tmp),
+            ext_points: None,
+            build_plan: Some(&plan),
+            ifml_frameworks: vec![],
+            ifml_components: None,
+            project_config: Some(&project_config),
+            emdash_plugins: None,
+            domain_config_dir: None,
+        })
+        .await
+        .unwrap();
     assert!(!report.has_errors(), "generation reported errors");
 
     let dto_dir = domain_types_dir
@@ -204,7 +205,11 @@ async fn mox_derived_field_is_readonly_in_response_and_absent_from_create_update
     );
 
     // Control: a non-derived sibling field is untouched in all three DTOs.
-    for (name, content) in [("response", &response), ("create", &create), ("update", &update)] {
+    for (name, content) in [
+        ("response", &response),
+        ("create", &create),
+        ("update", &update),
+    ] {
         assert!(
             content.contains("pub status"),
             "{name} DTO must keep the non-derived status field"

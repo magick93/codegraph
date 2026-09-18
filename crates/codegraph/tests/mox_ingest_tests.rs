@@ -103,11 +103,7 @@ class Broken {
 pub(crate) fn write_mox_fixture(dir: &Path, name: &str, source: &str) -> PathBuf {
     let vocab_dir = dir.join("vocab");
     fs::create_dir_all(&vocab_dir).unwrap();
-    fs::write(
-        vocab_dir.join("iso-4217@2024-01-01.json"),
-        VOCAB_SNAPSHOT,
-    )
-    .unwrap();
+    fs::write(vocab_dir.join("iso-4217@2024-01-01.json"), VOCAB_SNAPSHOT).unwrap();
     let path = dir.join(name);
     fs::write(&path, source).unwrap();
     path
