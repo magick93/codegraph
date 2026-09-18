@@ -156,7 +156,11 @@ impl CapabilityRegistry {
             c.features_required.iter().any(|f| {
                 matches!(
                     f.as_str(),
-                    "grpc_backend" | "atproto_backend" | "fern_sdk" | "emdash_plugins"
+                    "grpc_backend"
+                        | "atproto_backend"
+                        | "fern_sdk"
+                        | "emdash_plugins"
+                        | "rls_from_policy"
                 )
             })
         })
@@ -670,6 +674,9 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("grpc_service",         Entity,  Api, &["grpc_backend"], &[]),
         cap("grpc_router",          Domain,  Api, &["grpc_backend"], &[]),
         cap("grpc_scaffold",        Global,  Api, &["grpc_backend"], &[]),
+
+        // ── policy-driven RLS (issue #219) ─────────────────────────────
+        cap("policy_rls",           Global,  Common, &["rls_from_policy"], &[]),
 
         // ── Fern SDK generators ─────────────────────────────────────────
         cap("fern_config",          Global, Api,   &["fern_sdk"], &[]),

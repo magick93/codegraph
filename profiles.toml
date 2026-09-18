@@ -33,6 +33,10 @@ ops_backend = true
 persistence_provider = "sea_orm"   # "sea_orm" (default) | "cornucopia"
 deployment_topology = "monolith"   # "monolith" (default) | "workers"
 ifml_design_system = ""            # built-in IFML component pack ("" = none, e.g. "shadcn-svelte")
+# Policy-driven RLS from the `.actor` policy graph (issue #219). When true,
+# add "policy_rls" to an [api] generators list; emits 020000_policy_rls.sql
+# (Postgres only; sqlite is a no-op). Off = byte-identical output.
+rls_from_policy = false
 
 [profiles.default.api]
 generators = [

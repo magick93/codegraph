@@ -1,0 +1,5 @@
+---
+source: crates/codegraph/tests/policy_rls_snapshot_tests.rs
+expression: "&files"
+---
+[]
