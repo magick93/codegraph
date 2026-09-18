@@ -966,6 +966,7 @@ async fn dto_create_template_omits_garde_when_disabled() {
         has_approval_status: false,
         structured_imports: vec![],
         has_validate: false,
+        derived_fields: vec![],
     };
 
     let create = codegraph::generate::render_template_with_project(

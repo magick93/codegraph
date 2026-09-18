@@ -17,6 +17,9 @@ pub struct {{ entity_name }}Response {
     pub id: uuid::Uuid,
 {%- for field in fields %}
 {%- if field.name == "id" %}{% continue %}{%- endif %}
+{%- if field.name in derived_fields %}
+    /// Computed by the mox domain model (derived) — read-only.
+{%- endif %}
 {%- if field.is_entity_ref %}
 {%- if field.is_array %}
 {%- if field.is_required %}

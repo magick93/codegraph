@@ -43,6 +43,10 @@ pub struct DtoContext {
     pub structured_imports: Vec<String>,
     /// Whether to emit garde validation attributes on DTO fields.
     pub has_validate: bool,
+    /// Entity fields the ingested mox domain model marks as derived
+    /// (computed). They are marked read-only in the response DTO and
+    /// excluded from the create/update DTOs (issue #218, #195 decision).
+    pub derived_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -916,6 +920,31 @@ pub async fn build_dto_context(
         .map(|t| format!("use {import_prefix}::{t};"))
         .collect();
 
+    // Mox derived features (issue #218): fields the domain model marks as
+    // computed are read-only response fields, omitted from create/update
+    // inputs. Matched by class NAME against this schema (title or entity
+    // name) and by field NAME against the assembled DTO fields. When no mox
+    // was ingested the list is empty and output is byte-identical.
+    let mut derived_fields: Vec<String> = db
+        .get_mox_derived_features()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|d| d.class == schema_title || d.class == entity_name)
+        .map(|d| codegraph_naming::to_snake_case(&d.name))
+        .filter(|name| fields.iter().any(|f| f.name == *name))
+        .collect();
+    derived_fields.sort();
+    derived_fields.dedup();
+    for name in &derived_fields {
+        if !workflow_excluded_fields.contains(name) {
+            workflow_excluded_fields.push(name.clone());
+        }
+        if !immutable_fields.contains(name) {
+            immutable_fields.push(name.clone());
+        }
+    }
+
     Ok(DtoContext {
         module_name,
         entity_name,
@@ -935,6 +964,7 @@ pub async fn build_dto_context(
         has_approval_status,
         structured_imports,
         has_validate: true,
+        derived_fields,
     })
 }
 
