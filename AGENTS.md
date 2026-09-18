@@ -71,6 +71,11 @@ crate); older docs referencing `crates/codegraph/src/generate/ifml/` are stale.
 | **LSP server** | `crates/codegraph/src/lsp/` | lsp-server crate; diagnostics (unknown entity/field/navigate target/module), completions |
 | **CLI** | `crates/codegraph/src/cli.rs`, `main.rs` | `ifml-scaffold`, `ifml-generate`, `--ifml-files`, `--ifml-components` |
 
+The `ast-ifml` AST (`crates/ast-ifml/src/generated/mod.rs`) is committed and is the
+source of truth; plain builds never regenerate it. Codegen is opt-in: run
+`AST_GEN=1 cargo build -p ast-ifml` only after changing the IFML grammar
+(`crates/tree-sitter-ifml`), then commit the regenerated file (issue #221).
+
 ### IFML DSL syntax (C-like)
 
 ```ifml

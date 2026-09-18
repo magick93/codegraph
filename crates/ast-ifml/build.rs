@@ -1,7 +1,12 @@
 use std::{fs, path::PathBuf};
 
 fn main() {
-    if std::env::var("AST_GEN").unwrap_or("1".to_string()) == "0" {
+    // src/generated/mod.rs is committed; the checked-in version is the source of
+    // truth and plain builds must never touch it (regenerating on every build
+    // dirtied the working tree). Only regenerate explicitly with AST_GEN=1 —
+    // needed solely when the IFML grammar (tree-sitter-ifml NODE_TYPES) changes.
+    println!("cargo:rerun-if-env-changed=AST_GEN");
+    if std::env::var("AST_GEN").ok().as_deref() != Some("1") {
         return;
     }
 
