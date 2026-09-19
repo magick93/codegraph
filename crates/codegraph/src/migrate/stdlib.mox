@@ -1,0 +1,25 @@
+/// codegraph standard scalar type library: the JSON Schema string formats
+/// every migrated domain package shares. Refer to these types qualified
+/// (`codegraph_stdlib.Uuid`) from domain packages.
+package codegraph_stdlib
+
+/// RFC 4122 UUID string
+type Uuid wraps String { format "uuid" }
+
+/// RFC 3339 date-time string
+type DateTime wraps String { format "date-time" }
+
+/// RFC 3339 full-date string
+type Date wraps String { format "date" }
+
+/// RFC 5322 email address
+type Email wraps String { format "email" }
+
+/// URI reference
+type Uri wraps String { format "uri" }
+
+/// Raw JSON document
+type Json wraps String { format "json" }
+
+/// Exact-base-10 decimal number
+type Decimal wraps String { format "decimal" }

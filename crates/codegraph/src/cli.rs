@@ -209,9 +209,9 @@ pub enum Commands {
         #[arg(long)]
         config: Option<PathBuf>,
     },
-    /// Migrate domain configuration to the graph-based API model.
-    /// Reads domains.toml and creates ApiResource/Operation/Endpoint
-    /// nodes in an existing graph database.
+    /// Convert a JSON Schema directory tree into rexlang .mox domain sources
+    /// plus the shared codegraph_stdlib package. Output is parse-verified
+    /// with the rex compiler before anything is written.
     Migrate(MigrateArgs),
     /// Scaffold a new consumer project (domains.toml, schemas, workspace, ops harness)
     Init {
@@ -288,15 +288,19 @@ pub enum AddTarget {
 
 #[derive(Parser, Debug)]
 pub struct MigrateArgs {
-    /// Path to the domain configuration file
-    #[arg(long, default_value = "domains.toml")]
-    pub config: PathBuf,
-
-    /// Path to the schema directory (for loading existing schemas)
-    #[arg(long, default_value = "schemas")]
+    /// Path to the JSON schema directory tree
+    #[arg(long)]
     pub schemas: PathBuf,
 
-    /// Path to the classifier configuration
-    #[arg(long, default_value = "classifier.toml")]
-    pub classifier: PathBuf,
+    /// Directory to write the generated .mox files
+    #[arg(long)]
+    pub output: PathBuf,
+
+    /// Verify and report without writing any files
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Overwrite existing .mox files
+    #[arg(long)]
+    pub force: bool,
 }

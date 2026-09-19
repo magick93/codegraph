@@ -37,7 +37,7 @@ cargo run -- run --schemas <dir> --classifier classifier.toml \
   --config domains.toml --output <dir>          # ingest + classify + generate
 cargo run -- classify --schemas <dir> ...        # entity/VO decisions only
 cargo run -- generate --config domains.toml --output <dir>
-cargo run -- migrate --config domains.toml ...   # ingest API model only
+cargo run -- migrate --schemas <dir> --output <dir>  # convert JSON schemas to .mox
 cargo run -- lsp --schemas <dir> ...             # IFML language server
 cargo run -- init / doctor / add domain ...      # project lifecycle (see above)
 ```

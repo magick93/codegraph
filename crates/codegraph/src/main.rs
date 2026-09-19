@@ -2,9 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
-use codegraph_backend::{create_backend, BackendConfig};
 
 mod cli;
+
+use codegraph_backend::{create_backend, BackendConfig};
 
 #[tokio::main]
 async fn main() -> codegraph::error::Result<()> {
@@ -38,7 +39,22 @@ async fn main() -> codegraph::error::Result<()> {
             )
             .await
         }
-        cli::Commands::Migrate(args) => cmd_migrate(args).await,
+        cli::Commands::Migrate(args) => {
+            codegraph::migrate::migrate(codegraph::migrate::MigrateArgs {
+                schemas: &args.schemas,
+                output: &args.output,
+                dry_run: args.dry_run,
+                force: args.force,
+            })
+            .map(|report| {
+                println!(
+                    "Migration summary: {} converted, {} needs review, {} unsupported",
+                    report.converted,
+                    report.needs_review.len(),
+                    report.unsupported.len()
+                );
+            })
+        }
         cli::Commands::Classify {
             schemas,
             classifier,
@@ -208,37 +224,12 @@ async fn main() -> codegraph::error::Result<()> {
     }
 }
 
-async fn cmd_migrate(args: cli::MigrateArgs) -> codegraph::error::Result<()> {
-    let domain_config = codegraph_config::config::parse_domain_config(&args.config)
-        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
-
-    let be = create_backend(&BackendConfig::default())
-        .await
-        .map_err(|e| codegraph::error::Error::Config(e.to_string()))?;
-
-    println!(
-        "Ingesting API model from domain configuration '{}'...",
-        args.config.display()
-    );
-    let stats =
-        codegraph::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config).await?;
-
-    println!("Migration complete: {stats}");
-    println!(
-        "{} API resources, {} operations, {} endpoints, {} interactions created",
-        stats.resources, stats.operations, stats.endpoints, stats.interactions
-    );
-
-    Ok(())
-}
-
 async fn cmd_lsp(
     schema_dirs: &[PathBuf],
     classifier: Option<&Path>,
     config: Option<&Path>,
 ) -> codegraph::error::Result<()> {
     use codegraph::lsp::{run_lsp_server, GrafeoState, SchemaInfo};
-    use codegraph_backend::{create_backend, BackendConfig};
 
     let backend_config = BackendConfig::default();
     let be = create_backend(&backend_config)
