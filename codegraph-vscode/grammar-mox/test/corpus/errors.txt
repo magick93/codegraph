@@ -1,0 +1,74 @@
+==================
+Missing closing brace recovers at next declaration
+==================
+
+package nz.example.recovery
+
+class Broken {
+    String name
+
+class Fine {
+    String ok
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))
+    (ERROR)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))))
+
+==================
+Stray token inside class body stays contained
+==================
+
+package nz.example.recovery
+
+class Fine {
+    String name
+    @@@
+    int count
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))
+    (ERROR
+      (UNEXPECTED '@'))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))))

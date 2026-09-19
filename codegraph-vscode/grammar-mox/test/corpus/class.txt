@@ -1,0 +1,176 @@
+==================
+Minimal package and class
+==================
+
+package nz.example.shop
+
+class Customer {
+    String name
+    boolean active
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))))
+
+==================
+Multiplicity forms
+==================
+
+package nz.example.mult
+
+class Shapes {
+    String[] tags
+    String[3] fixed
+    String[0..1] maybe
+    int[1..*] many
+    int[2..5] bounded
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        multiplicity: (multiplicity)
+        name: (identifier)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        multiplicity: (multiplicity
+          lower: (number))
+        name: (identifier)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        multiplicity: (multiplicity
+          lower: (number)
+          upper: (number))
+        name: (identifier)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        multiplicity: (multiplicity
+          lower: (number))
+        name: (identifier)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        multiplicity: (multiplicity
+          lower: (number)
+          upper: (number))
+        name: (identifier)))))
+
+==================
+Attribute default and constraint block
+==================
+
+package nz.example.constraints
+
+class Product {
+    String sku = "ABC-123" {
+        pattern "[A-Z]{3}-[0-9]{4}"
+        minLength 3
+        maxLength 12
+    }
+    int stock {
+        minimum 0
+        maximum 1000
+    }
+    String status = Active
+    boolean active = true
+    int rank = 5
+    String[] tags {
+        unique
+    }
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)
+        default: (string)
+        (constraint_block
+          (constraint_entry
+            value: (string))
+          (constraint_entry
+            value: (number))
+          (constraint_entry
+            value: (number)))))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)
+        (constraint_block
+          (constraint_entry
+            value: (number))
+          (constraint_entry
+            value: (number)))))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)
+        default: (identifier)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)
+        default: (boolean)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)
+        default: (number)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        multiplicity: (multiplicity)
+        name: (identifier)
+        (constraint_block
+          (constraint_entry))))))
