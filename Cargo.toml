@@ -51,6 +51,6 @@ lsp-types = "0.97"
 tree-sitter = "0.25"
 tree-sitter-language = "0.1"
 salsa = "0.22"
-rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "3e923ff11ab90f595349a57c7e3ae3fac3a2f530" }
-rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "3e923ff11ab90f595349a57c7e3ae3fac3a2f530" }
-rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "3e923ff11ab90f595349a57c7e3ae3fac3a2f530" }
+rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "699b3a589c3404801e12f9683c2f8a8360edffd6" }
+rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "699b3a589c3404801e12f9683c2f8a8360edffd6" }
+rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "699b3a589c3404801e12f9683c2f8a8360edffd6" }
