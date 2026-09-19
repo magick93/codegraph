@@ -37,7 +37,7 @@
 //! order and must match the JSON path byte-for-byte (issue #233).
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use codegraph_classifier::projection_builder::ProjectionBuilder;
 use codegraph_config::config::DomainConfig;
@@ -49,7 +49,7 @@ use codegraph_core::types::{
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 use codegraph_type_contracts::{DddFieldProjection, PgType, RefClassificationKind};
-use rex_driver::compile_files;
+use rex_driver::{compile_files_with_imports, SchemaImports};
 use rex_ir::{DefaultValue, FeatureKind, PrimitiveType, TypeRef};
 
 use crate::error::{Error, Result};
@@ -79,6 +79,15 @@ pub struct MoxIngestStats {
     /// mox-first pipeline ordering (issue #231) the JSON schema pass skips
     /// every title listed here, so `.mox` wins title conflicts.
     pub bridged_titles: Vec<String>,
+    /// Unique JSON files imported via `import schema` declarations,
+    /// validated and queued for the schema pipeline (issue #230).
+    pub imported_files: usize,
+    /// Alias-typed features whose graph edge resolved to a real schema
+    /// title in the post-schema-pass wiring step.
+    pub resolved_aliases: usize,
+    /// Alias-typed features that matched no schema title (exact or with the
+    /// type suffix); each warned, never a hard error.
+    pub unresolved_aliases: usize,
 }
 
 impl std::fmt::Display for MoxIngestStats {
@@ -96,31 +105,252 @@ impl std::fmt::Display for MoxIngestStats {
             self.edges,
             self.enums,
             self.enum_schemas
-        )
+        )?;
+        // Import counters only surface when imports exist, so import-free
+        // runs keep their byte-identical output.
+        if self.imported_files != 0 || self.resolved_aliases != 0 || self.unresolved_aliases != 0 {
+            write!(
+                f,
+                ", {} imported files, {} aliases resolved, {} unresolved",
+                self.imported_files, self.resolved_aliases, self.unresolved_aliases
+            )?;
+        }
+        Ok(())
     }
+}
+
+/// One `import schema "<path>" (as <Alias>)?` declaration scanned from a
+/// `.mox` source (issue #230). A line-oriented scan stands in for the
+/// rex-syntax AST here (the lowered IR drops import declarations); limits
+/// are pinned on [`scan_schema_imports`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaImportDecl {
+    /// The quoted path exactly as written — the key the rex compiler's
+    /// `SchemaImports` provider matches on.
+    pub path: String,
+    /// `as <Alias>` when present; the file stem otherwise (mirroring the
+    /// upstream `imported_name` resolution).
+    pub alias: Option<String>,
+}
+
+/// A scanned import resolved to a readable file, ready for the JSON schema
+/// pipeline and the rex compile's `SchemaImports` provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoxSchemaImport {
+    /// The .mox file declaring the import — the compile path it must match.
+    pub mox_path: String,
+    /// The import path exactly as written in the declaration.
+    pub import_path: String,
+    /// Absolute path resolved against the .mox file's directory.
+    pub abs_path: PathBuf,
+    /// The namespace name the import joins (alias or file stem).
+    pub alias: String,
+    /// Package name of the importing .mox file.
+    pub importing_package: String,
+    /// Domain the importing package resolves to (resolved at scan time so
+    /// the schema pipeline can own the node without re-deriving it).
+    pub domain: String,
+}
+
+/// A feature typed with an import alias, awaiting the post-schema-pass
+/// wiring step (the imported schema's graph node does not exist while the
+/// mox pass runs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingAliasRef {
+    /// Schema title of the class declaring the feature.
+    pub schema_title: String,
+    /// Feature (property) name.
+    pub prop_name: String,
+    /// The alias exactly as the lowered IR names it.
+    pub alias: String,
+    /// `true` for many-features (ItemsOf edge); `false` → ReferencesSchema.
+    pub is_array: bool,
+}
+
+/// An alias that matched no ingested schema title (exact or suffixed).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnresolvedAlias {
+    pub alias: String,
+    pub schema_title: String,
+    pub prop_name: String,
+    /// The configured `defaults.type_suffix` used for the second try.
+    pub type_suffix: String,
+}
+
+/// The warning line for an unresolvable alias — names both the alias and
+/// the titles that were tried.
+pub fn unresolved_alias_warning(u: &UnresolvedAlias) -> String {
+    let suffixed = format!("{}{}", u.alias, u.type_suffix);
+    format!(
+        "Warning: mox import alias '{}' (feature '{}.{}') matches no ingested schema title — \
+         tried '{}' and '{}'; the reference edge is skipped",
+        u.alias, u.schema_title, u.prop_name, u.alias, suffixed
+    )
+}
+
+/// Everything one `ingest_mox_files` run hands to the driver: the usual
+/// stats, the imported schema files to ingest through the JSON pipeline,
+/// and the alias-typed features to wire after the schema pass.
+#[derive(Debug, Clone, Default)]
+pub struct MoxIngestOutcome {
+    pub stats: MoxIngestStats,
+    pub imported_files: Vec<MoxSchemaImport>,
+    pub pending_alias_refs: Vec<PendingAliasRef>,
+}
+
+/// Scan `.mox` source text for `import schema "<path>" (as <Alias>)?`
+/// declarations. A line-oriented scan like the `.actor` import scanner: the
+/// lowered rex IR does not carry import declarations, and a full rex-syntax
+/// parse here would duplicate the compile. Pinned v1 limits: the
+/// declaration must start its (trimmed) line with `import schema`, the path
+/// is a plain double-quoted string without escapes, and the optional alias
+/// is a bare identifier after `as`. Anything else is invisible to the scan
+/// (the compile itself still validates the declaration upstream).
+pub(crate) fn scan_schema_imports(source: &str) -> Vec<SchemaImportDecl> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("import schema ")?.trim();
+            let open = rest.strip_prefix('"')?;
+            let close = open.find('"')?;
+            let path = &open[..close];
+            if path.is_empty() {
+                return None;
+            }
+            let alias = open[close + 1..]
+                .trim()
+                .strip_prefix("as ")
+                .map(|a| a.trim().to_string())
+                .filter(|a| !a.is_empty());
+            Some(SchemaImportDecl {
+                path: path.to_string(),
+                alias,
+            })
+        })
+        .collect()
+}
+
+/// Scan the `package <name>` declaration of a `.mox` source (same
+/// line-scan contract as [`scan_schema_imports`]; the first match wins —
+/// the grammar allows one package declaration per file).
+pub(crate) fn scan_package_name(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("package ")?;
+        let name: String = rest.chars().take_while(|c| !c.is_whitespace()).collect();
+        (!name.is_empty()).then_some(name)
+    })
+}
+
+/// The name an import joins its package's namespace as: the `as` alias, or
+/// the import path's file stem (mirroring the upstream `imported_name`).
+fn import_name(decl: &SchemaImportDecl) -> String {
+    decl.alias.clone().unwrap_or_else(|| {
+        Path::new(&decl.path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default()
+    })
+}
+
+/// One scanned import resolved to a readable, JSON-validated target.
+pub(crate) struct ScannedImport {
+    /// The import path exactly as written (the compile key).
+    pub import_path: String,
+    /// The namespace name the import joins (alias or file stem).
+    pub alias: String,
+    /// Absolute path resolved against the .mox file's directory.
+    pub abs_path: PathBuf,
+    /// The validated JSON text.
+    pub json: String,
+    /// Package name of the importing .mox file.
+    pub importing_package: String,
+}
+
+/// Scan one `.mox` source's `import schema` declarations, resolve each
+/// against the .mox file's directory, and read + JSON-validate the target.
+/// Unreadable or invalid files are a HARD error (variant
+/// [`Error::MoxSchemaImport`]): the lowered model's structural references
+/// depend on the imported content, so unlike `.actor` policy imports this
+/// is not warn-and-continue.
+pub(crate) fn collect_schema_imports(
+    mox_path: &str,
+    source: &str,
+    base_dir: &Path,
+) -> Result<Vec<ScannedImport>> {
+    let mut out = Vec::new();
+    for decl in scan_schema_imports(source) {
+        let abs_path = base_dir.join(&decl.path);
+        let json = std::fs::read_to_string(&abs_path).map_err(|e| Error::MoxSchemaImport {
+            mox_path: mox_path.to_string(),
+            import_path: decl.path.clone(),
+            reason: format!("could not be read: {e}"),
+        })?;
+        if let Err(e) = serde_json::from_str::<serde_json::Value>(&json) {
+            return Err(Error::MoxSchemaImport {
+                mox_path: mox_path.to_string(),
+                import_path: decl.path.clone(),
+                reason: format!("is not valid JSON: {e}"),
+            });
+        }
+        out.push(ScannedImport {
+            import_path: decl.path.clone(),
+            alias: import_name(&decl),
+            abs_path,
+            json,
+            importing_package: scan_package_name(source).unwrap_or_default(),
+        });
+    }
+    Ok(out)
 }
 
 /// Compile `.mox` files in-process and ingest the resulting domain model
 /// into the graph. Diagnostics warn and never fail: unreadable files,
 /// compile errors, and unmatched class names are counted in
 /// [`MoxIngestStats::skipped`] and reported on stderr.
+///
+/// `import schema "<path>"` declarations are scanned before compiling,
+/// resolved against the .mox file's directory, and their JSON content
+/// validated and provided to the rex compiler ([`SchemaImports`]). A
+/// missing or invalid import file is a HARD error ([`Error::MoxSchemaImport`])
+/// naming both paths. The imported files themselves are returned on
+/// [`MoxIngestOutcome::imported_files`] for the schema pipeline to ingest,
+/// and alias-typed features on [`MoxIngestOutcome::pending_alias_refs`] for
+/// the post-schema-pass wiring step ([`wire_alias_refs`]).
 pub async fn ingest_mox_files(
     ingestor: &dyn GraphIngestor,
     querier: &dyn GraphQuerier,
     mox_paths: &[PathBuf],
     domain_config: &DomainConfig,
     type_suffix: &str,
-) -> Result<MoxIngestStats> {
+) -> Result<MoxIngestOutcome> {
     let mut sources: Vec<(String, String)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     let mut stats = MoxIngestStats::default();
+    let mut imported_files: Vec<MoxSchemaImport> = Vec::new();
+    let mut schema_imports = SchemaImports::new();
     for path in mox_paths {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if !seen.insert(canonical.display().to_string()) {
             continue;
         }
         match std::fs::read_to_string(path) {
-            Ok(text) => sources.push((path.display().to_string(), text)),
+            Ok(text) => {
+                let mox_path = path.display().to_string();
+                // Imports resolve relative to the .mox file's directory.
+                let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
+                for scanned in collect_schema_imports(&mox_path, &text, base_dir)? {
+                    schema_imports.insert(&mox_path, &scanned.import_path, scanned.json);
+                    imported_files.push(MoxSchemaImport {
+                        mox_path: mox_path.clone(),
+                        import_path: scanned.import_path,
+                        abs_path: scanned.abs_path,
+                        alias: scanned.alias,
+                        importing_package: scanned.importing_package.clone(),
+                        domain: resolve_domain(domain_config, &scanned.importing_package).0,
+                    });
+                }
+                sources.push((mox_path, text));
+            }
             Err(e) => {
                 eprintln!(
                     "Warning: mox file '{}' could not be read: {e}",
@@ -131,17 +361,37 @@ pub async fn ingest_mox_files(
         }
     }
     if sources.is_empty() {
-        return Ok(stats);
+        return Ok(MoxIngestOutcome {
+            stats,
+            imported_files,
+            pending_alias_refs: Vec::new(),
+        });
     }
+    stats.imported_files = imported_files
+        .iter()
+        .map(|i| {
+            i.abs_path
+                .canonicalize()
+                .unwrap_or_else(|_| i.abs_path.clone())
+                .display()
+                .to_string()
+        })
+        .collect::<HashSet<_>>()
+        .len();
+    let import_names: HashSet<String> = imported_files.iter().map(|i| i.alias.clone()).collect();
 
-    let compilation = compile_files(&sources);
+    let compilation = compile_files_with_imports(&sources, &schema_imports);
     for (path, diagnostic) in &compilation.diagnostics {
         eprintln!("Warning: mox diagnostic in {path}: {}", diagnostic.message);
     }
     let Some(model) = compilation.model else {
         eprintln!("Warning: mox compilation produced no model — nothing ingested");
         stats.skipped += sources.len();
-        return Ok(stats);
+        return Ok(MoxIngestOutcome {
+            stats,
+            imported_files,
+            pending_alias_refs: Vec::new(),
+        });
     };
 
     // Schema entities already in the graph: mox classes attach by NAME
@@ -169,6 +419,12 @@ pub async fn ingest_mox_files(
             }
         }
         for class in &package.classes {
+            // Imported schemas lower to nominal feature-less classes in
+            // their package (upstream v1 is opaque). The JSON pipeline owns
+            // their graph nodes — the bridge never creates them (issue #230).
+            if import_names.contains(&class.name) {
+                continue;
+            }
             if !seen_classes.insert(class.name.clone()) {
                 eprintln!(
                     "Warning: mox class '{}' declared in multiple packages — keeping the first",
@@ -262,6 +518,7 @@ pub async fn ingest_mox_files(
 
     let mut mox = MoxDomainModel::default();
     let mut unmatched_with_behavior: Vec<String> = Vec::new();
+    let mut pending_alias_refs: Vec<PendingAliasRef> = Vec::new();
     for package in &model.packages {
         mox.packages.push(MoxPackageNode {
             name: package.name.clone(),
@@ -434,6 +691,17 @@ pub async fn ingest_mox_files(
                     .cloned()
                     .or_else(|| class_schema_ids.get(name).cloned());
                 let Some(target_schema_id) = target_schema_id else {
+                    // Import aliases resolve after the schema pass — their
+                    // graph node does not exist yet (issue #230). Anything
+                    // else keeps the master behavior: silently no edge.
+                    if import_names.contains(name) {
+                        pending_alias_refs.push(PendingAliasRef {
+                            schema_title: class.name.clone(),
+                            prop_name: prop.name.clone(),
+                            alias: name.clone(),
+                            is_array: prop.is_array,
+                        });
+                    }
                     continue;
                 };
                 let edge_type = if prop.is_array {
@@ -521,7 +789,80 @@ pub async fn ingest_mox_files(
         .ingest_mox_domain(&mox)
         .await
         .map_err(Error::Graph)?;
-    Ok(stats)
+    Ok(MoxIngestOutcome {
+        stats,
+        imported_files,
+        pending_alias_refs,
+    })
+}
+
+/// Post-schema-pass wiring for alias-typed features (issue #230): resolve
+/// each pending alias against the ingested schema titles — exact match
+/// first, then title + `type_suffix` (the `Customer` → `CustomerType`
+/// convention) — and create the ReferencesSchema/ItemsOf edge to the REAL
+/// node. Unresolvable aliases warn (naming both names) and are counted in
+/// `stats.unresolved_aliases`; they are never a hard error — the imported
+/// file was valid, the mismatch is a naming miss.
+pub async fn wire_alias_refs(
+    ingestor: &dyn GraphIngestor,
+    querier: &dyn GraphQuerier,
+    pending: &[PendingAliasRef],
+    type_suffix: &str,
+    stats: &mut MoxIngestStats,
+) -> Result<()> {
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let schemas = querier.list_schemas(None).await.map_err(Error::Graph)?;
+    let title_to_schema_id: HashMap<String, String> = schemas
+        .iter()
+        .map(|s| (s.title.clone(), s.schema_id.clone()))
+        .collect();
+
+    for pending in pending {
+        let resolved = if title_to_schema_id.contains_key(&pending.alias) {
+            Some(pending.alias.clone())
+        } else {
+            let suffixed = format!("{}{}", pending.alias, type_suffix);
+            title_to_schema_id
+                .contains_key(&suffixed)
+                .then_some(suffixed)
+        };
+        let Some(title) = resolved else {
+            let unresolvable = UnresolvedAlias {
+                alias: pending.alias.clone(),
+                schema_title: pending.schema_title.clone(),
+                prop_name: pending.prop_name.clone(),
+                type_suffix: type_suffix.to_string(),
+            };
+            eprintln!("{}", unresolved_alias_warning(&unresolvable));
+            stats.unresolved_aliases += 1;
+            continue;
+        };
+        // `title` is a key of the map by construction.
+        let Some(target_schema_id) = title_to_schema_id.get(&title) else {
+            continue;
+        };
+        let edge_type = if pending.is_array {
+            EdgeType::ItemsOf
+        } else {
+            EdgeType::ReferencesSchema
+        };
+        ingestor
+            .ingest_edge(
+                &format!("{}::{}", pending.prop_name, pending.schema_title),
+                target_schema_id,
+                edge_type,
+                Some(&EdgeProperties {
+                    ref_path: Some(title),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .map_err(Error::Graph)?;
+        stats.resolved_aliases += 1;
+    }
+    Ok(())
 }
 
 /// One mox class flattened for ingestion: its definition, owning package,
@@ -1032,12 +1373,97 @@ mod tests {
             enums: 8,
             enum_schemas: 9,
             bridged_titles: Vec::new(),
+            imported_files: 0,
+            resolved_aliases: 0,
+            unresolved_aliases: 0,
         };
         assert_eq!(
             stats.to_string(),
             "1 vocabularies, 2 operations, 3 derived features, 4 skipped, \
              5 classes, 6 properties, 7 edges, 8 enums, 9 enum schemas"
         );
+    }
+
+    #[test]
+    fn stats_display_appends_import_counters_only_when_present() {
+        let stats = MoxIngestStats {
+            imported_files: 2,
+            resolved_aliases: 1,
+            unresolved_aliases: 1,
+            ..Default::default()
+        };
+        let display = stats.to_string();
+        assert!(
+            display.ends_with("2 imported files, 1 aliases resolved, 1 unresolved"),
+            "{display}"
+        );
+    }
+
+    #[test]
+    fn scan_schema_imports_finds_paths_and_aliases() {
+        let source = concat!(
+            "package todo\n\n",
+            "import schema \"schemas/todo_item.json\" as TodoItem\n",
+            "import schema \"schemas/note.json\"\n",
+            "class C { refers TodoItem[] items }\n"
+        );
+        assert_eq!(
+            scan_schema_imports(source),
+            vec![
+                SchemaImportDecl {
+                    path: "schemas/todo_item.json".to_string(),
+                    alias: Some("TodoItem".to_string()),
+                },
+                SchemaImportDecl {
+                    path: "schemas/note.json".to_string(),
+                    alias: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn scan_schema_imports_ignores_actor_imports_and_prose() {
+        // `.actor`-style imports and ordinary lines must not match.
+        assert!(scan_schema_imports("import \"support.mox\"\nclass C { String x }").is_empty());
+        assert!(scan_schema_imports("import schema\nbroken").is_empty());
+    }
+
+    #[test]
+    fn scan_package_name_reads_the_first_package_line() {
+        assert_eq!(
+            scan_package_name("package nz.example.todo\n\nclass C {}"),
+            Some("nz.example.todo".to_string())
+        );
+        assert_eq!(scan_package_name("class C {}"), None);
+    }
+
+    #[test]
+    fn import_name_prefers_alias_then_stem() {
+        let aliased = SchemaImportDecl {
+            path: "deep/dir/todo_item.json".to_string(),
+            alias: Some("TodoItem".to_string()),
+        };
+        let stemmed = SchemaImportDecl {
+            path: "deep/dir/todo_item.json".to_string(),
+            alias: None,
+        };
+        assert_eq!(import_name(&aliased), "TodoItem");
+        assert_eq!(import_name(&stemmed), "todo_item");
+    }
+
+    #[test]
+    fn unresolved_alias_warning_names_both_tried_titles() {
+        let warning = unresolved_alias_warning(&UnresolvedAlias {
+            alias: "Widget".to_string(),
+            schema_title: "TodoListType".to_string(),
+            prop_name: "items".to_string(),
+            type_suffix: "Type".to_string(),
+        });
+        assert!(warning.contains("'Widget'"), "{warning}");
+        assert!(warning.contains("'WidgetType'"), "{warning}");
+        assert!(warning.contains("TodoListType"), "{warning}");
+        assert!(warning.contains("items"), "{warning}");
     }
 
     #[test]

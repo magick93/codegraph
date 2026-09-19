@@ -263,7 +263,8 @@ async fn mox_vocabulary_ingests_with_facets_and_entries() {
         &config.defaults.type_suffix,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .stats;
 
     assert_eq!(stats.vocabularies, 1);
     assert_eq!(stats.operations, 1);
@@ -314,7 +315,8 @@ async fn mox_operations_and_derived_features_ingest_with_class_links() {
         &config.defaults.type_suffix,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .stats;
     assert_eq!(stats.skipped, 0);
 
     // Operation: name, class, return type, params, and the verbatim body text.
@@ -367,7 +369,8 @@ async fn mox_class_mismatch_warns_counts_skipped_and_never_fails() {
         &config.defaults.type_suffix,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .stats;
 
     // GhostType has one derived feature and matches no schema entity: warned
     // and counted as skipped, but the ingest itself succeeds and the feature
@@ -404,7 +407,8 @@ async fn mox_compile_failure_warns_and_skips_without_ingesting() {
         &config.defaults.type_suffix,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .stats;
 
     assert_eq!(stats.skipped, 1);
     assert_eq!(stats.vocabularies, 0);
@@ -472,7 +476,8 @@ async fn ingest_bridge_mox(engine: &GrafeoEngine) -> codegraph::ingest::mox_inge
         &config.defaults.type_suffix,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .stats;
     dir.close().unwrap();
     stats
 }
@@ -761,7 +766,8 @@ async fn mox_class_matching_json_schema_is_never_overridden() {
         &config.defaults.type_suffix,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .stats;
 
     // CandidateType already exists as a JSON-ingested entity: the bridge
     // creates no schema node and no properties for it.

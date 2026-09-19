@@ -212,7 +212,8 @@ async fn skip_set_keeps_single_mox_sourced_schema_and_non_covered_json() {
         &config.defaults.type_suffix,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .stats;
     assert_eq!(stats.bridged_titles.len(), 2);
     let skip: std::collections::HashSet<String> = stats.bridged_titles.into_iter().collect();
 

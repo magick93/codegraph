@@ -280,11 +280,15 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
     // and schema/property nodes for mox-authored classes and enums. The
     // bridged class titles win schema-title conflicts because the schema
     // pass below skips every title created here. Diagnostics warn and never
-    // fail the run.
+    // fail the run — except missing/invalid `import schema` targets, which
+    // are a hard error (issue #230): the lowered model's structural
+    // references depend on them.
     let mut mox_covered: HashSet<String> = HashSet::new();
+    let mut mox_stats = crate::ingest::mox_ingest::MoxIngestStats::default();
+    let mut pending_alias_refs: Vec<crate::ingest::mox_ingest::PendingAliasRef> = Vec::new();
     if !mox_files.is_empty() {
         println!("Pass 1: {} mox files to ingest", mox_files.len());
-        let mox_stats = crate::ingest::mox_ingest::ingest_mox_files(
+        let outcome = crate::ingest::mox_ingest::ingest_mox_files(
             be.ingestor(),
             be.querier(),
             mox_files,
@@ -292,8 +296,30 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
             &domain_config.defaults.type_suffix,
         )
         .await?;
-        println!("Pass 1 complete: {mox_stats}");
-        mox_covered.extend(mox_stats.bridged_titles);
+        println!("Pass 1 complete: {}", outcome.stats);
+        mox_covered.extend(outcome.stats.bridged_titles.iter().cloned());
+        mox_stats = outcome.stats;
+        pending_alias_refs = outcome.pending_alias_refs;
+
+        // Pass 1 (imports): the .mox model's imported JSON schema files go
+        // through the same pipeline as --schemas, BEFORE the schema pass so
+        // their titles join the skip-set and a file passed both ways
+        // ingests exactly once (issue #230).
+        if !outcome.imported_files.is_empty() {
+            let imported = crate::ingest::async_ingest::ingest_imported_schemas(
+                be.ingestor(),
+                &outcome.imported_files,
+                &classifier_config,
+                &ui_overrides,
+                &domain_config.defaults.type_suffix,
+            )
+            .await?;
+            println!(
+                "Pass 1 imports: {} schema files ingested",
+                imported.ingested.schemas_created
+            );
+            mox_covered.extend(imported.titles);
+        }
     }
 
     // Pass 1a: Ingest JSON schemas (no entity classification). Optional
@@ -314,6 +340,25 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         println!(
             "Pass 1a: {} schemas ingested",
             ingest_result.schemas_created
+        );
+    }
+
+    // Pass 1a (alias wiring): imported-schema aliases resolve now that both
+    // the imported files and the --schemas pass have run — exact title
+    // match, then title + type suffix; misses warn and skip the edge
+    // (issue #230).
+    if !pending_alias_refs.is_empty() {
+        crate::ingest::mox_ingest::wire_alias_refs(
+            be.ingestor(),
+            be.querier(),
+            &pending_alias_refs,
+            &domain_config.defaults.type_suffix,
+            &mut mox_stats,
+        )
+        .await?;
+        println!(
+            "Pass 1a wiring: {} aliases resolved, {} unresolved",
+            mox_stats.resolved_aliases, mox_stats.unresolved_aliases
         );
     }
 
@@ -892,10 +937,14 @@ pub async fn classify(
     let ui_overrides = load_ui_overrides(config_path)?;
 
     // Mox-first: mox-authored schemas enter the report as
-    // `override:source=mox` and shadow same-titled JSON schemas.
+    // `override:source=mox` and shadow same-titled JSON schemas. Imported
+    // schema files ingest through the JSON pipeline and their aliases wire
+    // after the schema pass (issue #230) so the report sees the same model
+    // the run does.
     let mut mox_covered: HashSet<String> = HashSet::new();
+    let mut pending_alias_refs: Vec<crate::ingest::mox_ingest::PendingAliasRef> = Vec::new();
     if !mox_files.is_empty() {
-        let mox_stats = crate::ingest::mox_ingest::ingest_mox_files(
+        let outcome = crate::ingest::mox_ingest::ingest_mox_files(
             be.ingestor(),
             be.querier(),
             mox_files,
@@ -903,7 +952,19 @@ pub async fn classify(
             &domain_config.defaults.type_suffix,
         )
         .await?;
-        mox_covered.extend(mox_stats.bridged_titles);
+        mox_covered.extend(outcome.stats.bridged_titles.iter().cloned());
+        pending_alias_refs = outcome.pending_alias_refs;
+        if !outcome.imported_files.is_empty() {
+            let imported = crate::ingest::async_ingest::ingest_imported_schemas(
+                be.ingestor(),
+                &outcome.imported_files,
+                &classifier_config,
+                &ui_overrides,
+                &domain_config.defaults.type_suffix,
+            )
+            .await?;
+            mox_covered.extend(imported.titles);
+        }
     }
 
     let empty_entities = HashSet::new();
@@ -917,6 +978,18 @@ pub async fn classify(
         &mox_covered,
     )
     .await?;
+
+    if !pending_alias_refs.is_empty() {
+        let mut mox_stats = crate::ingest::mox_ingest::MoxIngestStats::default();
+        crate::ingest::mox_ingest::wire_alias_refs(
+            be.ingestor(),
+            be.querier(),
+            &pending_alias_refs,
+            &domain_config.defaults.type_suffix,
+            &mut mox_stats,
+        )
+        .await?;
+    }
 
     let all_data = be
         .querier()
