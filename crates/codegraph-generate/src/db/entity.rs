@@ -1349,6 +1349,22 @@ fn child_timestamp_columns(columns: &mut Vec<EntityColumn>, dialect: &dyn SqlDia
         pg_cast: None,
         sea_orm_attr: None,
     });
+    // Soft-delete marker. The DDL template (table.tera) emits `deleted_at` on
+    // every child table and the repository emitter filters on
+    // `Column::DeletedAt` for auditable entities, so the child entity model
+    // must carry the column too.
+    columns.push(EntityColumn {
+        field_name: "deleted_at".to_string(),
+        rust_type: "Option<chrono::DateTime<chrono::Utc>>".to_string(),
+        sea_orm_type: dialect
+            .map_sea_orm_type("TimestampWithTimeZone")
+            .unwrap_or("TimestampWithTimeZone".to_string()),
+        column_name: "deleted_at".to_string(),
+        is_primary_key: false,
+        is_nullable: true,
+        pg_cast: None,
+        sea_orm_attr: None,
+    });
 }
 
 #[allow(clippy::too_many_arguments)]

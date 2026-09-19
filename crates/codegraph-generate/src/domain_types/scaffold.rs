@@ -280,7 +280,13 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
         sorted_types.sort();
         let prefix = &project.types_import_prefix;
         for ty in &sorted_types {
-            structured_re_exports.push_str(&format!("pub use {}::{};\n", prefix, ty));
+            // `Uuid` is not part of codegraph-type-contracts — it comes from
+            // the `uuid` crate (already a dependency of this generated crate).
+            if ty.as_str() == "Uuid" {
+                structured_re_exports.push_str("pub use uuid::Uuid;\n");
+            } else {
+                structured_re_exports.push_str(&format!("pub use {}::{};\n", prefix, ty));
+            }
         }
         if !structured_re_exports.is_empty() {
             structured_re_exports = format!(

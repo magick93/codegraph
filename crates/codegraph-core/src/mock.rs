@@ -19,6 +19,11 @@ pub struct MockEngine {
     consumed_fields: Mutex<HashMap<String, Vec<(PropertyNode, String)>>>,
     /// Maps (property_name, schema_title) -> target SchemaNode for $ref resolution
     ref_targets: Mutex<HashMap<(String, String), SchemaNode>>,
+    /// Maps (property_name, schema_title) -> item SchemaNode for array
+    /// `items.$ref` resolution (ItemsOf edges). Mirrors the real backend,
+    /// where array properties carry ItemsOf edges but no ReferencesSchema
+    /// edge, so `get_property_ref_target` misses array targets.
+    array_item_targets: Mutex<HashMap<(String, String), SchemaNode>>,
     parent_candidates: Mutex<Vec<ParentCandidate>>,
     extends_map: Mutex<HashMap<String, Vec<SchemaNode>>>,
     allof_targets: Mutex<HashMap<String, Vec<String>>>,
@@ -82,6 +87,7 @@ impl MockEngine {
             composite_ranges: Mutex::new(HashMap::new()),
             consumed_fields: Mutex::new(HashMap::new()),
             ref_targets: Mutex::new(HashMap::new()),
+            array_item_targets: Mutex::new(HashMap::new()),
             parent_candidates: Mutex::new(Vec::new()),
             extends_map: Mutex::new(HashMap::new()),
             allof_targets: Mutex::new(HashMap::new()),
@@ -155,6 +161,7 @@ pub struct MockEngineBuilder {
     composite_ranges: HashMap<String, CompositeRange>,
     consumed_fields: HashMap<String, Vec<(PropertyNode, String)>>,
     ref_targets: HashMap<(String, String), SchemaNode>,
+    array_item_targets: HashMap<(String, String), SchemaNode>,
     parent_candidates: Vec<ParentCandidate>,
     extends_map: HashMap<String, Vec<SchemaNode>>,
     allof_targets: HashMap<String, Vec<String>>,
@@ -204,6 +211,23 @@ impl MockEngineBuilder {
         target: SchemaNode,
     ) -> Self {
         self.ref_targets.insert(
+            (property_name.to_string(), schema_title.to_string()),
+            target,
+        );
+        self
+    }
+
+    /// Register an array `items.$ref` target (ItemsOf edge): only
+    /// `get_array_item_schema(property_name, schema_title)` returns it —
+    /// `get_property_ref_target` misses it, mirroring the real backend where
+    /// array properties carry no ReferencesSchema edge.
+    pub fn with_array_item(
+        mut self,
+        property_name: &str,
+        schema_title: &str,
+        target: SchemaNode,
+    ) -> Self {
+        self.array_item_targets.insert(
             (property_name.to_string(), schema_title.to_string()),
             target,
         );
@@ -297,6 +321,12 @@ impl MockEngineBuilder {
             let mut ref_targets = engine.ref_targets.lock().unwrap();
             for (k, v) in self.ref_targets {
                 ref_targets.insert(k, v);
+            }
+        }
+        {
+            let mut array_targets = engine.array_item_targets.lock().unwrap();
+            for (k, v) in self.array_item_targets {
+                array_targets.insert(k, v);
             }
         }
         {
@@ -1220,6 +1250,17 @@ impl GraphQuerier for MockEngine {
         property_name: &str,
         schema_title: &str,
     ) -> Result<Option<SchemaNode>, GraphError> {
+        // Array-only registrations win; fall back to the shared $ref map for
+        // backward compatibility with tests registered via `with_ref_target`.
+        if let Some(target) = self
+            .array_item_targets
+            .lock()
+            .unwrap()
+            .get(&(property_name.to_string(), schema_title.to_string()))
+            .cloned()
+        {
+            return Ok(Some(target));
+        }
         let ref_targets = self.ref_targets.lock().unwrap();
         Ok(ref_targets
             .get(&(property_name.to_string(), schema_title.to_string()))

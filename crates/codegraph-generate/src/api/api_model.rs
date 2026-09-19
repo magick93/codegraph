@@ -157,8 +157,27 @@ fn resolve_from_entity_config(
 /// Normalize an entity/resource name for API-model lookups: strip the "Type"
 /// suffix and PascalCase whatever remains (titles may contain spaces, e.g.
 /// "Review Decision" → "ReviewDecision").
+///
+/// Uses the default "Type" suffix. Prefer [`normalized_resource_name_with`]
+/// with `config.defaults.type_suffix` so the resource name matches what
+/// `api_ingest` created for projects that disable suffix stripping.
 pub fn normalized_resource_name(name: &str) -> String {
-    codegraph_naming::to_pascal_case(name.trim_end_matches("Type"))
+    normalized_resource_name_with(name, "Type")
+}
+
+/// Suffix-aware variant of [`normalized_resource_name`].
+///
+/// The suffix is stripped once (unlike `trim_end_matches`, which would strip
+/// repeated occurrences) and an empty suffix leaves the name unchanged, so
+/// projects whose `*Type` schemas are genuine entities (e.g. Tavi's
+/// `PropertyType` alongside `Property`) keep distinct resource names.
+pub fn normalized_resource_name_with(name: &str, type_suffix: &str) -> String {
+    let stripped = if type_suffix.is_empty() {
+        name
+    } else {
+        name.strip_suffix(type_suffix).unwrap_or(name)
+    };
+    codegraph_naming::to_pascal_case(stripped)
 }
 
 pub async fn resolve_entity_operations(
@@ -177,7 +196,8 @@ pub async fn resolve_entity_operations(
     }
 
     if let Ok(resources) = querier.get_api_resources().await {
-        let resource_name = normalized_resource_name(entity_name);
+        let resource_name =
+            normalized_resource_name_with(entity_name, &config.defaults.type_suffix);
         if let Some(resource) = resources
             .iter()
             .find(|r| r.domain == domain_name && r.name == resource_name)
@@ -319,5 +339,23 @@ operations = ["create", "read", "list"]
             normalized_resource_name("review decisionType"),
             "ReviewDecision"
         );
+    }
+
+    /// With a disabled type suffix, `*Type` entities keep their full name so
+    /// `Property` and `PropertyType` map to distinct API resources instead of
+    /// colliding on the stripped name.
+    #[test]
+    fn normalized_resource_name_with_empty_suffix_keeps_type_entities_distinct() {
+        assert_eq!(
+            normalized_resource_name_with("Property", ""),
+            "Property"
+        );
+        assert_eq!(
+            normalized_resource_name_with("PropertyType", ""),
+            "PropertyType"
+        );
+        // A single trailing suffix occurrence is stripped — "TypeType" keeps
+        // one (strip_suffix once, unlike trim_end_matches).
+        assert_eq!(normalized_resource_name_with("StatusTypeType", "Type"), "StatusType");
     }
 }

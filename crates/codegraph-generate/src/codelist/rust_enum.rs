@@ -35,9 +35,34 @@ pub struct RustEnumVariant {
     pub serde_rename: Option<String>,
 }
 
+/// Symbol-only codelist values mapped to readable Rust variant names.
+/// Checked before generic sanitization so enum values like `==` or `-`
+/// get distinct variant names instead of collapsing to `_Empty`.
+const SYMBOL_VARIANTS: &[(&str, &str)] = &[
+    ("==", "Eq"),
+    ("=", "Eq"),
+    ("!=", "NotEq"),
+    ("<>", "NotEq"),
+    (">=", "Gte"),
+    ("<=", "Lte"),
+    (">", "Gt"),
+    ("<", "Lt"),
+    ("-", "Minus"),
+    ("\u{2212}", "Minus"),
+    ("+", "Plus"),
+    ("*", "Star"),
+    ("/", "Slash"),
+    ("%", "Percent"),
+    ("~", "Tilde"),
+    ("^", "Caret"),
+    ("&", "Amp"),
+    ("|", "Pipe"),
+];
+
 /// Sanitize a codelist value into a valid Rust enum variant name.
 ///
 /// Rules (matching legacy `codelist_enum_emitter.rs`):
+/// 0. Symbol-only values (`==`, `>=`, `-`, ...) map via [`SYMBOL_VARIANTS`]
 /// 1. Replace `+` with `Plus`, Unicode minus (`−`) with `Minus`
 /// 2. Replace hyphens, spaces, dots, slashes with underscores
 /// 3. Remove colons
@@ -45,6 +70,18 @@ pub struct RustEnumVariant {
 /// 5. If the result starts with a digit, prefix with `_`
 /// 6. If the result is a Rust keyword, prefix with `R`
 pub fn sanitize_variant_name(value: &str) -> String {
+    // Symbol-only values (no alphanumeric characters) previously collapsed to
+    // the empty string and all mapped to the same `_Empty` variant, colliding
+    // in the generated enum (e.g. `==`, `!=`, `>`, `<`, `>=`, `<=`, `-`).
+    // Map the common operator/symbol spellings to readable variant names.
+    if !value.chars().any(|c| c.is_alphanumeric()) {
+        if let Some((_, name)) = SYMBOL_VARIANTS
+            .iter()
+            .find(|(sym, _)| *sym == value)
+        {
+            return name.to_string();
+        }
+    }
     let s = value
         .replace('+', "Plus")
         .replace('\u{2212}', "Minus") // Unicode minus sign
@@ -133,10 +170,19 @@ impl RustCodelistGenerator {
                 };
                 render_template_with_project(tera, "codelist/empty_enum.tera", &ctx, project)?
             } else {
+                let mut used_names: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
                 let variants: Vec<RustEnumVariant> = enum_values
                     .iter()
                     .map(|v| {
-                        let sanitized = sanitize_variant_name(&v.value);
+                        let mut sanitized = sanitize_variant_name(&v.value);
+                        // Guarantee unique variant names even when two values
+                        // sanitize identically (e.g. `=` and `==` both -> Eq).
+                        let mut n = 2;
+                        while !used_names.insert(sanitized.clone()) {
+                            sanitized = format!("{}{}", sanitize_variant_name(&v.value), n);
+                            n += 1;
+                        }
                         let serde_rename = if sanitized != v.value {
                             Some(v.value.clone())
                         } else {

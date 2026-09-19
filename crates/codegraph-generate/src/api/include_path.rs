@@ -945,7 +945,16 @@ async fn parent_holds_child_as_junction(
     for p in props.iter().filter(|p| {
         p.is_array && p.effective_kind() == Some(RefClassificationKind::EntityReference)
     }) {
-        if let Ok(Some(target)) = db.get_property_ref_target(&p.name, parent_title).await {
+        // Array properties carry ItemsOf edges (not ReferencesSchema), so the
+        // target must be resolved via get_array_item_schema — querying the
+        // scalar ref edge here would always miss and silently disable the
+        // junction guard.
+        let target = db
+            .get_array_item_schema(&p.name, parent_title)
+            .await
+            .ok()
+            .flatten();
+        if let Some(target) = target {
             if target.title == child_title {
                 return Ok(true);
             }
@@ -1222,6 +1231,13 @@ mod tests {
         }
     }
 
+    fn array_ref_property(name: &str, pg_column: &str, ref_target: &str) -> PropertyNode {
+        PropertyNode {
+            is_array: true,
+            ..ref_property(name, pg_column, ref_target)
+        }
+    }
+
     fn hr_config(entities: &[&str], extra: &str) -> codegraph_config::DomainConfig {
         let entities_list = entities
             .iter()
@@ -1430,6 +1446,47 @@ parent_ref = "worker_type_id"
         assert_eq!(
             fk, "worker_type_id",
             "parent_ref applies when the config parent matches the actual parent"
+        );
+    }
+
+    /// Array-of-entity-ref relationships (the parent holds children through an
+    /// array property, e.g. Concept.properties → Property) materialize as
+    /// junction tables — the child carries no `{parent}_id` column. The
+    /// array target lives on an ItemsOf edge, so the junction guard must
+    /// resolve it via `get_array_item_schema`; querying the scalar
+    /// ReferencesSchema edge (the old behavior) always missed and emitted
+    /// fetch helpers filtering a nonexistent SeaORM `Column`.
+    #[tokio::test]
+    async fn auto_discovery_skips_junction_array_relationships() {
+        let engine = MockEngine::builder()
+            .with_schema(schema_node("Concept", "hr", "concept", true))
+            .with_schema(schema_node("Property", "hr", "property", true))
+            .with_properties(
+                "Concept",
+                vec![array_ref_property("properties", "properties", "Property")],
+            )
+            // ItemsOf edge only — no ReferencesSchema edge for array props.
+            .with_array_item(
+                "properties",
+                "Concept",
+                schema_node("Property", "hr", "property", true),
+            )
+            .with_parent_candidate(ParentCandidate {
+                child_title: "Property".to_string(),
+                parent_title: "Concept".to_string(),
+                field_name: "properties".to_string(),
+                source: DetectionSource::ArrayItems,
+            })
+            .build();
+
+        let config = hr_config(&["Concept", "Property"], "");
+        let paths = resolve_include_paths(&engine, &config, "hr", "Concept", None)
+            .await
+            .unwrap();
+
+        assert!(
+            paths.iter().all(|p| p.alias != "property"),
+            "junction array relationship must not resolve to a child-FK include. Got: {paths:?}"
         );
     }
 }

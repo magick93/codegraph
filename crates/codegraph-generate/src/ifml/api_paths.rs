@@ -4,7 +4,7 @@ use codegraph_core::types::SchemaNode;
 use serde::Serialize;
 
 use crate::api::api_model::{
-    normalized_resource_name, resolve_entity_operations, resolve_path_segment,
+    normalized_resource_name_with, resolve_entity_operations, resolve_path_segment,
 };
 
 /// Resolved API surface for the entity an IFML component binds to.
@@ -49,7 +49,7 @@ pub async fn resolve_entity_api(
 
     if let Ok(resources) = db.get_api_resources().await {
         if !resources.is_empty() {
-            let target = normalized_resource_name(entity);
+            let target = normalized_resource_name_with(entity, &config.defaults.type_suffix);
             let suffixed = format!("{entity}Type");
             let resource = resources.iter().find(|r| {
                 r.schema_title == entity || r.schema_title == suffixed || r.name == target

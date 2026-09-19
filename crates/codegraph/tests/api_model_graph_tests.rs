@@ -120,3 +120,51 @@ async fn resolve_entity_operations_uses_graph_when_config_has_none() {
     ops.sort();
     assert_eq!(ops, vec!["create", "delete", "list", "read", "update"]);
 }
+
+/// Regression: entities whose titles differ only by the configured type
+/// suffix (`Property` + `PropertyType` with `type_suffix = ""`, as in the
+/// Tavi model where `*Type` schemas are genuine entities) must get DISTINCT
+/// ApiResource nodes. Previously the resource name was computed with a
+/// hard-coded "Type" strip, so both entities collapsed onto the resource name
+/// "Property" and the name-keyed `ar:{name}` node ids duplicated —
+/// `get_api_operations` then fanned out (5 ops × N collisions), producing
+/// duplicated event-enum variants and duplicated OpenAPI handler configs.
+#[tokio::test]
+async fn type_suffix_disabled_keeps_type_entities_distinct() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    let config: DomainConfig = toml::from_str(
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+type_suffix = ""
+
+[domains.tavi]
+label = "Tavi"
+schema_dir = "tavi"
+postgres_schema = "tavi"
+entities = ["Property", "PropertyType"]
+"#,
+    )
+    .unwrap();
+    ingest_api_model(&engine, &config).await.unwrap();
+
+    let resources = engine.get_api_resources().await.unwrap();
+    let mut names: Vec<&str> = resources.iter().map(|r| r.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(
+        names, ["Property", "PropertyType"],
+        "Property and PropertyType must be distinct resources"
+    );
+
+    // Each resource resolves to exactly the 5 default operations — no
+    // duplicates from name collisions.
+    for name in ["Property", "PropertyType"] {
+        let mut ops = resolve_entity_operations(&engine, &config, "tavi", name).await;
+        ops.sort();
+        assert_eq!(
+            ops,
+            vec!["create", "delete", "list", "read", "update"],
+            "resource {name} must resolve to the 5 distinct default ops"
+        );
+    }
+}

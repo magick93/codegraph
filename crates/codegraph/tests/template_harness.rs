@@ -824,6 +824,162 @@ async fn candidate_entity_model() {
     assert!(files[0].content.contains("family_name"));
 }
 
+/// The SeaORM entity for a VO child table must carry a `deleted_at` column.
+/// The DDL template emits `deleted_at TIMESTAMPTZ NULL` on every child table
+/// and the repository emitter filters on `Column::DeletedAt` for auditable
+/// entities — without the column the generated crate fails to compile
+/// (E0599: no variant `DeletedAt` found for enum `tavi_unit_divide::Column`).
+#[tokio::test]
+async fn child_entity_includes_deleted_at_column() {
+    let unit_schema = SchemaNode {
+        schema_id: "tavi/json/Unit.json".to_string(),
+        title: "Unit".to_string(),
+        description: None,
+        schema_type: "object".to_string(),
+        classification: "entity".to_string(),
+        domain: Some("tavi".to_string()),
+        rel_path: "tavi/json/Unit.json".to_string(),
+        pg_type: "UUID".to_string(),
+        rust_type: "Unit".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: "Unit".to_string(),
+        pg_table_name: "unit".to_string(),
+        api_path_segment: "units".to_string(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+        custom_annotations: Default::default(),
+    };
+    let unit_divide_schema = SchemaNode {
+        schema_id: "tavi/json/UnitDivide.json".to_string(),
+        title: "UnitDivide".to_string(),
+        description: None,
+        schema_type: "object".to_string(),
+        classification: "value_object".to_string(),
+        domain: Some("tavi".to_string()),
+        rel_path: "tavi/json/UnitDivide.json".to_string(),
+        pg_type: "JSONB".to_string(),
+        rust_type: "UnitDivide".to_string(),
+        sea_orm_type: "JsonBinary".to_string(),
+        rust_type_name: "UnitDivide".to_string(),
+        pg_table_name: "unit_divide".to_string(),
+        api_path_segment: String::new(),
+        parent_schema: None,
+        is_entity: false,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+        custom_annotations: Default::default(),
+    };
+    let divide_prop = PropertyNode {
+        name: "divide".to_string(),
+        prop_type: "object".to_string(),
+        description: None,
+        format: None,
+        is_required: false,
+        is_nullable: true,
+        is_array: false,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: "divide".to_string(),
+        pg_column_type: "JSONB".to_string(),
+        rust_field_name: "divide".to_string(),
+        rust_field_type: "UnitDivide".to_string(),
+        sea_orm_type: "JsonBinary".to_string(),
+        render_strategy: "child_table".to_string(),
+        ref_target: Some("tavi/json/UnitDivide.json".to_string()),
+        classification: Some("value_object".to_string()),
+        classification_kind: None,
+        projection: None,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    };
+    let scale_prop = PropertyNode {
+        name: "scale".to_string(),
+        prop_type: "string".to_string(),
+        description: None,
+        format: None,
+        is_required: false,
+        is_nullable: true,
+        is_array: false,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: "scale".to_string(),
+        pg_column_type: "TEXT".to_string(),
+        rust_field_name: "scale".to_string(),
+        rust_field_type: "String".to_string(),
+        sea_orm_type: "Text".to_string(),
+        render_strategy: "direct_column".to_string(),
+        ref_target: None,
+        classification: Some("primitive_wrapper".to_string()),
+        classification_kind: None,
+        projection: None,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    };
+
+    let engine = MockEngine::builder()
+        .with_schema(unit_schema)
+        .with_schema(unit_divide_schema.clone())
+        .with_properties("Unit", vec![divide_prop])
+        .with_properties("UnitDivide", vec![scale_prop])
+        .with_ref_target("divide", "Unit", unit_divide_schema)
+        .build();
+
+    let config = test_domain_config();
+    let tera = test_tera();
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-child-entity-deleted-at");
+
+    let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &engine,
+            "Unit",
+            "tavi",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let child = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("tavi_unit_divide.rs"))
+        .expect("entity generator should emit the unit_divide child entity");
+
+    assert!(
+        child
+            .content
+            .contains("pub deleted_at: Option<chrono::DateTime<chrono::Utc>>"),
+        "child entity model must include the deleted_at column to match the DDL and repository soft-delete filters. Got:\n{}",
+        child.content
+    );
+    assert!(
+        child.content.contains("pub created_at"),
+        "child entity keeps created_at. Got:\n{}",
+        child.content
+    );
+}
+
 // === DTO Template Tests ===
 
 #[tokio::test]
@@ -3878,6 +4034,17 @@ fn sanitize_variant_name_rules() {
     assert_eq!(sanitize_variant_name("full-time"), "FullTime");
     assert_eq!(sanitize_variant_name("a/b"), "AB");
     assert_eq!(sanitize_variant_name("a.b"), "AB");
+
+    // Symbol-only values map to readable variants instead of collapsing to _Empty
+    assert_eq!(sanitize_variant_name("=="), "Eq");
+    assert_eq!(sanitize_variant_name("="), "Eq");
+    assert_eq!(sanitize_variant_name("!="), "NotEq");
+    assert_eq!(sanitize_variant_name(">="), "Gte");
+    assert_eq!(sanitize_variant_name("<="), "Lte");
+    assert_eq!(sanitize_variant_name(">"), "Gt");
+    assert_eq!(sanitize_variant_name("<"), "Lt");
+    assert_eq!(sanitize_variant_name("-"), "Minus");
+    assert_eq!(sanitize_variant_name("+"), "Plus");
 }
 
 // === Domain Event Trigger Tests ===
