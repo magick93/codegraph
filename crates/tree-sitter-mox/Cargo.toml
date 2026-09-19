@@ -1,0 +1,25 @@
+[package]
+name = "tree-sitter-mox"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Generated parser for the rexlang .mox modeling language (tree-sitter grammar)"
+build = "build.rs"
+
+# Standalone workspace: this crate is generated from
+# codegraph-vscode/grammar-mox (the grammar source of truth) and mirrors
+# crates/tree-sitter-ifml. It is intentionally NOT a member of the repo
+# workspace; build it from this directory until a workspace crate gains a
+# path dependency on it (as ast-ifml/codegraph have for tree-sitter-ifml).
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+tree-sitter = "0.25"
+tree-sitter-language = "0.1"
+
+[build-dependencies]
+cc = "1"

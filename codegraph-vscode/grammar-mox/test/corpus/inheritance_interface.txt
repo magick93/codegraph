@@ -1,0 +1,123 @@
+==================
+Interface with bindings
+==================
+
+package nz.example.ifaces
+
+interface Serializable {
+    rust "serde::Serialize"
+    csharp "System.Runtime.Serialization.ISerializable"
+}
+
+---
+
+(source_file
+  (package_declaration
+    name:
+    (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (interface_declaration
+    name: (identifier)
+    (binding_entry
+      key: (identifier)
+      value: (string))
+    (binding_entry
+      key: (identifier)
+      value: (string))))
+
+==================
+Class extends single
+==================
+
+package nz.example.shapes
+
+class Animal {
+    String name
+}
+
+class Dog extends Animal {
+    String breed
+}
+
+---
+
+(source_file
+  (package_declaration
+    name:
+    (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier))))
+  (class_declaration
+    name: (identifier)
+    (extends_clause
+      type: (qualified_name
+        (identifier)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))))
+
+==================
+Class extends comma-separated
+==================
+
+package nz.example.mixins
+
+class Timestamped {
+    String at
+}
+
+class Audited {
+    String by
+}
+
+class Order extends Timestamped, Audited {
+    String id
+}
+
+---
+
+(source_file
+  (package_declaration
+    name:
+    (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier))))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier))))
+  (class_declaration
+    name: (identifier)
+    (extends_clause
+      type: (qualified_name
+        (identifier))
+      type: (qualified_name
+        (identifier)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))))

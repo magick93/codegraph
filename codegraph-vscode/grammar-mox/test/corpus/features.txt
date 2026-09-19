@@ -1,0 +1,255 @@
+==================
+Contains, refers, container with opposite
+==================
+
+package nz.example.org
+
+class Department {
+    contains Employee[] staff opposite department
+    contains Team[] teams
+}
+
+class Employee {
+    container Department department opposite staff
+    refers Department[0..1] peer opposite peers
+    refers Team[] leadsTeams
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (containment
+        type: (qualified_name
+          (identifier))
+        multiplicity: (multiplicity)
+        name: (identifier)
+        (opposite_clause
+          name: (identifier))))
+    (feature
+      (containment
+        type: (qualified_name
+          (identifier))
+        multiplicity: (multiplicity)
+        name: (identifier))))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (container_feature
+        type: (qualified_name
+          (identifier))
+        name: (identifier)
+        (opposite_clause
+          name: (identifier))))
+    (feature
+      (reference
+        type: (qualified_name
+          (identifier))
+        multiplicity: (multiplicity
+          lower: (number)
+          upper: (number))
+        name: (identifier)
+        (opposite_clause
+          name: (identifier))))
+    (feature
+      (reference
+        type: (qualified_name
+          (identifier))
+        multiplicity: (multiplicity)
+        name: (identifier)))))
+
+==================
+Operation with parameters and body
+==================
+
+package nz.example.org
+
+class Team {
+    op boolean any_member_earns_over(int threshold) {
+        expr { members.any(m => m.salary > threshold) }
+    }
+    op int payroll() {
+        rust { self.members.iter().map(|m| m.salary).sum() }
+    }
+    op void flush()
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (operation_declaration
+        type: (qualified_name
+          (identifier))
+        name: (identifier)
+        parameters: (parameters
+          (parameter
+            type: (qualified_name
+              (identifier))
+            name: (identifier)))
+        body: (op_body
+          (target_body
+            target: (identifier)
+            body: (raw_body)))))
+    (feature
+      (operation_declaration
+        type: (qualified_name
+          (identifier))
+        name: (identifier)
+        parameters: (parameters)
+        body: (op_body
+          (target_body
+            target: (identifier)
+            body: (raw_body)))))
+    (feature
+      (operation_declaration
+        type: (qualified_name
+          (identifier))
+        name: (identifier)
+        parameters: (parameters)))))
+
+==================
+Derived with expr body
+==================
+
+package nz.example.library
+
+class Book {
+    String title
+    int pages
+    derived String citation {
+        expr { if pages > 400 { title } else { "short read" } }
+    }
+    derived boolean needsRefund
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))
+    (feature
+      (derived_declaration
+        type: (qualified_name
+          (identifier))
+        name: (identifier)
+        body: (op_body
+          (target_body
+            target: (identifier)
+            body: (raw_body
+              (raw_body)
+              (raw_body
+                (string)))))))
+    (feature
+      (derived_declaration
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))))
+
+==================
+Modifiers id and readonly
+==================
+
+package nz.example.modifiers
+
+class Ticket {
+    id readonly String ticketNo
+    readonly String title
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (modifier)
+      (modifier)
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))
+    (feature
+      (modifier)
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))))
+
+==================
+Derived with multiplicity
+==================
+
+package nz.example.derived
+
+class Cart {
+    contains Item[] items opposite cart
+    derived Money[0..1] total {
+        expr { items.map(i => i.price).sum() }
+    }
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (containment
+        type: (qualified_name
+          (identifier))
+        multiplicity: (multiplicity)
+        name: (identifier)
+        (opposite_clause
+          name: (identifier))))
+    (feature
+      (derived_declaration
+        type: (qualified_name
+          (identifier))
+        multiplicity: (multiplicity
+          lower: (number)
+          upper: (number))
+        name: (identifier)
+        body: (op_body
+          (target_body
+            target: (identifier)
+            body: (raw_body)))))))
