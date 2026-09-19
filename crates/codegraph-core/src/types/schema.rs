@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Value stored under the `source` key of `SchemaNode::custom_annotations`
+/// (and mirrored onto `SchemaClassificationData::source`) for schemas whose
+/// entity/value-object nature is author-declared in a `.mox` domain source
+/// rather than inferred by the auto-classifier (issue #229).
+pub const MOX_SOURCE: &str = "mox";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SchemaNode {
     pub schema_id: String,
@@ -54,6 +60,15 @@ pub struct SchemaClassificationData {
     pub in_degree: usize,
     pub is_enum: bool,
     pub is_string_type: bool,
+    /// Whether the source schema is already flagged as an entity. Populated
+    /// from `SchemaNode::is_entity` by the graph queriers; defaults to false
+    /// for hand-constructed test data.
+    #[serde(default)]
+    pub is_entity: bool,
+    /// Ingestion provenance, e.g. [`MOX_SOURCE`] for schemas authored in a
+    /// `.mox` domain source. `None` for JSON-Schema-ingested schemas.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[cfg(test)]
@@ -172,9 +187,22 @@ mod tests {
             in_degree: 1,
             is_enum: false,
             is_string_type: false,
+            is_entity: true,
+            source: None,
         };
         let json = serde_json::to_string(&d).unwrap();
         let d2: SchemaClassificationData = serde_json::from_str(&json).unwrap();
         assert_eq!(d, d2);
+    }
+
+    #[test]
+    fn schema_classification_data_source_defaults_for_older_artifacts() {
+        // Wire compat: payloads written before `is_entity`/`source` existed
+        // (no `source` key on the node either) deserialize unchanged.
+        let d: SchemaClassificationData =
+            serde_json::from_str(r#"{"title":"T","rel_path":"t.json","schema_type":"object","is_codelist":false,"is_primitive_wrapper":false,"has_all_of":false,"composes_noun_type":false,"field_count":0,"required_field_count":0,"ref_count":0,"in_degree":0,"is_enum":false,"is_string_type":false}"#)
+                .unwrap();
+        assert!(!d.is_entity);
+        assert_eq!(d.source, None);
     }
 }

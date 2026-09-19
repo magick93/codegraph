@@ -311,6 +311,12 @@ impl GraphQuerier for GrafeoEngine {
                 in_degree,
                 is_enum: schema.has_one_of && field_count == 0,
                 is_string_type: schema.schema_type == "string",
+                is_entity: schema.is_entity,
+                source: schema
+                    .custom_annotations
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
             });
         }
 

@@ -1,6 +1,6 @@
 //! mox domain ingest: compile `.mox` domain sources in-process via
 //! `rex_driver::compile_files` and walk the resulting `rex_ir::Model` into
-//! the graph (issue #218).
+//! the graph (issues #218, #229).
 //!
 //! What lands in the graph:
 //! - `Vocabulary` nodes (with typed facets and vendored entries) plus
@@ -13,42 +13,69 @@
 //!   title or entity name). Mismatches warn and count as skipped — they
 //!   never fail ingestion.
 //!
-//! Non-goals (issue #218): entity generation still comes from JSON Schema;
-//! operation bodies are ingested as text and are never executed or parsed by
-//! codegraph.
+//! Class bridge (#229): mox `class`/`enum`/`datatype` definitions additionally
+//! produce the same graph shapes the JSON Schema path produces — a
+//! `SchemaNode` with `PropertyNode`s per class, a `CodeList` with
+//! `EnumValue`s per enum, `ReferencesSchema`/`ItemsOf` edges for
+//! refers/contains features and `ExtendsSchema` edges for `extends`. Classes
+//! whose name already exists as an ingested schema keep the JSON-authored
+//! node (the bridge never overrides); classes matching no schema get their
+//! own nodes, carrying the `source=mox` provenance in `custom_annotations`
+//! so the auto-classifier treats their entity/value-object nature as
+//! author-declared. `container` back-pointers and derived features are
+//! skipped here (the former has no stored column; the latter ingests as
+//! `DerivedFeature` nodes above).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use codegraph_classifier::projection_builder::ProjectionBuilder;
+use codegraph_config::config::DomainConfig;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    MoxDerivedFeatureNode, MoxDomainModel, MoxEntry, MoxFacet, MoxOperationNode, MoxPackageNode,
-    MoxParam, MoxVocabularyNode,
+    CodeList, EdgeProperties, EdgeType, EnumValue, MoxDerivedFeatureNode, MoxDomainModel, MoxEntry,
+    MoxFacet, MoxOperationNode, MoxPackageNode, MoxParam, MoxVocabularyNode, PropertyNode,
+    SchemaNode,
 };
+use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
+use codegraph_type_contracts::{DddFieldProjection, PgType, RefClassificationKind};
 use rex_driver::compile_files;
-use rex_ir::{DefaultValue, TypeRef};
+use rex_ir::{DefaultValue, FeatureKind, PrimitiveType, TypeRef};
 
 use crate::error::{Error, Result};
+use crate::ingest::async_ingest::{sanitize_description, sanitize_rust_type_name};
 
 /// Counters for one `ingest_mox_files` run.
 ///
 /// `skipped` counts mox files that could not be read or failed to compile,
 /// plus mox classes carrying operations/derived features that matched no
-/// ingested schema entity (each warned).
+/// pre-existing ingested schema entity (each warned).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MoxIngestStats {
     pub vocabularies: usize,
     pub operations: usize,
     pub derived_features: usize,
     pub skipped: usize,
+    pub classes: usize,
+    pub properties: usize,
+    pub edges: usize,
+    pub enums: usize,
 }
 
 impl std::fmt::Display for MoxIngestStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} vocabularies, {} operations, {} derived features, {} skipped",
-            self.vocabularies, self.operations, self.derived_features, self.skipped
+            "{} vocabularies, {} operations, {} derived features, {} skipped, \
+             {} classes, {} properties, {} edges, {} enums",
+            self.vocabularies,
+            self.operations,
+            self.derived_features,
+            self.skipped,
+            self.classes,
+            self.properties,
+            self.edges,
+            self.enums
         )
     }
 }
@@ -61,6 +88,8 @@ pub async fn ingest_mox_files(
     ingestor: &dyn GraphIngestor,
     querier: &dyn GraphQuerier,
     mox_paths: &[PathBuf],
+    domain_config: &DomainConfig,
+    type_suffix: &str,
 ) -> Result<MoxIngestStats> {
     let mut sources: Vec<(String, String)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -98,8 +127,102 @@ pub async fn ingest_mox_files(
     // Schema entities already in the graph: mox classes attach by NAME
     // (schema title or entity name). Warn on mismatch, never fail.
     let schemas = querier.list_schemas(None).await.unwrap_or_default();
+    let known_titles: HashSet<String> = schemas.iter().map(|s| s.title.clone()).collect();
+    let json_schema_ids: HashMap<String, String> = schemas
+        .iter()
+        .map(|s| (s.title.clone(), s.schema_id.clone()))
+        .collect();
+
+    // ── Class bridge (#229): collect the class universe first so entity vs
+    // value-object is decided from the whole model, not per package.
+    let mut class_index: Vec<ClassEntry> = Vec::new();
+    let mut seen_classes: HashSet<String> = HashSet::new();
+    let mut class_schema_ids: HashMap<String, String> = HashMap::new();
+    let mut datatype_formats: HashMap<(String, String), String> = HashMap::new();
+    for package in &model.packages {
+        for datatype in &package.datatypes {
+            if let Some(ref format) = datatype.format {
+                datatype_formats.insert(
+                    (package.name.clone(), datatype.name.clone()),
+                    format.clone(),
+                );
+            }
+        }
+        for class in &package.classes {
+            if !seen_classes.insert(class.name.clone()) {
+                eprintln!(
+                    "Warning: mox class '{}' declared in multiple packages — keeping the first",
+                    class.name
+                );
+                stats.skipped += 1;
+                continue;
+            }
+            let (domain, _) = resolve_domain(domain_config, &package.name);
+            let schema_id = format!("{}/{}", package.name, class.name);
+            class_schema_ids.insert(class.name.clone(), schema_id.clone());
+            class_index.push(ClassEntry {
+                class,
+                domain,
+                schema_id,
+            });
+        }
+    }
+
+    // Contained-only classes become value objects: a class that is targeted
+    // exclusively by `contains` features has its rows nested in the owner's
+    // child tables, never referenced by FK. `refers` wins on conflict.
+    let mut contains_targets: HashSet<String> = HashSet::new();
+    let mut refers_targets: HashSet<String> = HashSet::new();
+    for entry in &class_index {
+        for feature in &entry.class.features {
+            if feature.is_derived {
+                continue;
+            }
+            if let TypeRef::Class { name, .. } = &feature.type_ {
+                match feature.kind {
+                    FeatureKind::Containment => {
+                        contains_targets.insert(name.clone());
+                    }
+                    FeatureKind::CrossReference => {
+                        refers_targets.insert(name.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Enums → CodeList + EnumValue nodes (declaration order, per package).
+    for package in &model.packages {
+        for enum_def in &package.enums {
+            let codelist = CodeList {
+                name: enum_def.name.clone(),
+                description: enum_def.description.as_deref().map(sanitize_description),
+                pg_table_name: to_snake_case(&strip_suffix(&enum_def.name, type_suffix)),
+                render_as: "codelist".to_string(),
+                check_expression: None,
+            };
+            ingestor
+                .ingest_codelist(&codelist)
+                .await
+                .map_err(Error::Graph)?;
+            stats.enums += 1;
+            for literal in &enum_def.literals {
+                let ev = EnumValue {
+                    value: literal.name.clone(),
+                    display_name: literal.label.clone(),
+                    sort_order: literal.value.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+                };
+                ingestor
+                    .ingest_enum_value(&enum_def.name, &ev)
+                    .await
+                    .map_err(Error::Graph)?;
+            }
+        }
+    }
 
     let mut mox = MoxDomainModel::default();
+    let mut unmatched_with_behavior: Vec<String> = Vec::new();
     for package in &model.packages {
         mox.packages.push(MoxPackageNode {
             name: package.name.clone(),
@@ -171,24 +294,130 @@ pub async fn ingest_mox_files(
                 attached = true;
             }
             if attached {
-                match schemas
-                    .iter()
-                    .find(|s| s.title == class.name || s.rust_type_name == class.name)
-                {
-                    Some(schema) => {
-                        mox.class_links
-                            .push((class.name.clone(), schema.title.clone()));
-                    }
-                    None => {
-                        eprintln!(
-                            "Warning: mox class '{}' matches no ingested schema entity — \
-                             its operations/derived features will not attach to generated types",
-                            class.name
-                        );
-                        stats.skipped += 1;
-                    }
+                if known_titles.contains(&class.name) {
+                    mox.class_links
+                        .push((class.name.clone(), class.name.clone()));
+                } else {
+                    eprintln!(
+                        "Warning: mox class '{}' matches no ingested schema entity — \
+                         its schema nodes are created from the mox definition and its \
+                         operations/derived features attach there",
+                        class.name
+                    );
+                    stats.skipped += 1;
+                    // The bridge (below) creates the schema node for this
+                    // class in this run; link once it exists.
+                    unmatched_with_behavior.push(class.name.clone());
                 }
             }
+        }
+    }
+
+    // ── Bridge pass 1: SchemaNodes for classes matching no ingested schema.
+    let mut bridged: HashSet<String> = HashSet::new();
+    for entry in &class_index {
+        let class = entry.class;
+        if known_titles.contains(&class.name) {
+            continue;
+        }
+        let is_entity =
+            !contains_targets.contains(&class.name) || refers_targets.contains(&class.name);
+        let node = class_schema_node(entry, is_entity, type_suffix);
+        ingestor.ingest_schema(&node).await.map_err(Error::Graph)?;
+        bridged.insert(class.name.clone());
+        stats.classes += 1;
+    }
+
+    // ── Bridge pass 2: properties + reference edges per bridged class.
+    for entry in &class_index {
+        let class = entry.class;
+        if !bridged.contains(&class.name) {
+            // Owned by a JSON schema (never overridden) or a duplicate
+            // declaration that was dropped.
+            continue;
+        }
+        for feature in &class.features {
+            if feature.is_derived || feature.kind == FeatureKind::Container {
+                continue;
+            }
+            let Some(prop) = feature_property(feature, &class.name, &datatype_formats, &mut stats)
+            else {
+                continue;
+            };
+            ingestor
+                .ingest_property(&class.name, &entry.schema_id, &prop)
+                .await
+                .map_err(Error::Graph)?;
+            stats.properties += 1;
+
+            // Class-targeted features carry a graph edge to the target
+            // schema (enum/vocabulary targets keep only the ref_target —
+            // they are CodeList/Vocabulary nodes, not Schema nodes).
+            if let (
+                FeatureKind::Containment | FeatureKind::CrossReference,
+                TypeRef::Class { name, .. },
+            ) = (&feature.kind, &feature.type_)
+            {
+                // JSON-owned targets keep their own schema_id; bridged
+                // targets use the mox-authored node's id.
+                let target_schema_id = json_schema_ids
+                    .get(name)
+                    .cloned()
+                    .or_else(|| class_schema_ids.get(name).cloned());
+                let Some(target_schema_id) = target_schema_id else {
+                    continue;
+                };
+                let edge_type = if prop.is_array {
+                    EdgeType::ItemsOf
+                } else {
+                    EdgeType::ReferencesSchema
+                };
+                ingestor
+                    .ingest_edge(
+                        &format!("{}::{}", prop.name, class.name),
+                        &target_schema_id,
+                        edge_type,
+                        Some(&EdgeProperties {
+                            ref_path: Some(name.clone()),
+                            ..Default::default()
+                        }),
+                    )
+                    .await
+                    .map_err(Error::Graph)?;
+                stats.edges += 1;
+            }
+        }
+
+        // `extends` → ExtendsSchema edges (allOf composition), mirroring
+        // Pass 4 of the JSON path.
+        for parent in &class.extends {
+            if let TypeRef::Class { name, .. } = parent {
+                let parent_exists = known_titles.contains(name) || bridged.contains(name.as_str());
+                if !parent_exists {
+                    continue;
+                }
+                ingestor
+                    .ingest_edge(
+                        &class.name,
+                        name,
+                        EdgeType::ExtendsSchema,
+                        Some(&EdgeProperties {
+                            composition_type: Some("allOf".to_string()),
+                            ..Default::default()
+                        }),
+                    )
+                    .await
+                    .map_err(Error::Graph)?;
+                stats.edges += 1;
+            }
+        }
+    }
+
+    // Operations/derived features of bridged classes attach to the freshly
+    // created schema nodes.
+    for class in &unmatched_with_behavior {
+        if bridged.contains(class) {
+            mox.class_links.push((class.clone(), class.clone()));
         }
     }
 
@@ -197,6 +426,346 @@ pub async fn ingest_mox_files(
         .await
         .map_err(Error::Graph)?;
     Ok(stats)
+}
+
+/// One mox class flattened for ingestion: its definition, owning package,
+/// resolved domain, and the `schema_id` used for its graph node.
+struct ClassEntry<'a> {
+    class: &'a rex_ir::ClassDef,
+    domain: String,
+    schema_id: String,
+}
+
+/// Map a mox package name to a domain: an exact `domains.toml` key wins,
+/// then the last dot-segment; otherwise the snake_cased last segment is the
+/// domain (and, by the domain-driven pg-schema convention, the namespace).
+fn resolve_domain(domain_config: &DomainConfig, package: &str) -> (String, bool) {
+    if domain_config.domains.contains_key(package) {
+        return (package.to_string(), true);
+    }
+    let last = package.rsplit('.').next().unwrap_or(package);
+    for name in domain_config.domains.keys() {
+        if name == last {
+            return (name.clone(), true);
+        }
+    }
+    (to_snake_case(last), false)
+}
+
+/// Build the `SchemaNode` for a mox class, mirroring the JSON path's field
+/// population (`ingest_schema_node` in async_ingest).
+fn class_schema_node(entry: &ClassEntry<'_>, is_entity: bool, type_suffix: &str) -> SchemaNode {
+    let class = entry.class;
+    let stripped = strip_suffix(&class.name, type_suffix);
+    let mut custom_annotations = HashMap::new();
+    custom_annotations.insert(
+        "source".to_string(),
+        serde_json::Value::String(codegraph_core::types::MOX_SOURCE.to_string()),
+    );
+    SchemaNode {
+        schema_id: entry.schema_id.clone(),
+        title: class.name.clone(),
+        description: class.description.as_deref().map(sanitize_description),
+        schema_type: "object".to_string(),
+        classification: if is_entity {
+            "entity_reference".to_string()
+        } else {
+            "value_object".to_string()
+        },
+        domain: Some(entry.domain.clone()),
+        rel_path: entry.schema_id.clone(),
+        pg_type: "UUID".to_string(),
+        rust_type: stripped.clone(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: sanitize_rust_type_name(&stripped),
+        pg_table_name: to_snake_case(&stripped),
+        api_path_segment: to_kebab_case(&stripped),
+        parent_schema: None,
+        is_entity,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: !class.extends.is_empty(),
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+        custom_annotations,
+    }
+}
+
+/// Map one stored feature onto a `PropertyNode`, mirroring the JSON path's
+/// classification and type-string conventions. Returns `None` for features
+/// that produce no stored column (interfaces).
+fn feature_property(
+    feature: &rex_ir::Feature,
+    schema_title: &str,
+    datatype_formats: &HashMap<(String, String), String>,
+    stats: &mut MoxIngestStats,
+) -> Option<PropertyNode> {
+    let is_array = feature.multiplicity.is_many();
+    let is_required = feature.multiplicity.lower >= 1;
+
+    // Classify the feature type into the JSON path's classification shapes.
+    enum Mapped {
+        Primitive {
+            pg: PgType,
+            format: Option<String>,
+        },
+        Codelist {
+            target: String,
+        },
+        Reference {
+            target: String,
+            kind: RefClassificationKind,
+        },
+    }
+    let mapped = match (&feature.kind, &feature.type_) {
+        (_, TypeRef::Class { name, .. }) => {
+            // `refers` (and, defensively, an attribute typed with a class)
+            // is an FK-style entity reference; `contains` a value object.
+            let kind = if feature.kind == FeatureKind::Containment {
+                RefClassificationKind::ValueObject
+            } else {
+                RefClassificationKind::EntityReference
+            };
+            Mapped::Reference {
+                target: name.clone(),
+                kind,
+            }
+        }
+        (_, TypeRef::Enum { name, .. }) | (_, TypeRef::Vocabulary { name, .. }) => {
+            Mapped::Codelist {
+                target: name.clone(),
+            }
+        }
+        (_, TypeRef::Interface { name, .. }) => {
+            eprintln!(
+                "Warning: mox feature '{}.{}' targets interface '{}' — no stored column is produced",
+                schema_title, feature.name, name
+            );
+            stats.skipped += 1;
+            return None;
+        }
+        (_, TypeRef::Datatype { package, name }) => {
+            let format = datatype_formats.get(&(package.clone(), name.clone()));
+            match format.map(String::as_str) {
+                Some("uuid") => Mapped::Primitive {
+                    pg: PgType::Uuid,
+                    format: Some("uuid".to_string()),
+                },
+                Some("date") => Mapped::Primitive {
+                    pg: PgType::Date,
+                    format: Some("date".to_string()),
+                },
+                Some("date-time") => Mapped::Primitive {
+                    pg: PgType::Timestamptz,
+                    format: Some("date-time".to_string()),
+                },
+                Some(s @ ("email" | "uri")) => Mapped::Primitive {
+                    pg: PgType::Text,
+                    format: Some(s.to_string()),
+                },
+                Some("json") => Mapped::Primitive {
+                    pg: PgType::Jsonb,
+                    format: Some("json".to_string()),
+                },
+                Some("decimal") => Mapped::Primitive {
+                    pg: PgType::Numeric {
+                        precision: 19,
+                        scale: 4,
+                    },
+                    format: Some("decimal".to_string()),
+                },
+                Some(other) => {
+                    eprintln!(
+                        "Warning: mox datatype '{name}' has unknown format '{other}' — mapping to TEXT"
+                    );
+                    Mapped::Primitive {
+                        pg: PgType::Text,
+                        format: Some(other.to_string()),
+                    }
+                }
+                None => {
+                    eprintln!(
+                        "Warning: mox datatype '{name}' declares no format — mapping to TEXT"
+                    );
+                    Mapped::Primitive {
+                        pg: PgType::Text,
+                        format: None,
+                    }
+                }
+            }
+        }
+        (_, TypeRef::Primitive(p)) => Mapped::Primitive {
+            pg: primitive_pg_type(*p),
+            format: None,
+        },
+    };
+
+    let (kind, pg_base, rust_base, sea_base, ref_target, format_hint) = match mapped {
+        Mapped::Primitive { pg, format } => (
+            RefClassificationKind::PrimitiveWrapper,
+            pg.pg_ddl(),
+            pg.canonical_rust_type().as_rust_str().to_string(),
+            pg.sea_orm_type().to_string(),
+            None,
+            format,
+        ),
+        Mapped::Codelist { target } => (
+            RefClassificationKind::CodelistReference,
+            "TEXT".to_string(),
+            "String".to_string(),
+            "Text".to_string(),
+            Some(target),
+            None,
+        ),
+        Mapped::Reference { target, kind } => (
+            kind,
+            String::new(),
+            target.clone(),
+            String::new(),
+            Some(target),
+            None,
+        ),
+    };
+
+    // Arrays of primitives wrap in Vec + pg [] suffix; entity/VO/codelist
+    // arrays keep child-table semantics (mirrors the JSON path's array
+    // branch in ingest_properties_from_schema).
+    let (render_strategy, pg_type, rust_type) = if is_array {
+        match kind {
+            RefClassificationKind::EntityReference
+            | RefClassificationKind::ValueObject
+            | RefClassificationKind::CodelistReference
+            | RefClassificationKind::CodelistCheck => {
+                ("child_table".to_string(), pg_base, rust_base)
+            }
+            _ => (
+                classification_str(&kind).to_string(),
+                format!("{pg_base}[]"),
+                format!("Vec<{rust_base}>"),
+            ),
+        }
+    } else {
+        (classification_str(&kind).to_string(), pg_base, rust_base)
+    };
+
+    let sanitized_name = feature.name.replace(['@', '-'], "");
+    let snake = to_snake_case(&sanitized_name);
+    let projection = build_projection(&kind, &snake, &pg_type, &rust_type, &sea_base);
+    let mut rust_field_name = escape_rust_keyword(&snake);
+    if matches!(
+        kind,
+        RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck
+    ) {
+        rust_field_name = strip_code_suffix(&rust_field_name);
+    }
+
+    let prop_type = match &feature.type_ {
+        TypeRef::Class { .. } | TypeRef::Interface { .. } => "object".to_string(),
+        TypeRef::Primitive(PrimitiveType::Int)
+        | TypeRef::Primitive(PrimitiveType::Long)
+        | TypeRef::Primitive(PrimitiveType::Short)
+        | TypeRef::Primitive(PrimitiveType::Byte) => "integer".to_string(),
+        TypeRef::Primitive(PrimitiveType::Float) | TypeRef::Primitive(PrimitiveType::Double) => {
+            "number".to_string()
+        }
+        TypeRef::Primitive(PrimitiveType::Boolean) => "boolean".to_string(),
+        _ => "string".to_string(),
+    };
+
+    Some(PropertyNode {
+        name: feature.name.clone(),
+        prop_type,
+        description: feature.description.as_deref().map(sanitize_description),
+        format: format_hint,
+        is_required,
+        is_nullable: !is_required,
+        is_array,
+        pattern: feature.constraints.pattern.clone(),
+        min_length: feature.constraints.min_length,
+        max_length: feature.constraints.max_length,
+        minimum: feature.constraints.minimum.map(rust_decimal::Decimal::from),
+        maximum: feature.constraints.maximum.map(rust_decimal::Decimal::from),
+        pg_column_name: snake.clone(),
+        pg_column_type: pg_type,
+        rust_field_name,
+        rust_field_type: rust_type,
+        sea_orm_type: sea_base,
+        render_strategy,
+        ref_target,
+        classification: None,
+        projection: Some(projection),
+        classification_kind: Some(kind),
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    })
+}
+
+fn primitive_pg_type(p: PrimitiveType) -> PgType {
+    match p {
+        PrimitiveType::String | PrimitiveType::Char => PgType::Text,
+        PrimitiveType::Int => PgType::Integer,
+        PrimitiveType::Long => PgType::BigInt,
+        PrimitiveType::Short | PrimitiveType::Byte => PgType::SmallInt,
+        PrimitiveType::Float => PgType::Real,
+        PrimitiveType::Double => PgType::DoublePrecision,
+        PrimitiveType::Boolean => PgType::Boolean,
+    }
+}
+
+fn classification_str(kind: &RefClassificationKind) -> &'static str {
+    match kind {
+        RefClassificationKind::PrimitiveWrapper => "primitive_wrapper",
+        RefClassificationKind::ArrayWrapper => "array_wrapper",
+        RefClassificationKind::RangeWrapper => "range_wrapper",
+        RefClassificationKind::CodelistReference => "codelist",
+        RefClassificationKind::CodelistCheck => "codelist_check",
+        RefClassificationKind::InlineEnum => "inline_enum",
+        RefClassificationKind::EntityReference => "entity_reference",
+        RefClassificationKind::ValueObject => "value_object",
+        RefClassificationKind::CompositeWrapper => "composite_wrapper",
+        RefClassificationKind::MediaWrapper => "media_wrapper",
+        RefClassificationKind::StructuredWrapper => "structured_wrapper",
+    }
+}
+
+/// Build the cross-layer projection the same way the classifier's
+/// `ProjectionBuilder` does for the JSON path.
+fn build_projection(
+    kind: &RefClassificationKind,
+    field_name: &str,
+    pg_type: &str,
+    rust_type: &str,
+    sea_orm_type: &str,
+) -> DddFieldProjection {
+    let pg = (kind == &RefClassificationKind::PrimitiveWrapper).then_some(pg_type);
+    let rust = (kind == &RefClassificationKind::PrimitiveWrapper).then_some(rust_type);
+    let sea = (kind == &RefClassificationKind::PrimitiveWrapper).then_some(sea_orm_type);
+    ProjectionBuilder::from_classification(
+        kind,
+        field_name,
+        pg,
+        rust,
+        sea,
+        None,
+        None,
+        &HashMap::new(),
+        None,
+        None,
+        None,
+        false,
+    )
+}
+
+/// Strip a trailing `_code` from a codelist field name (JSON-path parity:
+/// the column keeps the suffix, the Rust field does not).
+fn strip_code_suffix(name: &str) -> String {
+    match name.strip_suffix("_code") {
+        Some(stripped) if !stripped.is_empty() => stripped.to_string(),
+        _ => name.to_string(),
+    }
 }
 
 /// Render a resolved [`TypeRef`] as a plain name: primitives use their
@@ -258,10 +827,65 @@ mod tests {
             operations: 2,
             derived_features: 3,
             skipped: 4,
+            classes: 5,
+            properties: 6,
+            edges: 7,
+            enums: 8,
         };
         assert_eq!(
             stats.to_string(),
-            "1 vocabularies, 2 operations, 3 derived features, 4 skipped"
+            "1 vocabularies, 2 operations, 3 derived features, 4 skipped, \
+             5 classes, 6 properties, 7 edges, 8 enums"
         );
+    }
+
+    #[test]
+    fn resolve_domain_prefers_exact_then_last_segment() {
+        let config = toml::from_str::<DomainConfig>(
+            r#"
+[domains."nz.example.library"]
+label = "Library"
+schema_dir = "schemas/library"
+postgres_schema = "library"
+
+[domains.library]
+label = "Library Short"
+schema_dir = "schemas/library"
+postgres_schema = "lib"
+"#,
+        )
+        .unwrap();
+        let (exact, matched) = resolve_domain(&config, "nz.example.library");
+        assert_eq!(exact, "nz.example.library");
+        assert!(matched);
+        let (segment, matched) = resolve_domain(&config, "other.library");
+        assert_eq!(segment, "library");
+        assert!(matched);
+        let (fallback, matched) = resolve_domain(&config, "totally.unknown");
+        assert_eq!(fallback, "unknown");
+        assert!(!matched);
+    }
+
+    #[test]
+    fn primitive_pg_type_covers_every_rex_primitive() {
+        assert_eq!(primitive_pg_type(PrimitiveType::String), PgType::Text);
+        assert_eq!(primitive_pg_type(PrimitiveType::Char), PgType::Text);
+        assert_eq!(primitive_pg_type(PrimitiveType::Int), PgType::Integer);
+        assert_eq!(primitive_pg_type(PrimitiveType::Long), PgType::BigInt);
+        assert_eq!(primitive_pg_type(PrimitiveType::Short), PgType::SmallInt);
+        assert_eq!(primitive_pg_type(PrimitiveType::Byte), PgType::SmallInt);
+        assert_eq!(primitive_pg_type(PrimitiveType::Float), PgType::Real);
+        assert_eq!(
+            primitive_pg_type(PrimitiveType::Double),
+            PgType::DoublePrecision
+        );
+        assert_eq!(primitive_pg_type(PrimitiveType::Boolean), PgType::Boolean);
+    }
+
+    #[test]
+    fn strip_code_suffix_strips_only_non_empty() {
+        assert_eq!(strip_code_suffix("color_code"), "color");
+        assert_eq!(strip_code_suffix("color"), "color");
+        assert_eq!(strip_code_suffix("_code"), "_code");
     }
 }

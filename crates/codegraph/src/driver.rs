@@ -302,13 +302,19 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
     }
 
     // Pass 1e: Ingest rexlang .mox domain sources (if provided) —
-    // vocabularies with facets, class operations, derived features.
+    // vocabularies with facets, class operations, derived features, and
+    // schema/property nodes for mox-authored classes and enums.
     // Diagnostics warn and never fail the run.
     if !mox_files.is_empty() {
         println!("Pass 1e: {} mox files to ingest", mox_files.len());
-        let mox_stats =
-            crate::ingest::mox_ingest::ingest_mox_files(be.ingestor(), be.querier(), mox_files)
-                .await?;
+        let mox_stats = crate::ingest::mox_ingest::ingest_mox_files(
+            be.ingestor(),
+            be.querier(),
+            mox_files,
+            &domain_config,
+            &domain_config.defaults.type_suffix,
+        )
+        .await?;
         println!("Pass 1e complete: {mox_stats}");
     }
 

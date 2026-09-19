@@ -47,10 +47,10 @@ fn write_mox_fixture(dir: &Path, name: &str, source: &str) -> PathBuf {
 
 /// Ingest the fixture JSON schemas (schema entities must exist for class
 /// name matching).
-async fn ingest_fixture_schemas(engine: &GrafeoEngine) {
-    let config =
-        codegraph_config::config::parse_domain_config(Path::new("tests/fixtures/domains.toml"))
-            .unwrap();
+async fn ingest_fixture_schemas(
+    engine: &GrafeoEngine,
+    config: &codegraph_config::config::DomainConfig,
+) {
     let classifier = codegraph_classifier::config::parse_classifier_config(Path::new(
         "tests/fixtures/classifier.toml",
     ))
@@ -169,13 +169,22 @@ async fn mox_derived_field_is_readonly_in_response_and_absent_from_create_update
     fs::create_dir_all(&output_dir).unwrap();
 
     let engine = GrafeoEngine::in_memory().unwrap();
-    ingest_fixture_schemas(&engine).await;
+    let config =
+        codegraph_config::config::parse_domain_config(Path::new("tests/fixtures/domains.toml"))
+            .unwrap();
+    ingest_fixture_schemas(&engine, &config).await;
 
     let mox_dir = tempfile::tempdir().unwrap();
     let mox = write_mox_fixture(mox_dir.path(), "model.mox", DERIVED_FIELD_MOX);
-    let stats = codegraph::ingest::mox_ingest::ingest_mox_files(&engine, &engine, &[mox])
-        .await
-        .unwrap();
+    let stats = codegraph::ingest::mox_ingest::ingest_mox_files(
+        &engine,
+        &engine,
+        &[mox],
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap();
     assert_eq!(stats.derived_features, 1);
     assert_eq!(stats.skipped, 0);
 
@@ -228,7 +237,10 @@ async fn without_mox_ingest_dtos_are_unchanged() {
     fs::create_dir_all(&output_dir).unwrap();
 
     let engine = GrafeoEngine::in_memory().unwrap();
-    ingest_fixture_schemas(&engine).await;
+    let config =
+        codegraph_config::config::parse_domain_config(Path::new("tests/fixtures/domains.toml"))
+            .unwrap();
+    ingest_fixture_schemas(&engine, &config).await;
 
     let hooks_tmp = tempfile::tempdir().unwrap();
     let (response, create, update) =
