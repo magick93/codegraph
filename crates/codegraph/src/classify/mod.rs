@@ -61,12 +61,32 @@ impl AutoClassifier {
         let mut value_objects = Vec::new();
         let mut excluded = Vec::new();
 
-        // Priority order is intentional: exclude → path → classifier → force_entities → force_value_objects → scoring.
+        // Priority order is intentional: mox provenance → exclude → path → classifier →
+        // force_entities → force_value_objects → scoring.
+        // Mox-authored schemas are author-declared (issue #229): the `.mox`
+        // class hierarchy already decides entity vs value object, so the
+        // classifier must not re-derive it. They still join the entity /
+        // value-object lists (with a provenance reason) so downstream
+        // consumers see consistent counts.
         // Excludes are checked BEFORE force overrides so that explicitly excluded types
         // are never promoted back by a stale force_entities/force_value_objects entry.
         // If you need to un-exclude a type, remove it from `exclude` first.
         for data in schemas {
             let title = &data.title;
+
+            // Priority 0: mox-authored (author-declared classification)
+            if data.source.as_deref() == Some(codegraph_core::types::MOX_SOURCE) {
+                let mut score = scoring::score_structural(data);
+                score.reasons.push("override:source=mox".to_string());
+                if data.is_entity {
+                    score.classification = AutoClassification::Entity;
+                    entities.push(score);
+                } else {
+                    score.classification = AutoClassification::ValueObject;
+                    value_objects.push(score);
+                }
+                continue;
+            }
 
             // Priority 1: Manual exclude
             if excludes.contains(title.as_str()) {
@@ -181,6 +201,8 @@ mod tests {
             in_degree,
             is_enum: false,
             is_string_type: false,
+            is_entity: false,
+            source: None,
         }
     }
 
@@ -362,6 +384,8 @@ mod tests {
             in_degree: 0,
             is_enum: false,
             is_string_type: false,
+            is_entity: false,
+            source: None,
         }];
         let result = classifier.classify_domain("wellness", &entry, &schemas);
         let entity_names: Vec<&str> = result.entities.iter().map(|e| e.title.as_str()).collect();
@@ -397,6 +421,8 @@ mod tests {
             in_degree: 0,
             is_enum: false,
             is_string_type: false,
+            is_entity: false,
+            source: None,
         }];
         let result = classifier.classify_domain("timecard", &entry, &schemas);
         let entity_names: Vec<&str> = result.entities.iter().map(|e| e.title.as_str()).collect();
@@ -432,6 +458,8 @@ mod tests {
                 in_degree: 0,
                 is_enum: false,
                 is_string_type: false,
+                is_entity: false,
+                source: None,
             },
             SchemaClassificationData {
                 title: "activity_response_daily".to_string(),
@@ -448,6 +476,8 @@ mod tests {
                 in_degree: 0,
                 is_enum: false,
                 is_string_type: false,
+                is_entity: false,
+                source: None,
             },
         ];
         let result = classifier.classify_domain("wellness", &entry, &schemas);

@@ -242,6 +242,10 @@ pub struct DoctorArgs {
     pub classifier: PathBuf,
     /// profiles.toml path (optional; skipped when absent and profile is default).
     pub profiles_config: Option<PathBuf>,
+    /// rexlang .mox domain model files (optional). When present each
+    /// package must match a domains.toml domain, and the JSON schemas
+    /// check degrades to a warning (mox-first projects).
+    pub mox_files: Vec<PathBuf>,
 }
 
 /// Extract every `rev = "<sha>"` value from lines that reference the
@@ -315,6 +319,62 @@ fn check_codegraph_rev() -> usize {
     }
 }
 
+/// Validate `--mox-files` for doctor: every file must compile with the rex
+/// compiler and every package must resolve to a domains.toml domain.
+/// Returns the (hard_failures, soft_warnings) contributed.
+fn check_mox_files(
+    mox_files: &[PathBuf],
+    domain_config: Option<&codegraph_config::config::DomainConfig>,
+) -> (usize, usize) {
+    let mut hard = 0;
+    let mut soft = 0;
+    for path in mox_files {
+        let text = match fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) => {
+                hard += 1;
+                println!("FAIL mox — cannot read {}: {e}", path.display());
+                continue;
+            }
+        };
+        let compilation = rex_driver::compile_files(&[(path.display().to_string(), text)]);
+        for (p, diagnostic) in &compilation.diagnostics {
+            println!("WARN mox diagnostic in {p}: {}", diagnostic.message);
+            soft += 1;
+        }
+        let Some(model) = compilation.model else {
+            hard += 1;
+            println!("FAIL mox — {} does not compile", path.display());
+            println!("     hint: fix the rexlang syntax errors reported above");
+            continue;
+        };
+        let Some(config) = domain_config else {
+            // domains.toml already reported a hard failure above.
+            continue;
+        };
+        let unmatched: Vec<String> = model
+            .packages
+            .iter()
+            .filter(|package| !crate::ingest::mox_ingest::resolve_domain(config, &package.name).1)
+            .map(|package| package.name.clone())
+            .collect();
+        if unmatched.is_empty() {
+            println!(
+                "PASS mox — {} compiles; every package matches domains.toml",
+                path.display()
+            );
+        } else {
+            hard += 1;
+            println!(
+                "FAIL mox — package(s) with no matching domains.toml entry: {}",
+                unmatched.join(", ")
+            );
+            println!("     hint: add a [domains.<name>] entry or rename the package");
+        }
+    }
+    (hard, soft)
+}
+
 /// Validate an existing consumer project. Prints pass/fail checks and
 /// returns Err when any hard check fails.
 pub fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
@@ -323,7 +383,8 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
 
     println!("codegraph doctor");
 
-    match codegraph_config::config::parse_domain_config(&args.config) {
+    let domain_config = codegraph_config::config::parse_domain_config(&args.config);
+    match &domain_config {
         Ok(config) => println!(
             "PASS domains.toml — {} domain(s) configured",
             config.domains.len()
@@ -382,14 +443,22 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
         println!("     hint: run `codegraph init` to scaffold one");
     }
 
+    let mox_mode = !args.mox_files.is_empty();
+    let mut schemas_has_json = false;
     if args.schemas.is_dir() {
-        let has_json = walkdir::WalkDir::new(&args.schemas)
+        schemas_has_json = walkdir::WalkDir::new(&args.schemas)
             .into_iter()
             .filter_map(|e| e.ok())
             .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"));
-        if has_json {
+        if schemas_has_json {
             println!(
                 "PASS schemas — {} contains JSON schema(s)",
+                args.schemas.display()
+            );
+        } else if mox_mode {
+            soft_warnings += 1;
+            println!(
+                "WARN schemas — no *.json files under {} (mox-first project)",
                 args.schemas.display()
             );
         } else {
@@ -400,10 +469,29 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
             );
             println!("     hint: add JSON schemas or run `codegraph add domain <name>`");
         }
+    } else if mox_mode {
+        soft_warnings += 1;
+        println!(
+            "WARN schemas — {} does not exist (mox-first project)",
+            args.schemas.display()
+        );
     } else {
         hard_failures += 1;
         println!("FAIL schemas — {} does not exist", args.schemas.display());
         println!("     hint: create the directory and add JSON schemas");
+    }
+
+    if mox_mode {
+        let (hard, soft) = check_mox_files(&args.mox_files, domain_config.as_ref().ok());
+        hard_failures += hard;
+        soft_warnings += soft;
+    } else if schemas_has_json {
+        soft_warnings += 1;
+        println!("WARN no .mox files — JSON schemas are the primary model source");
+        println!(
+            "     hint: consider migrating: codegraph migrate --schemas {} --output <dir>",
+            args.schemas.display()
+        );
     }
 
     let mut manifest_candidates = vec![PathBuf::from("codegraph-ops.toml")];

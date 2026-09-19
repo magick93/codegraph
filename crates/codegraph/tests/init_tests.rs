@@ -56,7 +56,7 @@ fn assert_scaffold_files_exist(project: &Path) {
         features(),
     );
     let mut expected = ctx.file_tree();
-    assert_eq!(expected.len(), 17, "PROJECT_TEMPLATES should list 17 files");
+    assert_eq!(expected.len(), 18, "PROJECT_TEMPLATES should list 18 files");
     expected.sort();
     for rel in &expected {
         assert!(project.join(rel).is_file(), "missing {}", rel.display());
@@ -105,6 +105,15 @@ fn init_scaffolds_expected_file_tree() {
         let schema = fs::read_to_string(project.join("schemas/common").join(schema_file)).unwrap();
         serde_json::from_str::<serde_json::Value>(&schema).unwrap();
     }
+
+    let starter_mox = fs::read_to_string(project.join("model/common.mox")).unwrap();
+    let compilation = rex_driver::compile_files(&[("model/common.mox".to_string(), starter_mox)]);
+    assert!(
+        compilation.model.is_some(),
+        "starter model.mox must compile: {:?}",
+        compilation.diagnostics
+    );
+    assert_eq!(compilation.model.unwrap().packages[0].name, "common");
 
     let workspace = fs::read_to_string(project.join("Cargo.toml")).unwrap();
     let expected_path = format!("path = \"{}\"", root.join("crates/codegraph").display());
@@ -188,6 +197,7 @@ fn doctor_passes_on_scaffolded_project() {
         schemas: project.join("schemas"),
         classifier: project.join("classifier.toml"),
         profiles_config: Some(project.join("profiles.toml")),
+        mox_files: vec![],
     })
     .unwrap();
 }
@@ -206,6 +216,7 @@ fn doctor_fails_on_missing_schemas() {
         schemas: dir.path().join("schemas"),
         classifier,
         profiles_config: None,
+        mox_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -219,6 +230,87 @@ fn copy_fixture_domains(dir: &Path) -> PathBuf {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/domains.toml");
     fs::copy(fixture, &config).unwrap();
     config
+}
+
+const DOCTOR_MOX: &str = "package recruiting\n\nclass CandidateType {\n    String name\n}\n";
+
+fn copy_doctor_fixture_files(dir: &TempDir) -> PathBuf {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    fs::copy(
+        fixtures.join("classifier.toml"),
+        dir.path().join("classifier.toml"),
+    )
+    .unwrap();
+    copy_fixture_domains(dir.path())
+}
+
+#[test]
+fn doctor_mox_mode_validates_packages_and_allows_missing_schemas() {
+    let dir = TempDir::new().unwrap();
+    let config = copy_doctor_fixture_files(&dir);
+    let mox = dir.path().join("model.mox");
+    fs::write(&mox, DOCTOR_MOX).unwrap();
+
+    // The schemas dir does not exist, but mox mode degrades that check to a
+    // warning; the compiling package matches the fixture's recruiting domain.
+    cmd_doctor(&DoctorArgs {
+        config,
+        schemas: dir.path().join("schemas"),
+        classifier: dir.path().join("classifier.toml"),
+        profiles_config: None,
+        mox_files: vec![mox],
+    })
+    .unwrap();
+}
+
+#[test]
+fn doctor_mox_package_without_domain_entry_is_a_hard_failure() {
+    let dir = TempDir::new().unwrap();
+    let config = copy_doctor_fixture_files(&dir);
+    let mox = dir.path().join("model.mox");
+    fs::write(
+        &mox,
+        "package unknown_package\n\nclass Widget {\n    String name\n}\n",
+    )
+    .unwrap();
+
+    let err = cmd_doctor(&DoctorArgs {
+        config,
+        schemas: dir.path().join("schemas"),
+        classifier: dir.path().join("classifier.toml"),
+        profiles_config: None,
+        mox_files: vec![mox],
+    })
+    .unwrap_err();
+    assert!(
+        format!("{err}").contains("hard check"),
+        "unmatched mox package should be a hard failure: {err}"
+    );
+}
+
+#[test]
+fn doctor_broken_mox_file_is_a_hard_failure() {
+    let dir = TempDir::new().unwrap();
+    let config = copy_doctor_fixture_files(&dir);
+    let mox = dir.path().join("broken.mox");
+    fs::write(
+        &mox,
+        "package recruiting\n\nclass Broken {\n    String\n}\n",
+    )
+    .unwrap();
+
+    let err = cmd_doctor(&DoctorArgs {
+        config,
+        schemas: dir.path().join("schemas"),
+        classifier: dir.path().join("classifier.toml"),
+        profiles_config: None,
+        mox_files: vec![mox],
+    })
+    .unwrap_err();
+    assert!(
+        format!("{err}").contains("hard check"),
+        "broken mox should be a hard failure: {err}"
+    );
 }
 
 #[test]

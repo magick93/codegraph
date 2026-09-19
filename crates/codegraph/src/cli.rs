@@ -65,13 +65,22 @@ pub enum Commands {
         /// Output format
         #[arg(long, default_value = "table")]
         format: ClassifyFormat,
+
+        /// Paths to rexlang .mox domain model files; their classes bypass
+        /// the classifier and show up as `override:source=mox`
+        #[arg(long)]
+        mox_files: Vec<PathBuf>,
     },
     /// Convenience: ingest + generate in one step
     Run {
+        /// Path to JSON schema directory. Optional when --mox-files is
+        /// provided; deprecated as the primary model source — migrate with
+        /// `codegraph migrate --schemas <dir> --output <dir>`
+        #[arg(long, required_unless_present = "mox_files")]
+        schemas: Option<PathBuf>,
+        /// Path to classifier.toml (required when --schemas is provided)
         #[arg(long)]
-        schemas: PathBuf,
-        #[arg(long)]
-        classifier: PathBuf,
+        classifier: Option<PathBuf>,
         #[arg(long)]
         config: PathBuf,
         #[arg(long)]
@@ -209,9 +218,9 @@ pub enum Commands {
         #[arg(long)]
         config: Option<PathBuf>,
     },
-    /// Migrate domain configuration to the graph-based API model.
-    /// Reads domains.toml and creates ApiResource/Operation/Endpoint
-    /// nodes in an existing graph database.
+    /// Convert a JSON Schema directory tree into rexlang .mox domain sources
+    /// plus the shared codegraph_stdlib package. Output is parse-verified
+    /// with the rex compiler before anything is written.
     Migrate(MigrateArgs),
     /// Scaffold a new consumer project (domains.toml, schemas, workspace, ops harness)
     Init {
@@ -272,6 +281,12 @@ pub enum Commands {
 
         #[arg(long)]
         profiles_config: Option<PathBuf>,
+
+        /// Paths to rexlang .mox domain model files; each package must match
+        /// a domains.toml domain. With .mox present the JSON schemas check
+        /// degrades to a warning (mox-first projects)
+        #[arg(long)]
+        mox_files: Vec<PathBuf>,
     },
     /// Add to an existing consumer project
     Add {
@@ -288,15 +303,19 @@ pub enum AddTarget {
 
 #[derive(Parser, Debug)]
 pub struct MigrateArgs {
-    /// Path to the domain configuration file
-    #[arg(long, default_value = "domains.toml")]
-    pub config: PathBuf,
-
-    /// Path to the schema directory (for loading existing schemas)
-    #[arg(long, default_value = "schemas")]
+    /// Path to the JSON schema directory tree
+    #[arg(long)]
     pub schemas: PathBuf,
 
-    /// Path to the classifier configuration
-    #[arg(long, default_value = "classifier.toml")]
-    pub classifier: PathBuf,
+    /// Directory to write the generated .mox files
+    #[arg(long)]
+    pub output: PathBuf,
+
+    /// Verify and report without writing any files
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Overwrite existing .mox files
+    #[arg(long)]
+    pub force: bool,
 }

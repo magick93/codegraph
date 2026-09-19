@@ -8,6 +8,7 @@ pub mod ifml_scaffold;
 pub mod ingest;
 pub mod init;
 pub mod lsp;
+pub mod migrate;
 pub mod rev;
 pub mod validate;
 

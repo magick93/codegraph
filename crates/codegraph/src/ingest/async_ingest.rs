@@ -20,7 +20,7 @@ use crate::ingest::schema_loader::SchemaLoader;
 /// Sanitize a schema/property description for use in generated code doc comments.
 /// Truncates to the first line (newlines break /// doc comments), trims whitespace,
 /// and caps length to 1000 characters.
-fn sanitize_description(s: &str) -> String {
+pub(crate) fn sanitize_description(s: &str) -> String {
     s.lines()
         .next()
         .unwrap_or("")
@@ -33,7 +33,7 @@ fn sanitize_description(s: &str) -> String {
 /// Sanitize a string into a valid PascalCase Rust type identifier.
 /// Removes characters that aren't alphanumeric (except underscores),
 /// converts to PascalCase, and truncates to 200 chars.
-fn sanitize_rust_type_name(s: &str) -> String {
+pub(crate) fn sanitize_rust_type_name(s: &str) -> String {
     // Keep only valid identifier characters and spaces (for PascalCase conversion)
     let cleaned: String = s
         .chars()
@@ -64,17 +64,54 @@ pub async fn ingest_schemas(
     ui_overrides: &UiOverrideConfig,
     suffix: &str,
 ) -> Result<IngestResult> {
+    ingest_schemas_with_skips(
+        db,
+        schema_dir,
+        classifier,
+        entity_names,
+        ui_overrides,
+        suffix,
+        &HashSet::new(),
+    )
+    .await
+}
+
+/// Like [`ingest_schemas`], but skips every top-level schema whose title was
+/// already created from a `.mox` source (mox-first pipeline, issue #231).
+/// Skipped entries contribute no schema node, properties, inline defs, or
+/// composition edges. Skips are logged to stderr with the schema's rel_path.
+pub async fn ingest_schemas_with_skips(
+    db: &dyn GraphIngestor,
+    schema_dir: &Path,
+    classifier: &ClassifierConfig,
+    entity_names: &HashSet<String>,
+    ui_overrides: &UiOverrideConfig,
+    suffix: &str,
+    skip_titles: &HashSet<String>,
+) -> Result<IngestResult> {
     let loader = SchemaLoader::load(schema_dir)?;
     let is_entity =
         |name: &str| entity_names.contains(name) || entity_names.contains(&format!("{}Type", name));
 
     let mut result = IngestResult::default();
 
-    // Pass 1: Ingest all schema nodes
-    let uris: Vec<String> = loader
-        .iter_top_level()
-        .map(|(uri, _)| uri.to_string())
-        .collect();
+    // Pass 1: Ingest all schema nodes, minus titles covered by .mox.
+    let mut uris: Vec<String> = Vec::new();
+    for (uri, entry) in loader.iter_top_level() {
+        let title = entry
+            .schema
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&entry.stem);
+        if skip_titles.contains(title) {
+            eprintln!(
+                "INFO: entity '{title}' covered by .mox, skipping {}",
+                entry.rel_path
+            );
+            continue;
+        }
+        uris.push(uri.to_string());
+    }
 
     for uri in &uris {
         ingest_schema_node(
@@ -1089,6 +1126,11 @@ pub async fn reclassify_with_entities(
     // Update schema nodes
     let schemas = querier.list_schemas(None).await.map_err(Error::Graph)?;
     for schema in &schemas {
+        // Mox-authored schemas are author-declared: neither their entity
+        // flag nor their property classifications may be re-derived (issue #229).
+        if is_mox_sourced(schema) {
+            continue;
+        }
         let should_be_entity = is_entity(&schema.title);
         if schema.is_entity != should_be_entity {
             db.update_entity_flag(&schema.title, should_be_entity)
@@ -1099,6 +1141,9 @@ pub async fn reclassify_with_entities(
 
     // Re-classify properties whose ref_target classification may have changed
     for schema in &schemas {
+        if is_mox_sourced(schema) {
+            continue;
+        }
         let properties = querier
             .get_properties(&schema.title)
             .await
@@ -1343,4 +1388,14 @@ fn collect_all_refs(
     }
 
     refs
+}
+
+/// True when the schema was authored in a `.mox` domain source (issue #229).
+/// Provenance rides `custom_annotations["source"]` set by the mox bridge.
+pub(crate) fn is_mox_sourced(schema: &SchemaNode) -> bool {
+    schema
+        .custom_annotations
+        .get("source")
+        .and_then(|v| v.as_str())
+        == Some(codegraph_core::types::MOX_SOURCE)
 }
