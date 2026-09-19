@@ -483,11 +483,37 @@ async fn mox_class_bridges_to_entity_schema_node_with_provenance() {
     let stats = ingest_bridge_mox(&engine).await;
 
     assert_eq!(stats.classes, 3);
-    assert_eq!(stats.properties, 13);
-    assert_eq!(stats.edges, 4);
+    assert_eq!(stats.properties, 14);
+    assert_eq!(stats.edges, 5);
     assert_eq!(stats.enums, 1);
+    assert_eq!(stats.enum_schemas, 1);
     assert_eq!(stats.skipped, 0);
     assert_eq!(stats.vocabularies, 0);
+
+    // The enum bridges to a codelist Schema node (issue #233) — the shape
+    // codelist DDL, FK resolution, and link generation key on.
+    let status = engine.get_schema("StatusKind").await.unwrap().unwrap();
+    assert!(status.is_codelist);
+    assert!(!status.is_entity);
+    assert_eq!(status.classification, "codelist");
+    assert_eq!(status.pg_table_name, "status_kind");
+    assert_eq!(
+        status
+            .custom_annotations
+            .get("source")
+            .and_then(|v| v.as_str()),
+        Some("mox")
+    );
+    // The enum-typed feature carries a ReferencesSchema edge to the codelist
+    // schema node (the JSON path's shape), so FK resolution emits
+    // `REFERENCES common.<codelist>(code)`.
+    let target = engine
+        .get_property_ref_target("status", "CustomerType")
+        .await
+        .unwrap()
+        .expect("ReferencesSchema edge to the codelist schema node");
+    assert_eq!(target.title, "StatusKind");
+    assert!(target.is_codelist);
 
     let schema = engine.get_schema("CustomerType").await.unwrap().unwrap();
     assert!(schema.is_entity);
@@ -598,9 +624,10 @@ async fn mox_contains_maps_to_value_object_and_composition_child() {
         .find(|c| c.field_name == "shipping_addresses")
         .expect("array containment child");
     assert!(array.is_collection);
-    // The child table carries the VO's own columns.
+    // The child table carries the VO's own columns plus the inherited
+    // `label` (allOf-canonical property merge, issue #233) — name-sorted.
     let child_columns: Vec<&str> = scalar.columns.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(child_columns, vec!["city", "line1"]);
+    assert_eq!(child_columns, vec!["city", "label", "line1"]);
 }
 
 #[tokio::test]

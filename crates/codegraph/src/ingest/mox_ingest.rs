@@ -16,15 +16,25 @@
 //! Class bridge (#229): mox `class`/`enum`/`datatype` definitions additionally
 //! produce the same graph shapes the JSON Schema path produces — a
 //! `SchemaNode` with `PropertyNode`s per class, a `CodeList` with
-//! `EnumValue`s per enum, `ReferencesSchema`/`ItemsOf` edges for
-//! refers/contains features and `ExtendsSchema` edges for `extends`. Classes
-//! whose name already exists as an ingested schema keep the JSON-authored
-//! node (the bridge never overrides); classes matching no schema get their
-//! own nodes, carrying the `source=mox` provenance in `custom_annotations`
-//! so the auto-classifier treats their entity/value-object nature as
-//! author-declared. `container` back-pointers and derived features are
-//! skipped here (the former has no stored column; the latter ingests as
-//! `DerivedFeature` nodes above).
+//! `EnumValue`s per enum (plus a codelist `SchemaNode` with
+//! `classification=codelist`, the shape the JSON codelist path produces and
+//! that codelist DDL, FK resolution, and link generation key on),
+//! `ReferencesSchema`/`ItemsOf` edges for refers/contains/enum features and
+//! `ExtendsSchema` edges for `extends`. Classes whose name already exists as
+//! an ingested schema keep the JSON-authored node (the bridge never
+//! overrides); classes matching no schema get their own nodes, carrying the
+//! `source=mox` provenance in `custom_annotations` so the auto-classifier
+//! treats their entity/value-object nature as author-declared. `container`
+//! back-pointers and derived features are skipped here (the former has no
+//! stored column; the latter ingests as `DerivedFeature` nodes above).
+//!
+//! Property ordering: properties are ingested in the JSON path's effective
+//! canonical order — allOf-canonical per class (inherited features before
+//! own features, each group name-sorted), mirroring how
+//! `ingest_properties_from_schema` orders its prop_blocks. The
+//! `CachingQuerier` warm path serves properties in insertion order (no
+//! `ORDER BY` in `list_all_properties`), so insertion order IS output field
+//! order and must match the JSON path byte-for-byte (issue #233).
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -60,6 +70,11 @@ pub struct MoxIngestStats {
     pub properties: usize,
     pub edges: usize,
     pub enums: usize,
+    /// Codelist `SchemaNode`s the enum bridge created this run (issue #233).
+    /// Mirrors the JSON path, where an enum-valued schema is itself a
+    /// `Schema` node that codelist DDL, FK resolution, and link generation
+    /// key on.
+    pub enum_schemas: usize,
     /// Titles of the schema nodes the class bridge created this run. Under
     /// mox-first pipeline ordering (issue #231) the JSON schema pass skips
     /// every title listed here, so `.mox` wins title conflicts.
@@ -71,7 +86,7 @@ impl std::fmt::Display for MoxIngestStats {
         write!(
             f,
             "{} vocabularies, {} operations, {} derived features, {} skipped, \
-             {} classes, {} properties, {} edges, {} enums",
+             {} classes, {} properties, {} edges, {} enums, {} enum schemas",
             self.vocabularies,
             self.operations,
             self.derived_features,
@@ -79,7 +94,8 @@ impl std::fmt::Display for MoxIngestStats {
             self.classes,
             self.properties,
             self.edges,
-            self.enums
+            self.enums,
+            self.enum_schemas
         )
     }
 }
@@ -166,6 +182,25 @@ pub async fn ingest_mox_files(
             class_schema_ids.insert(class.name.clone(), schema_id.clone());
             class_index.push(ClassEntry {
                 class,
+                domain,
+                schema_id,
+            });
+        }
+    }
+
+    // Enum universe: enums bridge to codelist Schema nodes (issue #233) so
+    // the graph carries the same shapes the JSON codelist path produces.
+    let mut enum_index: Vec<EnumEntry> = Vec::new();
+    let mut seen_enums: HashSet<String> = HashSet::new();
+    for package in &model.packages {
+        for enum_def in &package.enums {
+            if !seen_enums.insert(enum_def.name.clone()) {
+                continue;
+            }
+            let (domain, _) = resolve_domain(domain_config, &package.name);
+            let schema_id = format!("{}/{}", package.name, enum_def.name);
+            enum_index.push(EnumEntry {
+                enum_def,
                 domain,
                 schema_id,
             });
@@ -333,7 +368,35 @@ pub async fn ingest_mox_files(
         stats.classes += 1;
     }
 
+    // ── Bridge pass 1b: codelist SchemaNodes for enums (issue #233). The
+    // JSON path models an enum-valued schema as a `Schema` node with
+    // `classification=codelist`; codelist DDL, codelist FK resolution
+    // (`resolve_fk_target` routes codelist targets to the `common` schema
+    // through `ts.is_codelist`), link generation, and the per-entity
+    // artifact set all key on that node. Titles already owned by JSON
+    // schemas (or colliding with a bridged class) keep the existing node.
+    let mut bridged_enum_schema_ids: HashMap<String, String> = HashMap::new();
+    for entry in &enum_index {
+        let enum_def = entry.enum_def;
+        if known_titles.contains(&enum_def.name) || bridged.contains(&enum_def.name) {
+            continue;
+        }
+        let node = enum_schema_node(entry, type_suffix);
+        ingestor.ingest_schema(&node).await.map_err(Error::Graph)?;
+        bridged_enum_schema_ids.insert(enum_def.name.clone(), entry.schema_id.clone());
+        stats.bridged_titles.push(enum_def.name.clone());
+        stats.enum_schemas += 1;
+    }
+
     // ── Bridge pass 2: properties + reference edges per bridged class.
+    // Features are ingested in the JSON path's allOf-canonical order
+    // (inherited features before own features, each group name-sorted) so
+    // property insertion order — and thus the CachingQuerier's warm-cache
+    // ordering — matches the JSON path byte-for-byte (issue #233).
+    let class_map: HashMap<&str, &rex_ir::ClassDef> = class_index
+        .iter()
+        .map(|entry| (entry.class.name.as_str(), entry.class))
+        .collect();
     for entry in &class_index {
         let class = entry.class;
         if !bridged.contains(&class.name) {
@@ -341,7 +404,7 @@ pub async fn ingest_mox_files(
             // declaration that was dropped.
             continue;
         }
-        for feature in &class.features {
+        for feature in ordered_bridge_features(class, &class_map, &bridged) {
             if feature.is_derived || feature.kind == FeatureKind::Container {
                 continue;
             }
@@ -357,7 +420,8 @@ pub async fn ingest_mox_files(
 
             // Class-targeted features carry a graph edge to the target
             // schema (enum/vocabulary targets keep only the ref_target —
-            // they are CodeList/Vocabulary nodes, not Schema nodes).
+            // they are CodeList/Vocabulary nodes, not Schema nodes — except
+            // bridged enum schemas, which exist as codelist Schema nodes).
             if let (
                 FeatureKind::Containment | FeatureKind::CrossReference,
                 TypeRef::Class { name, .. },
@@ -390,6 +454,33 @@ pub async fn ingest_mox_files(
                     .await
                     .map_err(Error::Graph)?;
                 stats.edges += 1;
+            } else if let TypeRef::Enum { name, .. } = &feature.type_ {
+                // Enum features reference the bridged codelist Schema node
+                // with the same ReferencesSchema/ItemsOf edges the JSON path
+                // creates for $ref properties — `resolve_fk_target` needs
+                // the edge to emit the `REFERENCES common.<codelist>(code)`
+                // constraint. Vocabulary targets have no Schema node (no
+                // JSON counterpart) and keep the ref_target only.
+                if let Some(target_schema_id) = bridged_enum_schema_ids.get(name) {
+                    let edge_type = if prop.is_array {
+                        EdgeType::ItemsOf
+                    } else {
+                        EdgeType::ReferencesSchema
+                    };
+                    ingestor
+                        .ingest_edge(
+                            &format!("{}::{}", prop.name, class.name),
+                            target_schema_id,
+                            edge_type,
+                            Some(&EdgeProperties {
+                                ref_path: Some(name.clone()),
+                                ..Default::default()
+                            }),
+                        )
+                        .await
+                        .map_err(Error::Graph)?;
+                    stats.edges += 1;
+                }
             }
         }
 
@@ -437,6 +528,13 @@ pub async fn ingest_mox_files(
 /// resolved domain, and the `schema_id` used for its graph node.
 struct ClassEntry<'a> {
     class: &'a rex_ir::ClassDef,
+    domain: String,
+    schema_id: String,
+}
+
+/// One mox enum flattened for ingestion (same shape as [`ClassEntry`]).
+struct EnumEntry<'a> {
+    enum_def: &'a rex_ir::EnumDef,
     domain: String,
     schema_id: String,
 }
@@ -494,6 +592,99 @@ fn class_schema_node(entry: &ClassEntry<'_>, is_entity: bool, type_suffix: &str)
         has_any_of: false,
         has_definitions: false,
         custom_annotations,
+    }
+}
+
+/// Build the codelist `SchemaNode` for a mox enum, mirroring the JSON path's
+/// enum-valued schema (`classification=codelist`, `is_codelist=true`): the
+/// node codelist DDL, FK resolution, and link generation key on.
+fn enum_schema_node(entry: &EnumEntry<'_>, type_suffix: &str) -> SchemaNode {
+    let enum_def = entry.enum_def;
+    let stripped = strip_suffix(&enum_def.name, type_suffix);
+    let mut custom_annotations = HashMap::new();
+    custom_annotations.insert(
+        "source".to_string(),
+        serde_json::Value::String(codegraph_core::types::MOX_SOURCE.to_string()),
+    );
+    SchemaNode {
+        schema_id: entry.schema_id.clone(),
+        title: enum_def.name.clone(),
+        description: enum_def.description.as_deref().map(sanitize_description),
+        schema_type: "string".to_string(),
+        classification: "codelist".to_string(),
+        domain: Some(entry.domain.clone()),
+        rel_path: entry.schema_id.clone(),
+        pg_type: "UUID".to_string(),
+        rust_type: stripped.clone(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: sanitize_rust_type_name(&stripped),
+        pg_table_name: to_snake_case(&stripped),
+        api_path_segment: to_kebab_case(&stripped),
+        parent_schema: None,
+        is_entity: false,
+        is_codelist: true,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+        custom_annotations,
+    }
+}
+
+/// Features of a bridged class in the JSON path's allOf-canonical order:
+/// inherited features before own features, each group name-sorted.
+///
+/// `ingest_properties_from_schema` orders its prop_blocks parent-$ref-blocks
+/// first, inline-own-block last, and iterates each block in serde_json's
+/// name-sorted map order. `list_all_properties` (the CachingQuerier warm
+/// path) has no `ORDER BY`, so insertion order is output field order and
+/// must match the JSON path byte-for-byte (issue #233).
+fn ordered_bridge_features<'a>(
+    class: &'a rex_ir::ClassDef,
+    class_map: &HashMap<&str, &'a rex_ir::ClassDef>,
+    bridged: &HashSet<String>,
+) -> Vec<&'a rex_ir::Feature> {
+    let mut ordered = Vec::new();
+    let mut visited: HashSet<String> = HashSet::new();
+    collect_ancestor_features(class, class_map, bridged, &mut visited, &mut ordered);
+    let mut own: Vec<&rex_ir::Feature> = class.features.iter().collect();
+    own.sort_by(|a, b| a.name.cmp(&b.name));
+    ordered.extend(own);
+    // First occurrence wins per name — the same semantics the generators'
+    // query-time dedup applies to the JSON path's merged (and possibly
+    // duplicated) property blocks.
+    let mut seen_names: HashSet<String> = HashSet::new();
+    ordered
+        .into_iter()
+        .filter(|f| seen_names.insert(f.name.clone()))
+        .collect()
+}
+
+/// Recursively collect an ancestor chain's features (a parent's own parents
+/// before its own features), skipping JSON-owned or unknown parents — the
+/// schema pass merges those on the JSON side.
+fn collect_ancestor_features<'a>(
+    class: &'a rex_ir::ClassDef,
+    class_map: &HashMap<&str, &'a rex_ir::ClassDef>,
+    bridged: &HashSet<String>,
+    visited: &mut HashSet<String>,
+    out: &mut Vec<&'a rex_ir::Feature>,
+) {
+    for parent in &class.extends {
+        let TypeRef::Class { name, .. } = parent else {
+            continue;
+        };
+        if !visited.insert(name.clone()) || !bridged.contains(name) {
+            continue;
+        }
+        let Some(parent_class) = class_map.get(name.as_str()).copied() else {
+            continue;
+        };
+        collect_ancestor_features(parent_class, class_map, bridged, visited, out);
+        let mut own: Vec<&rex_ir::Feature> = parent_class.features.iter().collect();
+        own.sort_by(|a, b| a.name.cmp(&b.name));
+        out.extend(own);
     }
 }
 
@@ -666,7 +857,10 @@ fn feature_property(
     }
 
     let prop_type = match &feature.type_ {
-        TypeRef::Class { .. } | TypeRef::Interface { .. } => "object".to_string(),
+        TypeRef::Class { .. }
+        | TypeRef::Interface { .. }
+        | TypeRef::Enum { .. }
+        | TypeRef::Vocabulary { .. } => "object".to_string(),
         TypeRef::Primitive(PrimitiveType::Int)
         | TypeRef::Primitive(PrimitiveType::Long)
         | TypeRef::Primitive(PrimitiveType::Short)
@@ -836,12 +1030,13 @@ mod tests {
             properties: 6,
             edges: 7,
             enums: 8,
+            enum_schemas: 9,
             bridged_titles: Vec::new(),
         };
         assert_eq!(
             stats.to_string(),
             "1 vocabularies, 2 operations, 3 derived features, 4 skipped, \
-             5 classes, 6 properties, 7 edges, 8 enums"
+             5 classes, 6 properties, 7 edges, 8 enums, 9 enum schemas"
         );
     }
 
