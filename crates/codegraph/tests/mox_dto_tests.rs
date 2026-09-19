@@ -184,7 +184,8 @@ async fn mox_derived_field_is_readonly_in_response_and_absent_from_create_update
         &config.defaults.type_suffix,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .stats;
     assert_eq!(stats.derived_features, 1);
     assert_eq!(stats.skipped, 0);
 

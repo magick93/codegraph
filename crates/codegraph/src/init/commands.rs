@@ -321,7 +321,9 @@ fn check_codegraph_rev() -> usize {
 
 /// Validate `--mox-files` for doctor: every file must compile with the rex
 /// compiler and every package must resolve to a domains.toml domain.
-/// Returns the (hard_failures, soft_warnings) contributed.
+/// `import schema` targets (issue #230) are validated too — a missing or
+/// invalid target is a hard failure naming the import path and the .mox
+/// that declares it. Returns the (hard_failures, soft_warnings) contributed.
 fn check_mox_files(
     mox_files: &[PathBuf],
     domain_config: Option<&codegraph_config::config::DomainConfig>,
@@ -337,7 +339,46 @@ fn check_mox_files(
                 continue;
             }
         };
-        let compilation = rex_driver::compile_files(&[(path.display().to_string(), text)]);
+        let mox_path = path.display().to_string();
+        let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
+        let mut schema_imports = rex_driver::SchemaImports::new();
+        let mut import_failures = 0usize;
+        let mut import_count = 0usize;
+        for decl in crate::ingest::mox_ingest::scan_schema_imports(&text) {
+            let abs_path = base_dir.join(&decl.path);
+            let json = match fs::read_to_string(&abs_path) {
+                Ok(json) => json,
+                Err(e) => {
+                    hard += 1;
+                    import_failures += 1;
+                    println!(
+                        "FAIL mox — {mox_path}: import schema '{}' cannot be read: {e}",
+                        decl.path
+                    );
+                    println!(
+                        "     hint: create the file or fix the path (resolved relative to the .mox file's directory)"
+                    );
+                    continue;
+                }
+            };
+            if let Err(e) = serde_json::from_str::<serde_json::Value>(&json) {
+                hard += 1;
+                import_failures += 1;
+                println!(
+                    "FAIL mox — {mox_path}: import schema '{}' is not valid JSON: {e}",
+                    decl.path
+                );
+                println!("     hint: fix the JSON syntax in {}", abs_path.display());
+                continue;
+            }
+            schema_imports.insert(&mox_path, &decl.path, json);
+            import_count += 1;
+        }
+        if import_failures > 0 {
+            continue;
+        }
+        let compilation =
+            rex_driver::compile_files_with_imports(&[(mox_path.clone(), text)], &schema_imports);
         for (p, diagnostic) in &compilation.diagnostics {
             println!("WARN mox diagnostic in {p}: {}", diagnostic.message);
             soft += 1;
@@ -359,10 +400,18 @@ fn check_mox_files(
             .map(|package| package.name.clone())
             .collect();
         if unmatched.is_empty() {
-            println!(
-                "PASS mox — {} compiles; every package matches domains.toml",
-                path.display()
-            );
+            if import_count > 0 {
+                println!(
+                    "PASS mox — {} compiles; every package matches domains.toml; \
+                     {import_count} schema import(s) resolved",
+                    path.display()
+                );
+            } else {
+                println!(
+                    "PASS mox — {} compiles; every package matches domains.toml",
+                    path.display()
+                );
+            }
         } else {
             hard += 1;
             println!(

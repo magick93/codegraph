@@ -371,3 +371,76 @@ fn rev_accessor_is_hex_or_empty() {
         );
     }
 }
+
+// ── doctor: mox `import schema` validation (issue #230) ──
+
+fn write_doctor_import_fixture(dir: &TempDir, mox_body: &str, json: Option<&str>) {
+    let config = copy_doctor_fixture_files(dir);
+    assert!(config.is_file());
+    if let Some(json) = json {
+        let schema = dir.path().join("schemas/item.json");
+        fs::create_dir_all(schema.parent().unwrap()).unwrap();
+        fs::write(schema, json).unwrap();
+    }
+    let mox = dir.path().join("model.mox");
+    fs::write(&mox, mox_body).unwrap();
+}
+
+const IMPORT_MOX: &str = "package recruiting\n\nimport schema \"schemas/item.json\" as Item\n\nclass CandidateType {\n    String name\n}\n";
+
+#[test]
+fn doctor_valid_import_passes() {
+    let dir = TempDir::new().unwrap();
+    write_doctor_import_fixture(
+        &dir,
+        IMPORT_MOX,
+        Some(r#"{ "title": "ItemType", "type": "object" }"#),
+    );
+
+    cmd_doctor(&DoctorArgs {
+        config: dir.path().join("domains.toml"),
+        schemas: dir.path().join("schemas"),
+        classifier: dir.path().join("classifier.toml"),
+        profiles_config: None,
+        mox_files: vec![dir.path().join("model.mox")],
+    })
+    .unwrap();
+}
+
+#[test]
+fn doctor_missing_import_target_is_a_hard_failure() {
+    let dir = TempDir::new().unwrap();
+    write_doctor_import_fixture(&dir, IMPORT_MOX, None);
+
+    let err = cmd_doctor(&DoctorArgs {
+        config: dir.path().join("domains.toml"),
+        schemas: dir.path().join("schemas"),
+        classifier: dir.path().join("classifier.toml"),
+        profiles_config: None,
+        mox_files: vec![dir.path().join("model.mox")],
+    })
+    .unwrap_err();
+    assert!(
+        format!("{err}").contains("hard check"),
+        "missing import target should be a hard failure: {err}"
+    );
+}
+
+#[test]
+fn doctor_invalid_import_json_is_a_hard_failure() {
+    let dir = TempDir::new().unwrap();
+    write_doctor_import_fixture(&dir, IMPORT_MOX, Some("{ not json"));
+
+    let err = cmd_doctor(&DoctorArgs {
+        config: dir.path().join("domains.toml"),
+        schemas: dir.path().join("schemas"),
+        classifier: dir.path().join("classifier.toml"),
+        profiles_config: None,
+        mox_files: vec![dir.path().join("model.mox")],
+    })
+    .unwrap_err();
+    assert!(
+        format!("{err}").contains("hard check"),
+        "invalid import JSON should be a hard failure: {err}"
+    );
+}

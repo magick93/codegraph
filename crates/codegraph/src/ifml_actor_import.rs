@@ -7,7 +7,7 @@ use codegraph_core::types::{
     NeverBothGroup,
 };
 use codegraph_ifml_dsl::IfmlModel;
-use rex_driver::compile_actors_str;
+use rex_driver::{compile_actors_str_with_imports, SchemaImports};
 use rex_ir::ActorModel;
 
 use crate::error::{Error, Result};
@@ -121,9 +121,41 @@ fn import_artifact(raw: &str, source: &str) -> Option<ActorPolicyModel> {
 }
 
 fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorPolicyModel> {
-    let mut domains: Vec<(String, String)> = Vec::new();
-    collect_domains(dir, source, &mut domains);
-    let compilation = compile_actors_str(raw, source, &domains);
+    let domains = collect_domains(dir, source);
+    // Domain files may declare `import schema "<path>"` (issue #230); the
+    // rex compiler errors with `imported schema '…' was not provided`
+    // unless their content is provided. Policy imports stay
+    // warn-and-continue: an unreadable/invalid import file warns here and
+    // the compile reports the unprovided import as a diagnostic.
+    let mut schema_imports = SchemaImports::new();
+    for domain in &domains {
+        for decl in crate::ingest::mox_ingest::scan_schema_imports(&domain.source) {
+            let abs_path = domain.dir.join(&decl.path);
+            let json = match std::fs::read_to_string(&abs_path) {
+                Ok(json) => json,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: policy import '{raw}' domain '{}' import schema '{}' could not be read: {e}",
+                        domain.path, decl.path
+                    );
+                    continue;
+                }
+            };
+            if let Err(e) = serde_json::from_str::<serde_json::Value>(&json) {
+                eprintln!(
+                    "Warning: policy import '{raw}' domain '{}' import schema '{}' is not valid JSON: {e}",
+                    domain.path, decl.path
+                );
+                continue;
+            }
+            schema_imports.insert(&domain.path, &decl.path, json);
+        }
+    }
+    let domain_pairs: Vec<(String, String)> = domains
+        .iter()
+        .map(|d| (d.path.clone(), d.source.clone()))
+        .collect();
+    let compilation = compile_actors_str_with_imports(raw, source, &domain_pairs, &schema_imports);
     for (path, diagnostic) in &compilation.diagnostics {
         eprintln!(
             "Warning: policy import '{raw}' diagnostic in {path}: {}",
@@ -139,22 +171,41 @@ fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorPolic
     }
 }
 
-/// Collect the `(path, source)` domain pairs an `.actor` file imports,
-/// following `import "x.mox"` lines transitively. Paths are keyed exactly as
-/// written (that is what `compile_actors_str` matches on) and resolved
+/// One collected `.mox` domain: the import-path-as-written key the rex
+/// compiler matches on, the source text, and the directory its own imports
+/// (`import "x.mox"`, `import schema "y.json"`) resolve against.
+struct DomainSource {
+    path: String,
+    source: String,
+    dir: PathBuf,
+}
+
+/// Collect the `.mox` domain sources an `.actor` file imports, following
+/// `import "x.mox"` lines transitively. Paths are keyed exactly as written
+/// (that is what `compile_actors_str_with_imports` matches on) and resolved
 /// relative to the importing file's directory; missing files warn and are
 /// skipped.
-fn collect_domains(dir: &Path, source: &str, domains: &mut Vec<(String, String)>) {
+fn collect_domains(dir: &Path, source: &str) -> Vec<DomainSource> {
+    let mut domains: Vec<DomainSource> = Vec::new();
+    collect_domains_inner(dir, source, &mut domains);
+    domains
+}
+
+fn collect_domains_inner(dir: &Path, source: &str, domains: &mut Vec<DomainSource>) {
     for import in scan_imports(source) {
-        if domains.iter().any(|(path, _)| *path == import) {
+        if domains.iter().any(|d| d.path == import) {
             continue;
         }
         let resolved = dir.join(&import);
         match std::fs::read_to_string(&resolved) {
             Ok(domain_source) => {
-                domains.push((import.clone(), domain_source.clone()));
-                if let Some(domain_dir) = resolved.parent() {
-                    collect_domains(domain_dir, &domain_source, domains);
+                if let Some(domain_dir) = resolved.parent().map(Path::to_path_buf) {
+                    domains.push(DomainSource {
+                        path: import.clone(),
+                        source: domain_source.clone(),
+                        dir: domain_dir.clone(),
+                    });
+                    collect_domains_inner(&domain_dir, &domain_source, domains);
                 }
             }
             Err(e) => {

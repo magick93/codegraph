@@ -440,3 +440,94 @@ view "Guarded" {
     assert_eq!(containers[0].roles, Some(vec!["Nobody".to_string()]));
     assert_eq!(containers[0].requires, Some(vec!["Nothing".to_string()]));
 }
+
+/// An `.actor` policy over a domain that declares `import schema`: the
+/// domain files' imports must be resolved and provided to the rex compiler
+/// (issue #230) or the plain compile errors with `imported schema '…' was
+/// not provided`. The capability binds the import alias; the imported
+/// schema's graph node is the JSON pipeline's business, not the policy's.
+#[tokio::test]
+async fn actor_over_domain_with_schema_imports_resolves_capability() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // The .mox lives in policies/ and its import resolves relative to its
+    // own directory: policies/schemas/todo_item.json.
+    write_file(
+        tmp.path(),
+        "policies/schemas/todo_item.json",
+        r#"{
+  "title": "TodoItemType",
+  "type": "object",
+  "properties": { "id": { "type": "string", "format": "uuid" } },
+  "required": ["id"]
+}"#,
+    );
+    write_file(
+        tmp.path(),
+        "policies/support.mox",
+        r#"
+package support
+
+import schema "schemas/todo_item.json" as TodoItem
+
+class Ticket {
+    String title
+}
+"#,
+    );
+    write_file(
+        tmp.path(),
+        "policies/support.actor",
+        r#"
+import "support.mox"
+
+actors Support {
+    actor Agent
+
+    capability ViewTodoItems on TodoItem
+    capability CloseTicket on Ticket
+
+    grant Agent {
+        permit ViewTodoItems
+        permit CloseTicket
+    }
+}
+"#,
+    );
+    write_file(
+        tmp.path(),
+        "app.ifml",
+        r#"
+import "policies/support.actor"
+
+view "TodoBoard" {
+    roles: [Agent];
+    requires: [ViewTodoItems];
+}
+"#,
+    );
+
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    let imported = ingest_ifml_file(&engine, &tmp.path().join("app.ifml")).await;
+    assert_eq!(imported, 1, "policy over an importing domain must compile");
+
+    let capabilities = engine.get_capabilities().await.expect("capabilities");
+    let view = capabilities
+        .iter()
+        .find(|c| c.name == "ViewTodoItems")
+        .expect("capability on the imported name");
+    assert_eq!(view.class, "support::TodoItem");
+    let close = capabilities
+        .iter()
+        .find(|c| c.name == "CloseTicket")
+        .expect("capability on a declared class");
+    assert_eq!(close.class, "support::Ticket");
+
+    let grants = engine.get_grants().await.expect("grants");
+    assert_eq!(grants.len(), 2);
+    assert!(grants
+        .iter()
+        .all(|g| g.effect == "permit" && g.actor == "Agent"));
+
+    let permits = engine.effective_permits("Agent").await.expect("permits");
+    assert_eq!(permits.len(), 2);
+}
