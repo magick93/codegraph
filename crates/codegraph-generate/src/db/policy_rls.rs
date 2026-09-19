@@ -186,19 +186,61 @@ fn join_predicates(predicates: &[String]) -> String {
     }
 }
 
-/// Resolve the schema node for a capability's class: exact title first, then
-/// the configured type suffix (`Candidate` → `CandidateType`).
+/// Insert a space before every uppercase letter that follows a lowercase
+/// letter or digit: "BondOffering" → "Bond Offering". Existing spaces and
+/// acronym runs are preserved ("Bond Offering", "GSA" stay intact).
+fn split_camel_case(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::with_capacity(name.len() + 4);
+    for (index, ch) in chars.iter().enumerate() {
+        if index > 0
+            && ch.is_ascii_uppercase()
+            && (chars[index - 1].is_ascii_lowercase() || chars[index - 1].is_ascii_digit())
+        {
+            out.push(' ');
+        }
+        out.push(*ch);
+    }
+    out
+}
+
+/// The schema-title candidates for a capability class, in lookup order: the
+/// class as given (the historical contract — rexlang class names already
+/// match single-word titles), the type-suffixed form, then the camel-case
+/// split display form ("BondOffering" → "Bond Offering", matching schema
+/// titles that are display names) with its suffixed form. Model classes are
+/// PascalCase identifiers; schema titles are display names, and the two
+/// drift exactly at multi-word entities (yestechgroup/onboarding-os#64).
+fn title_candidates(class: &str, type_suffix: &str) -> Vec<String> {
+    let unqualified = unqualified_class(class);
+    let mut candidates = vec![unqualified.clone()];
+    if !type_suffix.is_empty() {
+        candidates.push(format!("{unqualified}{type_suffix}"));
+    }
+    let split = split_camel_case(&unqualified);
+    if split != unqualified {
+        candidates.push(split.clone());
+        if !type_suffix.is_empty() {
+            candidates.push(format!("{split}{type_suffix}"));
+        }
+    }
+    candidates
+}
+
+/// Resolve the schema node for a capability's class: each
+/// [`title_candidates`] entry in order (exact title, type suffix, camel-case
+/// split display form).
 async fn schema_for_class(
     db: &dyn GraphQuerier,
     class: &str,
     type_suffix: &str,
 ) -> Option<SchemaNode> {
-    let unqualified = unqualified_class(class);
-    if let Some(schema) = db.get_schema(&unqualified).await.ok().flatten() {
-        return Some(schema);
+    for candidate in title_candidates(class, type_suffix) {
+        if let Some(schema) = db.get_schema(&candidate).await.ok().flatten() {
+            return Some(schema);
+        }
     }
-    let suffixed = format!("{unqualified}{type_suffix}");
-    db.get_schema(&suffixed).await.ok().flatten()
+    None
 }
 
 /// Walk the policy graph and build the render context. Any `when`
@@ -420,5 +462,29 @@ mod tests {
     #[test]
     fn empty_predicate_list_means_unconditional_access() {
         assert_eq!(join_predicates(&[]), "true");
+    }
+
+    #[test]
+    fn class_candidates_cover_multi_word_schema_titles() {
+        // Model classes are PascalCase identifiers; schema titles are
+        // display names ("Bond Offering"). The candidates must cover both,
+        // plus the configured type suffix (yestechgroup/onboarding-os#64).
+        let candidates = title_candidates("BondOffering", "");
+        assert!(candidates.contains(&"BondOffering".to_string()));
+        assert!(candidates.contains(&"Bond Offering".to_string()));
+
+        let candidates = title_candidates("CovenantTest", "Type");
+        assert!(candidates.contains(&"CovenantTestType".to_string()));
+        assert!(candidates.contains(&"Covenant TestType".to_string()));
+
+        // Exact titles and non-camel names pass through unchanged.
+        let candidates = title_candidates("Bond", "");
+        assert_eq!(candidates, vec!["Bond".to_string()]);
+        let candidates = title_candidates("Bond Offering", "");
+        assert_eq!(candidates, vec!["Bond Offering".to_string()]);
+
+        // Digits bound to the following uppercase, not preceded by one.
+        let candidates = title_candidates("Iso4217Currency", "");
+        assert!(candidates.contains(&"Iso4217 Currency".to_string()));
     }
 }

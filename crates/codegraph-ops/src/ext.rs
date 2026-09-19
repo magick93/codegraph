@@ -229,6 +229,7 @@ mod tests {
             schemas_dir: None,
             classifier: None,
             domain_config: None,
+            ifml_files: None,
             profile: None,
             output_dir: "generated-app".into(),
             ui_dir: None,
