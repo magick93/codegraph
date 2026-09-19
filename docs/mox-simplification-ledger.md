@@ -299,13 +299,64 @@ JSON input; mox bypasses the loader.
 - **Status**: **Keep** (atproto era) / **Deletable** if atproto input moves
   to native mox constructs.
 
+### 15. `anyOf`/`oneOf` union flags and the `is_enum` heuristic
+
+- **Today**: the JSON ingest records `has_one_of`/`has_any_of` as bare
+  booleans on `SchemaNode` (`crates/codegraph-core/src/types/schema.rs:36-37`,
+  set at `async_ingest.rs:283-284`); no union structure — arms, variants,
+  discriminators — is ever modeled. The only consumer is the heuristic
+  `is_enum: schema.has_one_of && field_count == 0`
+  (`crates/codegraph-grafeo/src/querier.rs:312`) feeding the VO scorer.
+  Unions of *objects* fall through to item 2's JSONB guess, where they are
+  an active codegen hazard: hr-specs carries an explicit exclusion with the
+  comment "W3C Verifiable Credential types with anyOf cause JSONB fallback
+  that confuses the repository emitter. Excluded until the anyOf codegen
+  path is fixed" (`hr-specs/domains.toml:636-639`, `LER-RSType`).
+- **Why**: JSON Schema unions describe *input tolerance* ("accept any of
+  these shapes"), which a relational mapping must collapse to one storage
+  decision. The pipeline can't hold the union, so it degrades: flag, guess,
+  or per-type config override.
+- **Evidence** (hr-specs survey, 2026-09: 693 schema files, `anyOf` in 17,
+  `oneOf` in 19 — every occurrence classified):
+  1. **JSON Schema meta-schemas** (`common/json/meta/`: hyper4, v4, hros,
+     patch) — never ingested (`meta/` path exclusion, items 4/13).
+  2. **Vendored external standards** (W3C VC / 1EdTech LER-RS under
+     `recruiting/json/ler-rs/`, ~35 occurrences: `type: string | array`
+     JSON-LD conventions, `VerificationsType.oneOf` over verification
+     methods, internal-vs-verifiable presentation pairs) — force-VO'd
+     ("wrong bounded context") or excluded outright (the codegen-hazard
+     comment above).
+  3. **The common temporal/period family** — `FormattedDateTimeType`
+     (anyOf over Date/DateTime/Year/YearMonth) collapses to a TIMESTAMPTZ
+     primitive wrapper; the whole period family (`PeriodType`,
+     `OpenEndPeriodType`, …) collapses to `range_wrappers`
+     (`hr-specs/classifier.toml:43, 97-107`); `DurationType`
+     (oneOf: number|string), `TaxableCompensationType.typeCode.oneOf`
+     (US/NZ codelists), `SubjectType` (oneOf of inline objects →
+     `force_value_objects`) all degrade the same way.
+  Discriminated class-variant unions — the shape mox `extends` models —
+  are **absent from authored models**; the closest candidates are external
+  standard types already excluded.
+- **Mox replacement**: declarations that pick the storage honestly — a
+  temporal feature is a `datatype` with one `format`; period shapes are
+  range-typed declarations (item 12's pending construct); codelist variants
+  are `enum`/`vocabulary`; variant classes are `extends`. `codegraph
+  migrate` reports `anyOf` as `needs_review` rather than guessing. An
+  upstream rexlang `union` construct is **not** justified by the real
+  corpus: nothing authored needs non-discriminated unions once external
+  standards stop being modeled.
+- **Status**: **Deletable** (JSON-input era only) — the flags, the
+  `is_enum` heuristic, and the per-project exclude lists that work around
+  the JSONB fallback all lose their purpose with mox-only input. The
+  documented anyOf codegen bug becomes moot rather than fixed.
+
 ## Reading order for the eventual deletion PRs
 
 1. Ship the mox language gaps this ledger exposed (item 12's range/wrapper
    constructs, `codelist_as_check` rendering hint) — *before* removing the
    JSON machinery they substitute for.
 2. Deprecate `--schemas` as input (already warned, issue #231), then gate
-   items 1, 3, 4, 6, 8, 9, 11, 13 behind an input-format check and delete
+   items 1, 3, 4, 6, 8, 9, 11, 13, 15 behind an input-format check and delete
    with their tests.
 3. Items 2, 5, 7, 10 shrink with the same PR that removes the JSON ingest
    pass; the equivalence harness (mox-only) is the regression net.
