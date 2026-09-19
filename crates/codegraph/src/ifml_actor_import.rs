@@ -98,6 +98,7 @@ fn import_policy(raw: &str, resolved: &Path) -> Option<ActorPolicyModel> {
         "json" => import_artifact(raw, &source),
         "actor" => import_actor_source(
             raw,
+            resolved,
             resolved.parent().unwrap_or_else(|| Path::new(".")),
             &source,
         ),
@@ -120,10 +121,23 @@ fn import_artifact(raw: &str, source: &str) -> Option<ActorPolicyModel> {
     }
 }
 
-fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorPolicyModel> {
+fn import_actor_source(
+    raw: &str,
+    resolved: &Path,
+    dir: &Path,
+    source: &str,
+) -> Option<ActorPolicyModel> {
     let mut domains: Vec<(String, String)> = Vec::new();
     collect_domains(dir, source, &mut domains);
-    let compilation = compile_actors_str(raw, source, &domains);
+    // The driver path is the RESOLVED location, not the raw import string:
+    // the lowerer derives each domain's base directory from its driver path
+    // to locate `vocab/` snapshots and `model.lock`, so a raw relative
+    // string would resolve those against the process CWD. The driver
+    // matches imports by exact string first, then lexically against the
+    // actor file's directory, so resolved keys here line up
+    // (yestechgroup/onboarding-os#64).
+    let actor_path = resolved.display().to_string();
+    let compilation = compile_actors_str(&actor_path, source, &domains);
     for (path, diagnostic) in &compilation.diagnostics {
         eprintln!(
             "Warning: policy import '{raw}' diagnostic in {path}: {}",
@@ -140,19 +154,20 @@ fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorPolic
 }
 
 /// Collect the `(path, source)` domain pairs an `.actor` file imports,
-/// following `import "x.mox"` lines transitively. Paths are keyed exactly as
-/// written (that is what `compile_actors_str` matches on) and resolved
-/// relative to the importing file's directory; missing files warn and are
-/// skipped.
+/// following `import "x.mox"` lines transitively. Paths are keyed by their
+/// location **resolved against the importing file's directory** (the driver
+/// matches imports lexically and derives vocabulary snapshot directories
+/// from these paths); missing files warn and are skipped.
 fn collect_domains(dir: &Path, source: &str, domains: &mut Vec<(String, String)>) {
     for import in scan_imports(source) {
-        if domains.iter().any(|(path, _)| *path == import) {
+        let resolved = dir.join(&import);
+        let key = resolved.display().to_string();
+        if domains.iter().any(|(path, _)| *path == key) {
             continue;
         }
-        let resolved = dir.join(&import);
         match std::fs::read_to_string(&resolved) {
             Ok(domain_source) => {
-                domains.push((import.clone(), domain_source.clone()));
+                domains.push((key, domain_source.clone()));
                 if let Some(domain_dir) = resolved.parent() {
                     collect_domains(domain_dir, &domain_source, domains);
                 }
