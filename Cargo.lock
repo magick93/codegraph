@@ -3372,7 +3372,7 @@ dependencies = [
 [[package]]
 name = "rex-driver"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fc4c30414d714a9416185cc9237e80a80ff1c18#9fc4c30414d714a9416185cc9237e80a80ff1c18"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=3e923ff11ab90f595349a57c7e3ae3fac3a2f530#3e923ff11ab90f595349a57c7e3ae3fac3a2f530"
 dependencies = [
  "ariadne",
  "rex-expr",
@@ -3388,7 +3388,7 @@ dependencies = [
 [[package]]
 name = "rex-expr"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fc4c30414d714a9416185cc9237e80a80ff1c18#9fc4c30414d714a9416185cc9237e80a80ff1c18"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=3e923ff11ab90f595349a57c7e3ae3fac3a2f530#3e923ff11ab90f595349a57c7e3ae3fac3a2f530"
 dependencies = [
  "chumsky",
  "logos",
@@ -3399,7 +3399,7 @@ dependencies = [
 [[package]]
 name = "rex-ir"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fc4c30414d714a9416185cc9237e80a80ff1c18#9fc4c30414d714a9416185cc9237e80a80ff1c18"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=3e923ff11ab90f595349a57c7e3ae3fac3a2f530#3e923ff11ab90f595349a57c7e3ae3fac3a2f530"
 dependencies = [
  "serde",
  "serde_json",
@@ -3409,7 +3409,7 @@ dependencies = [
 [[package]]
 name = "rex-syntax"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fc4c30414d714a9416185cc9237e80a80ff1c18#9fc4c30414d714a9416185cc9237e80a80ff1c18"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=3e923ff11ab90f595349a57c7e3ae3fac3a2f530#3e923ff11ab90f595349a57c7e3ae3fac3a2f530"
 dependencies = [
  "chumsky",
  "logos",
@@ -3419,7 +3419,7 @@ dependencies = [
 [[package]]
 name = "rex-vocab"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fc4c30414d714a9416185cc9237e80a80ff1c18#9fc4c30414d714a9416185cc9237e80a80ff1c18"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=3e923ff11ab90f595349a57c7e3ae3fac3a2f530#3e923ff11ab90f595349a57c7e3ae3fac3a2f530"
 dependencies = [
  "anyhow",
  "rex-ir",
@@ -5241,7 +5241,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
