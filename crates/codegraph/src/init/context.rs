@@ -68,6 +68,7 @@ pub const PROJECT_TEMPLATES: &[(&str, &str)] = &[
         "project/todo_item_schema.tera",
         "schemas/{domain}/todo_item.json",
     ),
+    ("project/model_mox.tera", "model/{domain}.mox"),
     ("project/ops_manifest.tera", "codegraph-ops.toml"),
     ("project/testkit_cargo.tera", "ops/testkit/Cargo.toml"),
     ("project/testkit_main.tera", "ops/testkit/src/main.rs"),

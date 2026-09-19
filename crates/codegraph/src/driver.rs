@@ -19,11 +19,16 @@ pub enum ClassifyFormat {
     Json,
 }
 
-/// Arguments for the full pipeline (`run`): ingest schemas, classify, then
-/// run all generators.
+/// Arguments for the full pipeline (`run`): ingest the model sources
+/// (mox-first, then JSON schemas), classify, then run all generators.
 pub struct RunArgs<'a> {
-    pub schemas: &'a Path,
-    pub classifier: &'a Path,
+    /// JSON schema directory. Optional when `mox_files` is provided
+    /// (mox-first, issue #231); schemas-only runs are deprecated as the
+    /// primary model source but keep identical behavior.
+    pub schemas: Option<&'a Path>,
+    /// classifier.toml path. Required when `schemas` is provided; ignored
+    /// (an empty config is used) for mox-only runs without one.
+    pub classifier: Option<&'a Path>,
     pub config_path: &'a Path,
     pub output: &'a Path,
     pub extension_points_path: Option<&'a Path>,
@@ -114,6 +119,16 @@ fn effective_design_system<'a>(
     })
 }
 
+/// Stderr notice when `--schemas` is the only model source (issue #231).
+pub fn schemas_deprecation_notice() -> &'static str {
+    "WARN: --schemas is deprecated as the primary model source. Migrate to .mox files: codegraph migrate --schemas <dir> --output <dir>"
+}
+
+/// Stderr notice when both model sources are provided (issue #231).
+pub fn mox_primary_notice() -> &'static str {
+    "INFO: .mox files are the primary model source; --schemas fills gaps for types not authored in .mox"
+}
+
 /// Run the full pipeline: ingest + classify + generate.
 pub async fn run(args: RunArgs<'_>) -> Result<()> {
     let RunArgs {
@@ -136,6 +151,28 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         codegraph_rev,
     } = args;
 
+    // Model-source guard: at least one of schemas / mox files is required,
+    // and schemas need a classifier config.
+    if schemas.is_none() && mox_files.is_empty() {
+        return Err(crate::error::Error::Config(
+            "no model source: provide --mox-files (primary) or --schemas".to_string(),
+        ));
+    }
+    if schemas.is_some() && classifier.is_none() {
+        return Err(crate::error::Error::Config(
+            "--classifier is required when --schemas is provided".to_string(),
+        ));
+    }
+
+    // Notices (stderr; stdout stays clean for machine output).
+    if schemas.is_some() {
+        if mox_files.is_empty() {
+            eprintln!("{}", schemas_deprecation_notice());
+        } else {
+            eprintln!("{}", mox_primary_notice());
+        }
+    }
+
     let backend_config = BackendConfig::default();
     let be = create_backend(&backend_config)
         .await
@@ -143,8 +180,13 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
 
     let domain_config = codegraph_config::config::parse_domain_config(config_path)
         .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-    let classifier_config = codegraph_classifier::config::parse_classifier_config(classifier)
-        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+    let classifier_config = match classifier {
+        Some(classifier) => codegraph_classifier::config::parse_classifier_config(classifier)
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?,
+        // An empty TOML document deserializes to the all-defaults config.
+        None => codegraph_classifier::config::parse_classifier_config_str("")
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?,
+    };
 
     let ui_overrides = load_ui_overrides(config_path)?;
     let ui_domains = load_ui_domains(config_path)?;
@@ -233,21 +275,47 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         None
     };
 
-    // Pass 1: Ingest all schemas (no entity classification)
-    let empty_entities = HashSet::new();
-    let ingest_result = crate::ingest::async_ingest::ingest_schemas(
-        be.ingestor(),
-        schemas,
-        &classifier_config,
-        &empty_entities,
-        &ui_overrides,
-        &domain_config.defaults.type_suffix,
-    )
-    .await?;
-    println!(
-        "Pass 1 complete: {} schemas ingested",
-        ingest_result.schemas_created
-    );
+    // Pass 1: Ingest rexlang .mox domain sources FIRST (mox-first, issue
+    // #231): vocabularies with facets, class operations, derived features,
+    // and schema/property nodes for mox-authored classes and enums. The
+    // bridged class titles win schema-title conflicts because the schema
+    // pass below skips every title created here. Diagnostics warn and never
+    // fail the run.
+    let mut mox_covered: HashSet<String> = HashSet::new();
+    if !mox_files.is_empty() {
+        println!("Pass 1: {} mox files to ingest", mox_files.len());
+        let mox_stats = crate::ingest::mox_ingest::ingest_mox_files(
+            be.ingestor(),
+            be.querier(),
+            mox_files,
+            &domain_config,
+            &domain_config.defaults.type_suffix,
+        )
+        .await?;
+        println!("Pass 1 complete: {mox_stats}");
+        mox_covered.extend(mox_stats.bridged_titles);
+    }
+
+    // Pass 1a: Ingest JSON schemas (no entity classification). Optional
+    // under mox-first: skipped entirely when only .mox files are provided,
+    // and titles already created from .mox are skipped within the pass.
+    if let Some(schemas_dir) = schemas {
+        let empty_entities = HashSet::new();
+        let ingest_result = crate::ingest::async_ingest::ingest_schemas_with_skips(
+            be.ingestor(),
+            schemas_dir,
+            &classifier_config,
+            &empty_entities,
+            &ui_overrides,
+            &domain_config.defaults.type_suffix,
+            &mox_covered,
+        )
+        .await?;
+        println!(
+            "Pass 1a: {} schemas ingested",
+            ingest_result.schemas_created
+        );
+    }
 
     // Pass 1b: Ingest IFML DSL files (if provided)
     if !ifml_files.is_empty() {
@@ -299,23 +367,6 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
                     .await?;
             println!("  ingested {}: {stats}", openapi_path.display());
         }
-    }
-
-    // Pass 1e: Ingest rexlang .mox domain sources (if provided) —
-    // vocabularies with facets, class operations, derived features, and
-    // schema/property nodes for mox-authored classes and enums.
-    // Diagnostics warn and never fail the run.
-    if !mox_files.is_empty() {
-        println!("Pass 1e: {} mox files to ingest", mox_files.len());
-        let mox_stats = crate::ingest::mox_ingest::ingest_mox_files(
-            be.ingestor(),
-            be.querier(),
-            mox_files,
-            &domain_config,
-            &domain_config.defaults.type_suffix,
-        )
-        .await?;
-        println!("Pass 1e complete: {mox_stats}");
     }
 
     // Auto-classify
@@ -418,7 +469,9 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         tera: &tera,
         ui_overrides: &ui_overrides,
         ui_domains: &ui_domains,
-        schema_base_dir: schemas,
+        // mox-only runs have no schemas dir; an empty path keeps the UI
+        // codelist generator's schema-dir lookups graceful (see `generate`).
+        schema_base_dir: schemas.unwrap_or_else(|| Path::new("")),
         seed_config: load_seed_config(config_path).as_deref(),
         domain_types_base: domain_types_base_path.as_deref(),
         hooks_base: None,
@@ -801,13 +854,16 @@ pub async fn generate(
     Ok(())
 }
 
-/// Classify all schemas and show entity/VO decisions.
+/// Classify all schemas and show entity/VO decisions. Mox files, when
+/// provided, are ingested first: their schemas bypass the classifier and
+/// show up in the report with the `override:source=mox` reason.
 pub async fn classify(
     schemas: &Path,
     classifier_path: &Path,
     config_path: &Path,
     domain_filter: Option<&str>,
     format: ClassifyFormat,
+    mox_files: &[PathBuf],
 ) -> Result<()> {
     let domain_config = codegraph_config::config::parse_domain_config(config_path)
         .map_err(|e| crate::error::Error::Config(e.to_string()))?;
@@ -835,14 +891,30 @@ pub async fn classify(
 
     let ui_overrides = load_ui_overrides(config_path)?;
 
+    // Mox-first: mox-authored schemas enter the report as
+    // `override:source=mox` and shadow same-titled JSON schemas.
+    let mut mox_covered: HashSet<String> = HashSet::new();
+    if !mox_files.is_empty() {
+        let mox_stats = crate::ingest::mox_ingest::ingest_mox_files(
+            be.ingestor(),
+            be.querier(),
+            mox_files,
+            &domain_config,
+            &domain_config.defaults.type_suffix,
+        )
+        .await?;
+        mox_covered.extend(mox_stats.bridged_titles);
+    }
+
     let empty_entities = HashSet::new();
-    crate::ingest::async_ingest::ingest_schemas(
+    crate::ingest::async_ingest::ingest_schemas_with_skips(
         be.ingestor(),
         schemas,
         &classifier_config,
         &empty_entities,
         &ui_overrides,
         &domain_config.defaults.type_suffix,
+        &mox_covered,
     )
     .await?;
 
@@ -963,6 +1035,24 @@ fn current_git_rev() -> String {
 mod tests {
     use super::*;
     use codegraph_config::SemanticRole;
+
+    #[test]
+    fn schemas_deprecation_notice_has_exact_text() {
+        assert_eq!(
+            schemas_deprecation_notice(),
+            "WARN: --schemas is deprecated as the primary model source. Migrate to .mox files: codegraph migrate --schemas <dir> --output <dir>"
+        );
+    }
+
+    #[test]
+    fn mox_primary_notice_states_mox_wins_and_schemas_fill_gaps() {
+        let notice = mox_primary_notice();
+        assert!(
+            notice.starts_with("INFO: .mox files are the primary model source"),
+            "{notice}"
+        );
+        assert!(notice.contains("--schemas fills gaps"), "{notice}");
+    }
 
     #[test]
     fn design_system_arg_beats_profile_feature() {

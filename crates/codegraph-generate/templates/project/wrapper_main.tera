@@ -18,12 +18,12 @@ struct Cli {
 enum Commands {
     /// Ingest schemas, classify, then run all generators.
     Run {
-        /// JSON Schema directory.
-        #[arg(long, default_value = "schemas")]
-        schemas: PathBuf,
+        /// JSON Schema directory. Optional when --mox-files is provided.
+        #[arg(long, default_value = "schemas", required_unless_present = "mox_files")]
+        schemas: Option<PathBuf>,
         /// Classifier config path.
         #[arg(long, default_value = "classifier.toml")]
-        classifier: PathBuf,
+        classifier: Option<PathBuf>,
         /// Domain config path.
         #[arg(long, default_value = "domains.toml")]
         config: PathBuf,
@@ -51,6 +51,12 @@ enum Commands {
         /// IFML DSL files to ingest.
         #[arg(long = "ifml-files")]
         ifml_files: Vec<PathBuf>,
+        /// OpenAPI spec files to ingest.
+        #[arg(long = "openapi-files")]
+        openapi_files: Vec<PathBuf>,
+        /// rexlang .mox domain model files (primary model source).
+        #[arg(long = "mox-files")]
+        mox_files: Vec<PathBuf>,
     },
     /// Classify schemas and show entity/VO decisions.
     Classify {
@@ -93,6 +99,9 @@ enum Commands {
         /// profiles.toml path.
         #[arg(long)]
         profiles_config: Option<PathBuf>,
+        /// rexlang .mox domain model files.
+        #[arg(long = "mox-files")]
+        mox_files: Vec<PathBuf>,
     },
 }
 
@@ -124,11 +133,13 @@ async fn main() -> Result<()> {
             no_post_gen,
             template_dir,
             ifml_files,
+            openapi_files,
+            mox_files,
         } => {
             let dirs = template_dirs(&template_dir);
             codegraph::driver::run(codegraph::driver::RunArgs {
-                schemas: &schemas,
-                classifier: &classifier,
+                schemas: schemas.as_deref(),
+                classifier: classifier.as_deref(),
                 config_path: &config,
                 output: &output,
                 extension_points_path: extension_points.as_deref(),
@@ -138,7 +149,11 @@ async fn main() -> Result<()> {
                 no_post_gen,
                 template_dir: &dirs,
                 ifml_files: &ifml_files,
+                openapi_files: &openapi_files,
+                mox_files: &mox_files,
                 ifml_framework: &[],
+                ifml_components: None,
+                ifml_design_system: None,
                 codegraph_rev: if CODEGRAPH_REV.is_empty() {
                     None
                 } else {
@@ -164,6 +179,7 @@ async fn main() -> Result<()> {
             &config,
             domain.as_deref(),
             codegraph::driver::ClassifyFormat::Table,
+            &[],
         )
         .await
         .map_err(|e| codegraph::error::Error::Config(format!("classify failed: {e}"))),
@@ -179,6 +195,8 @@ async fn main() -> Result<()> {
                 extension_points.as_deref(),
                 &dirs,
                 &[],
+                None,
+                None,
             )
             .await
             .map_err(|e| codegraph::error::Error::Config(format!("generate failed: {e}")))
@@ -188,11 +206,13 @@ async fn main() -> Result<()> {
             schemas,
             classifier,
             profiles_config,
+            mox_files,
         } => codegraph::init::commands::cmd_doctor(&codegraph::init::commands::DoctorArgs {
             config,
             schemas,
             classifier,
             profiles_config,
+            mox_files,
         })
         .map_err(|e| codegraph::error::Error::Config(format!("doctor failed: {e}"))),
     }

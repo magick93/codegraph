@@ -65,13 +65,22 @@ pub enum Commands {
         /// Output format
         #[arg(long, default_value = "table")]
         format: ClassifyFormat,
+
+        /// Paths to rexlang .mox domain model files; their classes bypass
+        /// the classifier and show up as `override:source=mox`
+        #[arg(long)]
+        mox_files: Vec<PathBuf>,
     },
     /// Convenience: ingest + generate in one step
     Run {
+        /// Path to JSON schema directory. Optional when --mox-files is
+        /// provided; deprecated as the primary model source — migrate with
+        /// `codegraph migrate --schemas <dir> --output <dir>`
+        #[arg(long, required_unless_present = "mox_files")]
+        schemas: Option<PathBuf>,
+        /// Path to classifier.toml (required when --schemas is provided)
         #[arg(long)]
-        schemas: PathBuf,
-        #[arg(long)]
-        classifier: PathBuf,
+        classifier: Option<PathBuf>,
         #[arg(long)]
         config: PathBuf,
         #[arg(long)]
@@ -272,6 +281,12 @@ pub enum Commands {
 
         #[arg(long)]
         profiles_config: Option<PathBuf>,
+
+        /// Paths to rexlang .mox domain model files; each package must match
+        /// a domains.toml domain. With .mox present the JSON schemas check
+        /// degrades to a warning (mox-first projects)
+        #[arg(long)]
+        mox_files: Vec<PathBuf>,
     },
     /// Add to an existing consumer project
     Add {

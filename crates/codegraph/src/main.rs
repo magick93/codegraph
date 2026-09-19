@@ -61,13 +61,21 @@ async fn main() -> codegraph::error::Result<()> {
             config,
             domain,
             format,
+            mox_files,
         } => {
             let format = match format {
                 cli::ClassifyFormat::Table => codegraph::driver::ClassifyFormat::Table,
                 cli::ClassifyFormat::Json => codegraph::driver::ClassifyFormat::Json,
             };
-            codegraph::driver::classify(&schemas, &classifier, &config, domain.as_deref(), format)
-                .await
+            codegraph::driver::classify(
+                &schemas,
+                &classifier,
+                &config,
+                domain.as_deref(),
+                format,
+                &mox_files,
+            )
+            .await
         }
         cli::Commands::Run {
             schemas,
@@ -88,8 +96,8 @@ async fn main() -> codegraph::error::Result<()> {
             ifml_design_system,
         } => {
             codegraph::driver::run(codegraph::driver::RunArgs {
-                schemas: &schemas,
-                classifier: &classifier,
+                schemas: schemas.as_deref(),
+                classifier: classifier.as_deref(),
                 config_path: &config,
                 output: &output,
                 extension_points_path: extension_points.as_deref(),
@@ -205,12 +213,14 @@ async fn main() -> codegraph::error::Result<()> {
             schemas,
             classifier,
             profiles_config,
+            mox_files,
         } => {
             let args = codegraph::init::commands::DoctorArgs {
                 config,
                 schemas,
                 classifier,
                 profiles_config,
+                mox_files,
             };
             codegraph::init::commands::cmd_doctor(&args)
         }
@@ -246,7 +256,7 @@ async fn cmd_lsp(
                 codegraph_classifier::config::parse_classifier_config(classifier_path)
                     .map_err(|e| codegraph::error::Error::Config(e.to_string()))?
             } else {
-                codegraph_classifier::config::parse_classifier_config_str("{}")
+                codegraph_classifier::config::parse_classifier_config_str("")
                     .map_err(|e| codegraph::error::Error::Config(e.to_string()))?
             };
 
@@ -268,7 +278,7 @@ async fn cmd_lsp(
         codegraph_classifier::config::parse_classifier_config(classifier_path)
             .map_err(|e| codegraph::error::Error::Config(e.to_string()))?
     } else {
-        codegraph_classifier::config::parse_classifier_config_str("{}")
+        codegraph_classifier::config::parse_classifier_config_str("")
             .map_err(|e| codegraph::error::Error::Config(e.to_string()))?
     };
 

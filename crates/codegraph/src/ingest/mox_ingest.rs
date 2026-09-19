@@ -50,7 +50,7 @@ use crate::ingest::async_ingest::{sanitize_description, sanitize_rust_type_name}
 /// `skipped` counts mox files that could not be read or failed to compile,
 /// plus mox classes carrying operations/derived features that matched no
 /// pre-existing ingested schema entity (each warned).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MoxIngestStats {
     pub vocabularies: usize,
     pub operations: usize,
@@ -60,6 +60,10 @@ pub struct MoxIngestStats {
     pub properties: usize,
     pub edges: usize,
     pub enums: usize,
+    /// Titles of the schema nodes the class bridge created this run. Under
+    /// mox-first pipeline ordering (issue #231) the JSON schema pass skips
+    /// every title listed here, so `.mox` wins title conflicts.
+    pub bridged_titles: Vec<String>,
 }
 
 impl std::fmt::Display for MoxIngestStats {
@@ -325,6 +329,7 @@ pub async fn ingest_mox_files(
         let node = class_schema_node(entry, is_entity, type_suffix);
         ingestor.ingest_schema(&node).await.map_err(Error::Graph)?;
         bridged.insert(class.name.clone());
+        stats.bridged_titles.push(class.name.clone());
         stats.classes += 1;
     }
 
@@ -439,7 +444,7 @@ struct ClassEntry<'a> {
 /// Map a mox package name to a domain: an exact `domains.toml` key wins,
 /// then the last dot-segment; otherwise the snake_cased last segment is the
 /// domain (and, by the domain-driven pg-schema convention, the namespace).
-fn resolve_domain(domain_config: &DomainConfig, package: &str) -> (String, bool) {
+pub(crate) fn resolve_domain(domain_config: &DomainConfig, package: &str) -> (String, bool) {
     if domain_config.domains.contains_key(package) {
         return (package.to_string(), true);
     }
@@ -831,6 +836,7 @@ mod tests {
             properties: 6,
             edges: 7,
             enums: 8,
+            bridged_titles: Vec::new(),
         };
         assert_eq!(
             stats.to_string(),
