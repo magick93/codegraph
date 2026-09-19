@@ -796,6 +796,7 @@ mod tests {
             schemas_dir: Some("schemas".into()),
             classifier: Some("classifier.toml".into()),
             domain_config: None,
+            ifml_files: None,
             profile: Some("default".into()),
             output_dir: "generated-app".into(),
             ui_dir: None,

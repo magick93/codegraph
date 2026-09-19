@@ -1580,6 +1580,12 @@ fn regenerate_args(config: &OpsConfig, graph_binary: &str) -> Vec<String> {
         args.push("--profile".to_string());
         args.push(profile.clone());
     }
+    if let Some(ifml_files) = &config.manifest.ifml_files {
+        for ifml_file in ifml_files {
+            args.push("--ifml-files".to_string());
+            args.push(ifml_file.to_string_lossy().into_owned());
+        }
+    }
     args.push("--output".to_string());
     args.push(config.app_dir.to_string_lossy().into_owned());
     args
@@ -1717,6 +1723,7 @@ mod tests {
             schemas_dir: Some("schemas".into()),
             classifier: Some("classifier.toml".into()),
             domain_config: None,
+            ifml_files: None,
             profile: profile.map(String::from),
             output_dir: "generated-app".into(),
             ui_dir: None,
@@ -2016,5 +2023,20 @@ trailing context line
         );
         assert!(sql.contains(r#"[{"entity_type":"*","entity_id":"*","action":"read"}]"#));
         assert!(sql.ends_with("'::jsonb);"));
+    }
+
+    #[test]
+    fn regenerate_args_pass_ifml_files_through() {
+        let mut manifest = manifest_with(Some("default"), "sea_orm");
+        manifest.ifml_files = Some(vec![std::path::PathBuf::from(
+            "models/exchange/bond-exchange.ifml",
+        )]);
+        let config = config_for(manifest);
+        let args = regenerate_args(&config, "onboarding-graph");
+        let flag_at = args
+            .iter()
+            .position(|arg| arg == "--ifml-files")
+            .expect("--ifml-files must be forwarded to the graph binary");
+        assert_eq!(args[flag_at + 1], "models/exchange/bond-exchange.ifml");
     }
 }
