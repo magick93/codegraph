@@ -126,54 +126,49 @@ async fn e2e_supabase_up(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<(
 
 async fn e2e_generate(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     output::section("E2E 2. Generate");
-    if !args.skip_generate {
-        let binary = match &config.manifest.graph_binary {
-            Some(b) if config.manifest.schemas_dir.is_some() => Some(b),
-            Some(_) => {
-                output::warn("schemas_dir not configured — skipping generation");
-                None
-            }
-            None => {
-                output::warn("no graph_binary configured — skipping generation");
-                None
-            }
-        };
-        if let Some(binary) = binary {
-            crate::ext::run_hooks(config, "pre_generate").await?;
-            output::info(format!("Building {binary} (release)..."));
-            run_blocking(
-                "cargo",
-                &["build", "-p", binary, "--release"],
-                &config.workspace_root,
-            )
-            .map_err(|e| OpsError::TestFailure(format!("graph binary build failed: {e}")))?;
-            let gen_bin = config
-                .workspace_root
-                .join("target")
-                .join("release")
-                .join(binary);
-            if !gen_bin.is_file() {
-                return Err(OpsError::TestFailure(format!(
-                    "{binary} build produced no binary at {}",
-                    gen_bin.display()
-                )));
-            }
-            let gen_args = generate_args(config);
-            output::info("Generating app...");
-            let gen_bin_str = gen_bin.to_string_lossy().into_owned();
-            let gen_arg_refs: Vec<&str> = gen_args.iter().map(String::as_str).collect();
-            run_blocking(&gen_bin_str, &gen_arg_refs, &config.root_dir)?;
-            if !generation_outputs(config) {
-                return Err(OpsError::TestFailure(
-                    "code generation produced no output (src/ui/migrations empty)".to_string(),
-                ));
-            }
-            output::ok("App generated");
-            crate::ext::run_hooks(config, "post_generate").await?;
-        }
-    } else {
+    if args.skip_generate {
         output::info("Generation skipped (--skip-generate)");
+        return Ok(());
     }
+    let Some(binary) = generation_binary(config) else {
+        if config.manifest.graph_binary.is_none() {
+            output::warn("no graph_binary configured — skipping generation");
+        } else {
+            output::warn("schemas_dir not configured — skipping generation");
+        }
+        return Ok(());
+    };
+    crate::ext::run_hooks(config, "pre_generate").await?;
+    output::info(format!("Building {binary} (release)..."));
+    run_blocking(
+        "cargo",
+        &["build", "-p", &binary, "--release"],
+        &config.workspace_root,
+    )
+    .map_err(|e| OpsError::TestFailure(format!("graph binary build failed: {e}")))?;
+    let gen_bin = config
+        .workspace_root
+        .join("target")
+        .join("release")
+        .join(&binary);
+    if !gen_bin.is_file() {
+        return Err(OpsError::TestFailure(format!(
+            "{binary} build produced no binary at {}",
+            gen_bin.display()
+        )));
+    }
+    let gen_args = generate_args(config);
+    output::info("Generating app...");
+    let gen_bin_str = gen_bin.to_string_lossy().into_owned();
+    let gen_arg_refs: Vec<&str> = gen_args.iter().map(String::as_str).collect();
+    run_blocking(&gen_bin_str, &gen_arg_refs, &config.root_dir)?;
+    if !generation_outputs(config) {
+        return Err(OpsError::TestFailure(
+            "code generation produced no output (src/ui/migrations empty)".to_string(),
+        ));
+    }
+    output::ok("App generated");
+    crate::ext::run_hooks(config, "post_generate").await?;
     Ok(())
 }
 
@@ -613,9 +608,48 @@ pub fn failed_test_titles(output: &str) -> Vec<String> {
     titles
 }
 
-/// Build the graph-binary `run ...` argument vector. Only manifest flags
+/// Graph binary to build for generation, or `None` when the caller should
+/// skip with a warning. Generation proceeds only when `graph_binary` is set
+/// AND a model source exists: `mox_files` (preferred) or `schemas_dir` —
+/// a manifest setting both regenerates from mox.
+fn generation_binary(config: &OpsConfig) -> Option<String> {
+    let binary = config.manifest.graph_binary.as_ref()?;
+    if !config.manifest.mox_files.is_empty() || config.manifest.schemas_dir.is_some() {
+        Some(binary.clone())
+    } else {
+        None
+    }
+}
+
+/// Build the graph-binary `run ...` argument vector.
+///
+/// mox mode (non-empty `mox_files`): `run --mox-files <file>...` in manifest
+/// order, then the optional `--config`/`--profile`, then `--output`. No
+/// `--schemas`/`--classifier` is passed — the mox pipeline needs no
+/// classifier, and a manifest that also sets `schemas_dir` regenerates from
+/// mox (schemas_dir/classifier are ignored for generation).
+///
+/// Legacy schemas mode (`mox_files` empty) is unchanged: only manifest flags
 /// whose values are `Some` are passed.
 fn generate_args(config: &OpsConfig) -> Vec<String> {
+    if !config.manifest.mox_files.is_empty() {
+        let mut args = vec!["run".to_string()];
+        for file in &config.manifest.mox_files {
+            args.push("--mox-files".to_string());
+            args.push(file.clone());
+        }
+        if let Some(domain_config) = &config.manifest.domain_config {
+            args.push("--config".to_string());
+            args.push(domain_config.to_string_lossy().into_owned());
+        }
+        if let Some(profile) = &config.manifest.profile {
+            args.push("--profile".to_string());
+            args.push(profile.clone());
+        }
+        args.push("--output".to_string());
+        args.push(config.app_dir.to_string_lossy().into_owned());
+        return args;
+    }
     let schemas = config
         .manifest
         .schemas_dir
@@ -794,6 +828,7 @@ mod tests {
             app_name: "demo-app".into(),
             graph_binary: graph_binary.map(String::from),
             schemas_dir: Some("schemas".into()),
+            mox_files: Vec::new(),
             classifier: Some("classifier.toml".into()),
             domain_config: None,
             profile: Some("default".into()),
@@ -926,6 +961,77 @@ mod tests {
         assert!(!args.contains(&"--config".to_string()));
         assert!(args.contains(&"--output".to_string()));
         assert!(args.contains(&"/tmp/repo/generated-app".to_string()));
+    }
+
+    #[test]
+    fn generate_args_mox_files_only_exact_vector() {
+        let mut manifest = manifest_with(Some("hr-graph"));
+        manifest.schemas_dir = None;
+        // classifier must be ignored in mox mode — the mox pipeline needs none.
+        manifest.classifier = Some("classifier.toml".into());
+        manifest.domain_config = Some("domains.toml".into());
+        manifest.profile = Some("default".into());
+        manifest.mox_files = vec!["model/common.mox".into(), "model/billing.mox".into()];
+        let cfg = config_for(manifest);
+        assert_eq!(
+            generate_args(&cfg),
+            vec![
+                "run",
+                "--mox-files",
+                "model/common.mox",
+                "--mox-files",
+                "model/billing.mox",
+                "--config",
+                "domains.toml",
+                "--profile",
+                "default",
+                "--output",
+                "/tmp/repo/generated-app",
+            ]
+        );
+    }
+
+    #[test]
+    fn generate_args_mox_files_win_over_schemas_dir() {
+        let mut manifest = manifest_with(Some("hr-graph"));
+        manifest.mox_files = vec!["model/app.mox".into()];
+        let cfg = config_for(manifest);
+        let args = generate_args(&cfg);
+        assert!(args.contains(&"--mox-files".to_string()));
+        assert!(
+            !args.contains(&"--schemas".to_string()),
+            "mox_files must win: {args:?}"
+        );
+        assert!(
+            !args.contains(&"--classifier".to_string()),
+            "mox mode passes no --classifier: {args:?}"
+        );
+    }
+
+    #[test]
+    fn generation_gate_proceeds_on_schemas_only() {
+        let cfg = config_for(manifest_with(Some("hr-graph")));
+        assert_eq!(generation_binary(&cfg).as_deref(), Some("hr-graph"));
+    }
+
+    #[test]
+    fn generation_gate_proceeds_on_mox_files_without_schemas_dir() {
+        let mut manifest = manifest_with(Some("hr-graph"));
+        manifest.schemas_dir = None;
+        manifest.mox_files = vec!["model/app.mox".into()];
+        let cfg = config_for(manifest);
+        assert_eq!(generation_binary(&cfg).as_deref(), Some("hr-graph"));
+    }
+
+    #[test]
+    fn generation_gate_skips_without_any_model_source() {
+        let mut manifest = manifest_with(Some("hr-graph"));
+        manifest.schemas_dir = None;
+        let cfg = config_for(manifest);
+        assert!(generation_binary(&cfg).is_none());
+        // And without a graph binary there is nothing to run either.
+        let cfg = config_for(manifest_with(None));
+        assert!(generation_binary(&cfg).is_none());
     }
 
     #[test]
