@@ -47,11 +47,22 @@ pub fn normalize_for_hash(path: &str, bytes: &[u8]) -> Vec<u8> {
     // the checkout path minus its first component (see the
     // relative_path_fragments test below); replace that fragment too, or
     // hashing depends on where the workspace is checked out.
-    let text = if let Some((_, fragment)) = root.trim_start_matches('/').split_once('/') {
+    let mut text = if let Some((_, fragment)) = root.trim_start_matches('/').split_once('/') {
         text.replace(fragment, "<CODEGRAPH_ROOT>")
     } else {
         text
     };
+    // Climbing segments in front of the placeholder collapse away: outputs
+    // at different depths (or absolute outputs) must hash identically —
+    // the emitter emits shortest-relative paths whose dot-dot depth depends
+    // on the output directory's depth.
+    loop {
+        let collapsed = text.replacen("../<CODEGRAPH_ROOT>", "<CODEGRAPH_ROOT>", 1);
+        if collapsed == text {
+            break;
+        }
+        text = collapsed;
+    }
     let needle = "rev = \"";
     let placeholder = "0".repeat(40);
     let mut out = String::with_capacity(text.len());
@@ -106,7 +117,10 @@ fn relative_checkout_path_occurrence_is_normalized() {
         "[dependencies]\ncodegraph-ops = {{ path = \"../../../{stripped}/crates/codegraph-ops\" }}\n"
     );
     let out = normalize_for_hash("Cargo.toml", toml.as_bytes());
-    let expected = b"[dependencies]\ncodegraph-ops = { path = \"../../../<CODEGRAPH_ROOT>/crates/codegraph-ops\" }\n";
+    // The fragment is replaced AND the climbing segments collapse, so the
+    // hash no longer depends on the output directory's depth (#241).
+    let expected =
+        b"[dependencies]\ncodegraph-ops = { path = \"<CODEGRAPH_ROOT>/crates/codegraph-ops\" }\n";
     assert_eq!(out, expected.to_vec());
 }
 
@@ -181,4 +195,12 @@ fn relative_path_fragments_of_the_checkout_are_normalized() {
         "checkout fragment must be normalized away: {normalized}"
     );
     assert!(normalized.contains("<CODEGRAPH_ROOT>"), "{normalized}");
+    // Outputs at different depths (or absolute outputs) must hash
+    // identically: climbing segments in front of the placeholder collapse
+    // away. CI (output under /tmp, checkout under /home/runner) and a
+    // local worktree otherwise disagree byte-for-byte (#241).
+    assert!(
+        !normalized.contains("../"),
+        "climbing segments before <CODEGRAPH_ROOT> must collapse: {normalized}"
+    );
 }
