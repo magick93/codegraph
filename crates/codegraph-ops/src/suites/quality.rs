@@ -265,6 +265,7 @@ mod tests {
             graph_binary: Some("hr-graph".into()),
             schemas_dir: None,
             mox_files: Vec::new(),
+            ifml_files: None,
             classifier: None,
             domain_config: None,
             profile: None,

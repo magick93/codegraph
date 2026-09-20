@@ -831,6 +831,7 @@ mod tests {
             mox_files: Vec::new(),
             classifier: Some("classifier.toml".into()),
             domain_config: None,
+            ifml_files: None,
             profile: Some("default".into()),
             output_dir: "generated-app".into(),
             ui_dir: None,

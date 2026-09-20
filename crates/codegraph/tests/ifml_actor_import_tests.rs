@@ -441,6 +441,109 @@ view "Guarded" {
     assert_eq!(containers[0].requires, Some(vec!["Nothing".to_string()]));
 }
 
+/// Restores the process CWD on drop, so a panicking assertion cannot leave
+/// the test process in a moved directory for the remaining tests.
+struct ChdirGuard(std::path::PathBuf);
+
+impl ChdirGuard {
+    fn move_to(path: &Path) -> Self {
+        let previous = std::env::current_dir().expect("current dir");
+        std::env::set_current_dir(path).expect("set current dir");
+        Self(previous)
+    }
+}
+
+impl Drop for ChdirGuard {
+    fn drop(&mut self) {
+        std::env::set_current_dir(&self.0).expect("restore current dir");
+    }
+}
+
+/// The domain carries a vocabulary with a vendored snapshot (the bond
+/// exchange's `common.mox` shape): vocabulary snapshots resolve from the
+/// domain's driver path, so this fixture doubles as the CWD-independence
+/// regression test.
+const COMMON_MOX_WITH_VOCAB: &str = r#"
+package rex.pairs.common
+
+vocabulary Currency from "iso:4217" {
+    version "2024-01-01"
+    key alpha3
+    facet String symbol
+}
+
+class Wallet {
+    id String id
+    Currency currency
+    int cents
+}
+"#;
+
+const PAIR_BOND_ACTOR: &str = r#"
+import "../domains/common.mox"
+
+actors PairPolicies {
+    actor Teller
+
+    capability TopUp on Wallet
+
+    grant Teller {
+        permit TopUp when (cents > 0)
+    }
+}
+"#;
+
+const PAIR_IFML: &str = r#"
+domain "sales" { schema "sales"; }
+
+import "policies/bond.actor"
+
+view "WalletList" {
+    roles: [Teller];
+    requires: [TopUp];
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Wallet;
+        fields: [cents];
+    }
+}
+"#;
+
+const ISO_SNAPSHOT: &str = r#"{
+  "vocabulary": "iso:4217",
+  "version": "2024-01-01",
+  "entries": [
+    { "alpha3": "USD", "symbol": "$", "minorUnits": 2 },
+    { "alpha3": "EUR", "symbol": "€", "minorUnits": 2 },
+    { "alpha3": "JPY", "symbol": "¥", "minorUnits": 0 }
+  ]
+}"#;
+
+#[tokio::test]
+async fn policy_ingest_resolves_imports_independently_of_the_process_cwd() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_file(dir.path(), "pair.ifml", PAIR_IFML);
+    write_file(dir.path(), "policies/bond.actor", PAIR_BOND_ACTOR);
+    write_file(dir.path(), "domains/common.mox", COMMON_MOX_WITH_VOCAB);
+    write_file(
+        dir.path(),
+        "domains/vocab/iso-4217@2024-01-01.json",
+        ISO_SNAPSHOT,
+    );
+    let unrelated = tempfile::tempdir().expect("unrelated tempdir");
+
+    // The CLI's real-world shape: the process runs from an unrelated CWD
+    // while the model lives under its own tree. Vocabulary snapshots must
+    // resolve next to the declaring file, never relative to the CWD.
+    let _guard = ChdirGuard::move_to(unrelated.path());
+
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    let imported = ingest_ifml_file(&engine, &dir.path().join("pair.ifml")).await;
+    assert_eq!(imported, 1, "policy ingested despite the unrelated CWD");
+}
+
 /// An `.actor` policy over a domain that declares `import schema`: the
 /// domain files' imports must be resolved and provided to the rex compiler
 /// (issue #230) or the plain compile errors with `imported schema '…' was

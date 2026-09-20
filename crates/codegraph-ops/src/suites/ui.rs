@@ -365,6 +365,7 @@ mod tests {
             mox_files: Vec::new(),
             classifier: None,
             domain_config: None,
+            ifml_files: None,
             profile: None,
             output_dir: "generated-app".into(),
             ui_dir: None,

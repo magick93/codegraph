@@ -38,6 +38,11 @@ pub struct OpsManifest {
     /// Domain config file (`domains.toml`) passed to the codegen binary.
     #[serde(default)]
     pub domain_config: Option<PathBuf>,
+    /// IFML files passed to the codegen binary (`--ifml-files`); their
+    /// `import` statements may pull in rexlang `.actor` policy files, whose
+    /// ingested graph feeds the policy_rls generator.
+    #[serde(default)]
+    pub ifml_files: Option<Vec<PathBuf>>,
     /// Profile name passed to the codegen binary.
     #[serde(default)]
     pub profile: Option<String>,
@@ -285,6 +290,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn manifest_parses_ifml_files_for_policy_ingest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("codegraph-ops.toml");
+        std::fs::write(
+            &path,
+            r#"
+app_name = "app"
+database = { api = { host = "localhost", port = 5432, user = "postgres", password = "postgres", database = "postgres" } }
+ifml_files = ["models/exchange/bond-exchange.ifml"]
+"#,
+        )
+        .expect("write manifest");
+        let manifest = OpsManifest::load(&path).expect("parses");
+        assert_eq!(
+            manifest.ifml_files,
+            Some(vec![PathBuf::from("models/exchange/bond-exchange.ifml")])
+        );
+    }
+
+    #[test]
+    fn manifest_defaults_to_no_ifml_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("codegraph-ops.toml");
+        std::fs::write(
+            &path,
+            r#"
+app_name = "app"
+database = { api = { host = "localhost", port = 5432, user = "postgres", password = "postgres", database = "postgres" } }
+"#,
+        )
+        .expect("write manifest");
+        let manifest = OpsManifest::load(&path).expect("parses");
+        assert_eq!(manifest.ifml_files, None);
+    }
+
+    #[test]
     fn parses_roundtrip() {
         let m = OpsManifest {
             app_name: "hr-app".into(),
@@ -293,6 +334,7 @@ mod tests {
             mox_files: Vec::new(),
             classifier: Some("classifier.toml".into()),
             domain_config: Some("domains.toml".into()),
+            ifml_files: None,
             profile: Some("default".into()),
             output_dir: PathBuf::from("generated-candidate"),
             ui_dir: None,

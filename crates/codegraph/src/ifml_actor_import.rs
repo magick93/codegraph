@@ -98,6 +98,7 @@ fn import_policy(raw: &str, resolved: &Path) -> Option<ActorPolicyModel> {
         "json" => import_artifact(raw, &source),
         "actor" => import_actor_source(
             raw,
+            resolved,
             resolved.parent().unwrap_or_else(|| Path::new(".")),
             &source,
         ),
@@ -120,8 +121,21 @@ fn import_artifact(raw: &str, source: &str) -> Option<ActorPolicyModel> {
     }
 }
 
-fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorPolicyModel> {
+fn import_actor_source(
+    raw: &str,
+    resolved: &Path,
+    dir: &Path,
+    source: &str,
+) -> Option<ActorPolicyModel> {
     let domains = collect_domains(dir, source);
+    // The driver path is the RESOLVED location, not the raw import string:
+    // the lowerer derives each domain's base directory from its driver path
+    // to locate `vocab/` snapshots and `model.lock`, so a raw relative
+    // string would resolve those against the process CWD. The driver
+    // matches imports by exact string first, then lexically against the
+    // actor file's directory, so resolved keys here line up
+    // (yestechgroup/onboarding-os#64).
+    let actor_path = resolved.display().to_string();
     // Domain files may declare `import schema "<path>"` (issue #230); the
     // rex compiler errors with `imported schema '…' was not provided`
     // unless their content is provided. Policy imports stay
@@ -155,7 +169,8 @@ fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorPolic
         .iter()
         .map(|d| (d.path.clone(), d.source.clone()))
         .collect();
-    let compilation = compile_actors_str_with_imports(raw, source, &domain_pairs, &schema_imports);
+    let compilation =
+        compile_actors_str_with_imports(&actor_path, source, &domain_pairs, &schema_imports);
     for (path, diagnostic) in &compilation.diagnostics {
         eprintln!(
             "Warning: policy import '{raw}' diagnostic in {path}: {}",
@@ -171,9 +186,12 @@ fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorPolic
     }
 }
 
-/// One collected `.mox` domain: the import-path-as-written key the rex
-/// compiler matches on, the source text, and the directory its own imports
-/// (`import "x.mox"`, `import schema "y.json"`) resolve against.
+/// One collected `.mox` domain: the **resolved** location key (the rex
+/// driver matches imports lexically against the actor file's directory and
+/// derives vocabulary snapshot directories from these paths — raw import
+/// strings would resolve those against the process CWD), the source text,
+/// and the directory its own imports (`import "x.mox"`, `import schema
+/// "y.json"`) resolve against.
 struct DomainSource {
     path: String,
     source: String,
@@ -181,10 +199,9 @@ struct DomainSource {
 }
 
 /// Collect the `.mox` domain sources an `.actor` file imports, following
-/// `import "x.mox"` lines transitively. Paths are keyed exactly as written
-/// (that is what `compile_actors_str_with_imports` matches on) and resolved
-/// relative to the importing file's directory; missing files warn and are
-/// skipped.
+/// `import "x.mox"` lines transitively. Paths are keyed by their location
+/// resolved against the importing file's directory; missing files warn and
+/// are skipped.
 fn collect_domains(dir: &Path, source: &str) -> Vec<DomainSource> {
     let mut domains: Vec<DomainSource> = Vec::new();
     collect_domains_inner(dir, source, &mut domains);
@@ -193,15 +210,16 @@ fn collect_domains(dir: &Path, source: &str) -> Vec<DomainSource> {
 
 fn collect_domains_inner(dir: &Path, source: &str, domains: &mut Vec<DomainSource>) {
     for import in scan_imports(source) {
-        if domains.iter().any(|d| d.path == import) {
+        let resolved = dir.join(&import);
+        let key = resolved.display().to_string();
+        if domains.iter().any(|d| d.path == key) {
             continue;
         }
-        let resolved = dir.join(&import);
         match std::fs::read_to_string(&resolved) {
             Ok(domain_source) => {
                 if let Some(domain_dir) = resolved.parent().map(Path::to_path_buf) {
                     domains.push(DomainSource {
-                        path: import.clone(),
+                        path: key,
                         source: domain_source.clone(),
                         dir: domain_dir.clone(),
                     });

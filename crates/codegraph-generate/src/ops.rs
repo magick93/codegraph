@@ -168,6 +168,7 @@ impl GlobalGenerator for OpsManifestGenerator {
             mox_files: Vec::new(),
             classifier: None,
             domain_config: None,
+            ifml_files: None,
             profile: None,
             // The manifest sits at the generated app root, so "." makes the
             // harness resolve app_dir == the directory containing the manifest.

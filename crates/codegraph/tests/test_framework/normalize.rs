@@ -43,6 +43,26 @@ pub fn normalize_for_hash(path: &str, bytes: &[u8]) -> Vec<u8> {
         .into_owned();
     let text = text.replace(root.trim_start_matches('/'), "<CODEGRAPH_ROOT>");
     let text = text.replace(&root, "<CODEGRAPH_ROOT>");
+    // Shortest-relative paths from a differently-deep output directory embed
+    // the checkout path minus its first component (see the
+    // relative_path_fragments test below); replace that fragment too, or
+    // hashing depends on where the workspace is checked out.
+    let mut text = if let Some((_, fragment)) = root.trim_start_matches('/').split_once('/') {
+        text.replace(fragment, "<CODEGRAPH_ROOT>")
+    } else {
+        text
+    };
+    // Climbing segments in front of the placeholder collapse away: outputs
+    // at different depths (or absolute outputs) must hash identically —
+    // the emitter emits shortest-relative paths whose dot-dot depth depends
+    // on the output directory's depth.
+    loop {
+        let collapsed = text.replacen("../<CODEGRAPH_ROOT>", "<CODEGRAPH_ROOT>", 1);
+        if collapsed == text {
+            break;
+        }
+        text = collapsed;
+    }
     let needle = "rev = \"";
     let placeholder = "0".repeat(40);
     let mut out = String::with_capacity(text.len());
@@ -97,7 +117,10 @@ fn relative_checkout_path_occurrence_is_normalized() {
         "[dependencies]\ncodegraph-ops = {{ path = \"../../../{stripped}/crates/codegraph-ops\" }}\n"
     );
     let out = normalize_for_hash("Cargo.toml", toml.as_bytes());
-    let expected = b"[dependencies]\ncodegraph-ops = { path = \"../../../<CODEGRAPH_ROOT>/crates/codegraph-ops\" }\n";
+    // The fragment is replaced AND the climbing segments collapse, so the
+    // hash no longer depends on the output directory's depth (#241).
+    let expected =
+        b"[dependencies]\ncodegraph-ops = { path = \"<CODEGRAPH_ROOT>/crates/codegraph-ops\" }\n";
     assert_eq!(out, expected.to_vec());
 }
 
@@ -139,5 +162,45 @@ fn sha256_hex_round_trips_known_digests() {
     assert_eq!(
         sha256_hex(b"abc"),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+}
+
+#[test]
+fn relative_path_fragments_of_the_checkout_are_normalized() {
+    // Shortest-relative dependency paths from a differently-deep output
+    // directory embed the checkout path minus its first component:
+    // /tmp/opencode/cg-rls → "../../opencode/cg-rls/crates/...". The
+    // absolute-root replacement cannot catch that fragment, and hashing
+    // must not depend on where the workspace is checked out
+    // (magick93/codegraph#241).
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("manifest dir two levels below workspace root")
+        .to_string_lossy()
+        .into_owned();
+    let trimmed = root.trim_start_matches('/');
+    let (_, fragment) = trimmed
+        .split_once('/')
+        .expect("checkout path has more than one component");
+
+    let leaked = format!(
+        "[dependencies]\ncodegraph-ops = {{ path = \"../../{fragment}/crates/codegraph-ops\" }}\n"
+    );
+    let normalized = String::from_utf8(normalize_for_hash("testkit/Cargo.toml", leaked.as_bytes()))
+        .expect("utf8");
+
+    assert!(
+        !normalized.contains(fragment),
+        "checkout fragment must be normalized away: {normalized}"
+    );
+    assert!(normalized.contains("<CODEGRAPH_ROOT>"), "{normalized}");
+    // Outputs at different depths (or absolute outputs) must hash
+    // identically: climbing segments in front of the placeholder collapse
+    // away. CI (output under /tmp, checkout under /home/runner) and a
+    // local worktree otherwise disagree byte-for-byte (#241).
+    assert!(
+        !normalized.contains("../"),
+        "climbing segments before <CODEGRAPH_ROOT> must collapse: {normalized}"
     );
 }
