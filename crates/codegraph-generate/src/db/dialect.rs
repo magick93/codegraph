@@ -271,6 +271,14 @@ pub trait SqlDialect: fmt::Debug + Send + Sync {
         None
     }
 
+    /// Validate that a PostgreSQL column type is representable in this
+    /// dialect. Returns an error message when the type would produce DDL
+    /// the target database rejects (e.g. a type outside SQLite STRICT's
+    /// INT/INTEGER/REAL/TEXT/BLOB/ANY set). Default: everything maps.
+    fn validate_column_type(&self, _pg_type: &str) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Wrap a default expression for a specific column type.
     fn wrap_default(&self, default: &str, _pg_type: &str) -> String {
         default.to_string()
@@ -469,18 +477,42 @@ impl SqlDialect for SqliteDialect {
             "UUID" | "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" | "JSONB" | "TEXT" | "VARCHAR" => {
                 Some("TEXT".to_string())
             }
+            // ISO-8601 `YYYY-MM-DD` text: ordering and equality are preserved.
+            "DATE" => Some("TEXT".to_string()),
             "BOOLEAN" | "INTEGER" | "INT4" | "INT8" | "SMALLINT" | "BIGINT" | "SERIAL"
             | "BIGSERIAL" => Some("INTEGER".to_string()),
-            "FLOAT" | "FLOAT8" | "DOUBLE PRECISION" | "REAL" | "NUMERIC" | "DECIMAL" => {
+            // Prefix forms carry a precision suffix (e.g. NUMERIC(10,2)).
+            "FLOAT" | "FLOAT8" | "DOUBLE PRECISION" | "REAL" => Some("REAL".to_string()),
+            _ if upper.starts_with("NUMERIC") || upper.starts_with("DECIMAL") => {
                 Some("REAL".to_string())
             }
+            "BYTEA" => Some("BLOB".to_string()),
             _ if upper.starts_with("GEOMETRY")
                 || upper.starts_with("GEOGRAPHY")
                 || upper.starts_with("VECTOR") =>
             {
                 Some("BLOB".to_string())
             }
+            // Range types (INT4RANGE, DATERANGE, ...) and array types
+            // (TEXT[], ...) are deliberately NOT mapped: SQLite has no
+            // equivalent, and coercing them to TEXT would silently lose
+            // their operators. validate_column_type refuses them instead.
             _ => None,
+        }
+    }
+
+    fn validate_column_type(&self, pg_type: &str) -> Result<(), String> {
+        const STRICT_TYPES: [&str; 6] = ["INT", "INTEGER", "REAL", "TEXT", "BLOB", "ANY"];
+        if self.map_pg_type(pg_type).is_some()
+            || STRICT_TYPES.contains(&pg_type.to_uppercase().as_str())
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "type `{pg_type}` has no SQLite equivalent — STRICT tables \
+                 accept only INT, INTEGER, REAL, TEXT, BLOB, ANY and this \
+                 type is not mapped to any of them"
+            ))
         }
     }
 
@@ -597,6 +629,61 @@ mod tests {
             Some("BLOB".to_string())
         );
         assert_eq!(d.map_pg_type("VECTOR(1536)"), Some("BLOB".to_string()));
+    }
+
+    #[test]
+    fn test_map_pg_type_sqlite_date_bytea_and_suffixed_numerics() {
+        let d = SqliteDialect::new();
+        // ISO-8601 text: ordering and equality preserved.
+        assert_eq!(d.map_pg_type("DATE"), Some("TEXT".to_string()));
+        assert_eq!(d.map_pg_type("BYTEA"), Some("BLOB".to_string()));
+        // Precision-suffixed numerics must map, not pass through raw into a
+        // STRICT table.
+        assert_eq!(d.map_pg_type("NUMERIC(10,2)"), Some("REAL".to_string()));
+        assert_eq!(d.map_pg_type("DECIMAL(18,4)"), Some("REAL".to_string()));
+        assert_eq!(d.map_pg_type("NUMERIC"), Some("REAL".to_string()));
+        assert_eq!(d.map_pg_type("DOUBLE PRECISION"), Some("REAL".to_string()));
+    }
+
+    #[test]
+    fn test_sqlite_validate_column_type() {
+        let d = SqliteDialect::new();
+        // Mapped types and native STRICT types are representable.
+        for ok in [
+            "DATE",
+            "UUID",
+            "JSONB",
+            "TIMESTAMPTZ",
+            "BYTEA",
+            "NUMERIC(10,2)",
+            "TEXT",
+            "INTEGER",
+            "INT",
+            "REAL",
+            "BLOB",
+            "ANY",
+        ] {
+            assert!(d.validate_column_type(ok).is_ok(), "{ok} must validate");
+        }
+        // Range and array types have no SQLite equivalent — refuse rather
+        // than silently coerce to TEXT and lose their operators.
+        for refused in [
+            "DATERANGE",
+            "TSTZRANGE",
+            "INT4RANGE",
+            "INT8RANGE",
+            "TEXT[]",
+            "INTEGER[]",
+        ] {
+            assert!(
+                d.validate_column_type(refused).is_err(),
+                "{refused} must be refused"
+            );
+        }
+        // Postgres accepts every PostgreSQL type.
+        let p = PostgresDialect::new();
+        assert!(p.validate_column_type("DATERANGE").is_ok());
+        assert!(p.validate_column_type("TEXT[]").is_ok());
     }
 
     #[test]

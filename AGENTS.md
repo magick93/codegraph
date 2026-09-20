@@ -916,13 +916,37 @@ templates/db/sqlite/*.tera               (available in all template contexts)
 
 ### SqlDialect trait
 
-Defined at `crates/codegraph/src/generate/db/dialect.rs`:
+Defined at `crates/codegraph-generate/src/db/dialect.rs`:
 
-- **30 methods** covering: type mapping, default expressions, feature flags,
-  identifier handling, trigger syntax, FTS engine selection
+- **30+ methods** covering: type mapping, default expressions, feature flags,
+  identifier handling, trigger syntax, FTS engine selection, plus
+  `validate_column_type` (per-dialect column-type legality)
 - `DatabaseTarget` enum: `Postgres`, `Sqlite` (default: `Postgres`)
 - Factory: `dialect_for_target(DatabaseTarget)` returns `Box<dyn SqlDialect>`
-- 12 unit tests
+- 14 unit tests
+
+### SQLite STRICT validation + parse gate
+
+Two generation-time gates keep invalid SQLite DDL from ever reaching a
+migration file (previously `DATE`, `NUMERIC(10,2)`, and `BYTEA` columns
+passed through raw into STRICT tables and failed at `sqlite3` apply time):
+
+1. **Semantic type check** (`dialect.rs` `SqliteDialect::validate_column_type`,
+   wired into `apply_dialect_type_mapping` in `ddl.rs`): every column type
+   must either map via `map_pg_type` or be a native STRICT type
+   (`INT`/`INTEGER`/`REAL`/`TEXT`/`BLOB`/`ANY`). `DATE` → `TEXT` (ISO-8601,
+   lossless), `BYTEA` → `BLOB`, precision-suffixed numerics → `REAL`. Range
+   types (`DATERANGE`, ...) and array types (`TEXT[]`, ...) are deliberately
+   unmapped and REFUSED — coercing them to TEXT would silently lose their
+   operators. Unrepresentable types are a hard generation error naming the
+   table and column.
+2. **Parse gate** (`db/sqlite_gate.rs`, sqlglot-rust `=0.10.30`): every
+   generated SQLite statement must parse under the SQLite dialect before the
+   file is emitted. Trigger bodies (`CREATE TRIGGER ... BEGIN ... END;`) are
+   skipped textually (sqlglot-rust has no trigger grammar); everything else
+   (tables, indexes, FTS5 virtual tables, views) must parse. Postgres output
+   is NOT gated — it contains PL/pgSQL the generic parser rejects. Known
+   limitation: a template regression inside a trigger body is not caught.
 
 ### Profile configuration
 
@@ -1486,14 +1510,17 @@ from pre-feature master).
 `db/expr_sql.rs` parses the stored expression source with `rex-expr` (parse
 only, no model) and lowers: own-table field refs (→ quoted column, resolved
 through the class's schema properties), string/number/boolean literals,
+`date("YYYY-MM-DD")` literals (→ `DATE '...'`, format-validated; the compared
+field is guaranteed date-typed by the upstream rex-driver typecheck),
 `==`/`=`/`!=`/`<`/`<=`/`>`/`>=`, `&&`/`||`/`!`, parentheses, and `field ==
 null` / `field != null` → `IS NULL` / `IS NOT NULL`. EVERYTHING else —
-arithmetic, `?.`, `?:`, `let`, lambdas, collection algebra, `if`, calls,
-list literals, dotted navigation, unknown fields — is a HARD generation
-error naming the capability (rexlang Cedar-backend philosophy). Postgres
-only; sqlite is a documented no-op. Policy-derived RLS is ADDITIVE with the
-domains.toml-driven RLS: permissive policies OR-combine (only widening);
-RESTRICTIVE policies from `rls.tera` still AND on top.
+arithmetic, `?.`, `?:`, `let`, lambdas, collection algebra, date calendar
+algebra (`plus_days` etc.), `if`, calls, list literals, dotted navigation,
+unknown fields — is a HARD generation error naming the capability (rexlang
+Cedar-backend philosophy). Postgres only; sqlite is a documented no-op.
+Policy-derived RLS is ADDITIVE with the domains.toml-driven RLS: permissive
+policies OR-combine (only widening); RESTRICTIVE policies from `rls.tera`
+still AND on top.
 
 ## Branch & PR Workflow
 

@@ -14,6 +14,7 @@ pub mod policy_rls;
 pub mod report_view;
 pub mod seed;
 pub mod service_tables;
+pub mod sqlite_gate;
 pub mod workflow_seed;
 
 use std::path::{Path, PathBuf};
