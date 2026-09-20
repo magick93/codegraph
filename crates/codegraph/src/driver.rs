@@ -367,7 +367,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
         let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
         for ifml_path in ifml_files {
-            let model = codegraph_ifml_dsl::parse_ifml_file(ifml_path).map_err(|e| {
+            let model = rex_ifml::parse_ifml_file(ifml_path).map_err(|e| {
                 crate::error::Error::Config(format!(
                     "Failed to parse IFML file '{}': {}",
                     ifml_path.display(),
@@ -681,7 +681,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
     println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
     let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
     for ifml_path in ifml_files {
-        let model = codegraph_ifml_dsl::parse_ifml_file(ifml_path).map_err(|e| {
+        let model = rex_ifml::parse_ifml_file(ifml_path).map_err(|e| {
             crate::error::Error::Config(format!(
                 "Failed to parse IFML file '{}': {}",
                 ifml_path.display(),

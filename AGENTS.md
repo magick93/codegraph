@@ -2,7 +2,7 @@
 
 ## Project structure
 
-Workspace root `Cargo.toml` with 13 crates:
+Workspace root `Cargo.toml` with 12 crates:
 
 | Crate | Purpose |
 |-------|---------|
@@ -17,11 +17,12 @@ Workspace root `Cargo.toml` with 13 crates:
 | `codegraph-config` | Domain config parsing (`domains.toml`, classifier.toml, profiles.toml) + `OpsManifest` |
 | `codegraph-ext-points` | Extension points config types |
 | `codegraph-workflow` | Generic state machine workflow engine (SeaORM) |
-| `codegraph-ifml-dsl` | Pest-based IFML DSL parser + AST (see "IFML Integration" section) |
 | `ast-ifml` | auto-lsp AST definitions for IFML |
 | `codegraph-ops` | Rust test & deploy harness (see "Ops Harness" section) |
 
-The 13 members above are the workspace. The tree also carries
+The 12 members above are the workspace (the IFML DSL parser lives upstream in
+the rexlang repo as `rex-ifml`, consumed as a rev-pinned git dep — see the
+"IFML Integration" section). The tree also carries
 non-workspace directories: `codegraph-vscode/` (IFML VS Code extension),
 `crates/tree-sitter-ifml/` and `crates/tree-sitter-mox/` (editor grammars),
 and `crates/review/` (regenerated fixture app exercised by
@@ -112,9 +113,9 @@ crate); older docs referencing `crates/codegraph/src/generate/ifml/` are stale.
 
 | Layer | Location | Technology |
 |-------|----------|------------|
-| **DSL Parser** | `crates/codegraph-ifml-dsl/` | Pest (Rust PEG parser), 68 tests |
-| **AST types** | `crates/codegraph-ifml-dsl/src/ast.rs` | Serde-serializable AST + `render_expression()` |
-| **Grammar** | `crates/codegraph-ifml-dsl/src/grammar/ifml.pest` | PEG grammar (source of truth) |
+| **DSL Parser** | rexlang `crates/rex-ifml` (git dep, rev-pinned) | Pest (Rust PEG parser), consumed via `use rex_ifml::*` |
+| **AST types** | rexlang `crates/rex-ir/src/ifml.rs` (re-exported by `rex-ifml`) | Serde-serializable AST + `render_expression()` (camelCase, type-tagged wire format) |
+| **Grammar** | rexlang `crates/rex-ifml/src/grammar/ifml.pest` | PEG grammar (source of truth) |
 | **Tree-sitter grammar** | `codegraph-vscode/grammar/grammar.js` → `crates/tree-sitter-ifml/src/parser.c` | LSP/editor parsing; regenerate with `npx tree-sitter-cli generate --abi 14` |
 | **Graph model** | `crates/codegraph-core/src/types/ifml.rs` | 7 node types, 16 edge types, `NavigationFlowRecord`, `ModuleUseRecord` |
 | **Grafeo DDL** | `crates/codegraph-grafeo/src/schema_ddl.rs` | GQL CREATE statements |
@@ -609,7 +610,6 @@ cargo run -- lsp --schemas schemas/ --classifier classifier.toml --config domain
 ```bash
 # Rust tests
 cargo test --workspace                    # all tests (969+)
-cargo test -p codegraph-ifml-dsl          # 68 DSL parser tests
 cargo test -p codegraph -- lsp            # 26 LSP server tests
 cargo test -p codegraph --test ifml_e2e_tests  # 8 E2E tests
 cargo test -p codegraph-generate --lib -- ifml  # 34 IFML generator tests

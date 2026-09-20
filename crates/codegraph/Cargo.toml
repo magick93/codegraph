@@ -15,7 +15,6 @@ codegraph-config = { path = "../codegraph-config" }
 codegraph-core = { path = "../codegraph-core" }
 codegraph-backend = { path = "../codegraph-backend" }
 codegraph-ext-points = { path = "../codegraph-ext-points" }
-codegraph-ifml-dsl = { path = "../codegraph-ifml-dsl" }
 codegraph-ops = { path = "../codegraph-ops" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -44,6 +43,7 @@ tree-sitter = { workspace = true }
 tree-sitter-svelte-next = "0.1.1"
 rex-ir = { workspace = true }
 rex-driver = { workspace = true }
+rex-ifml = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

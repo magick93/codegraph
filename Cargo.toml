@@ -12,7 +12,6 @@ members = [
     "crates/codegraph-naming",
     "crates/codegraph-type-contracts",
     "crates/codegraph-workflow",
-    "crates/codegraph-ifml-dsl",
     "crates/ast-ifml",
     "gravy-atproto",
     "crates/codegraph-ops",
@@ -51,6 +50,7 @@ lsp-types = "0.97"
 tree-sitter = "0.25"
 tree-sitter-language = "0.1"
 salsa = "0.22"
-rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "699b3a589c3404801e12f9683c2f8a8360edffd6" }
-rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "699b3a589c3404801e12f9683c2f8a8360edffd6" }
-rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "699b3a589c3404801e12f9683c2f8a8360edffd6" }
+rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }
+rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }
+rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }
+rex-ifml = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }

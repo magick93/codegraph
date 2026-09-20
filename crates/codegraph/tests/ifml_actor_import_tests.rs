@@ -68,7 +68,7 @@ fn write_file(dir: &Path, rel: &str, contents: &str) {
 }
 
 async fn ingest_ifml_file(engine: &GrafeoEngine, ifml_path: &Path) -> usize {
-    let model = codegraph_ifml_dsl::parse_ifml_file(ifml_path).expect("parse .ifml");
+    let model = rex_ifml::parse_ifml_file(ifml_path).expect("parse .ifml");
     let mut stats = codegraph::ingest::ifml_ingest::ingest_ifml_model(engine, &model)
         .await
         .expect("ingest model");

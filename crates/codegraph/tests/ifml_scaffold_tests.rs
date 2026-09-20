@@ -1,6 +1,6 @@
 //! Round-trip tests for `codegraph ifml-scaffold`: run the scaffold against
 //! a temp fixture (hello-world TODO schemas), then parse the emitted DSL
-//! with the real `codegraph-ifml-dsl` parser and assert on views, form
+//! with the real `rex-ifml` parser and assert on views, form
 //! fields, and navigation events.
 
 use std::fs;
@@ -124,14 +124,11 @@ impl Fixture {
     }
 }
 
-fn view_names(model: &codegraph_ifml_dsl::IfmlModel) -> Vec<String> {
+fn view_names(model: &rex_ifml::IfmlModel) -> Vec<String> {
     model.views.iter().map(|v| v.name.clone()).collect()
 }
 
-fn find_view<'a>(
-    model: &'a codegraph_ifml_dsl::IfmlModel,
-    name: &str,
-) -> &'a codegraph_ifml_dsl::ViewDeclaration {
+fn find_view<'a>(model: &'a rex_ifml::IfmlModel, name: &str) -> &'a rex_ifml::ViewDeclaration {
     model
         .views
         .iter()
@@ -148,7 +145,7 @@ async fn scaffold_output_parses_with_expected_views_and_navigation() {
         .expect("scaffold should succeed");
 
     let content = fs::read_to_string(&output).unwrap();
-    let model = codegraph_ifml_dsl::parse_ifml(&content).expect("emitted DSL must parse");
+    let model = rex_ifml::parse_ifml(&content).expect("emitted DSL must parse");
 
     // Domain headers from domains.toml
     let domain_names: Vec<&str> = model.domains.iter().map(|d| d.name.as_str()).collect();
@@ -177,10 +174,7 @@ async fn scaffold_output_parses_with_expected_views_and_navigation() {
     assert_eq!(home.events.len(), 3, "one nav link per entity");
     for event in &home.events {
         assert!(
-            matches!(
-                &event.action,
-                codegraph_ifml_dsl::EventAction::Navigate { .. }
-            ),
+            matches!(&event.action, rex_ifml::EventAction::Navigate { .. }),
             "Home events should navigate"
         );
     }
@@ -188,10 +182,7 @@ async fn scaffold_output_parses_with_expected_views_and_navigation() {
     // List view: select -> navigate to Detail with id binding
     let list = find_view(&model, "TodoItemList");
     let grid = &list.components[0];
-    assert_eq!(
-        grid.component_type,
-        Some(codegraph_ifml_dsl::ComponentType::List)
-    );
+    assert_eq!(grid.component_type, Some(rex_ifml::ComponentType::List));
     let data_prop = grid
         .properties
         .iter()
@@ -199,15 +190,12 @@ async fn scaffold_output_parses_with_expected_views_and_navigation() {
         .expect("list binds data");
     assert_eq!(
         data_prop.value,
-        codegraph_ifml_dsl::ValueExpression::Identifier("TodoItem".to_string())
+        rex_ifml::ValueExpression::Identifier("TodoItem".to_string())
     );
     assert_eq!(grid.events.len(), 1);
-    assert_eq!(
-        grid.events[0].event_type,
-        codegraph_ifml_dsl::EventType::Select
-    );
+    assert_eq!(grid.events[0].event_type, rex_ifml::EventType::Select);
     match &grid.events[0].action {
-        codegraph_ifml_dsl::EventAction::Navigate { target, binding } => {
+        rex_ifml::EventAction::Navigate { target, binding } => {
             assert_eq!(target, "TodoItemDetail");
             let binding = binding.as_ref().expect("id binding");
             assert_eq!(binding.pairs[0].0, "id");
@@ -221,17 +209,11 @@ async fn scaffold_output_parses_with_expected_views_and_navigation() {
     assert_eq!(detail.params[0].name, "id");
     assert_eq!(detail.params[0].type_ref, "Uuid");
     let info = &detail.components[0];
-    assert_eq!(
-        info.component_type,
-        Some(codegraph_ifml_dsl::ComponentType::Details)
-    );
+    assert_eq!(info.component_type, Some(rex_ifml::ComponentType::Details));
     assert_eq!(info.events.len(), 1);
-    assert_eq!(
-        info.events[0].event_type,
-        codegraph_ifml_dsl::EventType::Back
-    );
+    assert_eq!(info.events[0].event_type, rex_ifml::EventType::Back);
     match &info.events[0].action {
-        codegraph_ifml_dsl::EventAction::Navigate { target, .. } => {
+        rex_ifml::EventAction::Navigate { target, .. } => {
             assert_eq!(target, "TodoItemList");
         }
         other => panic!("Expected Navigate, got {other:?}"),
@@ -242,10 +224,10 @@ async fn scaffold_output_parses_with_expected_views_and_navigation() {
     let form_comp = &form.components[0];
     assert_eq!(
         form_comp.component_type,
-        Some(codegraph_ifml_dsl::ComponentType::Form)
+        Some(rex_ifml::ComponentType::Form)
     );
     let spec = match &form_comp.spec {
-        Some(codegraph_ifml_dsl::ComponentSpec::Form(spec)) => spec,
+        Some(rex_ifml::ComponentSpec::Form(spec)) => spec,
         other => panic!("Expected Form spec, got {other:?}"),
     };
     let field = |name: &str| {
@@ -256,34 +238,19 @@ async fn scaffold_output_parses_with_expected_views_and_navigation() {
     };
 
     let title = field("title");
-    assert_eq!(title.input, codegraph_ifml_dsl::InputFieldType::Text);
+    assert_eq!(title.input, rex_ifml::InputFieldType::Text);
     assert!(title.required, "title is required in the schema");
 
     assert!(!field("notes").required);
-    assert_eq!(
-        field("completed").input,
-        codegraph_ifml_dsl::InputFieldType::Checkbox
-    );
-    assert_eq!(
-        field("due_date").input,
-        codegraph_ifml_dsl::InputFieldType::DateTime
-    );
+    assert_eq!(field("completed").input, rex_ifml::InputFieldType::Checkbox);
+    assert_eq!(field("due_date").input, rex_ifml::InputFieldType::DateTime);
     assert_eq!(
         field("contact_email").input,
-        codegraph_ifml_dsl::InputFieldType::Email
+        rex_ifml::InputFieldType::Email
     );
-    assert_eq!(
-        field("tags").input,
-        codegraph_ifml_dsl::InputFieldType::TextArea
-    );
-    assert_eq!(
-        field("priority").input,
-        codegraph_ifml_dsl::InputFieldType::Number
-    );
-    assert_eq!(
-        field("list_id").input,
-        codegraph_ifml_dsl::InputFieldType::Hidden
-    );
+    assert_eq!(field("tags").input, rex_ifml::InputFieldType::TextArea);
+    assert_eq!(field("priority").input, rex_ifml::InputFieldType::Number);
+    assert_eq!(field("list_id").input, rex_ifml::InputFieldType::Hidden);
     assert!(
         spec.fields.iter().all(|f| f.name != "id"),
         "primary key must not become a form field"
@@ -291,17 +258,11 @@ async fn scaffold_output_parses_with_expected_views_and_navigation() {
 
     // Form navigation: save + cancel back to the list
     assert_eq!(form_comp.events.len(), 2);
-    assert_eq!(
-        form_comp.events[0].event_type,
-        codegraph_ifml_dsl::EventType::Save
-    );
-    assert_eq!(
-        form_comp.events[1].event_type,
-        codegraph_ifml_dsl::EventType::Cancel
-    );
+    assert_eq!(form_comp.events[0].event_type, rex_ifml::EventType::Save);
+    assert_eq!(form_comp.events[1].event_type, rex_ifml::EventType::Cancel);
     for event in &form_comp.events {
         match &event.action {
-            codegraph_ifml_dsl::EventAction::Navigate { target, .. } => {
+            rex_ifml::EventAction::Navigate { target, .. } => {
                 assert_eq!(target, "TodoItemList");
             }
             other => panic!("Expected Navigate, got {other:?}"),
@@ -315,7 +276,7 @@ async fn scaffold_output_parses_with_expected_views_and_navigation() {
         .find(|p| p.key == "fields")
         .expect("list has fields");
     match &list_fields_prop.value {
-        codegraph_ifml_dsl::ValueExpression::Array(items) => {
+        rex_ifml::ValueExpression::Array(items) => {
             assert!(items.len() <= 5, "list fields capped at 5");
         }
         other => panic!("Expected Array, got {other:?}"),
@@ -352,7 +313,7 @@ async fn scaffold_domain_filter_limits_output() {
         .expect("filtered scaffold should succeed");
 
     let content = fs::read_to_string(&output).unwrap();
-    let model = codegraph_ifml_dsl::parse_ifml(&content).expect("emitted DSL must parse");
+    let model = rex_ifml::parse_ifml(&content).expect("emitted DSL must parse");
 
     let names = view_names(&model);
     assert!(names.contains(&"TodoListList".to_string()));
@@ -472,7 +433,7 @@ entities = ["NoteType"]
     .expect("scaffold should succeed");
 
     let content = fs::read_to_string(&output).unwrap();
-    let model = codegraph_ifml_dsl::parse_ifml(&content).expect("emitted DSL must parse");
+    let model = rex_ifml::parse_ifml(&content).expect("emitted DSL must parse");
 
     let form = find_view(&model, "RefundForm");
     let condition = form
@@ -480,7 +441,7 @@ entities = ["NoteType"]
         .as_ref()
         .expect("workflow form carries a guard");
     assert_eq!(
-        codegraph_ifml_dsl::render_expression(condition),
+        rex_ifml::render_expression(condition),
         r#"item.status != "archived" && item.status != "done""#,
         "the form view guards against terminal states: {content}"
     );

@@ -3,7 +3,7 @@ use codegraph_core::types::{
     ActionNode, DataBindingNode, EdgeProperties, EdgeType, EventNode, ModuleUseRecord,
     ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
 };
-use codegraph_ifml_dsl::*;
+use rex_ifml::*;
 
 use crate::error::{Error, Result};
 
