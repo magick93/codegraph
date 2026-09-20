@@ -10,7 +10,7 @@ use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, GeneratedFile};
 use codegraph_config::{DomainConfig, SearchConfig};
@@ -1948,8 +1948,19 @@ fn quote_ddl_identifiers(ctx: &mut DdlContext) {
 /// Post-process column types and defaults through the dialect.
 /// Converts PG types to dialect-appropriate types (e.g. UUID → TEXT for SQLite)
 /// and wraps default expressions (e.g. strips ::type casts, removes gen_random_uuid()).
-fn apply_dialect_type_mapping(dialect: &dyn SqlDialect, ctx: &mut DdlContext) {
+///
+/// Also validates every column type via
+/// [`SqlDialect::validate_column_type`](crate::db::dialect::SqlDialect) so an
+/// unrepresentable type is a generation error instead of invalid DDL.
+fn apply_dialect_type_mapping(dialect: &dyn SqlDialect, ctx: &mut DdlContext) -> Result<()> {
+    let mut errors = Vec::new();
     for col in &mut ctx.columns {
+        if let Err(type_err) = dialect.validate_column_type(&col.pg_type) {
+            errors.push(format!(
+                "table `{}`: column `{}`: {type_err}",
+                ctx.table_name, col.name
+            ));
+        }
         let original_type = col.pg_type.clone();
         if let Some(mapped) = dialect.map_pg_type(&original_type) {
             col.pg_type = mapped;
@@ -1963,6 +1974,12 @@ fn apply_dialect_type_mapping(dialect: &dyn SqlDialect, ctx: &mut DdlContext) {
     }
     for child in &mut ctx.child_tables {
         for col in &mut child.columns {
+            if let Err(type_err) = dialect.validate_column_type(&col.pg_type) {
+                errors.push(format!(
+                    "table `{}`: column `{}`: {type_err}",
+                    child.table_name, col.name
+                ));
+            }
             let original_type = col.pg_type.clone();
             if let Some(mapped) = dialect.map_pg_type(&original_type) {
                 col.pg_type = mapped;
@@ -1974,6 +1991,15 @@ fn apply_dialect_type_mapping(dialect: &dyn SqlDialect, ctx: &mut DdlContext) {
                 }
             }
         }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::Validation(format!(
+            "DDL contains column types the `{}` dialect cannot represent:\n  - {}",
+            dialect.name(),
+            errors.join("\n  - ")
+        )))
     }
 }
 
@@ -2005,8 +2031,9 @@ impl EntityGenerator for DdlGenerator {
             return Ok(Vec::new());
         }
 
-        // Apply dialect-specific type mapping and default wrapping
-        apply_dialect_type_mapping(&*self.dialect, &mut ctx);
+        // Apply dialect-specific type mapping, default wrapping, and
+        // per-dialect column type validation
+        apply_dialect_type_mapping(&*self.dialect, &mut ctx)?;
 
         // Quote PostgreSQL reserved words in column names (PG-specific, harmless pass-through for other dialects)
         quote_ddl_identifiers(&mut ctx);
@@ -2145,6 +2172,14 @@ impl EntityGenerator for DdlGenerator {
             });
         }
 
+        // Parse-validate generated SQLite DDL before emitting it: STRICT
+        // tables reject invalid statements at apply time, so the failure
+        // must surface at generation time. Postgres output is not gated —
+        // it contains PL/pgSQL the generic parser cannot accept.
+        if self.dialect.name() == "sqlite" {
+            super::sqlite_gate::validate_sqlite_files(&files)?;
+        }
+
         Ok(files)
     }
 }
@@ -2152,6 +2187,7 @@ impl EntityGenerator for DdlGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::dialect::{PostgresDialect, SqliteDialect};
 
     fn col(pg_type: &str) -> ColumnDef {
         ColumnDef {
@@ -2504,5 +2540,75 @@ mod tests {
         assert!(sql.contains("'ROLE_FORBIDDEN'"));
         // The retired fixed-matrix function is gone.
         assert!(!sql.contains("enforce_role_action"));
+    }
+
+    fn test_context() -> DdlContext {
+        DdlContext {
+            schema_name: "hr".to_string(),
+            table_name: "candidate".to_string(),
+            display_name: "Candidate".to_string(),
+            domain: "hr".to_string(),
+            columns: vec![],
+            primary_key: "id".to_string(),
+            foreign_keys: vec![],
+            check_constraints: vec![],
+            indexes: vec![],
+            has_updated_at: false,
+            is_tenant_scoped: false,
+            tenant_table: String::new(),
+            extensions: vec![],
+            child_tables: vec![],
+            comments: vec![],
+            has_workflow: false,
+            resource_name: "candidate".to_string(),
+            fts: None,
+            embeddings: vec![],
+            is_auditable: false,
+            role_enforced: false,
+            role_minima: vec![],
+            roles_hierarchy: vec![],
+            user_scope_column: None,
+            is_codelist: false,
+            has_demo_flag: false,
+        }
+    }
+
+    #[test]
+    fn sqlite_dialect_refuses_unrepresentable_column_types() {
+        let mut ctx = test_context();
+        ctx.columns.push(col("DATERANGE"));
+        ctx.child_tables.push(child(vec![col("TEXT[]")]));
+        let err = match apply_dialect_type_mapping(&SqliteDialect::new(), &mut ctx) {
+            Err(err) => err,
+            Ok(()) => panic!("sqlite must refuse range and array types"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("sqlite"), "must name the dialect: {msg}");
+        assert!(msg.contains("candidate"), "must name the table: {msg}");
+        assert!(msg.contains("DATERANGE"), "must name the type: {msg}");
+        assert!(msg.contains("TEXT[]"), "must name the child type: {msg}");
+    }
+
+    #[test]
+    fn sqlite_dialect_maps_date_numeric_and_bytea() {
+        let mut ctx = test_context();
+        ctx.columns = vec![col("DATE"), col("NUMERIC(10,2)"), col("BYTEA")];
+        apply_dialect_type_mapping(&SqliteDialect::new(), &mut ctx)
+            .expect("date/numeric/bytea must map for sqlite");
+        assert_eq!(ctx.columns[0].pg_type, "TEXT");
+        assert_eq!(ctx.columns[1].pg_type, "REAL");
+        assert_eq!(ctx.columns[2].pg_type, "BLOB");
+    }
+
+    #[test]
+    fn postgres_dialect_accepts_all_pg_types() {
+        let mut ctx = test_context();
+        ctx.columns.push(col("DATERANGE"));
+        ctx.columns.push(col("TEXT[]"));
+        apply_dialect_type_mapping(&PostgresDialect::new(), &mut ctx)
+            .expect("postgres accepts every PostgreSQL type");
+        // Unmapped types pass through unchanged.
+        assert_eq!(ctx.columns[0].pg_type, "DATERANGE");
+        assert_eq!(ctx.columns[1].pg_type, "TEXT[]");
     }
 }

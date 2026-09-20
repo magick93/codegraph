@@ -533,8 +533,8 @@ mod tests {
     fn calendar_algebra_on_dates_is_still_refused() {
         // Calendar functions are method calls — outside the closed subset
         // (no clock, no computation in RLS predicates).
-        let err = lower("start_date.plus_days(3) > date(\"2026-01-01\")")
-            .expect_err("expected refusal");
+        let err =
+            lower("start_date.plus_days(3) > date(\"2026-01-01\")").expect_err("expected refusal");
         assert!(
             err.contains("capability `ReviewCandidate`"),
             "refusal must name the capability, got: {err}"

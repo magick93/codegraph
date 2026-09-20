@@ -829,6 +829,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "sqlglot-rust",
  "tempfile",
  "tera",
  "tokio",
@@ -4055,6 +4056,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqlglot-rust"
+version = "0.10.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ad7e00ba375408c7361d90eb7f43f1ad0c2b0b0e6b1d7d8df008bb6819b4a5"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "sqlx"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5250,7 +5263,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
