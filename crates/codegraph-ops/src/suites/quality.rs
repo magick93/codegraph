@@ -21,7 +21,8 @@ const TAIL_CHARS: usize = 800;
 /// 2. `cargo clippy --workspace -- -D warnings`.
 /// 3. `cargo fmt --all -- --check`.
 /// 4. Regenerate the app with `cargo run -p {graph_binary} -- run ...`
-///    (skipped with a warning when `graph_binary`/`schemas_dir` are unset;
+///    (skipped with a warning when `graph_binary` is unset or neither
+///    `mox_files` nor `schemas_dir` provides a model source;
 ///    only manifest flags with `Some` values are passed).
 /// 5. `cargo check` in the generated app directory.
 ///
@@ -63,21 +64,12 @@ pub async fn run_quality(config: &OpsConfig, extra: &[String]) -> OpsResult<()> 
     )?;
 
     output::section("4/5 regenerate generated app");
-    match (&config.manifest.graph_binary, &config.manifest.schemas_dir) {
-        (Some(binary), Some(schemas)) => {
-            let args = generate_args(
-                binary,
-                schemas,
-                &config.manifest.classifier,
-                &config.manifest.domain_config,
-                &config.manifest.profile,
-                &config.app_dir,
-            );
+    match regeneration_plan(config) {
+        RegenPlan::Run(args) => {
             output::info(format!("cargo {args:?}"));
             run_step("cargo", &args, &config.workspace_root)?;
         }
-        (None, _) => output::warn("graph_binary not set — skipping app regeneration"),
-        (_, None) => output::warn("schemas_dir not set — skipping app regeneration"),
+        RegenPlan::Skip(warning) => output::warn(warning),
     }
 
     output::section("5/5 cargo check (generated app)");
@@ -94,6 +86,81 @@ pub async fn run_quality(config: &OpsConfig, extra: &[String]) -> OpsResult<()> 
 
     output::ok("=== All checks passed ===");
     Ok(())
+}
+
+/// What quality gate 4 (regenerate generated app) should do.
+enum RegenPlan {
+    /// Run `cargo {args}` from the workspace root.
+    Run(Vec<String>),
+    /// Skip regeneration with this warning (remaining gates still run).
+    Skip(&'static str),
+}
+
+/// Decide gate 4 from the manifest. `mox_files` wins over `schemas_dir`;
+/// without a graph binary — or without any model source — regeneration is
+/// skipped with a warning, mirroring the previous per-flag warnings.
+fn regeneration_plan(config: &OpsConfig) -> RegenPlan {
+    let Some(binary) = &config.manifest.graph_binary else {
+        return RegenPlan::Skip("graph_binary not set — skipping app regeneration");
+    };
+    if !config.manifest.mox_files.is_empty() {
+        return RegenPlan::Run(generate_mox_args(
+            binary,
+            &config.manifest.mox_files,
+            &config.manifest.domain_config,
+            &config.manifest.profile,
+            &config.app_dir,
+        ));
+    }
+    match &config.manifest.schemas_dir {
+        Some(schemas) => RegenPlan::Run(generate_args(
+            binary,
+            schemas,
+            &config.manifest.classifier,
+            &config.manifest.domain_config,
+            &config.manifest.profile,
+            &config.app_dir,
+        )),
+        None => {
+            RegenPlan::Skip("mox_files not set and schemas_dir not set — skipping app regeneration")
+        }
+    }
+}
+
+/// Build the mox-mode `cargo run -p {graph_binary} -- run ...` argument
+/// vector: one `--mox-files` flag per file in manifest order, then the
+/// optional `--config`/`--profile`, then `--output`. No `--classifier` —
+/// the mox pipeline needs none; a manifest that also sets `schemas_dir`
+/// regenerates from mox (schemas_dir/classifier are ignored here).
+fn generate_mox_args(
+    graph_binary: &str,
+    mox_files: &[String],
+    domain_config: &Option<PathBuf>,
+    profile: &Option<String>,
+    app_dir: &Path,
+) -> Vec<String> {
+    let mut args = vec![
+        "run".to_string(),
+        "-p".to_string(),
+        graph_binary.to_string(),
+        "--".to_string(),
+        "run".to_string(),
+    ];
+    for file in mox_files {
+        args.push("--mox-files".to_string());
+        args.push(file.clone());
+    }
+    if let Some(cfg) = domain_config {
+        args.push("--config".to_string());
+        args.push(cfg.to_string_lossy().into_owned());
+    }
+    if let Some(p) = profile {
+        args.push("--profile".to_string());
+        args.push(p.clone());
+    }
+    args.push("--output".to_string());
+    args.push(app_dir.to_string_lossy().into_owned());
+    args
 }
 
 /// Build the `cargo run -p {graph_binary} -- run ...` argument vector for
@@ -190,6 +257,190 @@ mod tests {
         assert!(!args.contains(&"--config".to_string()));
         assert!(args.contains(&"default".to_string()));
         assert!(args.contains(&"generated-app".to_string()));
+    }
+
+    fn quality_manifest() -> codegraph_config::OpsManifest {
+        codegraph_config::OpsManifest {
+            app_name: "demo-app".into(),
+            graph_binary: Some("hr-graph".into()),
+            schemas_dir: None,
+            mox_files: Vec::new(),
+            ifml_files: None,
+            classifier: None,
+            domain_config: None,
+            profile: None,
+            output_dir: "generated-app".into(),
+            ui_dir: None,
+            smoke: None,
+            api_version: "v1".to_string(),
+            servers: Default::default(),
+            database: codegraph_config::OpsDatabase {
+                api: codegraph_config::OpsDbTarget {
+                    host: "localhost".into(),
+                    port: 5432,
+                    user: "u".into(),
+                    password: "p".into(),
+                    database: "postgres".into(),
+                    reset_sql: None,
+                    seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
+                },
+                e2e: None,
+                e2e_app: None,
+            },
+            supabase: None,
+            capabilities: Default::default(),
+            hurl: None,
+            hooks: vec![],
+            extensions: vec![],
+        }
+    }
+
+    fn expect_run(plan: RegenPlan) -> Vec<String> {
+        match plan {
+            RegenPlan::Run(args) => args,
+            RegenPlan::Skip(msg) => panic!("expected Run, got Skip({msg})"),
+        }
+    }
+
+    fn expect_skip(plan: RegenPlan) -> &'static str {
+        match plan {
+            RegenPlan::Skip(msg) => msg,
+            RegenPlan::Run(args) => panic!("expected Skip, got Run({args:?})"),
+        }
+    }
+
+    #[test]
+    fn generate_mox_args_exact_vector() {
+        let args = generate_mox_args(
+            "hr-graph",
+            &[
+                "model/common.mox".to_string(),
+                "model/billing.mox".to_string(),
+            ],
+            &Some(PathBuf::from("domains.toml")),
+            &Some("default".to_string()),
+            Path::new("generated-app"),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "run",
+                "-p",
+                "hr-graph",
+                "--",
+                "run",
+                "--mox-files",
+                "model/common.mox",
+                "--mox-files",
+                "model/billing.mox",
+                "--config",
+                "domains.toml",
+                "--profile",
+                "default",
+                "--output",
+                "generated-app",
+            ]
+        );
+    }
+
+    #[test]
+    fn generate_mox_args_without_optionals() {
+        let args = generate_mox_args(
+            "hr-graph",
+            &["model/app.mox".to_string()],
+            &None,
+            &None,
+            Path::new("out"),
+        );
+        assert!(!args.contains(&"--config".to_string()));
+        assert!(!args.contains(&"--profile".to_string()));
+        assert!(!args.contains(&"--classifier".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("out"));
+    }
+
+    #[test]
+    fn regeneration_plan_mox_files_win_over_schemas_dir() {
+        let mut manifest = quality_manifest();
+        manifest.schemas_dir = Some("schemas".into());
+        manifest.classifier = Some("classifier.toml".into());
+        manifest.domain_config = Some("domains.toml".into());
+        manifest.profile = Some("default".into());
+        manifest.mox_files = vec!["model/common.mox".into(), "model/billing.mox".into()];
+        let cfg = OpsConfig::from_manifest(manifest, PathBuf::from("/tmp/repo")).unwrap();
+        let args = expect_run(regeneration_plan(&cfg));
+        assert_eq!(
+            args,
+            vec![
+                "run",
+                "-p",
+                "hr-graph",
+                "--",
+                "run",
+                "--mox-files",
+                "model/common.mox",
+                "--mox-files",
+                "model/billing.mox",
+                "--config",
+                "domains.toml",
+                "--profile",
+                "default",
+                "--output",
+                "/tmp/repo/generated-app",
+            ]
+        );
+    }
+
+    #[test]
+    fn regeneration_plan_legacy_when_only_schemas_dir() {
+        let mut manifest = quality_manifest();
+        manifest.schemas_dir = Some("schemas".into());
+        manifest.classifier = Some("classifier.toml".into());
+        manifest.domain_config = Some("domains.toml".into());
+        manifest.profile = Some("default".into());
+        let cfg = OpsConfig::from_manifest(manifest, PathBuf::from("/tmp/repo")).unwrap();
+        let args = expect_run(regeneration_plan(&cfg));
+        assert_eq!(
+            args,
+            vec![
+                "run",
+                "-p",
+                "hr-graph",
+                "--",
+                "run",
+                "--schemas",
+                "schemas",
+                "--classifier",
+                "classifier.toml",
+                "--config",
+                "domains.toml",
+                "--profile",
+                "default",
+                "--output",
+                "/tmp/repo/generated-app",
+            ]
+        );
+    }
+
+    #[test]
+    fn regeneration_plan_skips_with_mox_hint_when_neither_source() {
+        let manifest = quality_manifest();
+        let cfg = OpsConfig::from_manifest(manifest, PathBuf::from("/tmp/repo")).unwrap();
+        let msg = expect_skip(regeneration_plan(&cfg));
+        assert!(msg.contains("mox_files not set"), "{msg}");
+        assert!(msg.contains("schemas_dir not set"), "{msg}");
+        assert!(msg.contains("skipping app regeneration"), "{msg}");
+    }
+
+    #[test]
+    fn regeneration_plan_skips_without_graph_binary() {
+        let mut manifest = quality_manifest();
+        manifest.graph_binary = None;
+        manifest.schemas_dir = Some("schemas".into());
+        let cfg = OpsConfig::from_manifest(manifest, PathBuf::from("/tmp/repo")).unwrap();
+        let msg = expect_skip(regeneration_plan(&cfg));
+        assert!(msg.contains("graph_binary not set"), "{msg}");
     }
 
     #[test]

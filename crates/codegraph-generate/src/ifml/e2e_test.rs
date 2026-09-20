@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use codegraph_config::{DomainConfig, IfmlComponentMappings, SemanticRole};
 use codegraph_core::traits::GraphQuerier;
-use codegraph_ifml_dsl::{ComponentSpec, FormSpec};
+use rex_ifml::{ComponentSpec, FormSpec};
 
 use crate::error::Result;
 use crate::traits::{GeneratedFile, GlobalGenerator};

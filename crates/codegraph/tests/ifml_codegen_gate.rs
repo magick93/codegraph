@@ -206,7 +206,7 @@ async fn run_pipeline() -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
     let ifml_path = home.join("app.ifml");
-    let model = codegraph_ifml_dsl::parse_ifml_file(&ifml_path)
+    let model = rex_ifml::parse_ifml_file(&ifml_path)
         .map_err(|e| format!("parse {}: {e}", ifml_path.display()))?;
     codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
         .await

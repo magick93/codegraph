@@ -1,0 +1,153 @@
+==================
+Enum with labels and values
+==================
+
+package nz.example.library
+
+enum BookCategory {
+    Mystery as "M" = 0
+    ScienceFiction as "S" = 1
+    Recent
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (enum_declaration
+    name: (identifier)
+    (enum_literal
+      name: (identifier)
+      label: (string)
+      value: (number))
+    (enum_literal
+      name: (identifier)
+      label: (string)
+      value: (number))
+    (enum_literal
+      name: (identifier))))
+
+==================
+Datatype with bindings and format
+==================
+
+package nz.example.datatypes
+
+type Date wraps opaque {
+    rust "chrono::NaiveDate"
+    csharp "System.DateOnly"
+    format "date"
+}
+
+type Email wraps String {
+    format "email"
+}
+
+type Amount wraps int
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (datatype_declaration
+    name: (identifier)
+    (datatype_block
+      (binding_entry
+        key: (identifier)
+        value: (string))
+      (binding_entry
+        key: (identifier)
+        value: (string))
+      (format_entry
+        value: (string))))
+  (datatype_declaration
+    name: (identifier)
+    type: (qualified_name
+      (identifier))
+    (datatype_block
+      (format_entry
+        value: (string))))
+  (datatype_declaration
+    name: (identifier)
+    type: (qualified_name
+      (identifier))))
+
+==================
+Datatype with create and convert blocks
+==================
+
+package nz.example.iot
+
+type Mac wraps opaque {
+    create {
+        rust { Mac(it) }
+    }
+    convert {
+        rust { self.0.clone() }
+    }
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (datatype_declaration
+    name: (identifier)
+    (datatype_block
+      (create_block
+        (target_body
+          target: (identifier)
+          body: (raw_body)))
+      (convert_block
+        (target_body
+          target: (identifier)
+          body: (raw_body))))))
+
+==================
+Vocabulary with version, key and facets
+==================
+
+package nz.example.shop
+
+vocabulary Currency from "iso:4217" {
+    version "2024-01-01"
+    key alpha3
+    facet String symbol
+    facet int minorUnits
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (vocabulary_declaration
+    name: (identifier)
+    source: (string)
+    (version_entry
+      value: (string))
+    (key_entry
+      name: (identifier))
+    (facet_entry
+      type: (qualified_name
+        (identifier))
+      name: (identifier))
+    (facet_entry
+      type: (qualified_name
+        (identifier))
+      name: (identifier))))

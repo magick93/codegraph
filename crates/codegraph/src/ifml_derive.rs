@@ -144,7 +144,7 @@ pub fn ifml_derive(args: IfmlDeriveArgs<'_>) -> Result<()> {
     views.sort_by(|a, b| a.route.cmp(&b.route));
 
     let content = render_model(&domain_name, &views);
-    if let Err(e) = codegraph_ifml_dsl::parse_ifml(&content) {
+    if let Err(e) = rex_ifml::parse_ifml(&content) {
         return Err(Error::Config(format!(
             "internal error: derived IFML failed to parse: {e}"
         )));

@@ -58,7 +58,7 @@ pub use property::{inject_codelist_properties, PropertyNode};
 pub use relationship::{
     Cardinality, ForeignKeySpec, Ownership, PropagationRule, PropagationTrigger, RelationshipNode,
 };
-pub use schema::{SchemaClassificationData, SchemaNode};
+pub use schema::{SchemaClassificationData, SchemaNode, MOX_SOURCE};
 pub use security::{
     MembershipNode, MembershipStatus, Scope, ScopeKind, SecurityIdentityNode, TenantNode,
 };

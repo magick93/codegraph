@@ -66,7 +66,7 @@ fn field_kind(kind: Option<&RefClassificationKind>) -> Option<FieldKind> {
 mod tests {
     use super::*;
     use codegraph_config::SemanticRole;
-    use codegraph_ifml_dsl::InputFieldType;
+    use rex_ifml::InputFieldType;
     use rust_decimal::Decimal;
 
     fn prop(name: &str, prop_type: &str) -> PropertyNode {

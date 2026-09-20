@@ -1,0 +1,203 @@
+==================
+Actors block with actors, capabilities, purposes and grants
+==================
+
+package nz.example.support
+
+class Ticket {
+    boolean internal
+    int refundCents
+}
+
+actors Support {
+    actor Customer
+    actor Agent extends Customer
+    agent AutoAgent extends Agent
+    actor Manager
+
+    capability ReadTicket on Ticket
+    capability RaiseRefund on Ticket
+
+    purpose audit
+    purpose notifyCustomer
+
+    grant Customer {
+        permit ReadTicket when (!internal)
+    }
+
+    grant Agent {
+        permit ReadTicket
+        permit UpdateTicket when (refundCents > 0) obligation audit
+        permit RaiseRefund when (refundCents > 0 && refundCents <= 5000) obligation audit obligation notifyCustomer
+        forbid ResolveTicket
+    }
+
+    never_both { ReadTicket, ResolveTicket }
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier))))
+  (actors_block
+    name: (identifier)
+    (actor_declaration
+      name: (identifier))
+    (actor_declaration
+      name: (identifier)
+      superclass: (identifier))
+    (actor_declaration
+      name: (identifier)
+      superclass: (identifier))
+    (actor_declaration
+      name: (identifier))
+    (capability
+      name: (identifier)
+      type: (qualified_name
+        (identifier)))
+    (capability
+      name: (identifier)
+      type: (qualified_name
+        (identifier)))
+    (purpose_declaration
+      name: (identifier))
+    (purpose_declaration
+      name: (identifier))
+    (grant_declaration
+      actor: (identifier)
+      (grant_entry
+        (effect_entry
+          capability: (identifier)
+          (when_clause
+            condition: (raw_parens)))))
+    (grant_declaration
+      actor: (identifier)
+      (grant_entry
+        (effect_entry
+          capability: (identifier)))
+      (grant_entry
+        (effect_entry
+          capability: (identifier)
+          (when_clause
+            condition: (raw_parens))
+          (obligation
+            name: (identifier))))
+      (grant_entry
+        (effect_entry
+          capability: (identifier)
+          (when_clause
+            condition: (raw_parens))
+          (obligation
+            name: (identifier))
+          (obligation
+            name: (identifier))))
+      (grant_entry
+        (effect_entry
+          capability: (identifier))))
+    (never_both_declaration
+      capability: (identifier)
+      capability: (identifier))))
+
+==================
+Cedar entry
+==================
+
+package nz.example.support
+
+actors Support {
+    actor Manager
+
+    grant Manager {
+        cedar {
+            @why("internal tickets close at the manager's desk")
+            forbid(principal is Support::Manager, action == "resolve") when { resource.internal };
+        }
+    }
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (actors_block
+    name: (identifier)
+    (actor_declaration
+      name: (identifier))
+    (grant_declaration
+      actor: (identifier)
+      (grant_entry
+        (cedar_entry
+          body: (raw_body
+            (string)
+            (string)
+            (raw_body)))))))
+
+==================
+Delegation
+==================
+
+package nz.example.support
+
+actors Support {
+    actor Manager
+    agent Runner
+
+    delegation Cover {
+        from Manager
+        to Runner
+        purpose audit
+        permit ResolveTicket when (open)
+        forbid ApproveRefund
+    }
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (actors_block
+    name: (identifier)
+    (actor_declaration
+      name: (identifier))
+    (actor_declaration
+      name: (identifier))
+    (delegation_declaration
+      name: (identifier)
+      (from_clause
+        name: (identifier))
+      (to_clause
+        name: (identifier))
+      (purpose_clause
+        name: (identifier))
+      (grant_entry
+        (effect_entry
+          capability: (identifier)
+          (when_clause
+            condition: (raw_parens))))
+      (grant_entry
+        (effect_entry
+          capability: (identifier))))))

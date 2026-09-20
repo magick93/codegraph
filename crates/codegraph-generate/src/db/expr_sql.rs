@@ -12,6 +12,10 @@
 //! | `123` / `-123`                   | numeric literal                  |
 //! | `"text"`                         | `'text'` (`'` doubled)           |
 //! | `true` / `false`                 | `TRUE` / `FALSE`                 |
+//! | `date("YYYY-MM-DD")`             | `DATE '...'` (format-validated;  |
+//! |                                  | the compared field is guaranteed |
+//! |                                  | date-typed by the upstream       |
+//! |                                  | rex-driver typecheck)            |
 //! | `==` and `=`                     | `=`                              |
 //! | `!=`                             | `<>`                             |
 //! | `<`, `<=`, `>`, `>=`             | `<`, `<=`, `>`, `>=`             |
@@ -65,8 +69,8 @@ fn lower(
         Err(format!(
             "capability `{capability}`: `when` condition uses {construct}, \
              which cannot be lowered to a Postgres RLS predicate; the \
-             supported subset is own-table field refs, string/number/boolean \
-             literals, comparisons, && || !, parentheses, and null \
+             supported subset is own-table field refs, string/number/boolean/\
+             date literals, comparisons, && || !, parentheses, and null \
              comparisons"
         ))
     };
@@ -76,6 +80,7 @@ fn lower(
         ExprKind::Bool(true) => Ok("TRUE".to_string()),
         ExprKind::Bool(false) => Ok("FALSE".to_string()),
         ExprKind::Null => reject("`null` (compare a field to null instead)"),
+        ExprKind::Date { text, .. } => date_literal(text, capability),
         ExprKind::Name(name) => column_for(name, capability, class, fields),
         ExprKind::Unary { op, expr } => {
             let inner = lower(expr, capability, class, fields)?;
@@ -203,6 +208,63 @@ fn string_literal(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
+/// Lower a `date("...")` literal to a Postgres `DATE '...'` literal.
+///
+/// The literal text is format-validated before interpolation (rex-expr's
+/// parse-only mode does not validate it — that happens in the checker, and
+/// `.actor` policies reaching the graph have already been typechecked by
+/// rex-driver, which guarantees the compared field is date-typed).
+fn date_literal(text: &str, capability: &str) -> Result<String, String> {
+    if parse_date_text(text).is_some() {
+        Ok(format!("DATE '{text}'"))
+    } else {
+        Err(format!(
+            "capability `{capability}`: `when` condition uses the date \
+             literal {text:?}, which is not a calendar date `YYYY-MM-DD`"
+        ))
+    }
+}
+
+/// Validate `YYYY-MM-DD` (extended ISO-8601 calendar date, proleptic
+/// Gregorian, optional `-` year sign) and return the components.
+///
+/// Mirrors rex-expr's private `parse_date_text` / `rex_runtime::Date::from_str`
+/// calendar rules so both sides accept exactly the same literal text.
+fn parse_date_text(text: &str) -> Option<(i32, u32, u32)> {
+    let (sign, rest) = match text.strip_prefix('-') {
+        Some(rest) => (-1i64, rest),
+        None => (1, text),
+    };
+    let mut parts = rest.split('-');
+    let (year_text, month_text, day_text) = (parts.next()?, parts.next()?, parts.next()?);
+    if parts.next().is_some() {
+        return None;
+    }
+    let number = |part: &str, min_width: usize| -> Option<i64> {
+        if part.len() < min_width || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        part.parse::<i64>().ok()
+    };
+    let year = i32::try_from(sign * number(year_text, 4)?).ok()?;
+    let month = u32::try_from(number(month_text, 2)?).ok()?;
+    let day = u32::try_from(number(day_text, 2)?).ok()?;
+    if month == 0 || month > 12 {
+        return None;
+    }
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let length = match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    if day == 0 || day > length {
+        return None;
+    }
+    Some((year, month, day))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +287,7 @@ mod tests {
                 ("internal", "internal"),
                 ("verified", "verified"),
                 ("order", "order"),
+                ("start_date", "start_date"),
             ]),
         )
     }
@@ -416,6 +479,66 @@ mod tests {
     #[test]
     fn bare_null_is_refused() {
         assert_refusal("null", "`null`");
+    }
+
+    #[test]
+    fn date_literal_lowers_to_pg_date() {
+        assert_sql(
+            "start_date == date(\"2026-09-17\")",
+            "(start_date = DATE '2026-09-17')",
+        );
+    }
+
+    #[test]
+    fn date_literal_supports_ordering_comparisons() {
+        assert_sql(
+            "start_date >= date(\"2026-01-01\")",
+            "(start_date >= DATE '2026-01-01')",
+        );
+        assert_sql(
+            "start_date < date(\"2026-01-01\")",
+            "(start_date < DATE '2026-01-01')",
+        );
+    }
+
+    #[test]
+    fn date_literal_combines_with_boolean_and_null_algebra() {
+        assert_sql(
+            "internal && start_date > date(\"2026-01-01\")",
+            "(internal AND (start_date > DATE '2026-01-01'))",
+        );
+        assert_sql(
+            "start_date == null || start_date < date(\"2020-01-01\")",
+            "((start_date IS NULL) OR (start_date < DATE '2020-01-01'))",
+        );
+    }
+
+    #[test]
+    fn date_literal_accepts_leap_days() {
+        assert_sql(
+            "start_date == date(\"2028-02-29\")",
+            "(start_date = DATE '2028-02-29')",
+        );
+    }
+
+    #[test]
+    fn malformed_date_literal_is_refused_naming_capability() {
+        assert_refusal("start_date == date(\"not-a-date\")", "YYYY-MM-DD");
+        assert_refusal("start_date == date(\"2026-13-01\")", "YYYY-MM-DD");
+        assert_refusal("start_date == date(\"2026-02-30\")", "YYYY-MM-DD");
+        assert_refusal("start_date == date(\"2026-2-3\")", "YYYY-MM-DD");
+    }
+
+    #[test]
+    fn calendar_algebra_on_dates_is_still_refused() {
+        // Calendar functions are method calls — outside the closed subset
+        // (no clock, no computation in RLS predicates).
+        let err =
+            lower("start_date.plus_days(3) > date(\"2026-01-01\")").expect_err("expected refusal");
+        assert!(
+            err.contains("capability `ReviewCandidate`"),
+            "refusal must name the capability, got: {err}"
+        );
     }
 
     #[test]

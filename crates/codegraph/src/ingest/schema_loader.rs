@@ -5,6 +5,18 @@ use walkdir::WalkDir;
 
 use crate::error::{Error, Result};
 
+/// One explicit schema file to load, with the metadata the directory walk
+/// would otherwise derive (used by the mox `import schema` path, issue #230).
+#[derive(Debug, Clone)]
+pub struct SchemaFileSpec {
+    /// Absolute path of the JSON file.
+    pub abs_path: PathBuf,
+    /// Graph `schema_id` / rel_path for the node (e.g. `todo/schemas/todo_item.json`).
+    pub rel_path: String,
+    /// Owning domain (resolved from the importing .mox package).
+    pub domain: String,
+}
+
 /// A loaded JSON schema entry with metadata.
 #[derive(Debug, Clone)]
 pub struct SchemaEntry {
@@ -117,6 +129,57 @@ impl SchemaLoader {
         }
 
         top_level_uris.sort();
+
+        Ok(Self {
+            cache,
+            top_level_uris,
+        })
+    }
+
+    /// Load the given explicit files (same entry construction as [`load`],
+    /// minus the directory walk): rel_path/domain/stem come from the spec.
+    /// File order is preserved (deterministic by construction).
+    pub fn load_files(files: &[SchemaFileSpec]) -> Result<Self> {
+        let mut cache = HashMap::new();
+        let mut top_level_uris = Vec::new();
+
+        for spec in files {
+            let content = std::fs::read_to_string(&spec.abs_path)?;
+            let schema: serde_json::Value = serde_json::from_str(&content)?;
+
+            let stem = spec
+                .abs_path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let stem = stem
+                .strip_suffix(".schema")
+                .map(String::from)
+                .unwrap_or(stem);
+
+            let entry = SchemaEntry {
+                schema: schema.clone(),
+                rel_path: spec.rel_path.clone(),
+                full_path: spec.abs_path.to_string_lossy().to_string(),
+                stem: stem.clone(),
+                domain: spec.domain.clone(),
+            };
+
+            let schema_id = schema
+                .get("$id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            top_level_uris.push(spec.rel_path.clone());
+            cache.insert(spec.rel_path.clone(), entry.clone());
+            cache.insert(stem.clone(), entry.clone());
+            if !schema_id.is_empty() {
+                cache.entry(schema_id).or_insert(entry.clone());
+            }
+
+            Self::extract_inline_defs(&schema, &spec.rel_path, &spec.domain, &mut cache);
+        }
 
         Ok(Self {
             cache,

@@ -26,6 +26,12 @@ pub struct OpsManifest {
     /// Directory of JSON schemas passed to the codegen binary.
     #[serde(default)]
     pub schemas_dir: Option<PathBuf>,
+    /// `.mox` model files passed to the codegen binary (one `--mox-files`
+    /// flag per entry, manifest order). When non-empty these are the model
+    /// source for harness-driven regeneration and `schemas_dir`/`classifier`
+    /// are ignored for generation — the mox pipeline needs no classifier.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mox_files: Vec<String>,
     /// Classifier config file passed to the codegen binary.
     #[serde(default)]
     pub classifier: Option<PathBuf>,
@@ -325,6 +331,7 @@ database = { api = { host = "localhost", port = 5432, user = "postgres", passwor
             app_name: "hr-app".into(),
             graph_binary: Some("hr-graph".into()),
             schemas_dir: Some("4_5RC1".into()),
+            mox_files: Vec::new(),
             classifier: Some("classifier.toml".into()),
             domain_config: Some("domains.toml".into()),
             ifml_files: None,
@@ -437,6 +444,74 @@ dir = "hurl"
             !hurl.limited_key,
             "limited_key must default to false so legacy manifests keep their behavior"
         );
+    }
+
+    #[test]
+    fn mox_files_default_empty() {
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        assert!(
+            m.mox_files.is_empty(),
+            "mox_files must default to empty so legacy manifests parse unchanged"
+        );
+    }
+
+    #[test]
+    fn mox_files_parse_from_toml_in_manifest_order() {
+        let raw = r#"
+app_name = "demo-app"
+mox_files = ["model/common.mox", "model/billing.mox"]
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        assert_eq!(
+            m.mox_files,
+            vec![
+                "model/common.mox".to_string(),
+                "model/billing.mox".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn mox_files_roundtrip_preserved() {
+        let raw = r#"
+app_name = "demo-app"
+mox_files = ["model/common.mox", "model/billing.mox"]
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        let serialized = toml::to_string(&m).unwrap();
+        let back: OpsManifest = toml::from_str(&serialized).unwrap();
+        assert_eq!(back.mox_files, m.mox_files);
+    }
+
+    #[test]
+    fn mox_files_omitted_when_empty_on_serialize() {
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        let serialized = toml::to_string(&m).unwrap();
+        assert!(
+            !serialized.contains("mox_files"),
+            "empty mox_files must not appear in serialized manifests: {serialized}"
+        );
+    }
+
+    #[test]
+    fn mox_files_empty_array_accepted() {
+        let raw = r#"
+app_name = "demo-app"
+mox_files = []
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        assert!(m.mox_files.is_empty());
     }
 
     #[test]

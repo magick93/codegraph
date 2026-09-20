@@ -2,17 +2,17 @@
 
 default: generate
 
-# Regenerate code from schemas.
+# Regenerate code from your .mox model.
 generate:
-    cargo run -p {{ graph_binary }} -- run
+    cargo run -p {{ graph_binary }} -- run{% for d in domains %} --mox-files model/{{ d.name }}.mox{% endfor %} --config domains.toml --output generated
 
 # Show entity/VO classification decisions.
 classify:
-    cargo run -p {{ graph_binary }} -- classify
+    cargo run -p {{ graph_binary }} -- classify{% for d in domains %} --mox-files model/{{ d.name }}.mox{% endfor %} --config domains.toml
 
 # Validate project layout and configuration.
 doctor:
-    cargo run -p {{ graph_binary }} -- doctor --config domains.toml
+    cargo run -p {{ graph_binary }} -- doctor --config domains.toml{% for d in domains %} --mox-files model/{{ d.name }}.mox{% endfor %}
 
 # API integration tests (preflight, migrate, hurl, curl smoke, RLS).
 api *flags="":

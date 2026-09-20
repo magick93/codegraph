@@ -14,7 +14,7 @@
 //! generator actually receives via `fields_with_types`.
 
 use codegraph_config::SemanticRole;
-use codegraph_ifml_dsl::InputFieldType;
+use rex_ifml::InputFieldType;
 
 /// Upper bound on dropdown value lists emitted by inference.
 pub const MAX_CONTROL_VALUES: usize = 20;
@@ -26,7 +26,7 @@ pub const NOTE_OPTIONS_ENDPOINT: &str =
     "options endpoint for the referenced entity is not resolved yet";
 
 /// The 14 input types of the IFML DSL grammar, in keyword form. Mirrors
-/// `codegraph_ifml_dsl::InputFieldType` (static variants only; that enum's
+/// `rex_ifml::InputFieldType` (static variants only; that enum's
 /// `Custom` catch-all is not inferred).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ControlInputType {

@@ -1,0 +1,38 @@
+/// Starter {{ domain_label }} domain model — the primary model source.
+///
+/// Edit this file, then regenerate, e.g.:
+///   {{ graph_binary }} run --mox-files model/{{ domain }}.mox \
+///       --config domains.toml --output generated
+///
+/// Existing JSON schemas can be pulled in with
+/// `import schema "path/to/schema.json" as Name`, or converted to .mox with
+/// `codegraph migrate --schemas <dir> --output <dir>`.
+///
+/// Classes defined in .mox win name conflicts with same-titled schemas.
+/// Scalar datatypes (uuid, date, ...) live in the shared codegraph_stdlib
+/// package emitted by `codegraph migrate`.
+package {{ domain }}
+
+/// A named collection of todo items.
+class TodoListType {
+    /// Display name of the list.
+    String name
+
+    /// Optional longer description.
+    String [0..1] description
+}
+
+/// A single todo item belonging to a list.
+class TodoItemType {
+    /// Short title of the item.
+    String title
+
+    /// Optional free-form notes.
+    String [0..1] notes
+
+    /// Whether the item is done.
+    Boolean [0..1] completed
+
+    /// The list this item belongs to.
+    refers TodoListType todoList
+}

@@ -15,12 +15,12 @@ use heck::ToUpperCamelCase;
 
 use crate::error::{Error, Result};
 use crate::generate::ddd::dto::strip_code_suffix_safe;
-use crate::ingest::schema_loader::SchemaLoader;
+use crate::ingest::schema_loader::{SchemaFileSpec, SchemaLoader};
 
 /// Sanitize a schema/property description for use in generated code doc comments.
 /// Truncates to the first line (newlines break /// doc comments), trims whitespace,
 /// and caps length to 1000 characters.
-fn sanitize_description(s: &str) -> String {
+pub(crate) fn sanitize_description(s: &str) -> String {
     s.lines()
         .next()
         .unwrap_or("")
@@ -33,7 +33,7 @@ fn sanitize_description(s: &str) -> String {
 /// Sanitize a string into a valid PascalCase Rust type identifier.
 /// Removes characters that aren't alphanumeric (except underscores),
 /// converts to PascalCase, and truncates to 200 chars.
-fn sanitize_rust_type_name(s: &str) -> String {
+pub(crate) fn sanitize_rust_type_name(s: &str) -> String {
     // Keep only valid identifier characters and spaces (for PascalCase conversion)
     let cleaned: String = s
         .chars()
@@ -64,22 +64,157 @@ pub async fn ingest_schemas(
     ui_overrides: &UiOverrideConfig,
     suffix: &str,
 ) -> Result<IngestResult> {
+    ingest_schemas_with_skips(
+        db,
+        schema_dir,
+        classifier,
+        entity_names,
+        ui_overrides,
+        suffix,
+        &HashSet::new(),
+    )
+    .await
+}
+
+/// Like [`ingest_schemas`], but skips every top-level schema whose title was
+/// already created from a `.mox` source (mox-first pipeline, issue #231).
+/// Skipped entries contribute no schema node, properties, inline defs, or
+/// composition edges. Skips are logged to stderr with the schema's rel_path.
+pub async fn ingest_schemas_with_skips(
+    db: &dyn GraphIngestor,
+    schema_dir: &Path,
+    classifier: &ClassifierConfig,
+    entity_names: &HashSet<String>,
+    ui_overrides: &UiOverrideConfig,
+    suffix: &str,
+    skip_titles: &HashSet<String>,
+) -> Result<IngestResult> {
     let loader = SchemaLoader::load(schema_dir)?;
+    ingest_from_loader(
+        db,
+        &loader,
+        classifier,
+        entity_names,
+        ui_overrides,
+        suffix,
+        skip_titles,
+    )
+    .await
+}
+
+/// Ingest the JSON schema files a `.mox` model imported via
+/// `import schema "<path>"` (issue #230) through the same pipeline as the
+/// `--schemas` pass: classification, codelists, inline defs, composition
+/// edges, composite ranges, and required extensions all keep working.
+///
+/// Files are deduplicated by absolute path (first declaration wins), so the
+/// same file imported by several `.mox` files ingests once. The returned
+/// `titles` are the schema titles now in the graph — the driver adds them to
+/// the schema pass's skip-set so a file passed both ways (import +
+/// `--schemas`) ingests exactly once.
+pub async fn ingest_imported_schemas(
+    db: &dyn GraphIngestor,
+    imports: &[crate::ingest::mox_ingest::MoxSchemaImport],
+    classifier: &ClassifierConfig,
+    ui_overrides: &UiOverrideConfig,
+    suffix: &str,
+) -> Result<ImportedIngestion> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut specs: Vec<SchemaFileSpec> = Vec::new();
+    for import in imports {
+        let key = import
+            .abs_path
+            .canonicalize()
+            .unwrap_or_else(|_| import.abs_path.clone())
+            .display()
+            .to_string();
+        if !seen.insert(key) {
+            continue;
+        }
+        specs.push(SchemaFileSpec {
+            abs_path: import.abs_path.clone(),
+            rel_path: format!("{}/{}", import.importing_package, import.import_path),
+            domain: import.domain.clone(),
+        });
+    }
+
+    let loader = SchemaLoader::load_files(&specs)?;
+    let result = ingest_from_loader(
+        db,
+        &loader,
+        classifier,
+        &HashSet::new(),
+        ui_overrides,
+        suffix,
+        &HashSet::new(),
+    )
+    .await?;
+
+    let mut titles = Vec::new();
+    for spec in &specs {
+        if let Some(entry) = loader.get(&spec.rel_path) {
+            let title = entry
+                .schema
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&entry.stem);
+            titles.push(title.to_string());
+        }
+    }
+
+    Ok(ImportedIngestion {
+        ingested: result,
+        titles,
+    })
+}
+
+/// Result of ingesting imported schema files: the usual counters plus the
+/// titles now covered in the graph.
+#[derive(Debug, Default)]
+pub struct ImportedIngestion {
+    pub ingested: IngestResult,
+    pub titles: Vec<String>,
+}
+
+/// The schema-pass body shared by the directory walk ([`ingest_schemas`])
+/// and the mox import path ([`ingest_imported_schemas`]): every pass runs
+/// against a constructed loader.
+async fn ingest_from_loader(
+    db: &dyn GraphIngestor,
+    loader: &SchemaLoader,
+    classifier: &ClassifierConfig,
+    entity_names: &HashSet<String>,
+    ui_overrides: &UiOverrideConfig,
+    suffix: &str,
+    skip_titles: &HashSet<String>,
+) -> Result<IngestResult> {
     let is_entity =
         |name: &str| entity_names.contains(name) || entity_names.contains(&format!("{}Type", name));
 
     let mut result = IngestResult::default();
 
-    // Pass 1: Ingest all schema nodes
-    let uris: Vec<String> = loader
-        .iter_top_level()
-        .map(|(uri, _)| uri.to_string())
-        .collect();
+    // Pass 1: Ingest all schema nodes, minus titles covered by .mox.
+    let mut uris: Vec<String> = Vec::new();
+    for (uri, entry) in loader.iter_top_level() {
+        let title = entry
+            .schema
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&entry.stem);
+        if skip_titles.contains(title) {
+            eprintln!(
+                "INFO: entity '{title}' covered by .mox, skipping {}",
+                entry.rel_path
+            );
+            continue;
+        }
+        uris.push(uri.to_string());
+    }
 
     for uri in &uris {
         ingest_schema_node(
             db,
-            &loader,
+            loader,
             uri,
             classifier,
             &is_entity,
@@ -92,7 +227,7 @@ pub async fn ingest_schemas(
 
     // Pass 1b: Ingest codelist entries and enum values for codelist schemas
     for uri in &uris {
-        ingest_codelist_values(db, &loader, uri, suffix).await?;
+        ingest_codelist_values(db, loader, uri, suffix).await?;
     }
 
     // Build stem → schema_id map for $ref resolution.
@@ -110,16 +245,9 @@ pub async fn ingest_schemas(
     // Pass 2: Ingest inline definitions
     let mut inline_uris: Vec<String> = Vec::new();
     for uri in &uris {
-        let new_uris = ingest_inline_defs(
-            db,
-            &loader,
-            uri,
-            classifier,
-            &is_entity,
-            suffix,
-            &mut result,
-        )
-        .await?;
+        let new_uris =
+            ingest_inline_defs(db, loader, uri, classifier, &is_entity, suffix, &mut result)
+                .await?;
         inline_uris.extend(new_uris);
     }
 
@@ -146,7 +274,7 @@ pub async fn ingest_schemas(
     for uri in &all_uris {
         ingest_properties(
             db,
-            &loader,
+            loader,
             uri,
             classifier,
             &is_entity,
@@ -161,14 +289,14 @@ pub async fn ingest_schemas(
 
     // Pass 4: Ingest composition edges (allOf) for all schemas (top-level + inline defs)
     for uri in &all_uris {
-        ingest_allof_edges(db, &loader, uri, &mut result).await?;
+        ingest_allof_edges(db, loader, uri, &mut result).await?;
     }
 
     // Pass 5: Ingest composite ranges from classifier config
     ingest_composite_ranges(db, classifier).await?;
 
     // Pass 6: Ingest required extensions and link to schemas that use them
-    ingest_required_extensions(db, classifier, &loader, &all_uris).await?;
+    ingest_required_extensions(db, classifier, loader, &all_uris).await?;
 
     Ok(result)
 }
@@ -1089,6 +1217,11 @@ pub async fn reclassify_with_entities(
     // Update schema nodes
     let schemas = querier.list_schemas(None).await.map_err(Error::Graph)?;
     for schema in &schemas {
+        // Mox-authored schemas are author-declared: neither their entity
+        // flag nor their property classifications may be re-derived (issue #229).
+        if is_mox_sourced(schema) {
+            continue;
+        }
         let should_be_entity = is_entity(&schema.title);
         if schema.is_entity != should_be_entity {
             db.update_entity_flag(&schema.title, should_be_entity)
@@ -1099,6 +1232,9 @@ pub async fn reclassify_with_entities(
 
     // Re-classify properties whose ref_target classification may have changed
     for schema in &schemas {
+        if is_mox_sourced(schema) {
+            continue;
+        }
         let properties = querier
             .get_properties(&schema.title)
             .await
@@ -1343,4 +1479,14 @@ fn collect_all_refs(
     }
 
     refs
+}
+
+/// True when the schema was authored in a `.mox` domain source (issue #229).
+/// Provenance rides `custom_annotations["source"]` set by the mox bridge.
+pub(crate) fn is_mox_sourced(schema: &SchemaNode) -> bool {
+    schema
+        .custom_annotations
+        .get("source")
+        .and_then(|v| v.as_str())
+        == Some(codegraph_core::types::MOX_SOURCE)
 }

@@ -7,7 +7,7 @@ use codegraph_core::types::{
     resolve_effective_permits, DataBindingResolution, EventNode, NavigationFlowRecord,
     ViewContainerNode,
 };
-use codegraph_ifml_dsl::ComponentSpec;
+use rex_ifml::ComponentSpec;
 
 use super::context::*;
 use super::dependency_graph;
@@ -242,7 +242,7 @@ impl<'a> IfmlGraphQuerier<'a> {
         let field_names = match comp.fields.clone().unwrap_or_default() {
             fields if !fields.is_empty() => fields,
             _ => match parse_component_spec(comp.spec.as_deref()) {
-                Some(codegraph_ifml_dsl::ComponentSpec::Form(form)) => {
+                Some(rex_ifml::ComponentSpec::Form(form)) => {
                     form.fields.iter().map(|f| f.name.clone()).collect()
                 }
                 _ => Vec::new(),
@@ -479,7 +479,7 @@ mod tests {
     use codegraph_core::types::{
         EdgeProperties, EdgeType, ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
     };
-    use codegraph_ifml_dsl::{ChartKind, ColumnDef, InputFieldType};
+    use rex_ifml::{ChartKind, ColumnDef, InputFieldType};
 
     async fn ingest_view_container(db: &MockEngine, name: &str, landmark: bool) {
         db.ingest_view_container(&ViewContainerNode {
@@ -1029,10 +1029,10 @@ mod tests {
 
     #[test]
     fn parse_component_spec_table() {
-        let raw = r#"{"Table":{"columns":[
-            {"Field":{"label":"Name","field":{"entity":"Customer","property":"name"}}},
-            {"Lookup":{"label":"Status","field":{"entity":"Customer","property":"status"},"lookup":"status_labels"}},
-            {"Expression":{"label":"Tenure","expr":{"Call":{"name":"tenure_years","args":[{"FieldExpr":{"object":{"Ident":"Customer"},"field":"hire_date"}}]}}}}
+        let raw = r#"{"type":"table","value":{"columns":[
+            {"type":"field","value":{"label":"Name","field":{"entity":"Customer","property":"name"}}},
+            {"type":"lookup","value":{"label":"Status","field":{"entity":"Customer","property":"status"},"lookup":"status_labels"}},
+            {"type":"expression","value":{"label":"Tenure","expr":{"type":"call","value":{"name":"tenure_years","args":[{"type":"fieldExpr","value":{"object":{"type":"ident","value":"Customer"},"field":"hire_date"}}]}}}}
         ],"pagination":true}}"#;
         let spec = parse_component_spec(Some(raw)).expect("table spec should parse");
         let ComponentSpec::Table(table) = spec else {
@@ -1047,8 +1047,8 @@ mod tests {
 
     #[test]
     fn parse_component_spec_form_and_chart() {
-        let form_raw = r#"{"Form":{"fields":[
-            {"name":"email","input":"Email","required":true,"validations":[],"values":[]}
+        let form_raw = r#"{"type":"form","value":{"fields":[
+            {"name":"email","input":{"type":"email"},"required":true,"validations":[],"values":[]}
         ]}}"#;
         let spec = parse_component_spec(Some(form_raw)).expect("form spec should parse");
         let ComponentSpec::Form(form) = spec else {
@@ -1057,8 +1057,7 @@ mod tests {
         assert_eq!(form.fields[0].input, InputFieldType::Email);
         assert!(form.fields[0].required);
 
-        let chart_raw =
-            r#"{"Chart":{"kind":"Bar","label_field":"region","value_fields":["revenue"]}}"#;
+        let chart_raw = r#"{"type":"chart","value":{"kind":"bar","labelField":"region","valueFields":["revenue"]}}"#;
         let spec = parse_component_spec(Some(chart_raw)).expect("chart spec should parse");
         let ComponentSpec::Chart(chart) = spec else {
             panic!("expected chart spec, got {spec:?}");

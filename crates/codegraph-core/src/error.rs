@@ -17,6 +17,15 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("Config error: {0}")]
     Config(String),
+    #[error("mox schema import '{import_path}' imported by '{mox_path}' {reason}")]
+    MoxSchemaImport {
+        /// The .mox file declaring the import (as compiled).
+        mox_path: String,
+        /// The import path exactly as written in the declaration.
+        import_path: String,
+        /// Failure cause ("could not be read: …" / "is not valid JSON: …").
+        reason: String,
+    },
     #[error("Template error: {0}")]
     Template(String),
     #[error("Validation error: {0}")]

@@ -1721,6 +1721,7 @@ mod tests {
             app_name: "demo-app".into(),
             graph_binary: Some("hr-graph".into()),
             schemas_dir: Some("schemas".into()),
+            mox_files: Vec::new(),
             classifier: Some("classifier.toml".into()),
             domain_config: None,
             ifml_files: None,

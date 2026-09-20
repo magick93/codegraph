@@ -50,24 +50,18 @@ pub struct ProjectTemplateContext {
 }
 
 /// Canonical template list: (template path, output path). Output paths may
-/// contain `{}` placeholders: `{graph}` = graph_binary, `{domain}` = first
-/// domain's name. Templates must live under `crates/codegraph/templates/`.
+/// contain `{}` placeholders: `{graph}` = graph_binary, `{domain}` = domain
+/// name. `project/model_mox.tera` is special: it renders once per domain
+/// (output `model/{domain}.mox`, with `domain`/`domain_label` context
+/// variables). Templates live under `crates/codegraph-generate/templates/`.
 pub const PROJECT_TEMPLATES: &[(&str, &str)] = &[
     ("project/workspace_cargo.tera", "Cargo.toml"),
     ("project/wrapper_cargo.tera", "{graph}/Cargo.toml"),
     ("project/wrapper_main.tera", "{graph}/src/main.rs"),
     ("project/domains.tera", "domains.toml"),
-    ("project/classifier.tera", "classifier.toml"),
     ("project/profiles.tera", "profiles.toml"),
     ("project/extension_points.tera", "extension-points.toml"),
-    (
-        "project/todo_list_schema.tera",
-        "schemas/{domain}/todo_list.json",
-    ),
-    (
-        "project/todo_item_schema.tera",
-        "schemas/{domain}/todo_item.json",
-    ),
+    ("project/model_mox.tera", "model/{domain}.mox"),
     ("project/ops_manifest.tera", "codegraph-ops.toml"),
     ("project/testkit_cargo.tera", "ops/testkit/Cargo.toml"),
     ("project/testkit_main.tera", "ops/testkit/src/main.rs"),
@@ -77,6 +71,9 @@ pub const PROJECT_TEMPLATES: &[(&str, &str)] = &[
     ("project/readme.tera", "README.md"),
     ("project/ci_yml.tera", ".github/workflows/ci.yml"),
 ];
+
+/// The template that renders one `model/<domain>.mox` per domain.
+pub const MODEL_TEMPLATE: &str = "project/model_mox.tera";
 
 impl ProjectTemplateContext {
     #[allow(clippy::too_many_arguments)]
@@ -128,7 +125,9 @@ impl ProjectTemplateContext {
     }
 
     /// Render all project templates; returns (output-relative path, content)
-    /// pairs in deterministic template order.
+    /// pairs in deterministic template order. `project/model_mox.tera`
+    /// renders once per domain with `domain`/`domain_label` inserted into
+    /// the context.
     pub fn render(&self, tera: &tera::Tera) -> Result<Vec<(PathBuf, String)>, String> {
         let ctx = tera::Context::from_serialize(self)
             .map_err(|e| format!("serialize project context: {e}"))?;
@@ -137,8 +136,21 @@ impl ProjectTemplateContext {
             .first()
             .map(|d| d.name.clone())
             .unwrap_or_else(|| "common".to_string());
-        let mut out = Vec::with_capacity(PROJECT_TEMPLATES.len());
+        let mut out = Vec::new();
         for (template, output) in PROJECT_TEMPLATES {
+            if *template == MODEL_TEMPLATE {
+                for domain in &self.domains {
+                    let mut domain_ctx = ctx.clone();
+                    domain_ctx.insert("domain", &domain.name);
+                    domain_ctx.insert("domain_label", &domain.label);
+                    let rendered = tera
+                        .render(template, &domain_ctx)
+                        .map_err(|e| format!("render {template}: {e}"))?;
+                    let path = output.replace("{domain}", &domain.name);
+                    out.push((PathBuf::from(path), rendered));
+                }
+                continue;
+            }
             let rendered = tera
                 .render(template, &ctx)
                 .map_err(|e| format!("render {template}: {e}"))?;
@@ -157,16 +169,21 @@ impl ProjectTemplateContext {
             .first()
             .map(|d| d.name.clone())
             .unwrap_or_else(|| "common".to_string());
-        PROJECT_TEMPLATES
-            .iter()
-            .map(|(_, output)| {
-                PathBuf::from(
-                    output
-                        .replace("{graph}", &self.graph_binary)
-                        .replace("{domain}", &first_domain),
-                )
-            })
-            .collect()
+        let mut out = Vec::new();
+        for (template, output) in PROJECT_TEMPLATES {
+            if *template == MODEL_TEMPLATE {
+                for domain in &self.domains {
+                    out.push(PathBuf::from(output.replace("{domain}", &domain.name)));
+                }
+                continue;
+            }
+            out.push(PathBuf::from(
+                output
+                    .replace("{graph}", &self.graph_binary)
+                    .replace("{domain}", &first_domain),
+            ));
+        }
+        out
     }
 }
 
@@ -215,10 +232,103 @@ mod tests {
         );
         let tree = ctx.file_tree();
         assert!(tree.contains(&PathBuf::from("demo-app-graph/src/main.rs")));
-        assert!(tree.contains(&PathBuf::from("schemas/billing/todo_list.json")));
-        assert!(tree.contains(&PathBuf::from("schemas/billing/todo_item.json")));
+        assert!(tree.contains(&PathBuf::from("model/billing.mox")));
         assert!(tree.contains(&PathBuf::from("codegraph-ops.toml")));
-        assert_eq!(tree.len(), PROJECT_TEMPLATES.len());
+        // Mox-first: 14 fixed outputs + one model file per domain.
+        assert_eq!(tree.len(), PROJECT_TEMPLATES.len() - 1 + 1);
+        assert!(
+            !tree.iter().any(|p| p.starts_with("schemas")),
+            "mox-first scaffold has no schemas/ directory"
+        );
+        assert!(
+            !tree.iter().any(|p| p == &PathBuf::from("classifier.toml")),
+            "mox-first scaffold has no classifier.toml"
+        );
+    }
+
+    #[test]
+    fn file_tree_renders_one_model_file_per_domain() {
+        let ctx = ProjectTemplateContext::new(
+            "demo-app",
+            &["common".to_string(), "billing".to_string()],
+            "",
+            None,
+            "postgres",
+            "sea_orm",
+            "monolith",
+            ProjectFeatures {
+                grpc: false,
+                ifml: false,
+                ops: true,
+            },
+        );
+        let tree = ctx.file_tree();
+        assert!(tree.contains(&PathBuf::from("model/common.mox")));
+        assert!(tree.contains(&PathBuf::from("model/billing.mox")));
+        assert_eq!(
+            tree.len(),
+            PROJECT_TEMPLATES.len() - 1 + 2,
+            "14 fixed outputs + one model file per domain"
+        );
+    }
+
+    #[test]
+    fn render_emits_one_model_file_per_domain() {
+        let ctx = ProjectTemplateContext::new(
+            "demo-app",
+            &["common".to_string(), "billing".to_string()],
+            "",
+            None,
+            "postgres",
+            "sea_orm",
+            "monolith",
+            ProjectFeatures {
+                grpc: false,
+                ifml: false,
+                ops: true,
+            },
+        );
+        let tera = crate::generate::template_engine::create_tera(Path::new(".")).unwrap();
+        let files = ctx.render(&tera).unwrap();
+        assert_eq!(files.len(), PROJECT_TEMPLATES.len() - 1 + 2);
+        let model_paths: Vec<&PathBuf> = files
+            .iter()
+            .map(|(p, _)| p)
+            .filter(|p| p.starts_with("model"))
+            .collect();
+        assert_eq!(
+            model_paths,
+            vec![
+                &PathBuf::from("model/common.mox"),
+                &PathBuf::from("model/billing.mox")
+            ]
+        );
+        for (path, content) in &files {
+            if path.starts_with("model") {
+                let domain = path.file_stem().unwrap().to_str().unwrap();
+                assert!(
+                    content.contains(&format!("package {domain}")),
+                    "{path:?} must declare its own package:\n{content}"
+                );
+                assert!(
+                    content.contains("class TodoListType")
+                        && content.contains("class TodoItemType"),
+                    "{path:?} must carry the starter classes:\n{content}"
+                );
+                assert!(
+                    content.contains("--mox-files"),
+                    "{path:?} header must carry the mox-first run hint:\n{content}"
+                );
+                assert!(
+                    !content.contains("--classifier"),
+                    "{path:?} header must not reference --classifier:\n{content}"
+                );
+                assert!(
+                    content.contains("import schema"),
+                    "{path:?} header must document JSON interop:\n{content}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -134,6 +134,9 @@ pub fn handle_completion(
     params: CompletionParams,
 ) -> anyhow::Result<Option<CompletionResponse>> {
     let uri = &params.text_document_position.text_document.uri;
+    if uri.path().ends_with(".mox") {
+        return super::mox::handle_mox_completion(db, params);
+    }
     let position = params.text_document_position.position;
 
     let file = db
@@ -831,6 +834,30 @@ fn has_error_outside_imports(root: &tree_sitter::Node, source: &[u8]) -> bool {
     visit(root, source)
 }
 
+/// True when the tree has any ERROR/MISSING node (no import tolerance —
+/// used by the mox handlers, whose grammar models imports).
+pub(crate) fn has_any_error(root: &tree_sitter::Node, _source: &[u8]) -> bool {
+    fn visit(node: &tree_sitter::Node) -> bool {
+        if node.is_error() || node.is_missing() {
+            return true;
+        }
+        let mut cursor = node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                if visit(&cursor.node()) {
+                    return true;
+                }
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        false
+    }
+
+    visit(root)
+}
+
 /// Collect the raw paths of top-level `import "x";` statements. The
 /// tree-sitter grammar does not model imports yet, so they are gathered
 /// textually; callers gate this behind a clean-except-imports parse.
@@ -949,6 +976,9 @@ fn validate_policy_refs(
 
 pub fn handle_hover(db: &BaseDb, params: HoverParams) -> anyhow::Result<Option<Hover>> {
     let uri = &params.text_document_position_params.text_document.uri;
+    if uri.path().ends_with(".mox") {
+        return super::mox::handle_mox_hover(db, params);
+    }
     let position = params.text_document_position_params.position;
 
     let file = db
@@ -1015,6 +1045,10 @@ pub fn handle_goto_definition(
     params: GotoDefinitionParams,
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
     let uri = &params.text_document_position_params.text_document.uri;
+    if uri.path().ends_with(".mox") {
+        // No mox goto-definition in v1.
+        return Ok(None);
+    }
     let position = params.text_document_position_params.position;
 
     let file = db
@@ -1073,7 +1107,7 @@ pub fn handle_goto_definition(
     Ok(None)
 }
 
-fn get_word_at_position(line: &str, character: usize) -> Option<String> {
+pub(crate) fn get_word_at_position(line: &str, character: usize) -> Option<String> {
     let chars: Vec<char> = line.chars().collect();
     if character >= chars.len() {
         return None;
@@ -1097,6 +1131,9 @@ fn get_word_at_position(line: &str, character: usize) -> Option<String> {
 }
 
 pub fn compute_diagnostics(db: &BaseDb, uri: &Url) -> Vec<Diagnostic> {
+    if uri.path().ends_with(".mox") {
+        return super::mox::compute_mox_diagnostics(db, uri);
+    }
     let file = match db.get_file(uri) {
         Some(f) => f,
         None => return Vec::new(),
@@ -1194,6 +1231,10 @@ pub fn handle_semantic_tokens_full(
     params: SemanticTokensParams,
 ) -> anyhow::Result<Option<SemanticTokensResult>> {
     let uri = &params.text_document.uri;
+    if uri.path().ends_with(".mox") {
+        // No mox semantic tokens in v1.
+        return Ok(None);
+    }
     let file = match db.get_file(uri) {
         Some(f) => f,
         None => return Ok(None),
@@ -1379,7 +1420,11 @@ pub fn handle_document_diagnostic(
 /// editor shows red underlines exactly where the syntax error occurs.
 /// Import statements are skipped: the grammar does not model them yet, but
 /// they are valid DSL syntax (see `is_import_error`).
-fn collect_errors(node: &tree_sitter::Node, source: &[u8], diagnostics: &mut Vec<Diagnostic>) {
+pub(crate) fn collect_errors(
+    node: &tree_sitter::Node,
+    source: &[u8],
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     if (node.is_error() || node.is_missing()) && !is_import_error(node, source) {
         let range = node.range();
         let text = node.utf8_text(source).unwrap_or("<binary>");

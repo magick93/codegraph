@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use codegraph_config::{DomainConfig, IfmlComponentMapping, IfmlComponentMappings, SemanticRole};
 use codegraph_core::traits::GraphQuerier;
-use codegraph_ifml_dsl::{
+use rex_ifml::{
     BinOp, ChartKind, ChartSpec, ColumnDef, ComponentSpec, Expression, FormSpec, TableSpec, UnaryOp,
 };
 use serde::Serialize;
@@ -2300,8 +2300,8 @@ mod tests {
     use super::*;
     use crate::template_engine::create_tera;
     use codegraph_core::mock::MockEngine;
-    use codegraph_ifml_dsl::InputFieldType;
-    use codegraph_ifml_dsl::PropertyRef;
+    use rex_ifml::InputFieldType;
+    use rex_ifml::PropertyRef;
 
     fn table_spec() -> ComponentSpec {
         ComponentSpec::Table(TableSpec {
@@ -2893,7 +2893,7 @@ testids = { root = "ui-button" }
     fn form_spec_maps_input_types_and_validations() {
         let spec = ComponentSpec::Form(FormSpec {
             fields: vec![
-                codegraph_ifml_dsl::FieldDef {
+                rex_ifml::FieldDef {
                     name: "name".to_string(),
                     input: InputFieldType::Text,
                     required: true,
@@ -2908,7 +2908,7 @@ testids = { root = "ui-button" }
                     values: Vec::new(),
                     messages: vec!["Name too short".to_string()],
                 },
-                codegraph_ifml_dsl::FieldDef {
+                rex_ifml::FieldDef {
                     name: "start".to_string(),
                     input: InputFieldType::DateTime,
                     required: false,
@@ -2916,7 +2916,7 @@ testids = { root = "ui-button" }
                     values: Vec::new(),
                     messages: Vec::new(),
                 },
-                codegraph_ifml_dsl::FieldDef {
+                rex_ifml::FieldDef {
                     name: "tier".to_string(),
                     input: InputFieldType::Dropdown,
                     required: false,
@@ -2924,7 +2924,7 @@ testids = { root = "ui-button" }
                     values: vec!["gold".to_string(), "silver".to_string()],
                     messages: Vec::new(),
                 },
-                codegraph_ifml_dsl::FieldDef {
+                rex_ifml::FieldDef {
                     name: "stars".to_string(),
                     input: InputFieldType::Custom("stars".to_string()),
                     required: false,
@@ -2950,7 +2950,7 @@ testids = { root = "ui-button" }
     fn form_message_renders_validate_message_and_client_check() {
         let tera = create_tera(Path::new(".")).expect("tera");
         let spec = ComponentSpec::Form(FormSpec {
-            fields: vec![codegraph_ifml_dsl::FieldDef {
+            fields: vec![rex_ifml::FieldDef {
                 name: "title".to_string(),
                 input: InputFieldType::Text,
                 required: true,
@@ -2995,7 +2995,7 @@ testids = { root = "ui-button" }
         );
 
         let plain = ComponentSpec::Form(FormSpec {
-            fields: vec![codegraph_ifml_dsl::FieldDef {
+            fields: vec![rex_ifml::FieldDef {
                 name: "title".to_string(),
                 input: InputFieldType::Text,
                 required: true,
@@ -4045,8 +4045,8 @@ testids = { root = "data-table", row = "data-row" }
         assert_eq!(ctx.components[2].id_param.as_deref(), Some("customerId"));
     }
 
-    fn field_def(name: &str, input: InputFieldType) -> codegraph_ifml_dsl::FieldDef {
-        codegraph_ifml_dsl::FieldDef {
+    fn field_def(name: &str, input: InputFieldType) -> rex_ifml::FieldDef {
+        rex_ifml::FieldDef {
             name: name.to_string(),
             input,
             required: false,

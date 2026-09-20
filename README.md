@@ -37,7 +37,7 @@ cargo run -- run --schemas <dir> --classifier classifier.toml \
   --config domains.toml --output <dir>          # ingest + classify + generate
 cargo run -- classify --schemas <dir> ...        # entity/VO decisions only
 cargo run -- generate --config domains.toml --output <dir>
-cargo run -- migrate --config domains.toml ...   # ingest API model only
+cargo run -- migrate --schemas <dir> --output <dir>  # convert JSON schemas to .mox
 cargo run -- lsp --schemas <dir> ...             # IFML language server
 cargo run -- init / doctor / add domain ...      # project lifecycle (see above)
 ```
@@ -88,7 +88,7 @@ When `grpc_backend = true` is set in `profiles.toml`, four additional generators
 
 ### IFML Interaction Models
 
-IFML (Interaction Flow Modeling Language) DSL files describe views, navigation, events, and data bindings as a complement to JSON Schema. See `crates/codegraph-ifml-dsl/` for the Pest grammar and `codegraph lsp` for the language server.
+IFML (Interaction Flow Modeling Language) DSL files describe views, navigation, events, and data bindings as a complement to JSON Schema. The parser lives in the rexlang repo as the `rex-ifml` crate and `codegraph lsp` serves the language server.
 
 ### Database Dialect Support
 

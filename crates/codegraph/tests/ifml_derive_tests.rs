@@ -160,7 +160,7 @@ fn derived(content: &str, route: &str) -> (String, codegraph::ifml_derive::Deriv
     let name = view_name_from_route(route);
     let view = derive_view(&name, route, content);
     let rendered = render_model("todo", std::slice::from_ref(&view));
-    codegraph_ifml_dsl::parse_ifml(&rendered).expect("derived model must parse");
+    rex_ifml::parse_ifml(&rendered).expect("derived model must parse");
     (rendered, view)
 }
 
@@ -321,7 +321,7 @@ fn full_model_parses_and_has_all_views() {
     .map(|(route, src)| derive_view(&view_name_from_route(route), route, src))
     .collect();
     let content = render_model("todo", &views);
-    let model = codegraph_ifml_dsl::parse_ifml(&content).expect("combined model must parse");
+    let model = rex_ifml::parse_ifml(&content).expect("combined model must parse");
     assert_eq!(model.views.len(), 3);
     let mut names: Vec<&str> = model.views.iter().map(|v| v.name.as_str()).collect();
     names.sort();
@@ -338,7 +338,7 @@ async fn derived_model_ingests_into_mock_graph() {
         .map(|(route, src)| derive_view(&view_name_from_route(route), route, src))
         .collect();
     let content = render_model("todo", &views);
-    let model = codegraph_ifml_dsl::parse_ifml(&content).unwrap();
+    let model = rex_ifml::parse_ifml(&content).unwrap();
 
     let engine = codegraph_core::mock::MockEngine::new();
     codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
@@ -387,7 +387,7 @@ fn cli_discovers_routes_writes_and_respects_force() {
     .expect("derive should succeed");
 
     let content = std::fs::read_to_string(&output).unwrap();
-    let model = codegraph_ifml_dsl::parse_ifml(&content).expect("emitted file must parse");
+    let model = rex_ifml::parse_ifml(&content).expect("emitted file must parse");
     assert_eq!(model.domains[0].name, "todo");
     assert_eq!(model.views.len(), 3);
 

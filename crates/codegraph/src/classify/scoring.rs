@@ -140,6 +140,8 @@ mod tests {
             in_degree,
             is_enum,
             is_string_type: false,
+            is_entity: false,
+            source: None,
         }
     }
 

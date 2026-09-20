@@ -1,0 +1,140 @@
+==================
+Import schema with and without alias
+==================
+
+import schema "schemas/common.json" as Common
+import schema "schemas/support.json"
+import "support.mox"
+
+package nz.example.app
+
+class Thing {
+    String name
+}
+
+---
+
+(source_file
+  (import_schema_declaration
+    path: (string)
+    alias: (identifier))
+  (import_schema_declaration
+    path: (string))
+  (import_declaration
+    path: (string))
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))))
+
+==================
+Annotation declaration
+==================
+
+package nz.example.annotated
+
+annotation "urn:example:legacy" as Legacy
+annotation "urn:example:note"
+
+class Old {
+    String data
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (annotation_declaration
+    value: (string)
+    name: (identifier))
+  (annotation_declaration
+    value: (string))
+  (class_declaration
+    name: (identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))))
+
+==================
+Comments and doc comments
+==================
+
+/// Package level documentation.
+package nz.example.docs
+
+// A line comment.
+/* A block comment. */
+
+/** Class documentation. */
+class Doced {
+    /// Feature documentation.
+    String name
+}
+
+---
+
+(source_file
+  (line_doc_comment)
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (line_comment)
+  (block_comment)
+  (block_doc_comment)
+  (class_declaration
+    name: (identifier)
+    (line_doc_comment)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (identifier)))))
+
+==================
+Escaped keyword identifiers
+==================
+
+package nz.example.escaped
+
+class ^class {
+    String ^when
+    refers ^class[] refs
+}
+
+---
+
+(source_file
+  (package_declaration
+    name: (qualified_name
+      (identifier)
+      (identifier)
+      (identifier)))
+  (class_declaration
+    name: (escaped_identifier)
+    (feature
+      (attribute
+        type: (qualified_name
+          (identifier))
+        name: (escaped_identifier)))
+    (feature
+      (reference
+        type: (qualified_name
+          (escaped_identifier))
+        multiplicity: (multiplicity)
+        name: (identifier)))))

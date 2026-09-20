@@ -723,7 +723,6 @@ dependencies = [
  "codegraph-ext-points",
  "codegraph-generate",
  "codegraph-grafeo",
- "codegraph-ifml-dsl",
  "codegraph-naming",
  "codegraph-ops",
  "codegraph-type-contracts",
@@ -733,6 +732,7 @@ dependencies = [
  "pathdiff",
  "proc-macro2",
  "rex-driver",
+ "rex-ifml",
  "rex-ir",
  "rust_decimal",
  "serde",
@@ -748,6 +748,8 @@ dependencies = [
  "tracing-subscriber",
  "tree-sitter",
  "tree-sitter-ifml",
+ "tree-sitter-language",
+ "tree-sitter-mox",
  "tree-sitter-svelte-next",
  "uuid",
  "walkdir",
@@ -817,16 +819,17 @@ dependencies = [
  "codegraph-config",
  "codegraph-core",
  "codegraph-ext-points",
- "codegraph-ifml-dsl",
  "codegraph-naming",
  "codegraph-type-contracts",
  "futures",
  "heck 0.5.0",
  "pathdiff",
  "rex-expr",
+ "rex-ifml",
  "rust_decimal",
  "serde",
  "serde_json",
+ "sqlglot-rust",
  "tempfile",
  "tera",
  "tokio",
@@ -854,17 +857,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "codegraph-ifml-dsl"
-version = "0.1.0"
-dependencies = [
- "pest",
- "pest_derive",
- "serde",
- "serde_json",
- "thiserror",
 ]
 
 [[package]]
@@ -2858,8 +2850,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d45aeb61b4bf818e12d4205f2466f8c4748f85f4fce0146d1c03d69d753f0ad"
 dependencies = [
  "memchr",
- "serde",
- "serde_json",
  "ucd-trie",
 ]
 
@@ -3372,7 +3362,7 @@ dependencies = [
 [[package]]
 name = "rex-driver"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fc4c30414d714a9416185cc9237e80a80ff1c18#9fc4c30414d714a9416185cc9237e80a80ff1c18"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
 dependencies = [
  "ariadne",
  "rex-expr",
@@ -3388,7 +3378,7 @@ dependencies = [
 [[package]]
 name = "rex-expr"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fc4c30414d714a9416185cc9237e80a80ff1c18#9fc4c30414d714a9416185cc9237e80a80ff1c18"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
 dependencies = [
  "chumsky",
  "logos",
@@ -3397,9 +3387,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rex-ifml"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
+dependencies = [
+ "pest",
+ "pest_derive",
+ "rex-ir",
+ "thiserror",
+]
+
+[[package]]
 name = "rex-ir"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fc4c30414d714a9416185cc9237e80a80ff1c18#9fc4c30414d714a9416185cc9237e80a80ff1c18"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
 dependencies = [
  "serde",
  "serde_json",
@@ -3409,7 +3410,7 @@ dependencies = [
 [[package]]
 name = "rex-syntax"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fc4c30414d714a9416185cc9237e80a80ff1c18#9fc4c30414d714a9416185cc9237e80a80ff1c18"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
 dependencies = [
  "chumsky",
  "logos",
@@ -3419,7 +3420,7 @@ dependencies = [
 [[package]]
 name = "rex-vocab"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fc4c30414d714a9416185cc9237e80a80ff1c18#9fc4c30414d714a9416185cc9237e80a80ff1c18"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
 dependencies = [
  "anyhow",
  "rex-ir",
@@ -4052,6 +4053,18 @@ checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
  "der",
+]
+
+[[package]]
+name = "sqlglot-rust"
+version = "0.10.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ad7e00ba375408c7361d90eb7f43f1ad0c2b0b0e6b1d7d8df008bb6819b4a5"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -4838,6 +4851,15 @@ name = "tree-sitter-language"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca0d1bf6fdd806e43ae5198f82f527056d359def39e54e67a0f478ac09dac081"
+
+[[package]]
+name = "tree-sitter-mox"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "tree-sitter",
+ "tree-sitter-language",
+]
 
 [[package]]
 name = "tree-sitter-svelte-next"
