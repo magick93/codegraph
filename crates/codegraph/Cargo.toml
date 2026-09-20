@@ -36,6 +36,8 @@ uuid = { version = "1", features = ["v5"] }
 pathdiff = "0.2"
 ast-ifml = { path = "../ast-ifml" }
 tree-sitter-ifml = { path = "../tree-sitter-ifml" }
+tree-sitter-mox = { path = "../tree-sitter-mox" }
+tree-sitter-language = { workspace = true }
 auto-lsp = { version = "0.6", features = ["lsp_server"] }
 syn = "2"
 tree-sitter = { workspace = true }

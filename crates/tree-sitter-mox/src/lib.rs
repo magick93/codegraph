@@ -58,15 +58,16 @@ mod tests {
             })
             .collect();
         assert!(
-            feature_kinds.iter().any(|kinds| kinds.contains(&"reference")),
+            feature_kinds
+                .iter()
+                .any(|kinds| kinds.contains(&"reference")),
             "expected a reference feature, got {feature_kinds:?}"
         );
     }
 
     #[test]
     fn parses_import_schema_declaration() {
-        let source =
-            "import schema \"schemas/common.json\" as Common\n\npackage nz.example.app\n";
+        let source = "import schema \"schemas/common.json\" as Common\n\npackage nz.example.app\n";
         let tree = parse(source);
         let root = tree.root_node();
         assert!(!root.has_error(), "tree should be error-free: {root:?}");
