@@ -1,4 +1,7 @@
-use ast_ifml::db::IFML_PARSERS;
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
+use ast_ifml::generated::SourceFile as IfmlSourceFile;
 use auto_lsp::default::db::{BaseDb, FileManager};
 use auto_lsp::default::server::file_events::open_text_document;
 use auto_lsp::default::server::workspace_init::WorkspaceInit;
@@ -26,6 +29,64 @@ mod state;
 #[cfg(test)]
 mod tests;
 
+/// `.mox` language support: state builder + mox diagnostics/completions/hover.
+pub mod mox;
+
+use mox::MoxSourceFile;
+
+// Parsers for both languages the server serves: `.ifml` documents (AST from
+// ast-ifml) and `.mox` documents (passthrough root; mox handlers walk the
+// raw tree-sitter tree). Clients select per language id via
+// initializationOptions.perFileParser, e.g. {"ifml": "ifml", "mox": "mox"}.
+//
+// Hand-rolled instead of `configure_parsers!`: that macro only expands
+// correctly for a single entry (its separator lands between statements).
+static LSP_PARSERS: LazyLock<HashMap<&'static str, auto_lsp::core::parsers::Parsers>> =
+    LazyLock::new(|| {
+        let mut map = HashMap::new();
+        map.insert(
+            "ifml",
+            parser_entry(tree_sitter_ifml::LANGUAGE, parse_root::<IfmlSourceFile>()),
+        );
+        map.insert(
+            "mox",
+            parser_entry(tree_sitter_mox::LANGUAGE, parse_root::<MoxSourceFile>()),
+        );
+        map
+    });
+
+/// One parser-map entry (mirrors auto-lsp's `create_parser` + `Parsers`).
+fn parser_entry(
+    language: tree_sitter_language::LanguageFn,
+    ast_parser: auto_lsp::core::parsers::InvokeParserFn,
+) -> auto_lsp::core::parsers::Parsers {
+    let (parser, language) = auto_lsp::configure::parsers::create_parser(language);
+    auto_lsp::core::parsers::Parsers {
+        parser,
+        language,
+        ast_parser,
+    }
+}
+
+/// Generic AST root parse (mirrors the `configure_parsers!` closure).
+fn parse_root<R>() -> auto_lsp::core::parsers::InvokeParserFn
+where
+    R: auto_lsp::core::ast::AstNode
+        + for<'a> TryFrom<
+            auto_lsp::core::ast::TryFromParams<'a>,
+            Error = auto_lsp::core::errors::AstError,
+        >,
+{
+    |db, document| {
+        let mut builder = auto_lsp::core::ast::Builder::default();
+        let root = R::try_from((&document.tree.root_node(), db, &mut builder, 0, None))
+            .map_err(auto_lsp::core::errors::ParseError::from)?;
+        let mut nodes = builder.take_nodes();
+        nodes.push(std::sync::Arc::new(root));
+        Ok(nodes)
+    }
+}
+
 pub fn run_lsp_server(
     connection: Connection,
     grafeo_state: GrafeoState,
@@ -34,7 +95,7 @@ pub fn run_lsp_server(
 
     let db = BaseDb::default();
     let init_options = InitOptions {
-        parsers: &IFML_PARSERS,
+        parsers: &LSP_PARSERS,
         capabilities: server_capabilities(),
         server_info: None,
     };
@@ -47,7 +108,7 @@ pub fn run_lsp_server(
                 eprintln!(
                     "ERROR: LSP client did not send initializationOptions.perFileParser.\n\
                      The VS Code extension sends this automatically. If using a custom client,\n\
-                     include: {{ \"initializationOptions\": {{ \"perFileParser\": {{ \"ifml\": \"ifml\" }} }} }}"
+                     include: {{ \"initializationOptions\": {{ \"perFileParser\": {{ \"ifml\": \"ifml\", \"mox\": \"mox\" }} }} }}"
                 );
             }
         })?;

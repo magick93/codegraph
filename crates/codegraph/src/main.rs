@@ -175,7 +175,16 @@ async fn main() -> codegraph::error::Result<()> {
             schemas,
             classifier,
             config,
-        } => cmd_lsp(&schemas, classifier.as_deref(), config.as_deref()).await,
+            mox_files,
+        } => {
+            cmd_lsp(
+                &schemas,
+                classifier.as_deref(),
+                config.as_deref(),
+                &mox_files,
+            )
+            .await
+        }
         cli::Commands::Init {
             name,
             output,
@@ -238,8 +247,9 @@ async fn cmd_lsp(
     schema_dirs: &[PathBuf],
     classifier: Option<&Path>,
     config: Option<&Path>,
+    mox_files: &[PathBuf],
 ) -> codegraph::error::Result<()> {
-    use codegraph::lsp::{run_lsp_server, GrafeoState, SchemaInfo};
+    use codegraph::lsp::{init_mox, run_lsp_server, GrafeoState, SchemaInfo};
 
     let backend_config = BackendConfig::default();
     let be = create_backend(&backend_config)
@@ -380,6 +390,21 @@ async fn cmd_lsp(
         schema_infos,
         schema_dirs: schema_dirs.to_vec(),
     };
+
+    // Mox model for .mox diagnostics/completions. Schema titles feed the
+    // `import schema` alias resolution (the wire_alias_refs replay: exact
+    // title, then title + type suffix).
+    if mox_files.is_empty() {
+        init_mox(None);
+    } else {
+        let schema_titles: HashSet<String> = grafeo_state
+            .schema_infos
+            .values()
+            .map(|s| s.title.clone())
+            .collect();
+        let mox_state = codegraph::lsp::mox::build_mox_state(mox_files, &schema_titles, "Type");
+        init_mox(Some(mox_state));
+    }
 
     eprintln!("codegraph LSP server starting (IFML language)...");
     let (connection, _io_threads) = auto_lsp::lsp_server::Connection::stdio();

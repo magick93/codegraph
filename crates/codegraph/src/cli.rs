@@ -217,6 +217,12 @@ pub enum Commands {
         /// Path to domains.toml
         #[arg(long)]
         config: Option<PathBuf>,
+
+        /// rexlang .mox domain model files powering .mox diagnostics and
+        /// completions (repeatable). Without them, .mox documents get
+        /// syntax diagnostics only.
+        #[arg(long)]
+        mox_files: Vec<PathBuf>,
     },
     /// Convert a JSON Schema directory tree into rexlang .mox domain sources
     /// plus the shared codegraph_stdlib package. Output is parse-verified
