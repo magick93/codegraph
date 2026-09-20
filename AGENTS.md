@@ -23,8 +23,74 @@ Workspace root `Cargo.toml` with 13 crates:
 
 The 13 members above are the workspace. The tree also carries
 non-workspace directories: `codegraph-vscode/` (IFML VS Code extension),
-`crates/tree-sitter-ifml/` (grammar), and `crates/review/` (regenerated
-fixture app exercised by `grafeo_e2e_tests`). None are workspace members.
+`crates/tree-sitter-ifml/` and `crates/tree-sitter-mox/` (editor grammars),
+and `crates/review/` (regenerated fixture app exercised by
+`grafeo_e2e_tests`). None are workspace members.
+
+## mox-First Modeling (epic #228)
+
+`.mox` (rexlang) is the **primary text-based modeling language**; JSON
+Schema is the legacy/import surface. `codegraph run --mox-files model.mox
+--config domains.toml --output out/` works without `--schemas`. Pipeline
+order in `driver::run`: **Pass 1 mox** (bridges classes → Schema/Property/
+CodeList nodes; provenance `custom_annotations["source"]="mox"`; entity vs
+VO is author-declarative — a class targeted only by `contains` is a VO,
+`refers` wins) → **Pass 1a schemas** (skips mox-covered titles; mox wins
+title conflicts by ordering) → IFML/api/openapi → auto-classify (bypasses
+mox schemas). `--schemas` alone emits a deprecation WARN pointing at
+`codegraph migrate` (which converts JSON Schema dirs to `.mox` packages,
+parse-verified). Key files: `crates/codegraph/src/ingest/mox_ingest.rs`
+(bridge + import scan + `wire_alias_refs`), `ingest/async_ingest.rs`
+(`ingest_schemas_with_skips`, `ingest_imported_schemas`),
+`classify/mod.rs` (priority-0 mox bypass), `migrate.rs` + embedded
+`codegraph_stdlib.mox`. Equivalence gate:
+`crates/codegraph/tests/mox_equivalence_tests.rs` pins full-tree
+byte-identity between equivalent JSON Schema and `.mox` models.
+`docs/mox-simplification-ledger.md` is the deletion roadmap for the
+JSON-Schema inference machinery.
+
+### `import schema` (JSON Schema types from .mox)
+
+```mox
+package todo
+
+import schema "schemas/todo_item.json" as TodoItem
+
+class TodoListType {
+    refers TodoItem[] items
+}
+```
+
+rexlang owns the NAME (opaque nominal registration, `SchemaImports`
+provider API, upstream `yestechgroup/rexlang` rev `699b3a5`+); codegraph
+owns the GRAPH: imported files flow through the existing classifier-aware
+JSON pipeline (`ingest_imported_schemas` — wrapper/range/codelist config
+keeps working), and `wire_alias_refs` resolves deferred alias-typed
+features to real titles after the schema pass (exact → `+type_suffix` →
+warning). Missing/invalid import targets are **hard errors** (structural,
+unlike advisory `.actor` imports); `doctor --mox-files` validates them.
+Import scan is a line-scan (declaration must start its trimmed line with
+`import schema `). Actor-policy domains carrying imports compile via
+`compile_actors_str_with_imports`.
+
+### LSP for `.mox` (MoxState)
+
+`codegraph lsp --mox-files <file>...` builds an in-process `MoxState`
+(`crates/codegraph/src/lsp/mox.rs`) from the compiled mox workspace and
+serves: unknown-type diagnostics (tree-sitter queries over `type:`/
+`superclass:` fields), import-target-must-exist errors, completions in
+`refers`/`contains`/`container`/`extends`/`on` contexts and type
+positions, and type-position hover. Degradation contract (pinned by
+tests): without `--mox-files`, `.mox` documents are quiet on semantics;
+parser-level syntax diagnostics still flow; the LSP never fails to start.
+Editor grammar: `codegraph-vscode/grammar-mox/` (corpus-tested) →
+committed parser in `crates/tree-sitter-mox/` (regenerate with
+`npx tree-sitter generate --abi 14`, copy `src/parser.c`,
+`node-types.json`, `src/tree_sitter/parser.h` into the crate). Follow-up:
+VS Code extension must register the `mox` language + `.mox` extension and
+pass per-file parser initializationOptions; actor-internals validation
+belongs to upstream rex-lsp.
+
 
 ## IFML Integration
 
