@@ -1486,14 +1486,17 @@ from pre-feature master).
 `db/expr_sql.rs` parses the stored expression source with `rex-expr` (parse
 only, no model) and lowers: own-table field refs (→ quoted column, resolved
 through the class's schema properties), string/number/boolean literals,
+`date("YYYY-MM-DD")` literals (→ `DATE '...'`, format-validated; the compared
+field is guaranteed date-typed by the upstream rex-driver typecheck),
 `==`/`=`/`!=`/`<`/`<=`/`>`/`>=`, `&&`/`||`/`!`, parentheses, and `field ==
 null` / `field != null` → `IS NULL` / `IS NOT NULL`. EVERYTHING else —
-arithmetic, `?.`, `?:`, `let`, lambdas, collection algebra, `if`, calls,
-list literals, dotted navigation, unknown fields — is a HARD generation
-error naming the capability (rexlang Cedar-backend philosophy). Postgres
-only; sqlite is a documented no-op. Policy-derived RLS is ADDITIVE with the
-domains.toml-driven RLS: permissive policies OR-combine (only widening);
-RESTRICTIVE policies from `rls.tera` still AND on top.
+arithmetic, `?.`, `?:`, `let`, lambdas, collection algebra, date calendar
+algebra (`plus_days` etc.), `if`, calls, list literals, dotted navigation,
+unknown fields — is a HARD generation error naming the capability (rexlang
+Cedar-backend philosophy). Postgres only; sqlite is a documented no-op.
+Policy-derived RLS is ADDITIVE with the domains.toml-driven RLS: permissive
+policies OR-combine (only widening); RESTRICTIVE policies from `rls.tera`
+still AND on top.
 
 ## Branch & PR Workflow
 
