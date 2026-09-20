@@ -617,31 +617,10 @@ fn worker_ports() -> impl Iterator<Item = u16> {
 /// one-level-short path deps. Manifest-relative inputs are absolutized
 /// against `root_dir` to compensate.
 fn regenerate(config: &OpsConfig, graph: &str, workers_out: &Path) -> (bool, String) {
-    let mut cargo_args = vec![
-        "run".to_string(),
-        "--release".to_string(),
-        "-p".to_string(),
-        graph.to_string(),
-        "--".to_string(),
-        "run".to_string(),
-    ];
-    if let Some(schemas) = &config.manifest.schemas_dir {
-        cargo_args.push("--schemas".to_string());
-        cargo_args.push(absolutize(&config.root_dir, schemas));
+    if let Some(hint) = missing_model_source_hint(config) {
+        output::warn(hint);
     }
-    if let Some(classifier) = &config.manifest.classifier {
-        cargo_args.push("--classifier".to_string());
-        cargo_args.push(absolutize(&config.root_dir, classifier));
-    }
-    if let Some(domain_config) = &config.manifest.domain_config {
-        cargo_args.push("--config".to_string());
-        cargo_args.push(absolutize(&config.root_dir, domain_config));
-    }
-    cargo_args.push("--profile".to_string());
-    cargo_args.push(PROFILE.to_string());
-    cargo_args.push("--output".to_string());
-    cargo_args.push(workers_out.to_string_lossy().into_owned());
-
+    let cargo_args = regenerate_args(config, graph, workers_out);
     match Command::new("cargo")
         .args(&cargo_args)
         .current_dir(&config.workspace_root)
@@ -657,6 +636,59 @@ fn regenerate(config: &OpsConfig, graph: &str, workers_out: &Path) -> (bool, Str
         }
         Err(e) => (false, e.to_string()),
     }
+}
+
+/// Warning returned when the manifest provides neither `mox_files` nor
+/// `schemas_dir` — regeneration then runs the codegen binary without a
+/// model source and will fail.
+fn missing_model_source_hint(config: &OpsConfig) -> Option<&'static str> {
+    (config.manifest.mox_files.is_empty() && config.manifest.schemas_dir.is_none()).then_some(
+        "mox_files not set and schemas_dir not set — regenerating without a model source",
+    )
+}
+
+/// Build the `cargo run --release -p {graph} -- run ...` argument vector.
+///
+/// mox mode (non-empty `mox_files`): one `--mox-files` flag per file in
+/// manifest order (absolutized against `root_dir`), then optional
+/// `--config`, then the forced `--profile`/`--output`. No `--schemas`/
+/// `--classifier` is passed — the mox pipeline needs no classifier, and a
+/// manifest that also sets `schemas_dir` regenerates from mox.
+///
+/// Legacy schemas mode (`mox_files` empty) is unchanged: `--schemas` +
+/// optional `--classifier` only when `schemas_dir` is set. `--profile` is
+/// always forced to the workers profile and `--output` to `workers_out`.
+fn regenerate_args(config: &OpsConfig, graph: &str, workers_out: &Path) -> Vec<String> {
+    let mut cargo_args = vec![
+        "run".to_string(),
+        "--release".to_string(),
+        "-p".to_string(),
+        graph.to_string(),
+        "--".to_string(),
+        "run".to_string(),
+    ];
+    if !config.manifest.mox_files.is_empty() {
+        for file in &config.manifest.mox_files {
+            cargo_args.push("--mox-files".to_string());
+            cargo_args.push(absolutize(&config.root_dir, Path::new(file)));
+        }
+    } else if let Some(schemas) = &config.manifest.schemas_dir {
+        cargo_args.push("--schemas".to_string());
+        cargo_args.push(absolutize(&config.root_dir, schemas));
+        if let Some(classifier) = &config.manifest.classifier {
+            cargo_args.push("--classifier".to_string());
+            cargo_args.push(absolutize(&config.root_dir, classifier));
+        }
+    }
+    if let Some(domain_config) = &config.manifest.domain_config {
+        cargo_args.push("--config".to_string());
+        cargo_args.push(absolutize(&config.root_dir, domain_config));
+    }
+    cargo_args.push("--profile".to_string());
+    cargo_args.push(PROFILE.to_string());
+    cargo_args.push("--output".to_string());
+    cargo_args.push(workers_out.to_string_lossy().into_owned());
+    cargo_args
 }
 
 /// Resolve a manifest path as an absolute string: relative paths are rooted
@@ -782,6 +814,7 @@ fn print_log_tail(log_path: &Path, n: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codegraph_config::{OpsDatabase, OpsDbTarget, OpsManifest};
 
     #[test]
     fn worker_ports_are_sequential_from_base() {
@@ -875,5 +908,123 @@ mod tests {
             absolutize(root, Path::new("/elsewhere/schemas")),
             "/elsewhere/schemas"
         );
+    }
+
+    fn workers_manifest() -> OpsManifest {
+        OpsManifest {
+            app_name: "demo-app".into(),
+            graph_binary: Some("hr-graph".into()),
+            schemas_dir: Some("schemas".into()),
+            mox_files: Vec::new(),
+            classifier: Some("classifier.toml".into()),
+            domain_config: Some("domains.toml".into()),
+            profile: Some("default".into()),
+            output_dir: "generated-app".into(),
+            ui_dir: None,
+            smoke: None,
+            api_version: "v1".to_string(),
+            servers: Default::default(),
+            database: OpsDatabase {
+                api: OpsDbTarget {
+                    host: "localhost".into(),
+                    port: 5432,
+                    user: "u".into(),
+                    password: "p".into(),
+                    database: "postgres".into(),
+                    reset_sql: None,
+                    seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
+                },
+                e2e: None,
+                e2e_app: None,
+            },
+            supabase: None,
+            capabilities: Default::default(),
+            hurl: None,
+            hooks: vec![],
+            extensions: vec![],
+        }
+    }
+
+    fn workers_config(manifest: OpsManifest) -> OpsConfig {
+        OpsConfig::from_manifest(manifest, PathBuf::from("/tmp/repo")).unwrap()
+    }
+
+    #[test]
+    fn regenerate_args_mox_mode_replaces_schemas_and_classifier() {
+        let mut manifest = workers_manifest();
+        manifest.mox_files = vec!["model/common.mox".into(), "model/billing.mox".into()];
+        let cfg = workers_config(manifest);
+        let args = regenerate_args(&cfg, "hr-graph", Path::new("/tmp/repo/generated-workers"));
+        assert_eq!(
+            args,
+            vec![
+                "run",
+                "--release",
+                "-p",
+                "hr-graph",
+                "--",
+                "run",
+                "--mox-files",
+                "/tmp/repo/model/common.mox",
+                "--mox-files",
+                "/tmp/repo/model/billing.mox",
+                "--config",
+                "/tmp/repo/domains.toml",
+                "--profile",
+                "workers-cornucopia",
+                "--output",
+                "/tmp/repo/generated-workers",
+            ]
+        );
+    }
+
+    #[test]
+    fn regenerate_args_legacy_schemas_mode_unchanged() {
+        let manifest = workers_manifest();
+        let cfg = workers_config(manifest);
+        let args = regenerate_args(&cfg, "hr-graph", Path::new("/tmp/repo/generated-workers"));
+        assert_eq!(
+            args,
+            vec![
+                "run",
+                "--release",
+                "-p",
+                "hr-graph",
+                "--",
+                "run",
+                "--schemas",
+                "/tmp/repo/schemas",
+                "--classifier",
+                "/tmp/repo/classifier.toml",
+                "--config",
+                "/tmp/repo/domains.toml",
+                "--profile",
+                "workers-cornucopia",
+                "--output",
+                "/tmp/repo/generated-workers",
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_model_source_hint_only_when_neither_set() {
+        // Neither source → hint naming both knobs.
+        let mut manifest = workers_manifest();
+        manifest.schemas_dir = None;
+        let cfg = workers_config(manifest);
+        let hint = missing_model_source_hint(&cfg).expect("neither source must hint");
+        assert!(hint.contains("mox_files not set"), "{hint}");
+        assert!(hint.contains("schemas_dir not set"), "{hint}");
+        // mox-only → no hint.
+        let mut manifest = workers_manifest();
+        manifest.schemas_dir = None;
+        manifest.mox_files = vec!["model/app.mox".into()];
+        let cfg = workers_config(manifest);
+        assert!(missing_model_source_hint(&cfg).is_none());
+        // schemas-only → no hint (legacy behavior).
+        let cfg = workers_config(workers_manifest());
+        assert!(missing_model_source_hint(&cfg).is_none());
     }
 }

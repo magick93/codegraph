@@ -165,6 +165,7 @@ impl GlobalGenerator for OpsManifestGenerator {
             app_name: project.app_name.clone(),
             graph_binary: None,
             schemas_dir: None,
+            mox_files: Vec::new(),
             classifier: None,
             domain_config: None,
             profile: None,
