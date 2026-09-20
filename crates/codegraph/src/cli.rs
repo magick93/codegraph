@@ -279,18 +279,21 @@ pub enum Commands {
         #[arg(long, default_value = "domains.toml")]
         config: PathBuf,
 
-        #[arg(long, default_value = "schemas")]
-        schemas: PathBuf,
+        /// Path to JSON schema directory. Optional when --mox-files is
+        /// provided (mox-first projects carry no schemas directory)
+        #[arg(long)]
+        schemas: Option<PathBuf>,
 
-        #[arg(long, default_value = "classifier.toml")]
-        classifier: PathBuf,
+        /// Path to classifier.toml (only needed when JSON schemas are present)
+        #[arg(long)]
+        classifier: Option<PathBuf>,
 
         #[arg(long)]
         profiles_config: Option<PathBuf>,
 
         /// Paths to rexlang .mox domain model files; each package must match
         /// a domains.toml domain. With .mox present the JSON schemas check
-        /// degrades to a warning (mox-first projects)
+        /// degrades to an info line (mox-first projects)
         #[arg(long)]
         mox_files: Vec<PathBuf>,
     },

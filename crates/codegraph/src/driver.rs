@@ -902,18 +902,31 @@ pub async fn generate(
 /// Classify all schemas and show entity/VO decisions. Mox files, when
 /// provided, are ingested first: their schemas bypass the classifier and
 /// show up in the report with the `override:source=mox` reason.
+/// `schemas` is optional when `mox_files` is provided (mox-first, issue
+/// #231); the classifier config is only loaded when `classifier_path` is
+/// given (an empty config is used otherwise, mirroring `run`).
 pub async fn classify(
-    schemas: &Path,
-    classifier_path: &Path,
+    schemas: Option<&Path>,
+    classifier_path: Option<&Path>,
     config_path: &Path,
     domain_filter: Option<&str>,
     format: ClassifyFormat,
     mox_files: &[PathBuf],
 ) -> Result<()> {
+    if schemas.is_none() && mox_files.is_empty() {
+        return Err(crate::error::Error::Config(
+            "no model source: provide --mox-files (primary) or --schemas".to_string(),
+        ));
+    }
     let domain_config = codegraph_config::config::parse_domain_config(config_path)
         .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-    let classifier_config = codegraph_classifier::config::parse_classifier_config(classifier_path)
-        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+    let classifier_config = match classifier_path {
+        Some(classifier) => codegraph_classifier::config::parse_classifier_config(classifier)
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?,
+        // An empty TOML document deserializes to the all-defaults config.
+        None => codegraph_classifier::config::parse_classifier_config_str("")
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?,
+    };
 
     let classifier_types: HashSet<String> = classifier_config
         .primitive_wrappers
@@ -968,16 +981,18 @@ pub async fn classify(
     }
 
     let empty_entities = HashSet::new();
-    crate::ingest::async_ingest::ingest_schemas_with_skips(
-        be.ingestor(),
-        schemas,
-        &classifier_config,
-        &empty_entities,
-        &ui_overrides,
-        &domain_config.defaults.type_suffix,
-        &mox_covered,
-    )
-    .await?;
+    if let Some(schemas_dir) = schemas {
+        crate::ingest::async_ingest::ingest_schemas_with_skips(
+            be.ingestor(),
+            schemas_dir,
+            &classifier_config,
+            &empty_entities,
+            &ui_overrides,
+            &domain_config.defaults.type_suffix,
+            &mox_covered,
+        )
+        .await?;
+    }
 
     if !pending_alias_refs.is_empty() {
         let mut mox_stats = crate::ingest::mox_ingest::MoxIngestStats::default();

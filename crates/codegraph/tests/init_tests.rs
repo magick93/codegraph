@@ -1,5 +1,8 @@
 //! Project-init lifecycle integration tests: `init`, `doctor`, `add domain`,
 //! and the embedded rev accessor. All hermetic (tempfile, no network).
+//!
+//! Init is mox-first (issue #231): the scaffold emits `model/<domain>.mox`
+//! per domain and NO `schemas/` directory or `classifier.toml`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,10 +47,11 @@ fn init_args(dir: &Path, name: &str, codegraph_path: Option<PathBuf>, force: boo
     }
 }
 
-fn assert_scaffold_files_exist(project: &Path) {
+fn assert_scaffold_files_exist(project: &Path, domains: &[&str]) {
+    let domain_names: Vec<String> = domains.iter().map(|d| d.to_string()).collect();
     let ctx = ProjectTemplateContext::new(
         "demo-app",
-        &["common".to_string()],
+        &domain_names,
         "abc123",
         None,
         "postgres",
@@ -56,7 +60,13 @@ fn assert_scaffold_files_exist(project: &Path) {
         features(),
     );
     let mut expected = ctx.file_tree();
-    assert_eq!(expected.len(), 18, "PROJECT_TEMPLATES should list 18 files");
+    // 15 template entries minus the per-domain model expansion: 14 fixed
+    // outputs + one model/<domain>.mox per domain.
+    assert_eq!(
+        expected.len(),
+        14 + domains.len(),
+        "file tree should be 14 fixed outputs + one model file per domain"
+    );
     expected.sort();
     for rel in &expected {
         assert!(project.join(rel).is_file(), "missing {}", rel.display());
@@ -72,6 +82,42 @@ fn assert_scaffold_files_exist(project: &Path) {
     assert_eq!(actual, expected, "unexpected extra files: {actual:?}");
 }
 
+fn assert_mox_first_layout(project: &Path) {
+    assert!(
+        !project.join("schemas").exists(),
+        "mox-first scaffold must not create a schemas/ directory"
+    );
+    assert!(
+        !project.join("classifier.toml").exists(),
+        "mox-first scaffold must not create classifier.toml"
+    );
+}
+
+fn assert_starter_model_compiles(project: &Path, domain: &str) {
+    let path = project.join("model").join(format!("{domain}.mox"));
+    let content = fs::read_to_string(&path).unwrap();
+    let compilation = rex_driver::compile_files(&[(path.display().to_string(), content.clone())]);
+    assert!(
+        compilation.model.is_some(),
+        "starter model {domain}.mox must compile: {:?}",
+        compilation.diagnostics
+    );
+    let model = compilation.model.unwrap();
+    assert_eq!(
+        model.packages[0].name, domain,
+        "package name must match the domain"
+    );
+    let classes: Vec<&str> = model.packages[0]
+        .classes
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert!(
+        classes.contains(&"TodoListType") && classes.contains(&"TodoItemType"),
+        "starter model must carry the TODO starter classes, got {classes:?}"
+    );
+}
+
 #[test]
 fn init_scaffolds_expected_file_tree() {
     let dir = TempDir::new().unwrap();
@@ -85,7 +131,8 @@ fn init_scaffolds_expected_file_tree() {
     .unwrap();
 
     let project = dir.path().join("demo-app");
-    assert_scaffold_files_exist(&project);
+    assert_scaffold_files_exist(&project, &["common"]);
+    assert_mox_first_layout(&project);
 
     let domains =
         codegraph_config::config::parse_domain_config(&project.join("domains.toml")).unwrap();
@@ -96,24 +143,7 @@ fn init_scaffolds_expected_file_tree() {
     let plan = BuildPlan::from_profile(&resolved, &CapabilityRegistry::new()).unwrap();
     assert!(!plan.entity_generators.is_empty());
 
-    codegraph_config::ops_manifest::OpsManifest::load(&project.join("codegraph-ops.toml")).unwrap();
-
-    codegraph_classifier::config::parse_classifier_config(&project.join("classifier.toml"))
-        .unwrap();
-
-    for schema_file in ["todo_list.json", "todo_item.json"] {
-        let schema = fs::read_to_string(project.join("schemas/common").join(schema_file)).unwrap();
-        serde_json::from_str::<serde_json::Value>(&schema).unwrap();
-    }
-
-    let starter_mox = fs::read_to_string(project.join("model/common.mox")).unwrap();
-    let compilation = rex_driver::compile_files(&[("model/common.mox".to_string(), starter_mox)]);
-    assert!(
-        compilation.model.is_some(),
-        "starter model.mox must compile: {:?}",
-        compilation.diagnostics
-    );
-    assert_eq!(compilation.model.unwrap().packages[0].name, "common");
+    assert_starter_model_compiles(&project, "common");
 
     let workspace = fs::read_to_string(project.join("Cargo.toml")).unwrap();
     let expected_path = format!("path = \"{}\"", root.join("crates/codegraph").display());
@@ -130,6 +160,202 @@ fn init_scaffolds_expected_file_tree() {
     assert!(
         main.contains("CODEGRAPH_REV: &str = \"abc123\""),
         "wrapper should stamp the rev:\n{main}"
+    );
+}
+
+#[test]
+fn init_scaffolds_one_model_file_per_domain() {
+    let dir = TempDir::new().unwrap();
+    let mut args = init_args(dir.path(), "demo-app", None, false);
+    args.domains = vec!["common".to_string(), "billing".to_string()];
+    cmd_init(&args).unwrap();
+
+    let project = dir.path().join("demo-app");
+    assert_scaffold_files_exist(&project, &["common", "billing"]);
+    assert_mox_first_layout(&project);
+    assert_starter_model_compiles(&project, "common");
+    assert_starter_model_compiles(&project, "billing");
+
+    let domains =
+        codegraph_config::config::parse_domain_config(&project.join("domains.toml")).unwrap();
+    assert!(domains.domains.contains_key("common"));
+    assert!(domains.domains.contains_key("billing"));
+}
+
+/// The generated domains.toml must not pin `entities` — mox is
+/// author-declarative and the bridge decides entity vs VO.
+#[test]
+fn init_domains_toml_has_no_entities_key() {
+    let dir = TempDir::new().unwrap();
+    cmd_init(&init_args(dir.path(), "demo-app", None, false)).unwrap();
+
+    let raw = fs::read_to_string(dir.path().join("demo-app/domains.toml")).unwrap();
+    assert!(
+        !raw.contains("entities"),
+        "domains.toml must not carry an entities key:\n{raw}"
+    );
+}
+
+/// The generated wrapper + justfile must be mox-first: Run/Classify/Doctor
+/// take --mox-files and no longer default --schemas/--classifier.
+#[test]
+fn init_wrapper_and_justfile_are_mox_first() {
+    let dir = TempDir::new().unwrap();
+    cmd_init(&init_args(dir.path(), "demo-app", None, false)).unwrap();
+    let project = dir.path().join("demo-app");
+
+    let main = fs::read_to_string(project.join("demo-app-graph/src/main.rs")).unwrap();
+    assert!(
+        !main.contains("default_value = \"schemas\""),
+        "wrapper Run must not default --schemas:\n{main}"
+    );
+    assert!(
+        !main.contains("default_value = \"classifier.toml\""),
+        "wrapper must not default --classifier:\n{main}"
+    );
+    assert!(
+        main.contains("mox_files"),
+        "wrapper must accept --mox-files:\n{main}"
+    );
+
+    let justfile = fs::read_to_string(project.join("justfile")).unwrap();
+    assert!(
+        justfile.contains("--mox-files model/common.mox"),
+        "justfile recipes must pass --mox-files per domain:\n{justfile}"
+    );
+    assert!(
+        !justfile.contains("--classifier"),
+        "justfile must not reference --classifier:\n{justfile}"
+    );
+    assert!(
+        justfile.contains("Regenerate code from your .mox model"),
+        "justfile generate comment must reference the .mox model:\n{justfile}"
+    );
+
+    let domains_toml = fs::read_to_string(project.join("domains.toml")).unwrap();
+    assert!(
+        domains_toml.contains("model/common.mox"),
+        "domains.toml should point at the model file:\n{domains_toml}"
+    );
+
+    let readme = fs::read_to_string(project.join("README.md")).unwrap();
+    assert!(
+        readme.contains(".mox model"),
+        "README should describe the .mox-first scaffold:\n{readme}"
+    );
+    assert!(
+        !readme.contains("classifier.toml"),
+        "README layout must not list classifier.toml:\n{readme}"
+    );
+}
+
+/// The ops manifest emitted by init must be mox-first: `mox_files` set, no
+/// `schemas_dir`/`classifier` keys, and it must load through the harness's
+/// `OpsConfig` (contract from PR #250).
+#[test]
+fn init_ops_manifest_is_mox_first() {
+    let dir = TempDir::new().unwrap();
+    let mut args = init_args(dir.path(), "demo-app", None, false);
+    args.domains = vec!["common".to_string(), "billing".to_string()];
+    cmd_init(&args).unwrap();
+
+    let project = dir.path().join("demo-app");
+    let raw = fs::read_to_string(project.join("codegraph-ops.toml")).unwrap();
+    assert!(
+        raw.contains(r#"mox_files = ["model/common.mox", "model/billing.mox"]"#),
+        "manifest must list one mox file per domain in domain order:\n{raw}"
+    );
+    assert!(
+        !raw.contains("schemas_dir"),
+        "manifest must not carry schemas_dir:\n{raw}"
+    );
+    assert!(
+        !raw.contains("classifier"),
+        "manifest must not carry classifier:\n{raw}"
+    );
+
+    let manifest_path = project.join("codegraph-ops.toml");
+    let cfg = codegraph_ops::OpsConfig::load(&manifest_path)
+        .expect("emitted manifest must load via OpsConfig::load");
+    assert_eq!(
+        cfg.manifest.mox_files,
+        vec![
+            "model/common.mox".to_string(),
+            "model/billing.mox".to_string()
+        ]
+    );
+}
+
+/// THE acceptance gate: a fresh scaffold must generate with ONLY --mox-files
+/// + --config (no --schemas, no --classifier), producing DDL for both starter
+/// classes with the refers-derived FK.
+#[tokio::test]
+async fn init_scaffold_runs_mox_first() {
+    let dir = TempDir::new().unwrap();
+    let root = repo_root().canonicalize().unwrap();
+    cmd_init(&init_args(dir.path(), "demo-app", Some(root), false)).unwrap();
+    let project = dir.path().join("demo-app");
+
+    let mox_files = vec![project.join("model/common.mox")];
+    let output = project.join("generated");
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &project.join("domains.toml"),
+        output: &output,
+        extension_points_path: None,
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(project.join("profiles.toml")),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: &mox_files,
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+    })
+    .await
+    .unwrap();
+
+    let generated: Vec<PathBuf> = walkdir::WalkDir::new(&output)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.path().to_path_buf())
+        .collect();
+    assert!(
+        !generated.is_empty(),
+        "mox-first generation must produce files"
+    );
+
+    let migrations_dir = output.join("migrations");
+    let mut ddl = String::new();
+    for entry in fs::read_dir(&migrations_dir).unwrap_or_else(|e| {
+        panic!(
+            "migrations dir missing under {}: {e}",
+            migrations_dir.display()
+        )
+    }) {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) == Some("sql") {
+            ddl.push_str(&fs::read_to_string(&path).unwrap());
+            ddl.push('\n');
+        }
+    }
+    assert!(
+        ddl.contains("todo_list"),
+        "DDL must contain todo_list:\n{ddl}"
+    );
+    assert!(
+        ddl.contains("todo_item"),
+        "DDL must contain todo_item:\n{ddl}"
+    );
+    assert!(
+        ddl.contains("todo_list_id"),
+        "starter refers must produce a todo_list_id FK on todo_item:\n{ddl}"
     );
 }
 
@@ -186,20 +412,108 @@ fn init_normalizes_project_name() {
     assert!(!dir.path().join("My Cool App").exists());
 }
 
+/// Doctor with the wrapper's new default args (mox files set, no
+/// --schemas/--classifier) must pass on a fresh scaffold with ZERO model
+/// warnings — the intentional new-project shape is warning-free.
 #[test]
-fn doctor_passes_on_scaffolded_project() {
+fn doctor_fresh_scaffold_has_zero_model_warnings() {
     let dir = TempDir::new().unwrap();
     cmd_init(&init_args(dir.path(), "demo-app", Some(repo_root()), false)).unwrap();
     let project = dir.path().join("demo-app");
 
-    cmd_doctor(&DoctorArgs {
+    let summary = cmd_doctor(&DoctorArgs {
         config: project.join("domains.toml"),
-        schemas: project.join("schemas"),
-        classifier: project.join("classifier.toml"),
+        schemas: None,
+        classifier: None,
         profiles_config: Some(project.join("profiles.toml")),
-        mox_files: vec![],
+        mox_files: vec![project.join("model/common.mox")],
     })
     .unwrap();
+    assert_eq!(
+        summary.hard_failures, 0,
+        "fresh scaffold must have no hard failures"
+    );
+    assert_eq!(
+        summary.model_warnings, 0,
+        "fresh scaffold doctor must produce zero model warnings"
+    );
+}
+
+/// A schemas directory that exists but is empty is still a misconfiguration
+/// in mox mode — the WARN stays.
+#[test]
+fn doctor_empty_schemas_dir_in_mox_mode_still_warns() {
+    let dir = TempDir::new().unwrap();
+    let config = copy_doctor_fixture_files(&dir);
+    let schemas = dir.path().join("schemas");
+    fs::create_dir_all(&schemas).unwrap();
+    let mox = dir.path().join("model.mox");
+    fs::write(&mox, DOCTOR_MOX).unwrap();
+
+    let summary = cmd_doctor(&DoctorArgs {
+        config,
+        schemas: Some(schemas),
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![mox],
+    })
+    .unwrap();
+    assert_eq!(
+        summary.model_warnings, 1,
+        "empty schemas dir in mox mode must still warn"
+    );
+}
+
+/// classifier.toml is only required when JSON schemas are present: absent
+/// classifier + a schemas dir with JSON is a hard failure.
+#[test]
+fn doctor_classifier_missing_with_json_schemas_is_hard_failure() {
+    let dir = TempDir::new().unwrap();
+    let config = copy_fixture_domains(dir.path());
+    let schemas = dir.path().join("schemas/common");
+    fs::create_dir_all(&schemas).unwrap();
+    fs::write(
+        schemas.parent().unwrap().join("common/Widget.json"),
+        r#"{ "title": "Widget", "type": "object" }"#,
+    )
+    .unwrap();
+
+    let err = cmd_doctor(&DoctorArgs {
+        config,
+        schemas: Some(dir.path().join("schemas")),
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![],
+    })
+    .unwrap_err();
+    assert!(
+        format!("{err}").contains("hard check"),
+        "classifier missing with JSON schemas present should be a hard failure: {err}"
+    );
+}
+
+/// Doctor's mox compile must accept MULTIPLE --mox-files (one per domain).
+#[test]
+fn doctor_validates_multiple_mox_files() {
+    let dir = TempDir::new().unwrap();
+    let mut args = init_args(dir.path(), "demo-app", None, false);
+    args.domains = vec!["common".to_string(), "billing".to_string()];
+    cmd_init(&args).unwrap();
+    let project = dir.path().join("demo-app");
+
+    let summary = cmd_doctor(&DoctorArgs {
+        config: project.join("domains.toml"),
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![
+            project.join("model/common.mox"),
+            project.join("model/billing.mox"),
+        ],
+    })
+    .unwrap();
+    assert_eq!(summary.hard_failures, 0);
+    assert_eq!(summary.model_warnings, 0);
 }
 
 #[test]
@@ -213,8 +527,8 @@ fn doctor_fails_on_missing_schemas() {
 
     let err = cmd_doctor(&DoctorArgs {
         config,
-        schemas: dir.path().join("schemas"),
-        classifier,
+        schemas: Some(dir.path().join("schemas")),
+        classifier: Some(classifier),
         profiles_config: None,
         mox_files: vec![],
     })
@@ -251,16 +565,18 @@ fn doctor_mox_mode_validates_packages_and_allows_missing_schemas() {
     let mox = dir.path().join("model.mox");
     fs::write(&mox, DOCTOR_MOX).unwrap();
 
-    // The schemas dir does not exist, but mox mode degrades that check to a
-    // warning; the compiling package matches the fixture's recruiting domain.
-    cmd_doctor(&DoctorArgs {
+    // The schemas dir does not exist; in mox mode that is the intentional
+    // new-project shape (info, no warning); the compiling package matches
+    // the fixture's recruiting domain.
+    let summary = cmd_doctor(&DoctorArgs {
         config,
-        schemas: dir.path().join("schemas"),
-        classifier: dir.path().join("classifier.toml"),
+        schemas: Some(dir.path().join("schemas")),
+        classifier: Some(dir.path().join("classifier.toml")),
         profiles_config: None,
         mox_files: vec![mox],
     })
     .unwrap();
+    assert_eq!(summary.hard_failures, 0);
 }
 
 #[test]
@@ -276,8 +592,8 @@ fn doctor_mox_package_without_domain_entry_is_a_hard_failure() {
 
     let err = cmd_doctor(&DoctorArgs {
         config,
-        schemas: dir.path().join("schemas"),
-        classifier: dir.path().join("classifier.toml"),
+        schemas: Some(dir.path().join("schemas")),
+        classifier: Some(dir.path().join("classifier.toml")),
         profiles_config: None,
         mox_files: vec![mox],
     })
@@ -301,8 +617,8 @@ fn doctor_broken_mox_file_is_a_hard_failure() {
 
     let err = cmd_doctor(&DoctorArgs {
         config,
-        schemas: dir.path().join("schemas"),
-        classifier: dir.path().join("classifier.toml"),
+        schemas: Some(dir.path().join("schemas")),
+        classifier: Some(dir.path().join("classifier.toml")),
         profiles_config: None,
         mox_files: vec![mox],
     })
@@ -314,33 +630,48 @@ fn doctor_broken_mox_file_is_a_hard_failure() {
 }
 
 #[test]
-fn add_domain_appends_and_creates_schema() {
+fn add_domain_appends_and_creates_mox_starter() {
     let dir = TempDir::new().unwrap();
     let config = copy_fixture_domains(dir.path());
-    let schemas = dir.path().join("schemas");
 
-    cmd_add_domain(&config, &schemas, "billing").unwrap();
+    cmd_add_domain(&config, "billing").unwrap();
 
     let parsed = codegraph_config::config::parse_domain_config(&config).unwrap();
     assert!(parsed.domains.contains_key("billing"));
     assert_eq!(parsed.domains["billing"].label, "Billing");
+    assert_eq!(parsed.domains["billing"].schema_dir, "billing");
+    assert_eq!(parsed.domains["billing"].postgres_schema, "billing");
 
-    let todo_list = schemas.join("billing/todo_list.json");
-    assert!(todo_list.is_file());
-    let json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&todo_list).unwrap()).unwrap();
-    assert!(json.is_object());
-    assert_eq!(json["title"], "TodoListType");
+    let model = dir.path().join("model/billing.mox");
+    assert!(model.is_file(), "add domain must create model/billing.mox");
+    let content = fs::read_to_string(&model).unwrap();
+    let compilation = rex_driver::compile_files(&[("model/billing.mox".to_string(), content)]);
+    assert!(
+        compilation.model.is_some(),
+        "added domain starter must compile: {:?}",
+        compilation.diagnostics
+    );
+    assert_eq!(compilation.model.unwrap().packages[0].name, "billing");
+
+    assert!(
+        !dir.path().join("schemas/billing").exists(),
+        "add domain must not create a schemas/ directory"
+    );
+
+    let err = cmd_add_domain(&config, "billing").unwrap_err();
+    assert!(
+        format!("{err}").contains("already exists"),
+        "duplicate domain should be rejected: {err}"
+    );
 }
 
 #[test]
 fn add_domain_rejects_duplicate() {
     let dir = TempDir::new().unwrap();
     let config = copy_fixture_domains(dir.path());
-    let schemas = dir.path().join("schemas");
 
-    cmd_add_domain(&config, &schemas, "billing").unwrap();
-    let err = cmd_add_domain(&config, &schemas, "billing").unwrap_err();
+    cmd_add_domain(&config, "billing").unwrap();
+    let err = cmd_add_domain(&config, "billing").unwrap_err();
     assert!(
         format!("{err}").contains("already exists"),
         "duplicate domain should be rejected: {err}"
@@ -351,13 +682,25 @@ fn add_domain_rejects_duplicate() {
 fn add_domain_normalizes_name() {
     let dir = TempDir::new().unwrap();
     let config = copy_fixture_domains(dir.path());
-    let schemas = dir.path().join("schemas");
 
-    cmd_add_domain(&config, &schemas, "Billing Accounts").unwrap();
+    cmd_add_domain(&config, "Billing Accounts").unwrap();
 
     let parsed = codegraph_config::config::parse_domain_config(&config).unwrap();
     assert!(parsed.domains.contains_key("billing_accounts"));
-    assert!(schemas.join("billing_accounts/todo_list.json").is_file());
+    let model = dir.path().join("model/billing_accounts.mox");
+    assert!(model.is_file());
+    let content = fs::read_to_string(&model).unwrap();
+    let compilation =
+        rex_driver::compile_files(&[("model/billing_accounts.mox".to_string(), content)]);
+    assert!(
+        compilation.model.is_some(),
+        "normalized domain starter must compile: {:?}",
+        compilation.diagnostics
+    );
+    assert_eq!(
+        compilation.model.unwrap().packages[0].name,
+        "billing_accounts"
+    );
 }
 
 #[test]
@@ -399,8 +742,8 @@ fn doctor_valid_import_passes() {
 
     cmd_doctor(&DoctorArgs {
         config: dir.path().join("domains.toml"),
-        schemas: dir.path().join("schemas"),
-        classifier: dir.path().join("classifier.toml"),
+        schemas: Some(dir.path().join("schemas")),
+        classifier: Some(dir.path().join("classifier.toml")),
         profiles_config: None,
         mox_files: vec![dir.path().join("model.mox")],
     })
@@ -414,8 +757,8 @@ fn doctor_missing_import_target_is_a_hard_failure() {
 
     let err = cmd_doctor(&DoctorArgs {
         config: dir.path().join("domains.toml"),
-        schemas: dir.path().join("schemas"),
-        classifier: dir.path().join("classifier.toml"),
+        schemas: Some(dir.path().join("schemas")),
+        classifier: Some(dir.path().join("classifier.toml")),
         profiles_config: None,
         mox_files: vec![dir.path().join("model.mox")],
     })
@@ -433,8 +776,8 @@ fn doctor_invalid_import_json_is_a_hard_failure() {
 
     let err = cmd_doctor(&DoctorArgs {
         config: dir.path().join("domains.toml"),
-        schemas: dir.path().join("schemas"),
-        classifier: dir.path().join("classifier.toml"),
+        schemas: Some(dir.path().join("schemas")),
+        classifier: Some(dir.path().join("classifier.toml")),
         profiles_config: None,
         mox_files: vec![dir.path().join("model.mox")],
     })

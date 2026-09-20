@@ -405,8 +405,8 @@ Four gRPC generators produce `.proto` files and tonic-based Rust server code alo
 | **Service generator** | `crates/codegraph/src/generate/grpc/service.rs` | `GrpcServiceGenerator` — renders `server_impl.tera` + `conversions.tera` |
 | **Router generator** | `crates/codegraph/src/generate/grpc/router.rs` | `GrpcRouterGenerator` — renders `domain_router.tera` |
 | **Scaffold generator** | `crates/codegraph/src/generate/grpc/scaffold.rs` | `GrpcScaffoldGenerator` — shared proto + `mod.rs` + conversion helpers |
-| **Templates** | `crates/codegraph/templates/grpc/` | 6 Tera templates (proto, service, shared, conversions, server impl, router) |
-| **Build integration** | `crates/codegraph/templates/scaffold/build_rs.tera` | Conditional proto compilation via `tonic_build`. Generates both server AND client code |
+| **Templates** | `crates/codegraph-generate/templates/grpc/` | 6 Tera templates (proto, service, shared, conversions, server impl, router) |
+| **Build integration** | `crates/codegraph-generate/templates/scaffold/build_rs.tera` | Conditional proto compilation via `tonic_build`. Generates both server AND client code |
 | **Profile control** | `profiles.toml` | `grpc_backend = true` feature gates the 4 generators |
 
 ### Field numbering strategy
@@ -682,28 +682,33 @@ cargo run -- add domain billing
 ### Overview
 
 `codegraph init [NAME]` scaffolds a consumer monorepo. `codegraph doctor`
-validates the result, and `codegraph add domain <name>` grows it. The
-scaffold is generated from 17 Tera templates in
-`crates/codegraph/templates/project/` (see "Templates & context" below).
+validates the result, and `codegraph add domain <name>` grows it. Init is
+**mox-first**: the scaffold emits `model/<domain>.mox` per domain and NO
+`schemas/` directory or `classifier.toml` (JSON interop is documented via
+`import schema` / `codegraph migrate`). The scaffold is generated from 15
+Tera templates in `crates/codegraph-generate/templates/project/` (see
+"Templates & context" below).
 
 ### Scaffolded file tree
+
+15 outputs by default (`--domains common`): 14 fixed files + one
+`model/<domain>.mox` per domain.
 
 | File | Purpose |
 |------|---------|
 | `Cargo.toml` | Workspace: members `{name}-graph` + `ops/testkit`; codegraph crates as `git+rev` deps (or `path` deps with `--codegraph-path`); `exclude = ["generated"]` |
-| `{name}-graph/Cargo.toml`, `{name}-graph/src/main.rs` | Wrapper binary: clap `Run`/`Classify`/`Generate`/`Doctor` calling `codegraph::driver` |
-| `domains.toml` | Example domain entry (`entities = ["TodoListType", "TodoItemType"]` on the first domain) |
-| `classifier.toml` | Classifier config seed |
+| `{name}-graph/Cargo.toml`, `{name}-graph/src/main.rs` | Wrapper binary: clap `Run`/`Classify`/`Generate`/`Doctor` calling `codegraph::driver`; `Run`/`Classify` take repeatable `--mox-files`, `--schemas`/`--classifier` are optional with no defaults |
+| `model/{domain}.mox` | Starter mox model per domain (TodoListType + TodoItemType, `refers`-linked); the primary model source |
+| `domains.toml` | One entry per domain (label, schema_dir, postgres_schema); no `entities` key — mox is author-declarative |
 | `profiles.toml` | Profile meta (`name`/`version`/`app_name`, `domain_types_base`) + feature flags (`ops_backend`, `grpc_backend`, `ifml_backend`, `has_admin_cli`, `database_target`, `persistence_provider`, `deployment_topology`) |
 | `extension-points.toml` | Extension points config |
-| `schemas/{domain}/todo_list.json`, `schemas/{domain}/todo_item.json` | Hello-world TODO starter schemas |
-| `codegraph-ops.toml` | Seeded ops manifest (see "Ops Harness" section) |
+| `codegraph-ops.toml` | Seeded ops manifest with `mox_files = ["model/<d>.mox", ...]` (no `schemas_dir`/`classifier` keys; see "Ops Harness" section) |
 | `ops/testkit/Cargo.toml`, `ops/testkit/src/main.rs` | Testkit workspace member |
 | `hurl/health.hurl` | Health-check hurl file |
-| `justfile` | Recipes: `generate`, `classify`, `doctor`, `api`, `full`, `clean` |
+| `justfile` | Recipes: `generate`/`classify`/`doctor` (all pass `--mox-files model/<d>.mox` per domain), `api`, `e2e`, `full`, `clean` |
 | `.gitignore` | Ignores `generated/` |
-| `README.md` | Getting-started readme |
-| `.github/workflows/ci.yml` | CI workflow |
+| `README.md` | Getting-started readme (mox-first quickstart + layout) |
+| `.github/workflows/ci.yml` | CI workflow (generate job runs mox-first) |
 
 ### Layout decisions
 
@@ -744,37 +749,53 @@ scaffold is generated from 17 Tera templates in
 | Flag | Default | Checks |
 |------|---------|--------|
 | `--config` | `domains.toml` | domains.toml parses |
-| `--schemas` | `schemas` | schemas dir contains JSON schema(s) |
-| `--classifier` | `classifier.toml` | classifier.toml parses |
+| `--schemas` | optional | schemas dir contains JSON schema(s); absent + no `--mox-files` = hard failure, absent + mox files = info line (mox-first shape) |
+| `--classifier` | optional | classifier.toml parses; absent + JSON schemas present = hard failure, absent + no JSON schemas = info line |
 | `--profiles-config` | optional | profiles.toml parses + BuildPlan capability validation |
 
-Hard failures (non-zero exit): domains.toml, classifier.toml, profiles.toml,
-schemas dir, codegraph-ops.toml (`OpsConfig::load`). Warnings only: missing
-profiles.toml / codegraph-ops.toml, Cargo.toml rev pins vs the binary's
-embedded rev (mismatch WARN), missing `psql`/`npx`/`hurl` tools.
+Doctor's model-source matrix (zero warnings is the intentional mox-first
+new-project shape): schemas dir absent + mox files → INFO; schemas dir
+present but empty + mox files → WARN (misconfiguration); schemas dir with
+JSON → PASS; no mox files and no schemas → hard failure. `check_mox_files`
+accepts multiple `--mox-files` (one per domain) and validates `import
+schema` targets.
+
+Hard failures (non-zero exit): domains.toml, classifier.toml (when JSON
+schemas are present), profiles.toml, schemas dir (when no mox files),
+codegraph-ops.toml (`OpsConfig::load`). Warnings only: missing
+profiles.toml / codegraph-ops.toml, empty schemas dir in mox mode,
+Cargo.toml rev pins vs the binary's embedded rev (mismatch WARN; local
+path deps PASS as development mode), missing `psql`/`npx`/`hurl` tools.
 
 #### `codegraph add domain <name>`
 
 Appends a `[domains.<name>]` entry (label, schema_dir, postgres_schema) to
-`domains.toml` and creates `schemas/<name>/` with the TODO starter schemas
-(`todo_list.json` + `todo_item.json`). Rejects duplicate domain names.
+`domains.toml` and creates `model/<name>.mox` from the shared starter
+template (`init/model_starter.rs`), compile-verified with the rex compiler
+before write. No `schemas/<name>/` directory is created. Rejects duplicate
+domain names.
 
 ### Hello-world TODO example
 
 The scaffold ships a working TODO example (two entities: `TodoListType` +
-`TodoItemType`) instead of a placeholder schema. The full lifecycle is
-verified end-to-end against a real Postgres:
+`TodoItemType`, linked by `refers`) instead of a placeholder model. The
+mox-first generate lifecycle is verified end-to-end by
+`init_scaffold_runs_mox_first` (scaffold → `driver::run` with ONLY
+`--mox-files` + config → DDL contains `todo_list` + `todo_item` with the
+refers-derived FK):
 
 ```
 codegraph init todo-app
 cd todo-app
-just generate          # 187 files, 0 errors
+just generate          # 198 files, 0 errors, 0 warnings (mox-first)
 cargo build --manifest-path generated/Cargo.toml
-just api               # 39/39 PASS: migrate, CRUD smoke, RLS, graceful shutdown
+just api               # ops api suite gate: migrate, hurl CRUD smoke, RLS, graceful shutdown
 ```
 
-The fix for fresh-project generation required generator stubs that were
-previously assumed to exist: `errors` generator always emits per-domain
+`just generate` numbers verified with the real pipeline (198 files);
+the `just api` gate is verified by the ops suite (needs a Postgres) rather
+than a fixed spec count here. The generator stubs below remain load-bearing
+for fresh projects: `errors` generator always emits per-domain
 `errors.rs` (InternalError-only when no definitions), codelist generators
 emit empty `src/codelist/mod.rs` (both app and domain-types crates),
 `domain_types_scaffold` emits generic `context.rs`/`query.rs`/`codelist`,
@@ -795,15 +816,20 @@ just full                                   # api then e2e
 
 ### Templates & context
 
-Project templates live in `crates/codegraph/templates/project/` (17
-templates, shadowable via `--template-dir`). The render context is
-`ProjectTemplateContext` in `crates/codegraph/src/init/context.rs`, and the
-canonical (template, output-path) list is `PROJECT_TEMPLATES` in the same
-file; output paths support `{graph}` and `{domain}` placeholders.
+Project templates live in `crates/codegraph-generate/templates/project/`
+(15 templates, embedded via that crate's build.rs, shadowable via
+`--template-dir`). The render context is `ProjectTemplateContext` in
+`crates/codegraph/src/init/context.rs`, and the canonical (template,
+output-path) list is `PROJECT_TEMPLATES` in the same file; output paths
+support `{graph}` and `{domain}` placeholders. `project/model_mox.tera` is
+special-cased: it renders once per domain with `domain`/`domain_label`
+inserted into the context (one `model/<domain>.mox` per domain).
+`crates/codegraph/src/init/model_starter.rs` renders the same template for
+`add domain`.
 
 Adding a new template:
 
-1. Add `project/<name>.tera` under `crates/codegraph/templates/project/`.
+1. Add `project/<name>.tera` under `crates/codegraph-generate/templates/project/`.
 2. Append its `(template, output)` pair to `PROJECT_TEMPLATES` in
    `crates/codegraph/src/init/context.rs`.
 3. Add any new fields to `ProjectTemplateContext` (it serializes into the
@@ -824,11 +850,11 @@ times; later directories take precedence.
 
 ### How template shadowing works
 
-Implemented in `crates/codegraph/src/generate/template_engine.rs`:
+Implemented in `crates/codegraph-generate/src/template_engine.rs`:
 
-1. **`create_tera_with_overrides()`** at line 30 loads all built-in templates from `crates/codegraph/templates/` first
+1. **`create_tera_with_overrides()`** (line 33) loads the built-in templates embedded via that crate's build.rs first
 2. It then iterates override directories in order, calling `merge_tera_dir()` for each
-3. **`merge_tera_dir()`** at line 45 walks each directory, reading `.tera` files and registering them by their relative path name
+3. **`merge_tera_dir()`** (line 45) walks each directory, reading `.tera` files and registering them by their relative path name
 4. A template with the same relative path from a later directory **shadows** the earlier one — no merging, full replacement
 
 ### Available Tera custom filters
@@ -858,7 +884,7 @@ cargo run -- generate --config domains.toml --output out/ \
   --template-dir ./team-templates/ --template-dir ./local-tweaks/
 ```
 
-Place a `.tera` file at the matching relative path to shadow it. For example, `my-overrides/db/sqlite/table.tera` shadows `crates/codegraph/templates/db/sqlite/table.tera`.
+Place a `.tera` file at the matching relative path to shadow it. For example, `my-overrides/db/sqlite/table.tera` shadows `crates/codegraph-generate/templates/db/sqlite/table.tera`.
 
 ## Database Dialect Support (feat/sqlite-support)
 
@@ -911,7 +937,7 @@ to all templates via `ProjectConfig.database_target`.
 
 ### SQLite templates
 
-Located at `crates/codegraph/templates/db/sqlite/`:
+Located at `crates/codegraph-generate/templates/db/sqlite/`:
 
 | Template | Purpose |
 |----------|---------|
@@ -955,7 +981,7 @@ and extensions.
 | **Manifest types** | `crates/codegraph-config/src/ops_manifest.rs` | `OpsManifest` (serde TOML): app name, servers/ports, db targets, supabase, capabilities, hurl, hooks, extensions, smoke entity, api version |
 | **Harness crate** | `crates/codegraph-ops/` | Runtime: `cli.rs` (clap), `config.rs` (`OpsConfig` resolution), `proc.rs` (SIGTERM→SIGKILL supervision, `Supervisor`), `db.rs` (psql wrapper, extension validation), `migrate.rs` (phased migrations, supabase symlinks), `suites/*` (api, cli, ui, e2e, smoke, quality), `ext.rs` (extension protocol + hooks), `metrics.rs` (stage TSV export), `wait.rs`, `env.rs`, `pg.rs` (`PgTarget`) |
 | **Generator** | `crates/codegraph/src/generate/ops.rs` | Global generator `ops` — emits `codegraph-ops.toml` + `testkit/` crate into generated output |
-| **Templates** | `crates/codegraph/templates/ops/` | `testkit_cargo.tera`, `testkit_main.tera` (shadowable via `--template-dir`) |
+| **Templates** | `crates/codegraph-generate/templates/ops/` | `testkit_cargo.tera`, `testkit_main.tera` (shadowable via `--template-dir`) |
 | **Profile gating** | `profiles.toml` + `profile.rs` | `ops_backend` feature; `cap("ops", Global, Common, &["ops_backend"], &[])` |
 | **Contract test** | `crates/codegraph/tests/ops_generator_tests.rs` | Emitted manifest must parse via `OpsConfig::load` (cross-crate) |
 
@@ -1488,7 +1514,7 @@ RESTRICTIVE policies from `rls.tera` still AND on top.
 
 - No `unwrap()` in production code. Use `thiserror` + `?` propagation.
 - Imports grouped: std → external → internal → current crate, separated by blank lines.
-- Templates in `crates/codegraph/templates/` use Tera syntax.
+- Templates in `crates/codegraph-generate/templates/` use Tera syntax.
 - 60+ generators in `crates/codegraph/src/generate/` organized by target (api, db, ddd, ui, cli, etc.).
 - IFML-specific generators in `crates/codegraph-generate/src/ifml/`.
 - gRPC-specific generators in `crates/codegraph/src/generate/grpc/`.
@@ -1704,7 +1730,7 @@ Key files:
 | `crates/codegraph-grafeo/src/querier.rs` | `build_composition_node()`, `get_composition_tree()`, `get_properties()` |
 | `crates/codegraph/src/generate/db/ddl.rs` | `query_ddl_context()`, `column_info_to_ddl()`, `composition_node_to_child_table()`, FK/Comment dedup |
 | `crates/codegraph/src/generate/mod.rs` | `compute_generation_order()`, domain-level entity dedup |
-| `crates/codegraph/templates/db/table.tera` | PostgreSQL DDL template with child table rendering |
+| `crates/codegraph-generate/templates/db/table.tera` | PostgreSQL DDL template with child table rendering |
 
 ### How structured fields become child tables
 

@@ -68,8 +68,8 @@ async fn main() -> codegraph::error::Result<()> {
                 cli::ClassifyFormat::Json => codegraph::driver::ClassifyFormat::Json,
             };
             codegraph::driver::classify(
-                &schemas,
-                &classifier,
+                Some(&schemas),
+                Some(&classifier),
                 &config,
                 domain.as_deref(),
                 format,
@@ -231,14 +231,17 @@ async fn main() -> codegraph::error::Result<()> {
                 profiles_config,
                 mox_files,
             };
-            codegraph::init::commands::cmd_doctor(&args)
+            codegraph::init::commands::cmd_doctor(&args).map(|summary| {
+                println!(
+                    "doctor: {} hard failure(s), {} warning(s) ({} model warning(s))",
+                    summary.hard_failures, summary.soft_warnings, summary.model_warnings
+                );
+            })
         }
         cli::Commands::Add { target } => match target {
-            cli::AddTarget::Domain { name } => codegraph::init::commands::cmd_add_domain(
-                &PathBuf::from("domains.toml"),
-                &PathBuf::from("schemas"),
-                &name,
-            ),
+            cli::AddTarget::Domain { name } => {
+                codegraph::init::commands::cmd_add_domain(&PathBuf::from("domains.toml"), &name)
+            }
         },
     }
 }

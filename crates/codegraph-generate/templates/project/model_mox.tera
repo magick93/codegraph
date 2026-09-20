@@ -1,14 +1,17 @@
-/// Starter {{ domains[0].label }} domain model — the primary model source.
+/// Starter {{ domain_label }} domain model — the primary model source.
 ///
 /// Edit this file, then regenerate, e.g.:
-///   {{ graph_binary }} run --mox-files model/{{ domains[0].name }}.mox \
-///       --classifier classifier.toml --config domains.toml --output generated
+///   {{ graph_binary }} run --mox-files model/{{ domain }}.mox \
+///       --config domains.toml --output generated
 ///
-/// JSON schemas under schemas/ fill gaps for anything not modeled here;
-/// classes defined in .mox win name conflicts with same-titled schemas.
+/// Existing JSON schemas can be pulled in with
+/// `import schema "path/to/schema.json" as Name`, or converted to .mox with
+/// `codegraph migrate --schemas <dir> --output <dir>`.
+///
+/// Classes defined in .mox win name conflicts with same-titled schemas.
 /// Scalar datatypes (uuid, date, ...) live in the shared codegraph_stdlib
 /// package emitted by `codegraph migrate`.
-package {{ domains[0].name }}
+package {{ domain }}
 
 /// A named collection of todo items.
 class TodoListType {

@@ -10,7 +10,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Generate code
-        run: cargo run -p {{ graph_binary }} -- run
+        run: cargo run -p {{ graph_binary }} -- run{% for d in domains %} --mox-files model/{{ d.name }}.mox{% endfor %} --config domains.toml --output generated
       - name: Check generated workspace compiles
         run: cargo check --manifest-path generated/Cargo.toml
 
