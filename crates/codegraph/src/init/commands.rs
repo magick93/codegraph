@@ -236,16 +236,29 @@ pub fn cmd_init(args: &InitArgs) -> Result<()> {
 pub struct DoctorArgs {
     /// domains.toml path (default: "domains.toml").
     pub config: PathBuf,
-    /// JSON schemas dir (default: "schemas").
-    pub schemas: PathBuf,
-    /// classifier.toml path (default: "classifier.toml").
-    pub classifier: PathBuf,
+    /// JSON schemas dir. None = not provided: in mox mode the check
+    /// degrades to an info line (mox-first projects carry no schemas
+    /// directory); without mox files it stays a hard failure.
+    pub schemas: Option<PathBuf>,
+    /// classifier.toml path. None = not provided: only a hard failure when
+    /// the schemas dir (when given) contains JSON schemas.
+    pub classifier: Option<PathBuf>,
     /// profiles.toml path (optional; skipped when absent and profile is default).
     pub profiles_config: Option<PathBuf>,
     /// rexlang .mox domain model files (optional). When present each
     /// package must match a domains.toml domain, and the JSON schemas
-    /// check degrades to a warning (mox-first projects).
+    /// check degrades to an info line (mox-first projects).
     pub mox_files: Vec<PathBuf>,
+}
+
+/// Outcome counts for a doctor run. `model_warnings` isolates the
+/// model-source checks (schemas / classifier / mox): the intentional
+/// mox-first new-project shape must produce ZERO of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DoctorSummary {
+    pub hard_failures: usize,
+    pub soft_warnings: usize,
+    pub model_warnings: usize,
 }
 
 /// Extract every `rev = "<sha>"` value from lines that reference the
@@ -300,6 +313,15 @@ fn check_codegraph_rev() -> usize {
     };
     let revs = extract_codegraph_revs(&text);
     if revs.is_empty() {
+        if text.contains("magick93/codegraph.git") {
+            println!("WARN Cargo.toml pins codegraph crates without a git rev (branch/tag deps)");
+            println!("     hint: pin codegraph deps with rev = \"<sha>\"");
+            return 1;
+        }
+        if text.contains("codegraph") && text.contains("path =") {
+            println!("PASS Cargo.toml uses local codegraph path deps (development mode)");
+            return 0;
+        }
         println!("WARN Cargo.toml pins codegraph crates without a git rev (branch/tag deps)");
         println!("     hint: pin codegraph deps with rev = \"<sha>\"");
         return 1;
@@ -425,10 +447,11 @@ fn check_mox_files(
 }
 
 /// Validate an existing consumer project. Prints pass/fail checks and
-/// returns Err when any hard check fails.
-pub fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
+/// returns Err when any hard check fails; Ok carries the outcome counts.
+pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     let mut hard_failures: usize = 0;
     let mut soft_warnings: usize = 0;
+    let mut model_warnings: usize = 0;
 
     println!("codegraph doctor");
 
@@ -445,17 +468,44 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
         }
     }
 
-    match codegraph_classifier::config::parse_classifier_config(&args.classifier) {
-        Ok(config) => println!(
-            "PASS classifier.toml — {} naming rule(s)",
-            config.naming_rules.len()
-        ),
-        Err(e) => {
+    // Scan the schemas dir (when provided) up front: the classifier verdict
+    // depends on whether JSON schemas are present.
+    let schemas_dir = args.schemas.as_deref();
+    let mut schemas_dir_exists = false;
+    let mut schemas_has_json = false;
+    if let Some(dir) = schemas_dir {
+        if dir.is_dir() {
+            schemas_dir_exists = true;
+            schemas_has_json = walkdir::WalkDir::new(dir)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"));
+        }
+    }
+
+    match &args.classifier {
+        Some(classifier) => {
+            match codegraph_classifier::config::parse_classifier_config(classifier) {
+                Ok(config) => println!(
+                    "PASS classifier.toml — {} naming rule(s)",
+                    config.naming_rules.len()
+                ),
+                Err(e) => {
+                    hard_failures += 1;
+                    println!("FAIL classifier.toml — {e}");
+                    println!("     hint: fix TOML syntax in {}", classifier.display());
+                }
+            }
+        }
+        None if schemas_has_json => {
             hard_failures += 1;
-            println!("FAIL classifier.toml — {e}");
+            println!("FAIL classifier.toml — not provided but JSON schemas are present");
+            println!("     hint: pass --classifier (JSON schemas need classification rules)");
+        }
+        None => {
             println!(
-                "     hint: fix TOML syntax in {}",
-                args.classifier.display()
+                "INFO classifier.toml — not provided (no JSON schemas; \
+                 mox-first projects need no classifier)"
             );
         }
     }
@@ -493,40 +543,35 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
     }
 
     let mox_mode = !args.mox_files.is_empty();
-    let mut schemas_has_json = false;
-    if args.schemas.is_dir() {
-        schemas_has_json = walkdir::WalkDir::new(&args.schemas)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"));
+    if schemas_dir_exists {
         if schemas_has_json {
             println!(
                 "PASS schemas — {} contains JSON schema(s)",
-                args.schemas.display()
+                schemas_dir.unwrap().display()
             );
         } else if mox_mode {
             soft_warnings += 1;
+            model_warnings += 1;
             println!(
                 "WARN schemas — no *.json files under {} (mox-first project)",
-                args.schemas.display()
+                schemas_dir.unwrap().display()
             );
         } else {
             hard_failures += 1;
             println!(
                 "FAIL schemas — no *.json files under {}",
-                args.schemas.display()
+                schemas_dir.unwrap().display()
             );
             println!("     hint: add JSON schemas or run `codegraph add domain <name>`");
         }
     } else if mox_mode {
-        soft_warnings += 1;
-        println!(
-            "WARN schemas — {} does not exist (mox-first project)",
-            args.schemas.display()
-        );
+        println!("INFO schemas — mox-first project; no JSON schemas directory");
     } else {
         hard_failures += 1;
-        println!("FAIL schemas — {} does not exist", args.schemas.display());
+        match schemas_dir {
+            Some(dir) => println!("FAIL schemas — {} does not exist", dir.display()),
+            None => println!("FAIL schemas — no schemas directory and no --mox-files"),
+        }
         println!("     hint: create the directory and add JSON schemas");
     }
 
@@ -534,18 +579,25 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
         let (hard, soft) = check_mox_files(&args.mox_files, domain_config.as_ref().ok());
         hard_failures += hard;
         soft_warnings += soft;
+        model_warnings += soft;
     } else if schemas_has_json {
         soft_warnings += 1;
+        model_warnings += 1;
         println!("WARN no .mox files — JSON schemas are the primary model source");
         println!(
             "     hint: consider migrating: codegraph migrate --schemas {} --output <dir>",
-            args.schemas.display()
+            schemas_dir.unwrap().display()
         );
     }
 
     let mut manifest_candidates = vec![PathBuf::from("codegraph-ops.toml")];
-    if let Some(parent) = args.schemas.parent() {
+    if let Some(parent) = args.config.parent().filter(|p| !p.as_os_str().is_empty()) {
         manifest_candidates.push(parent.join("codegraph-ops.toml"));
+    }
+    if let Some(parent) = args.schemas.as_ref().and_then(|s| s.parent()) {
+        if !parent.as_os_str().is_empty() {
+            manifest_candidates.push(parent.join("codegraph-ops.toml"));
+        }
     }
     match manifest_candidates.iter().find(|p| p.is_file()) {
         Some(path) => match codegraph_ops::config::OpsConfig::load(path) {
@@ -613,107 +665,19 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
         )))
     } else {
         println!("doctor: all hard checks passed ({soft_warnings} warning(s))");
-        Ok(())
+        Ok(DoctorSummary {
+            hard_failures,
+            soft_warnings,
+            model_warnings,
+        })
     }
-}
-
-/// Minimal TODO schemas used when the project starter templates are
-/// unavailable or fail to render. Same shape as `templates/project/`
-/// `todo_list_schema.tera` + `todo_item_schema.tera`.
-fn fallback_starter_schemas() -> Vec<(String, String)> {
-    let todo_list = serde_json::json!({
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "title": "TodoListType",
-        "description": "A named collection of todo items.",
-        "type": "object",
-        "properties": {
-            "id": { "description": "Primary identifier.", "type": "string", "format": "uuid" },
-            "name": { "description": "Display name of the list.", "type": "string" },
-            "description": { "description": "Optional longer description.", "type": "string" }
-        },
-        "required": ["id", "name"]
-    });
-    let todo_item = serde_json::json!({
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "title": "TodoItemType",
-        "description": "A single todo item belonging to a list.",
-        "type": "object",
-        "properties": {
-            "id": { "description": "Primary identifier.", "type": "string", "format": "uuid" },
-            "list_id": { "description": "Identifier of the list this item belongs to.", "type": "string", "format": "uuid" },
-            "title": { "description": "Short title of the item.", "type": "string" },
-            "notes": { "description": "Optional free-form notes.", "type": "string" },
-            "completed": { "description": "Whether the item is done.", "type": "boolean" },
-            "due_date": { "description": "Optional due date.", "type": "string", "format": "date" }
-        },
-        "required": ["id", "title"]
-    });
-    let mut out = Vec::new();
-    for (name, schema) in [("todo_list.json", todo_list), ("todo_item.json", todo_item)] {
-        let mut content =
-            serde_json::to_string_pretty(&schema).unwrap_or_else(|_| "{}".to_string());
-        content.push('\n');
-        out.push((name.to_string(), content));
-    }
-    out
-}
-
-/// Render the project starter schemas (todo_list.json + todo_item.json) for
-/// `domain_name`, falling back to inline minimal schemas when a template is
-/// missing or renders invalid JSON.
-fn starter_schemas(domain_name: &str) -> Vec<(String, String)> {
-    let builtin = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-    if let Ok(tera) = crate::generate::template_engine::create_tera(&builtin) {
-        let ctx = ProjectTemplateContext::new(
-            "example",
-            &[domain_name.to_string()],
-            "",
-            None,
-            "postgres",
-            "sea_orm",
-            "monolith",
-            ProjectFeatures {
-                grpc: false,
-                ifml: false,
-                ops: true,
-            },
-        );
-        if let Ok(tctx) = tera::Context::from_serialize(&ctx) {
-            let mut out = Vec::new();
-            let mut valid = true;
-            for template in [
-                "project/todo_list_schema.tera",
-                "project/todo_item_schema.tera",
-            ] {
-                match tera.render(template, &tctx) {
-                    Ok(rendered)
-                        if serde_json::from_str::<serde_json::Value>(&rendered).is_ok() =>
-                    {
-                        let name = template
-                            .strip_prefix("project/")
-                            .and_then(|t| t.strip_suffix("_schema.tera"))
-                            .unwrap_or("example")
-                            .to_string()
-                            + ".json";
-                        out.push((name, rendered));
-                    }
-                    _ => {
-                        valid = false;
-                        break;
-                    }
-                }
-            }
-            if valid {
-                return out;
-            }
-        }
-    }
-    fallback_starter_schemas()
 }
 
 /// Append a `[domains.<name>]` entry to `config_path` and create
-/// `schemas_dir/<name>/` with an example schema. Refuses duplicate domains.
-pub fn cmd_add_domain(config_path: &Path, schemas_dir: &Path, domain_name: &str) -> Result<()> {
+/// `model/<name>.mox` with the shared starter model (compile-verified
+/// before write). Refuses duplicate domains. Mox-first: no `schemas/`
+/// directory is created.
+pub fn cmd_add_domain(config_path: &Path, domain_name: &str) -> Result<()> {
     let name = normalize_domain_name(domain_name);
     if name.is_empty() {
         return Err(Error::Config("domain name cannot be empty".to_string()));
@@ -778,17 +742,33 @@ pub fn cmd_add_domain(config_path: &Path, schemas_dir: &Path, domain_name: &str)
 
     fs::write(config_path, &new_content)?;
 
-    let domain_schemas = schemas_dir.join(&name);
-    fs::create_dir_all(&domain_schemas)?;
-    for (file_name, content) in starter_schemas(&name) {
-        let path = domain_schemas.join(&file_name);
-        if !path.exists() {
-            fs::write(&path, content)?;
-        }
+    // Starter model: shared .mox template, compile-verified before write
+    // (init precedent). The hint names the codegraph binary — the consumer
+    // wrapper's name is not known here, and `codegraph run --mox-files …`
+    // works in any project.
+    let model_content = super::model_starter::starter_model_mox(&name, &label, "codegraph")
+        .map_err(Error::Config)?;
+    let mox_rel = format!("model/{name}.mox");
+    let compilation = rex_driver::compile_files(&[(mox_rel.clone(), model_content.clone())]);
+    if compilation.model.is_none() {
+        return Err(Error::Config(format!(
+            "starter model '{mox_rel}' does not compile — refusing to write"
+        )));
+    }
+
+    let model_dir = match config_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join("model"),
+        _ => PathBuf::from("model"),
+    };
+    fs::create_dir_all(&model_dir)?;
+    let model_path = model_dir.join(format!("{name}.mox"));
+    if !model_path.exists() {
+        fs::write(&model_path, model_content)?;
     }
 
     println!("Added domain '{name}' (label {label}, schema_dir {name}, postgres_schema {name})");
     println!("Updated {}", config_path.display());
+    println!("Created {}", model_path.display());
     Ok(())
 }
 
@@ -860,9 +840,8 @@ other = "0.1"
         let config = dir.path().join("domains.toml");
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/domains.toml");
         fs::copy(&fixture, &config).unwrap();
-        let schemas = dir.path().join("schemas");
 
-        cmd_add_domain(&config, &schemas, "Billing").unwrap();
+        cmd_add_domain(&config, "Billing").unwrap();
 
         let parsed = codegraph_config::config::parse_domain_config(&config).unwrap();
         assert!(parsed.domains.contains_key("billing"));
@@ -870,20 +849,20 @@ other = "0.1"
         assert_eq!(parsed.domains["billing"].schema_dir, "billing");
         assert_eq!(parsed.domains["billing"].postgres_schema, "billing");
 
-        let todo_list = schemas.join("billing/todo_list.json");
-        assert!(todo_list.is_file());
-        let json: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&todo_list).unwrap()).unwrap();
-        assert_eq!(json["title"], "TodoListType");
-        assert!(json["properties"]["id"]["format"] == "uuid");
-        let todo_item = schemas.join("billing/todo_item.json");
-        assert!(todo_item.is_file());
-        let item: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&todo_item).unwrap()).unwrap();
-        assert_eq!(item["title"], "TodoItemType");
-        assert_eq!(item["properties"]["list_id"]["format"], "uuid");
+        let model = dir.path().join("model/billing.mox");
+        assert!(model.is_file(), "add domain must create model/billing.mox");
+        let content = fs::read_to_string(&model).unwrap();
+        let compilation = rex_driver::compile_files(&[("model/billing.mox".to_string(), content)]);
+        assert!(
+            compilation.model.is_some(),
+            "starter model must compile: {:?}",
+            compilation.diagnostics
+        );
+        assert_eq!(compilation.model.unwrap().packages[0].name, "billing");
 
-        let err = cmd_add_domain(&config, &schemas, "billing").unwrap_err();
+        assert!(!dir.path().join("schemas").exists());
+
+        let err = cmd_add_domain(&config, "billing").unwrap_err();
         assert!(format!("{err}").contains("already exists"), "{err}");
     }
 }

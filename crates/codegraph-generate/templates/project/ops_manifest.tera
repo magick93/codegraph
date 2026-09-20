@@ -3,8 +3,7 @@
 
 app_name = "{{ app_name }}"
 graph_binary = "{{ graph_binary }}"
-schemas_dir = "schemas"
-classifier = "classifier.toml"
+mox_files = [{% for d in domains %}"model/{{ d.name }}.mox"{% if not loop.last %}, {% endif %}{% endfor %}]
 domain_config = "domains.toml"
 profile = "default"
 output_dir = "generated"
