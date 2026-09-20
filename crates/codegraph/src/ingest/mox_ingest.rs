@@ -1252,6 +1252,7 @@ fn primitive_pg_type(p: PrimitiveType) -> PgType {
         PrimitiveType::Float => PgType::Real,
         PrimitiveType::Double => PgType::DoublePrecision,
         PrimitiveType::Boolean => PgType::Boolean,
+        PrimitiveType::Date => PgType::Date,
     }
 }
 

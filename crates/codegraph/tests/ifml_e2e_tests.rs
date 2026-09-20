@@ -60,7 +60,7 @@ view "CustomerEdit" {
 fn test_ifml_parse_full_example() {
     let ifml_content = FULL_IFML;
 
-    let model = codegraph_ifml_dsl::parse_ifml(ifml_content).expect("Should parse valid IFML");
+    let model = rex_ifml::parse_ifml(ifml_content).expect("Should parse valid IFML");
 
     assert_eq!(model.domains.len(), 1);
     assert_eq!(model.domains[0].name, "sales");
@@ -86,7 +86,7 @@ view "Dashboard" {
     }
 }
 "#;
-    let model = codegraph_ifml_dsl::parse_ifml(ifml).expect("Should parse expressions");
+    let model = rex_ifml::parse_ifml(ifml).expect("Should parse expressions");
     assert_eq!(model.views.len(), 1);
     let comp = &model.views[0].components[0];
     let fields_prop = comp
@@ -95,11 +95,11 @@ view "Dashboard" {
         .find(|p| p.key == "fields")
         .expect("fields property should exist");
     match &fields_prop.value {
-        codegraph_ifml_dsl::ValueExpression::Array(items) => {
+        rex_ifml::ValueExpression::Array(items) => {
             let field_names: Vec<String> = items
                 .iter()
                 .filter_map(|v| match v {
-                    codegraph_ifml_dsl::ValueExpression::Identifier(s) => Some(s.clone()),
+                    rex_ifml::ValueExpression::Identifier(s) => Some(s.clone()),
                     _ => None,
                 })
                 .collect();
@@ -119,7 +119,7 @@ fn test_ifml_invalid_syntax() {
     ];
 
     for (input, description) in &cases {
-        let result = codegraph_ifml_dsl::parse_ifml(input);
+        let result = rex_ifml::parse_ifml(input);
         assert!(result.is_err(), "Expected error for: {description}");
     }
 }
@@ -140,7 +140,7 @@ view "TestView" {
 }
 "#;
 
-    let model = codegraph_ifml_dsl::parse_ifml(ifml).unwrap();
+    let model = rex_ifml::parse_ifml(ifml).unwrap();
     codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
         .await
         .expect("Should ingest");
@@ -168,7 +168,7 @@ view "TestView" {
 #[tokio::test]
 async fn test_ifml_grafeo_round_trip_edges() {
     let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
-    let model = codegraph_ifml_dsl::parse_ifml(FULL_IFML).expect("Should parse valid IFML");
+    let model = rex_ifml::parse_ifml(FULL_IFML).expect("Should parse valid IFML");
     codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
         .await
         .expect("Should ingest");
@@ -270,7 +270,7 @@ view "Reports" {
 #[tokio::test]
 async fn typed_component_specs_round_trip_through_graph() {
     let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
-    let model = codegraph_ifml_dsl::parse_ifml(TYPED_IFML).expect("Should parse typed IFML");
+    let model = rex_ifml::parse_ifml(TYPED_IFML).expect("Should parse typed IFML");
     codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
         .await
         .expect("Should ingest");
@@ -286,7 +286,7 @@ async fn typed_component_specs_round_trip_through_graph() {
 
     let table = find("CustomerTable");
     assert_eq!(table.component_type, "table");
-    let table_spec: codegraph_ifml_dsl::ComponentSpec = serde_json::from_str(
+    let table_spec: rex_ifml::ComponentSpec = serde_json::from_str(
         table
             .spec
             .as_deref()
@@ -294,21 +294,21 @@ async fn typed_component_specs_round_trip_through_graph() {
     )
     .expect("table spec should deserialize");
     match table_spec {
-        codegraph_ifml_dsl::ComponentSpec::Table(t) => {
+        rex_ifml::ComponentSpec::Table(t) => {
             assert!(t.pagination);
             assert_eq!(t.columns.len(), 3);
             assert!(matches!(
                 &t.columns[0],
-                codegraph_ifml_dsl::ColumnDef::Field { label, field }
+                rex_ifml::ColumnDef::Field { label, field }
                     if label == "Name" && field.entity == "Customer" && field.property == "name"
             ));
             assert!(matches!(
                 &t.columns[1],
-                codegraph_ifml_dsl::ColumnDef::Lookup { lookup, .. } if lookup == "status_labels"
+                rex_ifml::ColumnDef::Lookup { lookup, .. } if lookup == "status_labels"
             ));
             assert!(matches!(
                 &t.columns[2],
-                codegraph_ifml_dsl::ColumnDef::Expression { .. }
+                rex_ifml::ColumnDef::Expression { .. }
             ));
         }
         other => panic!("Expected Table spec, got {other:?}"),
@@ -316,14 +316,14 @@ async fn typed_component_specs_round_trip_through_graph() {
 
     let form = find("EditForm");
     assert_eq!(form.component_type, "form");
-    let form_spec: codegraph_ifml_dsl::ComponentSpec =
+    let form_spec: rex_ifml::ComponentSpec =
         serde_json::from_str(form.spec.as_deref().expect("form spec should be persisted"))
             .expect("form spec should deserialize");
     match form_spec {
-        codegraph_ifml_dsl::ComponentSpec::Form(f) => {
+        rex_ifml::ComponentSpec::Form(f) => {
             assert_eq!(f.fields.len(), 3);
             assert_eq!(f.fields[0].name, "name");
-            assert_eq!(f.fields[0].input, codegraph_ifml_dsl::InputFieldType::Text);
+            assert_eq!(f.fields[0].input, rex_ifml::InputFieldType::Text);
             assert!(f.fields[0].required);
             assert_eq!(f.fields[0].validations.len(), 1);
             assert_eq!(f.fields[1].name, "email");
@@ -338,7 +338,7 @@ async fn typed_component_specs_round_trip_through_graph() {
 
     let chart = find("RevenueChart");
     assert_eq!(chart.component_type, "chart");
-    let chart_spec: codegraph_ifml_dsl::ComponentSpec = serde_json::from_str(
+    let chart_spec: rex_ifml::ComponentSpec = serde_json::from_str(
         chart
             .spec
             .as_deref()
@@ -346,8 +346,8 @@ async fn typed_component_specs_round_trip_through_graph() {
     )
     .expect("chart spec should deserialize");
     match chart_spec {
-        codegraph_ifml_dsl::ComponentSpec::Chart(c) => {
-            assert_eq!(c.kind, codegraph_ifml_dsl::ChartKind::Bar);
+        rex_ifml::ComponentSpec::Chart(c) => {
+            assert_eq!(c.kind, rex_ifml::ChartKind::Bar);
             assert_eq!(c.label_field.as_deref(), Some("region"));
             assert_eq!(c.value_fields, vec!["revenue".to_string()]);
         }
@@ -417,7 +417,7 @@ view "Plain" {
 }
 "#;
     let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
-    let model = codegraph_ifml_dsl::parse_ifml(ifml).expect("Should parse conditional IFML");
+    let model = rex_ifml::parse_ifml(ifml).expect("Should parse conditional IFML");
     codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
         .await
         .expect("Should ingest");

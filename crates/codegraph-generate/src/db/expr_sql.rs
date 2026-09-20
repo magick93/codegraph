@@ -76,6 +76,7 @@ fn lower(
         ExprKind::Bool(true) => Ok("TRUE".to_string()),
         ExprKind::Bool(false) => Ok("FALSE".to_string()),
         ExprKind::Null => reject("`null` (compare a field to null instead)"),
+        ExprKind::Date { .. } => reject("a `date(...)` literal"),
         ExprKind::Name(name) => column_for(name, capability, class, fields),
         ExprKind::Unary { op, expr } => {
             let inner = lower(expr, capability, class, fields)?;
@@ -416,6 +417,11 @@ mod tests {
     #[test]
     fn bare_null_is_refused() {
         assert_refusal("null", "`null`");
+    }
+
+    #[test]
+    fn date_literal_is_refused() {
+        assert_refusal("status == date(\"2026-09-17\")", "`date(...)`");
     }
 
     #[test]

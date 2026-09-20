@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use codegraph_ifml_dsl::ComponentSpec;
+use rex_ifml::ComponentSpec;
 use serde::Serialize;
 
 /// Generation-time authorization policy resolved from the graph's actor

@@ -723,7 +723,6 @@ dependencies = [
  "codegraph-ext-points",
  "codegraph-generate",
  "codegraph-grafeo",
- "codegraph-ifml-dsl",
  "codegraph-naming",
  "codegraph-ops",
  "codegraph-type-contracts",
@@ -733,6 +732,7 @@ dependencies = [
  "pathdiff",
  "proc-macro2",
  "rex-driver",
+ "rex-ifml",
  "rex-ir",
  "rust_decimal",
  "serde",
@@ -819,13 +819,13 @@ dependencies = [
  "codegraph-config",
  "codegraph-core",
  "codegraph-ext-points",
- "codegraph-ifml-dsl",
  "codegraph-naming",
  "codegraph-type-contracts",
  "futures",
  "heck 0.5.0",
  "pathdiff",
  "rex-expr",
+ "rex-ifml",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -856,17 +856,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "codegraph-ifml-dsl"
-version = "0.1.0"
-dependencies = [
- "pest",
- "pest_derive",
- "serde",
- "serde_json",
- "thiserror",
 ]
 
 [[package]]
@@ -2860,8 +2849,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d45aeb61b4bf818e12d4205f2466f8c4748f85f4fce0146d1c03d69d753f0ad"
 dependencies = [
  "memchr",
- "serde",
- "serde_json",
  "ucd-trie",
 ]
 
@@ -3374,7 +3361,7 @@ dependencies = [
 [[package]]
 name = "rex-driver"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=699b3a589c3404801e12f9683c2f8a8360edffd6#699b3a589c3404801e12f9683c2f8a8360edffd6"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
 dependencies = [
  "ariadne",
  "rex-expr",
@@ -3390,7 +3377,7 @@ dependencies = [
 [[package]]
 name = "rex-expr"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=699b3a589c3404801e12f9683c2f8a8360edffd6#699b3a589c3404801e12f9683c2f8a8360edffd6"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
 dependencies = [
  "chumsky",
  "logos",
@@ -3399,9 +3386,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rex-ifml"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
+dependencies = [
+ "pest",
+ "pest_derive",
+ "rex-ir",
+ "thiserror",
+]
+
+[[package]]
 name = "rex-ir"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=699b3a589c3404801e12f9683c2f8a8360edffd6#699b3a589c3404801e12f9683c2f8a8360edffd6"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
 dependencies = [
  "serde",
  "serde_json",
@@ -3411,7 +3409,7 @@ dependencies = [
 [[package]]
 name = "rex-syntax"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=699b3a589c3404801e12f9683c2f8a8360edffd6#699b3a589c3404801e12f9683c2f8a8360edffd6"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
 dependencies = [
  "chumsky",
  "logos",
@@ -3421,7 +3419,7 @@ dependencies = [
 [[package]]
 name = "rex-vocab"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=699b3a589c3404801e12f9683c2f8a8360edffd6#699b3a589c3404801e12f9683c2f8a8360edffd6"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
 dependencies = [
  "anyhow",
  "rex-ir",

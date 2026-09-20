@@ -17,7 +17,7 @@ use codegraph_generate::ifml::e2e_test::IfmlE2eTestGenerator;
 use codegraph_generate::traits::GlobalGenerator;
 use codegraph_generate::ProjectConfig;
 
-const EDITOR_FORM_SPEC: &str = r#"{"Form":{"fields":[{"name":"name","input":"Text","required":true,"validations":[],"values":[]}]}}"#;
+const EDITOR_FORM_SPEC: &str = r#"{"type":"form","value":{"fields":[{"name":"name","input":{"type":"text"},"required":true,"validations":[],"values":[]}]}}"#;
 
 fn test_config() -> DomainConfig {
     toml::from_str(
@@ -821,12 +821,12 @@ async fn form_fixtures_derive_typed_values_from_spec_fields() {
 
     ingest_view(&engine, "CustomerEdit", None).await;
     // Typed form specs declare fields in the spec, not in `fields`.
-    let typed_spec = r#"{"Form":{"fields":[
-        {"name":"name","input":"Text","required":true,"validations":[],"values":[]},
-        {"name":"amount","input":"Number","required":false,"validations":[],"values":[]},
-        {"name":"urgent","input":"Checkbox","required":false,"validations":[],"values":[]},
-        {"name":"submittedAt","input":"DateTime","required":false,"validations":[],"values":[]},
-        {"name":"reason","input":"Dropdown","required":false,"validations":[],"values":["Damaged","WrongItem"]}
+    let typed_spec = r#"{"type":"form","value":{"fields":[
+        {"name":"name","input":{"type":"text"},"required":true,"validations":[],"values":[]},
+        {"name":"amount","input":{"type":"number"},"required":false,"validations":[],"values":[]},
+        {"name":"urgent","input":{"type":"checkbox"},"required":false,"validations":[],"values":[]},
+        {"name":"submittedAt","input":{"type":"dateTime"},"required":false,"validations":[],"values":[]},
+        {"name":"reason","input":{"type":"dropdown"},"required":false,"validations":[],"values":["Damaged","WrongItem"]}
     ]}}"#;
     engine
         .ingest_view_component(&ViewComponentNode {
