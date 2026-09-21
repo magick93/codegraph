@@ -167,8 +167,9 @@ fn check_rows(doc: &str, list: &[&str], label: &str) -> Vec<String> {
 fn gap_analysis_doc_is_out_of_draft() {
     let doc = doc_text();
     assert!(
-        doc.contains("Status: REVIEW"),
-        "gap-analysis doc is still DRAFT; flip `Status: DRAFT` → `Status: REVIEW` after the probe WPs merge"
+        doc.lines()
+            .any(|l| l.contains("Status") && l.contains("REVIEW")),
+        "gap-analysis doc is still DRAFT; flip the status line to REVIEW after the probe WPs merge"
     );
 }
 

@@ -22,7 +22,14 @@ pub fn domains_toml(domain: &str, entities: &[&str]) -> String {
     let mut toml = String::from(
         "[defaults]\noperations = [\"create\", \"read\", \"update\", \"delete\", \"list\"]\n\n",
     );
-    toml.push_str(&format!("[domains.{domain}]\n"));
+    toml.push_str(&domain_toml_entry(domain, entities));
+    toml
+}
+
+/// Just the `[domains.<name>]` entry (no `[defaults]` header) — for
+/// appending further domains to an existing `domains.toml`.
+pub fn domain_toml_entry(domain: &str, entities: &[&str]) -> String {
+    let mut toml = format!("[domains.{domain}]\n");
     toml.push_str(&format!("label = \"{domain}\"\n"));
     toml.push_str(&format!("schema_dir = \"{domain}\"\n"));
     toml.push_str(&format!("postgres_schema = \"{domain}\"\n"));
@@ -85,7 +92,7 @@ pub fn write_extra_domain(root: &Path, domain: &str, files: &[(&str, &str)]) {
 pub fn add_domain_entry(p: &SchemaProject, domain: &str, entities: &[&str]) {
     let mut toml = fs::read_to_string(&p.config).unwrap();
     toml.push('\n');
-    toml.push_str(&domains_toml(domain, entities));
+    toml.push_str(&domain_toml_entry(domain, entities));
     fs::write(&p.config, toml).unwrap();
 }
 
@@ -138,8 +145,7 @@ pub async fn ingest_into_graph(
     let be = codegraph_backend::create_backend(&codegraph_backend::BackendConfig::default())
         .await
         .unwrap();
-    let domain_config =
-        codegraph_config::config::parse_domain_config(&p.config).unwrap();
+    let domain_config = codegraph_config::config::parse_domain_config(&p.config).unwrap();
     let classifier = codegraph_classifier::config::parse_classifier_config(&p.classifier).unwrap();
     codegraph::ingest::async_ingest::ingest_schemas(
         be.ingestor(),
@@ -182,10 +188,7 @@ fn collect_into(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) {
 
 /// Find the unique generated file whose path ends with `suffix` (ignoring
 /// `_rls`/`_trigger`/`_fts` twins, same rule as the equivalence harness).
-pub fn file_by_suffix<'a>(
-    files: &'a BTreeMap<String, String>,
-    suffix: &str,
-) -> Option<&'a String> {
+pub fn file_by_suffix<'a>(files: &'a BTreeMap<String, String>, suffix: &str) -> Option<&'a String> {
     files
         .iter()
         .filter(|(k, _)| {
