@@ -53,3 +53,10 @@ insta = { version = "1", features = ["glob", "yaml"] }
 syn = { version = "2", features = ["full", "parsing"] }
 proc-macro2 = "1"
 sha2 = "0.10"
+# Issue #254 (rosetta gap analysis): sigil is a TEST-ONLY dependency for the
+# Rune DSL probe tests + doc coverage gate. Production wiring (rev-pinned
+# workspace deps) lands in #255.
+sigil-model = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
+sigil-resolve = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
+sigil-syntax = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
+sigil-diag = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
