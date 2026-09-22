@@ -663,6 +663,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "chumsky"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0d2bfadce76f963d776feff99db6dc33783829539258314776383b33e2a00f8"
+dependencies = [
+ "hashbrown 0.15.5",
+ "regex-automata 0.4.18",
+ "serde",
+ "stacker",
+ "unicode-ident",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "clap"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -738,6 +752,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "sigil-diag",
+ "sigil-model",
+ "sigil-resolve",
+ "sigil-syntax",
  "syn 2.0.119",
  "tempfile",
  "tera",
@@ -3380,7 +3398,7 @@ name = "rex-expr"
 version = "0.1.0"
 source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
 dependencies = [
- "chumsky",
+ "chumsky 0.10.1",
  "logos",
  "rex-ir",
  "thiserror",
@@ -3412,7 +3430,7 @@ name = "rex-syntax"
 version = "0.1.0"
 source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
 dependencies = [
- "chumsky",
+ "chumsky 0.10.1",
  "logos",
  "thiserror",
 ]
@@ -3950,6 +3968,46 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "sigil-diag"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67#49a6a27f589fa89cbb20641504923c911700ee67"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "sigil-model"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67#49a6a27f589fa89cbb20641504923c911700ee67"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sigil-diag",
+]
+
+[[package]]
+name = "sigil-resolve"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67#49a6a27f589fa89cbb20641504923c911700ee67"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sigil-diag",
+ "sigil-model",
+ "sigil-syntax",
+]
+
+[[package]]
+name = "sigil-syntax"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67#49a6a27f589fa89cbb20641504923c911700ee67"
+dependencies = [
+ "chumsky 0.13.0",
+ "sigil-diag",
+ "sigil-model",
+]
 
 [[package]]
 name = "signal-hook-registry"
