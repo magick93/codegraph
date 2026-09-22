@@ -364,6 +364,7 @@ issues can reference them:
 | 6 | allOf parent → shadow child table re-declares inherited columns; flattened field order (descendant-first) disagrees with `get_properties` order (name-sorted) | WP1.1 | decide intent; pin order contract |
 | 7 | sigil: parser rejects `as-key` (E0001); expression-head diagnostics carry `span: None` | WP1.6 | upstream yestechgroup/sigil |
 | 8 | rexlang: `FeatureConstraints` has no cardinality slot; mox migrate collapses multiplicities to unbounded | WP1.2 | upstream rexlang / mox bridge |
+| 9 | Title-suffix strip collides for Rosetta's native convention: `type Product` + `choice ProductType` both strip to pg_table_name `product` — the strip assumes *types* carry the `Type` suffix, but in Rosetta it is the *choices* that do. Bridged schemas are separately titled but not separately addressable at the table level (found threading #257; pinned in `rosetta_pipeline_tests`) | #257 | #256 follow-up: skip-set on stripped table names, or don't strip choice titles |
 
 ## Cross-cutting collisions
 

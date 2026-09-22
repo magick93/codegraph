@@ -62,6 +62,7 @@ async fn main() -> codegraph::error::Result<()> {
             domain,
             format,
             mox_files,
+            rosetta_files,
         } => {
             let format = match format {
                 cli::ClassifyFormat::Table => codegraph::driver::ClassifyFormat::Table,
@@ -74,6 +75,7 @@ async fn main() -> codegraph::error::Result<()> {
                 domain.as_deref(),
                 format,
                 &mox_files,
+                &rosetta_files,
             )
             .await
         }
@@ -91,6 +93,7 @@ async fn main() -> codegraph::error::Result<()> {
             ifml_files,
             openapi_files,
             mox_files,
+            rosetta_files,
             ifml_framework,
             ifml_components,
             ifml_design_system,
@@ -109,6 +112,7 @@ async fn main() -> codegraph::error::Result<()> {
                 ifml_files: &ifml_files,
                 openapi_files: &openapi_files,
                 mox_files: &mox_files,
+                rosetta_files: &rosetta_files,
                 ifml_framework: &ifml_framework,
                 ifml_components: ifml_components.as_deref(),
                 ifml_design_system: ifml_design_system.as_deref(),

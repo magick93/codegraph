@@ -70,13 +70,21 @@ pub enum Commands {
         /// the classifier and show up as `override:source=mox`
         #[arg(long)]
         mox_files: Vec<PathBuf>,
+
+        /// Paths to Rosetta (Rune DSL) .rosetta model files; their types
+        /// are auto-scored by the classifier and appear in the report
+        #[arg(long = "rosetta-files")]
+        rosetta_files: Vec<PathBuf>,
     },
     /// Convenience: ingest + generate in one step
     Run {
-        /// Path to JSON schema directory. Optional when --mox-files is
-        /// provided; deprecated as the primary model source — migrate with
-        /// `codegraph migrate --schemas <dir> --output <dir>`
-        #[arg(long, required_unless_present = "mox_files")]
+        /// Path to JSON schema directory. Optional when --mox-files or
+        /// --rosetta-files is provided; deprecated as the primary model
+        /// source — migrate with `codegraph migrate --schemas <dir> --output <dir>`
+        #[arg(
+            long,
+            required_unless_present_any = ["mox_files", "rosetta_files"]
+        )]
         schemas: Option<PathBuf>,
         /// Path to classifier.toml (required when --schemas is provided)
         #[arg(long)]
@@ -115,6 +123,10 @@ pub enum Commands {
         /// (vocabularies with facets, class operations, derived features)
         #[arg(long)]
         mox_files: Vec<PathBuf>,
+        /// Paths to Rosetta (Rune DSL) .rosetta model files to bridge into
+        /// the graph data plane (types/choices/enums/attributes)
+        #[arg(long = "rosetta-files")]
+        rosetta_files: Vec<PathBuf>,
         /// IFML framework targets for code generation (e.g. svelte, react)
         #[arg(long)]
         ifml_framework: Vec<String>,
