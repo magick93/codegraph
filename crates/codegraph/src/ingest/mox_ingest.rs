@@ -1274,7 +1274,7 @@ fn classification_str(kind: &RefClassificationKind) -> &'static str {
 
 /// Build the cross-layer projection the same way the classifier's
 /// `ProjectionBuilder` does for the JSON path.
-fn build_projection(
+pub(crate) fn build_projection(
     kind: &RefClassificationKind,
     field_name: &str,
     pg_type: &str,
@@ -1302,7 +1302,7 @@ fn build_projection(
 
 /// Strip a trailing `_code` from a codelist field name (JSON-path parity:
 /// the column keeps the suffix, the Rust field does not).
-fn strip_code_suffix(name: &str) -> String {
+pub(crate) fn strip_code_suffix(name: &str) -> String {
     match name.strip_suffix("_code") {
         Some(stripped) if !stripped.is_empty() => stripped.to_string(),
         _ => name.to_string(),
