@@ -1,0 +1,15 @@
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+# Rosetta namespaces map onto domains via the mox package fallback (exact,
+# then namespace last segment): rosetta.fixture.store → store,
+# rosetta.fixture.partners → partners.
+[domains.partners]
+label = "Partners"
+schema_dir = "partners"
+postgres_schema = "partners"
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"

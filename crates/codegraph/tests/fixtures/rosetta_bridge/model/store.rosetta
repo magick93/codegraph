@@ -1,0 +1,36 @@
+namespace rosetta.fixture.store
+version "1.0.0"
+
+import rosetta.fixture.partners.*
+
+type OrderType:
+	id string (1..1) [metadata id]
+	label string (0..1)
+	total number (1..1)
+	placedOn dateTime (0..1)
+	tags string (0..*)
+	customer CustomerType (1..1)
+	status OrderStatus (1..1)
+	partner PartnerType (0..1)
+
+	condition PositiveTotal: total > 0
+
+type CustomerType:
+	customerId string (1..1)
+	name string (1..1)
+
+type PriorityOrderType extends OrderType:
+	priorityLevel int (0..1)
+	override label string (1..1)
+
+enum OrderStatus:
+	Draft
+	Approved displayName "Approved"
+	Shipped
+
+enum Urgency extends OrderStatus:
+	Rush
+
+choice OrderKind:
+	OrderType
+	CustomerType

@@ -1,0 +1,5 @@
+namespace rosetta.fixture.partners
+version "1.0.0"
+
+type PartnerType:
+	partnerId string (1..1)
