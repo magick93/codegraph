@@ -69,8 +69,8 @@ async fn main() -> codegraph::error::Result<()> {
                 cli::ClassifyFormat::Json => codegraph::driver::ClassifyFormat::Json,
             };
             codegraph::driver::classify(
-                Some(&schemas),
-                Some(&classifier),
+                schemas.as_deref(),
+                classifier.as_deref(),
                 &config,
                 domain.as_deref(),
                 format,

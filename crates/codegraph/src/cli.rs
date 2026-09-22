@@ -46,13 +46,17 @@ pub enum Commands {
     },
     /// Classify all schemas and show entity/VO decisions
     Classify {
-        /// Path to JSON schema directory
-        #[arg(long)]
-        schemas: PathBuf,
+        /// Path to JSON schema directory. Optional when --mox-files or
+        /// --rosetta-files is provided
+        #[arg(
+            long,
+            required_unless_present_any = ["mox_files", "rosetta_files"]
+        )]
+        schemas: Option<PathBuf>,
 
-        /// Path to classifier.toml
+        /// Path to classifier.toml (required when --schemas is provided)
         #[arg(long)]
-        classifier: PathBuf,
+        classifier: Option<PathBuf>,
 
         /// Path to domains.toml
         #[arg(long)]
