@@ -83,7 +83,9 @@ fn node_type_ddl() -> Vec<&'static str> {
             has_definitions BOOLEAN NOT NULL,
             custom_annotations STRING NOT NULL
         )",
-        // PropertyNode — 16 fields + _schema_title denormalized
+        // PropertyNode — 16 fields + scalar bounds + _schema_title denormalized.
+        // Bounds are persisted as STRING (u64/Decimal serialize via to_string)
+        // because Decimal has no native grafeo Value; conversions parses back.
         "CREATE NODE TYPE IF NOT EXISTS Property (
             name STRING NOT NULL,
             prop_type STRING NOT NULL,
@@ -93,6 +95,10 @@ fn node_type_ddl() -> Vec<&'static str> {
             is_nullable BOOLEAN NOT NULL,
             is_array BOOLEAN NOT NULL,
             pattern STRING,
+            min_length STRING,
+            max_length STRING,
+            minimum STRING,
+            maximum STRING,
             pg_column_name STRING NOT NULL,
             pg_column_type STRING NOT NULL,
             rust_field_name STRING NOT NULL,

@@ -24,10 +24,11 @@ const SCHEMA_RETURN_COLS: &str = "\
     s.parent_schema, s.is_entity, s.is_codelist, s.is_primitive_wrapper, \
     s.has_all_of, s.has_one_of, s.has_any_of, s.has_definitions, s.custom_annotations";
 
-/// The RETURN clause for all PropertyNode queries — keeps the 17 columns in one place.
+/// The RETURN clause for all PropertyNode queries — keeps the 21 columns in one place.
 const PROPERTY_RETURN_COLS: &str = "\
     p.name, p.prop_type, p.description, p.format, \
     p.is_required, p.is_nullable, p.is_array, p.pattern, \
+    p.min_length, p.max_length, p.minimum, p.maximum, \
     p.pg_column_name, p.pg_column_type, p.rust_field_name, p.rust_field_type, \
     p.sea_orm_type, p.render_strategy, p.ref_target, p.classification, \
     p.classification_kind";

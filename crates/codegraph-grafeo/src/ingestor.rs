@@ -273,6 +273,8 @@ impl GraphIngestor for GrafeoEngine {
             format: $format, \
             is_required: $is_required, is_nullable: $is_nullable, \
             is_array: $is_array, pattern: $pattern, \
+            min_length: $min_length, max_length: $max_length, \
+            minimum: $minimum, maximum: $maximum, \
             pg_column_name: $pg_column_name, pg_column_type: $pg_column_type, \
             rust_field_name: $rust_field_name, rust_field_type: $rust_field_type, \
             sea_orm_type: $sea_orm_type, render_strategy: $render_strategy, \
@@ -284,6 +286,12 @@ impl GraphIngestor for GrafeoEngine {
             .classification_kind
             .as_ref()
             .map(classification_kind_to_str);
+        // Bounds persist as STRING: Decimal has no native grafeo Value, and
+        // conversions.rs parses all four back from strings.
+        let min_length_str = prop.min_length.map(|v| v.to_string());
+        let max_length_str = prop.max_length.map(|v| v.to_string());
+        let minimum_str = prop.minimum.map(|v| v.to_string());
+        let maximum_str = prop.maximum.map(|v| v.to_string());
         let params = HashMap::from([
             (
                 "name".into(),
@@ -299,6 +307,10 @@ impl GraphIngestor for GrafeoEngine {
             ("is_nullable".into(), bool_to_grafeo_value(prop.is_nullable)),
             ("is_array".into(), bool_to_grafeo_value(prop.is_array)),
             ("pattern".into(), opt_to_grafeo_value(&prop.pattern)),
+            ("min_length".into(), opt_to_grafeo_value(&min_length_str)),
+            ("max_length".into(), opt_to_grafeo_value(&max_length_str)),
+            ("minimum".into(), opt_to_grafeo_value(&minimum_str)),
+            ("maximum".into(), opt_to_grafeo_value(&maximum_str)),
             (
                 "pg_column_name".into(),
                 grafeo::Value::String(prop.pg_column_name.clone().into()),
