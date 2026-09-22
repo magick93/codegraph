@@ -44,6 +44,13 @@ tree-sitter-svelte-next = "0.1.1"
 rex-ir = { workspace = true }
 rex-driver = { workspace = true }
 rex-ifml = { workspace = true }
+# Sigil (Rune DSL) — issue #255: workspace rev-pins, codegraph-crate-only.
+# Provenance for rosetta-derived graph data rides custom_annotations under a
+# distinct `origin=rosetta` key (never the mox `source` key).
+sigil-model = { workspace = true }
+sigil-resolve = { workspace = true }
+sigil-syntax = { workspace = true }
+sigil-diag = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -53,10 +60,3 @@ insta = { version = "1", features = ["glob", "yaml"] }
 syn = { version = "2", features = ["full", "parsing"] }
 proc-macro2 = "1"
 sha2 = "0.10"
-# Issue #254 (rosetta gap analysis): sigil is a TEST-ONLY dependency for the
-# Rune DSL probe tests + doc coverage gate. Production wiring (rev-pinned
-# workspace deps) lands in #255.
-sigil-model = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
-sigil-resolve = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
-sigil-syntax = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
-sigil-diag = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
