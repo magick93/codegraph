@@ -125,14 +125,12 @@ async fn rosetta_only_run_generates_the_data_plane() {
     assert!(has("src/entity/store_currency.rs"));
     assert!(has("src/entity/store_holder.rs"));
 
-    // KNOWN COLLISION (recorded for #259): `type Product` and
-    // `choice ProductType` both strip to pg_table_name `product` — the
-    // Type-suffix strip convention assumes Rosetta types carry the suffix,
-    // but Rosetta choices are the ones named *Type. The choice's artifacts
-    // are therefore NOT separately addressable in this model shape.
+    // Choices KEEP their unstripped names (gap-doc defect #9 fix): the
+    // choice ProductType gets its own table/artifacts instead of colliding
+    // with type Product at pg_table_name `product`.
     assert!(
-        !has("src/entity/store_product_type.rs"),
-        "if this assertion fails, the Product/ProductType table-name collision was fixed"
+        has("src/entity/store_product_type.rs"),
+        "choice ProductType must be separately addressable after the #9 fix"
     );
 }
 

@@ -667,7 +667,16 @@ fn data_schema_node(
     namespace: &str,
     type_suffix: &str,
 ) -> SchemaNode {
-    let stripped = strip_suffix(&data.name, type_suffix);
+    // Choices KEEP their full name for code identifiers: the Type-suffix
+    // strip assumes types carry the suffix, but in Rosetta it is the
+    // choices that do (`choice ProductType` optioning `type Product`) —
+    // stripping would collide both at pg_table_name `product`
+    // (gap-analysis defect #9).
+    let stripped = if data.is_choice {
+        data.name.clone()
+    } else {
+        strip_suffix(&data.name, type_suffix)
+    };
     let mut custom_annotations = rosetta_annotations();
     custom_annotations.insert(
         "rosetta_namespace".to_string(),
