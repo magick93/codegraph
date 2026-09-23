@@ -83,9 +83,10 @@ fn node_type_ddl() -> Vec<&'static str> {
             has_definitions BOOLEAN NOT NULL,
             custom_annotations STRING NOT NULL
         )",
-        // PropertyNode — 16 fields + scalar bounds + _schema_title denormalized.
-        // Bounds are persisted as STRING (u64/Decimal serialize via to_string)
-        // because Decimal has no native grafeo Value; conversions parses back.
+        // PropertyNode — 16 fields + scalar/item bounds + _schema_title
+        // denormalized. Bounds are persisted as STRING (u64/Decimal serialize
+        // via to_string) because Decimal has no native grafeo Value;
+        // conversions parses back.
         "CREATE NODE TYPE IF NOT EXISTS Property (
             name STRING NOT NULL,
             prop_type STRING NOT NULL,
@@ -97,6 +98,8 @@ fn node_type_ddl() -> Vec<&'static str> {
             pattern STRING,
             min_length STRING,
             max_length STRING,
+            min_items STRING,
+            max_items STRING,
             minimum STRING,
             maximum STRING,
             pg_column_name STRING NOT NULL,
@@ -344,6 +347,18 @@ fn node_type_ddl() -> Vec<&'static str> {
             type_ref STRING NOT NULL,
             expr STRING
         )",
+        // Condition — constraint plane (issue #261). `options` persists the
+        // one_of option titles as a JSON array string; `expr_json` carries
+        // the canonical Expr::to_json() payload for named conditions.
+        "CREATE NODE TYPE IF NOT EXISTS Condition (
+            name STRING NOT NULL,
+            owner_title STRING NOT NULL,
+            kind STRING NOT NULL,
+            expr_json STRING,
+            options STRING,
+            definition STRING,
+            domain STRING
+        )",
     ]
 }
 
@@ -413,5 +428,7 @@ fn edge_type_ddl() -> Vec<&'static str> {
         // mox domain metamodel edge types
         "CREATE EDGE TYPE IF NOT EXISTS BelongsToClass ()",
         "CREATE EDGE TYPE IF NOT EXISTS VocabularyInPackage ()",
+        // Constraint plane edge types (issue #261)
+        "CREATE EDGE TYPE IF NOT EXISTS HasCondition ()",
     ]
 }

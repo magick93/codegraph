@@ -161,6 +161,7 @@ impl CapabilityRegistry {
                         | "fern_sdk"
                         | "emdash_plugins"
                         | "rls_from_policy"
+                        | "rosetta_backend"
                 )
             })
         })
@@ -677,6 +678,9 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
 
         // ── policy-driven RLS (issue #219) ─────────────────────────────
         cap("policy_rls",           Global,  Common, &["rls_from_policy"], &[]),
+
+        // ── constraint-plane validations (issue #261) ───────────────────
+        cap("condition_validations", Domain, Api,  &["rosetta_backend"], &[]),
 
         // ── Fern SDK generators ─────────────────────────────────────────
         cap("fern_config",          Global, Api,   &["fern_sdk"], &[]),

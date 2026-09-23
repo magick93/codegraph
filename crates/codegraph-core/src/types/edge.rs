@@ -71,6 +71,9 @@ pub enum EdgeType {
 
     // Authorization metamodel edge types
     Grant,
+
+    // Constraint plane edge types (issue #261)
+    HasCondition,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

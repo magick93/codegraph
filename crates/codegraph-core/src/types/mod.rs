@@ -4,6 +4,7 @@ mod authorization;
 mod codelist;
 mod composite;
 mod composition;
+mod condition;
 mod discovery;
 mod edge;
 mod field_def;
@@ -29,6 +30,7 @@ pub use authorization::{
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};
+pub use condition::{ConditionKind, ConditionNode};
 pub use discovery::{DetectionSource, Extension, ParentCandidate};
 pub use edge::{EdgeProperties, EdgeType};
 pub use field_def::{

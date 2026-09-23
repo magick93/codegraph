@@ -92,15 +92,27 @@ async fn array_cardinality_dropped_from_graph() {
         members.rust_field_type, members.pg_column_type
     );
 
-    // The gap: `minItems: 2, maxItems: 10` is gone. No scalar-constraint
-    // field picked it up.
+    // HISTORY: this probe originally pinned the representation gap — no
+    // cardinality field anywhere on PropertyNode. Issue #261 resolved it:
+    // min_items/max_items exist AND the JSON path parses minItems/maxItems
+    // into them (enforcement is the generator's job, also #261).
     assert_eq!(members.min_length, None);
     assert_eq!(members.max_length, None);
     assert_eq!(members.minimum, None);
     assert_eq!(members.maximum, None);
+    assert_eq!(
+        members.min_items,
+        Some(2),
+        "minItems: 2 must land on PropertyNode.min_items"
+    );
+    assert_eq!(
+        members.max_items,
+        Some(10),
+        "maxItems: 10 must land on PropertyNode.max_items"
+    );
 
-    // Runtime pin of the compile-time fact: the serialized PropertyNode
-    // exposes no cardinality key whatsoever.
+    // Runtime pin: the serialized PropertyNode now exposes the cardinality
+    // keys (snake_case fields, serde default).
     let serialized = serde_json::to_value(members).unwrap();
     let keys: Vec<String> = serialized
         .as_object()
@@ -108,13 +120,12 @@ async fn array_cardinality_dropped_from_graph() {
         .keys()
         .cloned()
         .collect();
-    for cardinality_key in ["minItems", "maxItems", "min_items", "max_items"] {
+    for cardinality_key in ["min_items", "max_items"] {
         assert!(
-            !keys.iter().any(|k| k.eq_ignore_ascii_case(cardinality_key)),
-            "PropertyNode unexpectedly exposes cardinality key {cardinality_key}: {keys:?}"
+            keys.iter().any(|k| k == cardinality_key),
+            "PropertyNode must expose cardinality key {cardinality_key} post-#261: {keys:?}"
         );
     }
-    println!("PropertyNode serialized keys: {keys:?}");
 }
 
 /// Probe 2 — does the DDL enforce array cardinality?

@@ -5,14 +5,14 @@ use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
     resolve_effective_permits, ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode,
     ApiResourceNode, CapabilityNode, CodeList, CollectionNode, ColumnInfo, CompositeColumn,
-    CompositeRange, CompositionNode, CompositionTree, DataBindingResolution, DelegationRecord,
-    DetectionSource, EnumValue, ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget,
-    GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleUseRecord,
-    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceNode,
-    NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate, PermissionNode,
-    Permit, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
-    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    CompositeRange, CompositionNode, CompositionTree, ConditionNode, DataBindingResolution,
+    DelegationRecord, DetectionSource, EnumValue, ErrorDefinitionNode, EventNode, Extension,
+    FkDirection, FkTarget, GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode,
+    MembershipNode, ModuleUseRecord, MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode,
+    NamespaceNode, NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate,
+    PermissionNode, Permit, PipelineNode, PolicyNode, PropertyNode, RelationshipNode,
+    RepositoryNode, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -28,16 +28,16 @@ const SCHEMA_RETURN_COLS: &str = "\
 const PROPERTY_RETURN_COLS: &str = "\
     p.name, p.prop_type, p.description, p.format, \
     p.is_required, p.is_nullable, p.is_array, p.pattern, \
-    p.min_length, p.max_length, p.minimum, p.maximum, \
+    p.min_length, p.max_length, p.minimum, p.maximum, \n    p.min_items, p.max_items, \
     p.pg_column_name, p.pg_column_type, p.rust_field_name, p.rust_field_type, \
     p.sea_orm_type, p.render_strategy, p.ref_target, p.classification, \
     p.classification_kind";
 
 use crate::conversions::{
-    row_to_codelist, row_to_composite_column, row_to_composite_range, row_to_enum_value,
-    row_to_extension, row_to_membership_node, row_to_policy_node, row_to_property_node,
-    row_to_relationship_node, row_to_schema_node, row_to_security_identity_node,
-    row_to_structured_sub_field, row_to_tenant_node, RowReader,
+    row_to_codelist, row_to_composite_column, row_to_composite_range, row_to_condition_node,
+    row_to_enum_value, row_to_extension, row_to_membership_node, row_to_policy_node,
+    row_to_property_node, row_to_relationship_node, row_to_schema_node,
+    row_to_security_identity_node, row_to_structured_sub_field, row_to_tenant_node, RowReader,
 };
 use crate::engine::GrafeoEngine;
 
@@ -1904,6 +1904,50 @@ impl GraphQuerier for GrafeoEngine {
             .rows
             .iter()
             .map(|row| mox_derived_feature_from_row(&reader, row, "d"))
+            .collect()
+    }
+
+    // ── Constraint plane queries (issue #261) ─────────────────────────
+
+    async fn get_conditions_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<ConditionNode>, GraphError> {
+        let params = HashMap::from([(
+            "title".to_string(),
+            grafeo::Value::String(schema_title.into()),
+        )]);
+        let result = query_gql_params(
+            self,
+            "MATCH (c:Condition) WHERE c.owner_title = $title \
+             RETURN c.name AS name, c.owner_title AS owner_title, c.kind AS kind, \
+             c.expr_json AS expr_json, c.options AS options, \
+             c.definition AS definition, c.domain AS domain \
+             ORDER BY c.name",
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_condition_node(&reader, row))
+            .collect()
+    }
+
+    async fn list_conditions(&self) -> Result<Vec<ConditionNode>, GraphError> {
+        let result = query_gql(
+            self,
+            "MATCH (c:Condition) \
+             RETURN c.name AS name, c.owner_title AS owner_title, c.kind AS kind, \
+             c.expr_json AS expr_json, c.options AS options, \
+             c.definition AS definition, c.domain AS domain \
+             ORDER BY c.owner_title, c.name",
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_condition_node(&reader, row))
             .collect()
     }
 }

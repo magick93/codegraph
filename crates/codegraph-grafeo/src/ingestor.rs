@@ -4,11 +4,12 @@ use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
     ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode,
-    CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue,
-    ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode,
-    MembershipNode, MoxDomainModel, NamespaceNode, ParameterDefinitionNode, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaNode,
-    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
+    CompositeColumn, CompositeRange, ConditionKind, ConditionNode, DataBindingNode, EdgeProperties,
+    EdgeType, EnumValue, ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats,
+    InteractionNode, LexiconNode, MembershipNode, MoxDomainModel, NamespaceNode,
+    ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
+    RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -274,6 +275,7 @@ impl GraphIngestor for GrafeoEngine {
             is_required: $is_required, is_nullable: $is_nullable, \
             is_array: $is_array, pattern: $pattern, \
             min_length: $min_length, max_length: $max_length, \
+            min_items: $min_items, max_items: $max_items, \
             minimum: $minimum, maximum: $maximum, \
             pg_column_name: $pg_column_name, pg_column_type: $pg_column_type, \
             rust_field_name: $rust_field_name, rust_field_type: $rust_field_type, \
@@ -287,9 +289,11 @@ impl GraphIngestor for GrafeoEngine {
             .as_ref()
             .map(classification_kind_to_str);
         // Bounds persist as STRING: Decimal has no native grafeo Value, and
-        // conversions.rs parses all four back from strings.
+        // conversions.rs parses all of them back from strings.
         let min_length_str = prop.min_length.map(|v| v.to_string());
         let max_length_str = prop.max_length.map(|v| v.to_string());
+        let min_items_str = prop.min_items.map(|v| v.to_string());
+        let max_items_str = prop.max_items.map(|v| v.to_string());
         let minimum_str = prop.minimum.map(|v| v.to_string());
         let maximum_str = prop.maximum.map(|v| v.to_string());
         let params = HashMap::from([
@@ -309,6 +313,8 @@ impl GraphIngestor for GrafeoEngine {
             ("pattern".into(), opt_to_grafeo_value(&prop.pattern)),
             ("min_length".into(), opt_to_grafeo_value(&min_length_str)),
             ("max_length".into(), opt_to_grafeo_value(&max_length_str)),
+            ("min_items".into(), opt_to_grafeo_value(&min_items_str)),
+            ("max_items".into(), opt_to_grafeo_value(&max_items_str)),
             ("minimum".into(), opt_to_grafeo_value(&minimum_str)),
             ("maximum".into(), opt_to_grafeo_value(&maximum_str)),
             (
@@ -367,6 +373,43 @@ impl GraphIngestor for GrafeoEngine {
             .map_err(|e| {
                 GraphError::Ingest(format!("ingest_property HasProperty edge failed: {e}"))
             })?;
+        Ok(())
+    }
+
+    async fn ingest_condition(&self, node: &ConditionNode) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let options_json =
+            serde_json::to_string(&node.options).unwrap_or_else(|_| "[]".to_string());
+        let options_str = format!("'{}'", escape_gql(&options_json));
+        let gql = format!(
+            "INSERT (:Condition {{name: '{name}', owner_title: '{owner}', \
+             kind: '{kind}', expr_json: {expr}, options: {options}, \
+             definition: {definition}, domain: {domain}}})",
+            name = escape_gql(&node.name),
+            owner = escape_gql(&node.owner_title),
+            kind = match node.kind {
+                ConditionKind::Condition => "condition",
+                ConditionKind::OneOf => "one_of",
+            },
+            expr = opt_str(&node.expr_json),
+            options = options_str,
+            definition = opt_str(&node.definition),
+            domain = opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_condition INSERT failed: {e}")))?;
+        // Link the condition to its owning schema (Schema → Condition).
+        let edge = format!(
+            "MATCH (a:Schema), (b:Condition) \
+             WHERE a.title = '{owner}' AND b.name = '{name}' \
+             INSERT (a)-[:HasCondition]->(b)",
+            owner = escape_gql(&node.owner_title),
+            name = escape_gql(&node.name),
+        );
+        session
+            .execute(&edge)
+            .map_err(|e| GraphError::Ingest(format!("ingest_condition edge failed: {e}")))?;
         Ok(())
     }
 
@@ -585,6 +628,7 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::HasModuleDefinition => "HasModuleDefinition",
             EdgeType::HasViewComponentPart => "HasViewComponentPart",
             EdgeType::HasConditionalExpr => "HasConditionalExpr",
+            EdgeType::HasCondition => "HasCondition",
             EdgeType::InNamespace => "InNamespace",
             EdgeType::ProjectsToLexicon => "ProjectsToLexicon",
             EdgeType::DefinesCollection => "DefinesCollection",
@@ -621,6 +665,13 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(from_id),
                     escape_gql(value),
                     escape_gql(codelist),
+                )
+            }
+            EdgeType::HasCondition => {
+                format!(
+                    "MATCH (a:Schema {{title: '{}'}}), (b:Condition {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
                 )
             }
             EdgeType::UsesCodeList => {

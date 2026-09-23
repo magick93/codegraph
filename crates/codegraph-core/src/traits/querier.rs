@@ -1,7 +1,7 @@
 use crate::error::GraphError;
 use crate::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode, CapabilityNode,
-    CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree,
+    CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
     DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, GrantEdge,
     HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
     MoxOperationNode, MoxVocabularyNode, NamespaceNode, NavigationFlowRecord,
@@ -456,6 +456,22 @@ pub trait GraphQuerier: Send + Sync {
             .into_iter()
             .filter(|d| d.class == schema_title)
             .collect())
+    }
+
+    // ── Constraint plane query methods (default: no condition data) ──
+
+    /// All ConditionNodes attached to a schema via HasCondition edges
+    /// (named conditions AND bridge-derived one_of nodes).
+    async fn get_conditions_for_schema(
+        &self,
+        _schema_title: &str,
+    ) -> Result<Vec<ConditionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Every ConditionNode in the graph.
+    async fn list_conditions(&self) -> Result<Vec<ConditionNode>, GraphError> {
+        Ok(Vec::new())
     }
 }
 

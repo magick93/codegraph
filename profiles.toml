@@ -37,6 +37,12 @@ ifml_design_system = ""            # built-in IFML component pack ("" = none, e.
 # add "policy_rls" to an [api] generators list; emits 020000_policy_rls.sql
 # (Postgres only; sqlite is a no-op). Off = byte-identical output.
 rls_from_policy = false
+# Constraint-plane validations (issue #261). When true, add
+# "condition_validations" to an [api] generators list; emits per-domain
+# src/domain/<domain>/validations.rs from array minItems/maxItems and the
+# rosetta ConditionNode graph family (TODO(#262) transpile markers). Off =
+# byte-identical output.
+rosetta_backend = false
 
 [profiles.default.api]
 generators = [

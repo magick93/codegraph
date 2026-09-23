@@ -38,6 +38,8 @@ fn make_property(name: &str, is_required: bool) -> PropertyNode {
         is_required,
         is_nullable: false,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -1106,4 +1108,92 @@ async fn test_parameter_ingest_is_idempotent() {
         1,
         "duplicate HasParameter edges must collapse: {for_view:?}"
     );
+}
+
+// ── Constraint plane (issue #261) ─────────────────────────────────────
+
+fn make_condition(name: &str, owner: &str, kind: ConditionKind) -> ConditionNode {
+    ConditionNode {
+        name: name.to_string(),
+        owner_title: owner.to_string(),
+        kind,
+        expr_json: None,
+        options: Vec::new(),
+        definition: None,
+        domain: Some("payroll".to_string()),
+    }
+}
+
+#[tokio::test]
+async fn test_condition_round_trip() {
+    let engine = seeded_engine().await;
+    let expr = serde_json::json!({
+        "op": ">=",
+        "left": { "field": "amount" },
+        "right": { "number": 100 }
+    });
+    let named = ConditionNode {
+        expr_json: Some(serde_json::to_string(&expr).unwrap()),
+        definition: Some("amount at least 100".to_string()),
+        ..make_condition("amount_floor", "PayRunType", ConditionKind::Condition)
+    };
+    let one_of = ConditionNode {
+        options: vec!["PaymentTypeA".to_string(), "PaymentTypeB".to_string()],
+        ..make_condition("PayRunType_one_of", "PayRunType", ConditionKind::OneOf)
+    };
+    engine
+        .ingest_schema(&make_schema("PaymentTypeA", "payroll", false))
+        .await
+        .unwrap();
+    engine
+        .ingest_schema(&make_schema("PaymentTypeB", "payroll", false))
+        .await
+        .unwrap();
+    engine.ingest_condition(&named).await.unwrap();
+    engine.ingest_condition(&one_of).await.unwrap();
+
+    let for_schema = engine
+        .get_conditions_for_schema("PayRunType")
+        .await
+        .unwrap();
+    assert_eq!(for_schema.len(), 2, "both condition nodes must attach");
+    let named_back = for_schema
+        .iter()
+        .find(|c| c.kind == ConditionKind::Condition)
+        .expect("named condition missing");
+    assert_eq!(named_back.name, "amount_floor");
+    assert_eq!(named_back.owner_title, "PayRunType");
+    let payload: serde_json::Value = serde_json::from_str(
+        named_back
+            .expr_json
+            .as_deref()
+            .expect("expr_json must round-trip"),
+    )
+    .expect("expr_json must be valid JSON");
+    assert_eq!(payload["op"], ">=");
+
+    let one_of_back = for_schema
+        .iter()
+        .find(|c| c.kind == ConditionKind::OneOf)
+        .expect("one_of condition missing");
+    assert_eq!(one_of_back.name, "PayRunType_one_of");
+    assert_eq!(one_of_back.options, vec!["PaymentTypeA", "PaymentTypeB"]);
+    assert!(one_of_back.expr_json.is_none());
+
+    // HasCondition edges actually link Schema → Condition.
+    let all = engine.list_conditions().await.unwrap();
+    assert_eq!(all.len(), 2);
+    assert!(all.iter().all(|c| c.domain.as_deref() == Some("payroll")));
+
+    let other = engine
+        .get_conditions_for_schema("PersonType")
+        .await
+        .unwrap();
+    assert!(other.is_empty(), "conditions must not leak across schemas");
+}
+
+#[tokio::test]
+async fn test_list_conditions_empty_by_default() {
+    let engine = seeded_engine().await;
+    assert!(engine.list_conditions().await.unwrap().is_empty());
 }

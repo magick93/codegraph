@@ -7,7 +7,7 @@ use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode, CapabilityNode,
-    CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree,
+    CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
     DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, GrantEdge,
     HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
     MoxOperationNode, MoxVocabularyNode, NamespaceNode, NavigationFlowRecord,
@@ -574,6 +574,19 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn get_data_bindings(&self) -> Result<Vec<DataBindingResolution>, GraphError> {
         self.inner.get_data_bindings().await
+    }
+
+    // ── Constraint plane query delegation (issue #261) ─────────────────
+
+    async fn get_conditions_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<ConditionNode>, GraphError> {
+        self.inner.get_conditions_for_schema(schema_title).await
+    }
+
+    async fn list_conditions(&self) -> Result<Vec<ConditionNode>, GraphError> {
+        self.inner.list_conditions().await
     }
 
     // ── AT Protocol query delegation ───────────────────────────────────

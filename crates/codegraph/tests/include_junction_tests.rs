@@ -65,6 +65,8 @@ fn prop(
         is_required: false,
         is_nullable: true,
         is_array,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,

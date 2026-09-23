@@ -1,11 +1,11 @@
 use crate::error::GraphError;
 use crate::types::{
     ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode,
-    CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue,
-    ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode,
-    MembershipNode, MoxDomainModel, NamespaceNode, ParameterDefinitionNode, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaNode,
-    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
+    CompositeColumn, CompositeRange, ConditionNode, DataBindingNode, EdgeProperties, EdgeType,
+    EnumValue, ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats, InteractionNode,
+    LexiconNode, MembershipNode, MoxDomainModel, NamespaceNode, ParameterDefinitionNode,
+    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
+    SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -166,4 +166,12 @@ pub trait GraphIngestor: Send + Sync {
         let _ = model;
         Ok(())
     }
+
+    // ── Constraint plane (issue #261) ─────────────────────────────────
+
+    /// Ingest one ConditionNode (named condition or bridge-derived one_of)
+    /// and link it to its owning schema via a `HasCondition` edge. Follows
+    /// the IFML node-family precedent: a required method, implemented by
+    /// every backend.
+    async fn ingest_condition(&self, node: &ConditionNode) -> Result<(), GraphError>;
 }

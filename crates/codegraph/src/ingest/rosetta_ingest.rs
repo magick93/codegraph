@@ -29,10 +29,15 @@
 //!   SchemaNode (a serde-defaulted `PropertyNode.custom_annotations` field
 //!   is the flagged follow-up uplift — 60+ literal construction sites make
 //!   it more than a bridge-sized change).
-//! - conditions ([`sigil_model::Condition`]) → `rosetta_conditions`
-//!   payloads embedding `Expr::to_json()` Values (the embedding contract
-//!   pinned by WP1.6: deterministic, serialization-stable, write-once —
-//!   `Expr` is Serialize-only). The ConditionNode family is #261.
+//! - conditions ([`sigil_model::Condition`]) → `ConditionNode`s (issue
+//!   #261): each named condition lands as `kind: Condition` carrying the
+//!   canonical `Expr::to_json()` payload (the embedding contract pinned by
+//!   WP1.6: deterministic, serialization-stable, write-once — `Expr` is
+//!   Serialize-only), linked to its schema via a `HasCondition` edge;
+//!   `choice` types derive ONE `kind: OneOf` node whose options are the
+//!   option attributes' referenced titles. Transpilation is #262. The
+//!   `rosetta_conditions` annotation payload on the SchemaNode remains as
+//!   provenance (#259 snapshot).
 //! - namespaces: recorded per file (`rosetta_namespace` annotation +
 //!   stats) but NOT mapped onto domains and NOT given nodes — namespaces
 //!   are NOT domains; the first-class uplift is #267/#268. Until then the
@@ -64,7 +69,8 @@ use sigil_resolve::Resolution;
 use codegraph_config::config::DomainConfig;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    CodeList, EdgeProperties, EdgeType, EnumValue, PropertyNode, SchemaNode,
+    CodeList, ConditionKind, ConditionNode, EdgeProperties, EdgeType, EnumValue, PropertyNode,
+    SchemaNode,
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 use codegraph_type_contracts::{PgType, RefClassificationKind};
@@ -109,6 +115,10 @@ pub struct RosettaIngestStats {
     pub enum_schemas: usize,
     pub extends: usize,
     pub conditions_recorded: usize,
+    /// Named conditions that landed as ConditionNodes (#261).
+    pub conditions_ingested: usize,
+    /// Bridge-derived one_of nodes (one per `choice` type).
+    pub one_of_ingested: usize,
     pub namespaces: usize,
     pub namespace_imports: usize,
     /// Out-of-data-plane elements counted for review (never silently
@@ -125,8 +135,8 @@ impl std::fmt::Display for RosettaIngestStats {
         write!(
             f,
             "{} files, {} types ({} choices), {} properties, {} edges, {} enums \
-             ({} values, {} codelist schemas), {} extends, {} conditions recorded, \
-             {} namespaces ({} imports)",
+             ({} values, {} codelist schemas), {} extends, {} conditions recorded \
+             ({} nodes, {} one_of), {} namespaces ({} imports)",
             self.files,
             self.types,
             self.choices,
@@ -137,6 +147,8 @@ impl std::fmt::Display for RosettaIngestStats {
             self.enum_schemas,
             self.extends,
             self.conditions_recorded,
+            self.conditions_ingested,
+            self.one_of_ingested,
             self.namespaces,
             self.namespace_imports,
         )?;
@@ -367,6 +379,66 @@ pub async fn ingest_rosetta_files(
             stats.choices += 1;
         }
         stats.conditions_recorded += data.conditions.len();
+
+        // Named conditions land as ConditionNodes (#261). The
+        // `rosetta_conditions` annotation payload on the SchemaNode stays
+        // untouched — it remains the provenance snapshot pinned by #259.
+        for (idx, condition) in data.conditions.iter().enumerate() {
+            let name = condition
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("{}_condition_{}", data.name, idx));
+            let expr_json =
+                serde_json::to_string(&condition.expression.to_json()).map_err(|e| {
+                    Error::RosettaModel {
+                        file: data.name.clone(),
+                        reason: format!("condition '{name}' expression serialization failed: {e}"),
+                    }
+                })?;
+            let condition_node = ConditionNode {
+                name,
+                owner_title: data.name.clone(),
+                kind: ConditionKind::Condition,
+                expr_json: Some(expr_json),
+                options: Vec::new(),
+                definition: condition.definition.clone(),
+                domain: Some(domain.clone()),
+            };
+            ingestor
+                .ingest_condition(&condition_node)
+                .await
+                .map_err(Error::Graph)?;
+            stats.conditions_ingested += 1;
+        }
+
+        // Choices derive ONE one_of node whose options are the referenced
+        // titles of the `(0..1)` option attributes (declaration order,
+        // deduplicated). one_of is not a sigil Expr kind, so `expr_json`
+        // stays empty — transpilation is #262.
+        if data.is_choice {
+            let mut seen: HashSet<String> = HashSet::new();
+            let options: Vec<String> = data
+                .attributes
+                .iter()
+                .map(|attribute| referenced_title(&attribute.type_ref))
+                .filter(|title| seen.insert(title.clone()))
+                .collect();
+            let one_of = ConditionNode {
+                name: format!("{}_one_of", data.name),
+                owner_title: data.name.clone(),
+                kind: ConditionKind::OneOf,
+                expr_json: None,
+                options,
+                definition: None,
+                domain: Some(domain.clone()),
+            };
+            ingestor
+                .ingest_condition(&one_of)
+                .await
+                .map_err(Error::Graph)?;
+            stats.one_of_ingested += 1;
+        }
+
         stats.types += 1;
     }
 
@@ -796,9 +868,7 @@ fn enum_schema_node(
 
 /// Rosetta cardinality → the graph's two multiplicity bits. A `(min..max)`
 /// cardinality is required iff `min >= 1`, and an array iff max is
-/// unbounded or greater than one. A minimum above one (e.g. `(2..10)`) is
-/// NOT representable beyond `is_array` — gap-analysis finding 2; the #261
-/// uplift owns min/max items.
+/// unbounded or greater than one.
 ///
 /// Returns `(is_required, is_array)`.
 fn cardinality_flags(cardinality: &sigil_model::Cardinality) -> (bool, bool) {
@@ -808,6 +878,25 @@ fn cardinality_flags(cardinality: &sigil_model::Cardinality) -> (bool, bool) {
         CardinalityMax::Finite(max) => max > 1,
     };
     (is_required, is_array)
+}
+
+/// Rosetta cardinality → JSON-Schema-equivalent array bounds (issue #261,
+/// closing gap-analysis finding 2): `(2..10)` maps to
+/// `min_items = 2 / max_items = 10`. Only arrays carry item counts — a
+/// scalar attribute's `min` is requiredness, not an item bound.
+fn cardinality_items(
+    cardinality: &sigil_model::Cardinality,
+    is_array: bool,
+) -> (Option<u32>, Option<u32>) {
+    if !is_array {
+        return (None, None);
+    }
+    let min_items = (cardinality.min > 1).then_some(cardinality.min);
+    let max_items = match cardinality.max {
+        CardinalityMax::Finite(max) if max > 1 => Some(max),
+        _ => None,
+    };
+    (min_items, max_items)
 }
 
 fn classification_str(kind: &RefClassificationKind) -> &'static str {
@@ -835,6 +924,7 @@ fn attribute_property(
 ) -> Option<PropertyNode> {
     let target_title = referenced_title(&attribute.type_ref);
     let (is_required, is_array) = cardinality_flags(&attribute.cardinality);
+    let (min_items, max_items) = cardinality_items(&attribute.cardinality, is_array);
 
     let (kind, pg_base, rust_base, sea_base, ref_target, format_hint, prop_type) =
         if let Some((pg, format, json_type)) = builtin_mapping(&target_title) {
@@ -925,6 +1015,8 @@ fn attribute_property(
         is_required,
         is_nullable: !is_required,
         is_array,
+        min_items,
+        max_items,
         pattern: None,
         min_length: None,
         max_length: None,

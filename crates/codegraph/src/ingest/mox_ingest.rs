@@ -1221,6 +1221,8 @@ fn feature_property(
         is_required,
         is_nullable: !is_required,
         is_array,
+        min_items: None,
+        max_items: None,
         pattern: feature.constraints.pattern.clone(),
         min_length: feature.constraints.min_length,
         max_length: feature.constraints.max_length,

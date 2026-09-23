@@ -1,9 +1,9 @@
 use codegraph_core::error::GraphError;
 use codegraph_core::types::{
-    Cardinality, CodeList, CompositeColumn, CompositeRange, EnumValue, Extension, ForeignKeySpec,
-    MembershipNode, MembershipStatus, Ownership, PolicyKind, PolicyNode, PropagationRule,
-    PropertyNode, RelationshipNode, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, TenantStrategy,
+    Cardinality, CodeList, CompositeColumn, CompositeRange, ConditionKind, ConditionNode,
+    EnumValue, Extension, ForeignKeySpec, MembershipNode, MembershipStatus, Ownership, PolicyKind,
+    PolicyNode, PropagationRule, PropertyNode, RelationshipNode, SchemaNode, SecurityIdentityNode,
+    StructuredSubField, TenantNode, TenantStrategy,
 };
 use codegraph_type_contracts::RefClassificationKind;
 use std::collections::HashMap;
@@ -153,6 +153,16 @@ pub fn row_to_property_node(
             .ok()
             .flatten()
             .and_then(|s| s.parse::<rust_decimal::Decimal>().ok()),
+        min_items: reader
+            .get_opt_string(row, "p.min_items")
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<u32>().ok()),
+        max_items: reader
+            .get_opt_string(row, "p.max_items")
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<u32>().ok()),
         pg_column_name: reader.get_string(row, "p.pg_column_name")?,
         pg_column_type: reader.get_string(row, "p.pg_column_type")?,
         rust_field_name: reader.get_string(row, "p.rust_field_name")?,
@@ -337,6 +347,37 @@ pub fn row_to_tenant_node(
         name: reader.get_string(row, "name")?,
         label: reader.get_string(row, "label")?,
         strategy,
+        domain: reader.get_opt_string(row, "domain")?,
+    })
+}
+
+pub fn row_to_condition_node(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+) -> Result<ConditionNode, GraphError> {
+    let kind_str = reader.get_string(row, "kind")?;
+    let kind = match kind_str.as_str() {
+        "condition" => ConditionKind::Condition,
+        "one_of" => ConditionKind::OneOf,
+        other => {
+            return Err(GraphError::Query(format!(
+                "unknown condition kind '{other}'"
+            )))
+        }
+    };
+    // `options` persists as a JSON array string (the ingestor serializes the
+    // Vec<String>); an absent or unparsable value reads back empty.
+    let options = reader
+        .get_opt_string(row, "options")?
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default();
+    Ok(ConditionNode {
+        name: reader.get_string(row, "name")?,
+        owner_title: reader.get_string(row, "owner_title")?,
+        kind,
+        expr_json: reader.get_opt_string(row, "expr_json")?,
+        options,
+        definition: reader.get_opt_string(row, "definition")?,
         domain: reader.get_opt_string(row, "domain")?,
     })
 }

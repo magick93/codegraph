@@ -68,6 +68,7 @@ pub struct MockEngine {
     capabilities: Mutex<HashMap<String, CapabilityNode>>,
     grants: Mutex<Vec<GrantEdge>>,
     actor_policy: Mutex<Option<ActorPolicyNode>>,
+    conditions: Mutex<Vec<ConditionNode>>,
     start_time: Instant,
 }
 
@@ -125,6 +126,7 @@ impl MockEngine {
             capabilities: Mutex::new(HashMap::new()),
             grants: Mutex::new(Vec::new()),
             actor_policy: Mutex::new(None),
+            conditions: Mutex::new(Vec::new()),
             start_time: Instant::now(),
         }
     }
@@ -867,6 +869,11 @@ impl GraphIngestor for MockEngine {
             .lock()
             .unwrap()
             .insert(t.name.clone(), t.clone());
+        Ok(())
+    }
+
+    async fn ingest_condition(&self, node: &ConditionNode) -> Result<(), GraphError> {
+        self.conditions.lock().unwrap().push(node.clone());
         Ok(())
     }
 
@@ -1671,5 +1678,29 @@ impl GraphQuerier for MockEngine {
         let actors: Vec<ActorNode> = self.actors.lock().unwrap().values().cloned().collect();
         let grants = self.grants.lock().unwrap().clone();
         Ok(resolve_effective_permits(&actors, &grants, actor))
+    }
+
+    // ── Constraint plane queries (issue #261) ─────────────────────────
+
+    async fn get_conditions_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<ConditionNode>, GraphError> {
+        let mut nodes: Vec<ConditionNode> = self
+            .conditions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.owner_title == schema_title)
+            .cloned()
+            .collect();
+        nodes.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(nodes)
+    }
+
+    async fn list_conditions(&self) -> Result<Vec<ConditionNode>, GraphError> {
+        let mut nodes: Vec<ConditionNode> = self.conditions.lock().unwrap().clone();
+        nodes.sort_by(|a, b| (&a.owner_title, &a.name).cmp(&(&b.owner_title, &b.name)));
+        Ok(nodes)
     }
 }

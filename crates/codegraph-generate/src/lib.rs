@@ -1197,6 +1197,11 @@ fn build_domain_generators(
     };
     let mut gens: Vec<Box<dyn DomainGenerator>> = vec![
         Box::new(ddd::errors::ErrorGenerator::new(base("errors"))) as Box<dyn DomainGenerator>,
+        // Constraint-plane validations (issue #261) — gated by the
+        // `rosetta_backend` capability.
+        Box::new(ddd::validations::ConditionValidationsGenerator::new(base(
+            "condition_validations",
+        ))) as Box<dyn DomainGenerator>,
         Box::new(
             api::router::RouterGenerator::new(base("router"))
                 .with_parent_candidates(parent_candidates.to_vec()),

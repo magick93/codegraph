@@ -6,3 +6,4 @@ pub mod event;
 pub mod query;
 pub mod repository;
 pub mod repository_emitter;
+pub mod validations;

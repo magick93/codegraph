@@ -660,6 +660,14 @@ async fn ingest_properties_from_schema(
                 is_required,
                 is_nullable: !is_required,
                 is_array,
+                min_items: prop_schema
+                    .get("minItems")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32),
+                max_items: prop_schema
+                    .get("maxItems")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32),
                 pattern: prop_schema
                     .get("pattern")
                     .and_then(|v| v.as_str())

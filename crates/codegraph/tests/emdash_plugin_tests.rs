@@ -60,6 +60,8 @@ fn prop(
         is_required: required,
         is_nullable: !required,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,

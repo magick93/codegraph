@@ -204,6 +204,8 @@ mod tests {
             is_required: true,
             is_nullable: false,
             is_array: false,
+            min_items: None,
+            max_items: None,
             pattern: None,
             min_length: None,
             max_length: None,
