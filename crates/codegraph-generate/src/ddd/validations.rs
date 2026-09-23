@@ -43,6 +43,33 @@ struct ItemCheck {
     max_items: Option<u32>,
 }
 
+/// Numeric class of a property from its JSON type and DTO field type:
+/// `(numeric, integer)`. Arrays are unwrapped one `Vec<>` level so
+/// `Vec<f64>` reads as a numeric collection element type.
+fn numeric_class(prop_type: &str, rust_field_type: &str) -> (bool, bool) {
+    let base = rust_field_type
+        .strip_prefix("Vec<")
+        .and_then(|s| s.strip_suffix('>'))
+        .unwrap_or(rust_field_type);
+    let integer = prop_type == "integer"
+        || matches!(
+            base,
+            "i8" | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+                | "isize"
+        );
+    let numeric = integer || prop_type == "number" || matches!(base, "f32" | "f64");
+    (numeric, integer)
+}
+
 /// One condition's transpilation outcome.
 enum ConditionExpr {
     /// Transpiled Rust boolean expression over the `dto` receiver.
@@ -146,6 +173,25 @@ impl DomainGenerator for ConditionValidationsGenerator {
                 .filter(|p| p.is_nullable)
                 .map(|p| p.rust_field_name.clone())
                 .collect();
+            // Field knowledge for the #262 transpiler's collection/numeric
+            // inference: arrays gate contains/disjoint/join/Count/exists-
+            // modifiers; number/integer types gate Sum/Min/Max and pick
+            // their element type (i64 vs f64).
+            let mut collection_fields: HashSet<String> = HashSet::new();
+            let mut numeric_fields: HashSet<String> = HashSet::new();
+            let mut integer_fields: HashSet<String> = HashSet::new();
+            for p in &props {
+                let (numeric, integer) = numeric_class(&p.prop_type, &p.rust_field_type);
+                if p.is_array {
+                    collection_fields.insert(p.rust_field_name.clone());
+                }
+                if numeric {
+                    numeric_fields.insert(p.rust_field_name.clone());
+                }
+                if integer {
+                    integer_fields.insert(p.rust_field_name.clone());
+                }
+            }
             let conditions: Vec<ConditionEmission> = db
                 .get_conditions_for_schema(title)
                 .await?
@@ -158,6 +204,9 @@ impl DomainGenerator for ConditionValidationsGenerator {
                                 let ctx = ExprContext {
                                     receiver: "dto",
                                     optional_fields: &optional_fields,
+                                    collection_fields: &collection_fields,
+                                    numeric_fields: &numeric_fields,
+                                    integer_fields: &integer_fields,
                                 };
                                 match transpile(&payload, &ctx) {
                                     Ok(code) => ConditionExpr::Transpiled(code),

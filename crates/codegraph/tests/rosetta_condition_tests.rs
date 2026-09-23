@@ -249,6 +249,7 @@ type Product:
 
 	condition PositivePrice: price > 0
 	condition TaggedSale: tags contains "sale"
+	condition CodedProduct: productId to-enum LineItem
 
 type Holder:
 	holderId string (1..1)
@@ -344,17 +345,23 @@ async fn condition_validations_emits_item_checks_and_transpile_markers_when_enab
     );
     assert!(content.contains("dto.tags.len() < 2"), "{content}");
     assert!(content.contains("dto.tags.len() > 5"), "{content}");
-    // #262 slice 1: PositivePrice transpiles into its own function
-    // (issue #262 — see condition_validations_transpiles_... below).
+    // #262 slice 2: `tags contains "sale"` now transpiles into its own
+    // function (tags is an array property → collection knowledge gates the
+    // word binary through).
     assert!(
-        content.contains("pub fn validate_positive_price(dto: &CreateProductRequest)"),
+        content.contains("pub fn validate_tagged_sale(dto: &CreateProductRequest)"),
+        "{content}"
+    );
+    assert!(
+        content.contains("dto.tags.contains(&\"sale\")"),
         "{content}"
     );
     // ConditionNodes that cannot transpile keep the #262 marker with the
-    // asserted #261 prefix, extended with the rejection reason.
+    // asserted #261 prefix, extended with the rejection reason — here the
+    // to-enum cast (codelist knowledge is not in the transpiler context).
     assert!(
         content.contains(
-            "// TODO(#262): transpile condition 'TaggedSale' from its Expr::to_json payload (unsupported: Binary:"
+            "// TODO(#262): transpile condition 'CodedProduct' from its Expr::to_json payload (unsupported: ToEnum:"
         ),
         "{content}"
     );
@@ -387,10 +394,16 @@ async fn condition_validations_transpiles_named_conditions_and_marks_unsupported
         content.contains("        return Err(\"PositivePrice failed\".to_string());"),
         "{content}"
     );
-    // An UNTRANSPILABLE op (`contains`) keeps the TODO marker, now carrying
-    // the `(unsupported: kind: detail)` suffix.
+    // An UNTRANSPILABLE op (`to-enum` — codelist knowledge is not in the
+    // transpiler context) keeps the TODO marker, still carrying the
+    // `(unsupported: kind: detail)` suffix.
     assert!(
-        content.contains("(unsupported: Binary: operator 'contains' arrives in slice 2)"),
+        content.contains("(unsupported: ToEnum: to-enum needs codelist knowledge"),
+        "{content}"
+    );
+    // The slice-1 transpiled condition stays.
+    assert!(
+        content.contains("pub fn validate_positive_price(dto: &CreateProductRequest)"),
         "{content}"
     );
 }
