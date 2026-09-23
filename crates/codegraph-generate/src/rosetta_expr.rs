@@ -730,6 +730,11 @@ impl Emitter<'_> {
                 out = format!("{out} else if {cond} {{ {expr} }}");
             }
         }
+        if out.is_empty() {
+            // Default-only switch: no guarded cases — emit the default
+            // expression directly (`else { .. }` alone is not valid Rust).
+            return Ok(default_expr);
+        }
         out = format!("{out} else {{ {default_expr} }}");
         Ok(out)
     }
@@ -1781,6 +1786,16 @@ mod tests {
             t(payload),
             "if dto.price == 1 { \"a\" } else if dto.price == 2.5 { \"b\" } else { \"c\" }"
         );
+    }
+
+    #[test]
+    fn switch_default_only_emits_the_default_expression() {
+        // Regression: a default-only switch used to emit bare `else { .. }`,
+        // which is not valid Rust.
+        let payload = json!({"kind":"Switch","argument":sym("price"),"cases":[
+            json!({"default":true,"expression":{"kind":"String","value":"c"}}),
+        ]});
+        assert_eq!(t(payload), "\"c\"");
     }
 
     #[test]
