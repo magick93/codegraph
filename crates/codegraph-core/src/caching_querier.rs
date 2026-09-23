@@ -13,8 +13,8 @@ use crate::types::{
     MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceNode,
     NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
     PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
-    RepositoryNode, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, ViewComponentNode, ViewContainerNode,
+    RepositoryNode, RuleNode, RuleRefRecord, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -608,6 +608,20 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn list_function_extends(&self) -> Result<Vec<(String, String)>, GraphError> {
         self.inner.list_function_extends().await
+    }
+
+    // ── Rule plane delegation (issue #264) ─────────────────────────────
+
+    async fn list_rules(&self) -> Result<Vec<RuleNode>, GraphError> {
+        self.inner.list_rules().await
+    }
+
+    async fn list_rule_applies_to(&self) -> Result<Vec<(String, String)>, GraphError> {
+        self.inner.list_rule_applies_to().await
+    }
+
+    async fn list_rule_references(&self) -> Result<Vec<RuleRefRecord>, GraphError> {
+        self.inner.list_rule_references().await
     }
 
     // ── AT Protocol query delegation ───────────────────────────────────

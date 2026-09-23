@@ -67,23 +67,28 @@ async fn regulatory_nodes_ingest_with_stats_and_needs_review_shrinks() {
     // (body+corpus) + corpus parent (ESMA→body).
     assert_eq!(stats.regulatory_edges, 12, "stats: {stats}");
 
-    // The regulatory families left needs_review and #263 landed function
-    // nodes (the fixture's IngestOrders func is a FunctionNode now); the
-    // two rules remain (#264 owns them).
+    // The regulatory families left needs_review, #263 landed function
+    // nodes (IngestOrders), and #264 landed the two rules — nothing
+    // remains out-of-plane.
     assert_eq!(
-        stats.needs_review, 2,
+        stats.needs_review, 0,
         "names: {:?}",
         stats.needs_review_names
     );
     assert_eq!(stats.functions_ingested, 1, "stats: {stats}");
+    // The two fixture rules (PositiveTotal eligibility + ReportedStatus
+    // reporting) land as RuleNodes; PositiveTotal's `from OrderType`
+    // matches the bridged schema.
+    assert_eq!(stats.rules_ingested, 2, "stats: {stats}");
+    assert_eq!(stats.rule_applies_to, 2, "stats: {stats}");
+    // AgencySource's `[ruleReference ReportedStatus]` promotes to a real
+    // edge; `- total` carries none.
+    assert_eq!(stats.rule_reference_edges, 1, "stats: {stats}");
     assert!(stats
         .needs_review_names
         .iter()
-        .any(|n| n == "rule PositiveTotal"));
-    assert!(stats
-        .needs_review_names
-        .iter()
-        .all(|n| !n.starts_with("report ")
+        .all(|n| !n.starts_with("rule ")
+            && !n.starts_with("report ")
             && !n.starts_with("body ")
             && !n.starts_with("corpus ")
             && !n.starts_with("segment ")
@@ -455,9 +460,18 @@ async fn regulatory_reports_emits_corpus_dispatch_and_transform_hooks_when_enabl
         "{content}"
     );
     assert!(content.contains("\"1.a\" => {"), "{content}");
-    // The remaining seams await the signature registry (#264). The #263
-    // seams are filled: the transform hook references its bridged
-    // function instead of awaiting function nodes.
+    // Rules landed (#264): the dispatch arm resolves the rules bound
+    // through the report's rule source; the genuinely-deferred seams
+    // (endpoint handler wiring, transform-hook wire format) keep their
+    // markers. No stale seams may remain.
+    assert!(
+        content.contains("with source AgencySource — rules: ReportedStatus."),
+        "{content}"
+    );
+    assert!(
+        content.contains("Rule fns: super::rules::{reported_status} (via the `rules` generator)."),
+        "{content}"
+    );
     assert!(content.contains("TODO(#264)"), "{content}");
     assert!(
         content.contains("Function `IngestOrders` is bridged; its body emits via the `functions` generator (`ingest_orders`)."),
@@ -467,13 +481,26 @@ async fn regulatory_reports_emits_corpus_dispatch_and_transform_hooks_when_enabl
         !content.contains("TODO(#263)"),
         "no #263 seams may remain: {content}"
     );
+    assert!(
+        !content.contains("signature registry"),
+        "the registry language is retired: {content}"
+    );
     // The report's `with source` binding is documented at its arm.
     assert!(content.contains("with source AgencySource"), "{content}");
-    // Rule source surface.
+    // Rule source surface: bindings_registered counts the resolvable
+    // RuleReference bindings (ReportedStatus via AgencySource.OrderType).
     assert!(content.contains("pub mod agency_source {"), "{content}");
     assert!(
         content.contains("+ status -> rules [ReportedStatus]"),
         "{content}"
+    );
+    assert!(
+        content.contains("pub fn bindings_registered() -> usize {"),
+        "{content}"
+    );
+    assert!(
+        content.contains("        1"),
+        "the binding count: {content}"
     );
     // Transform hook captured from `[ingest FpMLSchema]` on IngestOrders.
     assert!(content.contains("pub mod fp_ml_schema {"), "{content}");
@@ -482,7 +509,7 @@ async fn regulatory_reports_emits_corpus_dispatch_and_transform_hooks_when_enabl
         "{content}"
     );
     // The emitted module must be plain Rust: dispatch arms stay inert
-    // (no rule payloads yet).
+    // (scaffolding, no payloads).
     assert!(content.contains("_ => None,"), "{content}");
 }
 

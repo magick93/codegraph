@@ -16,6 +16,7 @@ mod policy;
 mod property;
 mod regulatory;
 mod relationship;
+mod rule;
 mod schema;
 mod security;
 mod stats;
@@ -69,6 +70,7 @@ pub use regulatory::{
 pub use relationship::{
     Cardinality, ForeignKeySpec, Ownership, PropagationRule, PropagationTrigger, RelationshipNode,
 };
+pub use rule::{RuleKind, RuleNode, RuleRefRecord};
 pub use schema::{SchemaClassificationData, SchemaNode, MOX_SOURCE};
 pub use security::{
     MembershipNode, MembershipStatus, Scope, ScopeKind, SecurityIdentityNode, TenantNode,

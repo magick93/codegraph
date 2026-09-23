@@ -8,12 +8,16 @@
 //! segment references), plus rule-source and `[transform]` hook stubs.
 //!
 //! Function nodes LANDED (#263): the transform-hook stubs reference their
-//! bridged functions by name instead of awaiting them. The remaining
-//! seams — reporting-rule payloads and input/output signatures — await
-//! #264 (stdlib signature registry): every such spot carries a
-//! `TODO(#264)` marker. No runtime behavior is claimed — the emitted
-//! module is deliberately inert (`match` arms return `None`, hooks have
-//! empty bodies) so it compiles standalone.
+//! bridged functions by name instead of awaiting them. Rule nodes LANDED
+//! (#264): the dispatch arms resolve the reporting rules bound through the
+//! report's rule source (`RuleReference` edges from the querier) and
+//! `bindings_registered()` counts the resolvable rule-source bindings —
+//! the rule implementations themselves emit via the `rules` generator.
+//! The genuinely-deferred seams (axum handler wiring for the corpus
+//! endpoint, wire-format binding for transform hooks) keep `TODO(#264)`
+//! markers. No runtime behavior is claimed — the emitted module is
+//! deliberately inert (`match` arms return `None`, hooks have empty
+//! bodies) so it compiles standalone.
 //!
 //! Gated behind the `rosetta_backend` profile feature via the capability
 //! registry — OFF ⇒ the generator never runs and output is byte-identical.
@@ -23,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::{RegulatoryKind, RegulatoryNode};
+use codegraph_core::types::{RegulatoryKind, RegulatoryNode, RuleRefRecord};
 use codegraph_naming::{escape_rust_keyword, to_snake_case};
 
 use crate::code_writer::{wln, CodeWriter};
@@ -41,6 +45,9 @@ struct ReportDispatch {
     segments: Vec<(String, String)>,
     /// Rule source name, when the report carries `with source S`.
     rule_source: Option<String>,
+    /// Reporting rules bound through the rule source (querier-resolved,
+    /// source-ordered then deduped).
+    rules: Vec<String>,
 }
 
 /// One corpus' report surface.
@@ -117,6 +124,10 @@ impl DomainGenerator for RegulatoryReportGenerator {
             .into_iter()
             .map(|function| function.name)
             .collect();
+        // Rule nodes landed (#264): rule-source bindings resolve through
+        // the querier (RuleReference edges), so dispatch arms and
+        // bindings_registered() name real rules.
+        let rule_refs: Vec<RuleRefRecord> = db.list_rule_references().await?;
 
         let mut corpora: Vec<CorpusReport> = Vec::new();
         let mut reports: Vec<ReportDispatch> = Vec::new();
@@ -133,7 +144,15 @@ impl DomainGenerator for RegulatoryReportGenerator {
                     });
                 }
                 RegulatoryKind::Report => {
-                    if let Some(dispatch) = report_dispatch(node) {
+                    if let Some(mut dispatch) = report_dispatch(node) {
+                        if let Some(source) = &dispatch.rule_source {
+                            let mut seen: HashSet<String> = HashSet::new();
+                            dispatch.rules = rule_refs
+                                .iter()
+                                .filter(|r| &r.rule_source == source && seen.insert(r.rule.clone()))
+                                .map(|r| r.rule.clone())
+                                .collect();
+                        }
                         reports.push(dispatch);
                     }
                 }
@@ -171,8 +190,14 @@ impl DomainGenerator for RegulatoryReportGenerator {
             return Ok(Vec::new());
         }
 
-        let content =
-            emit_regulatory_reports(domain, &corpora, &rule_sources, &schemas, &function_names);
+        let content = emit_regulatory_reports(
+            domain,
+            &corpora,
+            &rule_sources,
+            &schemas,
+            &function_names,
+            &rule_refs,
+        );
         Ok(vec![GeneratedFile {
             path: self
                 .output_dir
@@ -207,6 +232,9 @@ fn report_dispatch(node: &RegulatoryNode) -> Option<ReportDispatch> {
             .get("rule_source")
             .and_then(serde_json::Value::as_str)
             .map(str::to_string),
+        // Querier-resolved per report in `generate` (needs the
+        // RuleReference edge list).
+        rules: Vec::new(),
     })
 }
 
@@ -300,6 +328,7 @@ fn emit_regulatory_reports(
     rule_sources: &[RuleSourceSurface],
     schemas: &[RuleSchemaSurface],
     function_names: &HashSet<String>,
+    rule_refs: &[RuleRefRecord],
 ) -> String {
     let mut code = CodeWriter::new();
     wln!(
@@ -310,25 +339,37 @@ fn emit_regulatory_reports(
     wln!(code, "//!");
     wln!(
         code,
-        "//! Function nodes landed (#263): the transform hooks below reference"
+        "//! Function nodes landed (#263) and rule nodes landed (#264): the"
     );
     wln!(
         code,
-        "//! their bridged functions. The remaining seams — reporting-rule"
+        "//! transform hooks reference their bridged functions and the rule"
     );
     wln!(
         code,
-        "//! payloads and signatures — carry TODO(#264) markers until the"
+        "//! dispatch resolves the rules bound through each report's rule"
     );
     wln!(
         code,
-        "//! stdlib signature registry lands. This module is deliberately"
+        "//! source (the rule implementations themselves emit via the"
     );
     wln!(
         code,
-        "//! inert — dispatch arms return `None` and hooks have empty bodies —"
+        "//! `rules` generator). The deferred seams — axum handler wiring for"
     );
-    wln!(code, "//! so it compiles standalone.");
+    wln!(
+        code,
+        "//! the corpus endpoint and transform-hook wire-format binding —"
+    );
+    wln!(
+        code,
+        "//! carry TODO(#264) markers. This module is deliberately inert —"
+    );
+    wln!(
+        code,
+        "//! dispatch arms return `None` and hooks have empty bodies — so it"
+    );
+    wln!(code, "//! compiles standalone.");
     wln!(code, "#![allow(dead_code)]");
     wln!(code);
 
@@ -336,7 +377,7 @@ fn emit_regulatory_reports(
         emit_corpus(&mut code, corpus);
     }
     for source in rule_sources {
-        emit_rule_source(&mut code, source);
+        emit_rule_source(&mut code, source, rule_refs);
     }
     for schema in schemas {
         emit_rule_schema_hooks(&mut code, schema, function_names);
@@ -361,12 +402,21 @@ fn emit_corpus(code: &mut CodeWriter, corpus: &CorpusReport) {
     );
     wln!(
         code,
-        "    /// segment references. Returns the computed report payload once"
+        "    /// segment references. Rule nodes landed (#264): each arm names"
     );
     wln!(
         code,
-        "    /// the signature registry (#264) lands; `None` until then."
+        "    /// the reporting rules bound through the report's rule source"
     );
+    wln!(
+        code,
+        "    /// (their computed-field functions emit via the `rules`"
+    );
+    wln!(
+        code,
+        "    /// generator); the dispatch still returns `None` — this module"
+    );
+    wln!(code, "    /// is deliberately inert scaffolding.");
     wln!(
         code,
         "    pub fn {module}_report_dispatch(segment: &str) -> Option<&'static str> {{"
@@ -381,26 +431,41 @@ fn emit_corpus(code: &mut CodeWriter, corpus: &CorpusReport) {
             }
             seen_segments.push(key);
             wln!(code, "            // {report}", report = report.name,);
-            if let Some(source) = &report.rule_source {
-                wln!(
-                    code,
-                    "            // with source {source} — TODO(#264): bind the rule source's \
-                 reporting rules.",
-                    source = source,
-                );
+            match (&report.rule_source, report.rules.as_slice()) {
+                (Some(source), []) => {
+                    wln!(
+                        code,
+                        "            // with source {source} — no rules bound to its classes.",
+                        source = source,
+                    );
+                }
+                (Some(source), rules) => {
+                    wln!(
+                        code,
+                        "            // with source {source} — rules: {rules}.",
+                        source = source,
+                        rules = rules.join(", "),
+                    );
+                    wln!(
+                        code,
+                        "            // Rule fns: super::rules::{{{names}}} (via the `rules` \
+                         generator).",
+                        names = rules
+                            .iter()
+                            .map(|r| to_snake_case(r))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    );
+                }
+                (None, _) => {
+                    wln!(
+                        code,
+                        "            // no rule source — segment {segment} has no bound rules.",
+                        segment = segment,
+                    );
+                }
             }
             wln!(code, "            {reference:?} => {{");
-            wln!(
-                code,
-                "                // TODO(#264): invoke the reporting rule(s) bound to segment \
-                 {segment:?}.",
-                segment = segment,
-            );
-            wln!(
-                code,
-                "                // TODO(#264): resolve rule input/output signatures from the \
-                 stdlib registry."
-            );
             wln!(code, "                None");
             wln!(code, "            }}");
         }
@@ -419,11 +484,12 @@ fn emit_corpus(code: &mut CodeWriter, corpus: &CorpusReport) {
     wln!(code, "    ///");
     wln!(
         code,
-        "    /// TODO(#264): wire the axum handler + query params once rule signatures land."
+        "    /// TODO(#264): wire the axum handler + query params to"
     );
     wln!(
         code,
-        "    /// TODO(#264): the response payload type comes from the signature registry."
+        "    /// {module}_report_dispatch (route-generation wiring is a follow-up).",
+        module = module,
     );
     wln!(
         code,
@@ -431,10 +497,10 @@ fn emit_corpus(code: &mut CodeWriter, corpus: &CorpusReport) {
     );
     wln!(
         code,
-        "        // TODO(#264): dispatch through {module}_report_dispatch once rule \
-         signatures land.",
+        "        // Dispatches through {module}_report_dispatch once the route wiring",
         module = module,
     );
+    wln!(code, "        // lands.");
     wln!(code, "        None");
     wln!(code, "    }}");
     wln!(code, "}}");
@@ -443,8 +509,18 @@ fn emit_corpus(code: &mut CodeWriter, corpus: &CorpusReport) {
 
 /// Emit one rule-source section: class attributes + rule references as
 /// documented stubs.
-fn emit_rule_source(code: &mut CodeWriter, source: &RuleSourceSurface) {
+fn emit_rule_source(
+    code: &mut CodeWriter,
+    source: &RuleSourceSurface,
+    rule_refs: &[RuleRefRecord],
+) {
     let module = escape_rust_keyword(&to_snake_case(&source.name));
+    // Rule nodes landed (#264): the bindings this source actually expresses
+    // (querier-resolved RuleReference edges), used for the count below.
+    let registered: Vec<&RuleRefRecord> = rule_refs
+        .iter()
+        .filter(|r| r.rule_source == source.name)
+        .collect();
     wln!(
         code,
         "/// Rule source {name} — external reporting-rule bindings (issue #265).",
@@ -470,12 +546,25 @@ fn emit_rule_source(code: &mut CodeWriter, source: &RuleSourceSurface) {
         }
     }
     wln!(code, "    ///");
-    wln!(
-        code,
-        "    /// TODO(#264): reporting-rule implementations arrive with the signature registry."
-    );
+    if registered.is_empty() {
+        wln!(
+            code,
+            "    /// No rules of this run are bound to this source's classes."
+        );
+    } else {
+        wln!(
+            code,
+            "    /// Bound rules: {rules} — their computed-field functions emit via the",
+            rules = registered
+                .iter()
+                .map(|r| r.rule.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        wln!(code, "    /// `rules` generator (`super::rules`).");
+    }
     wln!(code, "    pub fn bindings_registered() -> usize {{");
-    wln!(code, "        0");
+    wln!(code, "        {}", registered.len());
     wln!(code, "    }}");
     wln!(code, "}}");
     wln!(code);
@@ -526,7 +615,7 @@ fn emit_rule_schema_hooks(
         }
         wln!(
             code,
-            "    /// TODO(#264): the wire-format binding comes from the signature registry."
+            "    /// TODO(#264): the transform-hook wire-format binding is unwired."
         );
         wln!(
             code,

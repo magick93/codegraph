@@ -3,7 +3,7 @@ use codegraph_core::types::{
     Cardinality, CodeList, CompositeColumn, CompositeRange, ConditionKind, ConditionNode,
     EnumValue, Extension, ForeignKeySpec, FunctionNode, MembershipNode, MembershipStatus,
     Ownership, PolicyKind, PolicyNode, PropagationRule, PropertyNode, RegulatoryEdgeKind,
-    RegulatoryKind, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, SchemaNode,
+    RegulatoryKind, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RuleNode, SchemaNode,
     SecurityIdentityNode, StructuredSubField, TenantNode, TenantStrategy,
 };
 use codegraph_type_contracts::RefClassificationKind;
@@ -438,4 +438,14 @@ pub fn row_to_function_node(
     let payload_json = reader.get_string(row, "payload_json")?;
     serde_json::from_str(&payload_json)
         .map_err(|e| GraphError::Query(format!("Failed to parse function payload: {e}")))
+}
+
+pub fn row_to_rule_node(reader: &RowReader, row: &[grafeo::Value]) -> Result<RuleNode, GraphError> {
+    // The whole RuleNode (expr payload + metadata) persists as one JSON
+    // object string; the flat columns exist for cheap WHERE/ORDER BY only.
+    // An unparsable payload is a hard query error (the FunctionNode
+    // precedent).
+    let payload_json = reader.get_string(row, "payload_json")?;
+    serde_json::from_str(&payload_json)
+        .map_err(|e| GraphError::Query(format!("Failed to parse rule payload: {e}")))
 }

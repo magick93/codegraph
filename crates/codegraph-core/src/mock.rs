@@ -74,6 +74,13 @@ pub struct MockEngine {
     functions: Mutex<Vec<FunctionNode>>,
     /// `(child, parent)` FunctionExtends edges (resolved at ingest time).
     function_extends: Mutex<Vec<(String, String)>>,
+    rules: Mutex<Vec<RuleNode>>,
+    /// `(rule name, schema title)` RuleAppliesTo edges (resolved at ingest
+    /// time).
+    rule_applies_to: Mutex<Vec<(String, String)>>,
+    /// RuleReference bindings from rule-source classes (resolved at ingest
+    /// time).
+    rule_refs: Mutex<Vec<RuleRefRecord>>,
     start_time: Instant,
 }
 
@@ -136,6 +143,9 @@ impl MockEngine {
             regulatory_refs: Mutex::new(Vec::new()),
             functions: Mutex::new(Vec::new()),
             function_extends: Mutex::new(Vec::new()),
+            rules: Mutex::new(Vec::new()),
+            rule_applies_to: Mutex::new(Vec::new()),
+            rule_refs: Mutex::new(Vec::new()),
             start_time: Instant::now(),
         }
     }
@@ -672,6 +682,21 @@ impl GraphIngestor for MockEngine {
                     .unwrap()
                     .push((from_id.to_string(), to_id.to_string()));
             }
+            EdgeType::RuleAppliesTo => {
+                self.rule_applies_to
+                    .lock()
+                    .unwrap()
+                    .push((from_id.to_string(), to_id.to_string()));
+            }
+            EdgeType::RuleReference => {
+                let props = props.cloned().unwrap_or_default();
+                self.rule_refs.lock().unwrap().push(RuleRefRecord {
+                    schema_title: from_id.to_string(),
+                    attribute: props.ref_path.unwrap_or_default(),
+                    rule: to_id.to_string(),
+                    rule_source: props.rule_source.unwrap_or_default(),
+                });
+            }
             _ => {}
         }
         Ok(())
@@ -921,6 +946,7 @@ impl GraphIngestor for MockEngine {
             RegulatoryOwner::Condition(name) => (name.clone(), "Condition".to_string()),
             RegulatoryOwner::Regulatory { name, .. } => (name.clone(), "Regulatory".to_string()),
             RegulatoryOwner::Function(name) => (name.clone(), "Function".to_string()),
+            RegulatoryOwner::Rule(name) => (name.clone(), "Rule".to_string()),
         };
         self.regulatory_refs
             .lock()
@@ -938,6 +964,11 @@ impl GraphIngestor for MockEngine {
 
     async fn ingest_function(&self, node: &FunctionNode) -> Result<(), GraphError> {
         self.functions.lock().unwrap().push(node.clone());
+        Ok(())
+    }
+
+    async fn ingest_rule(&self, node: &RuleNode) -> Result<(), GraphError> {
+        self.rules.lock().unwrap().push(node.clone());
         Ok(())
     }
 
@@ -1794,5 +1825,31 @@ impl GraphQuerier for MockEngine {
         let mut edges: Vec<(String, String)> = self.function_extends.lock().unwrap().clone();
         edges.sort();
         Ok(edges)
+    }
+
+    // ── Rule plane queries (issue #264) ────────────────────────────────
+
+    async fn list_rules(&self) -> Result<Vec<RuleNode>, GraphError> {
+        let mut nodes: Vec<RuleNode> = self.rules.lock().unwrap().clone();
+        nodes.sort_by(|a, b| (&a.domain, &a.name).cmp(&(&b.domain, &b.name)));
+        Ok(nodes)
+    }
+
+    async fn list_rule_applies_to(&self) -> Result<Vec<(String, String)>, GraphError> {
+        let mut edges: Vec<(String, String)> = self.rule_applies_to.lock().unwrap().clone();
+        edges.sort();
+        Ok(edges)
+    }
+
+    async fn list_rule_references(&self) -> Result<Vec<RuleRefRecord>, GraphError> {
+        let mut records: Vec<RuleRefRecord> = self.rule_refs.lock().unwrap().clone();
+        records.sort_by(|a, b| {
+            (&a.rule_source, &a.schema_title, &a.attribute).cmp(&(
+                &b.rule_source,
+                &b.schema_title,
+                &b.attribute,
+            ))
+        });
+        Ok(records)
     }
 }

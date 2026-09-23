@@ -11,7 +11,7 @@ use codegraph_core::types::{
     MembershipNode, ModuleUseRecord, MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode,
     NamespaceNode, NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate,
     PermissionNode, Permit, PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind,
-    RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode,
+    RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode, RuleRefRecord,
     SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
     ViewComponentNode, ViewContainerNode,
 };
@@ -38,7 +38,7 @@ use crate::conversions::{
     row_to_codelist, row_to_composite_column, row_to_composite_range, row_to_condition_node,
     row_to_enum_value, row_to_extension, row_to_function_node, row_to_membership_node,
     row_to_policy_node, row_to_property_node, row_to_regulatory_node, row_to_regulatory_ref_record,
-    row_to_relationship_node, row_to_schema_node, row_to_security_identity_node,
+    row_to_relationship_node, row_to_rule_node, row_to_schema_node, row_to_security_identity_node,
     row_to_structured_sub_field, row_to_tenant_node, RowReader,
 };
 use crate::engine::GrafeoEngine;
@@ -1996,6 +1996,7 @@ impl GraphQuerier for GrafeoEngine {
                 ("Condition", "name"),
                 ("Regulatory", "name"),
                 ("Function", "name"),
+                ("Rule", "name"),
             ] {
                 let gql = format!(
                     "MATCH (a:{owner_label})-[e:{label}]->(b:Regulatory) \
@@ -2049,6 +2050,66 @@ impl GraphQuerier for GrafeoEngine {
                     reader.get_string(row, "child")?,
                     reader.get_string(row, "parent")?,
                 ))
+            })
+            .collect()
+    }
+
+    // ── Rule plane queries (issue #264) ────────────────────────────────
+
+    async fn list_rules(&self) -> Result<Vec<RuleNode>, GraphError> {
+        let result = query_gql(
+            self,
+            "MATCH (r:Rule) \
+             RETURN r.name AS name, r.domain AS domain, r.definition AS definition, \
+             r.kind AS kind, r.input_type AS input_type, r.payload_json AS payload_json \
+             ORDER BY r.domain, r.name",
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_rule_node(&reader, row))
+            .collect()
+    }
+
+    async fn list_rule_applies_to(&self) -> Result<Vec<(String, String)>, GraphError> {
+        let result = query_gql(
+            self,
+            "MATCH (a:Rule)-[:RuleAppliesTo]->(b:Schema) \
+             RETURN a.name AS rule, b.title AS schema_title ORDER BY rule",
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| {
+                Ok((
+                    reader.get_string(row, "rule")?,
+                    reader.get_string(row, "schema_title")?,
+                ))
+            })
+            .collect()
+    }
+
+    async fn list_rule_references(&self) -> Result<Vec<RuleRefRecord>, GraphError> {
+        let result = query_gql(
+            self,
+            "MATCH (a:Schema)-[e:RuleReference]->(b:Rule) \
+             RETURN a.title AS schema_title, e.ref_path AS attribute, \
+             b.name AS rule, e.rule_source AS rule_source \
+             ORDER BY rule_source, schema_title, attribute",
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| {
+                Ok(RuleRefRecord {
+                    schema_title: reader.get_string(row, "schema_title")?,
+                    attribute: reader.get_string(row, "attribute")?,
+                    rule: reader.get_string(row, "rule")?,
+                    rule_source: reader.get_string(row, "rule_source")?,
+                })
             })
             .collect()
     }

@@ -7,8 +7,8 @@ use crate::types::{
     MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceNode,
     NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
     PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
-    RepositoryNode, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, ViewComponentNode, ViewContainerNode,
+    RepositoryNode, RuleNode, RuleRefRecord, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -500,6 +500,25 @@ pub trait GraphQuerier: Send + Sync {
     /// Every `FunctionExtends` edge as `(child, parent)` pairs (issue
     /// #263), ordered by child name.
     async fn list_function_extends(&self) -> Result<Vec<(String, String)>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    // ── Rule plane query methods (issue #264) ──────────────────────────
+
+    /// Every RuleNode in the graph, ordered by (domain, name).
+    async fn list_rules(&self) -> Result<Vec<RuleNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Every `RuleAppliesTo` edge as `(rule name, schema title)` pairs
+    /// (issue #264), ordered by rule name.
+    async fn list_rule_applies_to(&self) -> Result<Vec<(String, String)>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Every rule-source `RuleReference` binding (issue #264), ordered by
+    /// (rule source, schema title, attribute).
+    async fn list_rule_references(&self) -> Result<Vec<RuleRefRecord>, GraphError> {
         Ok(Vec::new())
     }
 }

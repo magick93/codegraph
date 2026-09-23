@@ -84,3 +84,20 @@ func ApprovedValue(status: OrderStatus->Approved) extends ValueForStatus:
 
 	set result:
 		order -> total
+
+reporting rule HighValueTotal from OrderType: <"orders above the reporting threshold">
+	total > 100.0
+
+reporting rule TierForTotal from OrderType: <"the reporting tier">
+	status switch
+		Draft then 1,
+		default 0
+
+eligibility rule EligibleOrder from OrderType: <"orders that may be reported">
+	total > 0.0 and label exists
+
+rule source StoreSource {
+	OrderType:
+		+ total [ruleReference HighValueTotal]
+		+ label
+}

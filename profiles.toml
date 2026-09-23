@@ -52,6 +52,11 @@ rls_from_policy = false
 # operations, aliases as let-bindings, dispatch heads as match). Pair it
 # with function_postconditions = true to emit post-condition
 # `debug_assert!` checks (default OFF = absent).
+# Same gate also enables "rules" (issue #264): add it to an [api]
+# generators list to emit per-domain src/domain/<domain>/rules.rs —
+# reporting rules as computed-field functions attached to their input
+# entity (transpiled bodies, TODO(#264) markers where untranspilable) and
+# eligibility rules as endpoint guards naming the ApiOperations they gate.
 rosetta_backend = false
 function_postconditions = false
 

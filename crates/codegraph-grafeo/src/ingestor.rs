@@ -9,7 +9,7 @@ use codegraph_core::types::{
     IngestStats, InteractionNode, LexiconNode, MembershipNode, MoxDomainModel, NamespaceNode,
     ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
     RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RelationshipNode,
-    RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
+    RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
     ViewContainerNode,
 };
 
@@ -44,6 +44,7 @@ fn regulatory_reference_gql(
             kind.as_str()
         ),
         RegulatoryOwner::Function(name) => format!("(a:Function {{name: '{}'}})", escape_gql(name)),
+        RegulatoryOwner::Rule(name) => format!("(a:Rule {{name: '{}'}})", escape_gql(name)),
     };
     let props_str = match ref_path {
         Some(path) => format!(" {{ref_path: '{}'}}", escape_gql(path)),
@@ -90,6 +91,7 @@ fn decode_regulatory_edge_ids(
             }
         }
         "function" => RegulatoryOwner::Function(owner_payload.to_string()),
+        "rule" => RegulatoryOwner::Rule(owner_payload.to_string()),
         _ => return None,
     };
     let target_rest = to_id.strip_prefix("reg:")?;
@@ -202,6 +204,9 @@ fn build_edge_props_string(props: Option<&EdgeProperties>) -> String {
     }
     if let Some(v) = &p.obligations {
         fields.push(format!("obligations: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = &p.rule_source {
+        fields.push(format!("rule_source: '{}'", escape_gql(v)));
     }
     if fields.is_empty() {
         String::new()
@@ -558,6 +563,33 @@ impl GraphIngestor for GrafeoEngine {
         Ok(())
     }
 
+    async fn ingest_rule(&self, node: &RuleNode) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let payload_json = serde_json::to_string(&node).map_err(|e| {
+            GraphError::Ingest(format!("ingest_rule payload serialization failed: {e}"))
+        })?;
+        // Same escaping discipline as ingest_function: the payload embeds
+        // nested JSON whose escaped quotes `\"` would terminate the GQL
+        // string literal early — backslashes doubled BEFORE the
+        // single-quote escape.
+        let payload_escaped = payload_json.replace('\\', "\\\\").replace('\'', "\\'");
+        let gql = format!(
+            "INSERT (:Rule {{name: '{name}', domain: {domain}, \
+             definition: {definition}, kind: '{kind}', input_type: {input_type}, \
+             payload_json: '{payload}'}})",
+            name = escape_gql(&node.name),
+            domain = opt_str(&node.domain),
+            definition = opt_str(&node.definition),
+            kind = node.kind.as_str(),
+            input_type = opt_str(&node.input_type),
+            payload = payload_escaped,
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_rule INSERT failed: {e}")))?;
+        Ok(())
+    }
+
     async fn ingest_codelist(&self, codelist: &CodeList) -> Result<(), GraphError> {
         let session = self.db().session();
         let gql = format!(
@@ -835,6 +867,8 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::CorpusInBody => "CorpusInBody",
             EdgeType::DerivesFrom => "DerivesFrom",
             EdgeType::FunctionExtends => "FunctionExtends",
+            EdgeType::RuleAppliesTo => "RuleAppliesTo",
+            EdgeType::RuleReference => "RuleReference",
         };
 
         let match_clause = match &edge_type {
@@ -1174,6 +1208,22 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::FunctionExtends => {
                 format!(
                     "MATCH (a:Function {{name: '{}'}}), (b:Function {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            // Rule plane (issue #264): rules match by name; the input
+            // schema and the rule-source class data match by title.
+            EdgeType::RuleAppliesTo => {
+                format!(
+                    "MATCH (a:Rule {{name: '{}'}}), (b:Schema {{title: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::RuleReference => {
+                format!(
+                    "MATCH (a:Schema {{title: '{}'}}), (b:Rule {{name: '{}'}})",
                     escape_gql(from_id),
                     escape_gql(to_id),
                 )

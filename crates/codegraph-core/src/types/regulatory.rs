@@ -103,6 +103,9 @@ pub enum RegulatoryOwner {
     /// A FunctionNode carrying `[docReference ...]` metadata (issue #263),
     /// matched by name.
     Function(String),
+    /// A RuleNode carrying `[docReference ...]` metadata (issue #264),
+    /// matched by name.
+    Rule(String),
 }
 
 /// Which regulatory edge links an owner to a regulatory node. Grounded in

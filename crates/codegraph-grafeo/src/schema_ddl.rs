@@ -388,6 +388,19 @@ fn node_type_ddl() -> Vec<&'static str> {
             extends_function STRING,
             payload_json STRING NOT NULL
         )",
+        // Rule — computation plane (issue #264). ONE structured node per
+        // rosetta reporting/eligibility rule: the common shape persists
+        // flat (name, domain, definition, kind, input_type); the payload
+        // (expr_json, open-ended metadata) persists as one JSON object
+        // string in `payload_json` (the FunctionNode precedent).
+        "CREATE NODE TYPE IF NOT EXISTS Rule (
+            name STRING NOT NULL,
+            domain STRING,
+            definition STRING,
+            kind STRING NOT NULL,
+            input_type STRING,
+            payload_json STRING NOT NULL
+        )",
     ]
 }
 
@@ -466,5 +479,8 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS DerivesFrom ()",
         // Computation plane edge types (issue #263)
         "CREATE EDGE TYPE IF NOT EXISTS FunctionExtends ()",
+        // Rule plane edge types (issue #264)
+        "CREATE EDGE TYPE IF NOT EXISTS RuleAppliesTo ()",
+        "CREATE EDGE TYPE IF NOT EXISTS RuleReference (ref_path STRING, rule_source STRING)",
     ]
 }

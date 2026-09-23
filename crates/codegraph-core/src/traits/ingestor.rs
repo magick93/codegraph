@@ -6,7 +6,7 @@ use crate::types::{
     InteractionNode, LexiconNode, MembershipNode, MoxDomainModel, NamespaceNode,
     ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
     RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RelationshipNode,
-    RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
+    RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
     ViewContainerNode,
 };
 use async_trait::async_trait;
@@ -191,6 +191,12 @@ pub trait GraphIngestor: Send + Sync {
     /// written separately via `ingest_edge` AFTER every function of the
     /// run exists (name-ordered ingestion is not parent-first).
     async fn ingest_function(&self, node: &FunctionNode) -> Result<(), GraphError>;
+
+    /// Ingest one RuleNode (rosetta reporting/eligibility rule, issue
+    /// #264). The `RuleAppliesTo` input edge is written separately via
+    /// `ingest_edge` AFTER the input's Schema node exists (rules ingest
+    /// before the schema bridging passes).
+    async fn ingest_rule(&self, node: &RuleNode) -> Result<(), GraphError>;
 
     /// Link an owner element to a regulatory node. Edges are best-effort:
     /// when the target regulatory node (name + kind) is absent the backend

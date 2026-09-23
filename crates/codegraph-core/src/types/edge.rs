@@ -87,6 +87,14 @@ pub enum EdgeType {
     // resolved `extends` ref; there is no `HasFunction` owner edge — sigil
     // functions are namespace-level, not schema-owned.
     FunctionExtends,
+
+    // Rule plane edge types (issue #264). `RuleAppliesTo` (Rule → Schema)
+    // attaches a rule to its `from` input type; `RuleReference`
+    // (Schema → Rule, `ref_path` = attribute, `rule_source` = source name)
+    // promotes a resolvable `[ruleReference R]` on a rule-source class
+    // attribute to a real edge.
+    RuleAppliesTo,
+    RuleReference,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -114,4 +122,7 @@ pub struct EdgeProperties {
     pub when_expr: Option<String>,
     /// Pre-serialized JSON array of obligation names for Grant edges.
     pub obligations: Option<String>,
+    /// The rule source expressing a `RuleReference` edge binding (issue
+    /// #264).
+    pub rule_source: Option<String>,
 }

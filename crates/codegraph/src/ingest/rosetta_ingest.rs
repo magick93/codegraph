@@ -66,9 +66,20 @@
 //!   properties (`transform_annotations`, the #265 surface). Function
 //!   `[docReference ...]` metadata emits `RegulatoryReference` edges owned
 //!   by `RegulatoryOwner::Function`.
-//! - out-of-data-plane elements (rules/annotation decls/basic types/
-//!   aliases/library functions) are counted and named as `needs_review` —
-//!   never silently dropped, never bridged (#264 owns rule nodes).
+//! - rules (issue #264) → `RuleNode`s: each sigil `Rule` lands as ONE
+//!   structured node (`kind`: reporting/eligibility from the `eligibility`
+//!   bool, `input_type` from the `from TypeCall` clause, canonical
+//!   `Expr::to_json` body payload). Rules do NOT extend (sigil has no
+//!   rule parent ref). A resolvable input type becomes a `RuleAppliesTo`
+//!   edge (Rule → Schema, written after the schema bridging passes);
+//!   rule `[docReference ...]` metadata emits `RegulatoryReference` edges
+//!   owned by `RegulatoryOwner::Rule`; `[ruleReference R]` entries on
+//!   `rule source` class attributes promote to `RuleReference` edges
+//!   (Schema → Rule, carrying the attribute + source name) when R names a
+//!   rule of this run — unresolvable references stay documented skips.
+//! - out-of-data-plane elements (annotation decls/basic types/aliases/
+//!   library functions) are counted and named as `needs_review` — never
+//!   silently dropped, never bridged.
 //!
 //! Provenance: every bridged node carries `custom_annotations["origin"]
 //! = "rosetta"` (issue #255) — deliberately DISTINCT from the mox
@@ -93,7 +104,7 @@ use codegraph_core::types::{
     CodeList, ConditionKind, ConditionNode, EdgeProperties, EdgeType, EnumValue, FunctionAlias,
     FunctionDispatch, FunctionInput, FunctionNode, FunctionOperation, FunctionPostCondition,
     FunctionTransform, FunctionTransformKind, PropertyNode, RegulatoryEdgeKind, RegulatoryKind,
-    RegulatoryNode, RegulatoryOwner, SchemaNode,
+    RegulatoryNode, RegulatoryOwner, RuleKind, RuleNode, SchemaNode,
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 use codegraph_type_contracts::{PgType, RefClassificationKind};
@@ -150,6 +161,18 @@ pub struct RosettaIngestStats {
     pub regulatory_edges: usize,
     /// Function nodes ingested (issue #263): sigil `Function` elements.
     pub functions_ingested: usize,
+    /// Rule nodes ingested (issue #264): sigil `Rule` elements
+    /// (reporting + eligibility).
+    pub rules_ingested: usize,
+    /// `RuleAppliesTo` edges written for rules whose `from` input type
+    /// matches a schema of the graph (pre-existing or bridged this run).
+    pub rule_applies_to: usize,
+    /// Rule-source `[ruleReference R]` entries promoted to `RuleReference`
+    /// edges (issue #264).
+    pub rule_reference_edges: usize,
+    /// `[ruleReference R]` entries naming no rule of this run — documented
+    /// skips, never silent drops.
+    pub rule_reference_skips: usize,
     pub namespaces: usize,
     pub namespace_imports: usize,
     /// Out-of-data-plane elements counted for review (never silently
@@ -168,6 +191,7 @@ impl std::fmt::Display for RosettaIngestStats {
             "{} files, {} types ({} choices), {} properties, {} edges, {} enums \
                  ({} values, {} codelist schemas), {} extends, {} conditions recorded \
                  ({} nodes, {} one_of), {} regulatory nodes ({} refs), {} functions, \
+                 {} rules ({} applies-to, {} rule-source refs, {} skipped), \
                  {} namespaces ({} imports)",
             self.files,
             self.types,
@@ -184,6 +208,10 @@ impl std::fmt::Display for RosettaIngestStats {
             self.regulatory_nodes,
             self.regulatory_edges,
             self.functions_ingested,
+            self.rules_ingested,
+            self.rule_applies_to,
+            self.rule_reference_edges,
+            self.rule_reference_skips,
             self.namespaces,
             self.namespace_imports,
         )?;
@@ -310,6 +338,8 @@ pub async fn ingest_rosetta_files(
     let mut reg_reports: Vec<(&sigil_model::Report, String, String)> = Vec::new();
     // (function, domain).
     let mut func_index: Vec<(&sigil_model::Function, String)> = Vec::new();
+    // (rule, domain).
+    let mut rule_index: Vec<(&sigil_model::Rule, String)> = Vec::new();
     // Function `[transform]` annotations awaiting their target rule-schema
     // node: (bare reference, function name, transform kind).
     let mut function_transforms: Vec<(String, String, &'static str)> = Vec::new();
@@ -367,8 +397,7 @@ pub async fn ingest_rosetta_files(
                     }
                 }
                 SemanticElement::Rule(rule) => {
-                    stats.needs_review += 1;
-                    stats.needs_review_names.push(format!("rule {}", rule.name));
+                    rule_index.push((rule, domain.clone()));
                 }
                 SemanticElement::Annotation(_)
                 | SemanticElement::TypeAlias(_)
@@ -644,6 +673,28 @@ pub async fn ingest_rosetta_files(
         }
     }
 
+    // ── Bridge pass 0c: rules (issue #264). Deterministic order — rules
+    // sorted by name within a domain. Rules do NOT extend (sigil has no
+    // rule parent ref), so there are no cycle semantics to check.
+    rule_index.sort_by(|(a, da), (b, db)| (da, &a.name).cmp(&(db, &b.name)));
+    for (rule, domain) in &rule_index {
+        let node = rule_node(rule, domain);
+        ingestor.ingest_rule(&node).await.map_err(Error::Graph)?;
+        stats.rules_ingested += 1;
+        // Doc-reference edges come after the node exists (backends match
+        // the owner by name).
+        for doc in &rule.doc_references {
+            emit_doc_reference_edges(
+                ingestor,
+                &RegulatoryOwner::Rule(node.name.clone()),
+                doc,
+                &reg_known,
+                &mut stats,
+            )
+            .await?;
+        }
+    }
+
     // ── Bridge pass 1: codelist SchemaNodes + CodeLists + EnumValues.
     let mut bridged: HashSet<String> = HashSet::new();
     let mut bridged_enum_schema_ids: HashMap<String, String> = HashMap::new();
@@ -783,6 +834,67 @@ pub async fn ingest_rosetta_files(
         }
 
         stats.types += 1;
+    }
+
+    // ── Bridge pass 2b: rule attachment edges (issue #264). Written after
+    // the schema nodes exist — `ingest_edge` MATCHes the endpoints at
+    // execute time.
+    //
+    // RuleAppliesTo (Rule → Schema): the `from TypeCall` input, matched by
+    // bare title against schemas pre-existing in the graph or bridged this
+    // run. An input naming no schema is a documented no-op (the rule node
+    // keeps its `input_type` name either way — mirroring FunctionExtends,
+    // where only in-run parents link).
+    for (rule, _) in &rule_index {
+        let Some(input) = rule.input.as_ref().map(referenced_title) else {
+            continue;
+        };
+        if known_titles.contains(&input) || bridged.contains(&input) {
+            ingestor
+                .ingest_edge(&rule.name, &input, EdgeType::RuleAppliesTo, None)
+                .await
+                .map_err(Error::Graph)?;
+            stats.rule_applies_to += 1;
+        }
+    }
+    // RuleReference (Schema → Rule): `[ruleReference R]` entries on rule
+    // source class attributes, promoted to real edges when R names a rule
+    // of this run. Unresolvable references stay documented skips (counted,
+    // never silent).
+    for (source, _) in &reg_rule_sources {
+        for class in &source.classes {
+            let class_title = referenced_title(&class.data);
+            for attribute in &class.attributes {
+                for reference in &attribute.rule_references {
+                    let Some(name) = reference.rule.as_deref().map(referenced_title_str) else {
+                        continue;
+                    };
+                    if rule_index.iter().any(|(rule, _)| rule.name == name) {
+                        ingestor
+                            .ingest_edge(
+                                &class_title,
+                                &name,
+                                EdgeType::RuleReference,
+                                Some(&EdgeProperties {
+                                    ref_path: Some(attribute.attribute.clone()),
+                                    rule_source: Some(source.name.clone()),
+                                    ..Default::default()
+                                }),
+                            )
+                            .await
+                            .map_err(Error::Graph)?;
+                        stats.rule_reference_edges += 1;
+                    } else {
+                        stats.rule_reference_skips += 1;
+                        eprintln!(
+                            "Warning: rule source '{}' references rule '{}' (class {}, attribute \
+                             '{}') — no such rule in this run; skipping the binding edge",
+                            source.name, name, class_title, attribute.attribute
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // ── Bridge pass 3: properties + reference/extends edges per type, in
@@ -982,7 +1094,8 @@ pub async fn ingest_rosetta_files(
     if stats.needs_review != 0 {
         eprintln!(
             "Warning: rosetta model has {} out-of-data-plane element(s) recorded as \
-             needs_review (the rule node family lands in #264): {}",
+             needs_review (annotation declarations, basic types, aliases, library \
+             functions): {}",
             stats.needs_review,
             stats.needs_review_names.join(", ")
         );
@@ -1162,6 +1275,44 @@ fn function_node(function: &sigil_model::Function, domain: &str) -> FunctionNode
         post_conditions,
         extends: function.super_function.as_ref().map(referenced_title),
         transform_annotations,
+        properties,
+    }
+}
+
+/// Namespace of the file declaring `element_name` (lookup by bridged
+/// element name; empty when not found — namespace recording is best-effort
+/// until #268 gives namespaces nodes).
+/// One sigil `Rule` → a [`RuleNode`] (issue #264). The `eligibility` bool
+/// picks the kind; the `from TypeCall` input persists as its bare title;
+/// the body persists as the canonical `Expr::to_json()` payload. Doc
+/// references ride the properties payload AND emit `RegulatoryReference`
+/// edges (owner `RegulatoryOwner::Rule`).
+fn rule_node(rule: &sigil_model::Rule, domain: &str) -> RuleNode {
+    let properties = serde_json::json!({
+        "origin": ROSETTA_ORIGIN,
+        "doc_references": rule.doc_references.iter().map(|doc| {
+            serde_json::json!({
+                "body": referenced_title_str(&doc.body),
+                "corpora": doc.corpora.iter().map(|c| referenced_title_str(c))
+                    .collect::<Vec<_>>(),
+                "segments": doc.segments.iter().map(|(segment, reference)| {
+                    serde_json::json!({ "segment": referenced_title_str(segment),
+                                        "reference": reference })
+                }).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
+    });
+    RuleNode {
+        name: rule.name.clone(),
+        domain: Some(domain.to_string()),
+        definition: rule.definition.clone(),
+        kind: if rule.eligibility {
+            RuleKind::Eligibility
+        } else {
+            RuleKind::Reporting
+        },
+        input_type: rule.input.as_ref().map(referenced_title),
+        expr_json: serde_json::to_string(&rule.expression.to_json()).unwrap_or_default(),
         properties,
     }
 }

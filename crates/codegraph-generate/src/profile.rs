@@ -688,6 +688,9 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         // ── rosetta function codegen (issue #263) ───────────────────────
         cap("functions",           Domain, Api,  &["rosetta_backend"], &[]),
 
+        // ── rosetta rule codegen (issue #264) ───────────────────────────
+        cap("rules",               Domain, Api,  &["rosetta_backend"], &[]),
+
         // ── Fern SDK generators ─────────────────────────────────────────
         cap("fern_config",          Global, Api,   &["fern_sdk"], &[]),
 
