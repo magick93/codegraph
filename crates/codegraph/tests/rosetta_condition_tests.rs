@@ -248,6 +248,7 @@ type Product:
 	tags string (2..5)
 
 	condition PositivePrice: price > 0
+	condition TaggedSale: tags contains "sale"
 
 type Holder:
 	holderId string (1..1)
@@ -343,10 +344,17 @@ async fn condition_validations_emits_item_checks_and_transpile_markers_when_enab
     );
     assert!(content.contains("dto.tags.len() < 2"), "{content}");
     assert!(content.contains("dto.tags.len() > 5"), "{content}");
-    // ConditionNodes surface as #262 transpile markers.
+    // #262 slice 1: PositivePrice transpiles into its own function
+    // (issue #262 — see condition_validations_transpiles_... below).
+    assert!(
+        content.contains("pub fn validate_positive_price(dto: &CreateProductRequest)"),
+        "{content}"
+    );
+    // ConditionNodes that cannot transpile keep the #262 marker with the
+    // asserted #261 prefix, extended with the rejection reason.
     assert!(
         content.contains(
-            "// TODO(#262): transpile condition 'PositivePrice' from its Expr::to_json payload"
+            "// TODO(#262): transpile condition 'TaggedSale' from its Expr::to_json payload (unsupported: Binary:"
         ),
         "{content}"
     );
@@ -354,6 +362,35 @@ async fn condition_validations_emits_item_checks_and_transpile_markers_when_enab
         content.contains(
             "// TODO(#262): transpile one_of 'ProductType_one_of' from its options [Product, Holder]"
         ),
+        "{content}"
+    );
+}
+
+#[tokio::test]
+async fn condition_validations_transpiles_named_conditions_and_marks_unsupported() {
+    let dir = tempfile::tempdir().unwrap();
+    run_generator_pipeline(dir.path(), true)
+        .await
+        .expect("pipeline with rosetta_backend succeeds");
+
+    let content = read_validations(dir.path()).expect("validations.rs emitted");
+    // `condition PositivePrice: price > 0` on a required number field → a
+    // real validation function body (issue #262 slice 1).
+    assert!(
+        content.contains(
+            "pub fn validate_positive_price(dto: &CreateProductRequest) -> Result<(), String> {"
+        ),
+        "{content}"
+    );
+    assert!(content.contains("    if !(dto.price > 0) {"), "{content}");
+    assert!(
+        content.contains("        return Err(\"PositivePrice failed\".to_string());"),
+        "{content}"
+    );
+    // An UNTRANSPILABLE op (`contains`) keeps the TODO marker, now carrying
+    // the `(unsupported: kind: detail)` suffix.
+    assert!(
+        content.contains("(unsupported: Binary: operator 'contains' arrives in slice 2)"),
         "{content}"
     );
 }

@@ -1,4 +1,4 @@
-//! `condition_validations` — constraint-plane codegen (issue #261).
+//! `condition_validations` — constraint-plane codegen (issues #261, #262).
 //!
 //! Per domain, emits `src/domain/<domain>/validations.rs` containing:
 //!
@@ -8,10 +8,13 @@
 //!   `None` for now — rosetta `(min..max)` attribute cardinality uplifts
 //!   alongside the #262 transpiler), checking `dto.<field>.len()` against
 //!   the bounds;
-//! - a `// TODO(#262)` marker per ConditionNode owned by the domain's
-//!   schemas, where the `Expr::to_json` payload (named conditions) and the
-//!   one_of option set (bridge-derived choices) will transpile into
-//!   validation code.
+//! - one `validate_{condition}` function per ConditionNode whose
+//!   `Expr::to_json` payload transpiles through
+//!   [`crate::rosetta_expr`] (issue #262 slice 1) — untyped emission with
+//!   field-optionality inference from the entity's PropertyNodes;
+//! - a `// TODO(#262)` marker per ConditionNode that cannot transpile yet,
+//!   extended with `(unsupported: {kind}: {detail})`, plus the bridge-
+//!   derived one_of option sets (not sigil Exprs — no payload to transpile).
 //!
 //! Gated behind the `rosetta_backend` profile feature via the capability
 //! registry — OFF ⇒ the generator never runs and output is byte-identical.
@@ -22,10 +25,12 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{ConditionKind, PropertyNode};
+use codegraph_naming::to_snake_case;
 use codegraph_type_contracts::RefClassificationKind;
 
 use crate::code_writer::{wln, CodeWriter};
 use crate::error::Result;
+use crate::rosetta_expr::{transpile, ExprContext};
 use crate::traits::{DomainGenerator, GeneratedFile};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
@@ -38,12 +43,43 @@ struct ItemCheck {
     max_items: Option<u32>,
 }
 
+/// One condition's transpilation outcome.
+enum ConditionExpr {
+    /// Transpiled Rust boolean expression over the `dto` receiver.
+    Transpiled(String),
+    /// `expr_json` present but rejected by the slice-1 transpiler.
+    Unsupported { kind: String, detail: String },
+    /// No payload (one_of / bridge-derived) — marker path unchanged.
+    Missing,
+}
+
+/// One ConditionNode's emission surface.
+struct ConditionEmission {
+    name: String,
+    kind: ConditionKind,
+    options: Vec<String>,
+    expr: ConditionExpr,
+}
+
+impl ConditionEmission {
+    fn is_transpiled(&self) -> bool {
+        matches!(self.expr, ConditionExpr::Transpiled(_))
+    }
+}
+
 /// One schema's validation surface.
 struct EntityValidations {
     module_name: String,
     entity_name: String,
     checks: Vec<ItemCheck>,
-    conditions: Vec<(String, ConditionKind, Vec<String>)>,
+    conditions: Vec<ConditionEmission>,
+}
+
+impl EntityValidations {
+    /// Whether the `Create{Entity}Request` DTO import is needed.
+    fn needs_dto(&self) -> bool {
+        !self.checks.is_empty() || self.conditions.iter().any(|c| c.is_transpiled())
+    }
 }
 
 pub struct ConditionValidationsGenerator {
@@ -105,11 +141,45 @@ impl DomainGenerator for ConditionValidationsGenerator {
                     max_items: p.max_items,
                 })
                 .collect();
-            let conditions: Vec<(String, ConditionKind, Vec<String>)> = db
+            let optional_fields: HashSet<String> = props
+                .iter()
+                .filter(|p| p.is_nullable)
+                .map(|p| p.rust_field_name.clone())
+                .collect();
+            let conditions: Vec<ConditionEmission> = db
                 .get_conditions_for_schema(title)
                 .await?
                 .into_iter()
-                .map(|c| (c.name, c.kind, c.options))
+                .map(|c| {
+                    let expr = match c.expr_json.as_deref() {
+                        None => ConditionExpr::Missing,
+                        Some(json) => match serde_json::from_str::<serde_json::Value>(json) {
+                            Ok(payload) => {
+                                let ctx = ExprContext {
+                                    receiver: "dto",
+                                    optional_fields: &optional_fields,
+                                };
+                                match transpile(&payload, &ctx) {
+                                    Ok(code) => ConditionExpr::Transpiled(code),
+                                    Err(e) => ConditionExpr::Unsupported {
+                                        kind: e.kind,
+                                        detail: e.detail,
+                                    },
+                                }
+                            }
+                            Err(e) => ConditionExpr::Unsupported {
+                                kind: "expr_json".to_string(),
+                                detail: format!("payload does not parse as JSON: {e}"),
+                            },
+                        },
+                    };
+                    ConditionEmission {
+                        name: c.name,
+                        kind: c.kind,
+                        options: c.options,
+                        expr,
+                    }
+                })
                 .collect();
             if checks.is_empty() && conditions.is_empty() {
                 continue;
@@ -157,7 +227,7 @@ fn emit_domain_validations(
 
     let mut imported: HashSet<String> = HashSet::new();
     for entity in entities {
-        if entity.checks.is_empty() || !imported.insert(entity.module_name.clone()) {
+        if !entity.needs_dto() || !imported.insert(entity.module_name.clone()) {
             continue;
         }
         wln!(
@@ -170,6 +240,7 @@ fn emit_domain_validations(
 
     for entity in entities {
         emit_entity_fn(&mut code, entity);
+        emit_transpiled_conditions(&mut code, entity);
     }
 
     code.into_string()
@@ -279,23 +350,69 @@ fn emit_bound(code: &mut CodeWriter, pad: &str, bound: &Bound, entity: &str, fie
 }
 
 /// Emit the `// TODO(#262)` transpilation markers for one schema's
-/// ConditionNodes (named conditions + bridge-derived one_of).
+/// ConditionNodes (named conditions + bridge-derived one_of). Conditions
+/// that transpiled emit nothing here — they become their own functions via
+/// [`emit_transpiled_conditions`]; rejected conditions keep the asserted
+/// #261 marker prefix, extended with the rejection reason.
 fn emit_condition_markers(code: &mut CodeWriter, entity: &EntityValidations, pad: &str) {
-    for (name, kind, options) in &entity.conditions {
-        match kind {
-            ConditionKind::Condition => {
+    for condition in &entity.conditions {
+        match (&condition.expr, condition.kind) {
+            (ConditionExpr::Transpiled(_), _) => {}
+            (ConditionExpr::Unsupported { kind, detail }, ConditionKind::Condition) => {
                 wln!(
                     code,
-                    "{pad}// TODO(#262): transpile condition '{name}' from its Expr::to_json payload"
+                    "{pad}// TODO(#262): transpile condition '{name}' from its Expr::to_json payload (unsupported: {kind}: {detail})",
+                    name = condition.name,
                 );
             }
-            ConditionKind::OneOf => {
+            (ConditionExpr::Missing, ConditionKind::Condition) => {
+                wln!(
+                    code,
+                    "{pad}// TODO(#262): transpile condition '{name}' from its Expr::to_json payload",
+                    name = condition.name,
+                );
+            }
+            (_, ConditionKind::OneOf) => {
                 wln!(
                     code,
                     "{pad}// TODO(#262): transpile one_of '{name}' from its options [{}]",
-                    options.join(", ")
+                    condition.options.join(", "),
+                    name = condition.name,
                 );
             }
         }
+    }
+}
+
+/// Emit one standalone `validate_{condition}` function per transpiled
+/// ConditionNode, mirroring the item-check functions' DTO conventions.
+fn emit_transpiled_conditions(code: &mut CodeWriter, entity: &EntityValidations) {
+    for condition in &entity.conditions {
+        let ConditionExpr::Transpiled(expr) = &condition.expr else {
+            continue;
+        };
+        let fn_name = to_snake_case(&condition.name);
+        wln!(code);
+        wln!(
+            code,
+            "/// Condition '{name}' for {entity} (create path).",
+            name = condition.name,
+            entity = entity.entity_name,
+        );
+        wln!(
+            code,
+            "pub fn validate_{fn_name}(dto: &Create{entity}Request) -> Result<(), String> {{",
+            fn_name = fn_name,
+            entity = entity.entity_name,
+        );
+        wln!(code, "    if !({expr}) {{");
+        wln!(
+            code,
+            "        return Err(\"{name} failed\".to_string());",
+            name = condition.name,
+        );
+        wln!(code, "    }}");
+        wln!(code, "    Ok(())");
+        wln!(code, "}}");
     }
 }
