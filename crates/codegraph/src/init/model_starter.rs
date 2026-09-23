@@ -31,6 +31,7 @@ pub fn starter_model_mox(
             grpc: false,
             ifml: false,
             ops: true,
+            rosetta: false,
         },
     );
     let tera = crate::generate::template_engine::create_tera(Path::new("."))
@@ -42,6 +43,46 @@ pub fn starter_model_mox(
     tctx.insert("graph_binary", graph_binary_hint);
     tera.render(super::context::MODEL_TEMPLATE, &tctx)
         .map_err(|e| format!("render {}: {e}", super::context::MODEL_TEMPLATE))
+}
+
+/// Render the starter `model/<domain>.rosetta` content for one domain from
+/// the shared `project/rosetta_model.tera` template (`--rosetta` scaffolds).
+///
+/// `app_name` is the existing project's snake_case app name — the Rosetta
+/// namespace is `{app_name}.{domain}`, so the doctor's last-segment domain
+/// match keeps working. `graph_binary_hint` names the binary in the header's
+/// run hint.
+pub fn starter_model_rosetta(
+    domain: &str,
+    label: &str,
+    app_name: &str,
+    graph_binary_hint: &str,
+) -> Result<String, String> {
+    let ctx = ProjectTemplateContext::new(
+        domain,
+        &[domain.to_string()],
+        "",
+        None,
+        "postgres",
+        "sea_orm",
+        "monolith",
+        ProjectFeatures {
+            grpc: false,
+            ifml: false,
+            ops: true,
+            rosetta: true,
+        },
+    );
+    let tera = crate::generate::template_engine::create_tera(Path::new("."))
+        .map_err(|e| format!("load embedded templates: {e}"))?;
+    let mut tctx = tera::Context::from_serialize(&ctx)
+        .map_err(|e| format!("serialize starter context: {e}"))?;
+    tctx.insert("domain", domain);
+    tctx.insert("domain_label", label);
+    tctx.insert("app_name", app_name);
+    tctx.insert("graph_binary", graph_binary_hint);
+    tera.render(super::context::ROSETTA_MODEL_TEMPLATE, &tctx)
+        .map_err(|e| format!("render {}: {e}", super::context::ROSETTA_MODEL_TEMPLATE))
 }
 
 #[cfg(test)]
@@ -68,5 +109,32 @@ mod tests {
             compilation.diagnostics
         );
         assert_eq!(compilation.model.unwrap().packages[0].name, "billing");
+    }
+
+    #[test]
+    fn starter_model_rosetta_parses_lowers_and_resolves() {
+        let content = starter_model_rosetta("billing", "Billing", "demo_app", "codegraph").unwrap();
+        assert!(
+            content.contains("namespace demo_app.billing"),
+            "namespace must be {{app_name}}.{{domain}}:\n{content}"
+        );
+        assert!(content.contains("version \"1.0.0\""), "{content}");
+        assert!(content.contains("type BillingType:"), "{content}");
+        assert!(content.contains("enum BillingStatus:"), "{content}");
+        assert!(
+            content.contains("(0..1)"),
+            "starter must carry an optional attribute:\n{content}"
+        );
+        let check = super::super::rosetta_model::verify_rosetta_sources(&[
+            super::super::rosetta_model::RosettaFileCheck {
+                name: "model/billing.rosetta".to_string(),
+                text: content,
+            },
+        ]);
+        assert!(
+            check.hard_errors.is_empty(),
+            "starter rosetta model must pass sigil verification: {:?}",
+            check.hard_errors
+        );
     }
 }

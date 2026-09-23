@@ -1,0 +1,21 @@
+// Starter {{ domain_label }} domain model — the primary model source.
+//
+// Edit this file, then regenerate, e.g.:
+//   {{ graph_binary }} run --rosetta-files model/{{ domain }}.rosetta \
+//       --config domains.toml --output generated
+//
+// Rosetta types are auto-scored by the classifier (entity vs value object
+// follows from the graph shape, not author annotations). Builtin attribute
+// types: int, number, string, date, dateTime, time, boolean.
+
+namespace {{ app_name }}.{{ domain }}
+version "1.0.0"
+
+type {{ domain | pascal_case }}Type:
+	name string (1..1) <"Required name">
+	description string (0..1) <"Optional longer description">
+	status {{ domain | pascal_case }}Status (1..1) <"Lifecycle status">
+
+enum {{ domain | pascal_case }}Status:
+	Active <"Active">
+	Inactive <"Inactive">

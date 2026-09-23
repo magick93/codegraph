@@ -32,6 +32,12 @@ pub struct OpsManifest {
     /// are ignored for generation — the mox pipeline needs no classifier.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mox_files: Vec<String>,
+    /// Rosetta (Rune DSL) `.rosetta` model files passed to the codegen
+    /// binary (one `--rosetta-files` flag per entry, manifest order).
+    /// Rosetta-first manifests carry one `model/<domain>.rosetta` entry per
+    /// domain and, like mox-first ones, need no `schemas_dir`/`classifier`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rosetta_files: Vec<String>,
     /// Classifier config file passed to the codegen binary.
     #[serde(default)]
     pub classifier: Option<PathBuf>,
@@ -291,6 +297,7 @@ mod tests {
             graph_binary: Some("hr-graph".into()),
             schemas_dir: Some("4_5RC1".into()),
             mox_files: Vec::new(),
+            rosetta_files: Vec::new(),
             classifier: Some("classifier.toml".into()),
             domain_config: Some("domains.toml".into()),
             profile: Some("default".into()),
@@ -470,6 +477,63 @@ database.api = { host = "localhost", port = 5432, user = "u", password = "p", da
 "#;
         let m: OpsManifest = toml::from_str(raw).unwrap();
         assert!(m.mox_files.is_empty());
+    }
+
+    #[test]
+    fn rosetta_files_default_empty() {
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        assert!(
+            m.rosetta_files.is_empty(),
+            "rosetta_files must default to empty so legacy manifests parse unchanged"
+        );
+    }
+
+    #[test]
+    fn rosetta_files_parse_from_toml_in_manifest_order() {
+        let raw = r#"
+app_name = "demo-app"
+rosetta_files = ["model/common.rosetta", "model/billing.rosetta"]
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        assert_eq!(
+            m.rosetta_files,
+            vec![
+                "model/common.rosetta".to_string(),
+                "model/billing.rosetta".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn rosetta_files_roundtrip_preserved() {
+        let raw = r#"
+app_name = "demo-app"
+rosetta_files = ["model/common.rosetta", "model/billing.rosetta"]
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        let serialized = toml::to_string(&m).unwrap();
+        let back: OpsManifest = toml::from_str(&serialized).unwrap();
+        assert_eq!(back.rosetta_files, m.rosetta_files);
+    }
+
+    #[test]
+    fn rosetta_files_omitted_when_empty_on_serialize() {
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        let serialized = toml::to_string(&m).unwrap();
+        assert!(
+            !serialized.contains("rosetta_files"),
+            "empty rosetta_files must not appear in serialized manifests: {serialized}"
+        );
     }
 
     #[test]

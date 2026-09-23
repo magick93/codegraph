@@ -829,6 +829,7 @@ mod tests {
             graph_binary: graph_binary.map(String::from),
             schemas_dir: Some("schemas".into()),
             mox_files: Vec::new(),
+            rosetta_files: Vec::new(),
             classifier: Some("classifier.toml".into()),
             domain_config: None,
             profile: Some("default".into()),

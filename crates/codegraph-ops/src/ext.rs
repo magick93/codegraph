@@ -228,6 +228,7 @@ mod tests {
             graph_binary: None,
             schemas_dir: None,
             mox_files: Vec::new(),
+            rosetta_files: Vec::new(),
             classifier: None,
             domain_config: None,
             profile: None,

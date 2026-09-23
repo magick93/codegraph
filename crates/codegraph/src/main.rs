@@ -198,6 +198,7 @@ async fn main() -> codegraph::error::Result<()> {
             deployment_topology,
             grpc,
             ifml,
+            rosetta,
             no_ops,
             rev,
             codegraph_path,
@@ -214,6 +215,7 @@ async fn main() -> codegraph::error::Result<()> {
                 grpc,
                 ifml,
                 ops: !no_ops,
+                rosetta,
                 rev,
                 codegraph_path,
                 force,
@@ -227,6 +229,7 @@ async fn main() -> codegraph::error::Result<()> {
             classifier,
             profiles_config,
             mox_files,
+            rosetta_files,
         } => {
             let args = codegraph::init::commands::DoctorArgs {
                 config,
@@ -234,6 +237,7 @@ async fn main() -> codegraph::error::Result<()> {
                 classifier,
                 profiles_config,
                 mox_files,
+                rosetta_files,
             };
             codegraph::init::commands::cmd_doctor(&args).map(|summary| {
                 println!(
@@ -243,9 +247,11 @@ async fn main() -> codegraph::error::Result<()> {
             })
         }
         cli::Commands::Add { target } => match target {
-            cli::AddTarget::Domain { name } => {
-                codegraph::init::commands::cmd_add_domain(&PathBuf::from("domains.toml"), &name)
-            }
+            cli::AddTarget::Domain { name, rosetta } => codegraph::init::commands::cmd_add_domain(
+                &PathBuf::from("domains.toml"),
+                &name,
+                rosetta,
+            ),
         },
     }
 }

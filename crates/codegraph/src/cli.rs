@@ -272,6 +272,11 @@ pub enum Commands {
         #[arg(long)]
         ifml: bool,
 
+        /// Rosetta-first scaffold: model/<domain>.rosetta starters instead
+        /// of .mox, plus rosetta-first profiles/justfile/ops wiring
+        #[arg(long)]
+        rosetta: bool,
+
         #[arg(long = "no-ops")]
         no_ops: bool,
 
@@ -312,6 +317,13 @@ pub enum Commands {
         /// degrades to an info line (mox-first projects)
         #[arg(long)]
         mox_files: Vec<PathBuf>,
+
+        /// Paths to Rosetta (Rune DSL) .rosetta model files; verified with
+        /// the sigil pipeline (parse → lower → resolve). With .rosetta
+        /// present the JSON schemas check degrades to an info line
+        /// (rosetta-first projects)
+        #[arg(long = "rosetta-files")]
+        rosetta_files: Vec<PathBuf>,
     },
     /// Add to an existing consumer project
     Add {
@@ -322,8 +334,15 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum AddTarget {
-    /// Add a domain (schemas dir + domains.toml entry).
-    Domain { name: String },
+    /// Add a domain (starter model + domains.toml entry).
+    Domain {
+        name: String,
+
+        /// Create a .rosetta starter instead of .mox (auto-detected when
+        /// the project's model/ directory already carries .rosetta files)
+        #[arg(long)]
+        rosetta: bool,
+    },
 }
 
 #[derive(Parser, Debug)]

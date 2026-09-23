@@ -26,6 +26,7 @@ fn features() -> ProjectFeatures {
         grpc: false,
         ifml: false,
         ops: true,
+        rosetta: false,
     }
 }
 
@@ -40,6 +41,7 @@ fn init_args(dir: &Path, name: &str, codegraph_path: Option<PathBuf>, force: boo
         grpc: false,
         ifml: false,
         ops: true,
+        rosetta: false,
         rev: Some("abc123".to_string()),
         codegraph_path,
         force,
@@ -428,6 +430,7 @@ fn doctor_fresh_scaffold_has_zero_model_warnings() {
         classifier: None,
         profiles_config: Some(project.join("profiles.toml")),
         mox_files: vec![project.join("model/common.mox")],
+        rosetta_files: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -457,6 +460,7 @@ fn doctor_empty_schemas_dir_in_mox_mode_still_warns() {
         classifier: None,
         profiles_config: None,
         mox_files: vec![mox],
+        rosetta_files: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -485,6 +489,7 @@ fn doctor_classifier_missing_with_json_schemas_is_hard_failure() {
         classifier: None,
         profiles_config: None,
         mox_files: vec![],
+        rosetta_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -511,6 +516,7 @@ fn doctor_validates_multiple_mox_files() {
             project.join("model/common.mox"),
             project.join("model/billing.mox"),
         ],
+        rosetta_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -532,6 +538,7 @@ fn doctor_fails_on_missing_schemas() {
         classifier: Some(classifier),
         profiles_config: None,
         mox_files: vec![],
+        rosetta_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -575,6 +582,7 @@ fn doctor_mox_mode_validates_packages_and_allows_missing_schemas() {
         classifier: Some(dir.path().join("classifier.toml")),
         profiles_config: None,
         mox_files: vec![mox],
+        rosetta_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -597,6 +605,7 @@ fn doctor_mox_package_without_domain_entry_is_a_hard_failure() {
         classifier: Some(dir.path().join("classifier.toml")),
         profiles_config: None,
         mox_files: vec![mox],
+        rosetta_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -622,6 +631,7 @@ fn doctor_broken_mox_file_is_a_hard_failure() {
         classifier: Some(dir.path().join("classifier.toml")),
         profiles_config: None,
         mox_files: vec![mox],
+        rosetta_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -635,7 +645,7 @@ fn add_domain_appends_and_creates_mox_starter() {
     let dir = TempDir::new().unwrap();
     let config = copy_fixture_domains(dir.path());
 
-    cmd_add_domain(&config, "billing").unwrap();
+    cmd_add_domain(&config, "billing", false).unwrap();
 
     let parsed = codegraph_config::config::parse_domain_config(&config).unwrap();
     assert!(parsed.domains.contains_key("billing"));
@@ -659,7 +669,7 @@ fn add_domain_appends_and_creates_mox_starter() {
         "add domain must not create a schemas/ directory"
     );
 
-    let err = cmd_add_domain(&config, "billing").unwrap_err();
+    let err = cmd_add_domain(&config, "billing", false).unwrap_err();
     assert!(
         format!("{err}").contains("already exists"),
         "duplicate domain should be rejected: {err}"
@@ -671,8 +681,8 @@ fn add_domain_rejects_duplicate() {
     let dir = TempDir::new().unwrap();
     let config = copy_fixture_domains(dir.path());
 
-    cmd_add_domain(&config, "billing").unwrap();
-    let err = cmd_add_domain(&config, "billing").unwrap_err();
+    cmd_add_domain(&config, "billing", false).unwrap();
+    let err = cmd_add_domain(&config, "billing", false).unwrap_err();
     assert!(
         format!("{err}").contains("already exists"),
         "duplicate domain should be rejected: {err}"
@@ -684,7 +694,7 @@ fn add_domain_normalizes_name() {
     let dir = TempDir::new().unwrap();
     let config = copy_fixture_domains(dir.path());
 
-    cmd_add_domain(&config, "Billing Accounts").unwrap();
+    cmd_add_domain(&config, "Billing Accounts", false).unwrap();
 
     let parsed = codegraph_config::config::parse_domain_config(&config).unwrap();
     assert!(parsed.domains.contains_key("billing_accounts"));
@@ -747,6 +757,7 @@ fn doctor_valid_import_passes() {
         classifier: Some(dir.path().join("classifier.toml")),
         profiles_config: None,
         mox_files: vec![dir.path().join("model.mox")],
+        rosetta_files: vec![],
     })
     .unwrap();
 }
@@ -762,6 +773,7 @@ fn doctor_missing_import_target_is_a_hard_failure() {
         classifier: Some(dir.path().join("classifier.toml")),
         profiles_config: None,
         mox_files: vec![dir.path().join("model.mox")],
+        rosetta_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -781,10 +793,363 @@ fn doctor_invalid_import_json_is_a_hard_failure() {
         classifier: Some(dir.path().join("classifier.toml")),
         profiles_config: None,
         mox_files: vec![dir.path().join("model.mox")],
+        rosetta_files: vec![],
     })
     .unwrap_err();
     assert!(
         format!("{err}").contains("hard check"),
         "invalid import JSON should be a hard failure: {err}"
+    );
+}
+
+// ── Rosetta project lifecycle (issue #260) ──
+
+fn init_rosetta_args(dir: &Path, name: &str, domains: &[&str]) -> InitArgs {
+    let mut args = init_args(dir, name, None, false);
+    args.rosetta = true;
+    args.domains = domains.iter().map(|d| d.to_string()).collect();
+    args
+}
+
+/// `--rosetta` scaffolds a rosetta-first project: `model/<domain>.rosetta`
+/// starters (sigil-verified), no `.mox`, no schemas/, no classifier.toml,
+/// `rosetta_backend = true` in profiles.toml, and rosetta-first justfile +
+/// ops manifest wiring. Default (non---rosetta) output is untouched: every
+/// pre-existing test above pins it.
+#[test]
+fn init_rosetta_scaffolds_expected_tree() {
+    let dir = TempDir::new().unwrap();
+    let mut args = init_rosetta_args(dir.path(), "demo-app", &["common", "billing"]);
+    args.rev = Some("abc123".to_string());
+    cmd_init(&args).unwrap();
+    let project = dir.path().join("demo-app");
+
+    // One .rosetta starter per domain, no .mox anywhere.
+    assert!(project.join("model/common.rosetta").is_file());
+    assert!(project.join("model/billing.rosetta").is_file());
+    assert!(!project.join("model/common.mox").exists());
+    assert_mox_first_layout(&project);
+
+    // Starter verifies through the sigil pipeline and carries the
+    // `{app_name}.{domain}` namespace + starter type/enum.
+    for domain in ["common", "billing"] {
+        let path = project.join("model").join(format!("{domain}.rosetta"));
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains(&format!("namespace demo_app.{domain}")),
+            "namespace must be {{app_name}}.{{domain}}:\n{content}"
+        );
+        assert!(content.contains("version \"1.0.0\""), "{content}");
+        let pascal = "common" == domain;
+        assert!(
+            content.contains(&format!(
+                "type {}Type:",
+                if pascal { "Common" } else { "Billing" }
+            )),
+            "starter type must exist:\n{content}"
+        );
+        let check = codegraph::init::rosetta_model::verify_rosetta_sources(&[
+            codegraph::init::rosetta_model::RosettaFileCheck {
+                name: path.display().to_string(),
+                text: content,
+            },
+        ]);
+        assert!(
+            check.hard_errors.is_empty(),
+            "{domain} starter must pass sigil verification: {:?}",
+            check.hard_errors
+        );
+    }
+
+    // domains.toml parses, no entities key, points at the .rosetta models.
+    let domains =
+        codegraph_config::config::parse_domain_config(&project.join("domains.toml")).unwrap();
+    assert!(domains.domains.contains_key("common"));
+    assert!(domains.domains.contains_key("billing"));
+    let domains_raw = fs::read_to_string(project.join("domains.toml")).unwrap();
+    assert!(
+        domains_raw.contains("model/common.rosetta"),
+        "domains.toml should point at the rosetta model:\n{domains_raw}"
+    );
+    assert!(!domains_raw.contains(".mox"), "{domains_raw}");
+
+    // profiles.toml carries the rosetta feature and still resolves.
+    let profiles_raw = fs::read_to_string(project.join("profiles.toml")).unwrap();
+    assert!(
+        profiles_raw.contains("rosetta_backend = true"),
+        "profiles.toml must enable rosetta_backend:\n{profiles_raw}"
+    );
+    let resolved =
+        load_and_resolve_profile(&project.join("profiles.toml"), "default", None).unwrap();
+    BuildPlan::from_profile(&resolved, &CapabilityRegistry::new()).unwrap();
+
+    // justfile recipes pass --rosetta-files per domain, not --mox-files.
+    let justfile = fs::read_to_string(project.join("justfile")).unwrap();
+    assert!(
+        justfile.contains("--rosetta-files model/common.rosetta"),
+        "justfile recipes must pass --rosetta-files per domain:\n{justfile}"
+    );
+    assert!(!justfile.contains("--mox-files"), "{justfile}");
+
+    // Ops manifest seeds rosetta_files and loads via OpsConfig::load.
+    let manifest_raw = fs::read_to_string(project.join("codegraph-ops.toml")).unwrap();
+    assert!(
+        manifest_raw
+            .contains(r#"rosetta_files = ["model/common.rosetta", "model/billing.rosetta"]"#),
+        "manifest must list one rosetta file per domain in domain order:\n{manifest_raw}"
+    );
+    assert!(!manifest_raw.contains("mox_files"), "{manifest_raw}");
+    let cfg = codegraph_ops::OpsConfig::load(&project.join("codegraph-ops.toml"))
+        .expect("emitted manifest must load via OpsConfig::load");
+    assert_eq!(
+        cfg.manifest.rosetta_files,
+        vec![
+            "model/common.rosetta".to_string(),
+            "model/billing.rosetta".to_string()
+        ]
+    );
+}
+
+/// THE rosetta acceptance gate: a fresh `init --rosetta` scaffold must
+/// generate with ONLY --rosetta-files + --config (no --schemas, no
+/// --classifier), producing DDL for the starter type and its status
+/// codelist.
+#[tokio::test]
+async fn init_rosetta_scaffold_runs_rosetta_first() {
+    let dir = TempDir::new().unwrap();
+    let root = repo_root().canonicalize().unwrap();
+    let mut args = init_rosetta_args(dir.path(), "demo-app", &["common"]);
+    args.codegraph_path = Some(root);
+    cmd_init(&args).unwrap();
+    let project = dir.path().join("demo-app");
+
+    let rosetta_files = vec![project.join("model/common.rosetta")];
+    let output = project.join("generated");
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &project.join("domains.toml"),
+        output: &output,
+        extension_points_path: None,
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(project.join("profiles.toml")),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: &[],
+        rosetta_files: &rosetta_files,
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+    })
+    .await
+    .unwrap();
+
+    let generated: Vec<PathBuf> = walkdir::WalkDir::new(&output)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.path().to_path_buf())
+        .collect();
+    assert!(
+        !generated.is_empty(),
+        "rosetta-first generation must produce files"
+    );
+
+    let migrations_dir = output.join("migrations");
+    let mut ddl = String::new();
+    for entry in fs::read_dir(&migrations_dir).unwrap_or_else(|e| {
+        panic!(
+            "migrations dir missing under {}: {e}",
+            migrations_dir.display()
+        )
+    }) {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) == Some("sql") {
+            ddl.push_str(&fs::read_to_string(&path).unwrap());
+            ddl.push('\n');
+        }
+    }
+    assert!(
+        ddl.contains("CREATE TABLE IF NOT EXISTS common.common "),
+        "DDL must contain the starter type's table (CommonType strips the \
+         Type suffix → table common, the codelist is common.common_status):\n{ddl}"
+    );
+    assert!(
+        ddl.contains("common_status"),
+        "DDL must contain the starter enum's codelist table (CommonStatus → common_status):\n{ddl}"
+    );
+}
+
+/// Doctor with --rosetta-files only (the wrapper's new default on rosetta
+/// scaffolds) must pass with zero hard failures and zero model warnings.
+#[test]
+fn doctor_rosetta_starter_has_zero_model_warnings() {
+    let dir = TempDir::new().unwrap();
+    let mut args = init_rosetta_args(dir.path(), "demo-app", &["common"]);
+    args.codegraph_path = Some(repo_root());
+    cmd_init(&args).unwrap();
+    let project = dir.path().join("demo-app");
+
+    let summary = cmd_doctor(&DoctorArgs {
+        config: project.join("domains.toml"),
+        schemas: None,
+        classifier: None,
+        profiles_config: Some(project.join("profiles.toml")),
+        mox_files: vec![],
+        rosetta_files: vec![project.join("model/common.rosetta")],
+    })
+    .unwrap();
+    assert_eq!(summary.hard_failures, 0);
+    assert_eq!(summary.model_warnings, 0);
+}
+
+/// A rosetta file failing sigil verification (parse/lower/resolve) is a
+/// hard failure, mirroring check_mox_files semantics.
+#[test]
+fn doctor_broken_rosetta_file_is_a_hard_failure() {
+    let dir = TempDir::new().unwrap();
+    let config = copy_fixture_domains(dir.path());
+    let broken = dir.path().join("model/broken.rosetta");
+    fs::create_dir_all(broken.parent().unwrap()).unwrap();
+    fs::write(&broken, "namespace recruiting\n\ntype Broken:\n\tname\n").unwrap();
+
+    let err = cmd_doctor(&DoctorArgs {
+        config,
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![],
+        rosetta_files: vec![broken],
+    })
+    .unwrap_err();
+    assert!(
+        format!("{err}").contains("hard check"),
+        "broken rosetta file should be a hard failure: {err}"
+    );
+}
+
+/// A namespace whose last segment matches no domains.toml key is a WARNING
+/// (not a hard failure): compute_generation_order silently drops such
+/// schemas, so the project would generate nothing for it.
+#[test]
+fn doctor_rosetta_namespace_without_domain_entry_warns() {
+    let dir = TempDir::new().unwrap();
+    let config = copy_fixture_domains(dir.path());
+    let file = dir.path().join("model/orphan.rosetta");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(
+        &file,
+        "namespace nz.example.orphan\nversion \"1.0.0\"\n\ntype OrphanType:\n\tname string (1..1)\n",
+    )
+    .unwrap();
+
+    let summary = cmd_doctor(&DoctorArgs {
+        config,
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![],
+        rosetta_files: vec![file],
+    })
+    .unwrap();
+    assert_eq!(
+        summary.hard_failures, 0,
+        "namespace mismatch warns, not fails"
+    );
+    assert!(
+        summary.soft_warnings >= 1 && summary.model_warnings >= 1,
+        "unmatched namespace must warn: {summary:?}"
+    );
+}
+
+/// `import <ns>.*` line-scan: an imported namespace with no file among
+/// --rosetta-files whose last segment also matches no domain key warns.
+#[test]
+fn doctor_rosetta_import_without_matching_file_warns() {
+    let dir = TempDir::new().unwrap();
+    let config = copy_fixture_domains(dir.path());
+    let file = dir.path().join("model/recruiting.rosetta");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(
+        &file,
+        concat!(
+            "namespace nz.example.recruiting\nversion \"1.0.0\"\n\n",
+            "import nz.example.ghost.*\n\ntype CandidateType:\n\tname string (1..1)\n"
+        ),
+    )
+    .unwrap();
+
+    let summary = cmd_doctor(&DoctorArgs {
+        config,
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![],
+        rosetta_files: vec![file],
+    })
+    .unwrap();
+    assert_eq!(summary.hard_failures, 0);
+    assert!(
+        summary.soft_warnings >= 1,
+        "import of an unprovided, domain-less namespace must warn: {summary:?}"
+    );
+}
+
+/// `add domain` on a rosetta-first project (auto-detected via
+/// model/*.rosetta, or forced with --rosetta) creates a sigil-verified
+/// .rosetta starter and appends the domains.toml entry.
+#[test]
+fn add_domain_rosetta_mode_creates_rosetta_starter() {
+    let dir = TempDir::new().unwrap();
+    let args = init_rosetta_args(dir.path(), "demo-app", &["common"]);
+    cmd_init(&args).unwrap();
+    let project = dir.path().join("demo-app");
+    let config = project.join("domains.toml");
+
+    // Auto-detect: model/common.rosetta present.
+    cmd_add_domain(&config, "billing", false).unwrap();
+
+    let parsed = codegraph_config::config::parse_domain_config(&config).unwrap();
+    assert!(parsed.domains.contains_key("billing"));
+
+    let model = project.join("model/billing.rosetta");
+    assert!(
+        model.is_file(),
+        "add domain must create model/billing.rosetta"
+    );
+    assert!(
+        !project.join("model/billing.mox").exists(),
+        "rosetta mode must not create a .mox starter"
+    );
+    let content = fs::read_to_string(&model).unwrap();
+    assert!(
+        content.contains("namespace demo_app.billing"),
+        "added starter must carry the project-namespaced namespace:\n{content}"
+    );
+    let check = codegraph::init::rosetta_model::verify_rosetta_sources(&[
+        codegraph::init::rosetta_model::RosettaFileCheck {
+            name: "model/billing.rosetta".to_string(),
+            text: content,
+        },
+    ]);
+    assert!(
+        check.hard_errors.is_empty(),
+        "added starter must pass sigil verification: {:?}",
+        check.hard_errors
+    );
+
+    assert!(
+        !project.join("schemas/billing").exists(),
+        "add domain must not create a schemas/ directory"
+    );
+
+    let err = cmd_add_domain(&config, "billing", false).unwrap_err();
+    assert!(
+        format!("{err}").contains("already exists"),
+        "duplicate domain should be rejected: {err}"
     );
 }

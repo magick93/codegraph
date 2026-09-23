@@ -57,6 +57,8 @@ fn mock_test_setup() -> (
         is_required: true,
         is_nullable: false,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -206,6 +208,11 @@ async fn ops_generator_direct_call_manifest_roundtrips() {
     assert!(parsed.capabilities.has_grpc);
     assert_eq!(parsed.capabilities.database_target, "postgres");
     assert_eq!(parsed.capabilities.persistence_provider, "sea_orm");
+    // rosetta_files mirrors mox_files on the generated manifest: present in
+    // the type (issue #260) and empty here — the init scaffold's
+    // ops_manifest.tera seeds the per-domain entries.
+    assert!(parsed.mox_files.is_empty());
+    assert!(parsed.rosetta_files.is_empty());
 
     let cargo = files
         .iter()
@@ -523,4 +530,42 @@ async fn emitted_manifest_loads_through_ops_config() {
     assert!(cfg.supabase_dir.is_none());
     assert!(cfg.hurl_dir.is_none());
     assert!(cfg.hooks.is_empty());
+}
+
+/// Rosetta-first contract (issue #260): a manifest carrying rosetta_files
+/// parses through the harness's `OpsConfig::load` and preserves the
+/// per-domain model list in manifest order.
+#[test]
+fn ops_manifest_rosetta_files_roundtrip_through_ops_config() {
+    let raw = r#"
+app_name = "demo-app"
+rosetta_files = ["model/common.rosetta", "model/billing.rosetta"]
+domain_config = "domains.toml"
+output_dir = "generated"
+
+[servers]
+api_port = 3000
+ui_port = 5173
+bind_addr = "0.0.0.0"
+
+[database.api]
+host = "localhost"
+port = 5432
+user = "postgres"
+password = "postgres"
+database = "postgres"
+"#;
+    let dir = tempfile::TempDir::new().unwrap();
+    let manifest_path = dir.path().join("codegraph-ops.toml");
+    std::fs::write(&manifest_path, raw).unwrap();
+
+    let cfg = codegraph_ops::OpsConfig::load(&manifest_path).expect("OpsConfig::load");
+    assert_eq!(
+        cfg.manifest.rosetta_files,
+        vec![
+            "model/common.rosetta".to_string(),
+            "model/billing.rosetta".to_string()
+        ]
+    );
+    assert!(cfg.manifest.mox_files.is_empty());
 }

@@ -698,14 +698,14 @@ Tera templates in `crates/codegraph-generate/templates/project/` (see
 |------|---------|
 | `Cargo.toml` | Workspace: members `{name}-graph` + `ops/testkit`; codegraph crates as `git+rev` deps (or `path` deps with `--codegraph-path`); `exclude = ["generated"]` |
 | `{name}-graph/Cargo.toml`, `{name}-graph/src/main.rs` | Wrapper binary: clap `Run`/`Classify`/`Generate`/`Doctor` calling `codegraph::driver`; `Run`/`Classify` take repeatable `--mox-files`, `--schemas`/`--classifier` are optional with no defaults |
-| `model/{domain}.mox` | Starter mox model per domain (TodoListType + TodoItemType, `refers`-linked); the primary model source |
+| `model/{domain}.mox` | Starter mox model per domain (TodoListType + TodoItemType, `refers`-linked); the primary model source. With `--rosetta`: `model/{domain}.rosetta` starters (namespace `{app_name}.{domain}`, one `<Pascal>Type` + `<Pascal>Status` enum) instead — no `.mox` |
 | `domains.toml` | One entry per domain (label, schema_dir, postgres_schema); no `entities` key — mox is author-declarative |
 | `profiles.toml` | Profile meta (`name`/`version`/`app_name`, `domain_types_base`) + feature flags (`ops_backend`, `grpc_backend`, `ifml_backend`, `has_admin_cli`, `database_target`, `persistence_provider`, `deployment_topology`) |
 | `extension-points.toml` | Extension points config |
-| `codegraph-ops.toml` | Seeded ops manifest with `mox_files = ["model/<d>.mox", ...]` (no `schemas_dir`/`classifier` keys; see "Ops Harness" section) |
+| `codegraph-ops.toml` | Seeded ops manifest with `mox_files = ["model/<d>.mox", ...]` (no `schemas_dir`/`classifier` keys; see "Ops Harness" section). With `--rosetta`: `rosetta_files = ["model/<d>.rosetta", ...]` instead |
 | `ops/testkit/Cargo.toml`, `ops/testkit/src/main.rs` | Testkit workspace member |
 | `hurl/health.hurl` | Health-check hurl file |
-| `justfile` | Recipes: `generate`/`classify`/`doctor` (all pass `--mox-files model/<d>.mox` per domain), `api`, `e2e`, `full`, `clean` |
+| `justfile` | Recipes: `generate`/`classify`/`doctor` (all pass `--mox-files model/<d>.mox` per domain), `api`, `e2e`, `full`, `clean`. With `--rosetta`: recipes pass `--rosetta-files model/<d>.rosetta` instead |
 | `.gitignore` | Ignores `generated/` |
 | `README.md` | Getting-started readme (mox-first quickstart + layout) |
 | `.github/workflows/ci.yml` | CI workflow (generate job runs mox-first) |
@@ -738,6 +738,7 @@ Tera templates in `crates/codegraph-generate/templates/project/` (see
 | `--persistence-provider` | `sea_orm` | `sea_orm`/`cornucopia` |
 | `--deployment-topology` | `monolith` | `monolith`/`workers` |
 | `--grpc`, `--ifml` | off | Enable gRPC / IFML features in `profiles.toml` |
+| `--rosetta` | off | Rosetta-first scaffold: `model/<domain>.rosetta` starters (sigil parse+lower+resolve-verified before write) instead of `.mox`, `rosetta_backend = true` in `profiles.toml`, `rosetta_files` in the ops manifest, `--rosetta-files` justfile recipes. Rosetta types are auto-scored (no `entities` key either) |
 | `--no-ops` | off | Disable the ops generator/profile feature (testkit member still scaffolded) |
 | `--rev <sha>` | embedded rev | Codegraph git rev to pin |
 | `--codegraph-path <dir>` | none | Path deps to a local codegraph checkout |
@@ -752,6 +753,7 @@ Tera templates in `crates/codegraph-generate/templates/project/` (see
 | `--schemas` | optional | schemas dir contains JSON schema(s); absent + no `--mox-files` = hard failure, absent + mox files = info line (mox-first shape) |
 | `--classifier` | optional | classifier.toml parses; absent + JSON schemas present = hard failure, absent + no JSON schemas = info line |
 | `--profiles-config` | optional | profiles.toml parses + BuildPlan capability validation |
+| `--rosetta-files <file>` | repeatable | Each file sigil-verified (parse → lower → resolve; severity-Error diagnostics = hard failure). A namespace whose last segment matches no domains.toml key = WARN (generation silently drops it); `import <ns>.*` with no file among `--rosetta-files` and no matching domain key = WARN. Prints an INFO line with the embedded sigil rev (`rev::sigil_rev()`, WARN when unpinned) |
 
 Doctor's model-source matrix (zero warnings is the intentional mox-first
 new-project shape): schemas dir absent + mox files → INFO; schemas dir
@@ -770,10 +772,13 @@ path deps PASS as development mode), missing `psql`/`npx`/`hurl` tools.
 #### `codegraph add domain <name>`
 
 Appends a `[domains.<name>]` entry (label, schema_dir, postgres_schema) to
-`domains.toml` and creates `model/<name>.mox` from the shared starter
-template (`init/model_starter.rs`), compile-verified with the rex compiler
-before write. No `schemas/<name>/` directory is created. Rejects duplicate
-domain names.
+`domains.toml` and creates a starter model from the shared starter
+template (`init/model_starter.rs`), verified before write. Rosetta-first
+projects (`model/*.rosetta` present or `--rosetta`) get
+`model/<name>.rosetta` namespaced `{app_name}.{domain}`, sigil-verified
+(parse → lower → resolve); everything else gets `model/<name>.mox`
+compile-verified with the rex compiler. No `schemas/<name>/` directory is
+created. Rejects duplicate domain names.
 
 ### Hello-world TODO example
 
