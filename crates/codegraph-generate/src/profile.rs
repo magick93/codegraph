@@ -682,6 +682,9 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         // ── constraint-plane validations (issue #261) ───────────────────
         cap("condition_validations", Domain, Api,  &["rosetta_backend"], &[]),
 
+        // ── regulatory report scaffolding (issue #265) ──────────────────
+        cap("regulatory_reports",  Domain, Api,  &["rosetta_backend"], &[]),
+
         // ── Fern SDK generators ─────────────────────────────────────────
         cap("fern_config",          Global, Api,   &["fern_sdk"], &[]),
 

@@ -69,6 +69,8 @@ pub struct MockEngine {
     grants: Mutex<Vec<GrantEdge>>,
     actor_policy: Mutex<Option<ActorPolicyNode>>,
     conditions: Mutex<Vec<ConditionNode>>,
+    regulatory: Mutex<Vec<RegulatoryNode>>,
+    regulatory_refs: Mutex<Vec<RegulatoryRefRecord>>,
     start_time: Instant,
 }
 
@@ -127,6 +129,8 @@ impl MockEngine {
             grants: Mutex::new(Vec::new()),
             actor_policy: Mutex::new(None),
             conditions: Mutex::new(Vec::new()),
+            regulatory: Mutex::new(Vec::new()),
+            regulatory_refs: Mutex::new(Vec::new()),
             start_time: Instant::now(),
         }
     }
@@ -874,6 +878,49 @@ impl GraphIngestor for MockEngine {
 
     async fn ingest_condition(&self, node: &ConditionNode) -> Result<(), GraphError> {
         self.conditions.lock().unwrap().push(node.clone());
+        Ok(())
+    }
+
+    async fn ingest_regulatory(&self, node: &RegulatoryNode) -> Result<(), GraphError> {
+        self.regulatory.lock().unwrap().push(node.clone());
+        Ok(())
+    }
+
+    async fn ingest_regulatory_reference(
+        &self,
+        owner: &RegulatoryOwner,
+        target: &str,
+        target_kind: RegulatoryKind,
+        edge_kind: RegulatoryEdgeKind,
+        ref_path: Option<&str>,
+    ) -> Result<(), GraphError> {
+        // Best-effort, mirroring the GQL MATCH semantics: no target node,
+        // no edge.
+        let known = self
+            .regulatory
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|n| n.name == target && n.kind == target_kind);
+        if !known {
+            return Ok(());
+        }
+        let (owner_name, owner_label) = match owner {
+            RegulatoryOwner::Schema(title) => (title.clone(), "Schema".to_string()),
+            RegulatoryOwner::Condition(name) => (name.clone(), "Condition".to_string()),
+            RegulatoryOwner::Regulatory { name, .. } => (name.clone(), "Regulatory".to_string()),
+        };
+        self.regulatory_refs
+            .lock()
+            .unwrap()
+            .push(RegulatoryRefRecord {
+                owner: owner_name,
+                owner_label,
+                target: target.to_string(),
+                target_kind,
+                edge_kind,
+                ref_path: ref_path.map(str::to_string),
+            });
         Ok(())
     }
 
@@ -1702,5 +1749,19 @@ impl GraphQuerier for MockEngine {
         let mut nodes: Vec<ConditionNode> = self.conditions.lock().unwrap().clone();
         nodes.sort_by(|a, b| (&a.owner_title, &a.name).cmp(&(&b.owner_title, &b.name)));
         Ok(nodes)
+    }
+
+    // ── Regulatory reference plane queries (issue #265) ───────────────
+
+    async fn list_regulatory(&self) -> Result<Vec<RegulatoryNode>, GraphError> {
+        let mut nodes: Vec<RegulatoryNode> = self.regulatory.lock().unwrap().clone();
+        nodes.sort_by(|a, b| (a.kind.as_str(), &a.name).cmp(&(b.kind.as_str(), &b.name)));
+        Ok(nodes)
+    }
+
+    async fn list_regulatory_references(&self) -> Result<Vec<RegulatoryRefRecord>, GraphError> {
+        let mut records: Vec<RegulatoryRefRecord> = self.regulatory_refs.lock().unwrap().clone();
+        records.sort_by(|a, b| (&a.owner, &a.target).cmp(&(&b.owner, &b.target)));
+        Ok(records)
     }
 }

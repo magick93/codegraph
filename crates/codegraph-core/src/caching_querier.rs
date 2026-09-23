@@ -12,8 +12,9 @@ use crate::types::{
     HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
     MoxOperationNode, MoxVocabularyNode, NamespaceNode, NavigationFlowRecord,
     ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
-    PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData, SchemaNode,
-    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
+    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode,
+    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -587,6 +588,16 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn list_conditions(&self) -> Result<Vec<ConditionNode>, GraphError> {
         self.inner.list_conditions().await
+    }
+
+    // ── Regulatory reference plane delegation (issue #265) ─────────────
+
+    async fn list_regulatory(&self) -> Result<Vec<RegulatoryNode>, GraphError> {
+        self.inner.list_regulatory().await
+    }
+
+    async fn list_regulatory_references(&self) -> Result<Vec<RegulatoryRefRecord>, GraphError> {
+        self.inner.list_regulatory_references().await
     }
 
     // ── AT Protocol query delegation ───────────────────────────────────

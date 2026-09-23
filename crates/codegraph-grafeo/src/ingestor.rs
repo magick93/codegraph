@@ -8,8 +8,9 @@ use codegraph_core::types::{
     EdgeType, EnumValue, ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats,
     InteractionNode, LexiconNode, MembershipNode, MoxDomainModel, NamespaceNode,
     ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
-    RelationshipNode, RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RelationshipNode,
+    RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
+    ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -20,6 +21,82 @@ use crate::engine::GrafeoEngine;
 /// Escape single quotes in GQL string literals.
 pub(crate) fn escape_gql(s: &str) -> String {
     s.replace('\'', "\\'")
+}
+
+/// The GQL for one regulatory reference edge (issue #265). Owners match by
+/// their natural keys (Schema title, Condition name, Regulatory name +
+/// kind); targets are always Regulatory nodes matched by name + kind.
+fn regulatory_reference_gql(
+    owner: &RegulatoryOwner,
+    target: &str,
+    target_kind: RegulatoryKind,
+    edge_kind: RegulatoryEdgeKind,
+    ref_path: Option<&str>,
+) -> String {
+    let owner_match = match owner {
+        RegulatoryOwner::Schema(title) => format!("(a:Schema {{title: '{}'}})", escape_gql(title)),
+        RegulatoryOwner::Condition(name) => {
+            format!("(a:Condition {{name: '{}'}})", escape_gql(name))
+        }
+        RegulatoryOwner::Regulatory { name, kind } => format!(
+            "(a:Regulatory {{name: '{}', kind: '{}'}})",
+            escape_gql(name),
+            kind.as_str()
+        ),
+    };
+    let props_str = match ref_path {
+        Some(path) => format!(" {{ref_path: '{}'}}", escape_gql(path)),
+        None => String::new(),
+    };
+    format!(
+        "MATCH {owner_match}, (b:Regulatory {{name: '{target}', kind: '{kind}'}}) \
+         INSERT (a)-[:{edge}{props}]->(b)",
+        target = escape_gql(target),
+        kind = target_kind.as_str(),
+        edge = edge_kind.as_str(),
+        props = props_str,
+    )
+}
+
+/// The regulatory edge kind for an EdgeType (issue #265).
+fn edge_kind_ref(edge_type: &EdgeType) -> RegulatoryEdgeKind {
+    match edge_type {
+        EdgeType::HasRuleSource => RegulatoryEdgeKind::RuleSource,
+        EdgeType::CorpusInBody => RegulatoryEdgeKind::CorpusInBody,
+        EdgeType::DerivesFrom => RegulatoryEdgeKind::DerivesFrom,
+        _ => RegulatoryEdgeKind::Reference,
+    }
+}
+
+/// Decode the `from_id`/`to_id` encoding `ingest_edge` accepts for the
+/// regulatory reference edge types (`regowner:schema:<title>` /
+/// `regowner:condition:<name>` / `regowner:regulatory:<kind>:<name>` →
+/// `reg:<kind>:<name>`); `None` when malformed.
+fn decode_regulatory_edge_ids(
+    from_id: &str,
+    to_id: &str,
+) -> Option<(RegulatoryOwner, String, RegulatoryKind)> {
+    let rest = from_id.strip_prefix("regowner:")?;
+    let (owner_str, owner_payload) = rest.split_once(':')?;
+    let owner = match owner_str {
+        "schema" => RegulatoryOwner::Schema(owner_payload.to_string()),
+        "condition" => RegulatoryOwner::Condition(owner_payload.to_string()),
+        "regulatory" => {
+            let (kind_str, name) = owner_payload.split_once(':')?;
+            RegulatoryOwner::Regulatory {
+                name: name.to_string(),
+                kind: RegulatoryKind::parse_kind(kind_str)?,
+            }
+        }
+        _ => return None,
+    };
+    let target_rest = to_id.strip_prefix("reg:")?;
+    let (kind_str, target) = target_rest.split_once(':')?;
+    Some((
+        owner,
+        target.to_string(),
+        RegulatoryKind::parse_kind(kind_str)?,
+    ))
 }
 
 /// Strip a leading API-metamodel node prefix (`ar:` / `ao:` / `pl:` / `pm:` /
@@ -413,6 +490,43 @@ impl GraphIngestor for GrafeoEngine {
         Ok(())
     }
 
+    async fn ingest_regulatory(&self, node: &RegulatoryNode) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let properties_json =
+            serde_json::to_string(&node.properties).unwrap_or_else(|_| "{}".to_string());
+        let properties = format!("'{}'", escape_gql(&properties_json));
+        let gql = format!(
+            "INSERT (:Regulatory {{name: '{name}', kind: '{kind}', label: {label}, \
+             definition: {definition}, domain: {domain}, properties_json: {properties}}})",
+            name = escape_gql(&node.name),
+            kind = node.kind.as_str(),
+            label = opt_str(&node.label),
+            definition = opt_str(&node.definition),
+            domain = opt_str(&node.domain),
+            properties = properties,
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_regulatory INSERT failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn ingest_regulatory_reference(
+        &self,
+        owner: &RegulatoryOwner,
+        target: &str,
+        target_kind: RegulatoryKind,
+        edge_kind: RegulatoryEdgeKind,
+        ref_path: Option<&str>,
+    ) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let gql = regulatory_reference_gql(owner, target, target_kind, edge_kind, ref_path);
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_regulatory_reference failed: {e}")))?;
+        Ok(())
+    }
+
     async fn ingest_codelist(&self, codelist: &CodeList) -> Result<(), GraphError> {
         let session = self.db().session();
         let gql = format!(
@@ -518,6 +632,36 @@ impl GraphIngestor for GrafeoEngine {
         props: Option<&EdgeProperties>,
     ) -> Result<(), GraphError> {
         let session = self.db().session();
+
+        // Regulatory reference plane (issue #265) — encoded natural keys,
+        // same GQL the dedicated `ingest_regulatory_reference` emits.
+        if matches!(
+            edge_type,
+            EdgeType::RegulatoryReference
+                | EdgeType::HasRuleSource
+                | EdgeType::CorpusInBody
+                | EdgeType::DerivesFrom
+        ) {
+            let Some((owner, target, target_kind)) = decode_regulatory_edge_ids(from_id, to_id)
+            else {
+                return Err(GraphError::Ingest(format!(
+                    "ingest_edge: regulatory edge {edge_type:?} needs encoded ids \
+                     (regowner:... -> reg:...), got '{from_id}' -> '{to_id}'"
+                )));
+            };
+            let ref_path = props.and_then(|p| p.ref_path.as_deref());
+            let gql = regulatory_reference_gql(
+                &owner,
+                &target,
+                target_kind,
+                edge_kind_ref(&edge_type),
+                ref_path,
+            );
+            session
+                .execute(&gql)
+                .map_err(|e| GraphError::Ingest(format!("ingest_edge regulatory failed: {e}")))?;
+            return Ok(());
+        }
 
         // ── Hot-path edge types: parameterized queries for plan caching ──
         match &edge_type {
@@ -655,6 +799,10 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::MembershipInTenant => "MembershipInTenant",
             EdgeType::HasRole => "HasRole",
             EdgeType::Grant => "Grant",
+            EdgeType::RegulatoryReference => "RegulatoryReference",
+            EdgeType::HasRuleSource => "HasRuleSource",
+            EdgeType::CorpusInBody => "CorpusInBody",
+            EdgeType::DerivesFrom => "DerivesFrom",
         };
 
         let match_clause = match &edge_type {
@@ -996,7 +1144,11 @@ impl GraphIngestor for GrafeoEngine {
             | EdgeType::ReferencesSchema
             | EdgeType::ItemsOf
             | EdgeType::ExtendsSchema
-            | EdgeType::DependsOn => unreachable!(),
+            | EdgeType::DependsOn
+            | EdgeType::RegulatoryReference
+            | EdgeType::HasRuleSource
+            | EdgeType::CorpusInBody
+            | EdgeType::DerivesFrom => unreachable!(),
         };
 
         let props_str = build_edge_props_string(props);

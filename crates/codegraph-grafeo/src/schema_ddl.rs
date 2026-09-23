@@ -359,6 +359,19 @@ fn node_type_ddl() -> Vec<&'static str> {
             definition STRING,
             domain STRING
         )",
+        // Regulatory — regulatory reference plane (issue #265). ONE
+        // parameterized node type (the Condition precedent) carrying the
+        // seven regulatory kinds (report/body/corpus/segment/rule source/
+        // rule schema/meta type) in `kind`; the disjoint per-kind payloads
+        // persist as one JSON object string in `properties_json`.
+        "CREATE NODE TYPE IF NOT EXISTS Regulatory (
+            name STRING NOT NULL,
+            kind STRING NOT NULL,
+            label STRING,
+            definition STRING,
+            domain STRING,
+            properties_json STRING
+        )",
     ]
 }
 
@@ -430,5 +443,10 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS VocabularyInPackage ()",
         // Constraint plane edge types (issue #261)
         "CREATE EDGE TYPE IF NOT EXISTS HasCondition ()",
+        // Regulatory reference plane edge types (issue #265)
+        "CREATE EDGE TYPE IF NOT EXISTS RegulatoryReference (ref_path STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS HasRuleSource ()",
+        "CREATE EDGE TYPE IF NOT EXISTS CorpusInBody ()",
+        "CREATE EDGE TYPE IF NOT EXISTS DerivesFrom ()",
     ]
 }

@@ -4,8 +4,9 @@ use crate::types::{
     CompositeColumn, CompositeRange, ConditionNode, DataBindingNode, EdgeProperties, EdgeType,
     EnumValue, ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats, InteractionNode,
     LexiconNode, MembershipNode, MoxDomainModel, NamespaceNode, ParameterDefinitionNode,
-    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode,
-    SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
+    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind,
+    RegulatoryNode, RegulatoryOwner, RelationshipNode, RepositoryNode, SchemaNode,
+    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -174,4 +175,25 @@ pub trait GraphIngestor: Send + Sync {
     /// the IFML node-family precedent: a required method, implemented by
     /// every backend.
     async fn ingest_condition(&self, node: &ConditionNode) -> Result<(), GraphError>;
+
+    // ── Regulatory reference plane (issue #265) ───────────────────────
+
+    /// Ingest one regulatory reference metadata node (report/body/corpus/
+    /// segment/rule source/rule schema/meta type). Deduplication is the
+    /// bridge's job (name + kind is the natural key).
+    async fn ingest_regulatory(&self, node: &RegulatoryNode) -> Result<(), GraphError>;
+
+    /// Link an owner element to a regulatory node. Edges are best-effort:
+    /// when the target regulatory node (name + kind) is absent the backend
+    /// is expected to succeed without writing (the rosetta bridge skips
+    /// docReference targets that no declared element backs — sigil itself
+    /// does not validate them).
+    async fn ingest_regulatory_reference(
+        &self,
+        owner: &RegulatoryOwner,
+        target: &str,
+        target_kind: RegulatoryKind,
+        edge_kind: RegulatoryEdgeKind,
+        ref_path: Option<&str>,
+    ) -> Result<(), GraphError>;
 }

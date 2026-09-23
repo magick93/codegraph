@@ -1,0 +1,54 @@
+namespace regfixture.reg
+version "1.0.0"
+
+body RegAgency RegAgencyBody <"the agency body">
+
+corpus ESMA RegAgencyBody "esma" ESMA
+corpus CFTC "cftc" CFTC
+
+segment Section1
+segment Section2
+
+metaType Calculation number
+
+schema FpMLSchema FpML <"the FpML wire schema">
+
+enum OrderStatus:
+	NEW
+	FILLED
+
+type OrderType:
+	[docReference RegAgencyBody ESMA Section1 "1.a"]
+	orderId string (1..1)
+	status OrderStatus (1..1)
+	total number (1..1)
+		[docReference RegAgencyBody CFTC "2.b"]
+
+	condition PositiveTotal:
+		[docReference RegAgencyBody CFTC]
+		total > 0
+
+eligibility rule PositiveTotal from OrderType:
+	total > 0
+
+reporting rule ReportedStatus from OrderType:
+	status
+
+rule source AgencySource {
+	OrderType:
+		+ status [ruleReference ReportedStatus]
+		- total
+}
+
+report RegAgencyBody ESMA Section1 "1.a" in T+1 from OrderType when PositiveTotal with type OrderType with source AgencySource
+report RegAgencyBody CFTC in real-time from OrderType when PositiveTotal with type OrderType
+
+func IngestOrders: <"ingest orders from the FpML schema">
+	[ingest FpMLSchema]
+	inputs:
+		order OrderType (1..1)
+	output:
+		result number (1..1)
+
+	set result:
+		order -> total

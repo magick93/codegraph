@@ -1203,6 +1203,11 @@ fn build_domain_generators(
         Box::new(ddd::validations::ConditionValidationsGenerator::new(base(
             "condition_validations",
         ))) as Box<dyn DomainGenerator>,
+        // Regulatory report scaffolding (issue #265) — gated by the
+        // `rosetta_backend` capability.
+        Box::new(ddd::regulatory_report::RegulatoryReportGenerator::new(
+            base("regulatory_reports"),
+        )) as Box<dyn DomainGenerator>,
         Box::new(
             api::router::RouterGenerator::new(base("router"))
                 .with_parent_candidates(parent_candidates.to_vec()),

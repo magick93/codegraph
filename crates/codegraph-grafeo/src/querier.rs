@@ -10,9 +10,10 @@ use codegraph_core::types::{
     FkDirection, FkTarget, GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode,
     MembershipNode, ModuleUseRecord, MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode,
     NamespaceNode, NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate,
-    PermissionNode, Permit, PipelineNode, PolicyNode, PropertyNode, RelationshipNode,
-    RepositoryNode, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, ViewComponentNode, ViewContainerNode,
+    PermissionNode, Permit, PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind,
+    RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode,
+    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
@@ -36,8 +37,9 @@ const PROPERTY_RETURN_COLS: &str = "\
 use crate::conversions::{
     row_to_codelist, row_to_composite_column, row_to_composite_range, row_to_condition_node,
     row_to_enum_value, row_to_extension, row_to_membership_node, row_to_policy_node,
-    row_to_property_node, row_to_relationship_node, row_to_schema_node,
-    row_to_security_identity_node, row_to_structured_sub_field, row_to_tenant_node, RowReader,
+    row_to_property_node, row_to_regulatory_node, row_to_regulatory_ref_record,
+    row_to_relationship_node, row_to_schema_node, row_to_security_identity_node,
+    row_to_structured_sub_field, row_to_tenant_node, RowReader,
 };
 use crate::engine::GrafeoEngine;
 
@@ -1949,6 +1951,68 @@ impl GraphQuerier for GrafeoEngine {
             .iter()
             .map(|row| row_to_condition_node(&reader, row))
             .collect()
+    }
+
+    // ── Regulatory reference plane queries (issue #265) ───────────────
+
+    async fn list_regulatory(&self) -> Result<Vec<RegulatoryNode>, GraphError> {
+        let result = query_gql(
+            self,
+            "MATCH (r:Regulatory) \
+             RETURN r.name AS name, r.kind AS kind, r.label AS label, \
+             r.definition AS definition, r.domain AS domain, \
+             r.properties_json AS properties_json \
+             ORDER BY r.kind, r.name",
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_regulatory_node(&reader, row))
+            .collect()
+    }
+
+    async fn list_regulatory_references(&self) -> Result<Vec<RegulatoryRefRecord>, GraphError> {
+        // One MATCH per (edge family × owner label) combination — GQL has
+        // no union edge pattern, and the owner label is part of the read
+        // back record. Owners use their natural keys (Schema → title,
+        // Condition/Regulatory → name).
+        let mut records = Vec::new();
+        for (label, edge_kind) in [
+            ("RegulatoryReference", RegulatoryEdgeKind::Reference),
+            ("HasRuleSource", RegulatoryEdgeKind::RuleSource),
+            ("CorpusInBody", RegulatoryEdgeKind::CorpusInBody),
+            ("DerivesFrom", RegulatoryEdgeKind::DerivesFrom),
+        ] {
+            // Only RegulatoryReference carries the ref_path property —
+            // selecting it on the other families would read undeclared
+            // properties.
+            let ref_select = match edge_kind {
+                RegulatoryEdgeKind::Reference => "e.ref_path AS ref_path",
+                _ => "NULL AS ref_path",
+            };
+            for (owner_label, owner_key) in [
+                ("Schema", "title"),
+                ("Condition", "name"),
+                ("Regulatory", "name"),
+            ] {
+                let gql = format!(
+                    "MATCH (a:{owner_label})-[e:{label}]->(b:Regulatory) \
+                     RETURN a.{owner_key} AS owner, b.name AS target, \
+                     b.kind AS target_kind, {ref_select} \
+                     ORDER BY owner, target"
+                );
+                let result = query_gql(self, &gql)?;
+                let reader = RowReader::from_columns(&result.columns);
+                for row in &result.rows {
+                    let mut record = row_to_regulatory_ref_record(&reader, row, edge_kind)?;
+                    record.owner_label = owner_label.to_string();
+                    records.push(record);
+                }
+            }
+        }
+        records.sort_by(|a, b| (&a.owner, &a.target).cmp(&(&b.owner, &b.target)));
+        Ok(records)
     }
 }
 

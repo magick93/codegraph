@@ -13,6 +13,7 @@ mod mox;
 mod persistence;
 mod policy;
 mod property;
+mod regulatory;
 mod relationship;
 mod schema;
 mod security;
@@ -57,6 +58,9 @@ pub use policy::{
     TenantIsolationPolicy, TenantPropagation, TenantStrategy,
 };
 pub use property::{inject_codelist_properties, PropertyNode};
+pub use regulatory::{
+    RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RegulatoryRefRecord,
+};
 pub use relationship::{
     Cardinality, ForeignKeySpec, Ownership, PropagationRule, PropagationTrigger, RelationshipNode,
 };

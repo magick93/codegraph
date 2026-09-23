@@ -43,11 +43,23 @@
 //!   are NOT domains; the first-class uplift is #267/#268. Until then the
 //!   domain falls back to the mox bridge's `resolve_domain` semantics
 //!   over the dotted namespace.
-//! - out-of-data-plane elements (func/rules/reports/annotation decls/
-//!   basic types/aliases/schemas/bodies/corpora/segments/meta types/
-//!   external rule sources/library functions) are counted and named as
-//!   `needs_review` — never silently dropped, never bridged (their node
-//!   families are #263–#265).
+//! - regulatory reference elements (issue #265) → `RegulatoryNode`s:
+//!   reports/bodies/corpora/segments/rule sources/rule schemas/meta types
+//!   land as ONE parameterized node family (kind-tagged), with the
+//!   associations the model actually expresses as edges — `[docReference]`
+//!   metadata and report regulatory refs as `RegulatoryReference` edges
+//!   (Schema/Condition/Report → body/corpus/segment), `with source S` as
+//!   `HasRuleSource`, a corpus' parent body as `CorpusInBody`, and rule-
+//!   source `extends` as `DerivesFrom`. Doc-reference targets no declared
+//!   element backs are skipped (sigil passes them through unvalidated).
+//!   Function `[transform]` annotations (`[ingest X]`/`[enrich]`/
+//!   `[projection Y]`) ride along onto the named rule-schema node's
+//!   properties (`transform_annotations`) — the functions themselves stay
+//!   out-of-plane (#263).
+//! - out-of-data-plane elements (func/rules/annotation decls/basic types/
+//!   aliases/library functions) are counted and named as `needs_review` —
+//!   never silently dropped, never bridged (their node families are
+//!   #263–#264).
 //!
 //! Provenance: every bridged node carries `custom_annotations["origin"]
 //! = "rosetta"` (issue #255) — deliberately DISTINCT from the mox
@@ -70,7 +82,7 @@ use codegraph_config::config::DomainConfig;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
     CodeList, ConditionKind, ConditionNode, EdgeProperties, EdgeType, EnumValue, PropertyNode,
-    SchemaNode,
+    RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, SchemaNode,
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 use codegraph_type_contracts::{PgType, RefClassificationKind};
@@ -119,6 +131,12 @@ pub struct RosettaIngestStats {
     pub conditions_ingested: usize,
     /// Bridge-derived one_of nodes (one per `choice` type).
     pub one_of_ingested: usize,
+    /// Regulatory reference nodes ingested (issue #265): reports, bodies,
+    /// corpora, segments, rule sources, rule schemas, meta types.
+    pub regulatory_nodes: usize,
+    /// Regulatory reference edges (doc references, report regulatory refs,
+    /// rule sources, corpus parents, metaType/rule-source derivation).
+    pub regulatory_edges: usize,
     pub namespaces: usize,
     pub namespace_imports: usize,
     /// Out-of-data-plane elements counted for review (never silently
@@ -135,8 +153,9 @@ impl std::fmt::Display for RosettaIngestStats {
         write!(
             f,
             "{} files, {} types ({} choices), {} properties, {} edges, {} enums \
-             ({} values, {} codelist schemas), {} extends, {} conditions recorded \
-             ({} nodes, {} one_of), {} namespaces ({} imports)",
+                 ({} values, {} codelist schemas), {} extends, {} conditions recorded \
+                 ({} nodes, {} one_of), {} regulatory nodes ({} refs), \
+                 {} namespaces ({} imports)",
             self.files,
             self.types,
             self.choices,
@@ -149,6 +168,8 @@ impl std::fmt::Display for RosettaIngestStats {
             self.conditions_recorded,
             self.conditions_ingested,
             self.one_of_ingested,
+            self.regulatory_nodes,
+            self.regulatory_edges,
             self.namespaces,
             self.namespace_imports,
         )?;
@@ -261,9 +282,21 @@ pub async fn ingest_rosetta_files(
         .collect();
 
     // ── Element universe (user files only): data types + enums to bridge;
-    // everything else is out-of-data-plane and recorded for review.
+    // regulatory reference elements for the #265 plane; everything else is
+    // out-of-data-plane and recorded for review.
     let mut data_index: Vec<(&sigil_model::Data, String, String, &str)> = Vec::new();
     let mut enum_index: Vec<(&sigil_model::Enumeration, String, String)> = Vec::new();
+    let mut reg_bodies: Vec<(&sigil_model::Body, String)> = Vec::new();
+    let mut reg_corpora: Vec<(&sigil_model::Corpus, String)> = Vec::new();
+    let mut reg_segments: Vec<(&sigil_model::Segment, String)> = Vec::new();
+    let mut reg_rule_schemas: Vec<(&sigil_model::Schema, String)> = Vec::new();
+    let mut reg_meta_types: Vec<(&sigil_model::MetaType, String)> = Vec::new();
+    let mut reg_rule_sources: Vec<(&sigil_model::ExternalRuleSource, String)> = Vec::new();
+    // (report, domain, synthesized name).
+    let mut reg_reports: Vec<(&sigil_model::Report, String, String)> = Vec::new();
+    // Function `[transform]` annotations awaiting their target rule-schema
+    // node: (bare reference, function name, transform kind).
+    let mut function_transforms: Vec<(String, String, &'static str)> = Vec::new();
     let mut bridged_schema_ids: HashMap<String, String> = HashMap::new();
     let mut seen_elements: HashSet<String> = HashSet::new();
     let mut namespaces_seen: HashSet<String> = HashSet::new();
@@ -277,7 +310,7 @@ pub async fn ingest_rosetta_files(
         let (domain, _) = resolve_domain(domain_config, &model.namespace);
         for element in &model.elements {
             let name = element.name();
-            if !seen_elements.insert(name.to_string()) {
+            if !seen_elements.insert(element_dedup_key(element, name)) {
                 continue;
             }
             match element {
@@ -289,20 +322,47 @@ pub async fn ingest_rosetta_files(
                     let id = schema_id(&model.namespace, name);
                     enum_index.push((enumeration, domain.clone(), id));
                 }
-                SemanticElement::Function(_)
-                | SemanticElement::Rule(_)
-                | SemanticElement::Report(_)
-                | SemanticElement::Annotation(_)
+                SemanticElement::Body(body) => reg_bodies.push((body, domain.clone())),
+                SemanticElement::Corpus(corpus) => reg_corpora.push((corpus, domain.clone())),
+                SemanticElement::Segment(segment) => reg_segments.push((segment, domain.clone())),
+                SemanticElement::Schema(schema) => reg_rule_schemas.push((schema, domain.clone())),
+                SemanticElement::MetaType(meta_type) => {
+                    reg_meta_types.push((meta_type, domain.clone()))
+                }
+                SemanticElement::ExternalRuleSource(source) => {
+                    reg_rule_sources.push((source, domain.clone()))
+                }
+                SemanticElement::Report(report) => {
+                    reg_reports.push((report, domain.clone(), synthesize_report_name(report)))
+                }
+                SemanticElement::Function(function) => {
+                    stats.needs_review += 1;
+                    stats
+                        .needs_review_names
+                        .push(format!("func {}", function.name));
+                    // Bridge-level capture (issue #265): transform
+                    // annotations targeting a rule schema land on that
+                    // schema node's properties; the function stays
+                    // out-of-plane (#263 owns function nodes).
+                    for transform in &function.transform {
+                        if let Some(reference) = &transform.reference {
+                            function_transforms.push((
+                                referenced_title_str(reference),
+                                function.name.clone(),
+                                transform.kind.as_str(),
+                            ));
+                        }
+                    }
+                }
+                SemanticElement::Rule(rule) => {
+                    stats.needs_review += 1;
+                    stats.needs_review_names.push(format!("rule {}", rule.name));
+                }
+                SemanticElement::Annotation(_)
                 | SemanticElement::TypeAlias(_)
                 | SemanticElement::BasicType(_)
                 | SemanticElement::RecordType(_)
-                | SemanticElement::LibraryFunction(_)
-                | SemanticElement::ExternalRuleSource(_)
-                | SemanticElement::Schema(_)
-                | SemanticElement::Body(_)
-                | SemanticElement::Corpus(_)
-                | SemanticElement::Segment(_)
-                | SemanticElement::MetaType(_) => {
+                | SemanticElement::LibraryFunction(_) => {
                     stats.needs_review += 1;
                     stats
                         .needs_review_names
@@ -313,6 +373,214 @@ pub async fn ingest_rosetta_files(
     }
     stats.namespaces = namespaces_seen.len();
     stats.namespace_imports = user_files.iter().map(|model| model.imports.len()).sum();
+
+    // ── Bridge pass 0: regulatory reference nodes (#265). ONE parameterized
+    // node family (kind-tagged); `reg_known` drives best-effort edge
+    // emission below so stats stay backend-independent.
+    let mut reg_known: HashSet<(String, String)> = HashSet::new();
+    let transform_annotations: HashMap<&str, Vec<serde_json::Value>> = function_transforms
+        .iter()
+        .fold(HashMap::new(), |mut acc, (reference, function, kind)| {
+            acc.entry(reference.as_str())
+                .or_insert_with(Vec::new)
+                .push(serde_json::json!({ "function": function, "kind": kind }));
+            acc
+        });
+    for (body, domain) in &reg_bodies {
+        let node = RegulatoryNode {
+            name: body.name.clone(),
+            kind: RegulatoryKind::Body,
+            label: None,
+            definition: body.definition.clone(),
+            domain: Some(domain.clone()),
+            properties: serde_json::json!({
+                "origin": ROSETTA_ORIGIN,
+                "body_type": body.body_type,
+            }),
+        };
+        ingestor
+            .ingest_regulatory(&node)
+            .await
+            .map_err(Error::Graph)?;
+        reg_known.insert((RegulatoryKind::Body.as_str().to_string(), body.name.clone()));
+        stats.regulatory_nodes += 1;
+    }
+    for (corpus, domain) in &reg_corpora {
+        let node = RegulatoryNode {
+            name: corpus.name.clone(),
+            kind: RegulatoryKind::Corpus,
+            label: corpus.display_name.clone(),
+            definition: corpus.definition.clone(),
+            domain: Some(domain.clone()),
+            properties: serde_json::json!({
+                "origin": ROSETTA_ORIGIN,
+                "corpus_type": corpus.corpus_type,
+                "parent_body": corpus.body.as_deref().map(referenced_title_str),
+            }),
+        };
+        ingestor
+            .ingest_regulatory(&node)
+            .await
+            .map_err(Error::Graph)?;
+        reg_known.insert((
+            RegulatoryKind::Corpus.as_str().to_string(),
+            corpus.name.clone(),
+        ));
+        stats.regulatory_nodes += 1;
+    }
+    for (segment, domain) in &reg_segments {
+        let node = RegulatoryNode {
+            name: segment.name.clone(),
+            kind: RegulatoryKind::Segment,
+            label: None,
+            definition: None,
+            domain: Some(domain.clone()),
+            properties: serde_json::json!({ "origin": ROSETTA_ORIGIN }),
+        };
+        ingestor
+            .ingest_regulatory(&node)
+            .await
+            .map_err(Error::Graph)?;
+        reg_known.insert((
+            RegulatoryKind::Segment.as_str().to_string(),
+            segment.name.clone(),
+        ));
+        stats.regulatory_nodes += 1;
+    }
+    for (schema, domain) in &reg_rule_schemas {
+        let transforms = transform_annotations
+            .get(schema.name.as_str())
+            .cloned()
+            .unwrap_or_default();
+        let mut properties = serde_json::json!({
+            "origin": ROSETTA_ORIGIN,
+            "format": schema.format,
+            "transform_annotations": transforms,
+        });
+        if !schema.annotations.is_empty() {
+            if let Ok(annotations) = serde_json::to_value(&schema.annotations) {
+                properties["annotations"] = annotations;
+            }
+        }
+        let node = RegulatoryNode {
+            name: schema.name.clone(),
+            kind: RegulatoryKind::RuleSchema,
+            label: None,
+            definition: schema.definition.clone(),
+            domain: Some(domain.clone()),
+            properties,
+        };
+        ingestor
+            .ingest_regulatory(&node)
+            .await
+            .map_err(Error::Graph)?;
+        reg_known.insert((
+            RegulatoryKind::RuleSchema.as_str().to_string(),
+            schema.name.clone(),
+        ));
+        stats.regulatory_nodes += 1;
+    }
+    for (meta_type, domain) in &reg_meta_types {
+        let node = RegulatoryNode {
+            name: meta_type.name.clone(),
+            kind: RegulatoryKind::MetaType,
+            label: None,
+            definition: None,
+            domain: Some(domain.clone()),
+            properties: serde_json::json!({
+                "origin": ROSETTA_ORIGIN,
+                "type_ref": referenced_title(&meta_type.type_ref),
+            }),
+        };
+        ingestor
+            .ingest_regulatory(&node)
+            .await
+            .map_err(Error::Graph)?;
+        reg_known.insert((
+            RegulatoryKind::MetaType.as_str().to_string(),
+            meta_type.name.clone(),
+        ));
+        stats.regulatory_nodes += 1;
+    }
+    for (source, domain) in &reg_rule_sources {
+        let classes: Vec<serde_json::Value> = source
+            .classes
+            .iter()
+            .map(|class| {
+                serde_json::json!({
+                    "data": referenced_title(&class.data),
+                    "attributes": class.attributes.iter().map(|attribute| {
+                        serde_json::json!({
+                            "add": attribute.add,
+                            "attribute": attribute.attribute,
+                            "rule_references": attribute.rule_references.iter().map(|r| {
+                                serde_json::json!({
+                                    "rule": r.rule,
+                                    "empty": r.empty,
+                                })
+                            }).collect::<Vec<_>>(),
+                        })
+                    }).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        let node = RegulatoryNode {
+            name: source.name.clone(),
+            kind: RegulatoryKind::RuleSource,
+            label: None,
+            definition: None,
+            domain: Some(domain.clone()),
+            properties: serde_json::json!({
+                "origin": ROSETTA_ORIGIN,
+                "super_source": source.super_source.as_ref().map(referenced_title),
+                "classes": classes,
+            }),
+        };
+        ingestor
+            .ingest_regulatory(&node)
+            .await
+            .map_err(Error::Graph)?;
+        reg_known.insert((
+            RegulatoryKind::RuleSource.as_str().to_string(),
+            source.name.clone(),
+        ));
+        stats.regulatory_nodes += 1;
+    }
+    for (report, domain, name) in &reg_reports {
+        let node = RegulatoryNode {
+            name: name.clone(),
+            kind: RegulatoryKind::Report,
+            label: None,
+            definition: None,
+            domain: Some(domain.clone()),
+            properties: serde_json::json!({
+                "origin": ROSETTA_ORIGIN,
+                "timing": report.timing.as_str(),
+                "input_type": referenced_title(&report.input_type),
+                "report_type": named_ref_title(&report.report_type),
+                "eligibility_rules": report.eligibility_rules.iter().map(named_ref_title)
+                    .collect::<Vec<_>>(),
+                "rule_source": report.rule_source.as_ref().map(named_ref_title),
+                "regulatory": {
+                    "body": named_ref_title(&report.regulatory.body),
+                    "corpora": report.regulatory.corpora.iter().map(named_ref_title)
+                        .collect::<Vec<_>>(),
+                    "segments": report.regulatory.segments.iter().map(|segment| {
+                        serde_json::json!({
+                            "segment": named_ref_title(&segment.segment),
+                            "reference": segment.reference,
+                        })
+                    }).collect::<Vec<_>>(),
+                },
+            }),
+        };
+        ingestor
+            .ingest_regulatory(&node)
+            .await
+            .map_err(Error::Graph)?;
+        reg_known.insert((RegulatoryKind::Report.as_str().to_string(), name.clone()));
+        stats.regulatory_nodes += 1;
+    }
 
     // ── Bridge pass 1: codelist SchemaNodes + CodeLists + EnumValues.
     let mut bridged: HashSet<String> = HashSet::new();
@@ -409,6 +677,19 @@ pub async fn ingest_rosetta_files(
                 .await
                 .map_err(Error::Graph)?;
             stats.conditions_ingested += 1;
+
+            // The condition's own `[docReference ...]` metadata →
+            // RegulatoryReference edges (issue #265).
+            for doc in &condition.doc_references {
+                emit_doc_reference_edges(
+                    ingestor,
+                    &RegulatoryOwner::Condition(condition_node.name.clone()),
+                    doc,
+                    &reg_known,
+                    &mut stats,
+                )
+                .await?;
+            }
         }
 
         // Choices derive ONE one_of node whose options are the referenced
@@ -522,6 +803,118 @@ pub async fn ingest_rosetta_files(
                 stats.edges += 1;
             }
         }
+
+        // The type's `[docReference ...]` metadata → RegulatoryReference
+        // edges (issue #265). Attribute-level doc references stay in the
+        // SchemaNode's `rosetta_attribute_annotations` payload (attributes
+        // are not nodes).
+        for doc in &data.doc_references {
+            emit_doc_reference_edges(
+                ingestor,
+                &RegulatoryOwner::Schema(data.name.clone()),
+                doc,
+                &reg_known,
+                &mut stats,
+            )
+            .await?;
+        }
+    }
+
+    // ── Bridge pass 4: regulatory structural edges (issue #265).
+    // Best-effort: a target no declared user-file element backs is skipped
+    // (sigil passes doc references through unvalidated, and backends match
+    // by name + kind).
+    for (corpus, _) in &reg_corpora {
+        if let Some(parent) = &corpus.body {
+            link_regulatory(
+                ingestor,
+                &RegulatoryOwner::Regulatory {
+                    name: corpus.name.clone(),
+                    kind: RegulatoryKind::Corpus,
+                },
+                &referenced_title_str(parent),
+                RegulatoryKind::Body,
+                RegulatoryEdgeKind::CorpusInBody,
+                None,
+                &reg_known,
+                &mut stats,
+            )
+            .await?;
+        }
+    }
+    for (source, _) in &reg_rule_sources {
+        if let Some(super_source) = &source.super_source {
+            link_regulatory(
+                ingestor,
+                &RegulatoryOwner::Regulatory {
+                    name: source.name.clone(),
+                    kind: RegulatoryKind::RuleSource,
+                },
+                &referenced_title(super_source),
+                RegulatoryKind::RuleSource,
+                RegulatoryEdgeKind::DerivesFrom,
+                None,
+                &reg_known,
+                &mut stats,
+            )
+            .await?;
+        }
+    }
+    for (report, _, name) in &reg_reports {
+        let owner = RegulatoryOwner::Regulatory {
+            name: name.clone(),
+            kind: RegulatoryKind::Report,
+        };
+        link_regulatory(
+            ingestor,
+            &owner,
+            &named_ref_title(&report.regulatory.body),
+            RegulatoryKind::Body,
+            RegulatoryEdgeKind::Reference,
+            None,
+            &reg_known,
+            &mut stats,
+        )
+        .await?;
+        for corpus in &report.regulatory.corpora {
+            link_regulatory(
+                ingestor,
+                &owner,
+                &named_ref_title(corpus),
+                RegulatoryKind::Corpus,
+                RegulatoryEdgeKind::Reference,
+                None,
+                &reg_known,
+                &mut stats,
+            )
+            .await?;
+        }
+        for segment in &report.regulatory.segments {
+            link_regulatory(
+                ingestor,
+                &owner,
+                &named_ref_title(&segment.segment),
+                RegulatoryKind::Segment,
+                RegulatoryEdgeKind::Reference,
+                Some(&segment.reference),
+                &reg_known,
+                &mut stats,
+            )
+            .await?;
+        }
+        if let Some(rule_source) = &report.rule_source {
+            link_regulatory(
+                ingestor,
+                &owner,
+                &named_ref_title(rule_source),
+                RegulatoryKind::RuleSource,
+                RegulatoryEdgeKind::RuleSource,
+                None,
+                &reg_known,
+                &mut stats,
+            )
+            .await?;
+        }
     }
 
     if stats.needs_review != 0 {
@@ -550,6 +943,121 @@ fn model_namespace<'a>(user_files: &'a [sigil_model::ModelFile], element_name: &
         })
         .map(|model| model.namespace.as_str())
         .unwrap_or("")
+}
+
+/// The element-universe dedup key. Reports are anonymous in sigil
+/// (`SemanticElement::name()` returns `""`), so they key on their
+/// synthesized name — structurally identical reports dedup, distinct ones
+/// all land.
+fn element_dedup_key(element: &SemanticElement, name: &str) -> String {
+    match element {
+        SemanticElement::Report(report) => synthesize_report_name(report),
+        _ => name.to_string(),
+    }
+}
+
+/// A deterministic identity for an anonymous report: its regulatory
+/// reference plus timing, e.g. `Report CDRBody ESMA Section1 "1.a" (T+1)`.
+/// Sigil renders reports nameless in canonical JSON too (there is no
+/// `RosettaReport.name`); without a synthesis, one graph key could not
+/// distinguish a workspace's reports.
+fn synthesize_report_name(report: &sigil_model::Report) -> String {
+    let mut name = format!("Report {}", named_ref_title(&report.regulatory.body));
+    for corpus in &report.regulatory.corpora {
+        name.push(' ');
+        name.push_str(&named_ref_title(corpus));
+    }
+    for segment in &report.regulatory.segments {
+        name.push_str(&format!(
+            " {} \"{}\"",
+            named_ref_title(&segment.segment),
+            segment.reference
+        ));
+    }
+    name.push_str(&format!(" ({})", report.timing.as_str()));
+    name
+}
+
+/// Bare title of a `NamedRef` (the report's reference parts may be written
+/// namespace-qualified; titles are bare, matching `referenced_title`).
+fn named_ref_title(named_ref: &sigil_model::NamedRef) -> String {
+    referenced_title_str(&named_ref.name)
+}
+
+/// Bare last segment of a dotted reference name.
+fn referenced_title_str(name: &str) -> String {
+    name.rsplit('.').next().unwrap_or(name).to_string()
+}
+
+/// Emit the `RegulatoryReference` edges for one `[docReference ...]`
+/// payload: owner → body, owner → each corpus (carrying the provision as
+/// the ref path), owner → each segment (carrying the segment reference).
+async fn emit_doc_reference_edges(
+    ingestor: &dyn GraphIngestor,
+    owner: &RegulatoryOwner,
+    doc: &sigil_model::DocReference,
+    reg_known: &HashSet<(String, String)>,
+    stats: &mut RosettaIngestStats,
+) -> crate::error::Result<()> {
+    let mut edges: Vec<(String, RegulatoryKind, Option<String>)> = vec![(
+        referenced_title_str(&doc.body),
+        RegulatoryKind::Body,
+        doc.provision.clone(),
+    )];
+    for corpus in &doc.corpora {
+        edges.push((
+            referenced_title_str(corpus),
+            RegulatoryKind::Corpus,
+            doc.provision.clone(),
+        ));
+    }
+    for (segment, reference) in &doc.segments {
+        edges.push((
+            referenced_title_str(segment),
+            RegulatoryKind::Segment,
+            Some(reference.clone()),
+        ));
+    }
+    for (target, target_kind, ref_path) in edges {
+        link_regulatory(
+            ingestor,
+            owner,
+            &target,
+            target_kind,
+            RegulatoryEdgeKind::Reference,
+            ref_path.as_deref(),
+            reg_known,
+            stats,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Link an owner to a regulatory node when the target was ingested this
+/// run, counting the edge in the stats. Best-effort: a target no declared
+/// user-file element backs is skipped (sigil does not validate
+/// doc-reference targets either).
+#[allow(clippy::too_many_arguments)]
+async fn link_regulatory(
+    ingestor: &dyn GraphIngestor,
+    owner: &RegulatoryOwner,
+    target: &str,
+    target_kind: RegulatoryKind,
+    edge_kind: RegulatoryEdgeKind,
+    ref_path: Option<&str>,
+    reg_known: &HashSet<(String, String)>,
+    stats: &mut RosettaIngestStats,
+) -> crate::error::Result<()> {
+    if !reg_known.contains(&(target_kind.as_str().to_string(), target.to_string())) {
+        return Ok(());
+    }
+    ingestor
+        .ingest_regulatory_reference(owner, target, target_kind, edge_kind, ref_path)
+        .await
+        .map_err(Error::Graph)?;
+    stats.regulatory_edges += 1;
+    Ok(())
 }
 
 fn element_kind_label(element: &SemanticElement) -> &'static str {

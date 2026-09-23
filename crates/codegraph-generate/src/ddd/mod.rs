@@ -4,6 +4,7 @@ pub mod dto;
 pub mod errors;
 pub mod event;
 pub mod query;
+pub mod regulatory_report;
 pub mod repository;
 pub mod repository_emitter;
 pub mod validations;

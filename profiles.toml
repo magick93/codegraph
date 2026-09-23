@@ -42,6 +42,10 @@ rls_from_policy = false
 # src/domain/<domain>/validations.rs from array minItems/maxItems and the
 # rosetta ConditionNode graph family (TODO(#262) transpile markers). Off =
 # byte-identical output.
+# Same gate also enables "regulatory_reports" (issue #265): add it to an
+# [api] generators list to emit per-domain src/domain/<domain>/
+# regulatory_reports.rs report skeletons from the rosetta RegulatoryNode
+# family (TODO(#263)/TODO(#264) seams). Off = byte-identical output.
 rosetta_backend = false
 
 [profiles.default.api]

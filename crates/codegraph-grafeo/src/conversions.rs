@@ -2,8 +2,9 @@ use codegraph_core::error::GraphError;
 use codegraph_core::types::{
     Cardinality, CodeList, CompositeColumn, CompositeRange, ConditionKind, ConditionNode,
     EnumValue, Extension, ForeignKeySpec, MembershipNode, MembershipStatus, Ownership, PolicyKind,
-    PolicyNode, PropagationRule, PropertyNode, RelationshipNode, SchemaNode, SecurityIdentityNode,
-    StructuredSubField, TenantNode, TenantStrategy,
+    PolicyNode, PropagationRule, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode,
+    RegulatoryRefRecord, RelationshipNode, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, TenantStrategy,
 };
 use codegraph_type_contracts::RefClassificationKind;
 use std::collections::HashMap;
@@ -379,5 +380,47 @@ pub fn row_to_condition_node(
         options,
         definition: reader.get_opt_string(row, "definition")?,
         domain: reader.get_opt_string(row, "domain")?,
+    })
+}
+
+pub fn row_to_regulatory_node(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+) -> Result<RegulatoryNode, GraphError> {
+    let kind_str = reader.get_string(row, "kind")?;
+    let kind = RegulatoryKind::parse_kind(&kind_str)
+        .ok_or_else(|| GraphError::Query(format!("unknown regulatory kind '{kind_str}'")))?;
+    // `properties_json` persists as a JSON object string (the ingestor
+    // serializes the serde_json::Value); an absent or unparsable value
+    // reads back as an empty object.
+    let properties = reader
+        .get_opt_string(row, "properties_json")?
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+    Ok(RegulatoryNode {
+        name: reader.get_string(row, "name")?,
+        kind,
+        label: reader.get_opt_string(row, "label")?,
+        definition: reader.get_opt_string(row, "definition")?,
+        domain: reader.get_opt_string(row, "domain")?,
+        properties,
+    })
+}
+
+pub fn row_to_regulatory_ref_record(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+    edge_kind: RegulatoryEdgeKind,
+) -> Result<RegulatoryRefRecord, GraphError> {
+    let kind_str = reader.get_string(row, "target_kind")?;
+    let target_kind = RegulatoryKind::parse_kind(&kind_str)
+        .ok_or_else(|| GraphError::Query(format!("unknown regulatory kind '{kind_str}'")))?;
+    Ok(RegulatoryRefRecord {
+        owner: reader.get_string(row, "owner")?,
+        owner_label: String::new(),
+        target: reader.get_string(row, "target")?,
+        target_kind,
+        edge_kind,
+        ref_path: reader.get_opt_string(row, "ref_path")?,
     })
 }

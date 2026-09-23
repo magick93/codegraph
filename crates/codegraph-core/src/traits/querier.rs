@@ -6,8 +6,9 @@ use crate::types::{
     HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
     MoxOperationNode, MoxVocabularyNode, NamespaceNode, NavigationFlowRecord,
     ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
-    PropertyNode, RelationshipNode, RepositoryNode, SchemaClassificationData, SchemaNode,
-    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
+    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode,
+    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -471,6 +472,21 @@ pub trait GraphQuerier: Send + Sync {
 
     /// Every ConditionNode in the graph.
     async fn list_conditions(&self) -> Result<Vec<ConditionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    // ── Regulatory reference plane query methods (issue #265) ─────────
+
+    /// Every regulatory reference metadata node in the graph, ordered by
+    /// (kind, name).
+    async fn list_regulatory(&self) -> Result<Vec<RegulatoryNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Every regulatory reference edge, read back uniformly across the
+    /// four edge families (`RegulatoryReference`/`HasRuleSource`/
+    /// `CorpusInBody`/`DerivesFrom`), ordered by (owner, target).
+    async fn list_regulatory_references(&self) -> Result<Vec<RegulatoryRefRecord>, GraphError> {
         Ok(Vec::new())
     }
 }

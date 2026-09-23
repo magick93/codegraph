@@ -74,6 +74,13 @@ pub enum EdgeType {
 
     // Constraint plane edge types (issue #261)
     HasCondition,
+
+    // Regulatory reference plane edge types (issue #265). Created through
+    // `GraphIngestor::ingest_regulatory_reference`, not `ingest_edge`.
+    RegulatoryReference,
+    HasRuleSource,
+    CorpusInBody,
+    DerivesFrom,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
