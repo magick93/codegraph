@@ -2,11 +2,12 @@ use crate::error::GraphError;
 use crate::types::{
     ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode,
     CompositeColumn, CompositeRange, ConditionNode, DataBindingNode, EdgeProperties, EdgeType,
-    EnumValue, ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats, InteractionNode,
-    LexiconNode, MembershipNode, MoxDomainModel, NamespaceNode, ParameterDefinitionNode,
-    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind,
-    RegulatoryNode, RegulatoryOwner, RelationshipNode, RepositoryNode, SchemaNode,
-    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
+    EnumValue, ErrorDefinitionNode, EventNode, FunctionNode, HttpEndpointNode, IngestStats,
+    InteractionNode, LexiconNode, MembershipNode, MoxDomainModel, NamespaceNode,
+    ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
+    RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RelationshipNode,
+    RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
+    ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -182,6 +183,14 @@ pub trait GraphIngestor: Send + Sync {
     /// segment/rule source/rule schema/meta type). Deduplication is the
     /// bridge's job (name + kind is the natural key).
     async fn ingest_regulatory(&self, node: &RegulatoryNode) -> Result<(), GraphError>;
+
+    // ── Computation plane (issue #263) ─────────────────────────────────
+
+    /// Ingest one FunctionNode (rosetta func). The node carries its
+    /// resolved `extends` parent name; the `FunctionExtends` edge is
+    /// written separately via `ingest_edge` AFTER every function of the
+    /// run exists (name-ordered ingestion is not parent-first).
+    async fn ingest_function(&self, node: &FunctionNode) -> Result<(), GraphError>;
 
     /// Link an owner element to a regulatory node. Edges are best-effort:
     /// when the target regulatory node (name + kind) is absent the backend

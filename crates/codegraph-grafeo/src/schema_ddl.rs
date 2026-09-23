@@ -372,6 +372,22 @@ fn node_type_ddl() -> Vec<&'static str> {
             domain STRING,
             properties_json STRING
         )",
+        // Function — computation plane (issue #263). ONE structured node
+        // per rosetta func: the common shape persists flat (name, domain,
+        // definition, extends_function); the typed structured payload
+        // (dispatch head, inputs, output, aliases, operations,
+        // post-conditions, transform annotations, open-ended metadata)
+        // persists as one JSON object string in `payload_json` — Grafeo
+        // node properties are a flat bag, so nested Vecs serialize (the
+        // ConditionNode `options`/RegulatoryNode `properties_json`
+        // precedent).
+        "CREATE NODE TYPE IF NOT EXISTS Function (
+            name STRING NOT NULL,
+            domain STRING,
+            definition STRING,
+            extends_function STRING,
+            payload_json STRING NOT NULL
+        )",
     ]
 }
 
@@ -448,5 +464,7 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS HasRuleSource ()",
         "CREATE EDGE TYPE IF NOT EXISTS CorpusInBody ()",
         "CREATE EDGE TYPE IF NOT EXISTS DerivesFrom ()",
+        // Computation plane edge types (issue #263)
+        "CREATE EDGE TYPE IF NOT EXISTS FunctionExtends ()",
     ]
 }

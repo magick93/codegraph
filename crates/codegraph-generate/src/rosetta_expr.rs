@@ -221,6 +221,32 @@ pub fn transpile(
     .emit(payload, false)
 }
 
+/// [`transpile`] with a scope of local variable names (issue #263, slice-4
+/// addition for function bodies): a bare `SymbolReference` matching a
+/// local emits the bare name instead of a receiver-field access — a
+/// function's inputs, aliases, and output are locals of the generated
+/// free function, not fields of a receiver struct. Purely additive:
+/// existing `transpile` calls are unchanged.
+pub fn transpile_scoped(
+    payload: &serde_json::Value,
+    ctx: &ExprContext<'_>,
+    locals: &[String],
+) -> Result<String, TranspileError> {
+    let mut emitter = Emitter {
+        ctx,
+        frames: Vec::new(),
+    };
+    if !locals.is_empty() {
+        emitter.frames.push(Frame {
+            params: locals.to_vec(),
+            // The implicit variable `item` is a collection-lambda concept;
+            // at function-body top level there is no implicit binding.
+            implicit: None,
+        });
+    }
+    emitter.emit(payload, false)
+}
+
 /// One lambda binding frame (innermost frame last in the stack).
 struct Frame {
     /// Parameter names (snake_case, keyword-escaped) matchable by bare
@@ -2011,5 +2037,56 @@ mod tests {
     fn display_is_marker_friendly() {
         let err = TranspileError::new("Switch", "someday");
         assert_eq!(err.to_string(), "unsupported expression (Switch): someday");
+    }
+
+    // ── transpile_scoped (issue #263 slice-4 addition) ──────────────────
+
+    fn t_scoped(payload: serde_json::Value, locals: &[&str]) -> String {
+        let sets = Sets::empty();
+        let locals: Vec<String> = locals.iter().map(|s| s.to_string()).collect();
+        transpile_scoped(&payload, &sets.ctx(), &locals).expect("transpiles")
+    }
+
+    #[test]
+    fn scoped_locals_emit_bare() {
+        // `base + trade -> quantity` with `base` a local (an alias) and
+        // `trade` an input local: both emit bare, the feature as a field.
+        let payload = json!({
+            "kind":"Binary","op":"+",
+            "left": sym("base"),
+            "right": {"kind":"FeatureCall","receiver":sym("trade"),"feature":"quantity"},
+        });
+        assert_eq!(
+            t_scoped(payload, &["base", "trade"]),
+            "base + trade.quantity"
+        );
+    }
+
+    #[test]
+    fn scoped_unknown_symbols_stay_receiver_fields() {
+        // Not-a-local: unchanged transpile semantics (receiver prefix).
+        assert_eq!(t_scoped(sym("base"), &[]), "dto.base");
+    }
+
+    #[test]
+    fn scoped_local_beats_receiver_even_when_named_field() {
+        let payload = json!({
+            "kind":"FeatureCall","receiver":sym("result"),"feature":"price",
+        });
+        assert_eq!(t_scoped(payload, &["result"]), "result.price");
+    }
+
+    #[test]
+    fn scoped_exists_on_local_keeps_is_some_shape() {
+        let payload = json!({"kind":"Exists","modifier":"none","argument":sym("result")});
+        assert_eq!(t_scoped(payload, &["result"]), "result.is_some()");
+    }
+
+    #[test]
+    fn scoped_snake_cases_and_keyword_escapes_locals() {
+        // Matching is on the EMITTED (snake_cased, keyword-escaped) name —
+        // the generator registers locals in exactly that form.
+        let payload = json!({"kind":"FeatureCall","receiver":sym("Order"),"feature":"type"});
+        assert_eq!(t_scoped(payload, &["order", "r#type"]), "order.r#type");
     }
 }

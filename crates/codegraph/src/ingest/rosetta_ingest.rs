@@ -48,18 +48,27 @@
 //!   land as ONE parameterized node family (kind-tagged), with the
 //!   associations the model actually expresses as edges — `[docReference]`
 //!   metadata and report regulatory refs as `RegulatoryReference` edges
-//!   (Schema/Condition/Report → body/corpus/segment), `with source S` as
-//!   `HasRuleSource`, a corpus' parent body as `CorpusInBody`, and rule-
-//!   source `extends` as `DerivesFrom`. Doc-reference targets no declared
-//!   element backs are skipped (sigil passes them through unvalidated).
-//!   Function `[transform]` annotations (`[ingest X]`/`[enrich]`/
-//!   `[projection Y]`) ride along onto the named rule-schema node's
-//!   properties (`transform_annotations`) — the functions themselves stay
-//!   out-of-plane (#263).
-//! - out-of-data-plane elements (func/rules/annotation decls/basic types/
+//!   (Schema/Condition/Function/Report → body/corpus/segment), `with
+//!   source S` as `HasRuleSource`, a corpus' parent body as
+//!   `CorpusInBody`, and rule-source `extends` as `DerivesFrom`.
+//!   Doc-reference targets no declared element backs are skipped (sigil
+//!   itself does not validate them).
+//! - functions (issue #263) → `FunctionNode`s: each sigil `Function`
+//!   lands as ONE structured node carrying its dispatch head
+//!   (`(attr: Enum->VALUE)`), typed inputs/output, aliases (`alias n: e`),
+//!   `set`/`add` operations with their `->` paths, and post-conditions —
+//!   every expression persisted as the canonical `Expr::to_json()` payload
+//!   for the generation-time transpiler. `extends` resolves within the
+//!   run (functions sorted by name per domain; an extends CYCLE is a hard
+//!   error naming the cycle) and becomes a `FunctionExtends` edge plus the
+//!   denormalized `extends` field. `[transform]` annotations land on the
+//!   node (typed) AND keep riding onto the named rule-schema node's
+//!   properties (`transform_annotations`, the #265 surface). Function
+//!   `[docReference ...]` metadata emits `RegulatoryReference` edges owned
+//!   by `RegulatoryOwner::Function`.
+//! - out-of-data-plane elements (rules/annotation decls/basic types/
 //!   aliases/library functions) are counted and named as `needs_review` —
-//!   never silently dropped, never bridged (their node families are
-//!   #263–#264).
+//!   never silently dropped, never bridged (#264 owns rule nodes).
 //!
 //! Provenance: every bridged node carries `custom_annotations["origin"]
 //! = "rosetta"` (issue #255) — deliberately DISTINCT from the mox
@@ -81,8 +90,10 @@ use sigil_resolve::Resolution;
 use codegraph_config::config::DomainConfig;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    CodeList, ConditionKind, ConditionNode, EdgeProperties, EdgeType, EnumValue, PropertyNode,
-    RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, SchemaNode,
+    CodeList, ConditionKind, ConditionNode, EdgeProperties, EdgeType, EnumValue, FunctionAlias,
+    FunctionDispatch, FunctionInput, FunctionNode, FunctionOperation, FunctionPostCondition,
+    FunctionTransform, FunctionTransformKind, PropertyNode, RegulatoryEdgeKind, RegulatoryKind,
+    RegulatoryNode, RegulatoryOwner, SchemaNode,
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 use codegraph_type_contracts::{PgType, RefClassificationKind};
@@ -137,10 +148,12 @@ pub struct RosettaIngestStats {
     /// Regulatory reference edges (doc references, report regulatory refs,
     /// rule sources, corpus parents, metaType/rule-source derivation).
     pub regulatory_edges: usize,
+    /// Function nodes ingested (issue #263): sigil `Function` elements.
+    pub functions_ingested: usize,
     pub namespaces: usize,
     pub namespace_imports: usize,
     /// Out-of-data-plane elements counted for review (never silently
-    /// dropped, never bridged — #263–#265 own their node families).
+    /// dropped, never bridged — #264 owns rule nodes).
     pub needs_review: usize,
     pub skipped: usize,
     pub bridged_titles: Vec<String>,
@@ -154,7 +167,7 @@ impl std::fmt::Display for RosettaIngestStats {
             f,
             "{} files, {} types ({} choices), {} properties, {} edges, {} enums \
                  ({} values, {} codelist schemas), {} extends, {} conditions recorded \
-                 ({} nodes, {} one_of), {} regulatory nodes ({} refs), \
+                 ({} nodes, {} one_of), {} regulatory nodes ({} refs), {} functions, \
                  {} namespaces ({} imports)",
             self.files,
             self.types,
@@ -170,6 +183,7 @@ impl std::fmt::Display for RosettaIngestStats {
             self.one_of_ingested,
             self.regulatory_nodes,
             self.regulatory_edges,
+            self.functions_ingested,
             self.namespaces,
             self.namespace_imports,
         )?;
@@ -294,6 +308,8 @@ pub async fn ingest_rosetta_files(
     let mut reg_rule_sources: Vec<(&sigil_model::ExternalRuleSource, String)> = Vec::new();
     // (report, domain, synthesized name).
     let mut reg_reports: Vec<(&sigil_model::Report, String, String)> = Vec::new();
+    // (function, domain).
+    let mut func_index: Vec<(&sigil_model::Function, String)> = Vec::new();
     // Function `[transform]` annotations awaiting their target rule-schema
     // node: (bare reference, function name, transform kind).
     let mut function_transforms: Vec<(String, String, &'static str)> = Vec::new();
@@ -336,14 +352,10 @@ pub async fn ingest_rosetta_files(
                     reg_reports.push((report, domain.clone(), synthesize_report_name(report)))
                 }
                 SemanticElement::Function(function) => {
-                    stats.needs_review += 1;
-                    stats
-                        .needs_review_names
-                        .push(format!("func {}", function.name));
-                    // Bridge-level capture (issue #265): transform
-                    // annotations targeting a rule schema land on that
-                    // schema node's properties; the function stays
-                    // out-of-plane (#263 owns function nodes).
+                    func_index.push((function, domain.clone()));
+                    // Transform annotations keep riding onto the targeted
+                    // rule-schema node's properties (the #265 surface) in
+                    // ADDITION to landing on the FunctionNode itself.
                     for transform in &function.transform {
                         if let Some(reference) = &transform.reference {
                             function_transforms.push((
@@ -580,6 +592,56 @@ pub async fn ingest_rosetta_files(
             .map_err(Error::Graph)?;
         reg_known.insert((RegulatoryKind::Report.as_str().to_string(), name.clone()));
         stats.regulatory_nodes += 1;
+    }
+
+    // ── Bridge pass 0b: functions (issue #263). Deterministic order —
+    // functions sorted by name within a domain — drives extends resolution:
+    // every child carries the parent's name (denormalized `extends` field)
+    // and the backend links the `FunctionExtends` edge when the parent node
+    // exists in this run. An extends CYCLE is a hard error naming the
+    // cycle (a cyclic family could never be code-generated in dependency
+    // order, so half-bridging it would be worse than failing).
+    func_index.sort_by(|(a, da), (b, db)| (da, &a.name).cmp(&(db, &b.name)));
+    if let Some(cycle) = detect_function_extends_cycle(&func_index) {
+        return Err(Error::RosettaModel {
+            file: "rosetta workspace".to_string(),
+            reason: format!("function extends cycle detected: {cycle}"),
+        });
+    }
+    for (function, domain) in &func_index {
+        let node = function_node(function, domain);
+        ingestor
+            .ingest_function(&node)
+            .await
+            .map_err(Error::Graph)?;
+        stats.functions_ingested += 1;
+        // Doc-reference edges come after the node exists (backends match
+        // the owner by name).
+        for doc in &function.doc_references {
+            emit_doc_reference_edges(
+                ingestor,
+                &RegulatoryOwner::Function(node.name.clone()),
+                doc,
+                &reg_known,
+                &mut stats,
+            )
+            .await?;
+        }
+    }
+    // The FunctionExtends edges come after every function node exists —
+    // name-ordered ingestion is not parent-first. Only functions of this
+    // run are linked (a parent outside the run, e.g. a builtin, is
+    // unresolvable here); the child's `extends` field keeps the name.
+    for (function, _) in &func_index {
+        let Some(parent) = function.super_function.as_ref().map(referenced_title) else {
+            continue;
+        };
+        if func_index.iter().any(|(f, _)| f.name == parent) {
+            ingestor
+                .ingest_edge(&function.name, &parent, EdgeType::FunctionExtends, None)
+                .await
+                .map_err(Error::Graph)?;
+        }
     }
 
     // ── Bridge pass 1: codelist SchemaNodes + CodeLists + EnumValues.
@@ -920,13 +982,188 @@ pub async fn ingest_rosetta_files(
     if stats.needs_review != 0 {
         eprintln!(
             "Warning: rosetta model has {} out-of-data-plane element(s) recorded as \
-             needs_review (node families land in #263-#265): {}",
+             needs_review (the rule node family lands in #264): {}",
             stats.needs_review,
             stats.needs_review_names.join(", ")
         );
     }
 
     Ok(RosettaIngestOutcome { stats })
+}
+
+/// Walk the `extends` chains of one run's functions; `Some(described
+/// cycle)` when a cycle exists. The walk is deterministic (caller sorted
+/// by (domain, name)); the described cycle names every member.
+fn detect_function_extends_cycle(
+    func_index: &[(&sigil_model::Function, String)],
+) -> Option<String> {
+    let parent_of: HashMap<&str, String> = func_index
+        .iter()
+        .filter_map(|(f, _)| {
+            f.super_function
+                .as_ref()
+                .map(|parent| (f.name.as_str(), referenced_title(parent)))
+        })
+        .collect();
+    for (start, _) in func_index {
+        let mut path: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut current: String = start.name.clone();
+        while let Some(parent) = parent_of.get(current.as_str()).cloned() {
+            if seen.insert(current.clone()) {
+                path.push(current.clone());
+                current = parent;
+            } else {
+                // Re-entered a node already on this walk: the cycle is the
+                // path suffix from its first occurrence.
+                let start_idx = path
+                    .iter()
+                    .position(|name| name == &current)
+                    .unwrap_or_default();
+                let mut cycle = path[start_idx..].join(" -> ");
+                cycle.push_str(" -> ");
+                cycle.push_str(&current);
+                return Some(cycle);
+            }
+        }
+    }
+    None
+}
+
+/// One sigil `Attribute` (function input/output) → the typed
+/// [`FunctionInput`]: bare type title plus cardinality collapsed to the
+/// two flags codegen needs.
+fn attribute_to_function_input(attribute: &sigil_model::Attribute) -> FunctionInput {
+    let is_array = match attribute.cardinality.max {
+        sigil_model::CardinalityMax::Unbounded => true,
+        sigil_model::CardinalityMax::Finite(max) => max > 1,
+    };
+    FunctionInput {
+        name: attribute.name.clone(),
+        type_ref: referenced_title(&attribute.type_ref),
+        is_array,
+        is_optional: attribute.cardinality.min == 0,
+    }
+}
+
+/// One sigil `Function` → a [`FunctionNode`]. Every expression (alias,
+/// operation, non-post condition, post-condition) persists as the
+/// canonical `Expr::to_json()` payload — the generation-time transpiler's
+/// input (issue #262/#263 embedding contract).
+fn function_node(function: &sigil_model::Function, domain: &str) -> FunctionNode {
+    let inputs: Vec<FunctionInput> = function
+        .inputs
+        .iter()
+        .map(attribute_to_function_input)
+        .collect();
+    let output = function.output.as_ref().map(attribute_to_function_input);
+    let aliases: Vec<FunctionAlias> = function
+        .shortcuts
+        .iter()
+        .map(|shortcut| FunctionAlias {
+            name: shortcut.name.clone(),
+            expr_json: serde_json::to_string(&shortcut.expression.to_json()).unwrap_or_default(),
+        })
+        .collect();
+    let operations: Vec<FunctionOperation> = function
+        .operations
+        .iter()
+        .map(|operation| FunctionOperation {
+            is_add: operation.add,
+            assign_root: operation.assign_root.clone(),
+            path: operation
+                .path
+                .iter()
+                .map(|segment| segment.feature.clone())
+                .collect(),
+            expr_json: serde_json::to_string(&operation.expression.to_json()).unwrap_or_default(),
+        })
+        .collect();
+    let post_conditions: Vec<FunctionPostCondition> = function
+        .post_conditions
+        .iter()
+        .enumerate()
+        .map(|(idx, condition)| FunctionPostCondition {
+            name: condition
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("{}_post_{}", function.name, idx)),
+            definition: condition.definition.clone(),
+            expr_json: serde_json::to_string(&condition.expression.to_json()).unwrap_or_default(),
+        })
+        .collect();
+    let transform_annotations: Vec<FunctionTransform> = function
+        .transform
+        .iter()
+        .map(|transform| FunctionTransform {
+            kind: match transform.kind {
+                sigil_model::TransformKind::Ingest => FunctionTransformKind::Ingest,
+                sigil_model::TransformKind::Enrich => FunctionTransformKind::Enrich,
+                sigil_model::TransformKind::Projection => FunctionTransformKind::Projection,
+            },
+            reference: transform.reference.clone(),
+        })
+        .collect();
+
+    // Open-ended metadata: origin provenance (ROSETTA_ORIGIN convention),
+    // annotation refs, doc references, and the non-post conditions (they
+    // cannot see the output; a structured sibling field is deferred until
+    // a consumer needs them).
+    let mut properties = serde_json::json!({
+        "origin": ROSETTA_ORIGIN,
+        "doc_references": function.doc_references.iter().map(|doc| {
+            serde_json::json!({
+                "body": referenced_title_str(&doc.body),
+                "corpora": doc.corpora.iter().map(|c| referenced_title_str(c))
+                    .collect::<Vec<_>>(),
+                "segments": doc.segments.iter().map(|(segment, reference)| {
+                    serde_json::json!({ "segment": referenced_title_str(segment),
+                                        "reference": reference })
+                }).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
+    });
+    if !function.annotations.is_empty() {
+        if let Ok(annotations) = serde_json::to_value(&function.annotations) {
+            properties["annotations"] = annotations;
+        }
+    }
+    if !function.conditions.is_empty() {
+        let conditions: Vec<serde_json::Value> = function
+            .conditions
+            .iter()
+            .enumerate()
+            .map(|(idx, condition)| {
+                serde_json::json!({
+                    "name": condition.name.clone()
+                        .unwrap_or_else(|| format!("{}_cond_{}", function.name, idx)),
+                    "definition": condition.definition,
+                    "expr_json": serde_json::to_string(&condition.expression.to_json())
+                        .unwrap_or_default(),
+                })
+            })
+            .collect();
+        properties["conditions"] = serde_json::Value::Array(conditions);
+    }
+
+    FunctionNode {
+        name: function.name.clone(),
+        domain: Some(domain.to_string()),
+        definition: function.definition.clone(),
+        dispatch: function.dispatch.as_ref().map(|dispatch| FunctionDispatch {
+            attribute: dispatch.attribute.clone(),
+            enumeration: referenced_title_str(&dispatch.enumeration),
+            value: dispatch.value.clone(),
+        }),
+        inputs,
+        output,
+        aliases,
+        operations,
+        post_conditions,
+        extends: function.super_function.as_ref().map(referenced_title),
+        transform_annotations,
+        properties,
+    }
 }
 
 /// Namespace of the file declaring `element_name` (lookup by bridged

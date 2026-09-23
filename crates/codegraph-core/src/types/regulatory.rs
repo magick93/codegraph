@@ -100,6 +100,9 @@ pub enum RegulatoryOwner {
     /// Another RegulatoryNode (a report referencing its body/corpora/
     /// segments/rule source), matched by name + kind.
     Regulatory { name: String, kind: RegulatoryKind },
+    /// A FunctionNode carrying `[docReference ...]` metadata (issue #263),
+    /// matched by name.
+    Function(String),
 }
 
 /// Which regulatory edge links an owner to a regulatory node. Grounded in

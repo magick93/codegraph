@@ -3,6 +3,7 @@ pub mod cornucopia_repo;
 pub mod dto;
 pub mod errors;
 pub mod event;
+pub mod functions;
 pub mod query;
 pub mod regulatory_report;
 pub mod repository;

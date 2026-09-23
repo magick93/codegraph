@@ -8,6 +8,7 @@ mod condition;
 mod discovery;
 mod edge;
 mod field_def;
+mod function;
 mod ifml;
 mod mox;
 mod persistence;
@@ -37,6 +38,10 @@ pub use edge::{EdgeProperties, EdgeType};
 pub use field_def::{
     codelist_enum_name_from_ref, ensure_id_suffix, resolve_field, resolve_fk_column_name,
     FieldDefinition,
+};
+pub use function::{
+    FunctionAlias, FunctionDispatch, FunctionInput, FunctionNode, FunctionOperation,
+    FunctionPostCondition, FunctionTransform, FunctionTransformKind,
 };
 pub use ifml::{
     strip_ifml_prefix, ActionNode, DataBindingNode, DataBindingResolution, DataFlowData, EventNode,

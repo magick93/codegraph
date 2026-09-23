@@ -7,16 +7,18 @@
 //! properties by the bridge; the dispatch arms come from the report's
 //! segment references), plus rule-source and `[transform]` hook stubs.
 //!
-//! This slice AWAITS #263 (function/rule nodes) and #264 (stdlib signature
-//! registry): every seam where a landed rule node, rule payload, or
-//! signature lookup would slot in carries a `TODO(#263)` / `TODO(#264)`
-//! marker. No runtime behavior is claimed — the emitted module is
-//! deliberately inert (`match` arms return `None`, hooks have empty
-//! bodies) so it compiles standalone.
+//! Function nodes LANDED (#263): the transform-hook stubs reference their
+//! bridged functions by name instead of awaiting them. The remaining
+//! seams — reporting-rule payloads and input/output signatures — await
+//! #264 (stdlib signature registry): every such spot carries a
+//! `TODO(#264)` marker. No runtime behavior is claimed — the emitted
+//! module is deliberately inert (`match` arms return `None`, hooks have
+//! empty bodies) so it compiles standalone.
 //!
 //! Gated behind the `rosetta_backend` profile feature via the capability
 //! registry — OFF ⇒ the generator never runs and output is byte-identical.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -107,6 +109,14 @@ impl DomainGenerator for RegulatoryReportGenerator {
             .into_iter()
             .filter(|node| node.domain.as_deref() == Some(domain))
             .collect();
+        // Function nodes landed (#263): transform hooks reference their
+        // bridged functions by name.
+        let function_names: HashSet<String> = db
+            .list_functions()
+            .await?
+            .into_iter()
+            .map(|function| function.name)
+            .collect();
 
         let mut corpora: Vec<CorpusReport> = Vec::new();
         let mut reports: Vec<ReportDispatch> = Vec::new();
@@ -161,7 +171,8 @@ impl DomainGenerator for RegulatoryReportGenerator {
             return Ok(Vec::new());
         }
 
-        let content = emit_regulatory_reports(domain, &corpora, &rule_sources, &schemas);
+        let content =
+            emit_regulatory_reports(domain, &corpora, &rule_sources, &schemas, &function_names);
         Ok(vec![GeneratedFile {
             path: self
                 .output_dir
@@ -288,6 +299,7 @@ fn emit_regulatory_reports(
     corpora: &[CorpusReport],
     rule_sources: &[RuleSourceSurface],
     schemas: &[RuleSchemaSurface],
+    function_names: &HashSet<String>,
 ) -> String {
     let mut code = CodeWriter::new();
     wln!(
@@ -298,20 +310,25 @@ fn emit_regulatory_reports(
     wln!(code, "//!");
     wln!(
         code,
-        "//! AWAITING #263 (function/rule nodes) and #264 (stdlib signature"
+        "//! Function nodes landed (#263): the transform hooks below reference"
     );
     wln!(
         code,
-        "//! registry): every TODO(#263)/TODO(#264) marker is a seam the landed"
+        "//! their bridged functions. The remaining seams — reporting-rule"
     );
     wln!(
         code,
-        "//! planes fill. This module is deliberately inert — dispatch arms"
+        "//! payloads and signatures — carry TODO(#264) markers until the"
     );
     wln!(
         code,
-        "//! return `None` and hooks have empty bodies — so it compiles standalone."
+        "//! stdlib signature registry lands. This module is deliberately"
     );
+    wln!(
+        code,
+        "//! inert — dispatch arms return `None` and hooks have empty bodies —"
+    );
+    wln!(code, "//! so it compiles standalone.");
     wln!(code, "#![allow(dead_code)]");
     wln!(code);
 
@@ -322,7 +339,7 @@ fn emit_regulatory_reports(
         emit_rule_source(&mut code, source);
     }
     for schema in schemas {
-        emit_rule_schema_hooks(&mut code, schema);
+        emit_rule_schema_hooks(&mut code, schema, function_names);
     }
     code.into_string()
 }
@@ -346,7 +363,10 @@ fn emit_corpus(code: &mut CodeWriter, corpus: &CorpusReport) {
         code,
         "    /// segment references. Returns the computed report payload once"
     );
-    wln!(code, "    /// #263/#264 land; `None` until then.");
+    wln!(
+        code,
+        "    /// the signature registry (#264) lands; `None` until then."
+    );
     wln!(
         code,
         "    pub fn {module}_report_dispatch(segment: &str) -> Option<&'static str> {{"
@@ -364,15 +384,15 @@ fn emit_corpus(code: &mut CodeWriter, corpus: &CorpusReport) {
             if let Some(source) = &report.rule_source {
                 wln!(
                     code,
-                    "            // with source {source} — TODO(#263): bind the rule source's \
-                     reporting rules.",
+                    "            // with source {source} — TODO(#264): bind the rule source's \
+                 reporting rules.",
                     source = source,
                 );
             }
             wln!(code, "            {reference:?} => {{");
             wln!(
                 code,
-                "                // TODO(#263): invoke the reporting rule(s) bound to segment \
+                "                // TODO(#264): invoke the reporting rule(s) bound to segment \
                  {segment:?}.",
                 segment = segment,
             );
@@ -399,7 +419,7 @@ fn emit_corpus(code: &mut CodeWriter, corpus: &CorpusReport) {
     wln!(code, "    ///");
     wln!(
         code,
-        "    /// TODO(#263): wire the axum handler + query params once rule nodes land."
+        "    /// TODO(#264): wire the axum handler + query params once rule signatures land."
     );
     wln!(
         code,
@@ -411,7 +431,8 @@ fn emit_corpus(code: &mut CodeWriter, corpus: &CorpusReport) {
     );
     wln!(
         code,
-        "        // TODO(#263): dispatch through {module}_report_dispatch once rules land.",
+        "        // TODO(#264): dispatch through {module}_report_dispatch once rule \
+         signatures land.",
         module = module,
     );
     wln!(code, "        None");
@@ -451,7 +472,7 @@ fn emit_rule_source(code: &mut CodeWriter, source: &RuleSourceSurface) {
     wln!(code, "    ///");
     wln!(
         code,
-        "    /// TODO(#263): reporting-rule implementations arrive with the rule nodes."
+        "    /// TODO(#264): reporting-rule implementations arrive with the signature registry."
     );
     wln!(code, "    pub fn bindings_registered() -> usize {{");
     wln!(code, "        0");
@@ -460,8 +481,14 @@ fn emit_rule_source(code: &mut CodeWriter, source: &RuleSourceSurface) {
     wln!(code);
 }
 
-/// Emit `[transform]` hook stubs captured on one rule schema.
-fn emit_rule_schema_hooks(code: &mut CodeWriter, schema: &RuleSchemaSurface) {
+/// Emit `[transform]` hook stubs captured on one rule schema. Function
+/// nodes landed (#263): each hook references its bridged function's
+/// generated fn; the wire-format binding stays a #264 seam.
+fn emit_rule_schema_hooks(
+    code: &mut CodeWriter,
+    schema: &RuleSchemaSurface,
+    function_names: &HashSet<String>,
+) {
     if schema.hooks.is_empty() {
         return;
     }
@@ -482,9 +509,24 @@ fn emit_rule_schema_hooks(code: &mut CodeWriter, schema: &RuleSchemaSurface) {
             kind = hook.kind,
             name = hook.function,
         );
+        if function_names.contains(&hook.function) {
+            wln!(
+                code,
+                "    /// Function `{name}` is bridged; its body emits via the `functions` \
+                 generator (`{fn_name}`).",
+                name = hook.function,
+                fn_name = hook_name,
+            );
+        } else {
+            wln!(
+                code,
+                "    /// TODO(#263): function `{name}` is not bridged in this graph.",
+                name = hook.function,
+            );
+        }
         wln!(
             code,
-            "    /// TODO(#263): the transform implementation awaits function nodes."
+            "    /// TODO(#264): the wire-format binding comes from the signature registry."
         );
         wln!(
             code,

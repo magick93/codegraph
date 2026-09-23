@@ -1,10 +1,10 @@
 use codegraph_core::error::GraphError;
 use codegraph_core::types::{
     Cardinality, CodeList, CompositeColumn, CompositeRange, ConditionKind, ConditionNode,
-    EnumValue, Extension, ForeignKeySpec, MembershipNode, MembershipStatus, Ownership, PolicyKind,
-    PolicyNode, PropagationRule, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode,
-    RegulatoryRefRecord, RelationshipNode, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, TenantStrategy,
+    EnumValue, Extension, ForeignKeySpec, FunctionNode, MembershipNode, MembershipStatus,
+    Ownership, PolicyKind, PolicyNode, PropagationRule, PropertyNode, RegulatoryEdgeKind,
+    RegulatoryKind, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, TenantStrategy,
 };
 use codegraph_type_contracts::RefClassificationKind;
 use std::collections::HashMap;
@@ -423,4 +423,19 @@ pub fn row_to_regulatory_ref_record(
         edge_kind,
         ref_path: reader.get_opt_string(row, "ref_path")?,
     })
+}
+
+pub fn row_to_function_node(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+) -> Result<FunctionNode, GraphError> {
+    // The structured payload (dispatch head, inputs, output, aliases,
+    // operations, post-conditions, transform annotations, metadata)
+    // persists as one JSON object string — the whole FunctionNode (the
+    // flat columns exist for cheap WHERE/ORDER BY only). An unparsable
+    // payload is a hard query error: the ingestor writes the
+    // serialization, so a mismatch means a corrupted node.
+    let payload_json = reader.get_string(row, "payload_json")?;
+    serde_json::from_str(&payload_json)
+        .map_err(|e| GraphError::Query(format!("Failed to parse function payload: {e}")))
 }

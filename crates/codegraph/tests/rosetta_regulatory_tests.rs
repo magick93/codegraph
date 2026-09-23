@@ -67,17 +67,15 @@ async fn regulatory_nodes_ingest_with_stats_and_needs_review_shrinks() {
     // (body+corpus) + corpus parent (ESMA→body).
     assert_eq!(stats.regulatory_edges, 12, "stats: {stats}");
 
-    // The regulatory families left needs_review; func + the two rules
-    // (reporting + eligibility) remain (#263/#264 own them).
+    // The regulatory families left needs_review and #263 landed function
+    // nodes (the fixture's IngestOrders func is a FunctionNode now); the
+    // two rules remain (#264 owns them).
     assert_eq!(
-        stats.needs_review, 3,
+        stats.needs_review, 2,
         "names: {:?}",
         stats.needs_review_names
     );
-    assert!(stats
-        .needs_review_names
-        .iter()
-        .any(|n| n == "func IngestOrders"));
+    assert_eq!(stats.functions_ingested, 1, "stats: {stats}");
     assert!(stats
         .needs_review_names
         .iter()
@@ -91,6 +89,7 @@ async fn regulatory_nodes_ingest_with_stats_and_needs_review_shrinks() {
             && !n.starts_with("segment ")
             && !n.starts_with("schema ")
             && !n.starts_with("meta-type ")
+            && !n.starts_with("func ")
             && !n.starts_with("external-rule-source ")));
 }
 
@@ -456,9 +455,18 @@ async fn regulatory_reports_emits_corpus_dispatch_and_transform_hooks_when_enabl
         "{content}"
     );
     assert!(content.contains("\"1.a\" => {"), "{content}");
-    // The seams awaiting the later planes.
-    assert!(content.contains("TODO(#263)"), "{content}");
+    // The remaining seams await the signature registry (#264). The #263
+    // seams are filled: the transform hook references its bridged
+    // function instead of awaiting function nodes.
     assert!(content.contains("TODO(#264)"), "{content}");
+    assert!(
+        content.contains("Function `IngestOrders` is bridged; its body emits via the `functions` generator (`ingest_orders`)."),
+        "{content}"
+    );
+    assert!(
+        !content.contains("TODO(#263)"),
+        "no #263 seams may remain: {content}"
+    );
     // The report's `with source` binding is documented at its arm.
     assert!(content.contains("with source AgencySource"), "{content}");
     // Rule source surface.

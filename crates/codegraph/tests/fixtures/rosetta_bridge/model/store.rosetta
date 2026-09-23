@@ -34,3 +34,53 @@ enum Urgency extends OrderStatus:
 choice OrderKind:
 	OrderType
 	CustomerType
+
+func OrderScore: <"a simple derived value with an alias and a post-condition">
+	[enrich]
+	inputs:
+		order OrderType (1..1)
+	output:
+		result number (1..1)
+
+	alias base: order -> total
+
+	set result:
+		base + order -> total
+
+	add result:
+		order -> tags count
+
+	post-condition ResultPresent: <"the result is present">
+		result exists
+
+func ValueForStatus(status: OrderStatus->Draft):
+	inputs:
+		order OrderType (1..1)
+		status OrderStatus (1..1)
+	output:
+		result number (1..1)
+
+	set result:
+		1.0
+
+func ShippedValue(status: OrderStatus->Shipped) extends ValueForStatus:
+	inputs:
+		order OrderType (1..1)
+		status OrderStatus (1..1)
+	output:
+		result number (1..1)
+
+	alias net: order -> total
+
+	set result:
+		net * 2.0
+
+func ApprovedValue(status: OrderStatus->Approved) extends ValueForStatus:
+	inputs:
+		order OrderType (1..1)
+		status OrderStatus (1..1)
+	output:
+		result number (1..1)
+
+	set result:
+		order -> total

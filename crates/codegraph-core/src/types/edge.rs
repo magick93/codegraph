@@ -81,6 +81,12 @@ pub enum EdgeType {
     HasRuleSource,
     CorpusInBody,
     DerivesFrom,
+
+    // Computation plane edge types (issue #263). `FunctionExtends`
+    // (Function → Function) is written by `ingest_function` from the
+    // resolved `extends` ref; there is no `HasFunction` owner edge — sigil
+    // functions are namespace-level, not schema-owned.
+    FunctionExtends,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

@@ -253,6 +253,11 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
             has_fern: plan.has_fern,
             fern_sdk_languages: plan.fern_sdk_languages.clone(),
             has_emdash: plan.has_emdash,
+            has_function_postconditions: resolved
+                .features
+                .get("function_postconditions")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             emdash_site_pages_base: String::new(),
             emdash_site_e2e_base: String::new(),
             atproto_authority: String::new(),

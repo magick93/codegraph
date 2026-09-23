@@ -2,13 +2,13 @@ use crate::error::GraphError;
 use crate::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode, CapabilityNode,
     CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
-    DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, GrantEdge,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
-    MoxOperationNode, MoxVocabularyNode, NamespaceNode, NavigationFlowRecord,
-    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
-    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode,
-    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode,
+    GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
+    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceNode,
+    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
+    RepositoryNode, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -487,6 +487,19 @@ pub trait GraphQuerier: Send + Sync {
     /// four edge families (`RegulatoryReference`/`HasRuleSource`/
     /// `CorpusInBody`/`DerivesFrom`), ordered by (owner, target).
     async fn list_regulatory_references(&self) -> Result<Vec<RegulatoryRefRecord>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    // ── Computation plane query methods (issue #263) ───────────────────
+
+    /// Every FunctionNode in the graph, ordered by (domain, name).
+    async fn list_functions(&self) -> Result<Vec<FunctionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Every `FunctionExtends` edge as `(child, parent)` pairs (issue
+    /// #263), ordered by child name.
+    async fn list_function_extends(&self) -> Result<Vec<(String, String)>, GraphError> {
         Ok(Vec::new())
     }
 }

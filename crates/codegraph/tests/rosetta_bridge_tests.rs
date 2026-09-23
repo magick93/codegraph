@@ -401,14 +401,43 @@ async fn namespace_recorded_but_never_mapped_onto_domains() {
 #[tokio::test]
 async fn out_of_plane_elements_counted_as_needs_review() {
     let g = bridge_fixture().await;
-    // The fixture's func is recorded, not bridged and not dropped.
-    assert!(g.outcome.stats.needs_review >= 1);
-    assert!(g
-        .outcome
-        .stats
-        .needs_review_names
+    // #263 landed function nodes: the fixture's func is bridged as a
+    // FunctionNode (alias + operation payload), NOT recorded as
+    // needs_review. Rules stay out-of-plane (#264); this fixture has
+    // none, so nothing remains.
+    assert_eq!(
+        g.outcome.stats.functions_ingested, 1,
+        "the fixture func bridges"
+    );
+    assert!(
+        !g.outcome
+            .stats
+            .needs_review_names
+            .iter()
+            .any(|n| n.starts_with("func ")),
+        "functions are in-plane since #263: {:?}",
+        g.outcome.stats.needs_review_names
+    );
+
+    let functions = g.backend.querier().list_functions().await.unwrap();
+    let quote = functions
         .iter()
-        .any(|n| n.starts_with("func ")));
+        .find(|f| f.name == "Quote")
+        .expect("func Quote lands as a FunctionNode");
+    assert_eq!(quote.domain.as_deref(), Some("bridge"));
+    assert_eq!(
+        quote.output.as_ref().map(|o| o.type_ref.as_str()),
+        Some("number")
+    );
+    assert_eq!(quote.aliases.len(), 1);
+    assert_eq!(quote.aliases[0].name, "basePrice");
+    assert!(quote.aliases[0].expr_json.contains("FeatureCall"));
+    assert_eq!(quote.operations.len(), 1);
+    assert_eq!(quote.operations[0].assign_root, "result");
+    assert_eq!(
+        quote.properties.get("origin").and_then(|v| v.as_str()),
+        Some("rosetta")
+    );
 }
 
 #[tokio::test]

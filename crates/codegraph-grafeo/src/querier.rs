@@ -7,7 +7,7 @@ use codegraph_core::types::{
     ApiResourceNode, CapabilityNode, CodeList, CollectionNode, ColumnInfo, CompositeColumn,
     CompositeRange, CompositionNode, CompositionTree, ConditionNode, DataBindingResolution,
     DelegationRecord, DetectionSource, EnumValue, ErrorDefinitionNode, EventNode, Extension,
-    FkDirection, FkTarget, GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode,
+    FkDirection, FkTarget, FunctionNode, GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode,
     MembershipNode, ModuleUseRecord, MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode,
     NamespaceNode, NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate,
     PermissionNode, Permit, PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind,
@@ -36,8 +36,8 @@ const PROPERTY_RETURN_COLS: &str = "\
 
 use crate::conversions::{
     row_to_codelist, row_to_composite_column, row_to_composite_range, row_to_condition_node,
-    row_to_enum_value, row_to_extension, row_to_membership_node, row_to_policy_node,
-    row_to_property_node, row_to_regulatory_node, row_to_regulatory_ref_record,
+    row_to_enum_value, row_to_extension, row_to_function_node, row_to_membership_node,
+    row_to_policy_node, row_to_property_node, row_to_regulatory_node, row_to_regulatory_ref_record,
     row_to_relationship_node, row_to_schema_node, row_to_security_identity_node,
     row_to_structured_sub_field, row_to_tenant_node, RowReader,
 };
@@ -1995,6 +1995,7 @@ impl GraphQuerier for GrafeoEngine {
                 ("Schema", "title"),
                 ("Condition", "name"),
                 ("Regulatory", "name"),
+                ("Function", "name"),
             ] {
                 let gql = format!(
                     "MATCH (a:{owner_label})-[e:{label}]->(b:Regulatory) \
@@ -2013,6 +2014,43 @@ impl GraphQuerier for GrafeoEngine {
         }
         records.sort_by(|a, b| (&a.owner, &a.target).cmp(&(&b.owner, &b.target)));
         Ok(records)
+    }
+
+    // ── Computation plane queries (issue #263) ─────────────────────────
+
+    async fn list_functions(&self) -> Result<Vec<FunctionNode>, GraphError> {
+        let result = query_gql(
+            self,
+            "MATCH (f:Function) \
+             RETURN f.name AS name, f.domain AS domain, f.definition AS definition, \
+             f.extends_function AS extends_function, f.payload_json AS payload_json \
+             ORDER BY f.domain, f.name",
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| row_to_function_node(&reader, row))
+            .collect()
+    }
+
+    async fn list_function_extends(&self) -> Result<Vec<(String, String)>, GraphError> {
+        let result = query_gql(
+            self,
+            "MATCH (a:Function)-[:FunctionExtends]->(b:Function) \
+             RETURN a.name AS child, b.name AS parent ORDER BY child",
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| {
+                Ok((
+                    reader.get_string(row, "child")?,
+                    reader.get_string(row, "parent")?,
+                ))
+            })
+            .collect()
     }
 }
 

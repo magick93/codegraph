@@ -8,13 +8,13 @@ use crate::traits::GraphQuerier;
 use crate::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode, CapabilityNode,
     CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
-    DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, GrantEdge,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
-    MoxOperationNode, MoxVocabularyNode, NamespaceNode, NavigationFlowRecord,
-    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
-    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode,
-    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode,
+    GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
+    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceNode,
+    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
+    RepositoryNode, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -598,6 +598,16 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn list_regulatory_references(&self) -> Result<Vec<RegulatoryRefRecord>, GraphError> {
         self.inner.list_regulatory_references().await
+    }
+
+    // ── Computation plane delegation (issue #263) ──────────────────────
+
+    async fn list_functions(&self) -> Result<Vec<FunctionNode>, GraphError> {
+        self.inner.list_functions().await
+    }
+
+    async fn list_function_extends(&self) -> Result<Vec<(String, String)>, GraphError> {
+        self.inner.list_function_extends().await
     }
 
     // ── AT Protocol query delegation ───────────────────────────────────

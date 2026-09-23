@@ -5,8 +5,8 @@ use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
     ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode,
     CompositeColumn, CompositeRange, ConditionKind, ConditionNode, DataBindingNode, EdgeProperties,
-    EdgeType, EnumValue, ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats,
-    InteractionNode, LexiconNode, MembershipNode, MoxDomainModel, NamespaceNode,
+    EdgeType, EnumValue, ErrorDefinitionNode, EventNode, FunctionNode, HttpEndpointNode,
+    IngestStats, InteractionNode, LexiconNode, MembershipNode, MoxDomainModel, NamespaceNode,
     ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
     RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RelationshipNode,
     RepositoryNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
@@ -43,6 +43,7 @@ fn regulatory_reference_gql(
             escape_gql(name),
             kind.as_str()
         ),
+        RegulatoryOwner::Function(name) => format!("(a:Function {{name: '{}'}})", escape_gql(name)),
     };
     let props_str = match ref_path {
         Some(path) => format!(" {{ref_path: '{}'}}", escape_gql(path)),
@@ -88,6 +89,7 @@ fn decode_regulatory_edge_ids(
                 kind: RegulatoryKind::parse_kind(kind_str)?,
             }
         }
+        "function" => RegulatoryOwner::Function(owner_payload.to_string()),
         _ => return None,
     };
     let target_rest = to_id.strip_prefix("reg:")?;
@@ -527,6 +529,35 @@ impl GraphIngestor for GrafeoEngine {
         Ok(())
     }
 
+    async fn ingest_function(&self, node: &FunctionNode) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let payload_json = serde_json::to_string(&node).map_err(|e| {
+            GraphError::Ingest(format!("ingest_function payload serialization failed: {e}"))
+        })?;
+        // The payload embeds nested JSON (expr payloads) whose escaped
+        // quotes `\"` would terminate the GQL string literal early —
+        // backslashes must be doubled BEFORE the single-quote escape.
+        let payload_escaped = payload_json.replace('\\', "\\\\").replace('\'', "\\'");
+        let gql = format!(
+            "INSERT (:Function {{name: '{name}', domain: {domain}, \
+             definition: {definition}, extends_function: {extends}, \
+             payload_json: '{payload}'}})",
+            name = escape_gql(&node.name),
+            domain = opt_str(&node.domain),
+            definition = opt_str(&node.definition),
+            extends = opt_str(&node.extends),
+            payload = payload_escaped,
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_function INSERT failed: {e}")))?;
+        // The `FunctionExtends` edge is written separately (generic
+        // `ingest_edge`) AFTER every node of the run exists — name-ordered
+        // ingestion is not parent-first, so linking at node time would
+        // silently drop edges to later-sorted parents.
+        Ok(())
+    }
+
     async fn ingest_codelist(&self, codelist: &CodeList) -> Result<(), GraphError> {
         let session = self.db().session();
         let gql = format!(
@@ -803,6 +834,7 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::HasRuleSource => "HasRuleSource",
             EdgeType::CorpusInBody => "CorpusInBody",
             EdgeType::DerivesFrom => "DerivesFrom",
+            EdgeType::FunctionExtends => "FunctionExtends",
         };
 
         let match_clause = match &edge_type {
@@ -1134,6 +1166,14 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::Grant => {
                 format!(
                     "MATCH (a:Actor {{name: '{}'}}), (b:Capability {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            // Computation plane (issue #263): functions match by name.
+            EdgeType::FunctionExtends => {
+                format!(
+                    "MATCH (a:Function {{name: '{}'}}), (b:Function {{name: '{}'}})",
                     escape_gql(from_id),
                     escape_gql(to_id),
                 )

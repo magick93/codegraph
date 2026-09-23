@@ -71,6 +71,9 @@ pub struct MockEngine {
     conditions: Mutex<Vec<ConditionNode>>,
     regulatory: Mutex<Vec<RegulatoryNode>>,
     regulatory_refs: Mutex<Vec<RegulatoryRefRecord>>,
+    functions: Mutex<Vec<FunctionNode>>,
+    /// `(child, parent)` FunctionExtends edges (resolved at ingest time).
+    function_extends: Mutex<Vec<(String, String)>>,
     start_time: Instant,
 }
 
@@ -131,6 +134,8 @@ impl MockEngine {
             conditions: Mutex::new(Vec::new()),
             regulatory: Mutex::new(Vec::new()),
             regulatory_refs: Mutex::new(Vec::new()),
+            functions: Mutex::new(Vec::new()),
+            function_extends: Mutex::new(Vec::new()),
             start_time: Instant::now(),
         }
     }
@@ -661,6 +666,12 @@ impl GraphIngestor for MockEngine {
                     .unwrap()
                     .insert(strip_ifml_prefix(from_id).to_string(), to_id.to_string());
             }
+            EdgeType::FunctionExtends => {
+                self.function_extends
+                    .lock()
+                    .unwrap()
+                    .push((from_id.to_string(), to_id.to_string()));
+            }
             _ => {}
         }
         Ok(())
@@ -909,6 +920,7 @@ impl GraphIngestor for MockEngine {
             RegulatoryOwner::Schema(title) => (title.clone(), "Schema".to_string()),
             RegulatoryOwner::Condition(name) => (name.clone(), "Condition".to_string()),
             RegulatoryOwner::Regulatory { name, .. } => (name.clone(), "Regulatory".to_string()),
+            RegulatoryOwner::Function(name) => (name.clone(), "Function".to_string()),
         };
         self.regulatory_refs
             .lock()
@@ -921,6 +933,11 @@ impl GraphIngestor for MockEngine {
                 edge_kind,
                 ref_path: ref_path.map(str::to_string),
             });
+        Ok(())
+    }
+
+    async fn ingest_function(&self, node: &FunctionNode) -> Result<(), GraphError> {
+        self.functions.lock().unwrap().push(node.clone());
         Ok(())
     }
 
@@ -1763,5 +1780,19 @@ impl GraphQuerier for MockEngine {
         let mut records: Vec<RegulatoryRefRecord> = self.regulatory_refs.lock().unwrap().clone();
         records.sort_by(|a, b| (&a.owner, &a.target).cmp(&(&b.owner, &b.target)));
         Ok(records)
+    }
+
+    // ── Computation plane queries (issue #263) ─────────────────────────
+
+    async fn list_functions(&self) -> Result<Vec<FunctionNode>, GraphError> {
+        let mut nodes: Vec<FunctionNode> = self.functions.lock().unwrap().clone();
+        nodes.sort_by(|a, b| (&a.domain, &a.name).cmp(&(&b.domain, &b.name)));
+        Ok(nodes)
+    }
+
+    async fn list_function_extends(&self) -> Result<Vec<(String, String)>, GraphError> {
+        let mut edges: Vec<(String, String)> = self.function_extends.lock().unwrap().clone();
+        edges.sort();
+        Ok(edges)
     }
 }

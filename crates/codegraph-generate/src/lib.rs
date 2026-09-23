@@ -258,6 +258,11 @@ pub struct ProjectConfig {
     /// Whether EmDash plugin generation is enabled via profile feature flag.
     #[serde(default)]
     pub has_emdash: bool,
+    /// Whether function post-conditions emit `debug_assert!` checks
+    /// (issue #263). Gated by the `function_postconditions` profile
+    /// feature; default OFF = the emitted functions module carries none.
+    #[serde(default)]
+    pub has_function_postconditions: bool,
     /// Repo-relative base path for the community site's public pages
     /// (emdash plugin generator). Default: "apps/community-site/src/pages".
     #[serde(default = "default_emdash_site_pages_base")]
@@ -356,6 +361,7 @@ impl Default for ProjectConfig {
             has_fern: false,
             fern_sdk_languages: vec!["typescript".into()],
             has_emdash: false,
+            has_function_postconditions: false,
             emdash_site_pages_base: default_emdash_site_pages_base(),
             emdash_site_e2e_base: default_emdash_site_e2e_base(),
             atproto_authority: String::new(),
@@ -1208,6 +1214,10 @@ fn build_domain_generators(
         Box::new(ddd::regulatory_report::RegulatoryReportGenerator::new(
             base("regulatory_reports"),
         )) as Box<dyn DomainGenerator>,
+        // Rosetta function codegen (issue #263) — gated by the
+        // `rosetta_backend` capability.
+        Box::new(ddd::functions::FunctionsGenerator::new(base("functions")))
+            as Box<dyn DomainGenerator>,
         Box::new(
             api::router::RouterGenerator::new(base("router"))
                 .with_parent_candidates(parent_candidates.to_vec()),
