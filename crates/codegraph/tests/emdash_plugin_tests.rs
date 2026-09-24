@@ -184,6 +184,7 @@ fn emdash_build_plan() -> BuildPlan {
         persistence_provider: PersistenceProvider::SeaOrm,
         dto_key_casing: "snake".to_string(),
         deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
+        namespace_layout: false,
         features: Default::default(),
     }
 }

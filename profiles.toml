@@ -37,6 +37,12 @@ ifml_design_system = ""            # built-in IFML component pack ("" = none, e.
 # add "policy_rls" to an [api] generators list; emits 020000_policy_rls.sql
 # (Postgres only; sqlite is a no-op). Off = byte-identical output.
 rls_from_policy = false
+# Namespace-aware module layout (issue #268). When true, schemas that
+# carry a namespace (from mox `package`, rosetta `namespace`, or JSON
+# `$id`/`$namespace` inference) emit under namespace-derived module paths
+# (`cdm.base.datetime` → `cdm/base/datetime/...`) for the entity/DTO/db
+# module outputs. Default OFF = flat domain layout, byte-identical output.
+namespace_layout = false
 # Constraint-plane validations (issue #261). When true, add
 # "condition_validations" to an [api] generators list; emits per-domain
 # src/domain/<domain>/validations.rs from array minItems/maxItems and the

@@ -160,6 +160,29 @@ pub fn topological_namespace_order(
     Ok(order)
 }
 
+/// Rust module path for a namespace (issue #268): `cdm.base.datetime` →
+/// `cdm/base/datetime` — the relative directory path (slash-separated,
+/// no extension) used for gated output paths under `namespace_layout`.
+///
+/// Empty/namespace-less input yields an empty string, so callers can
+/// concatenate unconditionally and stay byte-identical when flat.
+pub fn namespace_module_path(fqn: &str) -> String {
+    fqn.split('.')
+        .filter(|seg| !seg.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Rust module path with `::` separators (issue #268): `cdm.base.datetime`
+/// → `cdm::base::datetime`. Used inside generated `use`/type paths, e.g.
+/// `crate::entity::cdm::base::datetime::{module}`.
+pub fn namespace_module_rust(fqn: &str) -> String {
+    fqn.split('.')
+        .filter(|seg| !seg.is_empty())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
 /// Derive `NamespaceDepends` pairs (issue #267): namespace A's assigned
 /// domain depends (per domains.toml `depends_on`) on namespace B's assigned
 /// domain ⇒ `(A, B)` namespace dependency. Output is deduplicated and
@@ -336,6 +359,27 @@ mod tests {
         let err = topological_namespace_order(&fqns, &imports).unwrap_err();
         assert!(err.contains("cycle"), "{err}");
         assert!(err.contains("a, b, c"), "{err}");
+    }
+
+    #[test]
+    fn module_path_maps_dots_to_slashes() {
+        assert_eq!(
+            namespace_module_path("cdm.base.datetime"),
+            "cdm/base/datetime"
+        );
+        assert_eq!(namespace_module_path("billing"), "billing");
+        assert_eq!(namespace_module_path("a..b"), "a/b", "empty segments drop");
+        assert_eq!(namespace_module_path(""), "", "empty fqn stays empty");
+    }
+
+    #[test]
+    fn module_rust_maps_dots_to_double_colons() {
+        assert_eq!(
+            namespace_module_rust("cdm.base.datetime"),
+            "cdm::base::datetime"
+        );
+        assert_eq!(namespace_module_rust("billing"), "billing");
+        assert_eq!(namespace_module_rust(""), "");
     }
 
     #[test]

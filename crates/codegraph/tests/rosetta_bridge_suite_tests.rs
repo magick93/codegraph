@@ -161,7 +161,11 @@ async fn fixture_bridges_with_expected_stats() {
     // no ExtendsSchema edge.
     assert_eq!(s.extends, 1, "exactly the type-level extends edge");
     assert_eq!(s.conditions_recorded, 1, "PositiveTotal");
-    assert_eq!(s.namespaces, 2, "fixture.store + fixture.partners");
+    // #268: namespace NODES, not just declaring files — each dotted
+    // namespace brings its parent chain (rosetta.fixture.store →
+    // rosetta.fixture → rosetta, same for .partners).
+    assert_eq!(s.namespaces, 4, "2 namespaces + 2 dotted parents");
+    assert_eq!(s.namespace_imports, 1, "import rosetta.fixture.partners.*");
     assert_eq!(s.needs_review, 0, "fixture is fully in-plane");
     assert_eq!(s.needs_review_names, Vec::<String>::new());
     for title in [

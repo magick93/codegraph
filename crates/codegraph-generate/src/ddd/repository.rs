@@ -223,11 +223,16 @@ impl EntityGenerator for RepositoryTraitGenerator {
             operations,
         };
 
+        // Issue #268 (namespace_layout): namespaced repositories emit
+        // under `src/domain/{ns_dir}/{module}/`. Flat otherwise.
+        let domain_dir_segment = crate::namespace_dir_prefix(schema.namespace.as_deref(), project)
+            .unwrap_or_else(|| domain.clone());
+
         let base_dir = self
             .output_dir
             .join("src")
             .join("domain")
-            .join(&domain)
+            .join(domain_dir_segment)
             .join(&module_name);
 
         let mut files = Vec::new();

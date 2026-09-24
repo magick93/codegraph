@@ -28,6 +28,10 @@ pub struct EntityTree {
     pub table_name: String,
     /// Domain-prefixed entity module name: `{schema_name}_{table_name}`.
     pub entity_module: String,
+    /// The schema's namespace (issue #268). `None` for namespace-less
+    /// schemas and when the graph carries no namespaces; drives the
+    /// namespace-derived module references under `namespace_layout`.
+    pub namespace: Option<String>,
     pub direct_columns: Vec<TreeColumn>,
     pub child_tables: Vec<ChildTableInfo>,
     /// Junction (many-to-many) tables for array-of-entity-ref properties that

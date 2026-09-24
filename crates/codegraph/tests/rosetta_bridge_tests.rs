@@ -379,7 +379,8 @@ async fn metadata_and_conditions_recorded_as_custom_annotation_payloads() {
 #[tokio::test]
 async fn namespace_recorded_but_never_mapped_onto_domains() {
     let g = bridge_fixture().await;
-    let schemas = g.backend.querier().list_schemas(None).await.unwrap();
+    let q = g.backend.querier();
+    let schemas = q.list_schemas(None).await.unwrap();
     for schema in &schemas {
         // Every bridged schema records its rosetta namespace...
         assert_eq!(
@@ -395,7 +396,44 @@ async fn namespace_recorded_but_never_mapped_onto_domains() {
         // a namespace-derived domain.
         assert_eq!(schema.domain.as_deref(), Some("bridge"));
     }
-    assert_eq!(g.outcome.stats.namespaces, 1);
+    // #268: namespace NODES — the namespace itself plus its dotted parent.
+    assert_eq!(g.outcome.stats.namespaces, 2);
+
+    // #268: the namespace is now FIRST-CLASS — a NamespaceNode exists, the
+    // bridged schemas carry `namespace` and link to it via InNamespace.
+    // Domains stay untouched (namespace ≠ domain).
+    let namespaces = q.list_namespaces().await.unwrap();
+    assert_eq!(
+        namespaces
+            .iter()
+            .map(|n| n.fqn.as_str())
+            .collect::<Vec<_>>(),
+        vec!["rosetta", "rosetta.bridge"],
+        "namespace node + dotted parent chain"
+    );
+    let bridge_node = namespaces
+        .iter()
+        .find(|n| n.fqn == "rosetta.bridge")
+        .unwrap();
+    assert_eq!(bridge_node.parent.as_deref(), Some("rosetta"));
+    assert_eq!(bridge_node.source.as_deref(), Some("rosetta"));
+    for schema in &schemas {
+        assert_eq!(
+            schema.namespace.as_deref(),
+            Some("rosetta.bridge"),
+            "schema {} missing namespace",
+            schema.title
+        );
+        let members = q
+            .list_schemas_by_namespace("rosetta.bridge", false)
+            .await
+            .unwrap();
+        assert!(
+            members.iter().any(|m| m.schema_id == schema.schema_id),
+            "schema {} must join the namespace via InNamespace",
+            schema.title
+        );
+    }
 }
 
 #[tokio::test]

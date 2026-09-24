@@ -247,6 +247,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
             persistence_provider: persistence_provider_str,
             dto_key_casing: plan.dto_key_casing.clone(),
             deployment_topology: deployment_topology_str,
+            namespace_layout: plan.namespace_layout,
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
             codegraph_rev: codegraph_rev.unwrap_or_else(current_git_rev),
             has_atproto: plan.has_atproto,

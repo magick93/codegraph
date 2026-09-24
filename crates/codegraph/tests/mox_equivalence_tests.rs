@@ -39,10 +39,21 @@
 //! derives the same decision from the model itself (`refers` targets are
 //! entities; containment-only classes are value objects). Both sides
 //! therefore encode the same authorial intent through their native mechanism.
+//!
+//! Namespace parity (issue #268): the mox model declares `package
+//! equivalence` (⇒ namespace `equivalence` in the graph); the JSON model
+//! declares no namespace. The byte-identity gates below therefore pin the
+//! #268 back-compat contract — the flat (default) layout is namespace-
+//! INERT, so a namespaced graph generates byte-identically to a
+//! namespace-less one. `namespace_graph_parity_between_equivalent_json_
+//! and_mox_models` additionally pins that namespace-EQUIVALENT models
+//! agree on the namespace graph shape.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use codegraph_core::traits::GraphQuerier;
 
 const DOMAINS_TOML: &str = r#"
 [defaults]
@@ -606,6 +617,87 @@ async fn report_residual_content_diffs_between_json_and_mox_models() {
     eprintln!(
         "residual report: {diffs} differing files (see MUST_MATCH gate for the enforced subset)"
     );
+}
+
+// ── Namespace parity (issue #268) ────────────────────────────────────────
+
+/// Namespace parity (issue #268): see the byte-identity gates above.
+#[tokio::test]
+async fn namespace_graph_parity_between_equivalent_json_and_mox_models() {
+    // mox side: the equivalence fixture's package → namespace.
+    let mox_engine = codegraph_grafeo::GrafeoEngine::in_memory().unwrap();
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let mox_path = dir.path().join("equivalence.mox");
+        fs::write(&mox_path, MODEL_MOX).unwrap();
+        let config: codegraph_config::config::DomainConfig =
+            codegraph_config::config::parse_domain_config_str(DOMAINS_TOML).unwrap();
+        codegraph::ingest::mox_ingest::ingest_mox_files(
+            &mox_engine,
+            &mox_engine,
+            &[mox_path],
+            &config,
+            &config.defaults.type_suffix,
+        )
+        .await
+        .unwrap();
+        dir.close().unwrap();
+    }
+
+    // JSON side: the same class set, one schema carrying an `$id` whose
+    // path ends in `/equivalence/` — the documented $id derivation must
+    // land it in the SAME namespace the mox package declares.
+    let json_engine = codegraph_grafeo::GrafeoEngine::in_memory().unwrap();
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let json_dir = dir.path().join("equivalence/json");
+        fs::create_dir_all(&json_dir).unwrap();
+        let mut worker: serde_json::Value = serde_json::from_str(WORKER_JSON).unwrap();
+        worker["$id"] = serde_json::json!("https://app.example/equivalence/WorkerType.json");
+        fs::write(json_dir.join("WorkerType.json"), worker.to_string()).unwrap();
+        let classifier =
+            codegraph_classifier::config::parse_classifier_config_str(CLASSIFIER_TOML).unwrap();
+        codegraph::ingest::async_ingest::ingest_schemas(
+            &json_engine,
+            dir.path(),
+            &classifier,
+            &Default::default(),
+            &Default::default(),
+            "Type",
+        )
+        .await
+        .unwrap();
+        dir.close().unwrap();
+    }
+
+    // Parity: the WorkerType schema lives in namespace `equivalence` on
+    // BOTH sides, with identical membership shape.
+    async fn assert_ns(engine: &codegraph_grafeo::GrafeoEngine) -> Vec<String> {
+        let worker = engine.get_schema("WorkerType").await.unwrap().unwrap();
+        assert_eq!(
+            worker.namespace.as_deref(),
+            Some("equivalence"),
+            "WorkerType must carry the equivalence namespace on both sides"
+        );
+        let members = engine
+            .list_schemas_by_namespace("equivalence", false)
+            .await
+            .unwrap();
+        assert!(
+            members.iter().any(|s| s.title == "WorkerType"),
+            "InNamespace membership: {members:?}"
+        );
+        engine
+            .list_namespaces()
+            .await
+            .unwrap()
+            .iter()
+            .map(|n| n.fqn.clone())
+            .collect()
+    }
+    let mox_fqns = assert_ns(&mox_engine).await;
+    let json_fqns = assert_ns(&json_engine).await;
+    assert_eq!(mox_fqns, json_fqns, "namespace node sets must agree");
 }
 
 // ── Broader-suite smoke: cornucopia / IFML / gRPC over the mox model ────

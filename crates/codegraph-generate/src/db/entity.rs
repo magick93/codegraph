@@ -224,6 +224,16 @@ impl EntityGenerator for SeaOrmEntityGenerator {
         // collisions (e.g. common::PositionType vs screening::PositionType).
         let entity_module_name = format!("{}_{}", schema_name, table_name);
 
+        // Issue #268 (namespace_layout): namespaced schemas emit under
+        // namespace-derived directories (`cdm.base.datetime` →
+        // `src/entity/cdm/base/datetime/{module}.rs`). None = flat
+        // (gate off or namespace-less schema) — byte-identical.
+        let ns_module = crate::namespace_module_dir(&schema, project);
+        let entity_rel_path = match &ns_module {
+            Some((dir, _)) => format!("{dir}/{entity_module_name}.rs"),
+            None => format!("{entity_module_name}.rs"),
+        };
+
         let import_prefix = &config.defaults.types_import_prefix;
         let structured_imports = structured_imports_for_columns(&columns, import_prefix);
 
@@ -269,7 +279,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                 .output_dir
                 .join("src")
                 .join("entity")
-                .join(format!("{}.rs", entity_module_name)),
+                .join(&entity_rel_path),
             content,
         }];
 

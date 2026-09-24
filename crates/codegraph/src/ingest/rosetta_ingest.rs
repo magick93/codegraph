@@ -92,7 +92,7 @@
 //! mirroring mox-first ordering — `.rosetta` wins title conflicts by
 //! passing first.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
 use sigil_model::{CardinalityMax, SemanticElement};
@@ -103,19 +103,25 @@ use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
     CodeList, ConditionKind, ConditionNode, EdgeProperties, EdgeType, EnumValue, FunctionAlias,
     FunctionDispatch, FunctionInput, FunctionNode, FunctionOperation, FunctionPostCondition,
-    FunctionTransform, FunctionTransformKind, PropertyNode, RegulatoryEdgeKind, RegulatoryKind,
-    RegulatoryNode, RegulatoryOwner, RuleKind, RuleNode, SchemaNode,
+    FunctionTransform, FunctionTransformKind, NamespaceImport, PropertyNode, RegulatoryEdgeKind,
+    RegulatoryKind, RegulatoryNode, RegulatoryOwner, RuleKind, RuleNode, SchemaNode,
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 use codegraph_type_contracts::{PgType, RefClassificationKind};
 
 use crate::error::{Error, Result};
 use crate::ingest::async_ingest::{sanitize_description, sanitize_rust_type_name};
-use crate::ingest::mox_ingest::{build_projection, resolve_domain, strip_code_suffix};
+use crate::ingest::mox_ingest::{
+    build_projection, emit_schema_namespace_edge, ingest_namespaces_deduped, resolve_domain,
+    strip_code_suffix, DISCOVERED_NAMESPACE_SOURCE,
+};
 
 /// Provenance marker on every rosetta-bridged node (`custom_annotations`
 /// key `origin`, value `rosetta`) — distinct from the mox `source` key.
 pub const ROSETTA_ORIGIN: &str = "rosetta";
+
+/// `NamespaceNode.source` provenance for rosetta-declared namespaces.
+pub(crate) const ROSETTA_NAMESPACE_SOURCE: &str = "rosetta";
 
 /// The Rosetta builtin simple types (issue #256) and their JSON-path
 /// primitive mappings. `time` has no `PgType` variant and maps to TEXT
@@ -345,10 +351,17 @@ pub async fn ingest_rosetta_files(
     let mut function_transforms: Vec<(String, String, &'static str)> = Vec::new();
     let mut bridged_schema_ids: HashMap<String, String> = HashMap::new();
     let mut seen_elements: HashSet<String> = HashSet::new();
-    let mut namespaces_seen: HashSet<String> = HashSet::new();
+    // Namespace universe (issue #268): declaring-file namespaces get the
+    // "rosetta" source; import-only targets (e.g. the sigil builtins'
+    // `com.rosetta.model`) land as "discovered" so import edges resolve
+    // and validation sees them.
+    let mut namespace_sources: BTreeMap<String, String> = BTreeMap::new();
+    let mut namespace_imports: Vec<NamespaceImport> = Vec::new();
     for model in user_files {
         if !model.namespace.is_empty() {
-            namespaces_seen.insert(model.namespace.clone());
+            namespace_sources
+                .entry(model.namespace.clone())
+                .or_insert_with(|| ROSETTA_NAMESPACE_SOURCE.to_string());
         }
         // Namespaces are NOT domains (#267/#268): domain resolution
         // mirrors the mox package fallback until the namespace
@@ -412,8 +425,55 @@ pub async fn ingest_rosetta_files(
             }
         }
     }
-    stats.namespaces = namespaces_seen.len();
-    stats.namespace_imports = user_files.iter().map(|model| model.imports.len()).sum();
+    // Import scan: `import a.b.*` / `import a.b as x` → NamespaceImports
+    // edges (issue #268). The sigil lowered form appends `.*` to the
+    // wildcard namespace string — strip it back to the bare FQN. Targets
+    // outside the workspace's own namespaces join the node universe as
+    // "discovered". Empty importing namespaces record no edges (nothing
+    // to import FROM); dedup keeps repeat imports to one edge.
+    let mut seen_imports: HashSet<(String, String, bool, Option<String>)> = HashSet::new();
+    for model in user_files {
+        if model.namespace.is_empty() {
+            continue;
+        }
+        for imp in &model.imports {
+            let target = imp
+                .imported_namespace
+                .trim_end_matches('*')
+                .trim_end_matches('.');
+            if target.is_empty() {
+                continue;
+            }
+            namespace_sources
+                .entry(target.to_string())
+                .or_insert_with(|| DISCOVERED_NAMESPACE_SOURCE.to_string());
+            let payload = (
+                model.namespace.clone(),
+                target.to_string(),
+                imp.wildcard,
+                imp.namespace_alias.clone(),
+            );
+            if seen_imports.insert(payload.clone()) {
+                namespace_imports.push(NamespaceImport {
+                    from_ns: payload.0,
+                    to_ns: payload.1,
+                    wildcard: payload.2,
+                    alias: payload.3,
+                });
+            }
+        }
+    }
+
+    // ── Namespace bridge (issue #268): namespace nodes with their dotted
+    // parent chains, then the import edges (both endpoints exist by now).
+    stats.namespaces = ingest_namespaces_deduped(ingestor, &namespace_sources).await?;
+    for imp in &namespace_imports {
+        ingestor
+            .ingest_namespace_import(imp)
+            .await
+            .map_err(Error::Graph)?;
+        stats.namespace_imports += 1;
+    }
 
     // ── Bridge pass 0: regulatory reference nodes (#265). ONE parameterized
     // node family (kind-tagged); `reg_known` drives best-effort edge
@@ -719,6 +779,12 @@ pub async fn ingest_rosetta_files(
         bridged_schema_ids.insert(enumeration.name.clone(), id.clone());
         stats.bridged_titles.push(enumeration.name.clone());
         stats.enum_schemas += 1;
+        emit_schema_namespace_edge(
+            ingestor,
+            id,
+            Some(model_namespace(user_files, &enumeration.name)),
+        )
+        .await?;
 
         let codelist = CodeList {
             name: enumeration.name.clone(),
@@ -756,6 +822,7 @@ pub async fn ingest_rosetta_files(
         bridged.insert(data.name.clone());
         bridged_schema_ids.insert(data.name.clone(), id.clone());
         stats.bridged_titles.push(data.name.clone());
+        emit_schema_namespace_edge(ingestor, id, Some(*namespace)).await?;
         if data.is_choice {
             stats.choices += 1;
         }
@@ -1694,7 +1761,7 @@ fn data_schema_node(
     }
 
     SchemaNode {
-        namespace: None,
+        namespace: (!namespace.trim().is_empty()).then(|| namespace.to_string()),
         schema_id: schema_id.to_string(),
         title: data.name.clone(),
         description: data.definition.as_deref().map(sanitize_description),
@@ -1738,7 +1805,7 @@ fn enum_schema_node(
         serde_json::Value::String(namespace.to_string()),
     );
     SchemaNode {
-        namespace: None,
+        namespace: (!namespace.trim().is_empty()).then(|| namespace.to_string()),
         schema_id: schema_id.to_string(),
         title: enumeration.name.clone(),
         description: enumeration.definition.as_deref().map(sanitize_description),

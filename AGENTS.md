@@ -143,6 +143,63 @@ slice — producers (mox/rosetta/JSON-`$id`) connect in #268.
   `SchemaNode.namespace` stays `None`, and generated output is unchanged.
   Gate: `cargo test -p codegraph --test namespace_tests`.
 
+### Source bridging + namespace-aware generation (issue #268)
+
+Producers now populate the #267 plane; generation consumes it behind the
+`namespace_layout` gate.
+
+- **mox** (`ingest/mox_ingest.rs`): `package <dotted.name>` → NamespaceNode
+  (source `"mox"`) + dotted `NamespaceParent` chains + `SchemaNode.namespace`
+  + `InNamespace` edges for every bridged class/enum schema. The rex grammar
+  REQUIRES a package, so every compilable mox model is namespaced; the mox
+  equivalence gate pins that this changes NO generated output (flat layout is
+  namespace-inert). New `MoxIngestStats::namespaces` counter (displayed only
+  when non-zero).
+- **rosetta** (`ingest/rosetta_ingest.rs`): `namespace a.b` → NamespaceNode
+  (source `"rosetta"`); `import a.b.*` / `import a.b as x` → NamespaceImports
+  edges (wildcard/alias payload; the lowered `imported_namespace` string
+  embeds `.*` — strip it). Import-only targets (e.g. the sigil builtins'
+  `com.rosetta.model`) land as `"discovered"` nodes so import edges resolve
+  and #267 validation sees them — a cross-domain import without
+  `depends_on` is a hard validation error (the rosetta_bridge fixture's
+  domains.toml declares one). Schemas carry `namespace` + `InNamespace`.
+  `RosettaIngestStats::{namespaces, namespace_imports}` now count ingested
+  nodes/edges.
+- **JSON** (`ingest/async_ingest.rs`): a schema joins a namespace ONLY when
+  it declares one — `$namespace` verbatim, else `$id` path-derived
+  (`https://cdm.example/cdm/base/datetime/Foo.json` → `cdm.base.datetime`;
+  host skipped, filename dropped; bare-host/filename-only/`urn:` ids → None).
+  No declaration ⇒ namespace-less ⇒ byte-identical back-compat (NOT a
+  domain-name default). Source `"json"`; inline `#/$defs` children inherit
+  the parent's treatment (they generate as its children). Classification
+  scoring is unchanged — `classify_domain` operates over domain-assigned
+  schemas that may span namespaces (`SchemaClassificationData.namespace`
+  rides through).
+- **Generation order** (`codegraph-generate` `compute_generation_order`):
+  when the graph has namespaces, per-domain emission order ranks titles by
+  `namespace_generation_order` (imported-before-importer, namespace-less
+  last, title tie-break) and the title-claim key becomes `(namespace, title)`
+  — same title in two namespaces are two types. Namespace-less graphs take
+  the exact pre-#268 path (byte-identical). An import cycle is a hard
+  `Error::Config`.
+- **`namespace_layout` gate** (profiles.toml `[features]`, default OFF =
+  flat/byte-identical): helpers `namespace_module_path`/`namespace_module_rust`
+  in codegraph-core (`cdm.base.datetime` → `cdm/base/datetime` /
+  `cdm::base::datetime`), threaded via `BuildPlan.namespace_layout` →
+  `ProjectConfig.namespace_layout`. When ON and the schema carries a
+  namespace: `sea_orm_entity` emits `src/entity/{ns}/{module}.rs`, `dto` +
+  `dto_included` + `repository` emit under `src/domain/{ns}/{module}/`, the
+  repository emitter references `crate::entity::{ns}::{module}` and
+  registers/imports DTO types on namespace-derived module paths
+  (type_registry keeps handler imports coherent). SvelteKit/API URL
+  segments stay title/api_path_segment-based — namespaces are NOT URLs.
+  Deferred (audit list): handler/app_state/query/command template-level
+  `crate::domain::{domain}::…` strings, child entity file paths, include
+  TARGET namespace resolution, cornucopia/grpc/openapi paths.
+  Gates: `cargo test -p codegraph --test namespace_bridge_tests`,
+  `namespace_graph_parity_between_equivalent_json_and_mox_models` in
+  `mox_equivalence_tests.rs`.
+
 ## IFML Integration
 
 ### Overview
