@@ -105,11 +105,50 @@
 //!   (`if A == g1 { e1 } else if … else { ed }`; the argument fragment is
 //!   re-emitted per guard — deterministic, side-effect-free). Exactly one
 //!   default case is required; `Reference` guards (enum/choice options)
-//!   are `Unsupported` (type knowledge not carried in the payload).
+//!   are `Unsupported` (type knowledge not carried in the payload). In
+//!   bool position the default arm follows the [`Conditional` else
+//!   rule](#boolean-position-issue-283): a `List` default lowers to
+//!   `false` (issue #283). Switches REQUIRE an authored default, so the
+//!   `full == false` generated-else shape cannot arise here — an
+//!   empty-list default in bool position is an authored one, and it is
+//!   indistinguishable from a non-bool default anyway.
 //! - **`Conditional`** → `if cond { then } else { else }`. The `full`
 //!   flag is informational only: a `full == false` conditional still
-//!   carries its generated empty-list `else` in the payload, which is
-//!   emitted faithfully (`vec![]`).
+//!   carries its generated empty-list `else` in the payload. In VALUE
+//!   position that else is emitted faithfully (`vec![]` — the documented
+//!   slice-2 decision). In BOOL position the issue #283 rule applies:
+//!   **a `List` else-arm lowers to `false`**; every other else kind is
+//!   emitted normally (see "Boolean position" below).
+//!
+//! ## Boolean position (issue #283)
+//!
+//! [`transpile`] starts in BOOL position: its callers (condition
+//! validations, eligibility rules) transpile boolean expressions, and a
+//! `full == false` conditional's generated `vec![]` else is not bool —
+//! the emitted crate could not compile (`if !(… else { vec![] }) {`).
+//! The flag threads through the emitter exactly like operand
+//! parenthesization and only changes behavior at `Conditional`/`Switch`:
+//!
+//! - **bool position** — the payload root; operands of `and`/`or` (a
+//!   logical operation's operands are bool by definition); the `if`
+//!   (condition) arm of a `Conditional`; the switch guard comparisons
+//!   (bool-typed by construction — they emit `arg == literal` directly,
+//!   so no threading happens there); the arguments of
+//!   `exists`/`absent`/`only exists`.
+//! - **value position** — arithmetic and comparison operands (a
+//!   comparison is itself the bool thing; its operands are values),
+//!   switch arguments and guard values (compared against guard
+//!   literals), function-call arguments, lambda bodies, list elements,
+//!   and the [`transpile_scoped`] root (function aliases/operations are
+//!   values).
+//! - **The rule** (`Conditional`): in bool position, if the else-arm's
+//!   kind is `List`, emit `false`. A real authored `else: []` is
+//!   indistinguishable from the generated one in the payload, and in
+//!   bool position ANY list else is non-bool anyway — so the rule covers
+//!   both. Any other else kind is emitted normally, and the then/else
+//!   arms thread the conditional's own position (both branches of a
+//!   bool-position conditional must be bool-shaped). In value position
+//!   the else is emitted faithfully (`vec![]`), unchanged.
 //! - **Casts** — `ToString` → `.to_string()`; `ToNumber` →
 //!   `.parse::<f64>().ok()`; `ToInt` → `.parse::<i64>().ok()`
 //!   (Option-propagating: a failed parse surfaces as `None`, pairing with
@@ -210,6 +249,10 @@ pub struct ExprContext<'a> {
 }
 
 /// Transpile one `Expr::to_json` payload into a Rust expression fragment.
+///
+/// The payload ROOT is a BOOL position (issue #283): callers transpile
+/// boolean expressions (condition validations, eligibility rules), so the
+/// bool-position rules (module docs) apply from the root down.
 pub fn transpile(
     payload: &serde_json::Value,
     ctx: &ExprContext<'_>,
@@ -218,7 +261,7 @@ pub fn transpile(
         ctx,
         frames: Vec::new(),
     }
-    .emit(payload, false)
+    .emit(payload, false, true)
 }
 
 /// [`transpile`] with a scope of local variable names (issue #263, slice-4
@@ -226,7 +269,9 @@ pub fn transpile(
 /// local emits the bare name instead of a receiver-field access — a
 /// function's inputs, aliases, and output are locals of the generated
 /// free function, not fields of a receiver struct. Purely additive:
-/// existing `transpile` calls are unchanged.
+/// existing `transpile` calls are unchanged. The ROOT is a VALUE position
+/// (aliases and operations compute values; the bool-position rules do
+/// not apply from here).
 pub fn transpile_scoped(
     payload: &serde_json::Value,
     ctx: &ExprContext<'_>,
@@ -244,7 +289,7 @@ pub fn transpile_scoped(
             implicit: None,
         });
     }
-    emitter.emit(payload, false)
+    emitter.emit(payload, false, false)
 }
 
 /// One lambda binding frame (innermost frame last in the stack).
@@ -267,11 +312,14 @@ struct Emitter<'a> {
 impl Emitter<'_> {
     /// Core emitter. `allow_optional_root` sanctions a bare optional-field
     /// reference — set ONLY for exists/absent/default/only-exists arguments
-    /// (the sanctioned ways to touch optionals).
+    /// (the sanctioned ways to touch optionals). `bool_position` threads
+    /// the boolean-position context (issue #283, module docs): it changes
+    /// behavior only at `Conditional`/`Switch`.
     fn emit(
         &mut self,
         payload: &serde_json::Value,
         allow_optional_root: bool,
+        bool_position: bool,
     ) -> Result<String, TranspileError> {
         let kind = payload.get("kind").and_then(|k| k.as_str());
         match kind {
@@ -317,7 +365,7 @@ impl Emitter<'_> {
                     })?;
                 let mut parts = Vec::with_capacity(elements.len());
                 for element in elements {
-                    parts.push(self.emit(element, false)?);
+                    parts.push(self.emit(element, false, false)?);
                 }
                 Ok(format!("vec![{}]", parts.join(", ")))
             }
@@ -334,7 +382,7 @@ impl Emitter<'_> {
                     TranspileError::new(call, "malformed payload: missing 'receiver'")
                 })?;
                 let recv = self
-                    .emit(receiver, false)
+                    .emit(receiver, false, false)
                     .map_err(|e| optional_receiver_error(call, e))?;
                 Ok(format!(
                     "{}.{}",
@@ -342,13 +390,16 @@ impl Emitter<'_> {
                     escape_rust_keyword(&to_snake_case(feature))
                 ))
             }
+            // A Binary node is position-transparent: comparisons and
+            // arithmetic are already bool/value-shaped by construction.
+            // Only the OPERAND position depends on the op (and/or).
             Some("Binary") => self.emit_binary(payload),
             Some("Exists") => self.emit_exists(payload),
             Some("Absent") => {
                 let argument = payload.get("argument").ok_or_else(|| {
                     TranspileError::new("Absent", "malformed payload: missing 'argument'")
                 })?;
-                Ok(format!("{}.is_none()", self.emit(argument, true)?))
+                Ok(format!("{}.is_none()", self.emit(argument, true, true)?))
             }
             // SEMANTIC GAP: `.first()` does not enforce Rosetta's uniqueness
             // contract (module docs).
@@ -356,7 +407,7 @@ impl Emitter<'_> {
                 let argument = payload.get("argument").ok_or_else(|| {
                     TranspileError::new("OnlyElement", "malformed payload: missing 'argument'")
                 })?;
-                Ok(format!("{}.first()", self.emit(argument, false)?))
+                Ok(format!("{}.first()", self.emit(argument, false, false)?))
             }
             Some("Count") => {
                 let argument = payload.get("argument").ok_or_else(|| {
@@ -368,7 +419,7 @@ impl Emitter<'_> {
                         "count requires a collection field",
                     ));
                 }
-                Ok(format!("{}.len()", self.emit(argument, false)?))
+                Ok(format!("{}.len()", self.emit(argument, false, false)?))
             }
             Some("Flatten") => {
                 let argument = payload.get("argument").ok_or_else(|| {
@@ -376,7 +427,7 @@ impl Emitter<'_> {
                 })?;
                 Ok(format!(
                     "{}.iter().flatten().collect::<Vec<_>>()",
-                    self.emit(argument, false)?
+                    self.emit(argument, false, false)?
                 ))
             }
             Some("Distinct") => {
@@ -385,7 +436,7 @@ impl Emitter<'_> {
                 })?;
                 Ok(format!(
                     "{}.iter().collect::<std::collections::BTreeSet<_>>()",
-                    self.emit(argument, false)?
+                    self.emit(argument, false, false)?
                 ))
             }
             Some("Reverse") => {
@@ -394,27 +445,27 @@ impl Emitter<'_> {
                 })?;
                 Ok(format!(
                     "{}.iter().rev().collect::<Vec<_>>()",
-                    self.emit(argument, false)?
+                    self.emit(argument, false, false)?
                 ))
             }
             Some("First") => {
                 let argument = payload.get("argument").ok_or_else(|| {
                     TranspileError::new("First", "malformed payload: missing 'argument'")
                 })?;
-                Ok(format!("{}.first()", self.emit(argument, false)?))
+                Ok(format!("{}.first()", self.emit(argument, false, false)?))
             }
             Some("Last") => {
                 let argument = payload.get("argument").ok_or_else(|| {
                     TranspileError::new("Last", "malformed payload: missing 'argument'")
                 })?;
-                Ok(format!("{}.last()", self.emit(argument, false)?))
+                Ok(format!("{}.last()", self.emit(argument, false, false)?))
             }
             Some("Sum") => self.emit_aggregate(payload, "sum"),
             Some("Min") => self.emit_aggregate(payload, "min"),
             Some("Max") => self.emit_aggregate(payload, "max"),
             Some("Join") => self.emit_join(payload),
-            Some("Switch") => self.emit_switch(payload),
-            Some("Conditional") => self.emit_conditional(payload),
+            Some("Switch") => self.emit_switch(payload, bool_position),
+            Some("Conditional") => self.emit_conditional(payload, bool_position),
             Some("ToString") => self.emit_cast(payload, ".to_string()"),
             Some("ToNumber") => self.emit_cast(payload, ".parse::<f64>().ok()"),
             Some("ToInt") => self.emit_cast(payload, ".parse::<i64>().ok()"),
@@ -466,7 +517,7 @@ impl Emitter<'_> {
                 })?;
                 Ok(format!(
                     "{} /* meta dropped */",
-                    self.emit(argument, false)?
+                    self.emit(argument, false, false)?
                 ))
             }
             Some("OnlyExists") => self.emit_only_exists(payload),
@@ -570,7 +621,7 @@ impl Emitter<'_> {
             TranspileError::new("Exists", "malformed payload: missing 'argument'")
         })?;
         match modifier {
-            "none" => Ok(format!("{}.is_some()", self.emit(argument, true)?)),
+            "none" => Ok(format!("{}.is_some()", self.emit(argument, true, true)?)),
             "single" | "multiple" => {
                 if !self.is_collection(argument) {
                     return Err(TranspileError::new(
@@ -578,7 +629,7 @@ impl Emitter<'_> {
                         format!("exists modifier '{modifier}' requires a collection field"),
                     ));
                 }
-                let arg = self.emit(argument, true)?;
+                let arg = self.emit(argument, true, true)?;
                 Ok(if modifier == "single" {
                     format!("{arg}.len() == 1")
                 } else {
@@ -618,7 +669,7 @@ impl Emitter<'_> {
                 format!("{op} requires numeric element type"),
             ));
         };
-        let arg = self.emit(argument, false)?;
+        let arg = self.emit(argument, false, false)?;
         Ok(match op {
             "sum" => format!("{arg}.iter().sum::<{elem}>()"),
             "min" => {
@@ -657,9 +708,9 @@ impl Emitter<'_> {
                 "join requires a collection field",
             ));
         }
-        let l = self.emit(left, false)?;
+        let l = self.emit(left, false, false)?;
         let sep = if explicit {
-            self.emit(right, false)?
+            self.emit(right, false, false)?
         } else {
             "\", \"".to_string()
         };
@@ -667,8 +718,15 @@ impl Emitter<'_> {
     }
 
     /// `switch` → if-else-chain expression. Requires exactly one default
-    /// case; reference guards are refused (module docs).
-    fn emit_switch(&mut self, payload: &serde_json::Value) -> Result<String, TranspileError> {
+    /// case; reference guards are refused (module docs). In bool position
+    /// the default arm follows the issue #283 List rule (module docs) —
+    /// a `List` default lowers to `false`; case expressions thread the
+    /// switch's own position.
+    fn emit_switch(
+        &mut self,
+        payload: &serde_json::Value,
+        bool_position: bool,
+    ) -> Result<String, TranspileError> {
         let argument = payload.get("argument").ok_or_else(|| {
             TranspileError::new("Switch", "malformed payload: missing 'argument'")
         })?;
@@ -686,15 +744,15 @@ impl Emitter<'_> {
                 "switch requires exactly one default case",
             ));
         }
-        let arg = self.emit(argument, false)?;
+        let arg = self.emit(argument, false, false)?;
         let arg = wrap_operand(argument, arg);
-        let default_expr = self.emit(&defaults[0]["expression"], false)?;
+        let default_expr = self.emit_switch_arm(&defaults[0]["expression"], bool_position)?;
         let mut out = String::new();
         for case in cases {
             if case.get("default").is_some() {
                 continue;
             }
-            let expr = self.emit(&case["expression"], false)?;
+            let expr = self.emit_switch_arm(&case["expression"], bool_position)?;
             let cond = match case.get("guard") {
                 Some(guard) if guard.get("kind").and_then(|k| k.as_str()) == Some("Literal") => {
                     let value = guard.get("value").ok_or_else(|| {
@@ -703,7 +761,9 @@ impl Emitter<'_> {
                             "malformed payload: literal guard missing 'value'",
                         )
                     })?;
-                    format!("{arg} == {}", self.emit(value, false)?)
+                    // The guard-derived comparison is bool-typed by
+                    // construction; its operands stay value-position.
+                    format!("{arg} == {}", self.emit(value, false, false)?)
                 }
                 Some(guard) if guard.get("kind").and_then(|k| k.as_str()) == Some("Reference") => {
                     let target = guard
@@ -739,10 +799,39 @@ impl Emitter<'_> {
         Ok(out)
     }
 
-    /// `if c then a else b` → if-else expression. `full == false` still
-    /// carries the generated empty-list else in the payload; it is emitted
-    /// faithfully (module docs).
-    fn emit_conditional(&mut self, payload: &serde_json::Value) -> Result<String, TranspileError> {
+    /// One switch arm (case expression or default), emitted in the
+    /// switch's own position — with the issue #283 List rule applied to
+    /// the default-shaped situation in bool position: a `List` arm in
+    /// bool position is non-bool, so it lowers to `false`. (The rule is
+    /// load-bearing for the default; case expressions only thread the
+    /// position.)
+    fn emit_switch_arm(
+        &mut self,
+        expr: &serde_json::Value,
+        bool_position: bool,
+    ) -> Result<String, TranspileError> {
+        if bool_position && expr.get("kind").and_then(|k| k.as_str()) == Some("List") {
+            return Ok("false".to_string());
+        }
+        self.emit(expr, false, bool_position)
+    }
+
+    /// `if c then a else b` → if-else expression.
+    ///
+    /// The condition arm is always emitted in bool position. The issue
+    /// #283 rule applies to the else-arm in bool position: a `List` else
+    /// (the generated `full == false` empty list — and any authored list,
+    /// which is indistinguishable in the payload) lowers to `false`;
+    /// every other else kind is emitted normally. The then/else arms
+    /// thread the conditional's own position (both branches of a
+    /// bool-position conditional must be bool-shaped). In value position
+    /// the `full == false` else is emitted faithfully as `vec![]`
+    /// (slice 2; module docs).
+    fn emit_conditional(
+        &mut self,
+        payload: &serde_json::Value,
+        bool_position: bool,
+    ) -> Result<String, TranspileError> {
         let cond = payload
             .get("if")
             .ok_or_else(|| TranspileError::new("Conditional", "malformed payload: missing 'if'"))?;
@@ -752,11 +841,18 @@ impl Emitter<'_> {
         let els = payload.get("else").ok_or_else(|| {
             TranspileError::new("Conditional", "malformed payload: missing 'else'")
         })?;
+        let else_frag = if bool_position && els.get("kind").and_then(|k| k.as_str()) == Some("List")
+        {
+            // Issue #283: a List else in bool position is not bool.
+            "false".to_string()
+        } else {
+            self.emit(els, false, bool_position)?
+        };
         Ok(format!(
             "if {} {{ {} }} else {{ {} }}",
-            wrap_operand(cond, self.emit(cond, false)?),
-            self.emit(then, false)?,
-            self.emit(els, false)?
+            wrap_operand(cond, self.emit(cond, false, true)?),
+            self.emit(then, false, bool_position)?,
+            else_frag
         ))
     }
 
@@ -775,7 +871,7 @@ impl Emitter<'_> {
                 "malformed payload: missing 'argument'",
             )
         })?;
-        Ok(format!("{}{}", self.emit(argument, false)?, suffix))
+        Ok(format!("{}{}", self.emit(argument, false, false)?, suffix))
     }
 
     /// `filter` / `extract`: emit the argument, bind the lambda frame, emit
@@ -823,7 +919,7 @@ impl Emitter<'_> {
                     TranspileError::new(kind, "malformed payload: parameter is not a string")
                 })?,
         };
-        let arg = self.emit(argument, false)?;
+        let arg = self.emit(argument, false, false)?;
         self.frames.push(Frame {
             params: vec![param.clone()],
             // Implicit-parameter form: `item` IS the element binding.
@@ -834,7 +930,7 @@ impl Emitter<'_> {
                 None
             },
         });
-        let body_frag = match self.emit(body, false) {
+        let body_frag = match self.emit(body, false, false) {
             Ok(frag) => frag,
             Err(e) => {
                 self.frames.pop();
@@ -858,7 +954,7 @@ impl Emitter<'_> {
             .get("function")
             .ok_or_else(|| TranspileError::new("Then", "malformed payload: missing 'function'"))?;
         if function.is_null() {
-            return self.emit(argument, false);
+            return self.emit(argument, false, false);
         }
         let params = function
             .get("parameters")
@@ -890,10 +986,10 @@ impl Emitter<'_> {
             let f = body.get("symbol").and_then(|s| s.as_str()).ok_or_else(|| {
                 TranspileError::new("Then", "malformed payload: function missing 'symbol'")
             })?;
-            let arg = self.emit(argument, false)?;
+            let arg = self.emit(argument, false, false)?;
             return Ok(format!("{f}({arg})"));
         }
-        let arg = self.emit(argument, false)?;
+        let arg = self.emit(argument, false, false)?;
         let binding = if wraps_as_operand(argument) {
             format!("({arg})")
         } else {
@@ -905,7 +1001,7 @@ impl Emitter<'_> {
             params: Vec::new(),
             implicit: Some(binding),
         });
-        let out = self.emit(body, false);
+        let out = self.emit(body, false, false);
         self.frames.pop();
         out
     }
@@ -927,7 +1023,7 @@ impl Emitter<'_> {
         }
         let mut parts = Vec::with_capacity(args.len());
         for arg in args {
-            parts.push(format!("{}.is_some()", self.emit(arg, true)?));
+            parts.push(format!("{}.is_some()", self.emit(arg, true, true)?));
         }
         Ok(parts.join(" && "))
     }
@@ -975,8 +1071,8 @@ impl Emitter<'_> {
                         "contains requires a collection receiver (string contains needs type knowledge)",
                     ));
                 }
-                let l = self.emit(left, false)?;
-                let r = self.emit(right, false)?;
+                let l = self.emit(left, false, false)?;
+                let r = self.emit(right, false, false)?;
                 return Ok(format!("{l}.contains(&{})", wrap_operand(right, r)));
             }
             "disjoint" => {
@@ -986,8 +1082,8 @@ impl Emitter<'_> {
                         "disjoint requires a collection receiver",
                     ));
                 }
-                let l = self.emit(left, false)?;
-                let r = self.emit(right, false)?;
+                let l = self.emit(left, false, false)?;
+                let r = self.emit(right, false, false)?;
                 return Ok(format!(
                     "{l}.iter().all(|x| !{}.contains(x))",
                     wrap_operand(right, r)
@@ -996,8 +1092,8 @@ impl Emitter<'_> {
             "default" => {
                 // Sanctioned optional access: `default` IS the sanctioned
                 // way to read a bare optional field.
-                let l = self.emit(left, true)?;
-                let r = self.emit(right, false)?;
+                let l = self.emit(left, true, false)?;
+                let r = self.emit(right, false, false)?;
                 return Ok(format!("{l}.unwrap_or({})", wrap_operand(right, r)));
             }
             other => {
@@ -1007,10 +1103,15 @@ impl Emitter<'_> {
                 ));
             }
         };
+        // Logical operands are bool-position regardless of the ambient
+        // position (a logical operation's operands are bool by
+        // definition, issue #283); arithmetic and comparison operands
+        // are values — the comparison itself is the bool thing.
+        let operand_bool = matches!(op, "and" | "or");
         Ok(format!(
             "{} {rust_op} {}",
-            self.wrap_nested_binary(left)?,
-            self.wrap_nested_binary(right)?
+            self.wrap_nested_binary(left, operand_bool)?,
+            self.wrap_nested_binary(right, operand_bool)?
         ))
     }
 
@@ -1020,8 +1121,9 @@ impl Emitter<'_> {
     fn wrap_nested_binary(
         &mut self,
         payload: &serde_json::Value,
+        bool_position: bool,
     ) -> Result<String, TranspileError> {
-        let code = self.emit(payload, false)?;
+        let code = self.emit(payload, false, bool_position)?;
         Ok(wrap_operand(payload, code))
     }
 
@@ -1841,14 +1943,29 @@ mod tests {
             "then":sym("prices"),
             "else":{"kind":"List","elements":[{"kind":"Number","text":"0.0"}]},
             "full":true});
+        // `transpile` roots at BOOL position (issue #283): ANY List
+        // else-arm — a real authored list included — lowers to `false`
+        // there, because no list is bool.
         assert_eq!(
-            t(payload),
+            t(payload.clone()),
+            "if (dto.price > 1.0) { dto.prices } else { false }"
+        );
+        // Value position keeps the faithful list rendering (byte-identity).
+        let sets = Sets::empty();
+        let out = transpile_scoped(&payload, &sets.ctx(), &[]).expect("transpiles");
+        assert_eq!(
+            out,
             "if (dto.price > 1.0) { dto.prices } else { vec![0.0] }"
         );
     }
 
     #[test]
-    fn conditional_without_else_emits_the_generated_empty_list() {
+    fn conditional_without_else_in_bool_position_emits_false() {
+        // Issue #283: `if COND then X` carries the GENERATED `full:false`
+        // empty-list else. At a condition root (bool position) `vec![]` is
+        // not bool and the generated crate cannot compile — the List else
+        // lowers to `false`. Value position still emits `vec![]` (the
+        // AveragingMethodologyExists value-position pin below).
         let payload = json!({"kind":"Conditional",
             "if":{"kind":"Binary","op":">","left":sym("price"),"right":{"kind":"Number","text":"1.0"}},
             "then":sym("prices"),
@@ -1856,7 +1973,7 @@ mod tests {
             "full":false});
         assert_eq!(
             t(payload),
-            "if (dto.price > 1.0) { dto.prices } else { vec![] }"
+            "if (dto.price > 1.0) { dto.prices } else { false }"
         );
     }
 
@@ -1867,6 +1984,131 @@ mod tests {
             "full":true});
         let payload = json!({"kind":"Binary","op":"+","left":conditional,"right":int("3")});
         assert_eq!(t(payload), "(if true { 1 } else { 2 }) + 3");
+    }
+
+    // ── bool-position rule (issue #283) ──────────────────────────────────
+
+    /// The verbatim `Reset.AveragingMethodologyExists` payload shape
+    /// (docs/trade-state-spike.md §2.3): `if observations->count > 1 then
+    /// averagingMethodology exists` — a `full:false` Conditional whose
+    /// else-arm is the generated empty list.
+    fn averaging_methodology_exists() -> serde_json::Value {
+        json!({
+            "kind":"Conditional","full":false,
+            "if":{"kind":"Binary","op":">",
+                "left":{"kind":"Count","argument":sym("observations")},
+                "right":int("1")},
+            "then":{"kind":"Exists","modifier":"none",
+                "argument":sym("averagingMethodology")},
+            "else":{"kind":"List","elements":[]}
+        })
+    }
+
+    /// Field knowledge for the AveragingMethodologyExists payload:
+    /// `observations` is an array, `averagingMethodology` an optional.
+    fn averaging_sets() -> Sets {
+        Sets {
+            collections: HashSet::from(["observations".to_string()]),
+            optional: HashSet::from(["averaging_methodology".to_string()]),
+            ..Sets::empty()
+        }
+    }
+
+    /// Byte-exact mirror of the per-condition function emission in
+    /// `ddd/validations.rs::emit_transpiled_conditions` (the condition
+    /// root is wrapped as `if !(…) {`), so transpiler goldens pin the
+    /// full integration shape.
+    fn validations_condition_body(name: &str, entity: &str, fn_name: &str, expr: &str) -> String {
+        format!(
+            "/// Condition '{name}' for {entity} (create path).\n\
+             pub fn validate_{fn_name}(dto: &Create{entity}Request) -> Result<(), String> {{\n    \
+             if !({expr}) {{\n        \
+             return Err(\"{name} failed\".to_string());\n    }}\n    \
+             Ok(())\n}}"
+        )
+    }
+
+    #[test]
+    fn averaging_methodology_lowers_list_else_to_false_in_bool_position() {
+        // The defect (issue #283): the root emitted
+        // `… else { vec![] }` inside `if !(…) {` — not bool, no compile.
+        let sets = averaging_sets();
+        assert_eq!(
+            transpile(&averaging_methodology_exists(), &sets.ctx()).expect("transpiles"),
+            "if (dto.observations.len() > 1) { dto.averaging_methodology.is_some() } else { false }"
+        );
+    }
+
+    #[test]
+    fn averaging_methodology_exists_full_validations_fn_body_golden() {
+        // Regression golden: the FULL emitted fn body, exactly as
+        // validations.rs renders the transpiled condition root.
+        let sets = averaging_sets();
+        let expr = transpile(&averaging_methodology_exists(), &sets.ctx()).expect("transpiles");
+        assert_eq!(
+            validations_condition_body(
+                "AveragingMethodologyExists",
+                "Reset",
+                "averaging_methodology_exists",
+                &expr
+            ),
+            "/// Condition 'AveragingMethodologyExists' for Reset (create path).\n\
+             pub fn validate_averaging_methodology_exists(dto: &CreateResetRequest) -> Result<(), String> {\n    \
+             if !(if (dto.observations.len() > 1) { dto.averaging_methodology.is_some() } else { false }) {\n        \
+             return Err(\"AveragingMethodologyExists failed\".to_string());\n    }\n    \
+             Ok(())\n}"
+        );
+    }
+
+    #[test]
+    fn averaging_methodology_exists_value_position_keeps_vec_empty() {
+        // Byte-identity pin (issue #283): the SAME payload in VALUE
+        // position — function aliases/operations transpile through
+        // `transpile_scoped` — still emits the faithful generated
+        // empty-list else (the documented slice-2 decision).
+        let sets = averaging_sets();
+        let out = transpile_scoped(&averaging_methodology_exists(), &sets.ctx(), &[])
+            .expect("transpiles");
+        assert_eq!(
+            out,
+            "if (dto.observations.len() > 1) { dto.averaging_methodology.is_some() } else { vec![] }"
+        );
+    }
+
+    #[test]
+    fn bool_position_conditional_with_boolean_else_emits_it() {
+        // The rule only rewrites LIST else-arms; a real Boolean else is
+        // emitted as-is in bool position.
+        let payload = json!({"kind":"Conditional","full":true,
+            "if":{"kind":"Binary","op":">","left":sym("price"),"right":{"kind":"Number","text":"1.0"}},
+            "then":{"kind":"Boolean","value":true},
+            "else":{"kind":"Boolean","value":false}});
+        assert_eq!(t(payload), "if (dto.price > 1.0) { true } else { false }");
+    }
+
+    #[test]
+    fn switch_in_bool_position_lowers_a_list_default_to_false() {
+        // Finding (issue #283): switches REQUIRE an authored default
+        // (emit_switch enforces exactly one), so the `full:false`
+        // generated-else shape cannot arise there — but an authored
+        // empty-list default is the same non-bool situation and follows
+        // the same `false` rule in bool position.
+        let payload = json!({"kind":"Switch","argument":sym("quantity"),"cases":[
+            switch_case(json!({"kind":"Literal","value":int("1")}), json!({"kind":"Boolean","value":true})),
+            json!({"default":true,"expression":{"kind":"List","elements":[]}}),
+        ]});
+        assert_eq!(t(payload), "if dto.quantity == 1 { true } else { false }");
+
+        // Default-only switch: the List default becomes `false` directly.
+        let default_only = json!({"kind":"Switch","argument":sym("quantity"),"cases":[
+            json!({"default":true,"expression":{"kind":"List","elements":[]}}),
+        ]});
+        assert_eq!(t(default_only.clone()), "false");
+
+        // Value position keeps the faithful `vec![]` default.
+        let sets = Sets::empty();
+        let out = transpile_scoped(&default_only, &sets.ctx(), &[]).expect("transpiles");
+        assert_eq!(out, "vec![]");
     }
 
     // ── casts ────────────────────────────────────────────────────────────

@@ -407,10 +407,14 @@ fn switch_literal_chain_and_conditional_expressions() {
         transpile_named(&conditions, "IfElse", &optional).unwrap(),
         "if (dto.price > 1.0) { dto.prices } else { dto.counts }"
     );
-    // full == false: the generated empty-list else is emitted faithfully.
+    // Issue #283: a condition root is BOOL position — the generated
+    // `full == false` empty-list else is not bool there and the emitted
+    // validation could not compile, so any List else-arm lowers to
+    // `false`. (In value position — function aliases/operations — the
+    // faithful `vec![]` emission is unchanged.)
     assert_eq!(
         transpile_named(&conditions, "IfNoElse", &optional).unwrap(),
-        "if (dto.price > 1.0) { dto.prices } else { vec![] }"
+        "if (dto.price > 1.0) { dto.prices } else { false }"
     );
 }
 
