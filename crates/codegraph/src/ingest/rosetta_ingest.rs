@@ -1694,6 +1694,7 @@ fn data_schema_node(
     }
 
     SchemaNode {
+        namespace: None,
         schema_id: schema_id.to_string(),
         title: data.name.clone(),
         description: data.definition.as_deref().map(sanitize_description),
@@ -1737,6 +1738,7 @@ fn enum_schema_node(
         serde_json::Value::String(namespace.to_string()),
     );
     SchemaNode {
+        namespace: None,
         schema_id: schema_id.to_string(),
         title: enumeration.name.clone(),
         description: enumeration.definition.as_deref().map(sanitize_description),

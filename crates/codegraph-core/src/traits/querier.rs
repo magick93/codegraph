@@ -1,14 +1,15 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode, CapabilityNode,
-    CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
-    DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode,
-    GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
-    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceNode,
-    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
-    PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
-    RepositoryNode, RuleNode, RuleRefRecord, SchemaClassificationData, SchemaNode,
-    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
+    ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
+    AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, EnumValue,
+    ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
+    InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode, MoxOperationNode,
+    MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
+    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
+    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -271,9 +272,10 @@ pub trait GraphQuerier: Send + Sync {
         Ok(Vec::new())
     }
 
-    /// Get all Namespace nodes.
+    /// Get all AT-Protocol namespace nodes (renamed from `get_namespaces`,
+    /// issue #267 collision resolution).
     #[allow(unused_variables)]
-    async fn get_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+    async fn get_atproto_namespaces(&self) -> Result<Vec<AtprotoNamespaceNode>, GraphError> {
         Ok(Vec::new())
     }
 
@@ -519,6 +521,37 @@ pub trait GraphQuerier: Send + Sync {
     /// Every rule-source `RuleReference` binding (issue #264), ordered by
     /// (rule source, schema title, attribute).
     async fn list_rule_references(&self) -> Result<Vec<RuleRefRecord>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    // ── Namespace plane query methods (issue #267; default: no data) ──
+
+    /// Every NamespaceNode in the graph, ordered by `fqn` (stable).
+    async fn list_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Schemas linked (via `InNamespace` edges) to the namespace `fqn`.
+    /// With `recursive = true` the namespace's descendants (through
+    /// `NamespaceParent` edges) are included. Ordered by `schema_id`.
+    async fn list_schemas_by_namespace(
+        &self,
+        _fqn: &str,
+        _recursive: bool,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// The `NamespaceImports` edges originating at `fqn`, ordered by
+    /// (target fqn, alias).
+    async fn get_namespace_imports(&self, _fqn: &str) -> Result<Vec<NamespaceImport>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Deterministic topological order of all namespaces by their imports
+    /// (imported before importer; lexicographic tie-break on fqn). A cycle
+    /// is an error naming the cycle members.
+    async fn namespace_generation_order(&self) -> Result<Vec<String>, GraphError> {
         Ok(Vec::new())
     }
 }

@@ -46,7 +46,15 @@ pub struct MockEngine {
     op_interaction: Mutex<HashMap<String, String>>,
     interaction_endpoint: Mutex<HashMap<String, String>>,
     resource_operations: Mutex<HashMap<String, Vec<String>>>,
-    namespaces: Mutex<HashMap<String, NamespaceNode>>,
+    atproto_namespaces: Mutex<HashMap<String, AtprotoNamespaceNode>>,
+    /// Graph-wide namespaces keyed by fqn (issue #267).
+    type_namespaces: Mutex<HashMap<String, NamespaceNode>>,
+    /// NamespaceImports edges (issue #267).
+    namespace_imports: Mutex<Vec<NamespaceImport>>,
+    /// InNamespace edges: schema_id → namespace fqn (issue #267).
+    schema_in_namespace: Mutex<HashMap<String, String>>,
+    /// NamespaceParent edges: (child fqn, parent fqn) (issue #267).
+    namespace_parent_edges: Mutex<Vec<(String, String)>>,
     lexicons: Mutex<HashMap<String, LexiconNode>>,
     collections: Mutex<HashMap<String, CollectionNode>>,
     repositories: Mutex<HashMap<String, RepositoryNode>>,
@@ -117,7 +125,11 @@ impl MockEngine {
             op_interaction: Mutex::new(HashMap::new()),
             interaction_endpoint: Mutex::new(HashMap::new()),
             resource_operations: Mutex::new(HashMap::new()),
-            namespaces: Mutex::new(HashMap::new()),
+            atproto_namespaces: Mutex::new(HashMap::new()),
+            type_namespaces: Mutex::new(HashMap::new()),
+            namespace_imports: Mutex::new(Vec::new()),
+            schema_in_namespace: Mutex::new(HashMap::new()),
+            namespace_parent_edges: Mutex::new(Vec::new()),
             lexicons: Mutex::new(HashMap::new()),
             collections: Mutex::new(HashMap::new()),
             repositories: Mutex::new(HashMap::new()),
@@ -155,6 +167,27 @@ impl MockEngine {
             .lock()
             .unwrap()
             .insert(schema_title.to_string(), lexicon_nsid.to_string());
+    }
+
+    /// The namespace `fqn` plus, when `recursive`, all its descendant
+    /// namespaces (via NamespaceParent edges) — the set of namespaces whose
+    /// schemas `list_schemas_by_namespace` returns.
+    fn namespace_closure(&self, fqn: &str, recursive: bool) -> Vec<String> {
+        let mut wanted: Vec<String> = vec![fqn.to_string()];
+        if recursive {
+            let edges = self.namespace_parent_edges.lock().unwrap();
+            // Walk down from fqn: children are edges (child → parent).
+            let mut frontier: Vec<String> = vec![fqn.to_string()];
+            while let Some(current) = frontier.pop() {
+                for (child, parent) in edges.iter() {
+                    if parent == &current && !wanted.contains(child) {
+                        wanted.push(child.clone());
+                        frontier.push(child.clone());
+                    }
+                }
+            }
+        }
+        wanted
     }
 
     pub fn builder() -> MockEngineBuilder {
@@ -697,6 +730,39 @@ impl GraphIngestor for MockEngine {
                     rule_source: props.rule_source.unwrap_or_default(),
                 });
             }
+            // Namespace plane (issue #267): InNamespace links a Schema (by
+            // schema_id) to a Namespace (by fqn).
+            EdgeType::InNamespace => {
+                // The AT-Protocol projection also uses InNamespace (Lexicon
+                // nsid → AtprotoNamespace authority); those edges carry no
+                // schema-side meaning here and are ignored.
+                if let Some(ns) = self.type_namespaces.lock().unwrap().get(to_id).cloned() {
+                    self.schema_in_namespace
+                        .lock()
+                        .unwrap()
+                        .insert(from_id.to_string(), ns.fqn);
+                }
+            }
+            EdgeType::NamespaceParent => {
+                self.namespace_parent_edges
+                    .lock()
+                    .unwrap()
+                    .push((from_id.to_string(), to_id.to_string()));
+            }
+            EdgeType::NamespaceImports => {
+                let props = props.cloned().unwrap_or_default();
+                self.namespace_imports
+                    .lock()
+                    .unwrap()
+                    .push(NamespaceImport {
+                        from_ns: from_id.to_string(),
+                        to_ns: to_id.to_string(),
+                        wildcard: props.import_wildcard.unwrap_or(false),
+                        alias: props.import_alias,
+                    });
+            }
+            // Derived, never ingested (issue #267).
+            EdgeType::NamespaceDepends => {}
             _ => {}
         }
         Ok(())
@@ -759,13 +825,35 @@ impl GraphIngestor for MockEngine {
         Ok(id)
     }
 
-    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError> {
+    async fn ingest_atproto_namespace(
+        &self,
+        node: &AtprotoNamespaceNode,
+    ) -> Result<String, GraphError> {
         let authority = node.authority.clone();
-        self.namespaces
+        self.atproto_namespaces
             .lock()
             .unwrap()
             .insert(authority.clone(), node.clone());
         Ok(authority)
+    }
+
+    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError> {
+        self.type_namespaces
+            .lock()
+            .unwrap()
+            .insert(node.fqn.clone(), node.clone());
+        if let Some(parent) = &node.parent {
+            self.namespace_parent_edges
+                .lock()
+                .unwrap()
+                .push((node.fqn.clone(), parent.clone()));
+        }
+        Ok(node.fqn.clone())
+    }
+
+    async fn ingest_namespace_import(&self, import: &NamespaceImport) -> Result<(), GraphError> {
+        self.namespace_imports.lock().unwrap().push(import.clone());
+        Ok(())
     }
 
     async fn ingest_lexicon(&self, node: &LexiconNode) -> Result<String, GraphError> {
@@ -1533,8 +1621,83 @@ impl GraphQuerier for MockEngine {
             .collect())
     }
 
-    async fn get_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
-        Ok(self.namespaces.lock().unwrap().values().cloned().collect())
+    async fn get_atproto_namespaces(&self) -> Result<Vec<AtprotoNamespaceNode>, GraphError> {
+        let mut nodes: Vec<AtprotoNamespaceNode> = self
+            .atproto_namespaces
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        nodes.sort_by(|a, b| a.authority.cmp(&b.authority));
+        Ok(nodes)
+    }
+
+    // ── Namespace plane query methods (issue #267) ────────────────────
+
+    async fn list_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+        let mut nodes: Vec<NamespaceNode> = self
+            .type_namespaces
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        nodes.sort_by(|a, b| a.fqn.cmp(&b.fqn));
+        Ok(nodes)
+    }
+
+    async fn list_schemas_by_namespace(
+        &self,
+        fqn: &str,
+        recursive: bool,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
+        let wanted = self.namespace_closure(fqn, recursive);
+        // The mock's schema map is title-keyed, so schema_id → fqn mappings
+        // resolve through a value scan.
+        let mapping = self.schema_in_namespace.lock().unwrap();
+        let schemas = self.schemas.lock().unwrap();
+        let mut out: Vec<SchemaNode> = mapping
+            .iter()
+            .filter(|(_, ns)| wanted.contains(ns))
+            .filter_map(|(schema_id, _)| {
+                schemas
+                    .values()
+                    .find(|s| &s.schema_id == schema_id)
+                    .cloned()
+            })
+            .collect();
+        out.sort_by(|a, b| a.schema_id.cmp(&b.schema_id));
+        Ok(out)
+    }
+
+    async fn get_namespace_imports(&self, fqn: &str) -> Result<Vec<NamespaceImport>, GraphError> {
+        let mut imports: Vec<NamespaceImport> = self
+            .namespace_imports
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|i| i.from_ns == fqn)
+            .cloned()
+            .collect();
+        imports.sort_by(|a, b| (&a.to_ns, &a.alias).cmp(&(&b.to_ns, &b.alias)));
+        Ok(imports)
+    }
+
+    async fn namespace_generation_order(&self) -> Result<Vec<String>, GraphError> {
+        let fqns: Vec<String> = self
+            .type_namespaces
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        let imports = self.namespace_imports.lock().unwrap();
+        let pairs: Vec<(String, String)> = imports
+            .iter()
+            .map(|i| (i.from_ns.clone(), i.to_ns.clone()))
+            .collect();
+        topological_namespace_order(&fqns, &pairs).map_err(GraphError::Query)
     }
 
     #[allow(unused_variables)]

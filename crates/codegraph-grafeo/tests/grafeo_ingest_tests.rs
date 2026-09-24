@@ -4,6 +4,7 @@ use codegraph_grafeo::GrafeoEngine;
 
 fn test_schema_node() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "common/PersonType".to_string(),
         title: "PersonType".to_string(),
         description: Some("A person".to_string()),

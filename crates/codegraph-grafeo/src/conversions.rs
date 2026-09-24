@@ -101,6 +101,7 @@ pub fn row_to_schema_node(
         schema_type: reader.get_string(row, "s.schema_type")?,
         classification: reader.get_string(row, "s.classification")?,
         domain: reader.get_opt_string(row, "s.domain")?,
+        namespace: reader.get_opt_string(row, "s.namespace")?,
         rel_path: reader.get_string(row, "s.rel_path")?,
         pg_type: reader.get_string(row, "s.pg_type")?,
         rust_type: reader.get_string(row, "s.rust_type")?,

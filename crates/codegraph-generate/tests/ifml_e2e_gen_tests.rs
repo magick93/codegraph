@@ -65,6 +65,7 @@ fn customer_schema() -> SchemaNode {
         schema_type: "object".into(),
         classification: "entity".into(),
         domain: Some("sales".into()),
+        namespace: None,
         rel_path: "sales/customer_type.json".into(),
         pg_type: "JSONB".into(),
         rust_type: "customer::Model".into(),

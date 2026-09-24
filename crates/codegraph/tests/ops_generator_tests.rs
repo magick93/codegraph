@@ -25,6 +25,7 @@ fn mock_test_setup() -> (
     tempfile::TempDir,
 ) {
     let schema = SchemaNode {
+        namespace: None,
         schema_id: "recruiting/json/CandidateType.json".to_string(),
         title: "CandidateType".to_string(),
         description: Some("A candidate for a position".to_string()),

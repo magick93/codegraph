@@ -351,6 +351,7 @@ fn mock_test_setup() -> (
     tempfile::TempDir,
 ) {
     let schema = SchemaNode {
+        namespace: None,
         schema_id: "recruiting/json/CandidateType.json".to_string(),
         title: "CandidateType".to_string(),
         description: Some("A candidate for a position".to_string()),
@@ -1143,6 +1144,7 @@ fn workers_scaffold_test_setup() -> (
     tempfile::TempDir,
 ) {
     let pay_run = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/PayRunType.json".to_string(),
         title: "PayRunType".to_string(),
         description: Some("A pay run".to_string()),
@@ -1167,6 +1169,7 @@ fn workers_scaffold_test_setup() -> (
         custom_annotations: Default::default(),
     };
     let code = SchemaNode {
+        namespace: None,
         schema_id: "common/json/CodeType.json".to_string(),
         title: "CodeType".to_string(),
         description: Some("A code value".to_string()),
@@ -1515,6 +1518,7 @@ async fn workers_codelist_test_setup() -> (
     tempfile::TempDir,
 ) {
     let pay_run = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/PayRunType.json".to_string(),
         title: "PayRunType".to_string(),
         description: Some("A pay run".to_string()),
@@ -1539,6 +1543,7 @@ async fn workers_codelist_test_setup() -> (
         custom_annotations: Default::default(),
     };
     let pay_line = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/PayLineType.json".to_string(),
         title: "PayLineType".to_string(),
         description: Some("A pay run line item".to_string()),
@@ -1563,6 +1568,7 @@ async fn workers_codelist_test_setup() -> (
         custom_annotations: Default::default(),
     };
     let code = SchemaNode {
+        namespace: None,
         schema_id: "common/json/CodeType.json".to_string(),
         title: "CodeType".to_string(),
         description: Some("A code value".to_string()),
@@ -1587,6 +1593,7 @@ async fn workers_codelist_test_setup() -> (
         custom_annotations: Default::default(),
     };
     let work_item = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/WorkItemType.json".to_string(),
         title: "WorkItemType".to_string(),
         description: Some("A work item".to_string()),

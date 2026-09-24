@@ -344,6 +344,7 @@ async fn ingest_schema_node(
     }
 
     let node = SchemaNode {
+        namespace: None,
         schema_id: uri.to_string(),
         title: title.to_string(),
         description: entry

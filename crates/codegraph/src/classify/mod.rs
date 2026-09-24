@@ -187,6 +187,7 @@ mod tests {
         field_count: usize,
     ) -> SchemaClassificationData {
         SchemaClassificationData {
+            namespace: None,
             title: title.to_string(),
             domain: Some(domain.to_string()),
             rel_path: rel_path.to_string(),
@@ -370,6 +371,7 @@ mod tests {
         let classifier = AutoClassifier::new(HashSet::new(), HashMap::new());
         let entry = empty_domain_entry("Wellness", "wellness");
         let schemas = vec![SchemaClassificationData {
+            namespace: None,
             title: "WellnessType".to_string(),
             domain: Some("wellness".to_string()),
             rel_path: "wellness/json/WellnessType.json".to_string(),
@@ -407,6 +409,7 @@ mod tests {
         let classifier = AutoClassifier::new(HashSet::new(), HashMap::new());
         let entry = empty_domain_entry("Timecard", "timecard");
         let schemas = vec![SchemaClassificationData {
+            namespace: None,
             title: "TimecardType".to_string(),
             domain: Some("timecard".to_string()),
             rel_path: "timecard/json/TimecardType.json".to_string(),
@@ -444,6 +447,7 @@ mod tests {
         let entry = empty_domain_entry("Wellness", "wellness");
         let schemas = vec![
             SchemaClassificationData {
+                namespace: None,
                 title: "WellnessType".to_string(),
                 domain: Some("wellness".to_string()),
                 rel_path: "wellness/json/WellnessType.json".to_string(),
@@ -462,6 +466,7 @@ mod tests {
                 source: None,
             },
             SchemaClassificationData {
+                namespace: None,
                 title: "activity_response_daily".to_string(),
                 domain: Some("wellness".to_string()),
                 rel_path: "wellness/json/samples/activity_response_daily.json".to_string(),

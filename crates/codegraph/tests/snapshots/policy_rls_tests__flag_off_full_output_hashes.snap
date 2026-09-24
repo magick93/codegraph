@@ -855,7 +855,7 @@ ui/src/routes/common/currency-code-list/descriptor.ts: c9aee5a60a238b28905626e46
 ui/src/routes/common/date/descriptor.ts: c2c2af8b1814926035acb6915e2c57151fd3a47ea7693d60362ad7a3353e26d6
 ui/src/routes/common/distribution-base/descriptor.ts: 7de00d6fde9d3320a1e1200be1a16ee3508af6f374e8851e3a148f4a96d4db4c
 ui/src/routes/common/effective-date/descriptor.ts: de6306992724f6cfca6e7a2ea934aee38970c0d9ba59851e3164b310a594ea32
-ui/src/routes/common/event-base/descriptor.ts: 60a6b95a4f96b5acb56c5f20d3c34573017c49525291f0e15138b30bdb52c4a5
+ui/src/routes/common/event-base/descriptor.ts: 7ad76bc4a6cbcc178c8cd7e53a5a72fbbbb15bef45426aa4e6838e63e0a3d10a
 ui/src/routes/common/formatted-date-time/descriptor.ts: 87e19d7ba8241563a7414e9e981f07e6a610073cf6b18a7b7efc184785711a0d
 ui/src/routes/common/gender-code-list/descriptor.ts: 7173707ce6ec821145b4a8582086e4d149125b2e38360ddccec59ca193cc718e
 ui/src/routes/common/identifier/descriptor.ts: 0bbe8f842b8082de66c7ecb74951aace0f66593588b9d2b2e7ace6a69478d1bb
@@ -866,7 +866,7 @@ ui/src/routes/common/process-history-item/descriptor.ts: 0f5c6d50b37bf3167d82f0a
 ui/src/routes/common/process-history/descriptor.ts: e3d082f6d08ef5eff741348abfaef0366d79e3e591d81813c5708e41576e8023
 ui/src/routes/common/string-type-array/descriptor.ts: d083bc17d79c6b88e97e04327109db9a0d349a0d00c88f694e5749ce876874a3
 ui/src/routes/compensation/pay-runs/descriptor.ts: 52415f53eb9d0da1f15bc8b4ebf170aab1d4e70dcf7243bef6ee3853706fbe89
-ui/src/routes/events/public-event/descriptor.ts: 154ed677b61718dccd48d052062463096d9b3accc6291011735eed8c09c15a1e
+ui/src/routes/events/public-event/descriptor.ts: 3db9175f063bd6cfbdec2a00d51c3ccf5e089bc7732f40621685fffc7e2742b2
 ui/src/routes/recruiting/applications/descriptor.ts: 0beaec625b8f7d1ec9f3ca6fefe940d948f09aeddd9222919fbcdee19499ef8b
 ui/src/routes/recruiting/candidate/descriptor.ts: 0758f2c98580a974c4867ec1f6d3d92cb98096e6d4bf2f885ac5845a43b90a1a
 ui/src/routes/rsvp/rsvp/descriptor.ts: 79049336d44261d728cb01e11750f5f4af8076c227fde1469e0486a0c4b1749d

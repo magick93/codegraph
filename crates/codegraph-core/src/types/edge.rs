@@ -95,6 +95,15 @@ pub enum EdgeType {
     // attribute to a real edge.
     RuleAppliesTo,
     RuleReference,
+
+    // Namespace plane edge types (issue #267). `InNamespace` (above, shared
+    // with the AT-Protocol line) links Schema → Namespace;
+    // `NamespaceParent` links a child namespace to its parent;
+    // `NamespaceImports` carries the wildcard/alias payload;
+    // `NamespaceDepends` is derived (through the domain depends_on plane).
+    NamespaceParent,
+    NamespaceImports,
+    NamespaceDepends,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -125,4 +134,10 @@ pub struct EdgeProperties {
     /// The rule source expressing a `RuleReference` edge binding (issue
     /// #264).
     pub rule_source: Option<String>,
+    /// Wildcard flag for a `NamespaceImports` edge (issue #267):
+    /// `Some(true)` = `import <ns>.*`.
+    pub import_wildcard: Option<bool>,
+    /// Alias for a `NamespaceImports` edge (issue #267):
+    /// `import <ns> as alias`.
+    pub import_alias: Option<String>,
 }

@@ -18,6 +18,7 @@ pub fn indexed_properties() -> Vec<&'static str> {
         "_codelist_name",
         "nsid",
         "authority",
+        "fqn",
         "did",
         "target_schema",
         "source_schema",
@@ -29,11 +30,22 @@ pub fn indexed_properties() -> Vec<&'static str> {
 
 fn node_type_ddl() -> Vec<&'static str> {
     vec![
-        // Namespace — AT Protocol
-        "CREATE NODE TYPE IF NOT EXISTS Namespace (
+        // AtprotoNamespace — AT Protocol repo namespaces. Renamed from
+        // `Namespace` (issue #267 collision resolution) so the graph-wide
+        // namespace concept owns the plain label.
+        "CREATE NODE TYPE IF NOT EXISTS AtprotoNamespace (
             authority STRING NOT NULL,
             segment STRING NOT NULL,
             domain STRING NOT NULL
+        )",
+        // Namespace — graph-wide namespaces (issue #267). `fqn` is the
+        // unique key; `parent` is persisted flat (and as a NamespaceParent
+        // edge); `source` records the declaration provenance ("config",
+        // "discovered", "mox", ...).
+        "CREATE NODE TYPE IF NOT EXISTS Namespace (
+            fqn STRING NOT NULL,
+            parent STRING,
+            source STRING
         )",
         // Lexicon — AT Protocol
         "CREATE NODE TYPE IF NOT EXISTS Lexicon (
@@ -58,7 +70,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             org_name STRING NOT NULL,
             tenancy_mode STRING NOT NULL
         )",
-        // SchemaNode — 21 fields from codegraph-core/src/types/schema.rs
+        // SchemaNode — 23 fields from codegraph-core/src/types/schema.rs
         "CREATE NODE TYPE IF NOT EXISTS Schema (
             schema_id STRING NOT NULL,
             title STRING NOT NULL,
@@ -69,6 +81,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             rust_type STRING NOT NULL,
             sea_orm_type STRING NOT NULL,
             domain STRING,
+            namespace STRING,
             rel_path STRING NOT NULL,
             rust_type_name STRING NOT NULL,
             pg_table_name STRING NOT NULL,
@@ -482,5 +495,11 @@ fn edge_type_ddl() -> Vec<&'static str> {
         // Rule plane edge types (issue #264)
         "CREATE EDGE TYPE IF NOT EXISTS RuleAppliesTo ()",
         "CREATE EDGE TYPE IF NOT EXISTS RuleReference (ref_path STRING, rule_source STRING)",
+        // Namespace plane edge types (issue #267). InNamespace (shared with
+        // AT-Protocol) is declared above; NamespaceDepends is derived and
+        // never ingested today.
+        "CREATE EDGE TYPE IF NOT EXISTS NamespaceParent ()",
+        "CREATE EDGE TYPE IF NOT EXISTS NamespaceImports (wildcard BOOLEAN, alias STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS NamespaceDepends ()",
     ]
 }

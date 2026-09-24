@@ -3,24 +3,25 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
-    resolve_effective_permits, ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode,
-    ApiResourceNode, CapabilityNode, CodeList, CollectionNode, ColumnInfo, CompositeColumn,
-    CompositeRange, CompositionNode, CompositionTree, ConditionNode, DataBindingResolution,
-    DelegationRecord, DetectionSource, EnumValue, ErrorDefinitionNode, EventNode, Extension,
-    FkDirection, FkTarget, FunctionNode, GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode,
-    MembershipNode, ModuleUseRecord, MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode,
-    NamespaceNode, NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate,
-    PermissionNode, Permit, PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind,
-    RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode, RuleRefRecord,
+    resolve_effective_permits, topological_namespace_order, ActionNode, ActorNode, ActorPolicyNode,
+    ApiOperationNode, ApiResourceNode, AtprotoNamespaceNode, CapabilityNode, CodeList,
+    CollectionNode, ColumnInfo, CompositeColumn, CompositeRange, CompositionNode, CompositionTree,
+    ConditionNode, DataBindingResolution, DelegationRecord, DetectionSource, EnumValue,
+    ErrorDefinitionNode, EventNode, Extension, FkDirection, FkTarget, FunctionNode, GrantEdge,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleUseRecord,
+    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode,
+    NavigationFlowRecord, NeverBothGroup, ParameterDefinitionNode, ParentCandidate, PermissionNode,
+    Permit, PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryNode,
+    RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode, RuleRefRecord,
     SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
     ViewComponentNode, ViewContainerNode,
 };
 use std::collections::{HashMap, VecDeque};
 
-/// The RETURN clause for all SchemaNode queries — keeps the 22 columns in one place.
+/// The RETURN clause for all SchemaNode queries — keeps the 23 columns in one place.
 const SCHEMA_RETURN_COLS: &str = "\
     s.schema_id, s.title, s.description, \
-    s.schema_type, s.classification, s.domain, s.rel_path, s.pg_type, s.rust_type, \
+    s.schema_type, s.classification, s.domain, s.namespace, s.rel_path, s.pg_type, s.rust_type, \
     s.sea_orm_type, s.rust_type_name, s.pg_table_name, s.api_path_segment, \
     s.parent_schema, s.is_entity, s.is_codelist, s.is_primitive_wrapper, \
     s.has_all_of, s.has_one_of, s.has_any_of, s.has_definitions, s.custom_annotations";
@@ -300,6 +301,7 @@ impl GraphQuerier for GrafeoEngine {
             let composes_noun_type = extends_set.contains(title);
 
             results.push(SchemaClassificationData {
+                namespace: schema.namespace.clone(),
                 title: title.clone(),
                 domain: schema.domain.clone(),
                 rel_path: schema.rel_path.clone(),
@@ -1198,15 +1200,15 @@ impl GraphQuerier for GrafeoEngine {
 
     // ── AT Protocol query methods ──────────────────────────────────────
 
-    async fn get_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+    async fn get_atproto_namespaces(&self) -> Result<Vec<AtprotoNamespaceNode>, GraphError> {
         let result = query_gql(
             self,
-            "MATCH (n:Namespace) RETURN n.authority, n.segment, n.domain ORDER BY n.authority",
+            "MATCH (n:AtprotoNamespace) RETURN n.authority, n.segment, n.domain ORDER BY n.authority",
         )?;
         let reader = RowReader::from_columns(&result.columns);
         let mut nodes = Vec::new();
         for row in &result.rows {
-            nodes.push(NamespaceNode {
+            nodes.push(AtprotoNamespaceNode {
                 authority: reader.get_string(row, "n.authority")?,
                 segment: reader.get_string(row, "n.segment")?,
                 domain: reader.get_string(row, "n.domain")?,
@@ -2112,6 +2114,140 @@ impl GraphQuerier for GrafeoEngine {
                 })
             })
             .collect()
+    }
+
+    // ── Namespace plane query methods (issue #267) ─────────────────────
+
+    async fn list_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+        let result = query_gql(
+            self,
+            "MATCH (n:Namespace) RETURN n.fqn, n.parent, n.source ORDER BY n.fqn",
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| {
+                Ok(NamespaceNode {
+                    fqn: reader.get_string(row, "n.fqn")?,
+                    parent: reader.get_opt_string(row, "n.parent")?,
+                    source: reader.get_opt_string(row, "n.source")?,
+                })
+            })
+            .collect()
+    }
+
+    async fn list_schemas_by_namespace(
+        &self,
+        fqn: &str,
+        recursive: bool,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
+        // The closure of descendant namespaces is computed in Rust from all
+        // NamespaceParent edges (GQL-side transitive closure is not assumed),
+        // then schemas are collected per namespace and deduplicated.
+        let mut wanted: Vec<String> = vec![fqn.to_string()];
+        if recursive {
+            let result = query_gql(
+                self,
+                "MATCH (c:Namespace)-[:NamespaceParent]->(p:Namespace) \
+                 RETURN c.fqn, p.fqn",
+            )?;
+            let reader = RowReader::from_columns(&result.columns);
+            let edges: Vec<(String, String)> = result
+                .rows
+                .iter()
+                .map(|row| {
+                    Ok((
+                        reader.get_string(row, "c.fqn")?,
+                        reader.get_string(row, "p.fqn")?,
+                    ))
+                })
+                .collect::<Result<Vec<(String, String)>, GraphError>>()?;
+            let mut frontier = vec![fqn.to_string()];
+            while let Some(current) = frontier.pop() {
+                for (child, parent) in &edges {
+                    if parent == &current && !wanted.contains(child) {
+                        wanted.push(child.clone());
+                        frontier.push(child.clone());
+                    }
+                }
+            }
+        }
+        wanted.sort();
+
+        let mut out: Vec<SchemaNode> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for ns in &wanted {
+            let params = HashMap::from([("fqn".to_string(), grafeo::Value::String(ns.into()))]);
+            let result = query_gql_params(
+                self,
+                "MATCH (s:Schema)-[:InNamespace]->(n:Namespace {fqn: $fqn}) \
+                 RETURN DISTINCT s.schema_id",
+                params,
+            )?;
+            let reader = RowReader::from_columns(&result.columns);
+            for row in &result.rows {
+                let schema_id = reader.get_string(row, "s.schema_id")?;
+                if seen.insert(schema_id.clone()) {
+                    if let Some(schema) = self.get_schema_by_id(&schema_id).await? {
+                        out.push(schema);
+                    }
+                }
+            }
+        }
+        out.sort_by(|a, b| a.schema_id.cmp(&b.schema_id));
+        Ok(out)
+    }
+
+    async fn get_namespace_imports(&self, fqn: &str) -> Result<Vec<NamespaceImport>, GraphError> {
+        let params = HashMap::from([("fqn".to_string(), grafeo::Value::String(fqn.into()))]);
+        let result = query_gql_params(
+            self,
+            "MATCH (a:Namespace {fqn: $fqn})-[e:NamespaceImports]->(b:Namespace) \
+             RETURN b.fqn AS to_ns, e.wildcard AS wildcard, e.alias AS alias \
+             ORDER BY to_ns, alias",
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        result
+            .rows
+            .iter()
+            .map(|row| {
+                Ok(NamespaceImport {
+                    from_ns: fqn.to_string(),
+                    to_ns: reader.get_string(row, "to_ns")?,
+                    wildcard: reader.get_bool(row, "wildcard").unwrap_or(false),
+                    alias: reader.get_opt_string(row, "alias")?,
+                })
+            })
+            .collect()
+    }
+
+    async fn namespace_generation_order(&self) -> Result<Vec<String>, GraphError> {
+        let all = query_gql(self, "MATCH (n:Namespace) RETURN n.fqn")?;
+        let reader = RowReader::from_columns(&all.columns);
+        let fqns: Vec<String> = all
+            .rows
+            .iter()
+            .map(|row| reader.get_string(row, "n.fqn"))
+            .collect::<Result<_, _>>()?;
+        let imports = query_gql(
+            self,
+            "MATCH (a:Namespace)-[:NamespaceImports]->(b:Namespace) \
+             RETURN DISTINCT a.fqn, b.fqn",
+        )?;
+        let edge_reader = RowReader::from_columns(&imports.columns);
+        let pairs: Vec<(String, String)> = imports
+            .rows
+            .iter()
+            .map(|row| {
+                Ok((
+                    edge_reader.get_string(row, "a.fqn")?,
+                    edge_reader.get_string(row, "b.fqn")?,
+                ))
+            })
+            .collect::<Result<Vec<(String, String)>, GraphError>>()?;
+        topological_namespace_order(&fqns, &pairs).map_err(GraphError::Query)
     }
 }
 

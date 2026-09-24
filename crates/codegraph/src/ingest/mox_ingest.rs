@@ -907,6 +907,7 @@ fn class_schema_node(entry: &ClassEntry<'_>, is_entity: bool, type_suffix: &str)
         serde_json::Value::String(codegraph_core::types::MOX_SOURCE.to_string()),
     );
     SchemaNode {
+        namespace: None,
         schema_id: entry.schema_id.clone(),
         title: class.name.clone(),
         description: class.description.as_deref().map(sanitize_description),
@@ -948,6 +949,7 @@ fn enum_schema_node(entry: &EnumEntry<'_>, type_suffix: &str) -> SchemaNode {
         serde_json::Value::String(codegraph_core::types::MOX_SOURCE.to_string()),
     );
     SchemaNode {
+        namespace: None,
         schema_id: entry.schema_id.clone(),
         title: enum_def.name.clone(),
         description: enum_def.description.as_deref().map(sanitize_description),

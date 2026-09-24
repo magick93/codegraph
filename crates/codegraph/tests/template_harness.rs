@@ -48,6 +48,7 @@ fn sqlite_project_config() -> codegraph::generate::ProjectConfig {
 
 fn gender_codelist_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "common/json/codelist/GenderCodeList.json".to_string(),
         title: "GenderCodeList".to_string(),
         description: Some("Gender codes".to_string()),
@@ -75,6 +76,7 @@ fn gender_codelist_schema() -> SchemaNode {
 
 fn candidate_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "recruiting/json/CandidateType.json".to_string(),
         title: "CandidateType".to_string(),
         description: Some("A person requesting consideration for a position".to_string()),
@@ -1708,6 +1710,7 @@ async fn recruiting_router() {
 async fn router_nests_child_under_parent() {
     // Create a parent entity (Compensation) and child entity (Reward) in the mock
     let parent_schema = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/CompensationType.json".to_string(),
         title: "CompensationType".to_string(),
         description: Some("Compensation package".to_string()),
@@ -1732,6 +1735,7 @@ async fn router_nests_child_under_parent() {
         custom_annotations: Default::default(),
     };
     let child_schema = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/RewardType.json".to_string(),
         title: "RewardType".to_string(),
         description: Some("A reward within compensation".to_string()),
@@ -1842,6 +1846,7 @@ async fn router_no_relationships_renders_flat() {
 /// Build a mock with Compensation (parent) + Reward (child) for handler tests.
 fn parent_child_mock() -> (MockEngine, Vec<codegraph_core::types::ParentCandidate>) {
     let parent_schema = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/CompensationType.json".to_string(),
         title: "CompensationType".to_string(),
         description: Some("Compensation package".to_string()),
@@ -1866,6 +1871,7 @@ fn parent_child_mock() -> (MockEngine, Vec<codegraph_core::types::ParentCandidat
         custom_annotations: Default::default(),
     };
     let child_schema = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/RewardType.json".to_string(),
         title: "RewardType".to_string(),
         description: Some("A reward within compensation".to_string()),
@@ -2071,6 +2077,7 @@ async fn child_handler_retains_utoipa_tags() {
 #[tokio::test]
 async fn array_items_fk_uses_parent_type_name() {
     let parent_schema = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/CompensationType.json".to_string(),
         title: "CompensationType".to_string(),
         description: Some("Compensation package".to_string()),
@@ -2095,6 +2102,7 @@ async fn array_items_fk_uses_parent_type_name() {
         custom_annotations: Default::default(),
     };
     let child_schema = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/RewardType.json".to_string(),
         title: "RewardType".to_string(),
         description: Some("A reward within compensation".to_string()),
@@ -2163,6 +2171,7 @@ async fn array_items_fk_uses_parent_type_name() {
 #[tokio::test]
 async fn array_items_handler_fk_uses_parent_type_name() {
     let parent_schema = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/CompensationType.json".to_string(),
         title: "CompensationType".to_string(),
         description: Some("Compensation package".to_string()),
@@ -2187,6 +2196,7 @@ async fn array_items_handler_fk_uses_parent_type_name() {
         custom_annotations: Default::default(),
     };
     let child_schema = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/RewardType.json".to_string(),
         title: "RewardType".to_string(),
         description: Some("A reward within compensation".to_string()),
@@ -4243,6 +4253,7 @@ async fn workflow_action_calls_service() {
 #[tokio::test]
 async fn workflow_action_child_entity_renders() {
     let parent_schema = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/CompensationType.json".to_string(),
         title: "CompensationType".to_string(),
         description: Some("Compensation package".to_string()),
@@ -4267,6 +4278,7 @@ async fn workflow_action_child_entity_renders() {
         custom_annotations: Default::default(),
     };
     let child_schema = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/RewardType.json".to_string(),
         title: "RewardType".to_string(),
         description: Some("A reward within compensation".to_string()),
@@ -4907,6 +4919,7 @@ async fn composite_range_collapses_start_end_into_daterange() {
     ];
 
     let schema = SchemaNode {
+        namespace: None,
         schema_id: "common/json/PositionHistoryType.json".to_string(),
         title: "PositionHistoryType".to_string(),
         description: Some("A record of position history".to_string()),
@@ -5003,6 +5016,7 @@ async fn recursive_child_tables_with_full_classification() {
     //             └─ countryCode (CodelistReference)
 
     let person_schema = SchemaNode {
+        namespace: None,
         schema_id: "common/json/PersonType.json".to_string(),
         title: "PersonType".to_string(),
         description: Some("A person".to_string()),
@@ -5028,6 +5042,7 @@ async fn recursive_child_tables_with_full_classification() {
     };
 
     let communication_schema = SchemaNode {
+        namespace: None,
         schema_id: "common/json/CommunicationType.json".to_string(),
         title: "CommunicationType".to_string(),
         description: Some("Communication details".to_string()),
@@ -5053,6 +5068,7 @@ async fn recursive_child_tables_with_full_classification() {
     };
 
     let address_schema = SchemaNode {
+        namespace: None,
         schema_id: "common/json/AddressType.json".to_string(),
         title: "AddressType".to_string(),
         description: Some("Address details".to_string()),
@@ -5078,6 +5094,7 @@ async fn recursive_child_tables_with_full_classification() {
     };
 
     let country_codelist_schema = SchemaNode {
+        namespace: None,
         schema_id: "common/json/codelist/CountryCodeList.json".to_string(),
         title: "CountryCodeList".to_string(),
         description: Some("Country codes".to_string()),
@@ -5943,6 +5960,7 @@ mod include_path_resolution_tests {
 
     fn schema_node(title: &str, domain: &str, table: &str, is_entity: bool) -> SchemaNode {
         SchemaNode {
+            namespace: None,
             schema_id: format!("{domain}/json/{title}.json"),
             title: title.to_string(),
             description: None,
@@ -7290,6 +7308,7 @@ fn prop_split(
 
 fn worker_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "hr/json/WorkerType.json".to_string(),
         title: "WorkerType".to_string(),
         description: Some("A worker".to_string()),
@@ -7317,6 +7336,7 @@ fn worker_schema() -> SchemaNode {
 
 fn person_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "hr/json/PersonType.json".to_string(),
         title: "PersonType".to_string(),
         description: Some("A person".to_string()),
@@ -7836,6 +7856,7 @@ async fn dto_include_not_generated_when_not_configured() {
 #[tokio::test]
 async fn dto_include_dot_notation() {
     let position_schema = SchemaNode {
+        namespace: None,
         schema_id: "hr/json/PositionType.json".to_string(),
         title: "PositionType".to_string(),
         description: Some("A position".to_string()),
@@ -7861,6 +7882,7 @@ async fn dto_include_dot_notation() {
     };
 
     let deployment_schema = SchemaNode {
+        namespace: None,
         schema_id: "hr/json/DeploymentType.json".to_string(),
         title: "DeploymentType".to_string(),
         description: Some("A deployment".to_string()),
@@ -8096,6 +8118,7 @@ allow_include = ["deployment.position"]
 #[tokio::test]
 async fn dto_included_enriched_codelist_fields_use_stripped_names() {
     let position_schema = SchemaNode {
+        namespace: None,
         schema_id: "hr/json/PositionType.json".to_string(),
         title: "PositionType".to_string(),
         description: Some("A position".to_string()),
@@ -8121,6 +8144,7 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
     };
 
     let deployment_schema = SchemaNode {
+        namespace: None,
         schema_id: "hr/json/DeploymentType.json".to_string(),
         title: "DeploymentType".to_string(),
         description: Some("A deployment".to_string()),
@@ -8439,6 +8463,7 @@ allow_include = ["deployment.position"]
 #[tokio::test]
 async fn ui_e2e_include_test_generated_when_allow_include_configured() {
     let dep_schema = SchemaNode {
+        namespace: None,
         custom_annotations: Default::default(),
         schema_id: "hr/json/DepEntityType.json".into(),
         title: "DepEntityType".into(),
@@ -8464,6 +8489,7 @@ async fn ui_e2e_include_test_generated_when_allow_include_configured() {
     };
 
     let worker_schema = SchemaNode {
+        namespace: None,
         custom_annotations: Default::default(),
         schema_id: "hr/json/WorkerType.json".into(),
         title: "WorkerType".into(),
@@ -8601,6 +8627,7 @@ role = "root"
 #[tokio::test]
 async fn handler_filter_keys_use_stripped_codelist_names() {
     let deployment_schema = SchemaNode {
+        namespace: None,
         schema_id: "recruiting/json/DeploymentType.json".to_string(),
         title: "DeploymentType".to_string(),
         description: Some("Deployment type".to_string()),
@@ -8832,6 +8859,7 @@ async fn dot_include_list_handler_wires_batch_and_merge() {
 
     fn schema_node(title: &str, domain: &str, table: &str, is_entity: bool) -> SchemaNode {
         SchemaNode {
+            namespace: None,
             schema_id: format!("{domain}/json/{title}.json"),
             title: title.to_string(),
             description: None,
@@ -9068,6 +9096,7 @@ async fn person_include_hydrates_target_child_tables() {
         is_entity: bool,
     ) -> codegraph_core::types::SchemaNode {
         codegraph_core::types::SchemaNode {
+            namespace: None,
             schema_id: format!("{domain}/json/{title}.json"),
             title: title.to_string(),
             description: None,
@@ -9258,6 +9287,7 @@ async fn person_include_hydrates_scoped_child_tables() {
         is_entity: bool,
     ) -> codegraph_core::types::SchemaNode {
         codegraph_core::types::SchemaNode {
+            namespace: None,
             schema_id: format!("{domain}/json/{title}.json"),
             title: title.to_string(),
             description: None,
@@ -9499,6 +9529,7 @@ async fn detail_page_emits_extension_points() {
 
     fn worker_schema() -> SchemaNode {
         SchemaNode {
+            namespace: None,
             schema_id: "hr/json/WorkerType.json".to_string(),
             title: "WorkerType".to_string(),
             description: None,

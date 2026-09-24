@@ -15,6 +15,7 @@ use codegraph_type_contracts::RefClassificationKind;
 pub fn mock_engine_with_candidate() -> MockEngine {
     MockEngine::builder()
         .with_schema(SchemaNode {
+            namespace: None,
             schema_id: "candidate".into(),
             title: "CandidateType".into(),
             description: Some("A job candidate".into()),
@@ -202,6 +203,7 @@ pub fn domain_config() -> DomainConfig {
     );
 
     DomainConfig {
+        namespaces: HashMap::new(),
         defaults: DefaultsConfig {
             operations: vec![
                 "create".into(),

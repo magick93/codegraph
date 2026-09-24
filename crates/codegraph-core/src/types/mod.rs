@@ -11,6 +11,7 @@ mod field_def;
 mod function;
 mod ifml;
 mod mox;
+mod namespace;
 mod persistence;
 mod policy;
 mod property;
@@ -25,7 +26,13 @@ pub use api::{
     ApiOperationNode, ApiResourceNode, ErrorDefinitionNode, HttpEndpointNode, InteractionNode,
     PermissionNode, PipelineNode,
 };
-pub use atproto::{CollectionNode, LexiconNode, NamespaceNode, RepositoryNode};
+// Naming-collision resolution (issue #267): the AT-Protocol repo namespace
+// node is renamed `AtprotoNamespaceNode` (grafeo label `AtprotoNamespace`,
+// trait methods `ingest_atproto_namespace`/`get_atproto_namespaces`) so the
+// graph-wide namespace concept (#267) can own the canonical `NamespaceNode`
+// name, `:Namespace` label, and `ingest_namespace`/`list_namespaces` trait
+// methods. `EdgeType::InNamespace` stays shared by both features.
+pub use atproto::{AtprotoNamespaceNode, CollectionNode, LexiconNode, RepositoryNode};
 pub use authorization::{
     resolve_effective_permits, ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode,
     DelegationRecord, GrantEdge, NeverBothGroup, Permit,
@@ -52,6 +59,10 @@ pub use ifml::{
 pub use mox::{
     MoxDerivedFeatureNode, MoxDomainModel, MoxEntry, MoxFacet, MoxOperationNode, MoxPackageNode,
     MoxParam, MoxVocabularyNode,
+};
+pub use namespace::{
+    derive_namespace_depends, disambiguate_schema_ids, qualified_schema_id,
+    topological_namespace_order, NamespaceImport, NamespaceNode,
 };
 pub use persistence::{
     AuditEffect, AuditTimestampKind, AuditUserKind, PersistenceChildTable, PersistenceColumn,

@@ -86,7 +86,7 @@ impl LexiconContext {
         let authority = &project.atproto_authority;
 
         let namespaces = db
-            .get_namespaces()
+            .get_atproto_namespaces()
             .await
             .map_err(|e| crate::error::Error::Config(format!("Failed to get namespaces: {}", e)))?;
         let namespace = namespaces

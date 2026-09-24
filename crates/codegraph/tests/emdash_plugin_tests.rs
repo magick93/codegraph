@@ -20,6 +20,7 @@ use codegraph_type_contracts::RefClassificationKind;
 
 fn rsvp_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "events/json/RsvpType.json".to_string(),
         title: "RsvpType".to_string(),
         description: Some("An RSVP".to_string()),

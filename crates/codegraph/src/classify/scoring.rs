@@ -126,6 +126,7 @@ mod tests {
         is_enum: bool,
     ) -> SchemaClassificationData {
         SchemaClassificationData {
+            namespace: None,
             title: title.to_string(),
             domain: Some("test".to_string()),
             rel_path: format!("test/json/{}.json", title),

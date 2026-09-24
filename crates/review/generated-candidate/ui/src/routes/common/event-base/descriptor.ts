@@ -18,6 +18,17 @@ export const EventBaseDescriptor: EntityDescriptor = {
 
 
 
+      validation: {
+
+
+
+
+        minimum: 0,
+
+
+
+      },
+
 
       list: { visible: true },
 

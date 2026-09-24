@@ -1162,6 +1162,7 @@ mod tests {
 
     fn schema_node(title: &str, domain: &str, table: &str, is_entity: bool) -> SchemaNode {
         SchemaNode {
+            namespace: None,
             schema_id: format!("{domain}/json/{title}.json"),
             title: title.to_string(),
             description: None,

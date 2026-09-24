@@ -14,6 +14,7 @@ fn test_domain_config() -> codegraph_config::DomainConfig {
 
 fn mock_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "recruiting/json/CandidateType.json".to_string(),
         title: "CandidateType".to_string(),
         description: None,
@@ -41,6 +42,7 @@ fn mock_schema() -> SchemaNode {
 
 fn make_entity_schema(title: &str, domain: &str) -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: format!("{domain}/json/{title}.json"),
         title: title.to_string(),
         description: None,

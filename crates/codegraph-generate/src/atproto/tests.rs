@@ -608,7 +608,7 @@ mod integration_tests {
 
     use codegraph_core::mock::MockEngine;
     use codegraph_core::traits::GraphIngestor;
-    use codegraph_core::types::{LexiconNode, NamespaceNode, PropertyNode, SchemaNode};
+    use codegraph_core::types::{AtprotoNamespaceNode, LexiconNode, PropertyNode, SchemaNode};
     use codegraph_type_contracts::RefClassificationKind;
     use tera::Tera;
 
@@ -620,6 +620,7 @@ mod integration_tests {
     fn make_domain_config() -> codegraph_config::DomainConfig {
         let domains = std::collections::HashMap::new();
         codegraph_config::DomainConfig {
+            namespaces: std::collections::HashMap::new(),
             defaults: Default::default(),
             domains,
             rbac: None,
@@ -662,6 +663,7 @@ mod integration_tests {
 
     fn make_schema(title: &str, domain: &str) -> SchemaNode {
         SchemaNode {
+            namespace: None,
             schema_id: format!("id:{}", title),
             title: title.to_string(),
             description: Some(format!("The {} schema", title)),
@@ -734,12 +736,12 @@ mod integration_tests {
             .with_lexicon_mapping("Grant", "nz.gravy.grants.grant")
             .build();
 
-        let namespace = NamespaceNode {
+        let namespace = AtprotoNamespaceNode {
             authority: "nz.gravy".to_string(),
             segment: "".to_string(),
             domain: "grants".to_string(),
         };
-        engine.ingest_namespace(&namespace).await.unwrap();
+        engine.ingest_atproto_namespace(&namespace).await.unwrap();
 
         let lexicon = LexiconNode {
             nsid: "nz.gravy.grants.grant".to_string(),
@@ -827,12 +829,12 @@ mod integration_tests {
     async fn test_scaffold_emitter_produces_catalog() {
         let engine = MockEngine::builder().build();
 
-        let ns = NamespaceNode {
+        let ns = AtprotoNamespaceNode {
             authority: "nz.gravy".to_string(),
             segment: "".to_string(),
             domain: "grants".to_string(),
         };
-        engine.ingest_namespace(&ns).await.unwrap();
+        engine.ingest_atproto_namespace(&ns).await.unwrap();
 
         let lex1 = LexiconNode {
             nsid: "nz.gravy.grants.grant".to_string(),
@@ -921,12 +923,12 @@ mod integration_tests {
             .with_lexicon_mapping("Candidate", "nz.gravy.recruiting.candidate")
             .build();
 
-        let namespace = NamespaceNode {
+        let namespace = AtprotoNamespaceNode {
             authority: "nz.gravy".to_string(),
             segment: "".to_string(),
             domain: "recruiting".to_string(),
         };
-        engine.ingest_namespace(&namespace).await.unwrap();
+        engine.ingest_atproto_namespace(&namespace).await.unwrap();
 
         let lexicon = LexiconNode {
             nsid: "nz.gravy.recruiting.candidate".to_string(),
@@ -985,6 +987,7 @@ mod atproto_client_tests {
     fn make_domain_config() -> codegraph_config::DomainConfig {
         let domains = std::collections::HashMap::new();
         codegraph_config::DomainConfig {
+            namespaces: std::collections::HashMap::new(),
             defaults: Default::default(),
             domains,
             rbac: None,
@@ -1000,6 +1003,7 @@ mod atproto_client_tests {
 
     fn make_schema(title: &str, domain: &str) -> SchemaNode {
         SchemaNode {
+            namespace: None,
             schema_id: format!("id:{}", title),
             title: title.to_string(),
             description: Some(format!("The {} schema", title)),
@@ -1412,7 +1416,7 @@ mod atproto_types_tests {
 
     use codegraph_core::mock::MockEngine;
     use codegraph_core::traits::GraphIngestor;
-    use codegraph_core::types::{LexiconNode, NamespaceNode, PropertyNode, SchemaNode};
+    use codegraph_core::types::{AtprotoNamespaceNode, LexiconNode, PropertyNode, SchemaNode};
     use codegraph_type_contracts::RefClassificationKind;
     use tera::Tera;
 
@@ -1423,6 +1427,7 @@ mod atproto_types_tests {
     fn make_types_domain_config() -> codegraph_config::DomainConfig {
         let domains = std::collections::HashMap::new();
         codegraph_config::DomainConfig {
+            namespaces: std::collections::HashMap::new(),
             defaults: Default::default(),
             domains,
             rbac: None,
@@ -1458,6 +1463,7 @@ mod atproto_types_tests {
 
     fn types_schema(title: &str, domain: &str) -> SchemaNode {
         SchemaNode {
+            namespace: None,
             schema_id: format!("id:{}", title),
             title: title.to_string(),
             description: Some(format!("The {} schema", title)),
@@ -1554,12 +1560,12 @@ mod atproto_types_tests {
             .with_lexicon_mapping("Grant", "nz.gravy.grants.grant")
             .build();
 
-        let ns = NamespaceNode {
+        let ns = AtprotoNamespaceNode {
             authority: "nz.gravy".to_string(),
             segment: "".to_string(),
             domain: "grants".to_string(),
         };
-        engine.ingest_namespace(&ns).await.unwrap();
+        engine.ingest_atproto_namespace(&ns).await.unwrap();
 
         let lex = LexiconNode {
             nsid: "nz.gravy.grants.grant".to_string(),
@@ -1616,12 +1622,12 @@ mod atproto_types_tests {
             .with_lexicon_mapping("Grant", "nz.gravy.grants.grant")
             .build();
 
-        let ns = NamespaceNode {
+        let ns = AtprotoNamespaceNode {
             authority: "nz.gravy".to_string(),
             segment: "".to_string(),
             domain: "grants".to_string(),
         };
-        engine.ingest_namespace(&ns).await.unwrap();
+        engine.ingest_atproto_namespace(&ns).await.unwrap();
 
         let lex = LexiconNode {
             nsid: "nz.gravy.grants.grant".to_string(),
@@ -1690,12 +1696,12 @@ mod atproto_types_tests {
             .with_lexicon_mapping("Grant", "nz.gravy.grants.grant")
             .build();
 
-        let ns = NamespaceNode {
+        let ns = AtprotoNamespaceNode {
             authority: "nz.gravy".to_string(),
             segment: "".to_string(),
             domain: "grants".to_string(),
         };
-        engine.ingest_namespace(&ns).await.unwrap();
+        engine.ingest_atproto_namespace(&ns).await.unwrap();
 
         let lex = LexiconNode {
             nsid: "nz.gravy.grants.grant".to_string(),
@@ -1753,12 +1759,12 @@ mod atproto_types_tests {
             .with_lexicon_mapping("Grant", "nz.gravy.grants.grant")
             .build();
 
-        let ns = NamespaceNode {
+        let ns = AtprotoNamespaceNode {
             authority: "nz.gravy".to_string(),
             segment: "".to_string(),
             domain: "grants".to_string(),
         };
-        engine.ingest_namespace(&ns).await.unwrap();
+        engine.ingest_atproto_namespace(&ns).await.unwrap();
 
         let lex = LexiconNode {
             nsid: "nz.gravy.grants.grant".to_string(),
@@ -1808,12 +1814,12 @@ mod atproto_types_tests {
             .with_lexicon_mapping("Media", "nz.gravy.media.hash")
             .build();
 
-        let ns = NamespaceNode {
+        let ns = AtprotoNamespaceNode {
             authority: "nz.gravy".to_string(),
             segment: "".to_string(),
             domain: "media".to_string(),
         };
-        engine.ingest_namespace(&ns).await.unwrap();
+        engine.ingest_atproto_namespace(&ns).await.unwrap();
 
         let lex = LexiconNode {
             nsid: "nz.gravy.media.hash".to_string(),
@@ -1867,12 +1873,12 @@ mod atproto_types_tests {
             .with_lexicon_mapping("Flags", "nz.gravy.test.flag")
             .build();
 
-        let ns = NamespaceNode {
+        let ns = AtprotoNamespaceNode {
             authority: "nz.gravy".to_string(),
             segment: "".to_string(),
             domain: "test".to_string(),
         };
-        engine.ingest_namespace(&ns).await.unwrap();
+        engine.ingest_atproto_namespace(&ns).await.unwrap();
 
         let lex = LexiconNode {
             nsid: "nz.gravy.test.flag".to_string(),
@@ -1931,12 +1937,12 @@ mod atproto_types_tests {
             .with_lexicon_mapping("File", "nz.gravy.files.avatar")
             .build();
 
-        let ns = NamespaceNode {
+        let ns = AtprotoNamespaceNode {
             authority: "nz.gravy".to_string(),
             segment: "".to_string(),
             domain: "files".to_string(),
         };
-        engine.ingest_namespace(&ns).await.unwrap();
+        engine.ingest_atproto_namespace(&ns).await.unwrap();
 
         let lex = LexiconNode {
             nsid: "nz.gravy.files.avatar".to_string(),
@@ -1998,12 +2004,12 @@ mod atproto_types_tests {
             .with_lexicon_mapping("Grant", "nz.gravy.grants.grant")
             .build();
 
-        let ns = NamespaceNode {
+        let ns = AtprotoNamespaceNode {
             authority: "nz.gravy".to_string(),
             segment: "".to_string(),
             domain: "grants".to_string(),
         };
-        engine.ingest_namespace(&ns).await.unwrap();
+        engine.ingest_atproto_namespace(&ns).await.unwrap();
 
         let lex = LexiconNode {
             nsid: "nz.gravy.grants.grant".to_string(),

@@ -12,6 +12,7 @@ use codegraph_type_contracts::RefClassificationKind;
 
 fn worker_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "hr/json/WorkerType.json".into(),
         title: "WorkerType".into(),
         description: Some("A worker".into()),
@@ -39,6 +40,7 @@ fn worker_schema() -> SchemaNode {
 
 fn person_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "hr/json/PersonType.json".into(),
         title: "PersonType".into(),
         description: Some("A person".into()),
@@ -160,6 +162,7 @@ fn snapshot_dto_included_single_level() {
 
 fn dot_notation_schema_for(title: &str, table: &str, rust_type_name: &str) -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: format!("hr/json/{title}.json"),
         title: title.into(),
         description: None,

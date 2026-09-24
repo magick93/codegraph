@@ -93,6 +93,56 @@ pass per-file parser initializationOptions; actor-internals validation
 belongs to upstream rex-lsp.
 
 
+## Namespaces as first-class citizens (issue #267)
+
+Namespace = where a type lives + what it can see (hierarchical, dotted,
+import-based); domain stays the bounded-context/deploy boundary. Core-only
+slice — producers (mox/rosetta/JSON-`$id`) connect in #268.
+
+- **Naming-collision resolution**: the AT-Protocol line previously owned
+  `NamespaceNode` with unrelated repo-namespace semantics. It is renamed
+  `AtprotoNamespaceNode` (`types/atproto.rs`), with trait methods
+  `ingest_atproto_namespace`/`get_atproto_namespaces` and grafeo label
+  `:AtprotoNamespace`. The graph-wide namespace concept owns the canonical
+  names: `NamespaceNode { fqn, parent, source }` (`types/namespace.rs`),
+  `:Namespace` label, `ingest_namespace`/`list_namespaces`.
+  `EdgeType::InNamespace` is SHARED by both families (grafeo match uses a
+  `WHERE a.nsid = … OR a.schema_id = …` form).
+- **Model**: `SchemaNode.namespace`/`SchemaClassificationData.namespace`
+  (`#[serde(default)]`, read-compat with old payloads); schema_id contract =
+  `<ns>::<Name>` when namespaced, legacy id verbatim otherwise
+  (`qualified_schema_id`); title uniqueness is scoped per namespace with
+  collision policy first-plain → namespace-qualified → numeric suffix
+  (`disambiguate_schema_ids`).
+- **Edges**: `InNamespace` (Schema → Namespace, shared),
+  `NamespaceParent` (child → parent; also persisted flat on the node),
+  `NamespaceImports` (`EdgeProperties.import_wildcard`/`import_alias`),
+  `NamespaceDepends` (derived via `derive_namespace_depends` through the
+  domain `depends_on` plane; enum + DDL exist, nothing ingests it).
+- **Graph plumbing**: GraphIngestor `ingest_namespace`/`ingest_namespace_import`;
+  GraphQuerier `list_namespaces`, `list_schemas_by_namespace(fqn, recursive)`,
+  `get_namespace_imports`, `namespace_generation_order` (deterministic Kahn:
+  imported-before-importer, lexicographic fqn tie-break, cycle = error naming
+  members — `topological_namespace_order`). Mock + Grafeo + CachingQuerier
+  all implement them.
+- **Config** (`domains.toml`): `[namespaces."cdm.base.datetime"]` with
+  optional `domain = "…"`. BOTH TOML spellings normalize to the same FQN
+  (quoted flat key or nested unquoted tables — nested intermediates are path
+  segments, not declarations; a level is declared when it has `domain` or is
+  a leaf). `domain` is reserved at every level; unknown scalar keys and
+  malformed fqns are parse errors. Discovered-but-undeclared namespaces are
+  allowed — the declared set is only the validation baseline.
+- **Validation** (`validate.rs`, no-op when the graph has no namespaces):
+  `namespace_import_undeclared` (Error — target not in graph/allowlist),
+  `namespace_import_undeclared_dependency` (Error — cross-domain import
+  without `depends_on`, mirrors `fk_target_undeclared_dependency`;
+  namespace→domain resolution: config `domain` wins, else unique member-schema
+  domain), `namespace_domain_conflict` (Warning — declared domain vs observed
+  member-schema domains disagree).
+- Back-compat is pinned: namespace-less graphs trigger zero namespace checks,
+  `SchemaNode.namespace` stays `None`, and generated output is unchanged.
+  Gate: `cargo test -p codegraph --test namespace_tests`.
+
 ## IFML Integration
 
 ### Overview

@@ -429,6 +429,7 @@ fn rosetta_never_trips_the_mox_scoring_bypass() {
     let entry = &config.domains["store"];
 
     let rosetta_data = SchemaClassificationData {
+        namespace: None,
         title: "Product".to_string(),
         domain: Some("store".to_string()),
         rel_path: "rosetta.bridge/Product".to_string(),

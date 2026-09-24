@@ -1,13 +1,13 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode,
-    CompositeColumn, CompositeRange, ConditionNode, DataBindingNode, EdgeProperties, EdgeType,
-    EnumValue, ErrorDefinitionNode, EventNode, FunctionNode, HttpEndpointNode, IngestStats,
-    InteractionNode, LexiconNode, MembershipNode, MoxDomainModel, NamespaceNode,
-    ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
-    RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RelationshipNode,
-    RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, AtprotoNamespaceNode,
+    CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionNode, DataBindingNode,
+    EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode, FunctionNode,
+    HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode, MoxDomainModel,
+    NamespaceImport, NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode,
+    PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner,
+    RelationshipNode, RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -70,10 +70,26 @@ pub trait GraphIngestor: Send + Sync {
 
     async fn ingest_data_binding(&self, node: &DataBindingNode) -> Result<String, GraphError>;
 
-    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError>;
+    async fn ingest_atproto_namespace(
+        &self,
+        node: &AtprotoNamespaceNode,
+    ) -> Result<String, GraphError>;
     async fn ingest_lexicon(&self, node: &LexiconNode) -> Result<String, GraphError>;
     async fn ingest_collection(&self, node: &CollectionNode) -> Result<String, GraphError>;
     async fn ingest_repository(&self, node: &RepositoryNode) -> Result<String, GraphError>;
+
+    // ── Namespace plane (issue #267) ─────────────────────────────────
+
+    /// Ingest one NamespaceNode (graph-wide namespace, issue #267). The
+    /// node's `fqn` is the unique key (returned as the id). The `parent`
+    /// field is persisted flat AND written as a `NamespaceParent` edge
+    /// (child → parent) when present. `#268` connects the producers (mox/
+    /// rosetta/`$id` sources).
+    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError>;
+
+    /// Ingest one NamespaceImports edge (`from_ns` imports `to_ns`), with
+    /// wildcard/alias payload. Both namespaces must already exist.
+    async fn ingest_namespace_import(&self, import: &NamespaceImport) -> Result<(), GraphError>;
 
     async fn update_entity_flag(&self, title: &str, is_entity: bool) -> Result<(), GraphError>;
 

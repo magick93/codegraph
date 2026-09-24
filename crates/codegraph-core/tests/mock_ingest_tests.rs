@@ -4,6 +4,7 @@ use codegraph_core::types::{ConditionKind, ConditionNode, PropertyNode, SchemaNo
 
 fn test_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "common/json/PersonType.json".into(),
         title: "PersonType".into(),
         description: Some("A person".into()),

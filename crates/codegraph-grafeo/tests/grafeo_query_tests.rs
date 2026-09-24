@@ -4,6 +4,7 @@ use codegraph_grafeo::GrafeoEngine;
 
 fn make_schema(title: &str, domain: &str, is_entity: bool) -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: format!("{domain}/{title}"),
         title: title.to_string(),
         description: None,

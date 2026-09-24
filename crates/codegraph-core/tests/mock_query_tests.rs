@@ -5,6 +5,7 @@ use codegraph_core::types::*;
 #[tokio::test]
 async fn builder_creates_engine_with_preloaded_data() {
     let schema = SchemaNode {
+        namespace: None,
         schema_id: "common/json/PersonType.json".into(),
         title: "PersonType".into(),
         description: Some("A person".into()),

@@ -28,6 +28,7 @@ fn test_project_config() -> codegraph::generate::ProjectConfig {
 
 fn candidate_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "recruiting/json/CandidateType.json".to_string(),
         title: "CandidateType".to_string(),
         description: Some("A person requesting consideration for a position".to_string()),
@@ -875,6 +876,7 @@ async fn ui_form_generator_skips_when_no_create_or_update() {
     // The simplest approach: create a minimal DomainConfig that has an entity with
     // operations = ["read", "list"] only.
     let schema = SchemaNode {
+        namespace: None,
         schema_id: "common/json/ReadOnlyType.json".to_string(),
         title: "ReadOnlyType".to_string(),
         description: None,

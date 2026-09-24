@@ -36,6 +36,17 @@ export const PublicEventDescriptor: EntityDescriptor = {
 
 
 
+      validation: {
+
+
+
+
+        minimum: 0,
+
+
+
+      },
+
 
       list: { visible: true },
 

@@ -3,14 +3,14 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
-    ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode,
-    CompositeColumn, CompositeRange, ConditionKind, ConditionNode, DataBindingNode, EdgeProperties,
-    EdgeType, EnumValue, ErrorDefinitionNode, EventNode, FunctionNode, HttpEndpointNode,
-    IngestStats, InteractionNode, LexiconNode, MembershipNode, MoxDomainModel, NamespaceNode,
-    ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
-    RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RelationshipNode,
-    RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, AtprotoNamespaceNode,
+    CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionKind, ConditionNode,
+    DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode,
+    FunctionNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
+    MoxDomainModel, NamespaceImport, NamespaceNode, ParameterDefinitionNode, PermissionNode,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode,
+    RegulatoryOwner, RelationshipNode, RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -208,6 +208,12 @@ fn build_edge_props_string(props: Option<&EdgeProperties>) -> String {
     if let Some(v) = &p.rule_source {
         fields.push(format!("rule_source: '{}'", escape_gql(v)));
     }
+    if let Some(v) = p.import_wildcard {
+        fields.push(format!("wildcard: {v}"));
+    }
+    if let Some(v) = &p.import_alias {
+        fields.push(format!("alias: '{}'", escape_gql(v)));
+    }
     if fields.is_empty() {
         String::new()
     } else {
@@ -259,7 +265,7 @@ impl GraphIngestor for GrafeoEngine {
             schema_id: $schema_id, title: $title, description: $description, \
             schema_type: $schema_type, classification: $classification, \
             pg_type: $pg_type, rust_type: $rust_type, sea_orm_type: $sea_orm_type, \
-            domain: $domain, rel_path: $rel_path, \
+            domain: $domain, namespace: $namespace, rel_path: $rel_path, \
             rust_type_name: $rust_type_name, pg_table_name: $pg_table_name, \
             api_path_segment: $api_path_segment, \
             parent_schema: $parent_schema, \
@@ -302,6 +308,7 @@ impl GraphIngestor for GrafeoEngine {
                 grafeo::Value::String(node.sea_orm_type.clone().into()),
             ),
             ("domain".into(), opt_to_grafeo_value(&node.domain)),
+            ("namespace".into(), opt_to_grafeo_value(&node.namespace)),
             (
                 "rel_path".into(),
                 grafeo::Value::String(node.rel_path.clone().into()),
@@ -869,6 +876,9 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::FunctionExtends => "FunctionExtends",
             EdgeType::RuleAppliesTo => "RuleAppliesTo",
             EdgeType::RuleReference => "RuleReference",
+            EdgeType::NamespaceParent => "NamespaceParent",
+            EdgeType::NamespaceImports => "NamespaceImports",
+            EdgeType::NamespaceDepends => "NamespaceDepends",
         };
 
         let match_clause = match &edge_type {
@@ -1144,13 +1154,29 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(strip_api_prefix(to_id)),
                 )
             }
-            // AT Protocol edges — nodes are matched by their natural keys
-            // (Lexicon/Collection by nsid, Namespace by authority, Repository by did).
-            EdgeType::InNamespace => {
+            // Namespace plane (issue #267): all three edges connect
+            // Namespace nodes matched by fqn.
+            EdgeType::NamespaceParent | EdgeType::NamespaceImports | EdgeType::NamespaceDepends => {
                 format!(
-                    "MATCH (a:Lexicon {{nsid: '{}'}}), (b:Namespace {{authority: '{}'}})",
+                    "MATCH (a:Namespace {{fqn: '{}'}}), (b:Namespace {{fqn: '{}'}})",
                     escape_gql(from_id),
                     escape_gql(to_id),
+                )
+            }
+            // AT Protocol edges — nodes are matched by their natural keys
+            // (Lexicon/Collection by nsid, AtprotoNamespace by authority,
+            // Repository by did). `InNamespace` is SHARED with the
+            // namespace plane (issue #267): the AT-Protocol projection
+            // links Lexicon (nsid) → AtprotoNamespace (authority), while
+            // the namespace plane links Schema (schema_id) → Namespace
+            // (fqn). The WHERE form covers both callers without guessing.
+            EdgeType::InNamespace => {
+                format!(
+                    "MATCH (a), (b) \
+                     WHERE (a.nsid = '{from}' OR a.schema_id = '{from}') \
+                     AND (b.authority = '{to}' OR b.fqn = '{to}')",
+                    from = escape_gql(from_id),
+                    to = escape_gql(to_id),
                 )
             }
             EdgeType::ProjectsToLexicon => {
@@ -1423,18 +1449,65 @@ impl GraphIngestor for GrafeoEngine {
         Ok(id)
     }
 
-    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError> {
+    async fn ingest_atproto_namespace(
+        &self,
+        node: &AtprotoNamespaceNode,
+    ) -> Result<String, GraphError> {
         let session = self.db().session();
         let gql = format!(
-            "INSERT (:Namespace {{ authority: '{}', segment: '{}', domain: '{}' }})",
+            "INSERT (:AtprotoNamespace {{ authority: '{}', segment: '{}', domain: '{}' }})",
             escape_gql(&node.authority),
             escape_gql(&node.segment),
             escape_gql(&node.domain),
         );
         session
             .execute(&gql)
-            .map_err(|e| GraphError::Ingest(format!("ingest_namespace failed: {e}")))?;
+            .map_err(|e| GraphError::Ingest(format!("ingest_atproto_namespace failed: {e}")))?;
         Ok(node.authority.clone())
+    }
+
+    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let gql = format!(
+            "INSERT (:Namespace {{ fqn: '{}', parent: {}, source: {} }})",
+            escape_gql(&node.fqn),
+            opt_str(&node.parent),
+            opt_str(&node.source),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_namespace failed: {e}")))?;
+        // Persist the hierarchy as an edge too (child → parent) so graph
+        // traversals see it; the flat `parent` property keeps read-back to
+        // a single query.
+        if let Some(parent) = &node.parent {
+            let edge = format!(
+                "MATCH (a:Namespace {{fqn: '{}'}}), (b:Namespace {{fqn: '{}'}}) \
+                 INSERT (a)-[:NamespaceParent]->(b)",
+                escape_gql(&node.fqn),
+                escape_gql(parent),
+            );
+            session.execute(&edge).map_err(|e| {
+                GraphError::Ingest(format!("ingest_namespace parent edge failed: {e}"))
+            })?;
+        }
+        Ok(node.fqn.clone())
+    }
+
+    async fn ingest_namespace_import(&self, import: &NamespaceImport) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let gql = format!(
+            "MATCH (a:Namespace {{fqn: '{}'}}), (b:Namespace {{fqn: '{}'}}) \
+             INSERT (a)-[:NamespaceImports {{wildcard: {}, alias: {}}}]->(b)",
+            escape_gql(&import.from_ns),
+            escape_gql(&import.to_ns),
+            import.wildcard,
+            opt_str(&import.alias),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_namespace_import failed: {e}")))?;
+        Ok(())
     }
 
     async fn ingest_lexicon(&self, node: &LexiconNode) -> Result<String, GraphError> {

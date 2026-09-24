@@ -31,6 +31,7 @@ fn schema(
     segment: &str,
 ) -> SchemaNode {
     SchemaNode {
+        namespace: None,
         custom_annotations: Default::default(),
         schema_id: format!("{domain}/json/{table}.schema.json"),
         title: title.into(),

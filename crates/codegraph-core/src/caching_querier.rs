@@ -6,15 +6,16 @@ use async_trait::async_trait;
 use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
-    ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode, CapabilityNode,
-    CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
-    DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode,
-    GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
-    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceNode,
-    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
-    PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
-    RepositoryNode, RuleNode, RuleRefRecord, SchemaClassificationData, SchemaNode,
-    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
+    ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
+    AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, EnumValue,
+    ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
+    InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode, MoxOperationNode,
+    MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
+    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
+    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -645,12 +646,34 @@ impl GraphQuerier for CachingQuerier<'_> {
         self.inner.get_repositories().await
     }
 
-    async fn get_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
-        self.inner.get_namespaces().await
+    async fn get_atproto_namespaces(&self) -> Result<Vec<AtprotoNamespaceNode>, GraphError> {
+        self.inner.get_atproto_namespaces().await
     }
 
     async fn get_lexicon_references(&self, nsid: &str) -> Result<Vec<LexiconNode>, GraphError> {
         self.inner.get_lexicon_references(nsid).await
+    }
+
+    // ── Namespace plane delegation (issue #267) ────────────────────────
+
+    async fn list_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+        self.inner.list_namespaces().await
+    }
+
+    async fn list_schemas_by_namespace(
+        &self,
+        fqn: &str,
+        recursive: bool,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
+        self.inner.list_schemas_by_namespace(fqn, recursive).await
+    }
+
+    async fn get_namespace_imports(&self, fqn: &str) -> Result<Vec<NamespaceImport>, GraphError> {
+        self.inner.get_namespace_imports(fqn).await
+    }
+
+    async fn namespace_generation_order(&self) -> Result<Vec<String>, GraphError> {
+        self.inner.namespace_generation_order().await
     }
 
     // ── API metamodel query delegation ──────────────────────────────────
