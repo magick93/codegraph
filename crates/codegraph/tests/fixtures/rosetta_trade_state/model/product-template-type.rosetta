@@ -1,0 +1,60 @@
+namespace cdm.product.template : <"Template feature concepts to define payouts.">
+version "${project.version}"
+
+import cdm.base.staticdata.party.*
+import cdm.base.staticdata.identifier.*
+
+enum OptionTypeEnum: <"The enumerated values to specify whether an option is a call or a put. TRIMMED from the real cdm.product.asset enum.">
+	Put
+	Call
+
+enum NotionalAdjustmentEnum: <"The enumerated values to specify the conditions that govern the adjustment to the quantity of a product being traded. TRIMMED.">
+	Execution
+	PortfolioRebalancing
+	Split
+
+type Price: <"A class to specify the price of a tradable product. STUB: real cdm.base.staticdata.asset.credit / cdm.observable.asset Price carries priceExpression and metadata.">
+	amount number (1..1) <"The monetary quantity of a price.">
+	currency string (1..1) <"The currency in which the price is denominated.">
+		[metadata scheme]
+
+type PriceQuantity: <"A class to specify the price and quantity of a financial instrument. STUB of the real cdm.product.common.PriceQuantity (which carries buyer/seller, settlement terms and metadata).">
+	price Price (0..*) <"The price of the traded product.">
+	quantity number (0..1) <"The quantity of the traded product.">
+	effectiveDate date (0..1) <"The date on which the quantity becomes effective.">
+
+type TradeLot: <"A trade lot associated with a traded product. STUB: real TradeLot carries lotIdentifier and metadata.">
+	priceQuantity PriceQuantity (1..*) <"Specifies the price and quantity of each trade lot.">
+
+type EconomicTerms: <"The core economics of a contractual product. STUB: real EconomicTerms carries termination provisions, extraordinary events, etc.">
+	payout Payout (0..*) <"The payouts that make up the product.">
+
+choice Payout: <"The payouts that may be combined to make up a product. TRIMMED to the three options the fragment references (real Payout has ~10 option legs).">
+	OptionPayout <"An option payout leg.">
+	CreditDefaultPayout <"A credit default payout leg.">
+	SettlementPayout <"A cash settlement payout leg.">
+
+type OptionPayout: <"A payout describing an option. STUB: real OptionPayout carries strike, exercise schedule, etc.">
+	payerReceiver PayerReceiver (1..1) <"The payer and receiver of the option premium and settlement amounts.">
+	optionType OptionTypeEnum (0..1) <"Whether the option is a call or a put.">
+	underlier Product (0..1) <"The underlying product on which the option decision is contingent.">
+
+type CreditDefaultPayout: <"A payout describing a credit default swap. STUB: real CreditDefaultPayout carries settlement terms and reference obligations.">
+	settlementTerms string (0..1) <"Placeholder for the trimmed physical/cur settlement terms.">
+
+type SettlementPayout: <"A cash settlement payout leg. STUB: trimmed. Underlier is the real attribute name; its real type is the cdm.product.asset Underlier type.">
+	payerReceiver PayerReceiver (1..1) <"The payer and receiver of the settlement amount.">
+	underlier Product (0..1) <"The underlying product of the settlement.">
+
+choice Product: <"The products that may underlie a payout. TRIMMED to one option (real Product has ~8).">
+	NonTransferableProduct <"A non-transferable product.">
+
+type NonTransferableProduct: <"A product that cannot be transferred. STUB: real NonTransferableProduct sits in the cdm.product.template hierarchy with maturity provisions.">
+	economicTerms EconomicTerms (1..1) <"The economic terms of the product.">
+
+type TradableProduct: <"Definition of a product as ready to be traded, i.e. included in an execution or contract, by associating a specific price and quantity to this product plus an (optional) mechanism for any potential future quantity adjustment. TRIMMED: adjustment attribute and the three product conditions dropped — they reach into the economic-terms closure.">
+
+	product NonTransferableProduct (1..1) <"The underlying product to be included in a contract or execution.">
+	tradeLot TradeLot (1..*) <"Specifies the price, quantity and effective date of each trade lot, when the same product may be traded multiple times in different lots with the same counterparty.">
+	counterparty Counterparty (2..2) <"Specifies the parties which are the two counterparties to the transaction.  The product is agnostic to the actual parties to the transaction, with the party references abstracted away from the product definition and replaced by the counterparty enum (e.g. CounterpartyEnum values Party1 or Party2).">
+	ancillaryParty AncillaryParty (0..*) <"Specifies the parties with ancillary roles in the transaction.">

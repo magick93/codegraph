@@ -1,0 +1,254 @@
+namespace cdm.event.common : <"Business event concepts: primitives, contract state and associated state transition function specifications.">
+version "${project.version}"
+
+import cdm.base.staticdata.party.*
+import cdm.base.staticdata.identifier.*
+import cdm.base.datetime.*
+import cdm.product.template.*
+import cdm.event.common.*
+
+func ExtractCounterpartyByRole: <"Extracts from a list of Counterparty data types, the Counterparty that corresponds to the role i.e. Party1 or Party2. TRIM: `filter role = roleEnumToExtract` rewritten as `filter item -> role = ...` — sigil at the pinned rev does not bind the filter's implicit iteration member (E0101 unknown symbol 'role').">
+	inputs:
+		counterparties Counterparty (1..*) <"The list of counterparties to filter.">
+		roleEnumToExtract CounterpartyRoleEnum (1..1) <"The counterparty role enum to filter by.">
+	output:
+		counterparty Counterparty (0..1) <"The counterparty with specified counterparty role.">
+
+	set counterparty:
+		counterparties
+			filter item -> role = roleEnumToExtract
+			then only-element
+
+func Create_Execution: <"Specifies the function to compose an execution based on a minimum required set of inputs: product, quantity, parties, etc. INTERFACE STUB: the real body constructs the execution trade state from the instruction (record literals over the full ExecutionInstruction surface) — out of the fragment closure; the signature is verbatim except the real single output name.">
+	inputs:
+		instruction ExecutionInstruction (1..1) <"Instructions to be used as an input to the function">
+	output:
+		tradeState TradeState (1..1) <"The execution trade state.">
+
+func Create_QuantityChange: <"The quantity change primitive event. INTERFACE STUB: real body out of the fragment closure; signature verbatim.">
+	inputs:
+		instruction QuantityChangeInstruction (1..1)
+		tradeState TradeState (1..1)
+	output:
+		after TradeState (1..1)
+
+func Create_TermsChange: <"The terms change primitive event. INTERFACE STUB: real body out of the fragment closure; signature verbatim.">
+	inputs:
+		termsChange TermsChangeInstruction (1..1) <"Instructions to be used as an input to the function">
+		before TradeState (1..1) <"current trade to be ammended">
+	output:
+		after TradeState (1..1)
+
+func Create_PartyChange: <"The party change primitive event. INTERFACE STUB: real body out of the fragment closure; signature verbatim.">
+	inputs:
+		counterparty Counterparty (1..1) <"The counterparty to change and the role it plays in the transaction.">
+		ancillaryParty AncillaryParty (0..1) <"Optional ancillary party.">
+		partyRole PartyRole (0..1)
+		tradeId TradeIdentifier (1..*) <"A mandatory trade identifier must be specified.">
+		before TradeState (1..1)
+	output:
+		after TradeState (1..1)
+
+func Create_ContractFormation: <"The contract formation primitive event. INTERFACE STUB: real body out of the fragment closure; signature verbatim.">
+	inputs:
+		instruction ContractFormationInstruction (1..1) <"Instructions to be used as an input to the function">
+		execution TradeState (1..1)
+	output:
+		after TradeState (1..1)
+
+func Create_NonTransferableProduct: <"Creates a NonTransferableProduct (ie EconomicTerms) from an underlier. Body verbatim; the underlier input is typed Product here where the real signature uses the cdm.product.asset Underlier type (documented stub).">
+	inputs:
+		underlier Product (1..1)
+		payerReceiver PayerReceiver (1..1)
+	output:
+		newProduct NonTransferableProduct (1..1)
+
+	set newProduct -> economicTerms -> payout -> SettlementPayout -> underlier: underlier
+	set newProduct -> economicTerms -> payout -> SettlementPayout -> payerReceiver:
+		payerReceiver
+
+func Update_ProductDirection: <"Flips the payer and receiver on a product (used when a Put Option is exercised). INTERFACE STUB: the real body is `set after: before` followed by two deep-path sets into economicTerms -> payout -> OptionPayout -> payerReceiver — out of the fragment closure; signature verbatim.">
+	inputs:
+		before NonTransferableProduct (1..1)
+		originalPayer CounterpartyRoleEnum (1..1)
+		originalReceiver CounterpartyRoleEnum (1..1)
+	output:
+		after NonTransferableProduct (1..1)
+
+func Create_TradeState: <"Creates a single trade state by applying primitive instructions to an existing trade state (optional in case an execution instruction is included).
+    The primitive instructions are applied in the following order:
+        Always first:
+            - execution, if it exists, otherwise a before state must be provided
+        The following 3 can be executed in any order, because they touch separate components of the trade:
+            - quantity change
+            - terms change
+            - party change
+        Always last:
+            - contract formation, otherwise the contract could be invalid. TRIMMED: the transfer/reset/indexTransition/observation/valuation/terminationDate/stockSplit alias stages are dropped — their primitive funcs are out of the fragment closure; the kept chain and all kept expressions are verbatim.">
+	inputs:
+		primitiveInstruction PrimitiveInstruction (0..1) <"The set of primitive instructions to apply to the trade.">
+		before TradeState (0..1) <"The original trade on which the primitive instructions are applied">
+	output:
+		after TradeState (1..1) <"The returned trade state must be of single cardinality. Where a different trade is created and the original trade must be persisted (for instance showing as 'closed'), it should be preceded by a split instruction.">
+
+	alias execution: <"Create execution if instruction exists. If not, then before must exist.">
+		if primitiveInstruction -> execution is absent
+		then before
+		else Create_Execution(primitiveInstruction -> execution)
+
+	alias quantityChange: <"Apply quantity change if instructions exist.">
+		if primitiveInstruction -> quantityChange is absent
+		then execution
+		else Create_QuantityChange(primitiveInstruction -> quantityChange, execution)
+
+	alias termsChange: <"Apply terms change if instructions exist.">
+		if primitiveInstruction -> termsChange is absent
+		then quantityChange
+		else Create_TermsChange(primitiveInstruction -> termsChange, quantityChange)
+
+	alias partyChange: <"Apply party change if instructions exist.">
+		if primitiveInstruction -> partyChange is absent
+		then termsChange
+		else Create_PartyChange(
+				primitiveInstruction -> partyChange -> counterparty,
+				primitiveInstruction -> partyChange -> ancillaryParty,
+				primitiveInstruction -> partyChange -> partyRole,
+				primitiveInstruction -> partyChange -> tradeId,
+				termsChange /*after*/
+			)
+
+	alias contractFormation: <"Create contract formation if instructions exist.">
+		if primitiveInstruction exists
+				and primitiveInstruction -> contractFormation is absent
+		then partyChange
+		else Create_ContractFormation(
+				primitiveInstruction -> contractFormation,
+				partyChange
+			)
+
+	set after: contractFormation
+
+func Create_Reset: <"This function processes a lifecycle reset event (e.g., a floating interest rate) for an active trade. It takes the incoming Reset Instruction and applies it to the current state of the trade. VERBATIM.">
+	inputs:
+		instruction ResetInstruction (1..1) <"Specifies the reset instructions.">
+		tradeState TradeState (1..1) <"Specifies the trade that is resetting.">
+	output:
+		reset TradeState (1..1)
+
+	set reset: tradeState
+
+	add reset -> resetHistory: <"Assigns the reset contained in the reset instruction to the resetHistory attribute.">
+		instruction -> reset
+
+func Create_Exercise: <"Defines the process of putting into effect the rights specified in an options contract, such as to buy or sell a security.  Once exercised the option contract is terminated. TRIM: the bare enum literal `Put` in the productWithDirection alias qualified to `OptionTypeEnum -> Put` — sigil at the pinned rev rejects bare enum value references (E0101 unknown symbol 'Put'); everything else is verbatim.">
+	inputs:
+		exerciseInstruction ExerciseInstruction (1..1) <"Instruction containing the terms of the option exercise.">
+		originalTrade TradeState (1..1) <"The original trade to be split, which must be of single cardinality.">
+	output:
+		exercise TradeState (1..*)
+
+	alias optionPayout: <"Extracts the option payout from exerciseInstruction if provided or from the original trade if absent">
+		if exerciseInstruction -> exerciseOption exists
+		then exerciseInstruction -> exerciseOption as OptionPayout
+		else originalTrade -> trade -> product -> economicTerms -> payout
+			only-element
+			as OptionPayout
+
+	alias underlier: <"Extracts the underlying financial product, upon which the option decision is contingent. Requires that the original contract contains an option payout that contains an Observable or a Product as the underlier.">
+		optionPayout -> underlier
+
+	alias resultProduct: <"Find or create the the non transferable product that will result from the exercise.">
+		if underlier as NonTransferableProduct exists // It already exists, no need to create
+		then underlier as NonTransferableProduct
+		else Create_NonTransferableProduct(underlier, optionPayout -> payerReceiver)
+
+	alias productWithDirection: <"If the option is a Put, then the direction on the result product needs to be flipped from that on the underlier.">
+		if optionPayout -> optionType = OptionTypeEnum -> Put
+		then Update_ProductDirection(
+					resultProduct,
+					optionPayout -> payerReceiver -> payer,
+					optionPayout -> payerReceiver -> receiver
+				)
+		else resultProduct
+
+	alias execution: <"Creates the execution primitive describing the exchange of the underlying product, either as a cash transfer or as the formation of a new contractual product between parties.">
+		Create_Execution(
+				ExecutionInstruction {
+					product: productWithDirection,
+					priceQuantity: originalTrade -> trade -> tradeLot only-element -> priceQuantity,
+					counterparty: originalTrade -> trade -> counterparty,
+					ancillaryParty: originalTrade -> trade -> ancillaryParty,
+					parties: originalTrade -> trade -> party,
+					partyRoles: originalTrade -> trade -> partyRole,
+					executionDetails: empty,
+					tradeDate: originalTrade -> trade -> tradeDate,
+					tradeIdentifier: exerciseInstruction -> replacementTradeIdentifier,
+					...
+				}
+			)
+
+	condition OptionPayoutExists: <"Requires that the original contract contains an option payout.">
+		optionPayout exists
+
+	add exercise: <"Reduces notional / quantity of option by the amount exercised.">
+		Create_TradeState(exerciseInstruction -> exerciseQuantity, originalTrade)
+
+	add exercise: <"Adds the replacement trade">
+		execution
+
+func FilterOpenTradeStates: <"Filter to only 'open' TradeState - where both the closedState and positionState are not set. TRIM: `filter state -> ...` rewritten with an explicit `item ->` iteration member (sigil gap).">
+	inputs:
+		tradeStates TradeState (0..*)
+	output:
+		openTradeStates TradeState (0..*)
+
+	add openTradeStates: tradeStates filter item -> state -> closedState is absent
+
+func FilterClosedTradeStates: <"Filter to only 'closed' TradeState - where either the closedState or positionState are set. TRIM: `filter state -> ...` rewritten with an explicit `item ->` iteration member (sigil gap).">
+	inputs:
+		tradeStates TradeState (0..*)
+	output:
+		closedTradeStates TradeState (0..*)
+
+	add closedTradeStates: tradeStates filter item -> state -> closedState exists
+
+func Qualify_Novation: <"The qualification of a novation event from the fact that (i) the intent is Novation when specified, (ii) the primitives quantityChange and a contract formation exist, (iii) the remaining quantity = 0, (iv) the closedState of the contract is Novated, (v) the stepped-in contract has a different contract identifier than the novated contract, (vi) the stepped-in contract has the novation event date and the novation event effective date, and (vii) the contract counterparties have changed. VERBATIM.">
+	[qualification BusinessEvent]
+	inputs:
+		businessEvent BusinessEvent (1..1)
+	output:
+		is_event boolean (1..1)
+
+	alias beforeTradeState: businessEvent -> instruction -> before only-element
+	alias closedTradeStates: FilterClosedTradeStates(businessEvent -> after)
+	alias openTradeStates: FilterOpenTradeStates(businessEvent -> after)
+	set is_event:
+		businessEvent -> intent = EventIntentEnum -> Novation
+			and closedTradeStates count = 1
+			and openTradeStates count = 1
+			and businessEvent -> instruction -> primitiveInstruction -> split exists
+			and beforeTradeState -> trade -> counterparty -> partyReference = closedTradeStates only-element -> trade -> counterparty -> partyReference
+
+func ChangeCounterparty: <"The party change business event, expressed as a full replacement of the counterparty pair. TRIM: the bare enum literals `Party1`/`Party2` qualified to `CounterpartyRoleEnum -> Party1`/`Party2` (sigil gap: bare enum value references). Everything else (record literals, list literal, (2..2) cardinalities) is verbatim.">
+	inputs:
+		originalCounterparty Counterparty (2..2)
+		changeCounterparty Counterparty (1..1)
+	output:
+		newCounterparty Counterparty (2..2)
+
+	alias counterparty1:
+		if changeCounterparty -> role = CounterpartyRoleEnum -> Party1
+		then Counterparty {
+				partyReference: changeCounterparty -> partyReference,
+				role: changeCounterparty -> role
+			}
+		else ExtractCounterpartyByRole(originalCounterparty, CounterpartyRoleEnum -> Party1)
+	alias counterparty2:
+		if changeCounterparty -> role = CounterpartyRoleEnum -> Party2
+		then Counterparty {
+				partyReference: changeCounterparty -> partyReference,
+				role: changeCounterparty -> role
+			}
+		else ExtractCounterpartyByRole(originalCounterparty, CounterpartyRoleEnum -> Party2)
+
+	set newCounterparty: [counterparty1, counterparty2]

@@ -1,0 +1,63 @@
+# WP-A spike: REAL FINOS CDM TradeState fragment.
+#
+# Domain layout note (a spike finding in itself): the rosetta bridge
+# resolves a file's domain from its namespace's LAST SEGMENT (the mox
+# package fallback, mox_ingest::resolve_domain) — the #267
+# [namespaces."x"].domain assignment is NOT consulted by producers. The
+# five CDM namespaces therefore land on five domains named by their last
+# segments, and the [namespaces] entries below are declared WITHOUT
+# `domain` keys (assigning them trips namespace_domain_conflict, which
+# is exactly how the mismatch surfaces).
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.datetime]
+label = "CDM Base Datetime"
+schema_dir = "datetime"
+postgres_schema = "datetime"
+
+[domains.party]
+label = "CDM Static Data Party"
+schema_dir = "party"
+postgres_schema = "party"
+
+[domains.identifier]
+label = "CDM Static Data Identifier"
+schema_dir = "identifier"
+postgres_schema = "identifier"
+depends_on = ["party"]
+
+[domains.template]
+label = "CDM Product Template"
+schema_dir = "template"
+postgres_schema = "template"
+depends_on = ["party", "identifier"]
+
+[domains.common]
+label = "CDM Event Common"
+schema_dir = "common"
+postgres_schema = "common"
+# Cross-namespace imports (real CDM: event-common imports base + product)
+# require the domain depends_on declaration (#267
+# namespace_import_undeclared_dependency — the validation plane working
+# on a REAL-CDM shape).
+depends_on = ["datetime", "party", "identifier", "template"]
+# TradeState and Trade are the promoted entities (rosetta types are
+# auto-scored; nothing in the fragment carries enough scoring signal to
+# self-promote — mirrors the JSON path with no `entities` list).
+force_entities = ["TradeState", "Trade"]
+
+# TradeState is the G1-mitigation evidence surface: append-only snapshot
+# semantics => NO update/delete in the generated API (asserted by
+# rosetta_trade_state_tests).
+[domains.common.entity_config.TradeState]
+operations = ["create", "read", "list"]
+role = "root"
+
+# The #267/#268 namespace declarations: the validation baseline. No
+# `domain` keys (see the note at the top).
+[namespaces."cdm.base.datetime"]
+[namespaces."cdm.base.staticdata.party"]
+[namespaces."cdm.base.staticdata.identifier"]
+[namespaces."cdm.product.template"]
+[namespaces."cdm.event.common"]

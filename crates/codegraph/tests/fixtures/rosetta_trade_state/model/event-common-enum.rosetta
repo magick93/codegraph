@@ -1,0 +1,46 @@
+namespace cdm.event.common : <"Business event concepts: primitives, contract state and associated state transition function specifications.">
+version "${project.version}"
+
+import cdm.base.staticdata.party.*
+import cdm.base.staticdata.identifier.*
+import cdm.base.datetime.*
+import cdm.product.template.*
+
+enum ClosedStateEnum: <"The enumerated values to specify what led to the contract or execution closure.">
+	Allocated <"The execution or contract has been allocated.">
+	Cancelled <"The execution or contract has been cancelled.">
+	Exercised <"The (option) contract has been exercised.">
+	Expired <"The (option) contract has expired without being exercised.">
+	Matured <"The contract has reached its contractual termination date.">
+	Novated <"The contract has been novated. This state applies to the stepped-out contract component of the novation event.">
+	Terminated <"The contract has been subject of an early termination event.">
+
+enum PositionStatusEnum: <"Enumeration to describe the different (risk) states of a Position, whether executed, settled, matured...etc">
+	Executed <"The position has been executed, which is the point at which risk has been transferred.">
+	Formed <"Contract has been formed, in case position is on a contractual product.">
+	Settled <"The position has settled, in case product is subject to settlement after execution, such as securities.">
+	Cancelled <"The position has been cancelled, in case of a cancellation event following an execution.">
+	Closed <"The position has been closed, in case of a termination event.">
+
+enum EventIntentEnum: <"The enumeration values to qualify the intent associated with a transaction event. TRIMMED from ~20 real values to the ones the fragment references; docs for Novation and CorporateActionAdjustment are verbatim.">
+	Allocation <"The intent is to allocate one or more trades as part of an allocated block trade.">
+	Clearing <"The intent is to clear the contract.">
+	ContractFormation <"The intent is to form a contract from an execution.">
+	Increase <"The intent is to Increase the quantity or notional of the contract.">
+	Decrease <"The intent is to Decrease the quantity or notional of the contract.">
+	Novation <"The intent is to novate the contract.">
+	OptionExercise <"The intent is to Exercise a contract that is made of one or several option payout legs. TRIMMED doc.">
+	CorporateActionAdjustment <"The intent is to take into effect the occurrence of a Corporate Action and the particular Corporate Action at stake shall be further specified in CorporateActionTypeEnum.">
+
+enum QuantityChangeDirectionEnum: <"Specifies whether a quantity change is an increase, a decrease or a replacement, whereby the quantity is always specified as a positive number. Values verbatim from cdm.base.math.">
+	Increase
+	Decrease
+	Replace
+
+enum CorporateActionTypeEnum: <"The enumerated values to specify a corporate action type. STUB: trimmed from the real cdm.base.staticdata type; the fragment needs only one value to satisfy the EventInstruction.CorporateAction condition.">
+	Mergers
+	TenderOffer
+
+enum TransferStatusEnum: <"The enumerated values to specify the status of a transfer. STUB: trimmed from the real cdm.event.position enum.">
+	Pending
+	Settled
