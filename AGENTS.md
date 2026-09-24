@@ -92,6 +92,10 @@ VS Code extension must register the `mox` language + `.mox` extension and
 pass per-file parser initializationOptions; actor-internals validation
 belongs to upstream rex-lsp.
 
+Rosetta (Rune DSL) is the sibling primary model source (sigil-parsed,
+bridged, auto-scored): integration guide at `docs/rosetta.md`, construct
+matrix + defects ledger at `docs/rosetta-gap-analysis.md`.
+
 
 ## Namespaces as first-class citizens (issue #267)
 

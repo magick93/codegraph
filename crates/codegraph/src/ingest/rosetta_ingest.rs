@@ -38,11 +38,12 @@
 //!   option attributes' referenced titles. Transpilation is #262. The
 //!   `rosetta_conditions` annotation payload on the SchemaNode remains as
 //!   provenance (#259 snapshot).
-//! - namespaces: recorded per file (`rosetta_namespace` annotation +
-//!   stats) but NOT mapped onto domains and NOT given nodes — namespaces
-//!   are NOT domains; the first-class uplift is #267/#268. Until then the
-//!   domain falls back to the mox bridge's `resolve_domain` semantics
-//!   over the dotted namespace.
+//! - namespaces (issue #268): declaring files get NamespaceNodes
+//!   (`source = "rosetta"`, `InNamespace` + dotted `NamespaceParent`);
+//!   import-only targets land as `source = "discovered"` so
+//!   `NamespaceImports` edges resolve. Namespaces are still NOT domains —
+//!   the domain falls back to the mox bridge's `resolve_domain` semantics
+//!   over the dotted namespace (#267 config `domain=` wins when declared).
 //! - regulatory reference elements (issue #265) → `RegulatoryNode`s:
 //!   reports/bodies/corpora/segments/rule sources/rule schemas/meta types
 //!   land as ONE parameterized node family (kind-tagged), with the
