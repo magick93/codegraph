@@ -579,8 +579,9 @@ async fn trade_state_operations_config_yields_no_update_or_delete_surface() {
         "no delete in the repo contract"
     );
 
-    // But the DDL remains a MUTABLE table — the G1 gap the config-only
-    // mitigation cannot close.
+    // Post-#284 the DDL matches the narrowed API surface: operations
+    // excluding update/delete infer append-only persistence (issue #284),
+    // closing the G1 gap the config-only mitigation could not.
     let mut ddl = String::new();
     for entry in std::fs::read_dir(generated.join("migrations")).unwrap() {
         let path = entry.unwrap().path();
@@ -599,11 +600,15 @@ async fn trade_state_operations_config_yields_no_update_or_delete_surface() {
         }
     }
     assert!(
-        ddl.contains("updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"),
-        "the mutable-update surface (G1): {ddl}"
+        ddl.contains("GRANT SELECT, INSERT ON TABLE common.trade_state"),
+        "grants narrowed to the append-only surface (issue #284): {ddl}"
     );
     assert!(
-        ddl.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE common.trade_state"),
-        "UPDATE/DELETE grants remain even when the API surface omits them (G1)"
+        !ddl.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE common.trade_state"),
+        "UPDATE/DELETE grants must be gone once the API surface omits them"
+    );
+    assert!(
+        !ddl.contains("updated_at"),
+        "append-only tables have no updated_at column (issue #284): {ddl}"
     );
 }

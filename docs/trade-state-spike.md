@@ -332,6 +332,18 @@ DB, which is precisely what the CDM pattern forbids (a state snapshot must
 never change after creation). The operations config is a route-level
 mitigation only.
 
+**Post-#284a update (slice A of issue #284): the DB surface now follows.**
+`entity_config.append_only = true` (or the same operations inference the
+scaffold grants already used) drives insert-only DDL: the `updated_at`
+column, the soft-delete audit band, and the BEFORE UPDATE trigger are not
+emitted; main + child-table grants narrow to `SELECT, INSERT`; the domain
+event trigger fires INSERT-only. `update`/`delete` in the effective
+operations of an append-only entity are a parse-time config error. Verified
+by `append_only_tests` and the flipped `trade_state_operations…` spike pin.
+Remaining for #284 slice B: successor-lineage repository reads
+(`create_successor`, `current_for_trade`, `as_of`) and function-plane
+before-seeding.
+
 ### G2 — no lineage materialization: VERIFIED
 
 before→after lives only in (a) function bodies (`set reset: tradeState`,

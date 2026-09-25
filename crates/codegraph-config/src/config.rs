@@ -563,6 +563,12 @@ pub struct EntityConfig {
     pub tag: Option<String>,
     /// Entity role: "root", "child", or "value_object".
     pub role: Option<String>,
+    /// Append-only snapshot semantics (CDM TradeState pattern, issue #284):
+    /// the table only ever receives INSERTs — DDL drops the updated_at
+    /// column + audit band and the BEFORE UPDATE trigger, grants narrow to
+    /// SELECT/INSERT (child tables inherit). When set, `update`/`delete`
+    /// MUST NOT appear in the entity's effective operations (parse error).
+    pub append_only: Option<bool>,
     /// Parent entity name (for child entities or roots with optional parent nesting).
     pub parent: Option<String>,
     /// DTO configuration overrides.
@@ -640,6 +646,13 @@ pub struct EntityConfig {
     /// platform routes, for example, scope on `tenants` / `api_keys`).
     #[serde(default)]
     pub api_key_scope: Option<String>,
+}
+
+impl EntityConfig {
+    /// Whether the entity is explicitly marked append-only (issue #284).
+    pub fn is_append_only(&self) -> bool {
+        self.append_only.unwrap_or(false)
+    }
 }
 
 /// AT Protocol permission gating configuration.
@@ -814,6 +827,7 @@ pub fn parse_domain_config(path: &Path) -> Result<DomainConfig, DomainConfigErro
 pub fn parse_domain_config_str(content: &str) -> Result<DomainConfig, DomainConfigError> {
     let config: DomainConfig = toml::from_str(content)?;
     validate_rbac_config(&config)?;
+    validate_append_only_config(&config)?;
     Ok(config)
 }
 
@@ -859,6 +873,33 @@ fn validate_rbac_config(config: &DomainConfig) -> Result<(), DomainConfigError> 
                     return Err(DomainConfigError::Invalid(format!(
                         "[domains.{domain}.entity_config.{entity}.permissions.min_roles] \
                          role {role:?} is not in the [rbac] roles_hierarchy"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Append-only entities (`append_only = true`, issue #284) must not carry
+/// `update`/`delete` in their effective operations — an append-only table
+/// has no UPDATE/DELETE grants, so the API surface must agree (parse-time
+/// config error, gRPC/ops strict-feature precedent).
+fn validate_append_only_config(config: &DomainConfig) -> Result<(), DomainConfigError> {
+    for (domain, entry) in &config.domains {
+        for (entity, ec) in &entry.entity_config {
+            if !ec.is_append_only() {
+                continue;
+            }
+            let effective = ec
+                .operations
+                .clone()
+                .unwrap_or_else(|| config.defaults.operations.clone());
+            for op in ["update", "delete"] {
+                if effective.iter().any(|o| o == op) {
+                    return Err(DomainConfigError::Invalid(format!(
+                        "[domains.{domain}.entity_config.{entity}] append_only = true \
+                         forbids {op:?} in the effective operations (configured: {effective:?})"
                     )));
                 }
             }

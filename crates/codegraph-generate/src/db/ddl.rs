@@ -502,6 +502,12 @@ pub struct DdlContext {
     pub is_codelist: bool,
     /// Whether this entity supports demo data flagging.
     pub has_demo_flag: bool,
+    /// Append-only snapshot semantics (issue #284, CDM TradeState pattern):
+    /// explicit `entity_config.append_only` OR inferred from the effective
+    /// operations excluding update+delete (the same inference the scaffold
+    /// grants use). Gates the updated_at column, audit band, BEFORE UPDATE
+    /// trigger, and SELECT/INSERT-only grants; child tables inherit.
+    pub append_only: bool,
 }
 
 /// Full-text search context for DDL generation.
@@ -912,6 +918,7 @@ pub(crate) fn child_table_rls_context(parent: &DdlContext, child: &ChildTableDef
         user_scope_column: None,
         is_codelist: false,
         has_demo_flag: false,
+        append_only: parent.append_only,
     }
 }
 
@@ -1144,12 +1151,29 @@ impl DdlGenerator {
             })
             .collect();
 
+        // Append-only snapshot semantics (issue #284): explicit config flag
+        // OR the same operations inference the scaffold grants use
+        // (effective operations exclude update AND delete). The explicit
+        // flag with update/delete ops is a parse-time config error
+        // (validate_append_only_config), so the two sources agree.
+        let entity_cfg_early = config
+            .domains
+            .get(domain)
+            .and_then(|d| d.get_entity_config(schema_title));
+        let append_only = entity_cfg_early.is_some_and(|ec| ec.is_append_only()) || {
+            let ops =
+                crate::api::api_model::resolve_entity_operations(db, config, domain, schema_title)
+                    .await;
+            !ops.iter().any(|op| op == "update" || op == "delete")
+        };
+
         // Add standard timestamp columns and determine tenancy
         let (has_updated_at, is_tenant_scoped) = add_timestamp_and_tenant_columns(
             &mut artifacts.columns,
             &mut child_tables,
             config,
             &table_name,
+            append_only,
         );
 
         // Deduplicate columns by name — CompositeWrapper expansion from
@@ -1208,16 +1232,14 @@ impl DdlGenerator {
             .domains
             .get(&domain)
             .and_then(|d| d.auditable)
-            .unwrap_or(true);
+            .unwrap_or(true)
+            && !append_only;
 
         // Role enforcement (#169): same gate the router used for its
         // permission layers — entities with `permissions.scope` configured —
         // plus any entity carrying explicit `min_roles`. The per-op minima
         // default to the built-in matrix when not configured.
-        let entity_cfg = config
-            .domains
-            .get(&domain)
-            .and_then(|d| d.get_entity_config(schema_title));
+        let entity_cfg = entity_cfg_early;
         let min_roles_cfg = entity_cfg.and_then(|ec| ec.permissions.min_roles.clone());
         let role_enforced = entity_cfg
             .map(|ec| {
@@ -1303,6 +1325,7 @@ impl DdlGenerator {
             user_scope_column,
             has_demo_flag: is_auditable,
             is_codelist: schema.is_codelist,
+            append_only,
         })
     }
 }
@@ -1616,6 +1639,7 @@ fn add_timestamp_and_tenant_columns(
     child_tables: &mut [ChildTableDef],
     config: &DomainConfig,
     table_name: &str,
+    append_only: bool,
 ) -> (bool, bool) {
     // Add standard timestamp columns
     columns.push(ColumnDef {
@@ -1626,15 +1650,19 @@ fn add_timestamp_and_tenant_columns(
         is_primary_key: false,
         is_array: false,
     });
-    columns.push(ColumnDef {
-        name: "updated_at".to_string(),
-        pg_type: "TIMESTAMPTZ".to_string(),
-        nullable: false,
-        default: Some("now()".to_string()),
-        is_primary_key: false,
-        is_array: false,
-    });
-    let has_updated_at = true;
+    // Append-only tables keep created_at (the row's birth) but never gain
+    // an updated_at column — states are never mutated in place (#284).
+    if !append_only {
+        columns.push(ColumnDef {
+            name: "updated_at".to_string(),
+            pg_type: "TIMESTAMPTZ".to_string(),
+            nullable: false,
+            default: Some("now()".to_string()),
+            is_primary_key: false,
+            is_array: false,
+        });
+    }
+    let has_updated_at = !append_only;
 
     // Determine tenancy
     let is_tenant_scoped = !is_global_entity(table_name, config);
@@ -2384,6 +2412,7 @@ mod tests {
             user_scope_column: None,
             is_codelist: false,
             has_demo_flag: false,
+            append_only: false,
         };
 
         let junction = ChildTableDef {
@@ -2492,6 +2521,7 @@ mod tests {
             user_scope_column: None,
             is_codelist: false,
             has_demo_flag: false,
+            append_only: false,
         };
         let sql = render_template_with_project(&tera, "db/rls.tera", &ctx, &project).unwrap();
 
@@ -2570,6 +2600,7 @@ mod tests {
             user_scope_column: None,
             is_codelist: false,
             has_demo_flag: false,
+            append_only: false,
         }
     }
 
