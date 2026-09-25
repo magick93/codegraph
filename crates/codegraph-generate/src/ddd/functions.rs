@@ -457,9 +457,30 @@ fn emit_ops_and_return(code: &mut CodeWriter, function: &FunctionSurface, projec
     // and `add` paths have a target; `set result` overwrites wholesale.
     match &function.output {
         Some((name, ty)) => {
-            wln!(code, "    let mut {name} = {ty}::default();");
-            for op in &function.node.operations {
-                emit_operation(code, function, op);
+            // Copy-from-before seeding (issue #284 slice B): CDM primitive
+            // functions start with a wholesale `set {out}: {before}` — the
+            // snapshot value semantics. Seed the output local from that
+            // input instead of `Default::default()` (which would silently
+            // drop every unassigned field of the "before" state) and skip
+            // the seeding op.
+            match function
+                .node
+                .operations
+                .first()
+                .and_then(|op| wholesale_copy_source(op, name, &function.args))
+            {
+                Some(before) => {
+                    wln!(code, "    let mut {name} = {before};");
+                    for op in function.node.operations.iter().skip(1) {
+                        emit_operation(code, function, op);
+                    }
+                }
+                None => {
+                    wln!(code, "    let mut {name} = {ty}::default();");
+                    for op in &function.node.operations {
+                        emit_operation(code, function, op);
+                    }
+                }
             }
             emit_post_conditions(code, function, project);
             wln!(code, "    {name}");
@@ -473,6 +494,34 @@ fn emit_ops_and_return(code: &mut CodeWriter, function: &FunctionSurface, projec
             emit_post_conditions(code, function, project);
         }
     }
+}
+
+/// The snake_cased input a leading wholesale `set {output}: {input}` copies
+/// from, if the first operation is exactly that (empty path, `set`, bare
+/// symbol resolving to an argument). This is the CDM copy-from-before
+/// authoring pattern (`Create_Reset`, `Create_TradeState`).
+fn wholesale_copy_source(
+    op: &FunctionOperation,
+    output_name: &str,
+    args: &[(String, String)],
+) -> Option<String> {
+    if op.is_add || !op.path.is_empty() {
+        return None;
+    }
+    if !op.assign_root.eq_ignore_ascii_case(output_name)
+        && codegraph_naming::to_snake_case(&op.assign_root) != output_name
+    {
+        return None;
+    }
+    let payload: serde_json::Value = serde_json::from_str(&op.expr_json).ok()?;
+    if payload.get("kind").and_then(|k| k.as_str()) != Some("SymbolReference") {
+        return None;
+    }
+    let symbol = payload.get("symbol").and_then(|s| s.as_str())?;
+    let snake = codegraph_naming::to_snake_case(symbol);
+    args.iter()
+        .find(|(name, _)| *name == snake)
+        .map(|(name, _)| name.clone())
 }
 
 /// Emit gated post-conditions (`debug_assert!` under the
@@ -578,4 +627,76 @@ fn emit_dispatch_body(
         enumeration,
     );
     wln!(code, "    }}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn set_op(root: &str, path: &[&str], expr_json: &str) -> FunctionOperation {
+        FunctionOperation {
+            is_add: false,
+            assign_root: root.to_string(),
+            path: path.iter().map(|p| p.to_string()).collect(),
+            expr_json: expr_json.to_string(),
+        }
+    }
+
+    #[test]
+    fn wholesale_copy_detects_set_output_from_bare_input() {
+        let op = set_op(
+            "reset",
+            &[],
+            r#"{"kind":"SymbolReference","symbol":"tradeState","args":[],"explicit":false}"#,
+        );
+        let args = vec![
+            ("instruction".to_string(), "ResetInstruction".to_string()),
+            ("trade_state".to_string(), "TradeState".to_string()),
+        ];
+        assert_eq!(
+            wholesale_copy_source(&op, "reset", &args).as_deref(),
+            Some("trade_state")
+        );
+    }
+
+    #[test]
+    fn wholesale_copy_refuses_pathed_or_add_or_non_input_sources() {
+        let args = vec![("trade_state".to_string(), "TradeState".to_string())];
+        // `add` never seeds.
+        let mut add = set_op(
+            "reset",
+            &[],
+            r#"{"kind":"SymbolReference","symbol":"tradeState","args":[],"explicit":false}"#,
+        );
+        add.is_add = true;
+        assert_eq!(wholesale_copy_source(&add, "reset", &args), None);
+        // Pathed assignment (`set out -> field: in`) is not wholesale.
+        let pathed = set_op(
+            "reset",
+            &["reset_history"],
+            r#"{"kind":"SymbolReference","symbol":"tradeState","args":[],"explicit":false}"#,
+        );
+        assert_eq!(wholesale_copy_source(&pathed, "reset", &args), None);
+        // Copying from something that is not an argument is not seeding.
+        let alias_src = set_op(
+            "reset",
+            &[],
+            r#"{"kind":"SymbolReference","symbol":"helper","args":[],"explicit":false}"#,
+        );
+        assert_eq!(wholesale_copy_source(&alias_src, "reset", &args), None);
+        // Different assign root (`set other: in`) does not seed `reset`.
+        let other_root = set_op(
+            "other",
+            &[],
+            r#"{"kind":"SymbolReference","symbol":"tradeState","args":[],"explicit":false}"#,
+        );
+        assert_eq!(wholesale_copy_source(&other_root, "reset", &args), None);
+        // Non-bare expressions (feature calls, literals) do not seed.
+        let call = set_op(
+            "reset",
+            &[],
+            r#"{"kind":"FeatureCall","receiver":{"kind":"SymbolReference","symbol":"tradeState"},"feature":"clone"}"#,
+        );
+        assert_eq!(wholesale_copy_source(&call, "reset", &args), None);
+    }
 }

@@ -342,7 +342,15 @@ operations of an append-only entity are a parse-time config error. Verified
 by `append_only_tests` and the flipped `trade_state_operations…` spike pin.
 Remaining for #284 slice B: successor-lineage repository reads
 (`create_successor`, `current_for_trade`, `as_of`) and function-plane
-before-seeding.
+before-seeding — the latter landed in the same slice: a leading wholesale
+`set {out}: {before}` now SEEDS the output local (`let mut reset =
+trade_state;`, Create_Reset) instead of assigning over
+`Default::default()`, so unassigned "before" fields survive the transition
+— value semantics, the Rust-native shape for pure-event application. The
+repository lineage half (predecessor_id column across DDL + SeaORM entity +
+`create_successor`/`successors_of`/latest/as_of reads) remains the open
+work; it spans the entity↔repo↔handler coherence contracts and is scoped
+in the issue.
 
 ### G2 — no lineage materialization: VERIFIED
 

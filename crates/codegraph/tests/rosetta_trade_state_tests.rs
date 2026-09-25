@@ -482,6 +482,13 @@ async fn generated_functions_show_copy_from_before_and_no_dispatch() {
         content.contains("reset = trade_state;"),
         "`set reset: tradeState` → copy-from-before assignment"
     );
+    // Post-#284 slice B: the copy-from-before op SEEDS the output local
+    // instead of assigning over `Default::default()` — value semantics,
+    // no silently-dropped "before" fields.
+    assert!(
+        content.contains("let mut reset = trade_state;"),
+        "wholesale copy-from-before seeds the output local (issue #284): {content}"
+    );
     assert!(
         content.contains("reset.reset_history.push(instruction.reset);"),
         "`add reset -> resetHistory` → push into the lineage list"
