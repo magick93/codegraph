@@ -30,6 +30,64 @@
 //!   (`i64` vs `f64`). Three sets (not two) because the i64/f64 choice
 //!   needs the integer subset; the generator derives all of them from
 //!   `PropertyNode.prop_type` / `rust_field_type`.
+//! - `enum_types` — enum TYPE names (Pascal, e.g. `PositionStatusEnum`;
+//!   from codelist-reference properties via
+//!   `codelist_enum_name_from_ref`, the same helper dto.rs uses to pick
+//!   the `GeneratedEnum` field type). Gates the guarded-optional family
+//!   (issue #283 slice b): enum-literal lowering and enum equality.
+//!
+//! # Name resolution order (issue #283)
+//!
+//! A bare `SymbolReference` (and a `FeatureCall` receiver) resolves
+//! through four tiers, first match wins:
+//!
+//! 1. **locals** — the lambda binding frames (and `transpile_scoped`'s
+//!    function-body locals): the symbol is emitted bare;
+//! 2. **receiver fields** — the snake_cased symbol is one of the known
+//!    field sets (`optional` / `collection` / `numeric` / `integer`):
+//!    emitted as a receiver-field access (with the bare-optional
+//!    sanction rule);
+//! 3. **enum type names** — the raw symbol is in `enum_types` and is NOT
+//!    a known field (fields win ties): an enum-namespace reference. As a
+//!    `FeatureCall` receiver it lowers to a qualified variant literal
+//!    (`PositionStatusEnum -> Closed` → `PositionStatusEnum::Closed`);
+//!    bare, outside a qualified literal, it is REFUSED (a type name is
+//!    not a value — and real CDM overwhelmingly writes the qualified
+//!    form; bare variants are sigil-rejected E0101 per the spike).
+//! 4. **unknown** — emitted as a receiver-field access (unknown-symbol
+//!    handling is the caller's concern, the documented untyped policy).
+//!
+//! # Guarded-optional lowering (issue #283 slice b)
+//!
+//! - **Deep-chain exists/absent** — `Exists` / `Absent` / `OnlyExists`
+//!   arguments may be `FeatureCall`/`DeepFeatureCall` chains, not just
+//!   bare symbols. A chain through an OPTIONAL root lowers to the
+//!   canonical map shape (ONE shape, deterministic):
+//!   `exists(primitiveInstruction -> execution)` →
+//!   `dto.primitive_instruction.as_ref().map(|v| v.execution.is_some()).unwrap_or(false)`,
+//!   `… absent` → `dto.primitive_instruction.as_ref().map(|v| v.execution.is_none()).unwrap_or(true)`
+//!   (a `None` root means the whole path is absent). A REQUIRED root
+//!   stays plain dot access (`dto.a.b.is_some()`); a local root (lambda
+//!   frame / scoped local) emits the plain path over the local. Only the
+//!   chain ROOT's optionality is known (`ExprContext` carries the owner
+//!   entity's fields) — deeper hops emit plain access, so a genuinely
+//!   optional deeper hop is a downstream compile rejection, the module's
+//!   documented caveat class. `OnlyExists` lowers each argument through
+//!   the same chain rule and &&-conjoins.
+//! - **Optional enum equality** — `Binary` `=` / `<>` with one side an
+//!   enum literal and the other a bare receiver field:
+//!   optional field → `dto.position_state.as_ref() == Some(&PositionStatusEnum::Closed)`
+//!   (`<>` → `!=`); required field → plain `dto.intent == Lit`. A
+//!   field-vs-field comparison (neither side a literal) is NOT handled
+//!   here: a bare optional field keeps its refusal, so optional
+//!   field-vs-field stays unsupported (documented).
+//! - **Value-position chains** (NOT under exists/absent/only-exists)
+//!   through an optional receiver remain REFUSED — the slice-1 rule is
+//!   unchanged: exists/absent (and now only-exists + literal equality)
+//!   are the sanctioned ways to touch optionals.
+//! - **Still refused**: `switch` with a `Reference` guard (enum/choice
+//!   knowledge not carried by the payload — the IsOptionPayout shape),
+//!   `Choice`/`OneOf` (choice-variant representation deferred).
 //!
 //! Every bare symbol is treated as a field on the receiver (unknown-symbol
 //! handling is the caller's concern).
@@ -167,7 +225,9 @@
 //!   through, the metadata entries are dropped with an inline marker
 //!   comment (valid Rust anywhere inside an expression).
 //! - **`OnlyExists`** → the boolean conjunction of per-argument
-//!   `X.is_some()` (each argument keeps the exists-sanction). DOCUMENTED
+//!   `X.is_some()` (each argument keeps the exists-sanction; chain
+//!   arguments lower through the guarded-optional chain rule — module
+//!   docs, issue #283). DOCUMENTED
 //!   GAP: Rosetta's exclusivity ("only" — all other optional attributes
 //!   must be absent) needs full type knowledge and is NOT enforced.
 //! - **`As`** (type-system cast), **`AsKey`** (map-key semantics),
@@ -202,7 +262,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use codegraph_naming::{escape_rust_keyword, to_snake_case};
+use codegraph_naming::{escape_rust_keyword, to_pascal_case, to_snake_case};
 
 /// Why an expression could not be transpiled.
 ///
@@ -239,13 +299,16 @@ impl std::error::Error for TranspileError {}
 /// - `collection_fields`: array properties (`PropertyNode.is_array`);
 /// - `numeric_fields` / `integer_fields`: number- and integer-typed
 ///   properties (integer is a subset of numeric) — gates the aggregate
-///   family and picks its element type.
+///   family and picks its element type;
+/// - `enum_types`: enum TYPE names (Pascal, e.g. `PositionStatusEnum`) —
+///   gates the enum-literal and enum-equality lowerings (issue #283).
 pub struct ExprContext<'a> {
     pub receiver: &'a str,
     pub optional_fields: &'a HashSet<String>,
     pub collection_fields: &'a HashSet<String>,
     pub numeric_fields: &'a HashSet<String>,
     pub integer_fields: &'a HashSet<String>,
+    pub enum_types: &'a HashSet<String>,
 }
 
 /// Transpile one `Expr::to_json` payload into a Rust expression fragment.
@@ -378,6 +441,13 @@ impl Emitter<'_> {
                         "bare '->' projection (no feature) is unsupported",
                     ));
                 };
+                // Enum-namespace receiver: `Enum -> Variant` →
+                // `Enum::Variant` (issue #283; resolution order in the
+                // module docs — fields win ties, so this only fires when
+                // the receiver is not a known field).
+                if let Some(literal) = self.enum_variant_literal(payload) {
+                    return Ok(literal);
+                }
                 let receiver = payload.get("receiver").ok_or_else(|| {
                     TranspileError::new(call, "malformed payload: missing 'receiver'")
                 })?;
@@ -399,6 +469,9 @@ impl Emitter<'_> {
                 let argument = payload.get("argument").ok_or_else(|| {
                     TranspileError::new("Absent", "malformed payload: missing 'argument'")
                 })?;
+                if let Some(frag) = self.emit_chain_exists(argument, true)? {
+                    return Ok(frag);
+                }
                 Ok(format!("{}.is_none()", self.emit(argument, true, true)?))
             }
             // SEMANTIC GAP: `.first()` does not enforce Rosetta's uniqueness
@@ -587,6 +660,15 @@ impl Emitter<'_> {
                 return Ok(field);
             }
         }
+        // Enum-namespace reference outside a qualified `Enum -> Variant`
+        // literal: a type name is not a value (issue #283; resolution
+        // order in the module docs).
+        if self.is_enum_namespace(symbol) {
+            return Err(TranspileError::new(
+                "SymbolReference",
+                format!("enum type name '{symbol}' outside a qualified 'Enum -> Variant' literal"),
+            ));
+        }
         if !allow_optional_root && self.ctx.optional_fields.contains(&field) {
             return Err(optional_field_error(&field));
         }
@@ -621,7 +703,12 @@ impl Emitter<'_> {
             TranspileError::new("Exists", "malformed payload: missing 'argument'")
         })?;
         match modifier {
-            "none" => Ok(format!("{}.is_some()", self.emit(argument, true, true)?)),
+            "none" => {
+                if let Some(frag) = self.emit_chain_exists(argument, false)? {
+                    return Ok(frag);
+                }
+                Ok(format!("{}.is_some()", self.emit(argument, true, true)?))
+            }
             "single" | "multiple" => {
                 if !self.is_collection(argument) {
                     return Err(TranspileError::new(
@@ -1023,7 +1110,11 @@ impl Emitter<'_> {
         }
         let mut parts = Vec::with_capacity(args.len());
         for arg in args {
-            parts.push(format!("{}.is_some()", self.emit(arg, true, true)?));
+            if let Some(frag) = self.emit_chain_exists(arg, false)? {
+                parts.push(frag);
+            } else {
+                parts.push(format!("{}.is_some()", self.emit(arg, true, true)?));
+            }
         }
         Ok(parts.join(" && "))
     }
@@ -1051,6 +1142,16 @@ impl Emitter<'_> {
         let right = payload
             .get("right")
             .ok_or_else(|| TranspileError::new("Binary", "malformed payload: missing 'right'"))?;
+        // Enum-literal equality (issue #283): exactly one side an enum
+        // literal, the other a bare receiver field. Anything else falls
+        // through to the generic operand path (a bare OPTIONAL field on
+        // either side keeps its refusal there — field-vs-field optional
+        // comparison stays unsupported).
+        if matches!(op, "=" | "<>") {
+            if let Some(frag) = self.emit_enum_equality(op, left, right)? {
+                return Ok(frag);
+            }
+        }
         let rust_op = match op {
             "+" => "+",
             "-" => "-",
@@ -1146,6 +1247,185 @@ impl Emitter<'_> {
             "f64"
         })
     }
+
+    /// Whether the snake_cased name is a known receiver field in ANY field
+    /// set (fields win ties over enum type names).
+    fn is_known_field(&self, field: &str) -> bool {
+        self.ctx.optional_fields.contains(field)
+            || self.ctx.collection_fields.contains(field)
+            || self.ctx.numeric_fields.contains(field)
+            || self.ctx.integer_fields.contains(field)
+    }
+
+    /// Whether the raw (Pascal) symbol is an enum-namespace reference: an
+    /// `enum_types` member that is NOT also a known field (tier 3 of the
+    /// resolution order — fields win ties).
+    fn is_enum_namespace(&self, symbol: &str) -> bool {
+        self.ctx.enum_types.contains(symbol) && !self.is_known_field(&to_snake_case(symbol))
+    }
+
+    /// `FeatureCall`/`DeepFeatureCall` with an enum-namespace receiver →
+    /// the qualified variant literal (`PositionStatusEnum -> Closed` →
+    /// `PositionStatusEnum::Closed`, variant Pascal-cased). `None` when
+    /// the receiver is not an enum-namespace reference (the generic field
+    /// path applies).
+    fn enum_variant_literal(&self, payload: &serde_json::Value) -> Option<String> {
+        let receiver = payload.get("receiver")?;
+        if receiver.get("kind").and_then(|k| k.as_str()) != Some("SymbolReference") {
+            return None;
+        }
+        let symbol = receiver.get("symbol").and_then(|s| s.as_str())?;
+        if !self.is_enum_namespace(symbol) {
+            return None;
+        }
+        let feature = payload.get("feature").and_then(|f| f.as_str())?;
+        Some(format!("{}::{}", symbol, to_pascal_case(feature)))
+    }
+
+    /// The bare receiver-field name a payload refers to, if it is a plain
+    /// `SymbolReference` resolving to a field (tier 2 — not a lambda
+    /// local, not an enum-namespace reference).
+    fn bare_receiver_field(&self, payload: &serde_json::Value) -> Option<String> {
+        if payload.get("kind").and_then(|k| k.as_str()) != Some("SymbolReference") {
+            return None;
+        }
+        let symbol = payload.get("symbol").and_then(|s| s.as_str())?;
+        let field = escape_rust_keyword(&to_snake_case(symbol));
+        if self
+            .frames
+            .iter()
+            .rev()
+            .any(|f| f.params.iter().any(|p| p == &field))
+        {
+            return None;
+        }
+        if self.is_enum_namespace(symbol) {
+            return None;
+        }
+        Some(field)
+    }
+
+    /// Enum-literal equality (issue #283): exactly one side an enum
+    /// literal (`Enum -> Variant`), the other a bare receiver field.
+    /// Optional field → `dto.f.as_ref() == Some(&Lit)` (`<>` → `!=`);
+    /// required field → plain `dto.f == Lit`. Returns `None` when neither
+    /// pairing matches — the generic operand path applies, where a bare
+    /// optional field keeps its refusal (field-vs-field optional
+    /// comparison stays unsupported).
+    fn emit_enum_equality(
+        &mut self,
+        op: &str,
+        left: &serde_json::Value,
+        right: &serde_json::Value,
+    ) -> Result<Option<String>, TranspileError> {
+        let rust_op = if op == "=" { "==" } else { "!=" };
+        for (literal_payload, field_payload) in [(left, right), (right, left)] {
+            let Some(literal) = self.enum_variant_literal(literal_payload) else {
+                continue;
+            };
+            let Some(field) = self.bare_receiver_field(field_payload) else {
+                continue;
+            };
+            if self.ctx.optional_fields.contains(&field) {
+                return Ok(Some(format!(
+                    "{}.{field}.as_ref() {rust_op} Some(&{literal})",
+                    self.ctx.receiver
+                )));
+            }
+            return Ok(Some(format!(
+                "{}.{field} {rust_op} {literal}",
+                self.ctx.receiver
+            )));
+        }
+        Ok(None)
+    }
+
+    /// Exists/absent/only-exists argument lowering for feature CHAINS
+    /// (issue #283 slice b). Returns `Ok(None)` when the argument is not
+    /// a `FeatureCall`/`DeepFeatureCall` chain bottoming in a plain
+    /// symbol — callers fall back to the legacy bare-fragment emission.
+    ///
+    /// Canonical shapes (module docs): an OPTIONAL root lowers to
+    /// `dto.a.as_ref().map(|v| v.b.is_some()).unwrap_or(false)` (absent:
+    /// `map(|v| v.b.is_none()).unwrap_or(true)` — a `None` root means the
+    /// whole path is absent); a required root stays plain dot access; a
+    /// local root (lambda frame) emits the plain path over the local.
+    /// Only the root's optionality is known — deeper hops emit plain
+    /// access (documented caveat class).
+    fn emit_chain_exists(
+        &mut self,
+        argument: &serde_json::Value,
+        absent: bool,
+    ) -> Result<Option<String>, TranspileError> {
+        let Some((root, features)) = chain_parts(argument) else {
+            return Ok(None);
+        };
+        let symbol = root.get("symbol").and_then(|s| s.as_str()).ok_or_else(|| {
+            TranspileError::new("Exists", "malformed payload: chain root missing 'symbol'")
+        })?;
+        // A function-like root is not a field chain — legacy path refuses
+        // it with the precise error.
+        let explicit = root
+            .get("explicit")
+            .and_then(|e| e.as_bool())
+            .unwrap_or(false);
+        let has_args = root
+            .get("args")
+            .and_then(|a| a.as_array())
+            .is_some_and(|a| !a.is_empty());
+        if explicit || has_args {
+            return Ok(None);
+        }
+        let field = escape_rust_keyword(&to_snake_case(symbol));
+        let path = features
+            .iter()
+            .map(|f| escape_rust_keyword(&to_snake_case(f)))
+            .collect::<Vec<_>>()
+            .join(".");
+        let terminal = if absent { "is_none()" } else { "is_some()" };
+        // Bare-symbol argument (empty feature path): the slice-1 direct
+        // shape — `recv.field.is_some()` — not the chain/map shape (which
+        // would emit a stray empty segment, `v..is_some()`).
+        if path.is_empty() {
+            for frame in self.frames.iter().rev() {
+                if frame.params.iter().any(|p| p == &field) {
+                    return Ok(Some(format!("{field}.{terminal}")));
+                }
+            }
+            if self.is_enum_namespace(symbol) {
+                return Err(TranspileError::new(
+                    "Exists",
+                    format!("enum type name '{symbol}' cannot be exists-checked"),
+                ));
+            }
+            return Ok(Some(format!("{}.{field}.{terminal}", self.ctx.receiver)));
+        }
+        // Lambda locals first (resolution order tier 1): a local-rooted
+        // chain is a plain value path.
+        for frame in self.frames.iter().rev() {
+            if frame.params.iter().any(|p| p == &field) {
+                return Ok(Some(format!("{field}.{path}.{terminal}")));
+            }
+        }
+        if self.is_enum_namespace(symbol) {
+            return Err(TranspileError::new(
+                "Exists",
+                format!("enum type name '{symbol}' cannot be exists-checked"),
+            ));
+        }
+        if self.ctx.optional_fields.contains(&field) {
+            let fallback = if absent { "true" } else { "false" };
+            Ok(Some(format!(
+                "{}.{field}.as_ref().map(|v| v.{path}.{terminal}).unwrap_or({fallback})",
+                self.ctx.receiver
+            )))
+        } else {
+            Ok(Some(format!(
+                "{}.{field}.{path}.{terminal}",
+                self.ctx.receiver
+            )))
+        }
+    }
 }
 
 /// The snake_case symbol at the root of a receiver/argument chain, if the
@@ -1164,6 +1444,24 @@ fn root_symbol(payload: &serde_json::Value) -> Option<String> {
         | "OnlyElement" | "Count" | "Filter" | "Map" | "Reduce" | "Sort" | "Then" | "WithMeta"
         | "ToString" | "ToNumber" | "ToInt" | "ToDate" | "ToDateTime" | "ToZonedDateTime"
         | "ToTime" => root_symbol(payload.get("argument")?),
+        _ => None,
+    }
+}
+
+/// Flatten a receiver chain into its `SymbolReference` root plus the
+/// features outermost-last (`FeatureCall{recv: sym(a), feature: b}` →
+/// `(sym(a), ["b"])`). `None` when the chain does not bottom out in a
+/// plain `SymbolReference` (wrappers, literals, calls) — callers fall
+/// back to the generic emission path.
+fn chain_parts(payload: &serde_json::Value) -> Option<(&serde_json::Value, Vec<String>)> {
+    match payload.get("kind").and_then(|k| k.as_str())? {
+        "SymbolReference" => Some((payload, Vec::new())),
+        "FeatureCall" | "DeepFeatureCall" => {
+            let feature = payload.get("feature").and_then(|f| f.as_str())?;
+            let (root, mut rest) = chain_parts(payload.get("receiver")?)?;
+            rest.push(feature.to_string());
+            Some((root, rest))
+        }
         _ => None,
     }
 }
@@ -1264,6 +1562,7 @@ mod tests {
         collections: HashSet<String>,
         numeric: HashSet<String>,
         integer: HashSet<String>,
+        enums: HashSet<String>,
     }
 
     impl Sets {
@@ -1273,6 +1572,7 @@ mod tests {
                 collections: HashSet::new(),
                 numeric: HashSet::new(),
                 integer: HashSet::new(),
+                enums: HashSet::new(),
             }
         }
         fn optional_fields(fields: &[&str]) -> Self {
@@ -1294,6 +1594,12 @@ mod tests {
                 ..Self::empty()
             }
         }
+        fn enums(names: &[&str]) -> Self {
+            Self {
+                enums: names.iter().map(|n| n.to_string()).collect(),
+                ..Self::empty()
+            }
+        }
         fn ctx(&self) -> ExprContext<'_> {
             ExprContext {
                 receiver: "dto",
@@ -1301,6 +1607,7 @@ mod tests {
                 collection_fields: &self.collections,
                 numeric_fields: &self.numeric,
                 integer_fields: &self.integer,
+                enum_types: &self.enums,
             }
         }
     }
@@ -2294,6 +2601,293 @@ mod tests {
     fn display_is_marker_friendly() {
         let err = TranspileError::new("Switch", "someday");
         assert_eq!(err.to_string(), "unsupported expression (Switch): someday");
+    }
+
+    // ── enum literals + enum equality (issue #283 slice b) ───────────────
+
+    fn enum_call(enum_name: &str, feature: &str) -> serde_json::Value {
+        json!({"kind":"FeatureCall","receiver":sym(enum_name),"feature":feature})
+    }
+
+    #[test]
+    fn enum_qualified_feature_call_becomes_variant_literal() {
+        let sets = Sets::enums(&["PositionStatusEnum"]);
+        assert_eq!(
+            t_in(enum_call("PositionStatusEnum", "Closed"), &sets),
+            "PositionStatusEnum::Closed"
+        );
+    }
+
+    #[test]
+    fn enum_variant_feature_is_pascal_cased() {
+        let sets = Sets::enums(&["EventIntentEnum"]);
+        assert_eq!(
+            t_in(
+                enum_call("EventIntentEnum", "corporateActionAdjustment"),
+                &sets
+            ),
+            "EventIntentEnum::CorporateActionAdjustment"
+        );
+    }
+
+    #[test]
+    fn deep_feature_call_enum_receiver_lowers_the_same() {
+        let sets = Sets::enums(&["E"]);
+        assert_eq!(
+            t_in(
+                json!({"kind":"DeepFeatureCall","receiver":sym("E"),"feature":"V"}),
+                &sets
+            ),
+            "E::V"
+        );
+    }
+
+    #[test]
+    fn receiver_not_in_enum_types_stays_field_access() {
+        // The generic receiver-field policy: unknown symbols are receiver
+        // fields (the documented untyped policy — no enum knowledge).
+        assert_eq!(
+            t(enum_call("PositionStatusEnum", "Closed")),
+            "dto.position_status_enum.closed"
+        );
+    }
+
+    #[test]
+    fn field_wins_tie_over_enum_name() {
+        // `Status` is BOTH an enum_types member and a known field — the
+        // field wins (resolution order tier 2 beats tier 3).
+        let sets = Sets {
+            collections: HashSet::from(["status".to_string()]),
+            ..Sets::enums(&["Status"])
+        };
+        assert_eq!(
+            t_in(enum_call("Status", "Closed"), &sets),
+            "dto.status.closed"
+        );
+    }
+
+    #[test]
+    fn bare_enum_namespace_symbol_is_refused() {
+        // A type name is not a value: bare `PositionStatusEnum` outside a
+        // qualified `Enum -> Variant` literal is refused.
+        let sets = Sets::enums(&["PositionStatusEnum"]);
+        let err = e_in(sym("PositionStatusEnum"), &sets);
+        assert_eq!(err.kind, "SymbolReference");
+        assert!(err.detail.contains("qualified 'Enum -> Variant'"), "{err}");
+    }
+
+    #[test]
+    fn local_beats_enum_name() {
+        // Resolution order tier 1: a lambda local named like an enum type
+        // binds the local.
+        let sets = Sets::enums(&["Status"]);
+        let payload = sym("Status");
+        let locals = vec!["status".to_string()];
+        let out = transpile_scoped(&payload, &sets.ctx(), &locals).expect("transpiles");
+        assert_eq!(out, "status");
+    }
+
+    #[test]
+    fn optional_enum_field_equality_lowers_to_as_ref_some() {
+        // ClosedStateExists if-arm: `positionState = PositionStatusEnum ->
+        // Closed` over an optional codelist-reference field.
+        let sets = Sets {
+            optional: HashSet::from(["position_state".to_string()]),
+            ..Sets::enums(&["PositionStatusEnum"])
+        };
+        let payload = json!({"kind":"Binary","op":"=","cardMod":"none",
+            "left":sym("positionState"),"right":enum_call("PositionStatusEnum","Closed")});
+        assert_eq!(
+            t_in(payload, &sets),
+            "dto.position_state.as_ref() == Some(&PositionStatusEnum::Closed)"
+        );
+    }
+
+    #[test]
+    fn optional_enum_field_inequality_lowers_to_as_ref_ne() {
+        let sets = Sets {
+            optional: HashSet::from(["position_state".to_string()]),
+            ..Sets::enums(&["PositionStatusEnum"])
+        };
+        let payload = json!({"kind":"Binary","op":"<>","cardMod":"none",
+            "left":sym("positionState"),"right":enum_call("PositionStatusEnum","Closed")});
+        assert_eq!(
+            t_in(payload, &sets),
+            "dto.position_state.as_ref() != Some(&PositionStatusEnum::Closed)"
+        );
+    }
+
+    #[test]
+    fn required_enum_field_equality_is_plain() {
+        // A required enum field renders without the Option wrapper in the
+        // DTO — plain `==`.
+        let sets = Sets::enums(&["EventIntentEnum"]);
+        let payload = json!({"kind":"Binary","op":"=","cardMod":"none",
+            "left":sym("intent"),"right":enum_call("EventIntentEnum","Novation")});
+        assert_eq!(
+            t_in(payload, &sets),
+            "dto.intent == EventIntentEnum::Novation"
+        );
+    }
+
+    #[test]
+    fn enum_literal_on_the_left_matches_too() {
+        let sets = Sets {
+            optional: HashSet::from(["status".to_string()]),
+            ..Sets::enums(&["TradeStatus"])
+        };
+        let payload = json!({"kind":"Binary","op":"=","cardMod":"none",
+            "left":enum_call("TradeStatus","Settled"),"right":sym("status")});
+        assert_eq!(
+            t_in(payload, &sets),
+            "dto.status.as_ref() == Some(&TradeStatus::Settled)"
+        );
+    }
+
+    #[test]
+    fn enum_field_vs_field_equality_keeps_the_optional_refusal() {
+        // Neither side is a literal: the generic operand path applies and
+        // the bare optional field keeps its refusal (field-vs-field
+        // optional comparison stays unsupported — documented).
+        let sets = Sets {
+            optional: HashSet::from(["a".to_string()]),
+            ..Sets::enums(&["E"])
+        };
+        let payload = json!({"kind":"Binary","op":"=","cardMod":"none",
+            "left":sym("a"),"right":sym("b")});
+        let err = e_in(payload, &sets);
+        assert_eq!(err.kind, "SymbolReference");
+        assert!(err.detail.contains("optional field 'a'"), "{err}");
+    }
+
+    #[test]
+    fn enum_equality_field_side_respects_lambda_locals() {
+        // The field side resolving as a lambda local is not a receiver
+        // field: generic path emits the bare local against the literal.
+        let sets = Sets::enums(&["EventIntentEnum"]);
+        let payload = json!({"kind":"Binary","op":"=","cardMod":"none",
+            "left":sym("intent"),"right":enum_call("EventIntentEnum","Novation")});
+        let locals = vec!["intent".to_string()];
+        let out = transpile_scoped(&payload, &sets.ctx(), &locals).expect("transpiles");
+        assert_eq!(out, "intent == EventIntentEnum::Novation");
+    }
+
+    #[test]
+    fn exists_over_enum_chain_is_refused() {
+        let sets = Sets::enums(&["E"]);
+        let err = e_in(
+            json!({"kind":"Exists","modifier":"none","argument":enum_call("E","V")}),
+            &sets,
+        );
+        assert_eq!(err.kind, "Exists");
+        assert!(err.detail.contains("cannot be exists-checked"), "{err}");
+    }
+
+    // ── guarded-optional chains (issue #283 slice b) ─────────────────────
+
+    fn chain(root: &str, feature: &str) -> serde_json::Value {
+        json!({"kind":"FeatureCall","receiver":sym(root),"feature":feature})
+    }
+
+    #[test]
+    fn chain_exists_through_optional_root_uses_the_map_shape() {
+        let sets = Sets::optional_fields(&["primitive_instruction"]);
+        let payload = json!({"kind":"Exists","modifier":"none","argument":
+            chain("primitiveInstruction", "execution")});
+        assert_eq!(
+            t_in(payload, &sets),
+            "dto.primitive_instruction.as_ref().map(|v| v.execution.is_some()).unwrap_or(false)"
+        );
+    }
+
+    #[test]
+    fn chain_absent_through_optional_root_unwraps_to_true() {
+        // A `None` root means the whole path is absent.
+        let sets = Sets::optional_fields(&["a"]);
+        let payload = json!({"kind":"Absent","argument":chain("a", "b")});
+        assert_eq!(
+            t_in(payload, &sets),
+            "dto.a.as_ref().map(|v| v.b.is_none()).unwrap_or(true)"
+        );
+    }
+
+    #[test]
+    fn chain_exists_through_required_root_stays_plain() {
+        let sets = Sets::empty();
+        let payload = json!({"kind":"Exists","modifier":"none","argument":chain("a", "b")});
+        assert_eq!(t_in(payload, &sets), "dto.a.b.is_some()");
+    }
+
+    #[test]
+    fn chain_exists_multi_feature_is_plain_beyond_the_root() {
+        // Only the ROOT's optionality is known — deeper hops emit plain
+        // access (documented caveat class).
+        let sets = Sets::optional_fields(&["a"]);
+        let payload = json!({"kind":"Exists","modifier":"none","argument":
+            json!({"kind":"FeatureCall","receiver":chain("a","b"),"feature":"c"})});
+        assert_eq!(
+            t_in(payload, &sets),
+            "dto.a.as_ref().map(|v| v.b.c.is_some()).unwrap_or(false)"
+        );
+    }
+
+    #[test]
+    fn chain_features_snake_case_and_escape_keywords() {
+        let sets = Sets::optional_fields(&["a"]);
+        let payload = json!({"kind":"Exists","modifier":"none","argument":
+            json!({"kind":"FeatureCall","receiver":chain("a","tradeId"),"feature":"type"})});
+        assert_eq!(
+            t_in(payload, &sets),
+            "dto.a.as_ref().map(|v| v.trade_id.r#type.is_some()).unwrap_or(false)"
+        );
+    }
+
+    #[test]
+    fn only_exists_lowers_chain_arguments() {
+        // ExclusiveSplitPrimitive then-arm: `primitiveInstruction -> split
+        // only exists` over an optional choice-typed receiver.
+        let sets = Sets::optional_fields(&["primitive_instruction"]);
+        let payload = json!({"kind":"OnlyExists","args":[chain("primitiveInstruction","split")],
+            "parentheses":false});
+        assert_eq!(
+            t_in(payload, &sets),
+            "dto.primitive_instruction.as_ref().map(|v| v.split.is_some()).unwrap_or(false)"
+        );
+    }
+
+    #[test]
+    fn only_exists_conjoins_mixed_bare_and_chain_arguments() {
+        let sets = Sets::optional_fields(&["price", "a"]);
+        let payload = json!({"kind":"OnlyExists","args":[sym("price"), chain("a","b")],
+            "parentheses":true});
+        assert_eq!(
+            t_in(payload, &sets),
+            "dto.price.is_some() && dto.a.as_ref().map(|v| v.b.is_some()).unwrap_or(false)"
+        );
+    }
+
+    #[test]
+    fn chain_through_lambda_local_root_is_plain() {
+        let sets = Sets::optional_fields(&["a"]);
+        let payload = json!({"kind":"Exists","modifier":"none","argument":chain("x","f")});
+        let locals = vec!["x".to_string()];
+        let out = transpile_scoped(&payload, &sets.ctx(), &locals).expect("transpiles");
+        assert_eq!(out, "x.f.is_some()");
+    }
+
+    #[test]
+    fn value_position_chain_through_optional_root_still_refused() {
+        // Slice-1 rule unchanged: exists/absent is the sanction — a value
+        // position (function aliases/operations) keeps the refusal.
+        let sets = Sets::optional_fields(&["a"]);
+        let err = transpile_scoped(&chain("a", "b"), &sets.ctx(), &[])
+            .expect_err("value-position chain refused");
+        assert_eq!(err.kind, "FeatureCall");
+        assert!(
+            err.detail
+                .contains("optional receiver requires exists-guard"),
+            "{err}"
+        );
     }
 
     // ── transpile_scoped (issue #263 slice-4 addition) ──────────────────

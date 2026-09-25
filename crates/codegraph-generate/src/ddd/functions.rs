@@ -190,7 +190,7 @@ fn build_surface(node: &FunctionNode, domain_functions: &HashSet<&str>) -> Funct
     // Empty ExprContext: with every bare symbol bound as a local, the
     // receiver prefix is only reached by unknown symbols (downstream
     // compile noise, the documented untyped policy); no field
-    // optionality/collection knowledge exists for function bodies.
+    // optionality/collection/enum knowledge exists for function bodies.
     let empty = HashSet::new();
     let ctx = ExprContext {
         receiver: output
@@ -201,6 +201,7 @@ fn build_surface(node: &FunctionNode, domain_functions: &HashSet<&str>) -> Funct
         collection_fields: &empty,
         numeric_fields: &empty,
         integer_fields: &empty,
+        enum_types: &empty,
     };
 
     let mut unresolved_aliases = HashSet::new();
@@ -426,6 +427,7 @@ fn emit_operation(code: &mut CodeWriter, function: &FunctionSurface, op: &Functi
         collection_fields: &empty,
         numeric_fields: &empty,
         integer_fields: &empty,
+        enum_types: &empty,
     };
     let expr = match transpile_scoped(&payload, &ctx, &function.locals) {
         Ok(expr) => expr,

@@ -180,6 +180,11 @@ impl DomainGenerator for ConditionValidationsGenerator {
             let mut collection_fields: HashSet<String> = HashSet::new();
             let mut numeric_fields: HashSet<String> = HashSet::new();
             let mut integer_fields: HashSet<String> = HashSet::new();
+            // Enum TYPE names for the #283 guarded-optional lowering: a
+            // codelist-reference scalar renders as `Option<{Enum}>` /
+            // `{Enum}` (dto.rs picks the same name via the same helper),
+            // so `Enum -> Variant` lowers to `{Enum}::Variant`.
+            let mut enum_types: HashSet<String> = HashSet::new();
             for p in &props {
                 let (numeric, integer) = numeric_class(&p.prop_type, &p.rust_field_type);
                 if p.is_array {
@@ -190,6 +195,17 @@ impl DomainGenerator for ConditionValidationsGenerator {
                 }
                 if integer {
                     integer_fields.insert(p.rust_field_name.clone());
+                }
+                if matches!(
+                    p.effective_kind(),
+                    Some(RefClassificationKind::CodelistReference)
+                        | Some(RefClassificationKind::CodelistCheck)
+                ) {
+                    if let Some(enum_name) =
+                        codegraph_core::types::codelist_enum_name_from_ref(&p.ref_target)
+                    {
+                        enum_types.insert(enum_name);
+                    }
                 }
             }
             let conditions: Vec<ConditionEmission> = db
@@ -207,6 +223,7 @@ impl DomainGenerator for ConditionValidationsGenerator {
                                     collection_fields: &collection_fields,
                                     numeric_fields: &numeric_fields,
                                     integer_fields: &integer_fields,
+                                    enum_types: &enum_types,
                                 };
                                 match transpile(&payload, &ctx) {
                                     Ok(code) => ConditionExpr::Transpiled(code),

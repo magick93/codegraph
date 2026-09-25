@@ -231,6 +231,20 @@ lowers its else branch to `vec![]`, which does not typecheck (gap G10c).
 The guarded-optional family (`exists` guards, enum `=` on optionals) is
 entirely TODO'd — that family covers most real CDM conditions.
 
+**Post-#283 update (commits b2648abe, 283b): both halves of gap G10 are
+fixed.** Bool-position else arms emit `false`; guarded-optional lowering
+(enum-literal resolution tier, optional enum equality via
+`as_ref() == Some(&Variant)`, deep-chain exists/absent/only-exists via the
+canonical `as_ref().map(|v| v.<feat>.is_some()).unwrap_or(false)` shape)
+converts **7 of the 9 real conditions** to real `validate_*` fns — including
+`ClosedStateExists` (`position_state.as_ref() == Some(&PositionStatusEnum::Closed)`
+→ `closed_state.is_some()`), `NewTrade` (chains through the optional
+`primitive_instruction` choice), and `ExclusiveSplitPrimitive`. Remaining
+honest refusals: `IsOptionPayout` (Reference-guard switch over an optional
+choice argument) and `IssuerChoice` (root Choice op). §5's WP-D priority is
+largely discharged; the residual choice-guard case is folded into the
+choice-representation follow-up.
+
 ### 2.4 Rules plane — real CDM has nothing to feed it
 
 Grepping all 145 real `.rosetta` files: **zero** `reporting rule`,

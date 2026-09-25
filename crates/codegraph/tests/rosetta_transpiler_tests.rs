@@ -144,12 +144,15 @@ fn ctx<'a>(optional: &'a HashSet<String>) -> codegraph::generate::rosetta_expr::
     });
     static INTEGER: std::sync::LazyLock<HashSet<String>> =
         std::sync::LazyLock::new(|| HashSet::from(["quantity", "counts"].map(str::to_string)));
+    static ENUMS: std::sync::LazyLock<HashSet<String>> =
+        std::sync::LazyLock::new(|| HashSet::from(["TradeStatus"].map(str::to_string)));
     codegraph::generate::rosetta_expr::ExprContext {
         receiver: "dto",
         optional_fields: optional,
         collection_fields: &COLLECTIONS,
         numeric_fields: &NUMERIC,
         integer_fields: &INTEGER,
+        enum_types: &ENUMS,
     }
 }
 
@@ -214,21 +217,17 @@ fn transpilable_conditions_produce_expected_rust() {
 }
 
 #[test]
-fn optional_receiver_chain_is_refused_even_under_exists() {
+fn optional_receiver_chain_transpiles_under_exists_guard() {
+    // Issue #283 slice b: exists sanctions a chain through an OPTIONAL
+    // root — the canonical map shape. (Before this slice the chain was
+    // refused with `optional receiver requires exists-guard`.)
     let conditions = trade_conditions();
     let optional = HashSet::from(["memo".to_string(), "settled_on".to_string()]);
 
-    // exists sanctions only a BARE optional symbol — a deep chain through
-    // `settledOn` still needs the optionality resolved first.
-    let err = transpile_named(&conditions, "OptionalChain", &optional)
-        .expect_err("optional receiver chain refused");
-    assert_eq!(err.kind, "FeatureCall");
-    assert!(
-        err.detail
-            .contains("optional receiver requires exists-guard"),
-        "{err}"
+    assert_eq!(
+        transpile_named(&conditions, "OptionalChain", &optional).unwrap(),
+        "dto.settled_on.as_ref().map(|v| v.year.is_some()).unwrap_or(false)"
     );
-    assert!(err.detail.contains("settled_on"), "{err}");
 }
 
 #[test]

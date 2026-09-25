@@ -262,12 +262,16 @@ async fn build_surface(
         Some(title) => {
             let empty = FieldKnowledge::default();
             let fields = knowledge.get(title).unwrap_or(&empty);
+            // No enum-type knowledge on the rules plane yet: enum literals
+            // keep the untyped receiver-field policy here.
+            let no_enums = HashSet::new();
             let ctx = ExprContext {
                 receiver: "input",
                 optional_fields: &fields.optional_fields,
                 collection_fields: &fields.collection_fields,
                 numeric_fields: &fields.numeric_fields,
                 integer_fields: &fields.integer_fields,
+                enum_types: &no_enums,
             };
             let payload: serde_json::Value = serde_json::from_str(&node.expr_json)
                 .unwrap_or_else(|_| serde_json::Value::String(node.expr_json.clone()));

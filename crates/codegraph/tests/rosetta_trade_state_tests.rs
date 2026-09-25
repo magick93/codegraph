@@ -389,9 +389,53 @@ async fn fragment_conditions_land_as_nodes_and_emit_into_validations() {
         validations.contains("Trade.counterparty allows at least 2"),
         "the real (2..2) counterparty cardinality becomes an item-count validation"
     );
+    // Post-#283 guarded-optional lowering: 7 of the 9 real conditions
+    // emit real checks.
     assert!(
-        validations.contains("TODO(#262): transpile condition 'NewTrade'"),
-        "untranspilable real conditions are TODO-marked, not silently dropped"
+        validations.contains("pub fn validate_new_trade("),
+        "chain-exists condition (Instruction.NewTrade) transpiles post-#283"
+    );
+    assert!(
+        validations.contains(
+            "dto.primitive_instruction.as_ref().map(|v| v.execution.is_some()).unwrap_or(false)"
+        ),
+        "exists through an optional (choice) receiver uses the canonical map shape"
+    );
+    assert!(
+        validations.contains("pub fn validate_closed_state_exists(")
+            && validations
+                .contains("dto.position_state.as_ref() == Some(&PositionStatusEnum::Closed)"),
+        "optional enum equality lowers to as_ref() == Some(&Variant)"
+    );
+    assert!(
+        validations.contains("pub fn validate_corporate_action(")
+            && validations.contains(
+                "dto.intent.as_ref() == Some(&EventIntentEnum::CorporateActionAdjustment)"
+            ),
+        "required-path enum equality with a qualified literal lowers"
+    );
+    assert!(
+        validations.contains("pub fn validate_exclusive_split_primitive("),
+        "OnlyExists over a chain lowers through the same rule"
+    );
+    assert!(
+        std::fs::read_to_string(output.join("src/domain/datetime/validations.rs"))
+            .expect("datetime/validations.rs")
+            .contains("pub fn validate_adjusted_date("),
+        "absent/exists family transpiles (AdjustedDate)"
+    );
+    // Honest refusals keep precise markers: the Reference-guard switch
+    // (optional choice argument) and the root Choice operation.
+    assert!(
+        validations.contains("TODO(#262): transpile condition 'IsOptionPayout'")
+            && validations.contains("exercise_option"),
+        "switch over an optional choice field stays TODO'd, not silently dropped"
+    );
+    assert!(
+        std::fs::read_to_string(output.join("src/domain/identifier/validations.rs"))
+            .expect("identifier/validations.rs")
+            .contains("TODO(#262): transpile condition 'IssuerChoice'"),
+        "root Choice operations remain the documented stub"
     );
 }
 
