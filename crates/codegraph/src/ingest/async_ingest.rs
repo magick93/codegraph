@@ -211,6 +211,26 @@ async fn ingest_from_loader(
         uris.push(uri.to_string());
     }
 
+    // Pass 1 pre-step (issue #268): schemas declaring `$namespace` or a
+    // path-bearing `$id` join namespaces — nodes with their dotted parent
+    // chains land BEFORE the schema pass so the InNamespace edges resolve.
+    // Only explicit declarations create namespaces: schemas without them
+    // stay namespace-less (byte-identical back-compat).
+    let mut namespace_sources: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    for uri in &uris {
+        if let Some(entry) = loader.get(uri) {
+            if let Some(ns) = namespace_from_schema(&entry.schema) {
+                namespace_sources
+                    .entry(ns)
+                    .or_insert_with(|| JSON_NAMESPACE_SOURCE.to_string());
+            }
+        }
+    }
+    if !namespace_sources.is_empty() {
+        crate::ingest::mox_ingest::ingest_namespaces_deduped(db, &namespace_sources).await?;
+    }
+
     for uri in &uris {
         ingest_schema_node(
             db,
@@ -344,6 +364,9 @@ async fn ingest_schema_node(
     }
 
     let node = SchemaNode {
+        // Issue #268: $namespace / $id-derived namespace (None keeps the
+        // schema namespace-less — byte-identical back-compat).
+        namespace: namespace_from_schema(&entry.schema),
         schema_id: uri.to_string(),
         title: title.to_string(),
         description: entry
@@ -380,6 +403,11 @@ async fn ingest_schema_node(
 
     db.ingest_schema(&node).await.map_err(Error::Graph)?;
     result.schemas_created += 1;
+    // Issue #268: link the schema into its namespace (no-op when
+    // namespace-less; the namespace nodes were ingested in the pass
+    // pre-step, so the edge resolves).
+    crate::ingest::mox_ingest::emit_schema_namespace_edge(db, uri, node.namespace.as_deref())
+        .await?;
     Ok(())
 }
 
@@ -660,6 +688,14 @@ async fn ingest_properties_from_schema(
                 is_required,
                 is_nullable: !is_required,
                 is_array,
+                min_items: prop_schema
+                    .get("minItems")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32),
+                max_items: prop_schema
+                    .get("maxItems")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32),
                 pattern: prop_schema
                     .get("pattern")
                     .and_then(|v| v.as_str())
@@ -1489,4 +1525,131 @@ pub(crate) fn is_mox_sourced(schema: &SchemaNode) -> bool {
         .get("source")
         .and_then(|v| v.as_str())
         == Some(codegraph_core::types::MOX_SOURCE)
+}
+
+/// `NamespaceNode.source` provenance for JSON-schema-derived namespaces.
+pub(crate) const JSON_NAMESPACE_SOURCE: &str = "json";
+
+/// The namespace a JSON schema declares, if any (issue #268).
+///
+/// Derivation (documented contract, in priority order):
+///
+/// 1. `$namespace` (a codegraph extension): the trimmed string verbatim.
+///    Empty-after-trim counts as absent.
+/// 2. `$id` with a hierarchical path (`https://host/some/path/Foo.json`):
+///    the URL path minus the filename, segments dot-joined —
+///    `https://cdm.example/cdm/base/datetime/Foo.json` →
+///    `cdm.base.datetime`. The HOST is deliberately skipped (a TLD like
+///    `com` would pollute the fqn); query/fragment are stripped; a bare
+///    host or filename-only id yields None.
+/// 3. Anything else — no `$id`, non-hierarchical ids (`urn:...`), or
+///    path-less ids — yields `None`: the schema stays namespace-less and
+///    the flow is byte-identical to pre-#268 behavior (back-compat).
+///
+/// Only TOP-LEVEL schemas are asked; inline `#/$defs` children inherit the
+/// generating parent's treatment (they generate as its child entities).
+pub(crate) fn namespace_from_schema(schema: &serde_json::Value) -> Option<String> {
+    if let Some(ns) = schema.get("$namespace").and_then(|v| v.as_str()) {
+        let trimmed = ns.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    let id = schema.get("$id").and_then(|v| v.as_str())?;
+    derive_namespace_from_id(id)
+}
+
+/// The `$id` → namespace derivation (see [`namespace_from_schema`]).
+fn derive_namespace_from_id(id: &str) -> Option<String> {
+    let path = if let Some((_, rest)) = id.split_once("://") {
+        // Hierarchical URL: skip the authority (host[:port]/userinfo).
+        rest.find('/').map(|idx| &rest[idx..])?
+    } else {
+        // Allow absolute-path ids (`/cdm/base/Foo.json`); anything without
+        // a path root (urn:, bare filenames) does not derive a namespace.
+        id.starts_with('/').then_some(id)?
+    };
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+    let mut segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    // Drop the filename itself; its directories are the namespace.
+    segments.pop()?;
+    if segments.is_empty() {
+        return None;
+    }
+    Some(
+        segments
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("."),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn json(v: &str) -> serde_json::Value {
+        serde_json::from_str(v).unwrap()
+    }
+
+    #[test]
+    fn namespace_derivation_table() {
+        // $namespace wins verbatim.
+        assert_eq!(
+            namespace_from_schema(&json(r#"{"$namespace": "cdm.base"}"#)),
+            Some("cdm.base".to_string())
+        );
+        // $namespace beats $id.
+        assert_eq!(
+            namespace_from_schema(&json(
+                r#"{"$namespace": "explicit.ns", "$id": "https://x.example/other/Foo.json"}"#
+            )),
+            Some("explicit.ns".to_string())
+        );
+        // Empty $namespace counts as absent → falls through to $id.
+        assert_eq!(
+            namespace_from_schema(&json(
+                r#"{"$namespace": "  ", "$id": "https://cdm.example/cdm/base/datetime/Foo.json"}"#
+            )),
+            Some("cdm.base.datetime".to_string())
+        );
+        // $id path derivation: host skipped, filename dropped.
+        assert_eq!(
+            namespace_from_schema(&json(
+                r#"{"$id": "https://cdm.example/cdm/base/datetime/Foo.json"}"#
+            )),
+            Some("cdm.base.datetime".to_string())
+        );
+        // Deep path, .schema.json suffix.
+        assert_eq!(
+            namespace_from_schema(&json(
+                r#"{"$id": "https://x.example/a/b/c/Bar.schema.json?q=1#frag"}"#
+            )),
+            Some("a.b.c".to_string())
+        );
+        // Absolute-path id.
+        assert_eq!(
+            namespace_from_schema(&json(r#"{"$id": "/local/path/Foo.json"}"#)),
+            Some("local.path".to_string())
+        );
+        // Host-only id → None.
+        assert_eq!(
+            namespace_from_schema(&json(r#"{"$id": "https://example.com"}"#)),
+            None
+        );
+        // Filename-only path → None.
+        assert_eq!(
+            namespace_from_schema(&json(r#"{"$id": "https://example.com/Foo.json"}"#)),
+            None
+        );
+        // Non-hierarchical id → None.
+        assert_eq!(
+            namespace_from_schema(&json(r#"{"$id": "urn:uuid:1234"}"#)),
+            None
+        );
+        // No declarations at all → None (back-compat).
+        assert_eq!(namespace_from_schema(&json(r#"{"title": "Foo"}"#)), None);
+    }
 }

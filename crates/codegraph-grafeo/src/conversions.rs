@@ -1,9 +1,10 @@
 use codegraph_core::error::GraphError;
 use codegraph_core::types::{
-    Cardinality, CodeList, CompositeColumn, CompositeRange, EnumValue, Extension, ForeignKeySpec,
-    MembershipNode, MembershipStatus, Ownership, PolicyKind, PolicyNode, PropagationRule,
-    PropertyNode, RelationshipNode, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, TenantStrategy,
+    Cardinality, CodeList, CompositeColumn, CompositeRange, ConditionKind, ConditionNode,
+    EnumValue, Extension, ForeignKeySpec, FunctionNode, MembershipNode, MembershipStatus,
+    Ownership, PolicyKind, PolicyNode, PropagationRule, PropertyNode, RegulatoryEdgeKind,
+    RegulatoryKind, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RuleNode, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, TenantStrategy,
 };
 use codegraph_type_contracts::RefClassificationKind;
 use std::collections::HashMap;
@@ -100,6 +101,7 @@ pub fn row_to_schema_node(
         schema_type: reader.get_string(row, "s.schema_type")?,
         classification: reader.get_string(row, "s.classification")?,
         domain: reader.get_opt_string(row, "s.domain")?,
+        namespace: reader.get_opt_string(row, "s.namespace")?,
         rel_path: reader.get_string(row, "s.rel_path")?,
         pg_type: reader.get_string(row, "s.pg_type")?,
         rust_type: reader.get_string(row, "s.rust_type")?,
@@ -153,6 +155,16 @@ pub fn row_to_property_node(
             .ok()
             .flatten()
             .and_then(|s| s.parse::<rust_decimal::Decimal>().ok()),
+        min_items: reader
+            .get_opt_string(row, "p.min_items")
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<u32>().ok()),
+        max_items: reader
+            .get_opt_string(row, "p.max_items")
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<u32>().ok()),
         pg_column_name: reader.get_string(row, "p.pg_column_name")?,
         pg_column_type: reader.get_string(row, "p.pg_column_type")?,
         rust_field_name: reader.get_string(row, "p.rust_field_name")?,
@@ -339,4 +351,102 @@ pub fn row_to_tenant_node(
         strategy,
         domain: reader.get_opt_string(row, "domain")?,
     })
+}
+
+pub fn row_to_condition_node(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+) -> Result<ConditionNode, GraphError> {
+    let kind_str = reader.get_string(row, "kind")?;
+    let kind = match kind_str.as_str() {
+        "condition" => ConditionKind::Condition,
+        "one_of" => ConditionKind::OneOf,
+        other => {
+            return Err(GraphError::Query(format!(
+                "unknown condition kind '{other}'"
+            )))
+        }
+    };
+    // `options` persists as a JSON array string (the ingestor serializes the
+    // Vec<String>); an absent or unparsable value reads back empty.
+    let options = reader
+        .get_opt_string(row, "options")?
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default();
+    Ok(ConditionNode {
+        name: reader.get_string(row, "name")?,
+        owner_title: reader.get_string(row, "owner_title")?,
+        kind,
+        expr_json: reader.get_opt_string(row, "expr_json")?,
+        options,
+        definition: reader.get_opt_string(row, "definition")?,
+        domain: reader.get_opt_string(row, "domain")?,
+    })
+}
+
+pub fn row_to_regulatory_node(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+) -> Result<RegulatoryNode, GraphError> {
+    let kind_str = reader.get_string(row, "kind")?;
+    let kind = RegulatoryKind::parse_kind(&kind_str)
+        .ok_or_else(|| GraphError::Query(format!("unknown regulatory kind '{kind_str}'")))?;
+    // `properties_json` persists as a JSON object string (the ingestor
+    // serializes the serde_json::Value); an absent or unparsable value
+    // reads back as an empty object.
+    let properties = reader
+        .get_opt_string(row, "properties_json")?
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+    Ok(RegulatoryNode {
+        name: reader.get_string(row, "name")?,
+        kind,
+        label: reader.get_opt_string(row, "label")?,
+        definition: reader.get_opt_string(row, "definition")?,
+        domain: reader.get_opt_string(row, "domain")?,
+        properties,
+    })
+}
+
+pub fn row_to_regulatory_ref_record(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+    edge_kind: RegulatoryEdgeKind,
+) -> Result<RegulatoryRefRecord, GraphError> {
+    let kind_str = reader.get_string(row, "target_kind")?;
+    let target_kind = RegulatoryKind::parse_kind(&kind_str)
+        .ok_or_else(|| GraphError::Query(format!("unknown regulatory kind '{kind_str}'")))?;
+    Ok(RegulatoryRefRecord {
+        owner: reader.get_string(row, "owner")?,
+        owner_label: String::new(),
+        target: reader.get_string(row, "target")?,
+        target_kind,
+        edge_kind,
+        ref_path: reader.get_opt_string(row, "ref_path")?,
+    })
+}
+
+pub fn row_to_function_node(
+    reader: &RowReader,
+    row: &[grafeo::Value],
+) -> Result<FunctionNode, GraphError> {
+    // The structured payload (dispatch head, inputs, output, aliases,
+    // operations, post-conditions, transform annotations, metadata)
+    // persists as one JSON object string — the whole FunctionNode (the
+    // flat columns exist for cheap WHERE/ORDER BY only). An unparsable
+    // payload is a hard query error: the ingestor writes the
+    // serialization, so a mismatch means a corrupted node.
+    let payload_json = reader.get_string(row, "payload_json")?;
+    serde_json::from_str(&payload_json)
+        .map_err(|e| GraphError::Query(format!("Failed to parse function payload: {e}")))
+}
+
+pub fn row_to_rule_node(reader: &RowReader, row: &[grafeo::Value]) -> Result<RuleNode, GraphError> {
+    // The whole RuleNode (expr payload + metadata) persists as one JSON
+    // object string; the flat columns exist for cheap WHERE/ORDER BY only.
+    // An unparsable payload is a hard query error (the FunctionNode
+    // precedent).
+    let payload_json = reader.get_string(row, "payload_json")?;
+    serde_json::from_str(&payload_json)
+        .map_err(|e| GraphError::Query(format!("Failed to parse rule payload: {e}")))
 }

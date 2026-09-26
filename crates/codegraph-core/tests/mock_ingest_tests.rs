@@ -1,9 +1,10 @@
 use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
-use codegraph_core::types::{PropertyNode, SchemaNode};
+use codegraph_core::types::{ConditionKind, ConditionNode, PropertyNode, SchemaNode};
 
 fn test_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "common/json/PersonType.json".into(),
         title: "PersonType".into(),
         description: Some("A person".into()),
@@ -38,6 +39,8 @@ fn test_property() -> PropertyNode {
         is_required: true,
         is_nullable: false,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -148,4 +151,31 @@ async fn get_child_schemas_returns_inline_defs() {
     let children = engine.get_child_schemas("PersonType").await.unwrap();
     assert_eq!(children.len(), 1);
     assert_eq!(children[0].title, "PersonName");
+}
+
+#[tokio::test]
+async fn ingest_condition_round_trips_through_the_mock() {
+    let engine = MockEngine::new();
+    engine.ingest_schema(&test_schema()).await.unwrap();
+
+    let condition = ConditionNode {
+        name: "PersonType_one_of".into(),
+        owner_title: "PersonType".into(),
+        kind: ConditionKind::OneOf,
+        expr_json: None,
+        options: vec!["A".into(), "B".into()],
+        definition: None,
+        domain: Some("common".into()),
+    };
+    engine.ingest_condition(&condition).await.unwrap();
+
+    let for_schema = engine
+        .get_conditions_for_schema("PersonType")
+        .await
+        .unwrap();
+    assert_eq!(for_schema, vec![condition.clone()]);
+    let all = engine.list_conditions().await.unwrap();
+    assert_eq!(all, vec![condition]);
+    let missing = engine.get_conditions_for_schema("OtherType").await.unwrap();
+    assert!(missing.is_empty());
 }

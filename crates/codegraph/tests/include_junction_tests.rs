@@ -21,6 +21,7 @@ use codegraph_type_contracts::RefClassificationKind;
 
 fn schema_for(title: &str, table: &str, rust_type_name: &str) -> SchemaNode {
     SchemaNode {
+        namespace: None,
         custom_annotations: Default::default(),
         schema_id: format!("hr/json/{title}.json"),
         title: title.into(),
@@ -65,6 +66,8 @@ fn prop(
         is_required: false,
         is_nullable: true,
         is_array,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,

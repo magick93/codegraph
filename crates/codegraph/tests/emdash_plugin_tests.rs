@@ -20,6 +20,7 @@ use codegraph_type_contracts::RefClassificationKind;
 
 fn rsvp_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "events/json/RsvpType.json".to_string(),
         title: "RsvpType".to_string(),
         description: Some("An RSVP".to_string()),
@@ -60,6 +61,8 @@ fn prop(
         is_required: required,
         is_nullable: !required,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -181,6 +184,7 @@ fn emdash_build_plan() -> BuildPlan {
         persistence_provider: PersistenceProvider::SeaOrm,
         dto_key_casing: "snake".to_string(),
         deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
+        namespace_layout: false,
         features: Default::default(),
     }
 }

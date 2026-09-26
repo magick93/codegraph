@@ -8,6 +8,7 @@ pub mod manifest;
 pub mod persistence;
 pub mod profile;
 pub mod report;
+pub mod rosetta_expr;
 pub mod template_engine;
 pub mod traits;
 pub mod type_registry;
@@ -234,6 +235,12 @@ pub struct ProjectConfig {
     /// Deployment topology for the generated application ("monolith" or "workers").
     /// Used by templates to select topology-specific rendering paths.
     pub deployment_topology: String,
+    /// Namespace-aware module layout (issue #268): schemas carrying a
+    /// namespace emit under namespace-derived module paths
+    /// (`cdm.base.datetime` → `cdm/base/datetime/...`). Default false =
+    /// flat domain layout, byte-identical output.
+    #[serde(default)]
+    pub namespace_layout: bool,
     /// Import prefix for structured wrapper types in generated re-exports.
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
@@ -257,6 +264,11 @@ pub struct ProjectConfig {
     /// Whether EmDash plugin generation is enabled via profile feature flag.
     #[serde(default)]
     pub has_emdash: bool,
+    /// Whether function post-conditions emit `debug_assert!` checks
+    /// (issue #263). Gated by the `function_postconditions` profile
+    /// feature; default OFF = the emitted functions module carries none.
+    #[serde(default)]
+    pub has_function_postconditions: bool,
     /// Repo-relative base path for the community site's public pages
     /// (emdash plugin generator). Default: "apps/community-site/src/pages".
     #[serde(default = "default_emdash_site_pages_base")]
@@ -329,6 +341,53 @@ impl ProjectConfig {
     }
 }
 
+/// Namespace-derived module directory for a schema under the
+/// `namespace_layout` gate (issue #268).
+///
+/// Returns `Some(("cdm/base/datetime", "cdm::base::datetime"))` when the
+/// gate is ON and the schema carries a namespace, `None` otherwise (gate
+/// OFF or namespace-less schema) — callers fall back to the flat
+/// domain-derived paths, keeping default output byte-identical.
+pub fn namespace_module_dir(
+    schema: &codegraph_core::types::SchemaNode,
+    project: &ProjectConfig,
+) -> Option<(String, String)> {
+    if !project.namespace_layout {
+        return None;
+    }
+    let ns = schema.namespace.as_deref()?.trim();
+    if ns.is_empty() {
+        return None;
+    }
+    Some((
+        codegraph_core::types::namespace_module_path(ns),
+        codegraph_core::types::namespace_module_rust(ns),
+    ))
+}
+
+/// The namespace-derived directory segment for a raw namespace FQN under
+/// the `namespace_layout` gate (`Some("cdm/base/datetime")`), `None` when
+/// flat (gate off / namespace-less). Path-form counterpart of
+/// [`namespace_rust_prefix`].
+pub fn namespace_dir_prefix(ns: Option<&str>, project: &ProjectConfig) -> Option<String> {
+    if !project.namespace_layout {
+        return None;
+    }
+    let ns = ns?.trim();
+    (!ns.is_empty()).then(|| codegraph_core::types::namespace_module_path(ns))
+}
+
+/// The namespace-derived Rust module path prefix for a raw namespace FQN
+/// under the `namespace_layout` gate (`Some("cdm::base::datetime")`),
+/// `None` when flat.
+pub fn namespace_rust_prefix(ns: Option<&str>, project: &ProjectConfig) -> Option<String> {
+    if !project.namespace_layout {
+        return None;
+    }
+    let ns = ns?.trim();
+    (!ns.is_empty()).then(|| codegraph_core::types::namespace_module_rust(ns))
+}
+
 impl Default for ProjectConfig {
     fn default() -> Self {
         Self {
@@ -350,11 +409,13 @@ impl Default for ProjectConfig {
             persistence_provider: "sea_orm".to_string(),
             dto_key_casing: "snake".to_string(),
             deployment_topology: "monolith".to_string(),
+            namespace_layout: false,
             types_import_prefix: "codegraph_type_contracts".into(),
             has_atproto: false,
             has_fern: false,
             fern_sdk_languages: vec!["typescript".into()],
             has_emdash: false,
+            has_function_postconditions: false,
             emdash_site_pages_base: default_emdash_site_pages_base(),
             emdash_site_e2e_base: default_emdash_site_e2e_base(),
             atproto_authority: String::new(),
@@ -1197,6 +1258,23 @@ fn build_domain_generators(
     };
     let mut gens: Vec<Box<dyn DomainGenerator>> = vec![
         Box::new(ddd::errors::ErrorGenerator::new(base("errors"))) as Box<dyn DomainGenerator>,
+        // Constraint-plane validations (issue #261) — gated by the
+        // `rosetta_backend` capability.
+        Box::new(ddd::validations::ConditionValidationsGenerator::new(base(
+            "condition_validations",
+        ))) as Box<dyn DomainGenerator>,
+        // Regulatory report scaffolding (issue #265) — gated by the
+        // `rosetta_backend` capability.
+        Box::new(ddd::regulatory_report::RegulatoryReportGenerator::new(
+            base("regulatory_reports"),
+        )) as Box<dyn DomainGenerator>,
+        // Rosetta function codegen (issue #263) — gated by the
+        // `rosetta_backend` capability.
+        Box::new(ddd::functions::FunctionsGenerator::new(base("functions")))
+            as Box<dyn DomainGenerator>,
+        // Rosetta rule codegen (issue #264) — gated by the
+        // `rosetta_backend` capability.
+        Box::new(ddd::rules::RulesGenerator::new(base("rules"))) as Box<dyn DomainGenerator>,
         Box::new(
             api::router::RouterGenerator::new(base("router"))
                 .with_parent_candidates(parent_candidates.to_vec()),
@@ -2196,6 +2274,34 @@ pub async fn compute_generation_order(
         .await
         .map_err(|e| Error::Config(e.to_string()))?;
 
+    // Namespace plane (issue #268): when the graph carries namespaces, the
+    // per-domain emission order respects `namespace_generation_order`
+    // (imported-before-importer) and title claiming is scoped per
+    // namespace. Namespace-less graphs skip the namespace queries'
+    // effects entirely — order and claiming stay byte-identical.
+    let has_namespaces = !db
+        .list_namespaces()
+        .await
+        .map_err(|e| Error::Config(e.to_string()))?
+        .is_empty();
+    let ns_rank: HashMap<String, usize> = if has_namespaces {
+        db.namespace_generation_order()
+            .await
+            .map_err(|e| Error::Config(e.to_string()))? // cycles are a hard error
+            .into_iter()
+            .enumerate()
+            .map(|(i, n)| (n, i))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    // Title → namespace of its schema (first wins; duplicates share one
+    // claim below unless namespaces scope them apart).
+    let title_namespace: HashMap<&str, Option<&str>> = all_schemas
+        .iter()
+        .map(|s| (s.title.as_str(), s.namespace.as_deref()))
+        .collect();
+
     // Build a set of entity titles present in each domain's graph data.
     // We include all schemas that have a pg_table_name (meaning they produce
     // entity .rs files), not just is_entity=true schemas. This ensures that
@@ -2225,7 +2331,12 @@ pub async fn compute_generation_order(
 
     let mut entries = Vec::new();
     let mut seen_entries = HashSet::new();
-    let mut seen_titles: HashSet<String> = HashSet::new();
+    // Title-claim key: `(namespace, title)` — with namespaces in the graph,
+    // the same title in two namespaces is two types (issue #268, the
+    // `disambiguate_schema_ids` scoping); the namespace component is empty
+    // for namespace-less schemas AND for namespace-less graphs, so
+    // keying is inert there (byte-identical back-compat).
+    let mut seen_titles: HashSet<(String, String)> = HashSet::new();
 
     // Track which domain currently claims each title, plus whether that claim
     // came from an explicit config `entities` entry or just graph discovery.
@@ -2235,8 +2346,22 @@ pub async fn compute_generation_order(
     // generators running each title exactly once (no duplicate DDL) while
     // per-domain generators (openapi, CLI, links) attribute the entity to the
     // domain that actually owns it.
-    let mut title_claim_domain: HashMap<String, String> = HashMap::new();
-    let mut title_claim_explicit: HashMap<String, bool> = HashMap::new();
+    let mut title_claim_domain: HashMap<(String, String), String> = HashMap::new();
+    let mut title_claim_explicit: HashMap<(String, String), bool> = HashMap::new();
+
+    // The claim key for a title: its schema's namespace (or "" when
+    // namespace-less / unknown).
+    let claim_key = |title: &str| -> (String, String) {
+        (
+            title_namespace
+                .get(title)
+                .copied()
+                .flatten()
+                .unwrap_or("")
+                .to_string(),
+            title.to_string(),
+        )
+    };
 
     for domain_name in &domain_order {
         let domain_entry = match config.domains.get(domain_name.as_str()) {
@@ -2273,7 +2398,31 @@ pub async fn compute_generation_order(
             }
         }
 
-        for title in &domain_titles {
+        // Emission order: BTreeSet's title sort when the graph has no
+        // namespaces (byte-identical); with namespaces, entries are
+        // ordered by their namespace's position in
+        // `namespace_generation_order` (imported-before-importer;
+        // namespace-less titles last), title as the tie-break.
+        let mut ordered_titles: Vec<String> = domain_titles.into_iter().collect();
+        if has_namespaces {
+            ordered_titles.sort_by(|a, b| {
+                let ra = title_namespace
+                    .get(a.as_str())
+                    .copied()
+                    .flatten()
+                    .and_then(|ns| ns_rank.get(ns).copied())
+                    .unwrap_or(usize::MAX);
+                let rb = title_namespace
+                    .get(b.as_str())
+                    .copied()
+                    .flatten()
+                    .and_then(|ns| ns_rank.get(ns).copied())
+                    .unwrap_or(usize::MAX);
+                (ra, a.as_str()).cmp(&(rb, b.as_str()))
+            });
+        }
+
+        for title in &ordered_titles {
             // Skip excluded or force-VO types for this domain
             if exclude.contains(title.as_str()) || force_vo.contains(title.as_str()) {
                 continue;
@@ -2282,12 +2431,13 @@ pub async fn compute_generation_order(
                 continue;
             }
             let explicitly_configured = domain_entry.entities.iter().any(|e| e == title);
-            match seen_titles.get(title.as_str()) {
+            let key = claim_key(title);
+            match seen_titles.get(&key) {
                 None => {
                     // First claim.
-                    seen_titles.insert(title.clone());
-                    title_claim_domain.insert(title.clone(), domain_name.clone());
-                    title_claim_explicit.insert(title.clone(), explicitly_configured);
+                    seen_titles.insert(key.clone());
+                    title_claim_domain.insert(key.clone(), domain_name.clone());
+                    title_claim_explicit.insert(key.clone(), explicitly_configured);
                     entries.push(GenerationEntry {
                         schema_title: title.clone(),
                         domain: domain_name.clone(),
@@ -2299,14 +2449,9 @@ pub async fn compute_generation_order(
                     // Already claimed. Reassign to this domain only if this domain
                     // explicitly configures the title and the current claim came
                     // from graph discovery alone (cross-domain reference).
-                    let claiming_domain = title_claim_domain
-                        .get(title.as_str())
-                        .cloned()
-                        .unwrap_or_default();
-                    let claim_was_explicit = title_claim_explicit
-                        .get(title.as_str())
-                        .copied()
-                        .unwrap_or(false);
+                    let claiming_domain = title_claim_domain.get(&key).cloned().unwrap_or_default();
+                    let claim_was_explicit =
+                        title_claim_explicit.get(&key).copied().unwrap_or(false);
                     if explicitly_configured && !claim_was_explicit {
                         // Remove the discovery-only claim, replace with the
                         // configured domain's entry.
@@ -2316,9 +2461,9 @@ pub async fn compute_generation_order(
                         {
                             entries.remove(pos);
                         }
-                        seen_titles.insert(title.clone());
-                        title_claim_domain.insert(title.clone(), domain_name.clone());
-                        title_claim_explicit.insert(title.clone(), true);
+                        seen_titles.insert(key.clone());
+                        title_claim_domain.insert(key.clone(), domain_name.clone());
+                        title_claim_explicit.insert(key.clone(), true);
                         entries.push(GenerationEntry {
                             schema_title: title.clone(),
                             domain: domain_name.clone(),

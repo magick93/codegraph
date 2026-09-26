@@ -4,7 +4,7 @@ use codegraph_config::DomainConfig;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    CollectionNode, EdgeType, LexiconNode, NamespaceNode, RepositoryNode, SchemaNode,
+    AtprotoNamespaceNode, CollectionNode, EdgeType, LexiconNode, RepositoryNode, SchemaNode,
 };
 use codegraph_naming::{strip_suffix, to_snake_case};
 use codegraph_type_contracts::RefClassificationKind;
@@ -33,12 +33,12 @@ pub async fn project_atproto_lexicons(
     for domain_name in &sorted_domains {
         let domain_slug = to_snake_case(domain_name);
 
-        let namespace = NamespaceNode {
+        let namespace = AtprotoNamespaceNode {
             authority: authority.clone(),
             segment: domain_slug.clone(),
             domain: "atproto".to_string(),
         };
-        ingestor.ingest_namespace(&namespace).await?;
+        ingestor.ingest_atproto_namespace(&namespace).await?;
 
         let schemas = querier.list_schemas(Some(domain_name)).await?;
 
@@ -237,6 +237,7 @@ mod tests {
     ) -> SchemaNode {
         let snake = to_snake_case(title);
         SchemaNode {
+            namespace: None,
             schema_id: format!("{}/{}.json", domain, title),
             title: title.to_string(),
             description: None,
@@ -317,6 +318,7 @@ mod tests {
             },
         );
         DomainConfig {
+            namespaces: HashMap::new(),
             defaults: DefaultsConfig::default(),
             rbac: None,
             domains,
@@ -336,7 +338,7 @@ mod tests {
             .await
             .unwrap();
 
-        let namespaces = engine.get_namespaces().await.unwrap();
+        let namespaces = engine.get_atproto_namespaces().await.unwrap();
         assert!(namespaces.is_empty());
     }
 
@@ -350,7 +352,7 @@ mod tests {
             .await
             .unwrap();
 
-        let namespaces = engine.get_namespaces().await.unwrap();
+        let namespaces = engine.get_atproto_namespaces().await.unwrap();
         assert_eq!(namespaces.len(), 1);
         assert_eq!(namespaces[0].authority, "nz.gravy");
         assert_eq!(namespaces[0].segment, "grants");
@@ -572,7 +574,7 @@ mod tests {
         let lexicons = engine.get_lexicons("grants").await.unwrap();
         assert_eq!(lexicons[0].nsid, "com.example.app.grants.grant");
 
-        let namespaces = engine.get_namespaces().await.unwrap();
+        let namespaces = engine.get_atproto_namespaces().await.unwrap();
         assert_eq!(namespaces[0].authority, "com.example.app");
     }
 }

@@ -20,6 +20,7 @@ fn schema(
     segment: &str,
 ) -> SchemaNode {
     SchemaNode {
+        namespace: None,
         custom_annotations: Default::default(),
         schema_id: format!("{domain}/json/{table}.schema.json"),
         title: title.into(),
@@ -54,6 +55,8 @@ fn scalar(name: &str, pg_type: &str, is_required: bool) -> PropertyNode {
         is_required,
         is_nullable: !is_required,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -89,6 +92,8 @@ fn entity_ref(name: &str, ref_target: &str, is_array: bool, is_required: bool) -
         is_required,
         is_nullable: !is_required,
         is_array,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,

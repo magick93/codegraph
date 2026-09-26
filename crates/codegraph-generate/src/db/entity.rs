@@ -199,7 +199,20 @@ impl EntityGenerator for SeaOrmEntityGenerator {
 
         // Add timestamp columns — policy-driven when AuditPolicy exists,
         // otherwise unconditional (backward compat: all entities get timestamps).
-        add_timestamp_columns(&mut columns, audit_policy);
+        // Append-only snapshot entities (issue #284) never gain an updated_at
+        // column — mirror the DDL inference in db/ddl.rs so the entity model
+        // matches the emitted table exactly.
+        let entity_cfg = config
+            .domains
+            .get(domain)
+            .and_then(|d| d.get_entity_config(schema_title));
+        let append_only = entity_cfg.as_ref().is_some_and(|ec| ec.is_append_only()) || {
+            let ops =
+                crate::api::api_model::resolve_entity_operations(db, config, domain, schema_title)
+                    .await;
+            !ops.iter().any(|op| op == "update" || op == "delete")
+        };
+        add_timestamp_columns(&mut columns, audit_policy, append_only);
 
         // Add soft-delete marker column from policy (before audit block).
         // The soft-delete policy takes precedence for the marker column name/type.
@@ -207,11 +220,14 @@ impl EntityGenerator for SeaOrmEntityGenerator {
         // adding them again in the audit block below.
         let soft_delete_marker_field = add_soft_delete_marker(&mut columns, soft_delete_policy);
 
-        // Add soft-delete / audit columns for auditable root entities
-        let is_auditable = audit_tracking_enabled(
-            audit_policy,
-            config.domains.get(domain).and_then(|d| d.auditable),
-        );
+        // Add soft-delete / audit columns for auditable root entities.
+        // Append-only entities match the DDL gate (ddl.rs: auditable &&
+        // !append_only) — no audit columns on insert-only tables (#284).
+        let is_auditable = !append_only
+            && audit_tracking_enabled(
+                audit_policy,
+                config.domains.get(domain).and_then(|d| d.auditable),
+            );
         if is_auditable {
             push_audit_columns(&mut columns, soft_delete_marker_field.as_deref());
         }
@@ -223,6 +239,16 @@ impl EntityGenerator for SeaOrmEntityGenerator {
         // Domain-prefix the entity module name to avoid cross-domain
         // collisions (e.g. common::PositionType vs screening::PositionType).
         let entity_module_name = format!("{}_{}", schema_name, table_name);
+
+        // Issue #268 (namespace_layout): namespaced schemas emit under
+        // namespace-derived directories (`cdm.base.datetime` →
+        // `src/entity/cdm/base/datetime/{module}.rs`). None = flat
+        // (gate off or namespace-less schema) — byte-identical.
+        let ns_module = crate::namespace_module_dir(&schema, project);
+        let entity_rel_path = match &ns_module {
+            Some((dir, _)) => format!("{dir}/{entity_module_name}.rs"),
+            None => format!("{entity_module_name}.rs"),
+        };
 
         let import_prefix = &config.defaults.types_import_prefix;
         let structured_imports = structured_imports_for_columns(&columns, import_prefix);
@@ -269,7 +295,7 @@ impl EntityGenerator for SeaOrmEntityGenerator {
                 .output_dir
                 .join("src")
                 .join("entity")
-                .join(format!("{}.rs", entity_module_name)),
+                .join(&entity_rel_path),
             content,
         }];
 
@@ -754,7 +780,11 @@ fn add_tenant_column(
     }
 }
 
-fn add_timestamp_columns(columns: &mut Vec<EntityColumn>, audit_policy: Option<&AuditPolicy>) {
+fn add_timestamp_columns(
+    columns: &mut Vec<EntityColumn>,
+    audit_policy: Option<&AuditPolicy>,
+    append_only: bool,
+) {
     if let Some(audit) = audit_policy {
         if audit.track_created {
             columns.push(EntityColumn {
@@ -768,7 +798,8 @@ fn add_timestamp_columns(columns: &mut Vec<EntityColumn>, audit_policy: Option<&
                 sea_orm_attr: None,
             });
         }
-        if audit.track_updated {
+        // Append-only tables keep created_at but never gain updated_at (#284).
+        if audit.track_updated && !append_only {
             columns.push(EntityColumn {
                 field_name: "updated_at".to_string(),
                 rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
@@ -792,16 +823,19 @@ fn add_timestamp_columns(columns: &mut Vec<EntityColumn>, audit_policy: Option<&
             pg_cast: None,
             sea_orm_attr: None,
         });
-        columns.push(EntityColumn {
-            field_name: "updated_at".to_string(),
-            rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
-            sea_orm_type: "TimestampWithTimeZone".to_string(),
-            column_name: "updated_at".to_string(),
-            is_primary_key: false,
-            is_nullable: false,
-            pg_cast: None,
-            sea_orm_attr: None,
-        });
+        // Append-only tables never gain an updated_at column (#284).
+        if !append_only {
+            columns.push(EntityColumn {
+                field_name: "updated_at".to_string(),
+                rust_type: "chrono::DateTime<chrono::Utc>".to_string(),
+                sea_orm_type: "TimestampWithTimeZone".to_string(),
+                column_name: "updated_at".to_string(),
+                is_primary_key: false,
+                is_nullable: false,
+                pg_cast: None,
+                sea_orm_attr: None,
+            });
+        }
     }
 }
 

@@ -23,6 +23,9 @@ pub struct InitArgs {
     pub grpc: bool,
     pub ifml: bool,
     pub ops: bool,
+    /// Rosetta-first scaffold: `model/<domain>.rosetta` starters instead of
+    /// `.mox`, plus rosetta-first profiles/justfile/ops-manifest wiring.
+    pub rosetta: bool,
     /// Codegraph git rev to pin (default: the running binary's embedded rev).
     pub rev: Option<String>,
     /// Use local path deps for codegraph crates instead of git+rev.
@@ -165,6 +168,7 @@ pub fn cmd_init(args: &InitArgs) -> Result<()> {
         grpc: args.grpc,
         ifml: args.ifml,
         ops: args.ops,
+        rosetta: args.rosetta,
     };
 
     let ctx = ProjectTemplateContext::new(
@@ -187,6 +191,27 @@ pub fn cmd_init(args: &InitArgs) -> Result<()> {
     };
 
     let files = ctx.render(&tera).map_err(Error::Template)?;
+
+    // Rosetta starters are sigil-verified BEFORE anything is written — a
+    // broken starter template is a generation-time hard error, never a
+    // broken scaffold on disk (the mox compile-verify precedent).
+    if args.rosetta {
+        let rosetta_sources: Vec<crate::init::rosetta_model::RosettaFileCheck> = files
+            .iter()
+            .filter(|(p, _)| p.extension().and_then(|e| e.to_str()) == Some("rosetta"))
+            .map(|(p, c)| crate::init::rosetta_model::RosettaFileCheck {
+                name: p.display().to_string(),
+                text: c.clone(),
+            })
+            .collect();
+        let verification = crate::init::rosetta_model::verify_rosetta_sources(&rosetta_sources);
+        if !verification.hard_errors.is_empty() {
+            return Err(Error::Config(format!(
+                "starter rosetta model(s) failed sigil verification — refusing to write: {}",
+                verification.hard_errors.join("; ")
+            )));
+        }
+    }
 
     if !args.force {
         let existing = would_overwrite(&target_dir, &files);
@@ -249,6 +274,11 @@ pub struct DoctorArgs {
     /// package must match a domains.toml domain, and the JSON schemas
     /// check degrades to an info line (mox-first projects).
     pub mox_files: Vec<PathBuf>,
+    /// Rosetta (Rune DSL) .rosetta model files (optional). Verified through
+    /// the sigil pipeline (parse → lower → resolve); a namespace whose last
+    /// segment matches no domains.toml key warns (compute_generation_order
+    /// silently drops such schemas).
+    pub rosetta_files: Vec<PathBuf>,
 }
 
 /// Outcome counts for a doctor run. `model_warnings` isolates the
@@ -446,6 +476,117 @@ fn check_mox_files(
     (hard, soft)
 }
 
+/// Validate `--rosetta-files` for doctor: every file must pass the sigil
+/// pipeline (parse → lower → resolve; severity-Error diagnostics are hard
+/// failures, mirroring check_mox_files). A file namespace whose last
+/// segment matches no domains.toml key is a WARNING (not a hard failure):
+/// compute_generation_order silently drops schemas whose domain is not
+/// configured, so the project would generate nothing for it. `import <ns>.*`
+/// declarations are line-scanned: an imported namespace with no file among
+/// --rosetta-files whose last segment also matches no domain key warns.
+/// Returns the (hard_failures, soft_warnings) contributed.
+fn check_rosetta_files(
+    rosetta_files: &[PathBuf],
+    domain_config: Option<&codegraph_config::config::DomainConfig>,
+) -> (usize, usize) {
+    let mut hard = 0;
+    let mut soft = 0;
+
+    // Sigil rev observability: the bridge's parse/lower/resolve behavior is
+    // pinned to the sigil git rev; surface it so doctor output is
+    // reproducible evidence.
+    let sigil = crate::rev::sigil_rev();
+    if sigil.is_empty() {
+        soft += 1;
+        println!("WARN sigil — this binary carries no sigil rev pin (Cargo.lock has no sigil-model entry)");
+        println!("     hint: rebuild so Cargo.lock pins the sigil git dependency");
+    } else {
+        println!("INFO sigil — sigil-model rev {sigil}");
+    }
+
+    let mut sources = Vec::new();
+    let mut file_texts: Vec<(String, String)> = Vec::new();
+    for path in rosetta_files {
+        match fs::read_to_string(path) {
+            Ok(text) => {
+                let name = path.display().to_string();
+                file_texts.push((name.clone(), text.clone()));
+                sources.push(crate::init::rosetta_model::RosettaFileCheck { name, text });
+            }
+            Err(e) => {
+                hard += 1;
+                println!("FAIL rosetta — cannot read {}: {e}", path.display());
+                continue;
+            }
+        }
+    }
+
+    let verification = crate::init::rosetta_model::verify_rosetta_sources(&sources);
+    for error in &verification.hard_errors {
+        hard += 1;
+        println!("FAIL rosetta — {error}");
+        println!("     hint: fix the Rosetta syntax/resolution error reported above");
+    }
+    for warning in &verification.warnings {
+        soft += 1;
+        println!("WARN rosetta diagnostic — {warning}");
+    }
+
+    let domain_keys: std::collections::HashSet<String> = domain_config
+        .map(|config| config.domains.keys().cloned().collect())
+        .unwrap_or_default();
+    let provided_namespaces: std::collections::HashSet<String> = verification
+        .namespaces
+        .iter()
+        .map(|(_, ns)| ns.clone())
+        .collect();
+
+    if !domain_keys.is_empty() {
+        for (file, ns, missing) in
+            crate::init::rosetta_model::unmatched_namespaces(&verification, &domain_keys)
+        {
+            soft += 1;
+            println!(
+                "WARN rosetta — {file}: namespace '{ns}' has no domains.toml entry \
+                 (last segment '{missing}' matches no domain key); its schemas are \
+                 silently dropped from generation"
+            );
+            println!("     hint: add a [domains.{missing}] entry or rename the namespace");
+        }
+        for (file, imported) in &verification.imports {
+            if provided_namespaces.contains(imported) {
+                continue;
+            }
+            let last = crate::init::rosetta_model::namespace_last_segment(imported);
+            if !domain_keys.contains(last) {
+                soft += 1;
+                println!(
+                    "WARN rosetta — {file}: import '{imported}.*' resolves to no \
+                     --rosetta-files entry and no domains.toml domain"
+                );
+                println!(
+                    "     hint: pass the file declaring namespace '{imported}' via \
+                     --rosetta-files or add a [domains.{last}] entry"
+                );
+            }
+        }
+    } else {
+        // domains.toml already reported a hard failure above; still surface
+        // the namespaces so the operator sees what would be dropped.
+        for (file, ns, _missing) in
+            crate::init::rosetta_model::unmatched_namespaces(&verification, &domain_keys)
+        {
+            soft += 1;
+            println!(
+                "WARN rosetta — {file}: namespace '{ns}' cannot be checked \
+                 (domains.toml unparseable)"
+            );
+        }
+    }
+
+    (hard, soft)
+}
+
 /// Validate an existing consumer project. Prints pass/fail checks and
 /// returns Err when any hard check fails; Ok carries the outcome counts.
 pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
@@ -543,17 +684,24 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     }
 
     let mox_mode = !args.mox_files.is_empty();
+    let rosetta_mode = !args.rosetta_files.is_empty();
+    let model_mode = mox_mode || rosetta_mode;
     if schemas_dir_exists {
         if schemas_has_json {
             println!(
                 "PASS schemas — {} contains JSON schema(s)",
                 schemas_dir.unwrap().display()
             );
-        } else if mox_mode {
+        } else if model_mode {
             soft_warnings += 1;
             model_warnings += 1;
+            let label = if rosetta_mode {
+                "rosetta-first"
+            } else {
+                "mox-first"
+            };
             println!(
-                "WARN schemas — no *.json files under {} (mox-first project)",
+                "WARN schemas — no *.json files under {} ({label} project)",
                 schemas_dir.unwrap().display()
             );
         } else {
@@ -564,8 +712,12 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
             );
             println!("     hint: add JSON schemas or run `codegraph add domain <name>`");
         }
-    } else if mox_mode {
-        println!("INFO schemas — mox-first project; no JSON schemas directory");
+    } else if model_mode {
+        if rosetta_mode {
+            println!("INFO schemas — rosetta-first project; no JSON schemas directory");
+        } else {
+            println!("INFO schemas — mox-first project; no JSON schemas directory");
+        }
     } else {
         hard_failures += 1;
         match schemas_dir {
@@ -577,6 +729,11 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
 
     if mox_mode {
         let (hard, soft) = check_mox_files(&args.mox_files, domain_config.as_ref().ok());
+        hard_failures += hard;
+        soft_warnings += soft;
+        model_warnings += soft;
+    } else if rosetta_mode {
+        let (hard, soft) = check_rosetta_files(&args.rosetta_files, domain_config.as_ref().ok());
         hard_failures += hard;
         soft_warnings += soft;
         model_warnings += soft;
@@ -673,11 +830,13 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     }
 }
 
-/// Append a `[domains.<name>]` entry to `config_path` and create
-/// `model/<name>.mox` with the shared starter model (compile-verified
-/// before write). Refuses duplicate domains. Mox-first: no `schemas/`
-/// directory is created.
-pub fn cmd_add_domain(config_path: &Path, domain_name: &str) -> Result<()> {
+/// Append a `[domains.<name>]` entry to `config_path` and create the
+/// starter model (verified before write). Rosetta-first projects (detected
+/// via `model/*.rosetta` or the `--rosetta` flag) get `model/<name>.rosetta`
+/// sigil-verified through parse/lower/resolve; everything else gets the
+/// .mox starter (compile-verified, init precedent). Neither mode creates a
+/// `schemas/` directory. Refuses duplicate domains.
+pub fn cmd_add_domain(config_path: &Path, domain_name: &str, rosetta: bool) -> Result<()> {
     let name = normalize_domain_name(domain_name);
     if name.is_empty() {
         return Err(Error::Config("domain name cannot be empty".to_string()));
@@ -742,29 +901,63 @@ pub fn cmd_add_domain(config_path: &Path, domain_name: &str) -> Result<()> {
 
     fs::write(config_path, &new_content)?;
 
-    // Starter model: shared .mox template, compile-verified before write
-    // (init precedent). The hint names the codegraph binary — the consumer
-    // wrapper's name is not known here, and `codegraph run --mox-files …`
-    // works in any project.
-    let model_content = super::model_starter::starter_model_mox(&name, &label, "codegraph")
-        .map_err(Error::Config)?;
-    let mox_rel = format!("model/{name}.mox");
-    let compilation = rex_driver::compile_files(&[(mox_rel.clone(), model_content.clone())]);
-    if compilation.model.is_none() {
-        return Err(Error::Config(format!(
-            "starter model '{mox_rel}' does not compile — refusing to write"
-        )));
-    }
-
+    // Starter model: shared template, verified before write. Rosetta-first
+    // projects (model/*.rosetta present or --rosetta) get a .rosetta starter
+    // namespaced `{app_name}.{domain}`; everything else keeps the .mox
+    // starter. The hint names the codegraph binary — the consumer wrapper's
+    // name is not known here, and `codegraph run --mox-files …` works in any
+    // project.
     let model_dir = match config_path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent.join("model"),
         _ => PathBuf::from("model"),
     };
-    fs::create_dir_all(&model_dir)?;
-    let model_path = model_dir.join(format!("{name}.mox"));
-    if !model_path.exists() {
-        fs::write(&model_path, model_content)?;
-    }
+    let rosetta_mode = rosetta
+        || model_dir.read_dir().is_ok_and(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("rosetta"))
+        });
+    let model_path = if rosetta_mode {
+        let app_name = re_parsed.defaults.app_name.clone();
+        let model_content =
+            super::model_starter::starter_model_rosetta(&name, &label, &app_name, "codegraph")
+                .map_err(Error::Config)?;
+        let rosetta_rel = format!("model/{name}.rosetta");
+        let verification = super::rosetta_model::verify_rosetta_sources(&[
+            super::rosetta_model::RosettaFileCheck {
+                name: rosetta_rel.clone(),
+                text: model_content.clone(),
+            },
+        ]);
+        if !verification.hard_errors.is_empty() {
+            return Err(Error::Config(format!(
+                "starter model '{rosetta_rel}' failed sigil verification — refusing to write: {}",
+                verification.hard_errors.join("; ")
+            )));
+        }
+        fs::create_dir_all(&model_dir)?;
+        let path = model_dir.join(format!("{name}.rosetta"));
+        if !path.exists() {
+            fs::write(&path, model_content)?;
+        }
+        path
+    } else {
+        let model_content = super::model_starter::starter_model_mox(&name, &label, "codegraph")
+            .map_err(Error::Config)?;
+        let mox_rel = format!("model/{name}.mox");
+        let compilation = rex_driver::compile_files(&[(mox_rel.clone(), model_content.clone())]);
+        if compilation.model.is_none() {
+            return Err(Error::Config(format!(
+                "starter model '{mox_rel}' does not compile — refusing to write"
+            )));
+        }
+        fs::create_dir_all(&model_dir)?;
+        let path = model_dir.join(format!("{name}.mox"));
+        if !path.exists() {
+            fs::write(&path, model_content)?;
+        }
+        path
+    };
 
     println!("Added domain '{name}' (label {label}, schema_dir {name}, postgres_schema {name})");
     println!("Updated {}", config_path.display());
@@ -841,7 +1034,7 @@ other = "0.1"
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/domains.toml");
         fs::copy(&fixture, &config).unwrap();
 
-        cmd_add_domain(&config, "Billing").unwrap();
+        cmd_add_domain(&config, "Billing", false).unwrap();
 
         let parsed = codegraph_config::config::parse_domain_config(&config).unwrap();
         assert!(parsed.domains.contains_key("billing"));
@@ -862,7 +1055,7 @@ other = "0.1"
 
         assert!(!dir.path().join("schemas").exists());
 
-        let err = cmd_add_domain(&config, "billing").unwrap_err();
+        let err = cmd_add_domain(&config, "billing", false).unwrap_err();
         assert!(format!("{err}").contains("already exists"), "{err}");
     }
 }

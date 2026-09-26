@@ -15,6 +15,11 @@ pub struct SchemaNode {
     pub schema_type: String,
     pub classification: String,
     pub domain: Option<String>,
+    /// Namespace FQN this schema lives in (issue #267). `None` for
+    /// namespace-less schemas (back-compat: the JSON-schema and mox
+    /// producers do not set it yet — #268 connects them).
+    #[serde(default)]
+    pub namespace: Option<String>,
     pub rel_path: String,
     pub pg_type: String,
     pub rust_type: String,
@@ -48,6 +53,9 @@ pub struct SchemaNode {
 pub struct SchemaClassificationData {
     pub title: String,
     pub domain: Option<String>,
+    /// Namespace FQN, mirroring [`SchemaNode::namespace`] (issue #267).
+    #[serde(default)]
+    pub namespace: Option<String>,
     pub rel_path: String,
     pub schema_type: String,
     pub is_codelist: bool,
@@ -83,6 +91,7 @@ mod tests {
             schema_type: "object".into(),
             classification: "entity".into(),
             domain: Some("recruiting".into()),
+            namespace: None,
             rel_path: "recruiting/candidate_type.json".into(),
             pg_type: "JSONB".into(),
             rust_type: "candidate::Model".into(),
@@ -111,6 +120,7 @@ mod tests {
             schema_type: "object".into(),
             classification: String::new(),
             domain: None,
+            namespace: None,
             rel_path: "common/some_type.json".into(),
             pg_type: String::new(),
             rust_type: String::new(),
@@ -175,6 +185,7 @@ mod tests {
         let d = SchemaClassificationData {
             title: "CandidateType".into(),
             domain: Some("recruiting".into()),
+            namespace: None,
             rel_path: "recruiting/candidate_type.json".into(),
             schema_type: "object".into(),
             is_codelist: false,
@@ -204,5 +215,26 @@ mod tests {
                 .unwrap();
         assert!(!d.is_entity);
         assert_eq!(d.source, None);
+    }
+
+    #[test]
+    fn schema_node_namespace_defaults_for_older_artifacts() {
+        // Wire compat (issue #267): payloads written before `namespace`
+        // existed deserialize with namespace = None.
+        let s: SchemaNode = serde_json::from_str(
+            r#"{"schema_id":"a/b.json","title":"T","schema_type":"object",
+                "classification":"entity","rel_path":"a/b.json","pg_type":"JSONB",
+                "rust_type":"t","sea_orm_type":"t","rust_type_name":"T",
+                "pg_table_name":"t","api_path_segment":"t","is_entity":true,
+                "is_codelist":false,"is_primitive_wrapper":false,"has_all_of":false,
+                "has_one_of":false,"has_any_of":false,"has_definitions":false,
+                "custom_annotations":{}}"#,
+        )
+        .unwrap();
+        assert_eq!(s.namespace, None);
+        let d: SchemaClassificationData =
+            serde_json::from_str(r#"{"title":"T","rel_path":"t.json","schema_type":"object","is_codelist":false,"is_primitive_wrapper":false,"has_all_of":false,"composes_noun_type":false,"field_count":0,"required_field_count":0,"ref_count":0,"in_degree":0,"is_enum":false,"is_string_type":false}"#)
+                .unwrap();
+        assert_eq!(d.namespace, None);
     }
 }

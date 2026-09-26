@@ -3,12 +3,14 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::strip_ifml_prefix;
 use codegraph_core::types::{
-    ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode,
-    CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue,
-    ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode,
-    MembershipNode, MoxDomainModel, NamespaceNode, ParameterDefinitionNode, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaNode,
-    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
+    ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, AtprotoNamespaceNode,
+    CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionKind, ConditionNode,
+    DataBindingNode, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode,
+    FunctionNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
+    MoxDomainModel, NamespaceImport, NamespaceNode, ParameterDefinitionNode, PermissionNode,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode,
+    RegulatoryOwner, RelationshipNode, RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 use codegraph_type_contracts::RefClassificationKind;
@@ -19,6 +21,86 @@ use crate::engine::GrafeoEngine;
 /// Escape single quotes in GQL string literals.
 pub(crate) fn escape_gql(s: &str) -> String {
     s.replace('\'', "\\'")
+}
+
+/// The GQL for one regulatory reference edge (issue #265). Owners match by
+/// their natural keys (Schema title, Condition name, Regulatory name +
+/// kind); targets are always Regulatory nodes matched by name + kind.
+fn regulatory_reference_gql(
+    owner: &RegulatoryOwner,
+    target: &str,
+    target_kind: RegulatoryKind,
+    edge_kind: RegulatoryEdgeKind,
+    ref_path: Option<&str>,
+) -> String {
+    let owner_match = match owner {
+        RegulatoryOwner::Schema(title) => format!("(a:Schema {{title: '{}'}})", escape_gql(title)),
+        RegulatoryOwner::Condition(name) => {
+            format!("(a:Condition {{name: '{}'}})", escape_gql(name))
+        }
+        RegulatoryOwner::Regulatory { name, kind } => format!(
+            "(a:Regulatory {{name: '{}', kind: '{}'}})",
+            escape_gql(name),
+            kind.as_str()
+        ),
+        RegulatoryOwner::Function(name) => format!("(a:Function {{name: '{}'}})", escape_gql(name)),
+        RegulatoryOwner::Rule(name) => format!("(a:Rule {{name: '{}'}})", escape_gql(name)),
+    };
+    let props_str = match ref_path {
+        Some(path) => format!(" {{ref_path: '{}'}}", escape_gql(path)),
+        None => String::new(),
+    };
+    format!(
+        "MATCH {owner_match}, (b:Regulatory {{name: '{target}', kind: '{kind}'}}) \
+         INSERT (a)-[:{edge}{props}]->(b)",
+        target = escape_gql(target),
+        kind = target_kind.as_str(),
+        edge = edge_kind.as_str(),
+        props = props_str,
+    )
+}
+
+/// The regulatory edge kind for an EdgeType (issue #265).
+fn edge_kind_ref(edge_type: &EdgeType) -> RegulatoryEdgeKind {
+    match edge_type {
+        EdgeType::HasRuleSource => RegulatoryEdgeKind::RuleSource,
+        EdgeType::CorpusInBody => RegulatoryEdgeKind::CorpusInBody,
+        EdgeType::DerivesFrom => RegulatoryEdgeKind::DerivesFrom,
+        _ => RegulatoryEdgeKind::Reference,
+    }
+}
+
+/// Decode the `from_id`/`to_id` encoding `ingest_edge` accepts for the
+/// regulatory reference edge types (`regowner:schema:<title>` /
+/// `regowner:condition:<name>` / `regowner:regulatory:<kind>:<name>` →
+/// `reg:<kind>:<name>`); `None` when malformed.
+fn decode_regulatory_edge_ids(
+    from_id: &str,
+    to_id: &str,
+) -> Option<(RegulatoryOwner, String, RegulatoryKind)> {
+    let rest = from_id.strip_prefix("regowner:")?;
+    let (owner_str, owner_payload) = rest.split_once(':')?;
+    let owner = match owner_str {
+        "schema" => RegulatoryOwner::Schema(owner_payload.to_string()),
+        "condition" => RegulatoryOwner::Condition(owner_payload.to_string()),
+        "regulatory" => {
+            let (kind_str, name) = owner_payload.split_once(':')?;
+            RegulatoryOwner::Regulatory {
+                name: name.to_string(),
+                kind: RegulatoryKind::parse_kind(kind_str)?,
+            }
+        }
+        "function" => RegulatoryOwner::Function(owner_payload.to_string()),
+        "rule" => RegulatoryOwner::Rule(owner_payload.to_string()),
+        _ => return None,
+    };
+    let target_rest = to_id.strip_prefix("reg:")?;
+    let (kind_str, target) = target_rest.split_once(':')?;
+    Some((
+        owner,
+        target.to_string(),
+        RegulatoryKind::parse_kind(kind_str)?,
+    ))
 }
 
 /// Strip a leading API-metamodel node prefix (`ar:` / `ao:` / `pl:` / `pm:` /
@@ -123,6 +205,15 @@ fn build_edge_props_string(props: Option<&EdgeProperties>) -> String {
     if let Some(v) = &p.obligations {
         fields.push(format!("obligations: '{}'", escape_gql(v)));
     }
+    if let Some(v) = &p.rule_source {
+        fields.push(format!("rule_source: '{}'", escape_gql(v)));
+    }
+    if let Some(v) = p.import_wildcard {
+        fields.push(format!("wildcard: {v}"));
+    }
+    if let Some(v) = &p.import_alias {
+        fields.push(format!("alias: '{}'", escape_gql(v)));
+    }
     if fields.is_empty() {
         String::new()
     } else {
@@ -174,7 +265,7 @@ impl GraphIngestor for GrafeoEngine {
             schema_id: $schema_id, title: $title, description: $description, \
             schema_type: $schema_type, classification: $classification, \
             pg_type: $pg_type, rust_type: $rust_type, sea_orm_type: $sea_orm_type, \
-            domain: $domain, rel_path: $rel_path, \
+            domain: $domain, namespace: $namespace, rel_path: $rel_path, \
             rust_type_name: $rust_type_name, pg_table_name: $pg_table_name, \
             api_path_segment: $api_path_segment, \
             parent_schema: $parent_schema, \
@@ -217,6 +308,7 @@ impl GraphIngestor for GrafeoEngine {
                 grafeo::Value::String(node.sea_orm_type.clone().into()),
             ),
             ("domain".into(), opt_to_grafeo_value(&node.domain)),
+            ("namespace".into(), opt_to_grafeo_value(&node.namespace)),
             (
                 "rel_path".into(),
                 grafeo::Value::String(node.rel_path.clone().into()),
@@ -273,6 +365,9 @@ impl GraphIngestor for GrafeoEngine {
             format: $format, \
             is_required: $is_required, is_nullable: $is_nullable, \
             is_array: $is_array, pattern: $pattern, \
+            min_length: $min_length, max_length: $max_length, \
+            min_items: $min_items, max_items: $max_items, \
+            minimum: $minimum, maximum: $maximum, \
             pg_column_name: $pg_column_name, pg_column_type: $pg_column_type, \
             rust_field_name: $rust_field_name, rust_field_type: $rust_field_type, \
             sea_orm_type: $sea_orm_type, render_strategy: $render_strategy, \
@@ -284,6 +379,14 @@ impl GraphIngestor for GrafeoEngine {
             .classification_kind
             .as_ref()
             .map(classification_kind_to_str);
+        // Bounds persist as STRING: Decimal has no native grafeo Value, and
+        // conversions.rs parses all of them back from strings.
+        let min_length_str = prop.min_length.map(|v| v.to_string());
+        let max_length_str = prop.max_length.map(|v| v.to_string());
+        let min_items_str = prop.min_items.map(|v| v.to_string());
+        let max_items_str = prop.max_items.map(|v| v.to_string());
+        let minimum_str = prop.minimum.map(|v| v.to_string());
+        let maximum_str = prop.maximum.map(|v| v.to_string());
         let params = HashMap::from([
             (
                 "name".into(),
@@ -299,6 +402,12 @@ impl GraphIngestor for GrafeoEngine {
             ("is_nullable".into(), bool_to_grafeo_value(prop.is_nullable)),
             ("is_array".into(), bool_to_grafeo_value(prop.is_array)),
             ("pattern".into(), opt_to_grafeo_value(&prop.pattern)),
+            ("min_length".into(), opt_to_grafeo_value(&min_length_str)),
+            ("max_length".into(), opt_to_grafeo_value(&max_length_str)),
+            ("min_items".into(), opt_to_grafeo_value(&min_items_str)),
+            ("max_items".into(), opt_to_grafeo_value(&max_items_str)),
+            ("minimum".into(), opt_to_grafeo_value(&minimum_str)),
+            ("maximum".into(), opt_to_grafeo_value(&maximum_str)),
             (
                 "pg_column_name".into(),
                 grafeo::Value::String(prop.pg_column_name.clone().into()),
@@ -355,6 +464,136 @@ impl GraphIngestor for GrafeoEngine {
             .map_err(|e| {
                 GraphError::Ingest(format!("ingest_property HasProperty edge failed: {e}"))
             })?;
+        Ok(())
+    }
+
+    async fn ingest_condition(&self, node: &ConditionNode) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let options_json =
+            serde_json::to_string(&node.options).unwrap_or_else(|_| "[]".to_string());
+        let options_str = format!("'{}'", escape_gql(&options_json));
+        let gql = format!(
+            "INSERT (:Condition {{name: '{name}', owner_title: '{owner}', \
+             kind: '{kind}', expr_json: {expr}, options: {options}, \
+             definition: {definition}, domain: {domain}}})",
+            name = escape_gql(&node.name),
+            owner = escape_gql(&node.owner_title),
+            kind = match node.kind {
+                ConditionKind::Condition => "condition",
+                ConditionKind::OneOf => "one_of",
+            },
+            expr = opt_str(&node.expr_json),
+            options = options_str,
+            definition = opt_str(&node.definition),
+            domain = opt_str(&node.domain),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_condition INSERT failed: {e}")))?;
+        // Link the condition to its owning schema (Schema → Condition).
+        let edge = format!(
+            "MATCH (a:Schema), (b:Condition) \
+             WHERE a.title = '{owner}' AND b.name = '{name}' \
+             INSERT (a)-[:HasCondition]->(b)",
+            owner = escape_gql(&node.owner_title),
+            name = escape_gql(&node.name),
+        );
+        session
+            .execute(&edge)
+            .map_err(|e| GraphError::Ingest(format!("ingest_condition edge failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn ingest_regulatory(&self, node: &RegulatoryNode) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let properties_json =
+            serde_json::to_string(&node.properties).unwrap_or_else(|_| "{}".to_string());
+        let properties = format!("'{}'", escape_gql(&properties_json));
+        let gql = format!(
+            "INSERT (:Regulatory {{name: '{name}', kind: '{kind}', label: {label}, \
+             definition: {definition}, domain: {domain}, properties_json: {properties}}})",
+            name = escape_gql(&node.name),
+            kind = node.kind.as_str(),
+            label = opt_str(&node.label),
+            definition = opt_str(&node.definition),
+            domain = opt_str(&node.domain),
+            properties = properties,
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_regulatory INSERT failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn ingest_regulatory_reference(
+        &self,
+        owner: &RegulatoryOwner,
+        target: &str,
+        target_kind: RegulatoryKind,
+        edge_kind: RegulatoryEdgeKind,
+        ref_path: Option<&str>,
+    ) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let gql = regulatory_reference_gql(owner, target, target_kind, edge_kind, ref_path);
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_regulatory_reference failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn ingest_function(&self, node: &FunctionNode) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let payload_json = serde_json::to_string(&node).map_err(|e| {
+            GraphError::Ingest(format!("ingest_function payload serialization failed: {e}"))
+        })?;
+        // The payload embeds nested JSON (expr payloads) whose escaped
+        // quotes `\"` would terminate the GQL string literal early —
+        // backslashes must be doubled BEFORE the single-quote escape.
+        let payload_escaped = payload_json.replace('\\', "\\\\").replace('\'', "\\'");
+        let gql = format!(
+            "INSERT (:Function {{name: '{name}', domain: {domain}, \
+             definition: {definition}, extends_function: {extends}, \
+             payload_json: '{payload}'}})",
+            name = escape_gql(&node.name),
+            domain = opt_str(&node.domain),
+            definition = opt_str(&node.definition),
+            extends = opt_str(&node.extends),
+            payload = payload_escaped,
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_function INSERT failed: {e}")))?;
+        // The `FunctionExtends` edge is written separately (generic
+        // `ingest_edge`) AFTER every node of the run exists — name-ordered
+        // ingestion is not parent-first, so linking at node time would
+        // silently drop edges to later-sorted parents.
+        Ok(())
+    }
+
+    async fn ingest_rule(&self, node: &RuleNode) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let payload_json = serde_json::to_string(&node).map_err(|e| {
+            GraphError::Ingest(format!("ingest_rule payload serialization failed: {e}"))
+        })?;
+        // Same escaping discipline as ingest_function: the payload embeds
+        // nested JSON whose escaped quotes `\"` would terminate the GQL
+        // string literal early — backslashes doubled BEFORE the
+        // single-quote escape.
+        let payload_escaped = payload_json.replace('\\', "\\\\").replace('\'', "\\'");
+        let gql = format!(
+            "INSERT (:Rule {{name: '{name}', domain: {domain}, \
+             definition: {definition}, kind: '{kind}', input_type: {input_type}, \
+             payload_json: '{payload}'}})",
+            name = escape_gql(&node.name),
+            domain = opt_str(&node.domain),
+            definition = opt_str(&node.definition),
+            kind = node.kind.as_str(),
+            input_type = opt_str(&node.input_type),
+            payload = payload_escaped,
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_rule INSERT failed: {e}")))?;
         Ok(())
     }
 
@@ -463,6 +702,36 @@ impl GraphIngestor for GrafeoEngine {
         props: Option<&EdgeProperties>,
     ) -> Result<(), GraphError> {
         let session = self.db().session();
+
+        // Regulatory reference plane (issue #265) — encoded natural keys,
+        // same GQL the dedicated `ingest_regulatory_reference` emits.
+        if matches!(
+            edge_type,
+            EdgeType::RegulatoryReference
+                | EdgeType::HasRuleSource
+                | EdgeType::CorpusInBody
+                | EdgeType::DerivesFrom
+        ) {
+            let Some((owner, target, target_kind)) = decode_regulatory_edge_ids(from_id, to_id)
+            else {
+                return Err(GraphError::Ingest(format!(
+                    "ingest_edge: regulatory edge {edge_type:?} needs encoded ids \
+                     (regowner:... -> reg:...), got '{from_id}' -> '{to_id}'"
+                )));
+            };
+            let ref_path = props.and_then(|p| p.ref_path.as_deref());
+            let gql = regulatory_reference_gql(
+                &owner,
+                &target,
+                target_kind,
+                edge_kind_ref(&edge_type),
+                ref_path,
+            );
+            session
+                .execute(&gql)
+                .map_err(|e| GraphError::Ingest(format!("ingest_edge regulatory failed: {e}")))?;
+            return Ok(());
+        }
 
         // ── Hot-path edge types: parameterized queries for plan caching ──
         match &edge_type {
@@ -573,6 +842,7 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::HasModuleDefinition => "HasModuleDefinition",
             EdgeType::HasViewComponentPart => "HasViewComponentPart",
             EdgeType::HasConditionalExpr => "HasConditionalExpr",
+            EdgeType::HasCondition => "HasCondition",
             EdgeType::InNamespace => "InNamespace",
             EdgeType::ProjectsToLexicon => "ProjectsToLexicon",
             EdgeType::DefinesCollection => "DefinesCollection",
@@ -599,6 +869,16 @@ impl GraphIngestor for GrafeoEngine {
             EdgeType::MembershipInTenant => "MembershipInTenant",
             EdgeType::HasRole => "HasRole",
             EdgeType::Grant => "Grant",
+            EdgeType::RegulatoryReference => "RegulatoryReference",
+            EdgeType::HasRuleSource => "HasRuleSource",
+            EdgeType::CorpusInBody => "CorpusInBody",
+            EdgeType::DerivesFrom => "DerivesFrom",
+            EdgeType::FunctionExtends => "FunctionExtends",
+            EdgeType::RuleAppliesTo => "RuleAppliesTo",
+            EdgeType::RuleReference => "RuleReference",
+            EdgeType::NamespaceParent => "NamespaceParent",
+            EdgeType::NamespaceImports => "NamespaceImports",
+            EdgeType::NamespaceDepends => "NamespaceDepends",
         };
 
         let match_clause = match &edge_type {
@@ -609,6 +889,13 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(from_id),
                     escape_gql(value),
                     escape_gql(codelist),
+                )
+            }
+            EdgeType::HasCondition => {
+                format!(
+                    "MATCH (a:Schema {{title: '{}'}}), (b:Condition {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
                 )
             }
             EdgeType::UsesCodeList => {
@@ -867,13 +1154,29 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(strip_api_prefix(to_id)),
                 )
             }
-            // AT Protocol edges — nodes are matched by their natural keys
-            // (Lexicon/Collection by nsid, Namespace by authority, Repository by did).
-            EdgeType::InNamespace => {
+            // Namespace plane (issue #267): all three edges connect
+            // Namespace nodes matched by fqn.
+            EdgeType::NamespaceParent | EdgeType::NamespaceImports | EdgeType::NamespaceDepends => {
                 format!(
-                    "MATCH (a:Lexicon {{nsid: '{}'}}), (b:Namespace {{authority: '{}'}})",
+                    "MATCH (a:Namespace {{fqn: '{}'}}), (b:Namespace {{fqn: '{}'}})",
                     escape_gql(from_id),
                     escape_gql(to_id),
+                )
+            }
+            // AT Protocol edges — nodes are matched by their natural keys
+            // (Lexicon/Collection by nsid, AtprotoNamespace by authority,
+            // Repository by did). `InNamespace` is SHARED with the
+            // namespace plane (issue #267): the AT-Protocol projection
+            // links Lexicon (nsid) → AtprotoNamespace (authority), while
+            // the namespace plane links Schema (schema_id) → Namespace
+            // (fqn). The WHERE form covers both callers without guessing.
+            EdgeType::InNamespace => {
+                format!(
+                    "MATCH (a), (b) \
+                     WHERE (a.nsid = '{from}' OR a.schema_id = '{from}') \
+                     AND (b.authority = '{to}' OR b.fqn = '{to}')",
+                    from = escape_gql(from_id),
+                    to = escape_gql(to_id),
                 )
             }
             EdgeType::ProjectsToLexicon => {
@@ -927,13 +1230,41 @@ impl GraphIngestor for GrafeoEngine {
                     escape_gql(to_id),
                 )
             }
+            // Computation plane (issue #263): functions match by name.
+            EdgeType::FunctionExtends => {
+                format!(
+                    "MATCH (a:Function {{name: '{}'}}), (b:Function {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            // Rule plane (issue #264): rules match by name; the input
+            // schema and the rule-source class data match by title.
+            EdgeType::RuleAppliesTo => {
+                format!(
+                    "MATCH (a:Rule {{name: '{}'}}), (b:Schema {{title: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::RuleReference => {
+                format!(
+                    "MATCH (a:Schema {{title: '{}'}}), (b:Rule {{name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
             // These edge types are handled by the early-return above but must
             // be listed to satisfy the exhaustive match. They are unreachable.
             EdgeType::HasProperty
             | EdgeType::ReferencesSchema
             | EdgeType::ItemsOf
             | EdgeType::ExtendsSchema
-            | EdgeType::DependsOn => unreachable!(),
+            | EdgeType::DependsOn
+            | EdgeType::RegulatoryReference
+            | EdgeType::HasRuleSource
+            | EdgeType::CorpusInBody
+            | EdgeType::DerivesFrom => unreachable!(),
         };
 
         let props_str = build_edge_props_string(props);
@@ -1118,18 +1449,65 @@ impl GraphIngestor for GrafeoEngine {
         Ok(id)
     }
 
-    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError> {
+    async fn ingest_atproto_namespace(
+        &self,
+        node: &AtprotoNamespaceNode,
+    ) -> Result<String, GraphError> {
         let session = self.db().session();
         let gql = format!(
-            "INSERT (:Namespace {{ authority: '{}', segment: '{}', domain: '{}' }})",
+            "INSERT (:AtprotoNamespace {{ authority: '{}', segment: '{}', domain: '{}' }})",
             escape_gql(&node.authority),
             escape_gql(&node.segment),
             escape_gql(&node.domain),
         );
         session
             .execute(&gql)
-            .map_err(|e| GraphError::Ingest(format!("ingest_namespace failed: {e}")))?;
+            .map_err(|e| GraphError::Ingest(format!("ingest_atproto_namespace failed: {e}")))?;
         Ok(node.authority.clone())
+    }
+
+    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let gql = format!(
+            "INSERT (:Namespace {{ fqn: '{}', parent: {}, source: {} }})",
+            escape_gql(&node.fqn),
+            opt_str(&node.parent),
+            opt_str(&node.source),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_namespace failed: {e}")))?;
+        // Persist the hierarchy as an edge too (child → parent) so graph
+        // traversals see it; the flat `parent` property keeps read-back to
+        // a single query.
+        if let Some(parent) = &node.parent {
+            let edge = format!(
+                "MATCH (a:Namespace {{fqn: '{}'}}), (b:Namespace {{fqn: '{}'}}) \
+                 INSERT (a)-[:NamespaceParent]->(b)",
+                escape_gql(&node.fqn),
+                escape_gql(parent),
+            );
+            session.execute(&edge).map_err(|e| {
+                GraphError::Ingest(format!("ingest_namespace parent edge failed: {e}"))
+            })?;
+        }
+        Ok(node.fqn.clone())
+    }
+
+    async fn ingest_namespace_import(&self, import: &NamespaceImport) -> Result<(), GraphError> {
+        let session = self.db().session();
+        let gql = format!(
+            "MATCH (a:Namespace {{fqn: '{}'}}), (b:Namespace {{fqn: '{}'}}) \
+             INSERT (a)-[:NamespaceImports {{wildcard: {}, alias: {}}}]->(b)",
+            escape_gql(&import.from_ns),
+            escape_gql(&import.to_ns),
+            import.wildcard,
+            opt_str(&import.alias),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_namespace_import failed: {e}")))?;
+        Ok(())
     }
 
     async fn ingest_lexicon(&self, node: &LexiconNode) -> Result<String, GraphError> {

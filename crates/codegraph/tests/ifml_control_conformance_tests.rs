@@ -157,7 +157,7 @@ async fn control_decisions_conform_across_scaffold_and_route_generator() {
     for prop in &props {
         let canonical = infer_control(prop);
         let generate_side = control_for_field(&prop.rust_field_type, &prop.name);
-        if is_kind_poor_class(&prop.name) {
+        if is_ledger_divergent(prop) {
             assert_divergence_ledger(prop, &canonical, &generate_side);
             continue;
         }
@@ -174,10 +174,11 @@ async fn control_decisions_conform_across_scaffold_and_route_generator() {
     }
 }
 
-/// Classes whose canonical decision is driven by the classification kind,
-/// which `fields_with_types` `(name, rust_type)` pairs cannot carry.
-fn is_kind_poor_class(field_name: &str) -> bool {
-    matches!(field_name, "owner" | "status")
+/// Fields whose canonical decision depends on graph-only signals the
+/// `(name, rust_type)` pairs cannot carry: classification kind, entity
+/// refs, and (since the defect-#1 persistence fix) numeric bounds.
+fn is_ledger_divergent(prop: &PropertyNode) -> bool {
+    matches!(prop.name.as_str(), "owner" | "status" | "amount")
 }
 
 fn assert_divergence_ledger(
@@ -198,40 +199,55 @@ fn assert_divergence_ledger(
             assert_eq!(canonical.input_str(), "dropdown");
             assert_eq!(generate_side.input_str(), "text");
         }
-        other => panic!("unexpected kind-poor class '{other}'"),
+        // Persisted numeric bounds → number (has_bounds branch); the bare
+        // pair sees a plain string. Converging needs bounds propagation
+        // into fields_with_types.
+        "amount" => {
+            assert_eq!(canonical.input_str(), "number");
+            assert_eq!(generate_side.input_str(), "text");
+        }
+        other => panic!("unexpected ledger-divergent field '{other}'"),
     }
 }
 
-/// Numeric bounds: the canonical mapping's `has_bounds` branch fires on
-/// in-memory properties, but bounds do not survive graph ingestion, so the
-/// rehydrated property is a plain string on BOTH sides. The generate side
-/// (driven by rehydrated `(name, rust_type)` pairs) can never see them.
+/// Numeric bounds: since the scalar-bounds persistence fix (gap-doc
+/// defect #1), bounds SURVIVE graph ingestion, so the rehydrated property
+/// carries them and the canonical mapping's `has_bounds` branch fires on
+/// it. The generate side is still driven by `(name, rust_type)` pairs
+/// that cannot carry bounds, so the divergence is now "number vs text"
+/// for the bounded field — asserted in the ledger, not silently allowed.
 #[tokio::test]
-async fn numeric_bounds_diverge_only_for_in_memory_properties() {
+async fn numeric_bounds_persist_and_stay_invisible_to_name_type_pairs() {
     let fx = Fixture::new();
     let props = probe_properties(&fx).await;
     let amount = props
         .iter()
         .find(|p| p.name == "amount")
         .expect("amount property");
-    assert!(
-        amount.minimum.is_none() && amount.maximum.is_none(),
-        "precondition: bounds are dropped during ingestion"
+    assert_eq!(
+        amount.minimum,
+        Some(rust_decimal::Decimal::from(0)),
+        "bounds persist through ingestion (defect #1 fix)"
     );
-    assert_eq!(infer_control(amount).input_str(), "text");
+    assert_eq!(amount.maximum, Some(rust_decimal::Decimal::from(100)));
+    assert_eq!(
+        infer_control(amount).input_str(),
+        "number",
+        "canonical side sees persisted bounds"
+    );
     assert_eq!(
         control_for_field(&amount.rust_field_type, "amount").input_str(),
-        "text"
+        "text",
+        "bounds are still invisible to (name, rust_type) pairs"
     );
 
     let mut in_memory = amount.clone();
     in_memory.minimum = Some(rust_decimal::Decimal::from(0));
     in_memory.maximum = Some(rust_decimal::Decimal::from(100));
-    assert_eq!(infer_control(&in_memory).input_str(), "number");
     assert_eq!(
-        control_for_field(&in_memory.rust_field_type, "amount").input_str(),
-        "text",
-        "bounds are invisible to (name, rust_type) pairs"
+        infer_control(&in_memory).input_str(),
+        "number",
+        "in-memory and rehydrated properties now decide identically"
     );
 }
 

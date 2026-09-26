@@ -161,6 +161,7 @@ impl CapabilityRegistry {
                         | "fern_sdk"
                         | "emdash_plugins"
                         | "rls_from_policy"
+                        | "rosetta_backend"
                 )
             })
         })
@@ -265,6 +266,11 @@ pub struct BuildPlan {
     pub dto_key_casing: String,
     /// Deployment topology for the generated application (default: Monolith).
     pub deployment_topology: DeploymentTopology,
+    /// Namespace-aware module layout (issue #268): when true, schemas that
+    /// carry a namespace emit under namespace-derived module paths
+    /// (`cdm.base.datetime` → `cdm/base/datetime/...`) instead of the flat
+    /// domain layout. Default OFF = byte-identical flat output.
+    pub namespace_layout: bool,
     /// Feature flags from the profile (e.g., has_admin_cli, auth, etc.).
     pub features: toml::Table,
 }
@@ -412,6 +418,13 @@ impl BuildPlan {
             None => "snake".to_string(),
         };
 
+        // Parse namespace_layout from features (default: false = flat).
+        let namespace_layout = profile
+            .features
+            .get("namespace_layout")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         Ok(BuildPlan {
             entity_generators: entity_gens,
             domain_generators: domain_gens,
@@ -428,6 +441,7 @@ impl BuildPlan {
             persistence_provider,
             dto_key_casing,
             deployment_topology,
+            namespace_layout,
             features: profile.features.clone(),
         })
     }
@@ -482,6 +496,7 @@ impl BuildPlan {
             persistence_provider: PersistenceProvider::default(),
             dto_key_casing: "snake".to_string(),
             deployment_topology: DeploymentTopology::default(),
+            namespace_layout: false,
             features,
         })
     }
@@ -677,6 +692,18 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
 
         // ── policy-driven RLS (issue #219) ─────────────────────────────
         cap("policy_rls",           Global,  Common, &["rls_from_policy"], &[]),
+
+        // ── constraint-plane validations (issue #261) ───────────────────
+        cap("condition_validations", Domain, Api,  &["rosetta_backend"], &[]),
+
+        // ── regulatory report scaffolding (issue #265) ──────────────────
+        cap("regulatory_reports",  Domain, Api,  &["rosetta_backend"], &[]),
+
+        // ── rosetta function codegen (issue #263) ───────────────────────
+        cap("functions",           Domain, Api,  &["rosetta_backend"], &[]),
+
+        // ── rosetta rule codegen (issue #264) ───────────────────────────
+        cap("rules",               Domain, Api,  &["rosetta_backend"], &[]),
 
         // ── Fern SDK generators ─────────────────────────────────────────
         cap("fern_config",          Global, Api,   &["fern_sdk"], &[]),

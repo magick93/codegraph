@@ -146,6 +146,7 @@ mod tests {
 
         let emitter = AtprotoXrpcMergeEmitter::new(&out);
         let config = codegraph_config::DomainConfig {
+            namespaces: std::collections::HashMap::new(),
             defaults: Default::default(),
             domains: std::collections::HashMap::new(),
             rbac: None,
@@ -214,6 +215,7 @@ mod tests {
 
         let emitter = AtprotoXrpcMergeEmitter::new(&out);
         let config = codegraph_config::DomainConfig {
+            namespaces: std::collections::HashMap::new(),
             defaults: Default::default(),
             domains: std::collections::HashMap::new(),
             rbac: None,

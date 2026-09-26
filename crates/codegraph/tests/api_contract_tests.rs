@@ -22,6 +22,7 @@ fn schema(
     domain: &str,
 ) -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: title.to_lowercase(),
         title: title.into(),
         description: Some("test schema".into()),
@@ -81,6 +82,7 @@ fn domain_config(domain: &str, entities: &[&str]) -> DomainConfig {
         },
     );
     DomainConfig {
+        namespaces: HashMap::new(),
         defaults: DefaultsConfig {
             operations: vec![
                 "create".into(),

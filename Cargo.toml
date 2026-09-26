@@ -54,3 +54,10 @@ rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99
 rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }
 rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }
 rex-ifml = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }
+# Sigil (Rune DSL / .rosetta) — issue #255. Pinned by rev like the rexlang
+# crates; depended on from `crates/codegraph` ONLY (no sigil deps may leak
+# into codegraph-generate / codegraph-core).
+sigil-model = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
+sigil-resolve = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
+sigil-syntax = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
+sigil-diag = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }

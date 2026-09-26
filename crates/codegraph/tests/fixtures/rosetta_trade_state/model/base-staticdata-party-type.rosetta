@@ -1,0 +1,46 @@
+namespace cdm.base.staticdata.party : <"Basic party concepts: legal entity, natural person, contact details, buyer / payer and all related enums.">
+version "${project.version}"
+
+enum CounterpartyRoleEnum: <"Defines the enumerated values to specify the two counterparties to the transaction.">
+	Party1
+	Party2
+
+enum PartyRoleEnum: <"The enumerated values for the party role. TRIMMED from ~100 real ISDA-coded values to the two the TradeState fragment references.">
+	Buyer <"Acquirer of the legal title to the financial instrument.">
+	Seller <"The party that sells (writes) this instrument and in return receives a payment for it.">
+
+enum AncillaryRoleEnum: <"The enumerated values to specify the ancillary roles to a transaction. TRIMMED from the real coded list.">
+	ExtraordinaryDividendsParty
+	PredeterminedClearingOrganizationParty
+
+type PartyIdentifier: <"Comprises an identifier and a source. TRIMMED to the identifier attribute.">
+	[metadata key]
+	identifier string (1..1) <"The identifier associated with a party, e.g. the 20 digits LEI code.">
+		[metadata scheme]
+
+type Party: <"A class to specify a party, without a qualification as to whether this party is a legal entity or a natural person. TRIMMED: businessUnit/person/personRole/account/contactInformation dropped — out of the TradeState closure.">
+	[metadata key]
+
+	partyId PartyIdentifier (1..*) <"The identifier associated with a party, e.g. the 20 digits LEI code.">
+	name string (0..1) <"The party name.">
+		[metadata scheme]
+
+type Counterparty: <"Defines a counterparty enumerated value, e.g. Party1 or Party2, with an associated party reference. The product is agnostic to the actual parties to the transaction, with the party references abstracted away from the product definition and replaced by the CounterpartyEnum (e.g. values Party1 or Party2). The CounterpartyEnum can then be positioned in the product (e.g. to specify which counterparty is the payer, receiver etc) and this Counterparty type, which is positioned outside of the product definition, allows the CounterpartyEnum to be associated with an actual party reference.">
+	role CounterpartyRoleEnum (1..1) <"Specifies the CounterpartyEnum, e.g. either Party1 or Party2, that is associated to the partyReference.">
+	partyReference Party (1..1) <"Specifies the party that is associated to the counterparty.">
+		[metadata reference]
+
+type AncillaryParty: <"Defines an ancillary role enumerated value with an associated party reference. The product is agnostic to the actual parties involved in the transaction, with the party references abstracted away from the product definition and replaced by the AncillaryRoleEnum. The AncillaryRoleEnum can then be positioned in the product and this AncillaryParty type, which is positioned outside of the product definition, allows the CounterpartyEnum to be associated with an actual party reference.">
+
+	role AncillaryRoleEnum (1..1) <"Specifies the AncillaryRoleEnum that is associated to the party reference. An ancillary party is any involved party that is not one of the two principal parties to the transaction.">
+	partyReference Party (1..*) <"Specifies the party, or parties, associated to the ancillary role.">
+		[metadata reference]
+	onBehalfOf CounterpartyRoleEnum (0..1) <"Optionally specifies the counterparty that the ancillary party is acting on behalf of.">
+
+type PartyRole: <"A class to specify the role(s) that party(ies) may have in relation to the execution, contract or other legal agreement. TRIMMED to the role attribute.">
+	role PartyRoleEnum (1..*)
+
+type PayerReceiver: <"Specifies the parties responsible for making and receiving payments defined by this structure.">
+
+	payer CounterpartyRoleEnum (1..1) <"Specifies the counterparty responsible for making the payments defined by this structure.  The party is one of the two principal parties to the transaction.">
+	receiver CounterpartyRoleEnum (1..1) <"Specifies the party that receives the payments corresponding to this structure.  The party is one of the two counterparties to the transaction.">

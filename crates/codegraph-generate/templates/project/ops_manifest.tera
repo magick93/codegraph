@@ -3,7 +3,7 @@
 
 app_name = "{{ app_name }}"
 graph_binary = "{{ graph_binary }}"
-mox_files = [{% for d in domains %}"model/{{ d.name }}.mox"{% if not loop.last %}, {% endif %}{% endfor %}]
+{% if features.rosetta %}rosetta_files = [{% for d in domains %}"model/{{ d.name }}.rosetta"{% if not loop.last %}, {% endif %}{% endfor %}]{% else %}mox_files = [{% for d in domains %}"model/{{ d.name }}.mox"{% if not loop.last %}, {% endif %}{% endfor %}]{% endif %}
 domain_config = "domains.toml"
 profile = "default"
 output_dir = "generated"

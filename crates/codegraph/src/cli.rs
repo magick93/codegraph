@@ -46,13 +46,17 @@ pub enum Commands {
     },
     /// Classify all schemas and show entity/VO decisions
     Classify {
-        /// Path to JSON schema directory
-        #[arg(long)]
-        schemas: PathBuf,
+        /// Path to JSON schema directory. Optional when --mox-files or
+        /// --rosetta-files is provided
+        #[arg(
+            long,
+            required_unless_present_any = ["mox_files", "rosetta_files"]
+        )]
+        schemas: Option<PathBuf>,
 
-        /// Path to classifier.toml
+        /// Path to classifier.toml (required when --schemas is provided)
         #[arg(long)]
-        classifier: PathBuf,
+        classifier: Option<PathBuf>,
 
         /// Path to domains.toml
         #[arg(long)]
@@ -70,13 +74,21 @@ pub enum Commands {
         /// the classifier and show up as `override:source=mox`
         #[arg(long)]
         mox_files: Vec<PathBuf>,
+
+        /// Paths to Rosetta (Rune DSL) .rosetta model files; their types
+        /// are auto-scored by the classifier and appear in the report
+        #[arg(long = "rosetta-files")]
+        rosetta_files: Vec<PathBuf>,
     },
     /// Convenience: ingest + generate in one step
     Run {
-        /// Path to JSON schema directory. Optional when --mox-files is
-        /// provided; deprecated as the primary model source — migrate with
-        /// `codegraph migrate --schemas <dir> --output <dir>`
-        #[arg(long, required_unless_present = "mox_files")]
+        /// Path to JSON schema directory. Optional when --mox-files or
+        /// --rosetta-files is provided; deprecated as the primary model
+        /// source — migrate with `codegraph migrate --schemas <dir> --output <dir>`
+        #[arg(
+            long,
+            required_unless_present_any = ["mox_files", "rosetta_files"]
+        )]
         schemas: Option<PathBuf>,
         /// Path to classifier.toml (required when --schemas is provided)
         #[arg(long)]
@@ -115,6 +127,10 @@ pub enum Commands {
         /// (vocabularies with facets, class operations, derived features)
         #[arg(long)]
         mox_files: Vec<PathBuf>,
+        /// Paths to Rosetta (Rune DSL) .rosetta model files to bridge into
+        /// the graph data plane (types/choices/enums/attributes)
+        #[arg(long = "rosetta-files")]
+        rosetta_files: Vec<PathBuf>,
         /// IFML framework targets for code generation (e.g. svelte, react)
         #[arg(long)]
         ifml_framework: Vec<String>,
@@ -256,6 +272,11 @@ pub enum Commands {
         #[arg(long)]
         ifml: bool,
 
+        /// Rosetta-first scaffold: model/<domain>.rosetta starters instead
+        /// of .mox, plus rosetta-first profiles/justfile/ops wiring
+        #[arg(long)]
+        rosetta: bool,
+
         #[arg(long = "no-ops")]
         no_ops: bool,
 
@@ -296,6 +317,13 @@ pub enum Commands {
         /// degrades to an info line (mox-first projects)
         #[arg(long)]
         mox_files: Vec<PathBuf>,
+
+        /// Paths to Rosetta (Rune DSL) .rosetta model files; verified with
+        /// the sigil pipeline (parse → lower → resolve). With .rosetta
+        /// present the JSON schemas check degrades to an info line
+        /// (rosetta-first projects)
+        #[arg(long = "rosetta-files")]
+        rosetta_files: Vec<PathBuf>,
     },
     /// Add to an existing consumer project
     Add {
@@ -306,8 +334,15 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum AddTarget {
-    /// Add a domain (schemas dir + domains.toml entry).
-    Domain { name: String },
+    /// Add a domain (starter model + domains.toml entry).
+    Domain {
+        name: String,
+
+        /// Create a .rosetta starter instead of .mox (auto-detected when
+        /// the project's model/ directory already carries .rosetta files)
+        #[arg(long)]
+        rosetta: bool,
+    },
 }
 
 #[derive(Parser, Debug)]

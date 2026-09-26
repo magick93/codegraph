@@ -351,6 +351,7 @@ fn mock_test_setup() -> (
     tempfile::TempDir,
 ) {
     let schema = SchemaNode {
+        namespace: None,
         schema_id: "recruiting/json/CandidateType.json".to_string(),
         title: "CandidateType".to_string(),
         description: Some("A candidate for a position".to_string()),
@@ -383,6 +384,8 @@ fn mock_test_setup() -> (
         is_required: true,
         is_nullable: false,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -950,6 +953,7 @@ async fn run_routing_generators(
         persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
         dto_key_casing: "snake".to_string(),
         deployment_topology: topology,
+        namespace_layout: false,
         features: toml::Table::new(),
     };
 
@@ -957,6 +961,7 @@ async fn run_routing_generators(
     // templates can read `project.deployment_topology`.
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: topology.to_string(),
+        namespace_layout: false,
         ..Default::default()
     };
 
@@ -1141,6 +1146,7 @@ fn workers_scaffold_test_setup() -> (
     tempfile::TempDir,
 ) {
     let pay_run = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/PayRunType.json".to_string(),
         title: "PayRunType".to_string(),
         description: Some("A pay run".to_string()),
@@ -1165,6 +1171,7 @@ fn workers_scaffold_test_setup() -> (
         custom_annotations: Default::default(),
     };
     let code = SchemaNode {
+        namespace: None,
         schema_id: "common/json/CodeType.json".to_string(),
         title: "CodeType".to_string(),
         description: Some("A code value".to_string()),
@@ -1197,6 +1204,8 @@ fn workers_scaffold_test_setup() -> (
         is_required: true,
         is_nullable: false,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -1295,11 +1304,13 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
         persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
         dto_key_casing: "snake".to_string(),
         deployment_topology: codegraph::profile::DeploymentTopology::Workers,
+        namespace_layout: false,
         features: toml::Table::new(),
     };
 
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: "workers".to_string(),
+        namespace_layout: false,
         ..Default::default()
     };
 
@@ -1511,6 +1522,7 @@ async fn workers_codelist_test_setup() -> (
     tempfile::TempDir,
 ) {
     let pay_run = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/PayRunType.json".to_string(),
         title: "PayRunType".to_string(),
         description: Some("A pay run".to_string()),
@@ -1535,6 +1547,7 @@ async fn workers_codelist_test_setup() -> (
         custom_annotations: Default::default(),
     };
     let pay_line = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/PayLineType.json".to_string(),
         title: "PayLineType".to_string(),
         description: Some("A pay run line item".to_string()),
@@ -1559,6 +1572,7 @@ async fn workers_codelist_test_setup() -> (
         custom_annotations: Default::default(),
     };
     let code = SchemaNode {
+        namespace: None,
         schema_id: "common/json/CodeType.json".to_string(),
         title: "CodeType".to_string(),
         description: Some("A code value".to_string()),
@@ -1583,6 +1597,7 @@ async fn workers_codelist_test_setup() -> (
         custom_annotations: Default::default(),
     };
     let work_item = SchemaNode {
+        namespace: None,
         schema_id: "compensation/json/WorkItemType.json".to_string(),
         title: "WorkItemType".to_string(),
         description: Some("A work item".to_string()),
@@ -1615,6 +1630,8 @@ async fn workers_codelist_test_setup() -> (
         is_required: true,
         is_nullable: false,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -1643,6 +1660,8 @@ async fn workers_codelist_test_setup() -> (
         is_required: false,
         is_nullable: true,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -1671,6 +1690,8 @@ async fn workers_codelist_test_setup() -> (
         is_required: false,
         is_nullable: true,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -1699,6 +1720,8 @@ async fn workers_codelist_test_setup() -> (
         is_required: false,
         is_nullable: true,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -1727,6 +1750,8 @@ async fn workers_codelist_test_setup() -> (
         is_required: false,
         is_nullable: true,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -1872,6 +1897,7 @@ async fn run_routing_generators_with_parts(
         persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
         dto_key_casing: "snake".to_string(),
         deployment_topology: topology,
+        namespace_layout: false,
         features: toml::Table::new(),
     };
 
@@ -1918,6 +1944,7 @@ async fn workers_topology_emits_per_worker_codelist_reexports() {
 
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: "workers".to_string(),
+        namespace_layout: false,
         ..Default::default()
     };
     let (report, output_dir) = run_routing_generators_with_parts(
@@ -2069,6 +2096,7 @@ async fn monolith_topology_keeps_root_codelist_reexport() {
 
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: "monolith".to_string(),
+        namespace_layout: false,
         ..Default::default()
     };
     let (report, output_dir) = run_routing_generators_with_parts(
@@ -2149,6 +2177,7 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
 
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: "workers".to_string(),
+        namespace_layout: false,
         hooks_api_crate: "hr_hooks_api".to_string(),
         hooks_api_base: "crates/hr-hooks-api".to_string(),
         ..Default::default()
@@ -2248,6 +2277,7 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
     let (mock2, config2, tera2, output_dir2) = workers_scaffold_test_setup();
     let project2 = codegraph::generate::ProjectConfig {
         deployment_topology: "monolith".to_string(),
+        namespace_layout: false,
         hooks_api_crate: "hr_hooks_api".to_string(),
         ..Default::default()
     };

@@ -92,15 +92,27 @@ async fn array_cardinality_dropped_from_graph() {
         members.rust_field_type, members.pg_column_type
     );
 
-    // The gap: `minItems: 2, maxItems: 10` is gone. No scalar-constraint
-    // field picked it up.
+    // HISTORY: this probe originally pinned the representation gap — no
+    // cardinality field anywhere on PropertyNode. Issue #261 resolved it:
+    // min_items/max_items exist AND the JSON path parses minItems/maxItems
+    // into them (enforcement is the generator's job, also #261).
     assert_eq!(members.min_length, None);
     assert_eq!(members.max_length, None);
     assert_eq!(members.minimum, None);
     assert_eq!(members.maximum, None);
+    assert_eq!(
+        members.min_items,
+        Some(2),
+        "minItems: 2 must land on PropertyNode.min_items"
+    );
+    assert_eq!(
+        members.max_items,
+        Some(10),
+        "maxItems: 10 must land on PropertyNode.max_items"
+    );
 
-    // Runtime pin of the compile-time fact: the serialized PropertyNode
-    // exposes no cardinality key whatsoever.
+    // Runtime pin: the serialized PropertyNode now exposes the cardinality
+    // keys (snake_case fields, serde default).
     let serialized = serde_json::to_value(members).unwrap();
     let keys: Vec<String> = serialized
         .as_object()
@@ -108,13 +120,12 @@ async fn array_cardinality_dropped_from_graph() {
         .keys()
         .cloned()
         .collect();
-    for cardinality_key in ["minItems", "maxItems", "min_items", "max_items"] {
+    for cardinality_key in ["min_items", "max_items"] {
         assert!(
-            !keys.iter().any(|k| k.eq_ignore_ascii_case(cardinality_key)),
-            "PropertyNode unexpectedly exposes cardinality key {cardinality_key}: {keys:?}"
+            keys.iter().any(|k| k == cardinality_key),
+            "PropertyNode must expose cardinality key {cardinality_key} post-#261: {keys:?}"
         );
     }
-    println!("PropertyNode serialized keys: {keys:?}");
 }
 
 /// Probe 2 — does the DDL enforce array cardinality?
@@ -240,15 +251,13 @@ async fn array_cardinality_not_validated_in_rust() {
 
 /// Probe 4 — scalar bounds, for contrast.
 ///
-/// Hypothesis was that scalar bounds survive into `PropertyNode.minimum`/
-/// `maximum` while array cardinality does not. The measured reality is a
-/// stronger gap: `minimum`/`maximum` ARE parsed off the JSON Schema into the
-/// in-process PropertyNode (crates/codegraph/src/ingest/async_ingest.rs:669),
-/// but the Grafeo `ingest_property` INSERT never persists them, so the
-/// graph round-trip returns None. Downstream, the DTO emits plain
-/// `#[garde(skip)]` (the `garde(range)` template branch never fires) and the
-/// DDL has no numeric CHECK. Scalar bounds outlive array cardinality only
-/// one layer longer (parse), and are unobservable everywhere else.
+/// HISTORY: this probe originally pinned gap-analysis defect #1 — bounds
+/// were parsed but never persisted by the Grafeo INSERT, so they
+/// round-tripped as None and dto_create's garde(range) branch was dead
+/// code. The persistence fix (Property DDL columns + INSERT params +
+/// RETURN cols) resolved the defect; the probe now pins the FIXED behavior:
+/// bounds round-trip and garde(range) fires. Array-cardinality (min>1)
+/// remains unrepresentable — that uplift is #261.
 #[tokio::test]
 async fn scalar_bounds_survive_for_contrast() {
     // Graph side: scalar bounds are ALSO dropped by the graph round-trip.
@@ -259,11 +268,10 @@ async fn scalar_bounds_survive_for_contrast() {
         .iter()
         .find(|p| p.name == "seat_count")
         .expect("seat_count PropertyNode ingested");
-    assert_eq!(
-        seat.minimum, None,
-        "surprise if Some: minimum persisted through the graph"
-    );
-    assert_eq!(seat.maximum, None);
+    // Post-fix: bounds persist through the graph round-trip (defect #1
+    // resolved). The JSON fixture carries minimum 2 / maximum 10.
+    assert_eq!(seat.minimum, Some(rust_decimal::Decimal::from(2)));
+    assert_eq!(seat.maximum, Some(rust_decimal::Decimal::from(10)));
     println!(
         "seat_count after graph round-trip: minimum={:?} maximum={:?} rust={}",
         seat.minimum, seat.maximum, seat.rust_field_type
@@ -307,13 +315,15 @@ async fn scalar_bounds_survive_for_contrast() {
         create_dto.0,
         &lines[seat_idx.saturating_sub(1)..=seat_idx]
     );
+    // Post-fix: the garde(range) branch fires with the persisted bounds.
     assert!(
-        !create_dto.1.contains("garde(range"),
-        "garde(range) unexpectedly fired for seat_count"
+        create_dto.1.contains("garde(range(min = 2, max = 10))"),
+        "garde(range) must fire with the persisted bounds: {}",
+        create_dto.1
     );
     assert!(
-        lines[seat_idx - 1].contains("#[garde(skip)]"),
-        "expected #[garde(skip)] on seat_count, got: {}",
+        !lines[seat_idx - 1].contains("#[garde(skip)]"),
+        "seat_count must no longer be garde(skip), got: {}",
         lines[seat_idx - 1]
     );
 }

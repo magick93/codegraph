@@ -26,6 +26,14 @@ pub enum Error {
         /// Failure cause ("could not be read: …" / "is not valid JSON: …").
         reason: String,
     },
+    #[error("rosetta model error in '{file}': {reason}")]
+    RosettaModel {
+        /// The .rosetta file the error came from.
+        file: String,
+        /// Failure cause, including sigil diagnostic codes/spans when the
+        /// error comes from parsing or resolution.
+        reason: String,
+    },
     #[error("Template error: {0}")]
     Template(String),
     #[error("Validation error: {0}")]

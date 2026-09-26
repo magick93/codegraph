@@ -92,6 +92,117 @@ VS Code extension must register the `mox` language + `.mox` extension and
 pass per-file parser initializationOptions; actor-internals validation
 belongs to upstream rex-lsp.
 
+Rosetta (Rune DSL) is the sibling primary model source (sigil-parsed,
+bridged, auto-scored): integration guide at `docs/rosetta.md`, construct
+matrix + defects ledger at `docs/rosetta-gap-analysis.md`.
+
+
+## Namespaces as first-class citizens (issue #267)
+
+Namespace = where a type lives + what it can see (hierarchical, dotted,
+import-based); domain stays the bounded-context/deploy boundary. Core-only
+slice — producers (mox/rosetta/JSON-`$id`) connect in #268.
+
+- **Naming-collision resolution**: the AT-Protocol line previously owned
+  `NamespaceNode` with unrelated repo-namespace semantics. It is renamed
+  `AtprotoNamespaceNode` (`types/atproto.rs`), with trait methods
+  `ingest_atproto_namespace`/`get_atproto_namespaces` and grafeo label
+  `:AtprotoNamespace`. The graph-wide namespace concept owns the canonical
+  names: `NamespaceNode { fqn, parent, source }` (`types/namespace.rs`),
+  `:Namespace` label, `ingest_namespace`/`list_namespaces`.
+  `EdgeType::InNamespace` is SHARED by both families (grafeo match uses a
+  `WHERE a.nsid = … OR a.schema_id = …` form).
+- **Model**: `SchemaNode.namespace`/`SchemaClassificationData.namespace`
+  (`#[serde(default)]`, read-compat with old payloads); schema_id contract =
+  `<ns>::<Name>` when namespaced, legacy id verbatim otherwise
+  (`qualified_schema_id`); title uniqueness is scoped per namespace with
+  collision policy first-plain → namespace-qualified → numeric suffix
+  (`disambiguate_schema_ids`).
+- **Edges**: `InNamespace` (Schema → Namespace, shared),
+  `NamespaceParent` (child → parent; also persisted flat on the node),
+  `NamespaceImports` (`EdgeProperties.import_wildcard`/`import_alias`),
+  `NamespaceDepends` (derived via `derive_namespace_depends` through the
+  domain `depends_on` plane; enum + DDL exist, nothing ingests it).
+- **Graph plumbing**: GraphIngestor `ingest_namespace`/`ingest_namespace_import`;
+  GraphQuerier `list_namespaces`, `list_schemas_by_namespace(fqn, recursive)`,
+  `get_namespace_imports`, `namespace_generation_order` (deterministic Kahn:
+  imported-before-importer, lexicographic fqn tie-break, cycle = error naming
+  members — `topological_namespace_order`). Mock + Grafeo + CachingQuerier
+  all implement them.
+- **Config** (`domains.toml`): `[namespaces."cdm.base.datetime"]` with
+  optional `domain = "…"`. BOTH TOML spellings normalize to the same FQN
+  (quoted flat key or nested unquoted tables — nested intermediates are path
+  segments, not declarations; a level is declared when it has `domain` or is
+  a leaf). `domain` is reserved at every level; unknown scalar keys and
+  malformed fqns are parse errors. Discovered-but-undeclared namespaces are
+  allowed — the declared set is only the validation baseline.
+- **Validation** (`validate.rs`, no-op when the graph has no namespaces):
+  `namespace_import_undeclared` (Error — target not in graph/allowlist),
+  `namespace_import_undeclared_dependency` (Error — cross-domain import
+  without `depends_on`, mirrors `fk_target_undeclared_dependency`;
+  namespace→domain resolution: config `domain` wins, else unique member-schema
+  domain), `namespace_domain_conflict` (Warning — declared domain vs observed
+  member-schema domains disagree).
+- Back-compat is pinned: namespace-less graphs trigger zero namespace checks,
+  `SchemaNode.namespace` stays `None`, and generated output is unchanged.
+  Gate: `cargo test -p codegraph --test namespace_tests`.
+
+### Source bridging + namespace-aware generation (issue #268)
+
+Producers now populate the #267 plane; generation consumes it behind the
+`namespace_layout` gate.
+
+- **mox** (`ingest/mox_ingest.rs`): `package <dotted.name>` → NamespaceNode
+  (source `"mox"`) + dotted `NamespaceParent` chains + `SchemaNode.namespace`
+  + `InNamespace` edges for every bridged class/enum schema. The rex grammar
+  REQUIRES a package, so every compilable mox model is namespaced; the mox
+  equivalence gate pins that this changes NO generated output (flat layout is
+  namespace-inert). New `MoxIngestStats::namespaces` counter (displayed only
+  when non-zero).
+- **rosetta** (`ingest/rosetta_ingest.rs`): `namespace a.b` → NamespaceNode
+  (source `"rosetta"`); `import a.b.*` / `import a.b as x` → NamespaceImports
+  edges (wildcard/alias payload; the lowered `imported_namespace` string
+  embeds `.*` — strip it). Import-only targets (e.g. the sigil builtins'
+  `com.rosetta.model`) land as `"discovered"` nodes so import edges resolve
+  and #267 validation sees them — a cross-domain import without
+  `depends_on` is a hard validation error (the rosetta_bridge fixture's
+  domains.toml declares one). Schemas carry `namespace` + `InNamespace`.
+  `RosettaIngestStats::{namespaces, namespace_imports}` now count ingested
+  nodes/edges.
+- **JSON** (`ingest/async_ingest.rs`): a schema joins a namespace ONLY when
+  it declares one — `$namespace` verbatim, else `$id` path-derived
+  (`https://cdm.example/cdm/base/datetime/Foo.json` → `cdm.base.datetime`;
+  host skipped, filename dropped; bare-host/filename-only/`urn:` ids → None).
+  No declaration ⇒ namespace-less ⇒ byte-identical back-compat (NOT a
+  domain-name default). Source `"json"`; inline `#/$defs` children inherit
+  the parent's treatment (they generate as its children). Classification
+  scoring is unchanged — `classify_domain` operates over domain-assigned
+  schemas that may span namespaces (`SchemaClassificationData.namespace`
+  rides through).
+- **Generation order** (`codegraph-generate` `compute_generation_order`):
+  when the graph has namespaces, per-domain emission order ranks titles by
+  `namespace_generation_order` (imported-before-importer, namespace-less
+  last, title tie-break) and the title-claim key becomes `(namespace, title)`
+  — same title in two namespaces are two types. Namespace-less graphs take
+  the exact pre-#268 path (byte-identical). An import cycle is a hard
+  `Error::Config`.
+- **`namespace_layout` gate** (profiles.toml `[features]`, default OFF =
+  flat/byte-identical): helpers `namespace_module_path`/`namespace_module_rust`
+  in codegraph-core (`cdm.base.datetime` → `cdm/base/datetime` /
+  `cdm::base::datetime`), threaded via `BuildPlan.namespace_layout` →
+  `ProjectConfig.namespace_layout`. When ON and the schema carries a
+  namespace: `sea_orm_entity` emits `src/entity/{ns}/{module}.rs`, `dto` +
+  `dto_included` + `repository` emit under `src/domain/{ns}/{module}/`, the
+  repository emitter references `crate::entity::{ns}::{module}` and
+  registers/imports DTO types on namespace-derived module paths
+  (type_registry keeps handler imports coherent). SvelteKit/API URL
+  segments stay title/api_path_segment-based — namespaces are NOT URLs.
+  Deferred (audit list): handler/app_state/query/command template-level
+  `crate::domain::{domain}::…` strings, child entity file paths, include
+  TARGET namespace resolution, cornucopia/grpc/openapi paths.
+  Gates: `cargo test -p codegraph --test namespace_bridge_tests`,
+  `namespace_graph_parity_between_equivalent_json_and_mox_models` in
+  `mox_equivalence_tests.rs`.
 
 ## IFML Integration
 
@@ -698,14 +809,14 @@ Tera templates in `crates/codegraph-generate/templates/project/` (see
 |------|---------|
 | `Cargo.toml` | Workspace: members `{name}-graph` + `ops/testkit`; codegraph crates as `git+rev` deps (or `path` deps with `--codegraph-path`); `exclude = ["generated"]` |
 | `{name}-graph/Cargo.toml`, `{name}-graph/src/main.rs` | Wrapper binary: clap `Run`/`Classify`/`Generate`/`Doctor` calling `codegraph::driver`; `Run`/`Classify` take repeatable `--mox-files`, `--schemas`/`--classifier` are optional with no defaults |
-| `model/{domain}.mox` | Starter mox model per domain (TodoListType + TodoItemType, `refers`-linked); the primary model source |
+| `model/{domain}.mox` | Starter mox model per domain (TodoListType + TodoItemType, `refers`-linked); the primary model source. With `--rosetta`: `model/{domain}.rosetta` starters (namespace `{app_name}.{domain}`, one `<Pascal>Type` + `<Pascal>Status` enum) instead — no `.mox` |
 | `domains.toml` | One entry per domain (label, schema_dir, postgres_schema); no `entities` key — mox is author-declarative |
 | `profiles.toml` | Profile meta (`name`/`version`/`app_name`, `domain_types_base`) + feature flags (`ops_backend`, `grpc_backend`, `ifml_backend`, `has_admin_cli`, `database_target`, `persistence_provider`, `deployment_topology`) |
 | `extension-points.toml` | Extension points config |
-| `codegraph-ops.toml` | Seeded ops manifest with `mox_files = ["model/<d>.mox", ...]` (no `schemas_dir`/`classifier` keys; see "Ops Harness" section) |
+| `codegraph-ops.toml` | Seeded ops manifest with `mox_files = ["model/<d>.mox", ...]` (no `schemas_dir`/`classifier` keys; see "Ops Harness" section). With `--rosetta`: `rosetta_files = ["model/<d>.rosetta", ...]` instead |
 | `ops/testkit/Cargo.toml`, `ops/testkit/src/main.rs` | Testkit workspace member |
 | `hurl/health.hurl` | Health-check hurl file |
-| `justfile` | Recipes: `generate`/`classify`/`doctor` (all pass `--mox-files model/<d>.mox` per domain), `api`, `e2e`, `full`, `clean` |
+| `justfile` | Recipes: `generate`/`classify`/`doctor` (all pass `--mox-files model/<d>.mox` per domain), `api`, `e2e`, `full`, `clean`. With `--rosetta`: recipes pass `--rosetta-files model/<d>.rosetta` instead |
 | `.gitignore` | Ignores `generated/` |
 | `README.md` | Getting-started readme (mox-first quickstart + layout) |
 | `.github/workflows/ci.yml` | CI workflow (generate job runs mox-first) |
@@ -738,6 +849,7 @@ Tera templates in `crates/codegraph-generate/templates/project/` (see
 | `--persistence-provider` | `sea_orm` | `sea_orm`/`cornucopia` |
 | `--deployment-topology` | `monolith` | `monolith`/`workers` |
 | `--grpc`, `--ifml` | off | Enable gRPC / IFML features in `profiles.toml` |
+| `--rosetta` | off | Rosetta-first scaffold: `model/<domain>.rosetta` starters (sigil parse+lower+resolve-verified before write) instead of `.mox`, `rosetta_backend = true` in `profiles.toml`, `rosetta_files` in the ops manifest, `--rosetta-files` justfile recipes. Rosetta types are auto-scored (no `entities` key either) |
 | `--no-ops` | off | Disable the ops generator/profile feature (testkit member still scaffolded) |
 | `--rev <sha>` | embedded rev | Codegraph git rev to pin |
 | `--codegraph-path <dir>` | none | Path deps to a local codegraph checkout |
@@ -752,6 +864,7 @@ Tera templates in `crates/codegraph-generate/templates/project/` (see
 | `--schemas` | optional | schemas dir contains JSON schema(s); absent + no `--mox-files` = hard failure, absent + mox files = info line (mox-first shape) |
 | `--classifier` | optional | classifier.toml parses; absent + JSON schemas present = hard failure, absent + no JSON schemas = info line |
 | `--profiles-config` | optional | profiles.toml parses + BuildPlan capability validation |
+| `--rosetta-files <file>` | repeatable | Each file sigil-verified (parse → lower → resolve; severity-Error diagnostics = hard failure). A namespace whose last segment matches no domains.toml key = WARN (generation silently drops it); `import <ns>.*` with no file among `--rosetta-files` and no matching domain key = WARN. Prints an INFO line with the embedded sigil rev (`rev::sigil_rev()`, WARN when unpinned) |
 
 Doctor's model-source matrix (zero warnings is the intentional mox-first
 new-project shape): schemas dir absent + mox files → INFO; schemas dir
@@ -770,10 +883,13 @@ path deps PASS as development mode), missing `psql`/`npx`/`hurl` tools.
 #### `codegraph add domain <name>`
 
 Appends a `[domains.<name>]` entry (label, schema_dir, postgres_schema) to
-`domains.toml` and creates `model/<name>.mox` from the shared starter
-template (`init/model_starter.rs`), compile-verified with the rex compiler
-before write. No `schemas/<name>/` directory is created. Rejects duplicate
-domain names.
+`domains.toml` and creates a starter model from the shared starter
+template (`init/model_starter.rs`), verified before write. Rosetta-first
+projects (`model/*.rosetta` present or `--rosetta`) get
+`model/<name>.rosetta` namespaced `{app_name}.{domain}`, sigil-verified
+(parse → lower → resolve); everything else gets `model/<name>.mox`
+compile-verified with the rex compiler. No `schemas/<name>/` directory is
+created. Rejects duplicate domain names.
 
 ### Hello-world TODO example
 

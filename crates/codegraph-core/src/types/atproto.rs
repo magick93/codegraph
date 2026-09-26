@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+/// An AT-Protocol repo namespace (authority + segment). Renamed from
+/// `NamespaceNode` (issue #267 collision resolution): the graph-wide
+/// namespace concept now owns the canonical `NamespaceNode` name; this type
+/// keeps its AT-Protocol semantics (persisted under the grafeo label
+/// `AtprotoNamespace`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct NamespaceNode {
+pub struct AtprotoNamespaceNode {
     pub authority: String,
     pub segment: String,
     pub domain: String,
@@ -39,13 +44,13 @@ mod tests {
 
     #[test]
     fn namespace_node_serialization_roundtrip() {
-        let node = NamespaceNode {
+        let node = AtprotoNamespaceNode {
             authority: "nz.gravy".to_string(),
             segment: "grants".to_string(),
             domain: "atproto".to_string(),
         };
         let json = serde_json::to_string(&node).unwrap();
-        let roundtripped: NamespaceNode = serde_json::from_str(&json).unwrap();
+        let roundtripped: AtprotoNamespaceNode = serde_json::from_str(&json).unwrap();
         assert_eq!(node, roundtripped);
     }
 
@@ -92,7 +97,7 @@ mod tests {
 
     #[test]
     fn namespace_node_default_has_empty_fields() {
-        let node = NamespaceNode::default();
+        let node = AtprotoNamespaceNode::default();
         assert_eq!(node.authority, "");
         assert_eq!(node.segment, "");
         assert_eq!(node.domain, "");

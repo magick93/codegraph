@@ -314,6 +314,7 @@ async fn build_child_dto(
             | Some(RefClassificationKind::RangeWrapper)
             | Some(RefClassificationKind::InlineEnum) => {
                 let fd = codegraph_core::types::resolve_field(c);
+                let len_ok = supports_garde_length(&c.rust_field_type);
                 child_fields.push(DtoField {
                     name: fd.rust_field_name.clone(),
                     rust_type: c.rust_field_type.clone(),
@@ -323,8 +324,8 @@ async fn build_child_dto(
                     render_strategy: "direct_column".to_string(),
                     is_entity_ref: false,
                     is_hierarchy_field: false,
-                    min_length: c.min_length,
-                    max_length: c.max_length,
+                    min_length: if len_ok { c.min_length } else { None },
+                    max_length: if len_ok { c.max_length } else { None },
                     minimum: c.minimum,
                     maximum: c.maximum,
                     pattern: c.pattern.clone(),
@@ -341,6 +342,7 @@ async fn build_child_dto(
                     )
                 {
                     let fd = codegraph_core::types::resolve_field(c);
+                    let len_ok = supports_garde_length(t);
                     child_fields.push(DtoField {
                         name: fd.rust_field_name.clone(),
                         rust_type: t.clone(),
@@ -350,8 +352,8 @@ async fn build_child_dto(
                         render_strategy: "direct_column".to_string(),
                         is_entity_ref: false,
                         is_hierarchy_field: false,
-                        min_length: c.min_length,
-                        max_length: c.max_length,
+                        min_length: if len_ok { c.min_length } else { None },
+                        max_length: if len_ok { c.max_length } else { None },
                         minimum: c.minimum,
                         maximum: c.maximum,
                         pattern: c.pattern.clone(),
@@ -719,6 +721,7 @@ pub async fn build_dto_context(
 
         let field_def = codegraph_core::types::resolve_field(prop);
         // Use field_def.rust_field_name for DTO field names
+        let len_ok = supports_garde_length(&rust_type);
 
         fields.push(DtoField {
             name: field_def.rust_field_name.clone(),
@@ -731,8 +734,8 @@ pub async fn build_dto_context(
             render_strategy: prop.render_strategy.clone(),
             is_entity_ref,
             is_hierarchy_field: hierarchy_field_name.as_deref() == Some(&field_def.rust_field_name),
-            min_length: prop.min_length,
-            max_length: prop.max_length,
+            min_length: if len_ok { prop.min_length } else { None },
+            max_length: if len_ok { prop.max_length } else { None },
             minimum: prop.minimum,
             maximum: prop.maximum,
             pattern: prop.pattern.clone(),
@@ -1001,11 +1004,24 @@ impl EntityGenerator for DtoGenerator {
             return Ok(Vec::new());
         }
 
+        // Issue #268 (namespace_layout): namespaced DTOs emit under
+        // `src/domain/{ns_dir}/{module}/` and register their types on the
+        // namespace-derived module path, so handler/import consumers
+        // resolve them there. Flat (gate off / namespace-less) keeps the
+        // domain-derived layout byte-identical.
+        let schema = db
+            .get_schema_in_domain(schema_title, domain)
+            .await?
+            .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
+        let ns_dir = crate::namespace_dir_prefix(schema.namespace.as_deref(), project);
+        let ns_rust = crate::namespace_rust_prefix(schema.namespace.as_deref(), project);
+        let domain_dir_segment = ns_dir.as_deref().unwrap_or(&ctx.domain);
+
         let base_dir = self
             .output_dir
             .join("src")
             .join("domain")
-            .join(&ctx.domain)
+            .join(domain_dir_segment)
             .join(&ctx.module_name);
 
         let mut files = Vec::new();
@@ -1034,12 +1050,25 @@ impl EntityGenerator for DtoGenerator {
 
         // Register all DTO types produced by this generator for cross-generator import resolution.
         let module_path = || -> Vec<String> {
-            vec![
-                "crate".into(),
-                "domain".into(),
-                ctx.domain.clone(),
-                ctx.module_name.clone(),
-            ]
+            // Issue #268: the registered path must match the emitted file
+            // location — namespace segments when gated, domain segment flat.
+            let base: Vec<String> = match &ns_rust {
+                Some(ns) => {
+                    let mut segs: Vec<String> = format!("crate::domain::{ns}")
+                        .split("::")
+                        .map(str::to_string)
+                        .collect();
+                    segs.push(ctx.module_name.clone());
+                    segs
+                }
+                None => vec![
+                    "crate".into(),
+                    "domain".into(),
+                    ctx.domain.clone(),
+                    ctx.module_name.clone(),
+                ],
+            };
+            base
         };
         type_registry::register_type(
             &format!("{}Response", ctx.entity_name),
@@ -1144,8 +1173,14 @@ impl DtoGenerator {
             .await?
             .ok_or_else(|| crate::error::Error::SchemaNotFound(schema_title.into()))?;
 
-        let entity_name = schema.rust_type_name;
-        let module_name = schema.pg_table_name;
+        // Issue #268: gated module dir + registered path segments must
+        // match the dto_response registration above.
+        let ns_dir = crate::namespace_dir_prefix(schema.namespace.as_deref(), project);
+        let ns_rust = crate::namespace_rust_prefix(schema.namespace.as_deref(), project);
+        let domain_dir_segment = ns_dir.clone().unwrap_or_else(|| domain.to_string());
+
+        let entity_name = schema.rust_type_name.clone();
+        let module_name = schema.pg_table_name.clone();
 
         let has_includes = !include_paths.is_empty();
         let has_dot_paths = include_paths.iter().any(|p| p.segments.len() > 1);
@@ -1167,20 +1202,38 @@ impl DtoGenerator {
         let enriched_types = build_enriched_types(db, domain, include_paths, &all_props).await?;
 
         // Register include DTO types for cross-generator import resolution.
-        register_include_types(&entity_name, domain, &module_name, include_paths);
+        register_include_types(
+            &entity_name,
+            domain,
+            &module_name,
+            include_paths,
+            ns_rust.as_deref(),
+        );
 
         // Collect all type names referenced by include fields for cross-entity import resolution.
         let mut ref_type_names = collect_ref_type_names(&include_fields, &enriched_types);
         // Also add framework types referenced by the template.
         ref_type_names.push(format!("{}LinkedResponse", entity_name));
         ref_type_names.push("Meta".into());
-        let caller_module: Vec<String> = vec![
-            "crate".into(),
-            "domain".into(),
-            domain.into(),
-            module_name.clone(),
-            "dto_included".into(),
-        ];
+        let caller_ns = ns_rust.clone();
+        let caller_module: Vec<String> = match &caller_ns {
+            Some(ns) => {
+                let mut segs: Vec<String> = format!("crate::domain::{ns}")
+                    .split("::")
+                    .map(str::to_string)
+                    .collect();
+                segs.push(module_name.clone());
+                segs.push("dto_included".into());
+                segs
+            }
+            None => vec![
+                "crate".into(),
+                "domain".into(),
+                domain.into(),
+                module_name.clone(),
+                "dto_included".into(),
+            ],
+        };
         let imports = type_registry::resolve_imports(&ref_type_names, &caller_module);
 
         // Collect codelist enum types referenced by compound DTO base fields.
@@ -1210,7 +1263,7 @@ impl DtoGenerator {
                 .output_dir
                 .join("src")
                 .join("domain")
-                .join(domain)
+                .join(domain_dir_segment)
                 .join(&module_name)
                 .join("dto_included.rs"),
             content,
@@ -1424,24 +1477,64 @@ fn dot_field_type(prop: &PropertyNode, is_optional: bool) -> String {
     }
 }
 
+/// True when the field's Rust type can carry garde `length` semantics
+/// (strings and collections — the types implementing garde's `Simple`
+/// length rule). `Option<...>` wrappers are unwrapped first: the DTO
+/// template validates inner values via `#[garde(inner(length(...)))]`.
+/// Without this gate, JSON `minLength` on e.g. a `format: date-time`
+/// property emits `#[garde(length(...))]` on a `chrono::DateTime<Utc>`
+/// field, which does not compile.
+fn supports_garde_length(rust_type: &str) -> bool {
+    let t = rust_type.trim();
+    let t = t
+        .strip_prefix("Option<")
+        .and_then(|s| s.strip_suffix('>'))
+        .map(str::trim)
+        .unwrap_or(t);
+    t.starts_with("String")
+        || t.starts_with("Vec<")
+        || t.starts_with("VecDeque<")
+        || t.contains("HashMap<")
+        || t.contains("BTreeMap<")
+        || t.contains("HashSet<")
+        || t.contains("BTreeSet<")
+        || t.contains("LinkedList<")
+        || t.contains("BinaryHeap<")
+}
+
+#[allow(clippy::too_many_arguments)]
 fn register_include_types(
     entity_name: &str,
     domain: &str,
     module_name: &str,
     include_paths: &[ResolvedIncludePath],
+    ns_rust: Option<&str>,
 ) {
-    let module_path: Vec<String> = vec![
-        "crate".into(),
-        "domain".into(),
-        domain.into(),
-        module_name.to_string(),
-        "dto_included".into(),
-    ];
+    // Issue #268: this entity's OWN module registrations follow its
+    // namespace-derived path under namespace_layout; cross-target
+    // registrations (single-segment paths resolving to the TARGET entity's
+    // dto_response module) stay domain-flat — correct whenever the target
+    // is namespace-less; fully-namespaced include targets are a #268
+    // follow-up (they need the target's namespace at include-path
+    // resolution time).
+    let own_ns: Vec<String> = match ns_rust {
+        Some(ns) => format!("crate::domain::{ns}")
+            .split("::")
+            .map(str::to_string)
+            .collect(),
+        None => vec!["crate".into(), "domain".into(), domain.into()],
+    };
+    let mut own_path = own_ns.clone();
+    own_path.push(module_name.to_string());
+    own_path.push("dto_included".into());
+    let mut own_response_path = own_ns;
+    own_response_path.push(module_name.to_string());
+    own_response_path.push("dto_response".into());
     type_registry::register_type(
         &format!("{}WithIncludeResponse", entity_name),
-        module_path.clone(),
+        own_path.clone(),
     );
-    type_registry::register_type(&format!("{}IncludedData", entity_name), module_path);
+    type_registry::register_type(&format!("{}IncludedData", entity_name), own_path.clone());
     for path in include_paths {
         let type_name = if path.segments.len() > 1 {
             format!("{}CombinedResponse", path.segments[0].entity_name)
@@ -1462,13 +1555,7 @@ fn register_include_types(
                 if path.segments[0].child_table_override.is_some() {
                     // This entity's dto_response module, where its
                     // child DTOs are registered.
-                    vec![
-                        "crate".into(),
-                        "domain".into(),
-                        domain.into(),
-                        module_name.to_string(),
-                        "dto_response".into(),
-                    ]
+                    own_response_path.clone()
                 } else {
                     let seg = &path.segments[0];
                     vec![
@@ -1480,13 +1567,7 @@ fn register_include_types(
                     ]
                 }
             }
-            _ => vec![
-                "crate".into(),
-                "domain".into(),
-                domain.into(),
-                module_name.to_string(),
-                "dto_included".into(),
-            ],
+            _ => own_path.clone(),
         };
         type_registry::register_type(&type_name, defining_module);
     }

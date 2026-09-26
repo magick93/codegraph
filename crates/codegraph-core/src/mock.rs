@@ -46,7 +46,15 @@ pub struct MockEngine {
     op_interaction: Mutex<HashMap<String, String>>,
     interaction_endpoint: Mutex<HashMap<String, String>>,
     resource_operations: Mutex<HashMap<String, Vec<String>>>,
-    namespaces: Mutex<HashMap<String, NamespaceNode>>,
+    atproto_namespaces: Mutex<HashMap<String, AtprotoNamespaceNode>>,
+    /// Graph-wide namespaces keyed by fqn (issue #267).
+    type_namespaces: Mutex<HashMap<String, NamespaceNode>>,
+    /// NamespaceImports edges (issue #267).
+    namespace_imports: Mutex<Vec<NamespaceImport>>,
+    /// InNamespace edges: schema_id → namespace fqn (issue #267).
+    schema_in_namespace: Mutex<HashMap<String, String>>,
+    /// NamespaceParent edges: (child fqn, parent fqn) (issue #267).
+    namespace_parent_edges: Mutex<Vec<(String, String)>>,
     lexicons: Mutex<HashMap<String, LexiconNode>>,
     collections: Mutex<HashMap<String, CollectionNode>>,
     repositories: Mutex<HashMap<String, RepositoryNode>>,
@@ -68,6 +76,19 @@ pub struct MockEngine {
     capabilities: Mutex<HashMap<String, CapabilityNode>>,
     grants: Mutex<Vec<GrantEdge>>,
     actor_policy: Mutex<Option<ActorPolicyNode>>,
+    conditions: Mutex<Vec<ConditionNode>>,
+    regulatory: Mutex<Vec<RegulatoryNode>>,
+    regulatory_refs: Mutex<Vec<RegulatoryRefRecord>>,
+    functions: Mutex<Vec<FunctionNode>>,
+    /// `(child, parent)` FunctionExtends edges (resolved at ingest time).
+    function_extends: Mutex<Vec<(String, String)>>,
+    rules: Mutex<Vec<RuleNode>>,
+    /// `(rule name, schema title)` RuleAppliesTo edges (resolved at ingest
+    /// time).
+    rule_applies_to: Mutex<Vec<(String, String)>>,
+    /// RuleReference bindings from rule-source classes (resolved at ingest
+    /// time).
+    rule_refs: Mutex<Vec<RuleRefRecord>>,
     start_time: Instant,
 }
 
@@ -104,7 +125,11 @@ impl MockEngine {
             op_interaction: Mutex::new(HashMap::new()),
             interaction_endpoint: Mutex::new(HashMap::new()),
             resource_operations: Mutex::new(HashMap::new()),
-            namespaces: Mutex::new(HashMap::new()),
+            atproto_namespaces: Mutex::new(HashMap::new()),
+            type_namespaces: Mutex::new(HashMap::new()),
+            namespace_imports: Mutex::new(Vec::new()),
+            schema_in_namespace: Mutex::new(HashMap::new()),
+            namespace_parent_edges: Mutex::new(Vec::new()),
             lexicons: Mutex::new(HashMap::new()),
             collections: Mutex::new(HashMap::new()),
             repositories: Mutex::new(HashMap::new()),
@@ -125,6 +150,14 @@ impl MockEngine {
             capabilities: Mutex::new(HashMap::new()),
             grants: Mutex::new(Vec::new()),
             actor_policy: Mutex::new(None),
+            conditions: Mutex::new(Vec::new()),
+            regulatory: Mutex::new(Vec::new()),
+            regulatory_refs: Mutex::new(Vec::new()),
+            functions: Mutex::new(Vec::new()),
+            function_extends: Mutex::new(Vec::new()),
+            rules: Mutex::new(Vec::new()),
+            rule_applies_to: Mutex::new(Vec::new()),
+            rule_refs: Mutex::new(Vec::new()),
             start_time: Instant::now(),
         }
     }
@@ -134,6 +167,27 @@ impl MockEngine {
             .lock()
             .unwrap()
             .insert(schema_title.to_string(), lexicon_nsid.to_string());
+    }
+
+    /// The namespace `fqn` plus, when `recursive`, all its descendant
+    /// namespaces (via NamespaceParent edges) — the set of namespaces whose
+    /// schemas `list_schemas_by_namespace` returns.
+    fn namespace_closure(&self, fqn: &str, recursive: bool) -> Vec<String> {
+        let mut wanted: Vec<String> = vec![fqn.to_string()];
+        if recursive {
+            let edges = self.namespace_parent_edges.lock().unwrap();
+            // Walk down from fqn: children are edges (child → parent).
+            let mut frontier: Vec<String> = vec![fqn.to_string()];
+            while let Some(current) = frontier.pop() {
+                for (child, parent) in edges.iter() {
+                    if parent == &current && !wanted.contains(child) {
+                        wanted.push(child.clone());
+                        frontier.push(child.clone());
+                    }
+                }
+            }
+        }
+        wanted
     }
 
     pub fn builder() -> MockEngineBuilder {
@@ -655,6 +709,60 @@ impl GraphIngestor for MockEngine {
                     .unwrap()
                     .insert(strip_ifml_prefix(from_id).to_string(), to_id.to_string());
             }
+            EdgeType::FunctionExtends => {
+                self.function_extends
+                    .lock()
+                    .unwrap()
+                    .push((from_id.to_string(), to_id.to_string()));
+            }
+            EdgeType::RuleAppliesTo => {
+                self.rule_applies_to
+                    .lock()
+                    .unwrap()
+                    .push((from_id.to_string(), to_id.to_string()));
+            }
+            EdgeType::RuleReference => {
+                let props = props.cloned().unwrap_or_default();
+                self.rule_refs.lock().unwrap().push(RuleRefRecord {
+                    schema_title: from_id.to_string(),
+                    attribute: props.ref_path.unwrap_or_default(),
+                    rule: to_id.to_string(),
+                    rule_source: props.rule_source.unwrap_or_default(),
+                });
+            }
+            // Namespace plane (issue #267): InNamespace links a Schema (by
+            // schema_id) to a Namespace (by fqn).
+            EdgeType::InNamespace => {
+                // The AT-Protocol projection also uses InNamespace (Lexicon
+                // nsid → AtprotoNamespace authority); those edges carry no
+                // schema-side meaning here and are ignored.
+                if let Some(ns) = self.type_namespaces.lock().unwrap().get(to_id).cloned() {
+                    self.schema_in_namespace
+                        .lock()
+                        .unwrap()
+                        .insert(from_id.to_string(), ns.fqn);
+                }
+            }
+            EdgeType::NamespaceParent => {
+                self.namespace_parent_edges
+                    .lock()
+                    .unwrap()
+                    .push((from_id.to_string(), to_id.to_string()));
+            }
+            EdgeType::NamespaceImports => {
+                let props = props.cloned().unwrap_or_default();
+                self.namespace_imports
+                    .lock()
+                    .unwrap()
+                    .push(NamespaceImport {
+                        from_ns: from_id.to_string(),
+                        to_ns: to_id.to_string(),
+                        wildcard: props.import_wildcard.unwrap_or(false),
+                        alias: props.import_alias,
+                    });
+            }
+            // Derived, never ingested (issue #267).
+            EdgeType::NamespaceDepends => {}
             _ => {}
         }
         Ok(())
@@ -717,13 +825,35 @@ impl GraphIngestor for MockEngine {
         Ok(id)
     }
 
-    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError> {
+    async fn ingest_atproto_namespace(
+        &self,
+        node: &AtprotoNamespaceNode,
+    ) -> Result<String, GraphError> {
         let authority = node.authority.clone();
-        self.namespaces
+        self.atproto_namespaces
             .lock()
             .unwrap()
             .insert(authority.clone(), node.clone());
         Ok(authority)
+    }
+
+    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError> {
+        self.type_namespaces
+            .lock()
+            .unwrap()
+            .insert(node.fqn.clone(), node.clone());
+        if let Some(parent) = &node.parent {
+            self.namespace_parent_edges
+                .lock()
+                .unwrap()
+                .push((node.fqn.clone(), parent.clone()));
+        }
+        Ok(node.fqn.clone())
+    }
+
+    async fn ingest_namespace_import(&self, import: &NamespaceImport) -> Result<(), GraphError> {
+        self.namespace_imports.lock().unwrap().push(import.clone());
+        Ok(())
     }
 
     async fn ingest_lexicon(&self, node: &LexiconNode) -> Result<String, GraphError> {
@@ -867,6 +997,66 @@ impl GraphIngestor for MockEngine {
             .lock()
             .unwrap()
             .insert(t.name.clone(), t.clone());
+        Ok(())
+    }
+
+    async fn ingest_condition(&self, node: &ConditionNode) -> Result<(), GraphError> {
+        self.conditions.lock().unwrap().push(node.clone());
+        Ok(())
+    }
+
+    async fn ingest_regulatory(&self, node: &RegulatoryNode) -> Result<(), GraphError> {
+        self.regulatory.lock().unwrap().push(node.clone());
+        Ok(())
+    }
+
+    async fn ingest_regulatory_reference(
+        &self,
+        owner: &RegulatoryOwner,
+        target: &str,
+        target_kind: RegulatoryKind,
+        edge_kind: RegulatoryEdgeKind,
+        ref_path: Option<&str>,
+    ) -> Result<(), GraphError> {
+        // Best-effort, mirroring the GQL MATCH semantics: no target node,
+        // no edge.
+        let known = self
+            .regulatory
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|n| n.name == target && n.kind == target_kind);
+        if !known {
+            return Ok(());
+        }
+        let (owner_name, owner_label) = match owner {
+            RegulatoryOwner::Schema(title) => (title.clone(), "Schema".to_string()),
+            RegulatoryOwner::Condition(name) => (name.clone(), "Condition".to_string()),
+            RegulatoryOwner::Regulatory { name, .. } => (name.clone(), "Regulatory".to_string()),
+            RegulatoryOwner::Function(name) => (name.clone(), "Function".to_string()),
+            RegulatoryOwner::Rule(name) => (name.clone(), "Rule".to_string()),
+        };
+        self.regulatory_refs
+            .lock()
+            .unwrap()
+            .push(RegulatoryRefRecord {
+                owner: owner_name,
+                owner_label,
+                target: target.to_string(),
+                target_kind,
+                edge_kind,
+                ref_path: ref_path.map(str::to_string),
+            });
+        Ok(())
+    }
+
+    async fn ingest_function(&self, node: &FunctionNode) -> Result<(), GraphError> {
+        self.functions.lock().unwrap().push(node.clone());
+        Ok(())
+    }
+
+    async fn ingest_rule(&self, node: &RuleNode) -> Result<(), GraphError> {
+        self.rules.lock().unwrap().push(node.clone());
         Ok(())
     }
 
@@ -1431,8 +1621,83 @@ impl GraphQuerier for MockEngine {
             .collect())
     }
 
-    async fn get_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
-        Ok(self.namespaces.lock().unwrap().values().cloned().collect())
+    async fn get_atproto_namespaces(&self) -> Result<Vec<AtprotoNamespaceNode>, GraphError> {
+        let mut nodes: Vec<AtprotoNamespaceNode> = self
+            .atproto_namespaces
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        nodes.sort_by(|a, b| a.authority.cmp(&b.authority));
+        Ok(nodes)
+    }
+
+    // ── Namespace plane query methods (issue #267) ────────────────────
+
+    async fn list_namespaces(&self) -> Result<Vec<NamespaceNode>, GraphError> {
+        let mut nodes: Vec<NamespaceNode> = self
+            .type_namespaces
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        nodes.sort_by(|a, b| a.fqn.cmp(&b.fqn));
+        Ok(nodes)
+    }
+
+    async fn list_schemas_by_namespace(
+        &self,
+        fqn: &str,
+        recursive: bool,
+    ) -> Result<Vec<SchemaNode>, GraphError> {
+        let wanted = self.namespace_closure(fqn, recursive);
+        // The mock's schema map is title-keyed, so schema_id → fqn mappings
+        // resolve through a value scan.
+        let mapping = self.schema_in_namespace.lock().unwrap();
+        let schemas = self.schemas.lock().unwrap();
+        let mut out: Vec<SchemaNode> = mapping
+            .iter()
+            .filter(|(_, ns)| wanted.contains(ns))
+            .filter_map(|(schema_id, _)| {
+                schemas
+                    .values()
+                    .find(|s| &s.schema_id == schema_id)
+                    .cloned()
+            })
+            .collect();
+        out.sort_by(|a, b| a.schema_id.cmp(&b.schema_id));
+        Ok(out)
+    }
+
+    async fn get_namespace_imports(&self, fqn: &str) -> Result<Vec<NamespaceImport>, GraphError> {
+        let mut imports: Vec<NamespaceImport> = self
+            .namespace_imports
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|i| i.from_ns == fqn)
+            .cloned()
+            .collect();
+        imports.sort_by(|a, b| (&a.to_ns, &a.alias).cmp(&(&b.to_ns, &b.alias)));
+        Ok(imports)
+    }
+
+    async fn namespace_generation_order(&self) -> Result<Vec<String>, GraphError> {
+        let fqns: Vec<String> = self
+            .type_namespaces
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        let imports = self.namespace_imports.lock().unwrap();
+        let pairs: Vec<(String, String)> = imports
+            .iter()
+            .map(|i| (i.from_ns.clone(), i.to_ns.clone()))
+            .collect();
+        topological_namespace_order(&fqns, &pairs).map_err(GraphError::Query)
     }
 
     #[allow(unused_variables)]
@@ -1671,5 +1936,83 @@ impl GraphQuerier for MockEngine {
         let actors: Vec<ActorNode> = self.actors.lock().unwrap().values().cloned().collect();
         let grants = self.grants.lock().unwrap().clone();
         Ok(resolve_effective_permits(&actors, &grants, actor))
+    }
+
+    // ── Constraint plane queries (issue #261) ─────────────────────────
+
+    async fn get_conditions_for_schema(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<ConditionNode>, GraphError> {
+        let mut nodes: Vec<ConditionNode> = self
+            .conditions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.owner_title == schema_title)
+            .cloned()
+            .collect();
+        nodes.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(nodes)
+    }
+
+    async fn list_conditions(&self) -> Result<Vec<ConditionNode>, GraphError> {
+        let mut nodes: Vec<ConditionNode> = self.conditions.lock().unwrap().clone();
+        nodes.sort_by(|a, b| (&a.owner_title, &a.name).cmp(&(&b.owner_title, &b.name)));
+        Ok(nodes)
+    }
+
+    // ── Regulatory reference plane queries (issue #265) ───────────────
+
+    async fn list_regulatory(&self) -> Result<Vec<RegulatoryNode>, GraphError> {
+        let mut nodes: Vec<RegulatoryNode> = self.regulatory.lock().unwrap().clone();
+        nodes.sort_by(|a, b| (a.kind.as_str(), &a.name).cmp(&(b.kind.as_str(), &b.name)));
+        Ok(nodes)
+    }
+
+    async fn list_regulatory_references(&self) -> Result<Vec<RegulatoryRefRecord>, GraphError> {
+        let mut records: Vec<RegulatoryRefRecord> = self.regulatory_refs.lock().unwrap().clone();
+        records.sort_by(|a, b| (&a.owner, &a.target).cmp(&(&b.owner, &b.target)));
+        Ok(records)
+    }
+
+    // ── Computation plane queries (issue #263) ─────────────────────────
+
+    async fn list_functions(&self) -> Result<Vec<FunctionNode>, GraphError> {
+        let mut nodes: Vec<FunctionNode> = self.functions.lock().unwrap().clone();
+        nodes.sort_by(|a, b| (&a.domain, &a.name).cmp(&(&b.domain, &b.name)));
+        Ok(nodes)
+    }
+
+    async fn list_function_extends(&self) -> Result<Vec<(String, String)>, GraphError> {
+        let mut edges: Vec<(String, String)> = self.function_extends.lock().unwrap().clone();
+        edges.sort();
+        Ok(edges)
+    }
+
+    // ── Rule plane queries (issue #264) ────────────────────────────────
+
+    async fn list_rules(&self) -> Result<Vec<RuleNode>, GraphError> {
+        let mut nodes: Vec<RuleNode> = self.rules.lock().unwrap().clone();
+        nodes.sort_by(|a, b| (&a.domain, &a.name).cmp(&(&b.domain, &b.name)));
+        Ok(nodes)
+    }
+
+    async fn list_rule_applies_to(&self) -> Result<Vec<(String, String)>, GraphError> {
+        let mut edges: Vec<(String, String)> = self.rule_applies_to.lock().unwrap().clone();
+        edges.sort();
+        Ok(edges)
+    }
+
+    async fn list_rule_references(&self) -> Result<Vec<RuleRefRecord>, GraphError> {
+        let mut records: Vec<RuleRefRecord> = self.rule_refs.lock().unwrap().clone();
+        records.sort_by(|a, b| {
+            (&a.rule_source, &a.schema_title, &a.attribute).cmp(&(
+                &b.rule_source,
+                &b.schema_title,
+                &b.attribute,
+            ))
+        });
+        Ok(records)
     }
 }

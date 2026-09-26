@@ -14,6 +14,7 @@ fn test_domain_config() -> codegraph_config::DomainConfig {
 
 fn mock_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "recruiting/json/CandidateType.json".to_string(),
         title: "CandidateType".to_string(),
         description: None,
@@ -41,6 +42,7 @@ fn mock_schema() -> SchemaNode {
 
 fn make_entity_schema(title: &str, domain: &str) -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: format!("{domain}/json/{title}.json"),
         title: title.to_string(),
         description: None,
@@ -75,6 +77,8 @@ fn make_entity_ref_property(name: &str, ref_target: &str) -> PropertyNode {
         is_required: false,
         is_nullable: false,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -607,6 +611,8 @@ async fn mock_engine_does_not_produce_phantom_fk_for_array_entity_ref() {
         is_required: false,
         is_nullable: false,
         is_array: true,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,

@@ -37,6 +37,34 @@ ifml_design_system = ""            # built-in IFML component pack ("" = none, e.
 # add "policy_rls" to an [api] generators list; emits 020000_policy_rls.sql
 # (Postgres only; sqlite is a no-op). Off = byte-identical output.
 rls_from_policy = false
+# Namespace-aware module layout (issue #268). When true, schemas that
+# carry a namespace (from mox `package`, rosetta `namespace`, or JSON
+# `$id`/`$namespace` inference) emit under namespace-derived module paths
+# (`cdm.base.datetime` → `cdm/base/datetime/...`) for the entity/DTO/db
+# module outputs. Default OFF = flat domain layout, byte-identical output.
+namespace_layout = false
+# Constraint-plane validations (issue #261). When true, add
+# "condition_validations" to an [api] generators list; emits per-domain
+# src/domain/<domain>/validations.rs from array minItems/maxItems and the
+# rosetta ConditionNode graph family (TODO(#262) transpile markers). Off =
+# byte-identical output.
+# Same gate also enables "regulatory_reports" (issue #265): add it to an
+# [api] generators list to emit per-domain src/domain/<domain>/
+# regulatory_reports.rs report skeletons from the rosetta RegulatoryNode
+# family (TODO(#263)/TODO(#264) seams). Off = byte-identical output.
+# Same gate also enables "functions" (issue #263): add it to an [api]
+# generators list to emit per-domain src/domain/<domain>/functions.rs —
+# rosetta func elements as Rust free functions (transpiled set/add
+# operations, aliases as let-bindings, dispatch heads as match). Pair it
+# with function_postconditions = true to emit post-condition
+# `debug_assert!` checks (default OFF = absent).
+# Same gate also enables "rules" (issue #264): add it to an [api]
+# generators list to emit per-domain src/domain/<domain>/rules.rs —
+# reporting rules as computed-field functions attached to their input
+# entity (transpiled bodies, TODO(#264) markers where untranspilable) and
+# eligibility rules as endpoint guards naming the ApiOperations they gate.
+rosetta_backend = false
+function_postconditions = false
 
 [profiles.default.api]
 generators = [

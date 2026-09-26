@@ -15,6 +15,7 @@ use codegraph_type_contracts::RefClassificationKind;
 pub fn mock_engine_with_candidate() -> MockEngine {
     MockEngine::builder()
         .with_schema(SchemaNode {
+            namespace: None,
             schema_id: "candidate".into(),
             title: "CandidateType".into(),
             description: Some("A job candidate".into()),
@@ -49,6 +50,8 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     is_required: true,
                     is_nullable: false,
                     is_array: false,
+                    min_items: None,
+                    max_items: None,
                     pattern: None,
                     min_length: None,
                     max_length: None,
@@ -77,6 +80,8 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     is_required: true,
                     is_nullable: false,
                     is_array: false,
+                    min_items: None,
+                    max_items: None,
                     pattern: None,
                     min_length: None,
                     max_length: None,
@@ -105,6 +110,8 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     is_required: true,
                     is_nullable: false,
                     is_array: false,
+                    min_items: None,
+                    max_items: None,
                     pattern: None,
                     min_length: None,
                     max_length: None,
@@ -133,6 +140,8 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     is_required: true,
                     is_nullable: false,
                     is_array: false,
+                    min_items: None,
+                    max_items: None,
                     pattern: None,
                     min_length: None,
                     max_length: None,
@@ -194,6 +203,7 @@ pub fn domain_config() -> DomainConfig {
     );
 
     DomainConfig {
+        namespaces: HashMap::new(),
         defaults: DefaultsConfig {
             operations: vec![
                 "create".into(),

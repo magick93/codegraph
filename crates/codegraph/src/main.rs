@@ -62,18 +62,20 @@ async fn main() -> codegraph::error::Result<()> {
             domain,
             format,
             mox_files,
+            rosetta_files,
         } => {
             let format = match format {
                 cli::ClassifyFormat::Table => codegraph::driver::ClassifyFormat::Table,
                 cli::ClassifyFormat::Json => codegraph::driver::ClassifyFormat::Json,
             };
             codegraph::driver::classify(
-                Some(&schemas),
-                Some(&classifier),
+                schemas.as_deref(),
+                classifier.as_deref(),
                 &config,
                 domain.as_deref(),
                 format,
                 &mox_files,
+                &rosetta_files,
             )
             .await
         }
@@ -91,6 +93,7 @@ async fn main() -> codegraph::error::Result<()> {
             ifml_files,
             openapi_files,
             mox_files,
+            rosetta_files,
             ifml_framework,
             ifml_components,
             ifml_design_system,
@@ -109,6 +112,7 @@ async fn main() -> codegraph::error::Result<()> {
                 ifml_files: &ifml_files,
                 openapi_files: &openapi_files,
                 mox_files: &mox_files,
+                rosetta_files: &rosetta_files,
                 ifml_framework: &ifml_framework,
                 ifml_components: ifml_components.as_deref(),
                 ifml_design_system: ifml_design_system.as_deref(),
@@ -194,6 +198,7 @@ async fn main() -> codegraph::error::Result<()> {
             deployment_topology,
             grpc,
             ifml,
+            rosetta,
             no_ops,
             rev,
             codegraph_path,
@@ -210,6 +215,7 @@ async fn main() -> codegraph::error::Result<()> {
                 grpc,
                 ifml,
                 ops: !no_ops,
+                rosetta,
                 rev,
                 codegraph_path,
                 force,
@@ -223,6 +229,7 @@ async fn main() -> codegraph::error::Result<()> {
             classifier,
             profiles_config,
             mox_files,
+            rosetta_files,
         } => {
             let args = codegraph::init::commands::DoctorArgs {
                 config,
@@ -230,6 +237,7 @@ async fn main() -> codegraph::error::Result<()> {
                 classifier,
                 profiles_config,
                 mox_files,
+                rosetta_files,
             };
             codegraph::init::commands::cmd_doctor(&args).map(|summary| {
                 println!(
@@ -239,9 +247,11 @@ async fn main() -> codegraph::error::Result<()> {
             })
         }
         cli::Commands::Add { target } => match target {
-            cli::AddTarget::Domain { name } => {
-                codegraph::init::commands::cmd_add_domain(&PathBuf::from("domains.toml"), &name)
-            }
+            cli::AddTarget::Domain { name, rosetta } => codegraph::init::commands::cmd_add_domain(
+                &PathBuf::from("domains.toml"),
+                &name,
+                rosetta,
+            ),
         },
     }
 }

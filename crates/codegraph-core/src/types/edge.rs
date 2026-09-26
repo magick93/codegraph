@@ -71,6 +71,39 @@ pub enum EdgeType {
 
     // Authorization metamodel edge types
     Grant,
+
+    // Constraint plane edge types (issue #261)
+    HasCondition,
+
+    // Regulatory reference plane edge types (issue #265). Created through
+    // `GraphIngestor::ingest_regulatory_reference`, not `ingest_edge`.
+    RegulatoryReference,
+    HasRuleSource,
+    CorpusInBody,
+    DerivesFrom,
+
+    // Computation plane edge types (issue #263). `FunctionExtends`
+    // (Function → Function) is written by `ingest_function` from the
+    // resolved `extends` ref; there is no `HasFunction` owner edge — sigil
+    // functions are namespace-level, not schema-owned.
+    FunctionExtends,
+
+    // Rule plane edge types (issue #264). `RuleAppliesTo` (Rule → Schema)
+    // attaches a rule to its `from` input type; `RuleReference`
+    // (Schema → Rule, `ref_path` = attribute, `rule_source` = source name)
+    // promotes a resolvable `[ruleReference R]` on a rule-source class
+    // attribute to a real edge.
+    RuleAppliesTo,
+    RuleReference,
+
+    // Namespace plane edge types (issue #267). `InNamespace` (above, shared
+    // with the AT-Protocol line) links Schema → Namespace;
+    // `NamespaceParent` links a child namespace to its parent;
+    // `NamespaceImports` carries the wildcard/alias payload;
+    // `NamespaceDepends` is derived (through the domain depends_on plane).
+    NamespaceParent,
+    NamespaceImports,
+    NamespaceDepends,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -98,4 +131,13 @@ pub struct EdgeProperties {
     pub when_expr: Option<String>,
     /// Pre-serialized JSON array of obligation names for Grant edges.
     pub obligations: Option<String>,
+    /// The rule source expressing a `RuleReference` edge binding (issue
+    /// #264).
+    pub rule_source: Option<String>,
+    /// Wildcard flag for a `NamespaceImports` edge (issue #267):
+    /// `Some(true)` = `import <ns>.*`.
+    pub import_wildcard: Option<bool>,
+    /// Alias for a `NamespaceImports` edge (issue #267):
+    /// `import <ns> as alias`.
+    pub import_alias: Option<String>,
 }

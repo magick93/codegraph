@@ -116,7 +116,9 @@ impl RepositoryImplEmitter {
             wln!(code, "                workflow_state: None,");
         }
         wln!(code, "                created_at: row.created_at,");
-        wln!(code, "                updated_at: row.updated_at,");
+        if !tree.append_only {
+            wln!(code, "                updated_at: row.updated_at,");
+        }
         wln!(code, "                ..Default::default()");
         if has_tree_include {
             wln!(code, "            }}).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Serialization error: {{e}}\").into() }})?;");
@@ -522,7 +524,9 @@ impl RepositoryImplEmitter {
                 is_nullable,
             );
             wln!(code, "                created_at: row.created_at,");
-            wln!(code, "                updated_at: row.updated_at,");
+            if !target_tree.is_some_and(|t| t.append_only) {
+                wln!(code, "                updated_at: row.updated_at,");
+            }
             if !hydration_children.is_empty() {
                 emit_child_field_population(code, hydration_children, "                ");
             }
@@ -753,7 +757,9 @@ impl RepositoryImplEmitter {
                 is_nullable,
             );
             wln!(code, "                created_at: row.created_at,");
-            wln!(code, "                updated_at: row.updated_at,");
+            if !target_tree.is_some_and(|t| t.append_only) {
+                wln!(code, "                updated_at: row.updated_at,");
+            }
             if !hydration_children.is_empty() {
                 emit_child_field_population(code, hydration_children, "                ");
             }
@@ -832,7 +838,9 @@ impl RepositoryImplEmitter {
                 is_nullable,
             );
             wln!(code, "                created_at: t.created_at,");
-            wln!(code, "                updated_at: t.updated_at,");
+            if !target_tree.is_some_and(|t2| t2.append_only) {
+                wln!(code, "                updated_at: t.updated_at,");
+            }
             if !hydration_children.is_empty() {
                 emit_child_field_population(code, hydration_children, "                ");
             }

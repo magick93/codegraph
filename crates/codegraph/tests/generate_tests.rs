@@ -21,6 +21,7 @@ fn mock_schema(
 ) -> SchemaNode {
     let rust_type_name = title.replace("Type", "");
     SchemaNode {
+        namespace: None,
         schema_id: schema_id.to_string(),
         title: title.to_string(),
         description: None,
@@ -56,6 +57,8 @@ fn mock_properties() -> Vec<PropertyNode> {
             is_required: true,
             is_nullable: false,
             is_array: false,
+            min_items: None,
+            max_items: None,
             pattern: None,
             min_length: None,
             max_length: None,
@@ -84,6 +87,8 @@ fn mock_properties() -> Vec<PropertyNode> {
             is_required: false,
             is_nullable: true,
             is_array: false,
+            min_items: None,
+            max_items: None,
             pattern: None,
             min_length: None,
             max_length: None,
@@ -309,6 +314,7 @@ entities = []
 async fn test_generation_ordering_excludes_inline_def_schemas() {
     // Build an inline-def schema (parent_schema is set — like #/definitions/AssessmentScoreType)
     let inline_schema = SchemaNode {
+        namespace: None,
         schema_id: "assessments/json/ReportType.json#/definitions/AssessmentScoreType".into(),
         title: "AssessmentScoreType".into(),
         description: None,
@@ -633,6 +639,8 @@ fn prop(
         is_required: required,
         is_nullable: !required,
         is_array,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -846,6 +854,7 @@ async fn snapshot_repository_emitter_structured_wrapper() {
 async fn snapshot_repository_emitter_child_tables() {
     // Create a ValueObject child schema
     let child_schema = SchemaNode {
+        namespace: None,
         schema_id: "recruiting/json/PersonNameType.json".to_string(),
         title: "PersonNameType".to_string(),
         description: None,
@@ -1709,6 +1718,8 @@ fn prop_split(
         is_required: required,
         is_nullable: !required,
         is_array,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -2676,6 +2687,8 @@ async fn generate_policy_driven_entity_with_soft_delete() {
                 is_required: true,
                 is_nullable: false,
                 is_array: false,
+                min_items: None,
+                max_items: None,
                 pattern: None,
                 min_length: None,
                 max_length: None,
@@ -2817,6 +2830,8 @@ async fn generate_policy_driven_ddl_with_soft_delete() {
                 is_required: true,
                 is_nullable: false,
                 is_array: false,
+                min_items: None,
+                max_items: None,
                 pattern: None,
                 min_length: None,
                 max_length: None,

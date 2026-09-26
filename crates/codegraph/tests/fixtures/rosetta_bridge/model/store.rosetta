@@ -1,0 +1,103 @@
+namespace rosetta.fixture.store
+version "1.0.0"
+
+import rosetta.fixture.partners.*
+
+type OrderType:
+	id string (1..1) [metadata id]
+	label string (0..1)
+	total number (1..1)
+	placedOn dateTime (0..1)
+	tags string (0..*)
+	customer CustomerType (1..1)
+	status OrderStatus (1..1)
+	partner PartnerType (0..1)
+
+	condition PositiveTotal: total > 0
+
+type CustomerType:
+	customerId string (1..1)
+	name string (1..1)
+
+type PriorityOrderType extends OrderType:
+	priorityLevel int (0..1)
+	override label string (1..1)
+
+enum OrderStatus:
+	Draft
+	Approved displayName "Approved"
+	Shipped
+
+enum Urgency extends OrderStatus:
+	Rush
+
+choice OrderKind:
+	OrderType
+	CustomerType
+
+func OrderScore: <"a simple derived value with an alias and a post-condition">
+	[enrich]
+	inputs:
+		order OrderType (1..1)
+	output:
+		result number (1..1)
+
+	alias base: order -> total
+
+	set result:
+		base + order -> total
+
+	add result:
+		order -> tags count
+
+	post-condition ResultPresent: <"the result is present">
+		result exists
+
+func ValueForStatus(status: OrderStatus->Draft):
+	inputs:
+		order OrderType (1..1)
+		status OrderStatus (1..1)
+	output:
+		result number (1..1)
+
+	set result:
+		1.0
+
+func ShippedValue(status: OrderStatus->Shipped) extends ValueForStatus:
+	inputs:
+		order OrderType (1..1)
+		status OrderStatus (1..1)
+	output:
+		result number (1..1)
+
+	alias net: order -> total
+
+	set result:
+		net * 2.0
+
+func ApprovedValue(status: OrderStatus->Approved) extends ValueForStatus:
+	inputs:
+		order OrderType (1..1)
+		status OrderStatus (1..1)
+	output:
+		result number (1..1)
+
+	set result:
+		order -> total
+
+reporting rule HighValueTotal from OrderType: <"orders above the reporting threshold">
+	total > 100.0
+
+reporting rule TierForTotal from OrderType: <"the reporting tier">
+	status switch
+		Draft then 1,
+		default 0
+
+eligibility rule EligibleOrder from OrderType: <"orders that may be reported">
+	total > 0.0 and label exists
+
+rule source StoreSource {
+	OrderType:
+		+ total [ruleReference HighValueTotal]
+		+ label
+}

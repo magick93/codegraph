@@ -18,6 +18,7 @@ pub fn indexed_properties() -> Vec<&'static str> {
         "_codelist_name",
         "nsid",
         "authority",
+        "fqn",
         "did",
         "target_schema",
         "source_schema",
@@ -29,11 +30,22 @@ pub fn indexed_properties() -> Vec<&'static str> {
 
 fn node_type_ddl() -> Vec<&'static str> {
     vec![
-        // Namespace — AT Protocol
-        "CREATE NODE TYPE IF NOT EXISTS Namespace (
+        // AtprotoNamespace — AT Protocol repo namespaces. Renamed from
+        // `Namespace` (issue #267 collision resolution) so the graph-wide
+        // namespace concept owns the plain label.
+        "CREATE NODE TYPE IF NOT EXISTS AtprotoNamespace (
             authority STRING NOT NULL,
             segment STRING NOT NULL,
             domain STRING NOT NULL
+        )",
+        // Namespace — graph-wide namespaces (issue #267). `fqn` is the
+        // unique key; `parent` is persisted flat (and as a NamespaceParent
+        // edge); `source` records the declaration provenance ("config",
+        // "discovered", "mox", ...).
+        "CREATE NODE TYPE IF NOT EXISTS Namespace (
+            fqn STRING NOT NULL,
+            parent STRING,
+            source STRING
         )",
         // Lexicon — AT Protocol
         "CREATE NODE TYPE IF NOT EXISTS Lexicon (
@@ -58,7 +70,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             org_name STRING NOT NULL,
             tenancy_mode STRING NOT NULL
         )",
-        // SchemaNode — 21 fields from codegraph-core/src/types/schema.rs
+        // SchemaNode — 23 fields from codegraph-core/src/types/schema.rs
         "CREATE NODE TYPE IF NOT EXISTS Schema (
             schema_id STRING NOT NULL,
             title STRING NOT NULL,
@@ -69,6 +81,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             rust_type STRING NOT NULL,
             sea_orm_type STRING NOT NULL,
             domain STRING,
+            namespace STRING,
             rel_path STRING NOT NULL,
             rust_type_name STRING NOT NULL,
             pg_table_name STRING NOT NULL,
@@ -83,7 +96,10 @@ fn node_type_ddl() -> Vec<&'static str> {
             has_definitions BOOLEAN NOT NULL,
             custom_annotations STRING NOT NULL
         )",
-        // PropertyNode — 16 fields + _schema_title denormalized
+        // PropertyNode — 16 fields + scalar/item bounds + _schema_title
+        // denormalized. Bounds are persisted as STRING (u64/Decimal serialize
+        // via to_string) because Decimal has no native grafeo Value;
+        // conversions parses back.
         "CREATE NODE TYPE IF NOT EXISTS Property (
             name STRING NOT NULL,
             prop_type STRING NOT NULL,
@@ -93,6 +109,12 @@ fn node_type_ddl() -> Vec<&'static str> {
             is_nullable BOOLEAN NOT NULL,
             is_array BOOLEAN NOT NULL,
             pattern STRING,
+            min_length STRING,
+            max_length STRING,
+            min_items STRING,
+            max_items STRING,
+            minimum STRING,
+            maximum STRING,
             pg_column_name STRING NOT NULL,
             pg_column_type STRING NOT NULL,
             rust_field_name STRING NOT NULL,
@@ -338,6 +360,60 @@ fn node_type_ddl() -> Vec<&'static str> {
             type_ref STRING NOT NULL,
             expr STRING
         )",
+        // Condition — constraint plane (issue #261). `options` persists the
+        // one_of option titles as a JSON array string; `expr_json` carries
+        // the canonical Expr::to_json() payload for named conditions.
+        "CREATE NODE TYPE IF NOT EXISTS Condition (
+            name STRING NOT NULL,
+            owner_title STRING NOT NULL,
+            kind STRING NOT NULL,
+            expr_json STRING,
+            options STRING,
+            definition STRING,
+            domain STRING
+        )",
+        // Regulatory — regulatory reference plane (issue #265). ONE
+        // parameterized node type (the Condition precedent) carrying the
+        // seven regulatory kinds (report/body/corpus/segment/rule source/
+        // rule schema/meta type) in `kind`; the disjoint per-kind payloads
+        // persist as one JSON object string in `properties_json`.
+        "CREATE NODE TYPE IF NOT EXISTS Regulatory (
+            name STRING NOT NULL,
+            kind STRING NOT NULL,
+            label STRING,
+            definition STRING,
+            domain STRING,
+            properties_json STRING
+        )",
+        // Function — computation plane (issue #263). ONE structured node
+        // per rosetta func: the common shape persists flat (name, domain,
+        // definition, extends_function); the typed structured payload
+        // (dispatch head, inputs, output, aliases, operations,
+        // post-conditions, transform annotations, open-ended metadata)
+        // persists as one JSON object string in `payload_json` — Grafeo
+        // node properties are a flat bag, so nested Vecs serialize (the
+        // ConditionNode `options`/RegulatoryNode `properties_json`
+        // precedent).
+        "CREATE NODE TYPE IF NOT EXISTS Function (
+            name STRING NOT NULL,
+            domain STRING,
+            definition STRING,
+            extends_function STRING,
+            payload_json STRING NOT NULL
+        )",
+        // Rule — computation plane (issue #264). ONE structured node per
+        // rosetta reporting/eligibility rule: the common shape persists
+        // flat (name, domain, definition, kind, input_type); the payload
+        // (expr_json, open-ended metadata) persists as one JSON object
+        // string in `payload_json` (the FunctionNode precedent).
+        "CREATE NODE TYPE IF NOT EXISTS Rule (
+            name STRING NOT NULL,
+            domain STRING,
+            definition STRING,
+            kind STRING NOT NULL,
+            input_type STRING,
+            payload_json STRING NOT NULL
+        )",
     ]
 }
 
@@ -407,5 +483,23 @@ fn edge_type_ddl() -> Vec<&'static str> {
         // mox domain metamodel edge types
         "CREATE EDGE TYPE IF NOT EXISTS BelongsToClass ()",
         "CREATE EDGE TYPE IF NOT EXISTS VocabularyInPackage ()",
+        // Constraint plane edge types (issue #261)
+        "CREATE EDGE TYPE IF NOT EXISTS HasCondition ()",
+        // Regulatory reference plane edge types (issue #265)
+        "CREATE EDGE TYPE IF NOT EXISTS RegulatoryReference (ref_path STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS HasRuleSource ()",
+        "CREATE EDGE TYPE IF NOT EXISTS CorpusInBody ()",
+        "CREATE EDGE TYPE IF NOT EXISTS DerivesFrom ()",
+        // Computation plane edge types (issue #263)
+        "CREATE EDGE TYPE IF NOT EXISTS FunctionExtends ()",
+        // Rule plane edge types (issue #264)
+        "CREATE EDGE TYPE IF NOT EXISTS RuleAppliesTo ()",
+        "CREATE EDGE TYPE IF NOT EXISTS RuleReference (ref_path STRING, rule_source STRING)",
+        // Namespace plane edge types (issue #267). InNamespace (shared with
+        // AT-Protocol) is declared above; NamespaceDepends is derived and
+        // never ingested today.
+        "CREATE EDGE TYPE IF NOT EXISTS NamespaceParent ()",
+        "CREATE EDGE TYPE IF NOT EXISTS NamespaceImports (wildcard BOOLEAN, alias STRING)",
+        "CREATE EDGE TYPE IF NOT EXISTS NamespaceDepends ()",
     ]
 }

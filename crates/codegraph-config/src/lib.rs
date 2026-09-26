@@ -8,8 +8,9 @@ pub mod workflow_loader;
 pub use config::{
     parse_ui_domains_config, parse_ui_domains_config_str, parse_ui_overrides_config,
     parse_ui_overrides_config_str, ApprovalChainDef, ApprovalStepDef, DataGuard, DefaultsConfig,
-    DomainConfig, DomainEntry, DtoConfig, EntityConfig, SearchConfig, TimerDef, UiDomainConfig,
-    UiEntityEntry, UiOverrideConfig, UiOverrideEntry, UiWizardConfig, WorkflowConfig,
+    DomainConfig, DomainEntry, DtoConfig, EntityConfig, NamespaceEntry, SearchConfig, TimerDef,
+    UiDomainConfig, UiEntityEntry, UiOverrideConfig, UiOverrideEntry, UiWizardConfig,
+    WorkflowConfig,
 };
 pub use error::DomainConfigError;
 pub use ifml_components::{

@@ -21,6 +21,10 @@ pub struct ProjectFeatures {
     pub grpc: bool,
     pub ifml: bool,
     pub ops: bool,
+    /// Rosetta-first scaffold: `model/<domain>.rosetta` starters instead of
+    /// `.mox`, `rosetta_backend = true` in profiles.toml, and rosetta-first
+    /// justfile/ops-manifest wiring.
+    pub rosetta: bool,
 }
 
 /// Everything the project templates render from.
@@ -74,6 +78,10 @@ pub const PROJECT_TEMPLATES: &[(&str, &str)] = &[
 
 /// The template that renders one `model/<domain>.mox` per domain.
 pub const MODEL_TEMPLATE: &str = "project/model_mox.tera";
+
+/// The template that renders one `model/<domain>.rosetta` per domain
+/// (`--rosetta` init). Replaces [`MODEL_TEMPLATE`]'s expansion — never both.
+pub const ROSETTA_MODEL_TEMPLATE: &str = "project/rosetta_model.tera";
 
 impl ProjectTemplateContext {
     #[allow(clippy::too_many_arguments)]
@@ -139,14 +147,23 @@ impl ProjectTemplateContext {
         let mut out = Vec::new();
         for (template, output) in PROJECT_TEMPLATES {
             if *template == MODEL_TEMPLATE {
+                // Rosetta-first scaffolds emit .rosetta starters in place of
+                // the .mox ones — the expansion logic is identical.
+                let (model_template, model_ext) = if self.features.rosetta {
+                    (ROSETTA_MODEL_TEMPLATE, "rosetta")
+                } else {
+                    (MODEL_TEMPLATE, "mox")
+                };
                 for domain in &self.domains {
                     let mut domain_ctx = ctx.clone();
                     domain_ctx.insert("domain", &domain.name);
                     domain_ctx.insert("domain_label", &domain.label);
                     let rendered = tera
-                        .render(template, &domain_ctx)
-                        .map_err(|e| format!("render {template}: {e}"))?;
-                    let path = output.replace("{domain}", &domain.name);
+                        .render(model_template, &domain_ctx)
+                        .map_err(|e| format!("render {model_template}: {e}"))?;
+                    let path = output
+                        .replace("mox", model_ext)
+                        .replace("{domain}", &domain.name);
                     out.push((PathBuf::from(path), rendered));
                 }
                 continue;
@@ -172,8 +189,15 @@ impl ProjectTemplateContext {
         let mut out = Vec::new();
         for (template, output) in PROJECT_TEMPLATES {
             if *template == MODEL_TEMPLATE {
+                let ext = if self.features.rosetta {
+                    "rosetta"
+                } else {
+                    "mox"
+                };
                 for domain in &self.domains {
-                    out.push(PathBuf::from(output.replace("{domain}", &domain.name)));
+                    out.push(PathBuf::from(
+                        output.replace("mox", ext).replace("{domain}", &domain.name),
+                    ));
                 }
                 continue;
             }
@@ -205,6 +229,7 @@ mod tests {
                 grpc: false,
                 ifml: false,
                 ops: true,
+                rosetta: false,
             },
         );
         assert_eq!(ctx.app_name, "demo_app");
@@ -228,6 +253,7 @@ mod tests {
                 grpc: true,
                 ifml: true,
                 ops: true,
+                rosetta: false,
             },
         );
         let tree = ctx.file_tree();
@@ -260,6 +286,7 @@ mod tests {
                 grpc: false,
                 ifml: false,
                 ops: true,
+                rosetta: false,
             },
         );
         let tree = ctx.file_tree();
@@ -286,6 +313,7 @@ mod tests {
                 grpc: false,
                 ifml: false,
                 ops: true,
+                rosetta: false,
             },
         );
         let tera = crate::generate::template_engine::create_tera(Path::new(".")).unwrap();
@@ -345,6 +373,7 @@ mod tests {
                 grpc: false,
                 ifml: false,
                 ops: true,
+                rosetta: false,
             },
         );
         let tera = tera::Tera::default();

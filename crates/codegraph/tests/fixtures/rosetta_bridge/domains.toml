@@ -1,0 +1,19 @@
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+# Rosetta namespaces map onto domains via the mox package fallback (exact,
+# then namespace last segment): rosetta.fixture.store → store,
+# rosetta.fixture.partners → partners.
+[domains.partners]
+label = "Partners"
+schema_dir = "partners"
+postgres_schema = "partners"
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+# store.rosetta imports rosetta.fixture.partners.* (issue #268 namespace
+# bridging): the cross-domain import requires the depends_on declaration
+# (namespace_import_undeclared_dependency, issue #267).
+depends_on = ["partners"]

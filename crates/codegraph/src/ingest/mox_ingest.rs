@@ -36,7 +36,7 @@
 //! `ORDER BY` in `list_all_properties`), so insertion order IS output field
 //! order and must match the JSON path byte-for-byte (issue #233).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use codegraph_classifier::projection_builder::ProjectionBuilder;
@@ -44,8 +44,8 @@ use codegraph_config::config::DomainConfig;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
     CodeList, EdgeProperties, EdgeType, EnumValue, MoxDerivedFeatureNode, MoxDomainModel, MoxEntry,
-    MoxFacet, MoxOperationNode, MoxPackageNode, MoxParam, MoxVocabularyNode, PropertyNode,
-    SchemaNode,
+    MoxFacet, MoxOperationNode, MoxPackageNode, MoxParam, MoxVocabularyNode, NamespaceNode,
+    PropertyNode, SchemaNode,
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 use codegraph_type_contracts::{DddFieldProjection, PgType, RefClassificationKind};
@@ -88,6 +88,10 @@ pub struct MoxIngestStats {
     /// Alias-typed features that matched no schema title (exact or with the
     /// type suffix); each warned, never a hard error.
     pub unresolved_aliases: usize,
+    /// Namespace nodes ingested from `package <dotted.name>` declarations
+    /// (issue #268), including the dotted parent chain. Namespace-less
+    /// models (no package line) contribute zero.
+    pub namespaces: usize,
 }
 
 impl std::fmt::Display for MoxIngestStats {
@@ -114,6 +118,10 @@ impl std::fmt::Display for MoxIngestStats {
                 ", {} imported files, {} aliases resolved, {} unresolved",
                 self.imported_files, self.resolved_aliases, self.unresolved_aliases
             )?;
+        }
+        // Namespace counter only surfaces when namespaces exist (#268).
+        if self.namespaces != 0 {
+            write!(f, ", {} namespaces", self.namespaces)?;
         }
         Ok(())
     }
@@ -403,6 +411,20 @@ pub async fn ingest_mox_files(
         .map(|s| (s.title.clone(), s.schema_id.clone()))
         .collect();
 
+    // ── Namespace bridge (issue #268): `package <dotted.name>` declarations
+    // become NamespaceNodes (source="mox") with the dotted parent chain as
+    // NamespaceParent edges. Namespace-less models contribute nothing, so
+    // their graph (and generated output) stays byte-identical.
+    let mut namespace_fqns: BTreeMap<String, String> = BTreeMap::new();
+    for package in &model.packages {
+        if let Some(ns) = non_empty_namespace(&package.name) {
+            namespace_fqns
+                .entry(ns)
+                .or_insert_with(|| MOX_NAMESPACE_SOURCE.to_string());
+        }
+    }
+    stats.namespaces = ingest_namespaces_deduped(ingestor, &namespace_fqns).await?;
+
     // ── Class bridge (#229): collect the class universe first so entity vs
     // value-object is decided from the whole model, not per package.
     let mut class_index: Vec<ClassEntry> = Vec::new();
@@ -440,6 +462,7 @@ pub async fn ingest_mox_files(
                 class,
                 domain,
                 schema_id,
+                namespace: non_empty_namespace(&package.name),
             });
         }
     }
@@ -459,6 +482,7 @@ pub async fn ingest_mox_files(
                 enum_def,
                 domain,
                 schema_id,
+                namespace: non_empty_namespace(&package.name),
             });
         }
     }
@@ -643,6 +667,22 @@ pub async fn ingest_mox_files(
         bridged_enum_schema_ids.insert(enum_def.name.clone(), entry.schema_id.clone());
         stats.bridged_titles.push(enum_def.name.clone());
         stats.enum_schemas += 1;
+    }
+
+    // ── Bridge pass 1c: InNamespace edges for bridged schemas (issue #268).
+    // Written after the nodes exist (endpoints MATCH at execute time).
+    // Namespace-less entries contribute nothing.
+    for entry in &class_index {
+        if !bridged.contains(entry.class.name.as_str()) {
+            continue;
+        }
+        emit_schema_namespace_edge(ingestor, &entry.schema_id, entry.namespace.as_deref()).await?;
+    }
+    for entry in &enum_index {
+        if !bridged_enum_schema_ids.contains_key(&entry.enum_def.name) {
+            continue;
+        }
+        emit_schema_namespace_edge(ingestor, &entry.schema_id, entry.namespace.as_deref()).await?;
     }
 
     // ── Bridge pass 2: properties + reference edges per bridged class.
@@ -866,11 +906,13 @@ pub async fn wire_alias_refs(
 }
 
 /// One mox class flattened for ingestion: its definition, owning package,
-/// resolved domain, and the `schema_id` used for its graph node.
+/// resolved domain, namespace (the package name — `None` when package-less),
+/// and the `schema_id` used for its graph node.
 struct ClassEntry<'a> {
     class: &'a rex_ir::ClassDef,
     domain: String,
     schema_id: String,
+    namespace: Option<String>,
 }
 
 /// One mox enum flattened for ingestion (same shape as [`ClassEntry`]).
@@ -878,6 +920,7 @@ struct EnumEntry<'a> {
     enum_def: &'a rex_ir::EnumDef,
     domain: String,
     schema_id: String,
+    namespace: Option<String>,
 }
 
 /// Map a mox package name to a domain: an exact `domains.toml` key wins,
@@ -896,6 +939,83 @@ pub(crate) fn resolve_domain(domain_config: &DomainConfig, package: &str) -> (St
     (to_snake_case(last), false)
 }
 
+/// The namespace FQN for a mox package: `None` when the model is
+/// package-less (empty package name) — namespace-less models must stay
+/// byte-identical (issue #268).
+fn non_empty_namespace(package: &str) -> Option<String> {
+    (!package.trim().is_empty()).then(|| package.trim().to_string())
+}
+
+/// `NamespaceNode.source` provenance for mox-declared namespaces.
+pub(crate) const MOX_NAMESPACE_SOURCE: &str = "mox";
+
+/// `NamespaceNode.source` provenance for namespaces that only import
+/// declarations reference (e.g. the sigil builtins' `com.rosetta.model`).
+pub(crate) const DISCOVERED_NAMESPACE_SOURCE: &str = "discovered";
+
+/// Expand one dotted FQN into its `(fqn, parent)` chain, root first
+/// (issue #268): `a.b.c` → `[("a", None), ("a.b", "a"), ("a.b.c", "a.b")]`.
+/// Empty segments are skipped; an empty FQN yields an empty chain.
+pub(crate) fn namespace_chain(fqn: &str) -> Vec<(String, Option<String>)> {
+    let segments: Vec<&str> = fqn.split('.').filter(|s| !s.is_empty()).collect();
+    (0..segments.len())
+        .map(|i| {
+            (
+                segments[..=i].join("."),
+                (i != 0).then(|| segments[..i].join(".")),
+            )
+        })
+        .collect()
+}
+
+/// Ingest namespace nodes exactly once each: the pending `(fqn, source)`
+/// set is expanded into full parent chains and deduplicated by FQN (first
+/// source wins in sorted order — deterministic), then every node lands
+/// with its `NamespaceParent` edge. Returns the number of nodes ingested.
+pub(crate) async fn ingest_namespaces_deduped(
+    ingestor: &dyn GraphIngestor,
+    pending: &BTreeMap<String, String>,
+) -> crate::error::Result<usize> {
+    // fqn → (parent, source); BTreeMap iteration keeps ingestion order
+    // deterministic (sorted by fqn).
+    let mut nodes: BTreeMap<String, (Option<String>, String)> = BTreeMap::new();
+    for (fqn, source) in pending {
+        for (chain_fqn, parent) in namespace_chain(fqn) {
+            nodes
+                .entry(chain_fqn)
+                .or_insert_with(|| (parent, source.clone()));
+        }
+    }
+    for (fqn, (parent, source)) in &nodes {
+        let node = NamespaceNode {
+            fqn: fqn.clone(),
+            parent: parent.clone(),
+            source: Some(source.clone()),
+        };
+        ingestor
+            .ingest_namespace(&node)
+            .await
+            .map_err(Error::Graph)?;
+    }
+    Ok(nodes.len())
+}
+
+/// Link one bridged schema to its namespace via an `InNamespace` edge
+/// (issue #268). Namespace-less schemas contribute nothing (back-compat).
+pub(crate) async fn emit_schema_namespace_edge(
+    ingestor: &dyn GraphIngestor,
+    schema_id: &str,
+    namespace: Option<&str>,
+) -> crate::error::Result<()> {
+    let Some(ns) = namespace.filter(|n| !n.trim().is_empty()) else {
+        return Ok(());
+    };
+    ingestor
+        .ingest_edge(schema_id, ns, EdgeType::InNamespace, None)
+        .await
+        .map_err(Error::Graph)
+}
+
 /// Build the `SchemaNode` for a mox class, mirroring the JSON path's field
 /// population (`ingest_schema_node` in async_ingest).
 fn class_schema_node(entry: &ClassEntry<'_>, is_entity: bool, type_suffix: &str) -> SchemaNode {
@@ -907,6 +1027,7 @@ fn class_schema_node(entry: &ClassEntry<'_>, is_entity: bool, type_suffix: &str)
         serde_json::Value::String(codegraph_core::types::MOX_SOURCE.to_string()),
     );
     SchemaNode {
+        namespace: entry.namespace.clone(),
         schema_id: entry.schema_id.clone(),
         title: class.name.clone(),
         description: class.description.as_deref().map(sanitize_description),
@@ -948,6 +1069,7 @@ fn enum_schema_node(entry: &EnumEntry<'_>, type_suffix: &str) -> SchemaNode {
         serde_json::Value::String(codegraph_core::types::MOX_SOURCE.to_string()),
     );
     SchemaNode {
+        namespace: entry.namespace.clone(),
         schema_id: entry.schema_id.clone(),
         title: enum_def.name.clone(),
         description: enum_def.description.as_deref().map(sanitize_description),
@@ -1221,6 +1343,8 @@ fn feature_property(
         is_required,
         is_nullable: !is_required,
         is_array,
+        min_items: None,
+        max_items: None,
         pattern: feature.constraints.pattern.clone(),
         min_length: feature.constraints.min_length,
         max_length: feature.constraints.max_length,
@@ -1274,7 +1398,7 @@ fn classification_str(kind: &RefClassificationKind) -> &'static str {
 
 /// Build the cross-layer projection the same way the classifier's
 /// `ProjectionBuilder` does for the JSON path.
-fn build_projection(
+pub(crate) fn build_projection(
     kind: &RefClassificationKind,
     field_name: &str,
     pg_type: &str,
@@ -1302,7 +1426,7 @@ fn build_projection(
 
 /// Strip a trailing `_code` from a codelist field name (JSON-path parity:
 /// the column keeps the suffix, the Rust field does not).
-fn strip_code_suffix(name: &str) -> String {
+pub(crate) fn strip_code_suffix(name: &str) -> String {
     match name.strip_suffix("_code") {
         Some(stripped) if !stripped.is_empty() => stripped.to_string(),
         _ => name.to_string(),
@@ -1377,6 +1501,7 @@ mod tests {
             imported_files: 0,
             resolved_aliases: 0,
             unresolved_aliases: 0,
+            namespaces: 0,
         };
         assert_eq!(
             stats.to_string(),

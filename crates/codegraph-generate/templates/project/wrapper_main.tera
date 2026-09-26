@@ -18,10 +18,13 @@ struct Cli {
 enum Commands {
     /// Ingest the .mox model, classify, then run all generators.
     Run {
-        /// JSON Schema directory. Optional when --mox-files is provided;
-        /// JSON schemas are a secondary source (use `codegraph migrate` to
-        /// convert them to .mox).
-        #[arg(long, required_unless_present = "mox_files")]
+        /// JSON Schema directory. Optional when --mox-files or
+        /// --rosetta-files is provided; JSON schemas are a secondary source
+        /// (use `codegraph migrate` to convert them to .mox).
+        #[arg(
+            long,
+            required_unless_present_any = ["mox_files", "rosetta_files"]
+        )]
         schemas: Option<PathBuf>,
         /// Classifier config path (only needed when --schemas is provided).
         #[arg(long)]
@@ -59,6 +62,9 @@ enum Commands {
         /// rexlang .mox domain model files (primary model source).
         #[arg(long = "mox-files")]
         mox_files: Vec<PathBuf>,
+        /// Rosetta (Rune DSL) .rosetta model files (primary model source).
+        #[arg(long = "rosetta-files")]
+        rosetta_files: Vec<PathBuf>,
     },
     /// Show entity/VO classification decisions for the .mox model.
     Classify {
@@ -77,6 +83,9 @@ enum Commands {
         /// rexlang .mox domain model files (primary model source).
         #[arg(long = "mox-files")]
         mox_files: Vec<PathBuf>,
+        /// Rosetta (Rune DSL) .rosetta model files (primary model source).
+        #[arg(long = "rosetta-files")]
+        rosetta_files: Vec<PathBuf>,
     },
     /// Generate code without ingesting schemas.
     Generate {
@@ -108,6 +117,9 @@ enum Commands {
         /// rexlang .mox domain model files.
         #[arg(long = "mox-files")]
         mox_files: Vec<PathBuf>,
+        /// Rosetta (Rune DSL) .rosetta model files (sigil-verified).
+        #[arg(long = "rosetta-files")]
+        rosetta_files: Vec<PathBuf>,
     },
 }
 
@@ -141,6 +153,7 @@ async fn main() -> Result<()> {
             ifml_files,
             openapi_files,
             mox_files,
+            rosetta_files,
         } => {
             let dirs = template_dirs(&template_dir);
             codegraph::driver::run(codegraph::driver::RunArgs {
@@ -157,6 +170,7 @@ async fn main() -> Result<()> {
                 ifml_files: &ifml_files,
                 openapi_files: &openapi_files,
                 mox_files: &mox_files,
+                rosetta_files: &rosetta_files,
                 ifml_framework: &[],
                 ifml_components: None,
                 ifml_design_system: None,
@@ -180,6 +194,7 @@ async fn main() -> Result<()> {
             config,
             domain,
             mox_files,
+            rosetta_files,
         } => codegraph::driver::classify(
             schemas.as_deref(),
             classifier.as_deref(),
@@ -187,6 +202,7 @@ async fn main() -> Result<()> {
             domain.as_deref(),
             codegraph::driver::ClassifyFormat::Table,
             &mox_files,
+            &rosetta_files,
         )
         .await
         .map_err(|e| codegraph::error::Error::Config(format!("classify failed: {e}"))),
@@ -214,12 +230,14 @@ async fn main() -> Result<()> {
             classifier,
             profiles_config,
             mox_files,
+            rosetta_files,
         } => codegraph::init::commands::cmd_doctor(&codegraph::init::commands::DoctorArgs {
             config,
             schemas,
             classifier,
             profiles_config,
             mox_files,
+            rosetta_files,
         })
         .map(|_summary| ())
         .map_err(|e| codegraph::error::Error::Config(format!("doctor failed: {e}"))),

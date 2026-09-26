@@ -43,6 +43,10 @@ pub struct RunArgs<'a> {
     /// into the graph (vocabularies with facets, class operations, derived
     /// features). Absent/empty = no mox ingest, generators unchanged.
     pub mox_files: &'a [PathBuf],
+    /// Rosetta (Rune DSL) `.rosetta` model files, bridged into the graph
+    /// data plane (issue #256). Ingested after mox and BEFORE the JSON
+    /// schema pass; bridged titles join the schema pass's skip-set.
+    pub rosetta_files: &'a [PathBuf],
     pub ifml_framework: &'a [String],
     /// Optional `ifml-components.toml` mapping IFML components to
     /// handcrafted framework components. Absent = all built-in templates.
@@ -129,6 +133,11 @@ pub fn mox_primary_notice() -> &'static str {
     "INFO: .mox files are the primary model source; --schemas fills gaps for types not authored in .mox"
 }
 
+/// Stderr notice when .rosetta is a provided primary source (issue #257).
+pub fn rosetta_primary_notice() -> &'static str {
+    "INFO: .rosetta files are a primary model source; --schemas fills gaps for types not authored in .rosetta"
+}
+
 /// Run the full pipeline: ingest + classify + generate.
 pub async fn run(args: RunArgs<'_>) -> Result<()> {
     let RunArgs {
@@ -145,17 +154,19 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         ifml_files,
         openapi_files,
         mox_files,
+        rosetta_files,
         ifml_framework,
         ifml_components,
         ifml_design_system,
         codegraph_rev,
     } = args;
 
-    // Model-source guard: at least one of schemas / mox files is required,
-    // and schemas need a classifier config.
-    if schemas.is_none() && mox_files.is_empty() {
+    // Model-source guard: at least one of schemas / mox files / rosetta
+    // files is required, and schemas need a classifier config.
+    if schemas.is_none() && mox_files.is_empty() && rosetta_files.is_empty() {
         return Err(crate::error::Error::Config(
-            "no model source: provide --mox-files (primary) or --schemas".to_string(),
+            "no model source: provide --mox-files or --rosetta-files (primary) or --schemas"
+                .to_string(),
         ));
     }
     if schemas.is_some() && classifier.is_none() {
@@ -166,10 +177,12 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
 
     // Notices (stderr; stdout stays clean for machine output).
     if schemas.is_some() {
-        if mox_files.is_empty() {
-            eprintln!("{}", schemas_deprecation_notice());
-        } else {
+        if !mox_files.is_empty() {
             eprintln!("{}", mox_primary_notice());
+        } else if !rosetta_files.is_empty() {
+            eprintln!("{}", rosetta_primary_notice());
+        } else {
+            eprintln!("{}", schemas_deprecation_notice());
         }
     }
 
@@ -234,12 +247,18 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
             persistence_provider: persistence_provider_str,
             dto_key_casing: plan.dto_key_casing.clone(),
             deployment_topology: deployment_topology_str,
+            namespace_layout: plan.namespace_layout,
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
             codegraph_rev: codegraph_rev.unwrap_or_else(current_git_rev),
             has_atproto: plan.has_atproto,
             has_fern: plan.has_fern,
             fern_sdk_languages: plan.fern_sdk_languages.clone(),
             has_emdash: plan.has_emdash,
+            has_function_postconditions: resolved
+                .features
+                .get("function_postconditions")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             emdash_site_pages_base: String::new(),
             emdash_site_e2e_base: String::new(),
             atproto_authority: String::new(),
@@ -320,6 +339,25 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
             );
             mox_covered.extend(imported.titles);
         }
+    }
+
+    // Pass 1b: Rosetta (Rune DSL) data-plane bridge (issues #256, #257).
+    // Runs alongside mox and BEFORE the JSON schema pass: bridged titles
+    // join the skip-set so a same-titled JSON schema never duplicates the
+    // node. Mox keeps primary position (rosetta wins over JSON by passing
+    // first; mox wins over rosetta).
+    if !rosetta_files.is_empty() {
+        println!("Pass 1b: {} rosetta files to ingest", rosetta_files.len());
+        let outcome = crate::ingest::rosetta_ingest::ingest_rosetta_files(
+            be.ingestor(),
+            be.querier(),
+            rosetta_files,
+            &domain_config,
+            &domain_config.defaults.type_suffix,
+        )
+        .await?;
+        println!("Pass 1b complete: {}", outcome.stats);
+        mox_covered.extend(outcome.stats.bridged_titles.iter().cloned());
     }
 
     // Pass 1a: Ingest JSON schemas (no entity classification). Optional
@@ -912,10 +950,12 @@ pub async fn classify(
     domain_filter: Option<&str>,
     format: ClassifyFormat,
     mox_files: &[PathBuf],
+    rosetta_files: &[PathBuf],
 ) -> Result<()> {
-    if schemas.is_none() && mox_files.is_empty() {
+    if schemas.is_none() && mox_files.is_empty() && rosetta_files.is_empty() {
         return Err(crate::error::Error::Config(
-            "no model source: provide --mox-files (primary) or --schemas".to_string(),
+            "no model source: provide --mox-files or --rosetta-files (primary) or --schemas"
+                .to_string(),
         ));
     }
     let domain_config = codegraph_config::config::parse_domain_config(config_path)
@@ -978,6 +1018,21 @@ pub async fn classify(
             .await?;
             mox_covered.extend(imported.titles);
         }
+    }
+
+    // Rosetta bridge (issue #257): bridged titles join the skip-set, and
+    // because rosetta provenance rides `origin` (not mox's `source`), the
+    // classifier auto-scores them — they appear in the report normally.
+    if !rosetta_files.is_empty() {
+        let outcome = crate::ingest::rosetta_ingest::ingest_rosetta_files(
+            be.ingestor(),
+            be.querier(),
+            rosetta_files,
+            &domain_config,
+            &domain_config.defaults.type_suffix,
+        )
+        .await?;
+        mox_covered.extend(outcome.stats.bridged_titles.iter().cloned());
     }
 
     let empty_entities = HashSet::new();

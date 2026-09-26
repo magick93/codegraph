@@ -27,6 +27,7 @@ fn test_project_config() -> codegraph::generate::ProjectConfig {
 
 fn candidate_schema() -> SchemaNode {
     SchemaNode {
+        namespace: None,
         schema_id: "recruiting/json/CandidateType.json".to_string(),
         title: "CandidateType".to_string(),
         description: Some("A person requesting consideration for a position".to_string()),
@@ -62,6 +63,8 @@ fn candidate_properties() -> Vec<PropertyNode> {
             is_required: true,
             is_nullable: false,
             is_array: false,
+            min_items: None,
+            max_items: None,
             pattern: None,
             min_length: None,
             max_length: None,
@@ -90,6 +93,8 @@ fn candidate_properties() -> Vec<PropertyNode> {
             is_required: false,
             is_nullable: true,
             is_array: false,
+            min_items: None,
+            max_items: None,
             pattern: None,
             min_length: None,
             max_length: None,
@@ -118,6 +123,8 @@ fn candidate_properties() -> Vec<PropertyNode> {
             is_required: false,
             is_nullable: true,
             is_array: false,
+            min_items: None,
+            max_items: None,
             pattern: None,
             min_length: None,
             max_length: None,
@@ -793,6 +800,7 @@ async fn cli_scaffold_output_has_format_options() {
 #[tokio::test]
 async fn cli_scaffold_handles_multiple_domains() {
     let name_schema = SchemaNode {
+        namespace: None,
         schema_id: "common/json/NameType.json".to_string(),
         title: "NameType".to_string(),
         description: None,

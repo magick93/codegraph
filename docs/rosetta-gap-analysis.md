@@ -356,14 +356,17 @@ issues can reference them:
 
 | # | Defect | Found by | Suggested home |
 |---|--------|----------|----------------|
-| 1 | Grafeo `ingest_property` never persists `min_length`/`max_length`/`minimum`/`maximum` → garde range/length branches are dead code end-to-end | WP1.2 | standalone fix before #261 |
+| 1 | ~~Grafeo `ingest_property` never persists `min_length`/`max_length`/`minimum`/`maximum`~~ **RESOLVED** on the epic branch: Property DDL columns + INSERT params + RETURN cols; garde range/length now fire (pinned by `rosetta_scalar_bounds_tests` + flipped `cardinality_probe`) | WP1.2 | resolved pre-#261 |
 | 2 | Property-level oneOf silently dropped from DDL/entity/DTO (ValueObject column → no child node for `$ref`-less oneOf) | WP1.3 | #261 (interim guard: emit the JSONB column) |
 | 3 | Propertyless oneOf generates a hollow CRUD entity (full stack incl. UI/proto) instead of enum/codelist; anyOf asymmetry (`is_enum` reads `has_one_of` only) | WP1.3 | #261 |
 | 4 | `fk_target_undeclared_dependency` is dead code for JSON refs (`ref_target` holds the raw `$ref`, lookup is title-keyed) → cross-domain FKs generate with no `depends_on`, no warning | WP1.5 | #267 enforcement point |
-| 5 | `UsesCodeList` edge is dormant — `get_codelist_for_property` walks an edge no ingest creates (real link: `ref_target` + `classification_kind`) | WP1.7 | standalone cleanup |
+| 5 | `UsesCodeList` edge is dormant — `get_codelist_for_property` walks an edge no ingest creates (real link: `ref_target` + `classification_kind`). Follow-up investigation found a SECOND dormant consumer: `ifml_scaffold::codelist_values` (crates/codegraph/src/ifml_scaffold.rs:383-403) walks the same edge, so scaffolded dropdown values are always empty. Cleanup requires rewriting that caller first; `is_codelist_fk` additionally has ZERO readers (always-false and unconsumed — deletable). Deliberately left in place on the epic branch (behavior-neutral) | WP1.7 | follow-up issue |
 | 6 | allOf parent → shadow child table re-declares inherited columns; flattened field order (descendant-first) disagrees with `get_properties` order (name-sorted) | WP1.1 | decide intent; pin order contract |
 | 7 | sigil: parser rejects `as-key` (E0001); expression-head diagnostics carry `span: None` | WP1.6 | upstream yestechgroup/sigil |
 | 8 | rexlang: `FeatureConstraints` has no cardinality slot; mox migrate collapses multiplicities to unbounded | WP1.2 | upstream rexlang / mox bridge |
+| 10 | Rosetta-only runs show migration-sequence nondeterminism across identical inputs (e.g. 000648 vs 000624) and the "Auto-classified N entities" count can flip 0/1 — a scorer sits on a knife edge (net_score ≥ 4) whose in-degree signals vary run-to-run. Content of individual migrations is stable; ordering is not. Found by the #259 fixture suite | #259 | standalone determinism fix; blocker for any future snapshot-on-migration-names |
+| 11 | Codelist routing dangles for rosetta-only projects: enums outside the `common` domain emit bare entity tables without a `code` column (ddl.rs:1257) while enum-typed attribute FKs target `common.<codelist>(code)` — and no seed rows are emitted. Same family as WP1.7's "non-common codelists are graph-only" caveat | #259 fixture suite | #261/#265 plane work or standalone |
+| 9 | ~~Title-suffix strip collides for `type Product` + `choice ProductType`~~ **RESOLVED** on the epic branch: choices keep their unstripped code names (`ProductType` → table `product_type`); pinned by the flipped `rosetta_pipeline_tests` assertion + `rosetta_bridge_suite_tests::fixture_choices_get_unstripped_names` | #257 | resolved |
 
 ## Cross-cutting collisions
 

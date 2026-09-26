@@ -8,6 +8,7 @@ use std::time::Duration;
 #[test]
 fn schema_node_serde_round_trip() {
     let node = SchemaNode {
+        namespace: None,
         schema_id: "recruiting/json/CandidateType.json".into(),
         title: "CandidateType".into(),
         description: Some("A candidate for a position".into()),
@@ -46,6 +47,8 @@ fn property_node_serde_round_trip() {
         is_required: true,
         is_nullable: false,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -74,6 +77,7 @@ fn property_node_serde_round_trip() {
 #[test]
 fn schema_node_with_parent_schema() {
     let node = SchemaNode {
+        namespace: None,
         schema_id: "common/json/PersonType.json#/definitions/PersonName".into(),
         title: "PersonName".into(),
         description: None,

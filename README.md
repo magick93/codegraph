@@ -42,7 +42,7 @@ cargo run -- lsp --schemas <dir> ...             # IFML language server
 cargo run -- init / doctor / add domain ...      # project lifecycle (see above)
 ```
 
-Common flags: `--template-dir` (repeatable; shadows built-in templates), `--profile`/`--profiles-config`, `--ifml-files`, `--no-post-gen`.
+Common flags: `--template-dir` (repeatable; shadows built-in templates), `--profile`/`--profiles-config`, `--ifml-files`, `--mox-files`, `--rosetta-files`, `--no-post-gen`.
 
 ## Ops harness (`codegraph-ops`)
 
@@ -89,6 +89,20 @@ When `grpc_backend = true` is set in `profiles.toml`, four additional generators
 ### IFML Interaction Models
 
 IFML (Interaction Flow Modeling Language) DSL files describe views, navigation, events, and data bindings as a complement to JSON Schema. The parser lives in the rexlang repo as the `rex-ifml` crate and `codegraph lsp` serves the language server.
+
+### Rosetta (Rune DSL) models
+
+`.rosetta` files are a primary model source alongside `.mox` and JSON Schema. The upstream sigil crates parse, lower, and resolve the model; codegraph bridges the resolved types/enums/choices/conditions/functions/rules/regulatory elements into the same graph the JSON path produces and generates from it. Namespaces are first-class (`namespace a.b` + `import`), and types are auto-scored by the classifier.
+
+```bash
+codegraph init my-app --rosetta    # rosetta-first scaffold: model/<d>.rosetta per domain
+cd my-app
+just generate                      # run --rosetta-files model/<d>.rosetta ... -> generated/
+```
+
+Mixed runs work: `run --rosetta-files model/x.rosetta --schemas <dir> ...` — mox wins over rosetta, rosetta wins over JSON (title conflicts resolve by pass order; bridged titles join the JSON pass's skip-set). Language support lives upstream (sigil-lsp + sigil VS Code extension); codegraph ships no `.rosetta` grammar or LSP.
+
+See [docs/rosetta.md](docs/rosetta.md) for the full guide and [docs/rosetta-gap-analysis.md](docs/rosetta-gap-analysis.md) for the supported/deferred construct matrix.
 
 ### Database Dialect Support
 

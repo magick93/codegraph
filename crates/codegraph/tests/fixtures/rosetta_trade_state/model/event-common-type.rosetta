@@ -1,0 +1,201 @@
+namespace cdm.event.common : <"Business event concepts: primitives, contract state and associated state transition function specifications.">
+version "${project.version}"
+
+import cdm.base.staticdata.party.*
+import cdm.base.staticdata.identifier.*
+import cdm.base.datetime.*
+import cdm.product.template.*
+
+type CreditEvent: <"A credit event observation. STUB: trimmed from the real cdm.observable.event type.">
+	creditEventDate date (0..1) <"The date on which the credit event occurred.">
+
+type CorporateAction: <"A corporate action observation. STUB: trimmed from the real cdm.observable.event type.">
+	corporateActionDate date (0..1) <"The date on which the corporate action occurred.">
+
+type ObservationEvent: <"Specifies the necessary information to create any observation event. TRIM: the real type's bare `condition: one-of` (exclusive choice among attributes, no expression body) is dropped — sigil at the pinned rev lowers the body to unknown symbols 'one'/'of' (E0101); its one-of synthesis covers `choice` types only.">
+	creditEvent CreditEvent (0..1) <"Specifies the necessary information to create a credit event.">
+	corporateAction CorporateAction (0..1) <"Specifies the necessary information to create a corporate action.">
+
+type Observation: <"Defines the observation event used to compute a reset value. STUB: trimmed from the real cdm.observable.asset Observation.">
+	observationDate date (1..1) <"The date on which the observation was made.">
+
+type AveragingCalculation: <"Identifies the aggregation method used to compute a reset from multiple observations. STUB: trimmed.">
+	averagingMethod string (0..1) <"The averaging methodology, e.g. ArithmeticMean.">
+
+type ClosedState: <" A class to qualify the closed state of an execution or a contract through the combination or a state (e.g. terminated, novated) and a set of dates: activity date, effective date and, when relevant, last payment date.">
+
+	state ClosedStateEnum (1..1) <"The qualification of what gave way to the contract or execution closure, e.g. allocation, termination, novation, ...">
+	activityDate date (1..1) <"The activity date on which the closing state took place, i.e. either the event date of the closing event (e.g. option exercise, contract early termination) or the contractual termination date.">
+	effectiveDate date (0..1) <"The date on which the closing event contractually takes effect, when different from the activity date. When an explicit event effective date attribute is associated with the closing event, it will be that date. In the case of a cancellation event, it will be the date on which the cancelled event took place.">
+	lastPaymentDate date (0..1) <"The date associated with the last payment in relation to the artefact (e.g. contract) to which this closed state applies. As an example, in the case of an early termination event, it would be the settlement date of the associated fee, if applicable.">
+
+type State: <"Defines the state of a trade at a point in the Trade's life cycle. Trades have many state dimensions, all of which are represented here. For example, states useful for position keeping are represented alongside those needed for regulatory reporting.">
+	closedState ClosedState (0..1) <"Represents the qualification of what led to the trade's closure alongside the dates on which this closure took effect.">
+	positionState PositionStatusEnum (0..1) <"Identifies the state of the position, to distinguish if just executed, formed, already settled, closed, etc.">
+
+	condition ClosedStateExists: <"When the position state is identified as closed, the closed state must also be specified.">
+		if positionState = PositionStatusEnum -> Closed
+		then closedState exists
+
+type Reset: <"Defines the reset value or fixing value produced in cashflow calculations, during the life-cycle of a financial instrument. The reset process defined in Create_Reset function joins product definition details with observations to compute the reset value.">
+	[metadata key]
+	resetValue Price (1..1) <"Specifies the reset or fixing value. The fixing value could be a cash price, interest rate, or other value.">
+	resetDate date (1..1) <"Specifies the date on which the reset occurred.">
+	rateRecordDate date (0..1) <"Specifies the 'Rate Record Day' for a Fallback rate. TRIMMED doc.">
+	observations Observation (1..*) <"Represents an audit of the observations used to produce the reset value. If multiple observations were necessary to produce the reset value, the aggregation method should be defined on the payout.">
+		[metadata reference]
+	averagingMethodology AveragingCalculation (0..1) <"Identifies the aggregation method to use in the case where multiple observations are used to compute the reset value and the method is not defined in a payout.">
+
+	condition AveragingMethodologyExists: <"Ensures an averaging method is defined when more than one observation is used to compute the reset.">
+		if observations count > 1 then averagingMethodology exists
+
+type Valuation: <"Defines the value of an investment, asset, or security. TRIMMED from 9 real attributes to 2.">
+	amount number (1..1) <"Current value of the outstanding contract">
+	timestamp zonedDateTime (1..1) <"Date and time of the last valuation marked to market.">
+
+type TransferBase: <"The base transfer type. STUB: real TransferBase carries payoutReference and settlement terms.">
+	transferId TradeIdentifier (0..1) <"An optional identifier for the transfer.">
+
+type UnscheduledTransfer extends TransferBase: <"An ad-hoc transfer instigated by a party to the contract.">
+	transferType string (0..1) <"Specifies the type of unscheduled transfer. TRIMMED: real attribute is UnscheduledTransferEnum.">
+
+type ScheduledTransfer extends TransferBase: <"A scheduled transfer built into the contract.">
+	transferType string (1..1) <"Specifies the type of scheduled transfer. TRIMMED: real attribute is ScheduledTransferEnum.">
+
+type ContingentTransfer extends TransferBase: <"A transfer created from a contingent event on the contract. STUB: real type carries payoutReference metadata.">
+	reference string (0..1) <"Placeholder for the trimmed payout reference.">
+
+choice Transfer: <"The type of transfer.">
+	ScheduledTransfer <"A transfer created from a scheduled event on a contract, e.g. Coupon, Dividend Return, Fixed Rate Return">
+	UnscheduledTransfer <"An ad-hoc transfer instigated by a party to the contract e.g. Recall, Return.">
+	ContingentTransfer <"A transfer created from a contingent event on a contract, e.g. Corporate Action, Credit Event or Exercise">
+
+type TransferState: <"Defines the fundamental financial information associated with a Transfer event. Each TransferState specifies where a Transfer is in its life-cycle. TransferState is a root type and as such, can be created independently to any other CDM data type, but can also be used as part of the CDM Event Model.">
+	[metadata key]
+	[rootType]
+	transfer Transfer (1..1) <"Represents the Transfer that has been effected by a business or life-cycle event.">
+	transferStatus TransferStatusEnum (0..1) <"Represents the State of the Transfer through its life-cycle.">
+
+type TradeState: <"Defines the fundamental financial information that can be changed by a Primitive Event and by extension any business or life-cycle event. Each TradeState specifies where a Trade is in its life-cycle. TradeState is a root type and as such, can be created independently to any other CDM data type, but can also be used as part of the CDM Event Model.">
+	[metadata key]
+	[rootType]
+	trade Trade (1..1) <"Represents the Trade that has been effected by a business or life-cycle event.">
+	state State (0..1) <"Represents the State of the Trade through its life-cycle.">
+	resetHistory Reset (0..*) <"Represents the updated Trade attributes which can change as the result of a reset event. TRIMMED doc.">
+	transferHistory TransferState (0..*) <"Represents the updated Trade attributes which can change as the result of a transfer event.">
+	observationHistory ObservationEvent (0..*) <"Represents the observed events related to a particular product or process, such as credit events or corporate actions.">
+	valuationHistory Valuation (0..*)
+
+type Trade extends TradableProduct: <"Defines the output of a financial transaction between parties - a Business Event. A Trade impacts the financial position (i.e. the balance sheet) of involved parties. TRIMMED: executionDetails/contractDetails/collateral attributes and the three product conditions dropped — they reach into the documentation and economic-terms closure.">
+	[metadata key]
+	tradeIdentifier TradeIdentifier (1..*) <"Represents the identifier(s) that uniquely identify a trade for an identity issuer. A trade can include multiple identifiers, for example a trade that is reportable to both the CFTC and ESMA, and then has an associated USI (Unique Swap Identifier) UTI (Unique Trade Identifier).">
+	tradeDate date (1..1) <"Specifies the date which the trade was agreed.">
+		[metadata id]
+	tradeTime TimeZone (0..1) <"Denotes the trade time and timezone as agreed by the parties to the trade.">
+		[metadata id]
+	party Party (0..*) <"Represents the parties to the trade. The cardinality is optional to address the case where the trade is defined within a BusinessEvent data type, in which case the party is specified in BusinessEvent.">
+	partyRole PartyRole (0..*) <"Represents the role each specified party takes in the trade. further to the principal roles, payer and receiver.">
+
+type ExecutionInstruction: <"Specifies instructions for execution of a transaction, consisting of a product, price, quantity, parties, trade identifier, execution details, and settlement terms. Attributes verbatim; executionDetails is a STUB type.">
+	product NonTransferableProduct (1..1) <"The financial product to be executed.">
+	priceQuantity PriceQuantity (1..1) <"The price and quantity of the execution.">
+	counterparty Counterparty (2..2) <"The two counterparties to the execution.">
+	ancillaryParty AncillaryParty (0..*) <"The parties with ancillary roles in the execution.">
+	parties Party (0..*) <"The parties to the execution.">
+	partyRole PartyRole (0..*) <"The roles each party takes in the execution.">
+	executionDetails ExecutionDetails (0..1) <"Information specific to executions, e.g. package references. STUB type.">
+	tradeDate date (1..1) <"The date on which the execution was agreed.">
+	tradeIdentifier TradeIdentifier (0..*) <"The identifiers to apply to the execution.">
+
+type ExecutionDetails: <"Information specific to a trade that arose from an execution. STUB: real ExecutionDetails carries packageReference, etc.">
+	packageReference string (0..1) <"Placeholder for the trimmed package reference.">
+
+type ContractFormationInstruction: <"Specifies instructions to create a fully formed contract, with optional legal agreements. TRIMMED to one attribute.">
+	legalAgreement string (0..1) <"The legal agreement applied at formation. TRIMMED: real attribute is a LegalAgreement reference.">
+
+type ExerciseInstruction: <"Specifies the information required to communicate the choices made by the exercising party, in a financial product endowing the party with at least one option.">
+
+	exerciseQuantity PrimitiveInstruction (1..1) <"Contains instructions for exercising the option including a quantity change, and optionally a transfer.">
+	exerciseOption Payout (0..1) <"The Payout being exercised on the trade.">
+		[metadata reference]
+	exerciseDate AdjustableOrAdjustedDate (0..1) <"Specifies the date on which an option contained within the financial product would be exercised. The date may be omitted if the contractual product allows for only a single date of exercise (European exercise). TRIMMED doc.">
+	exerciseTime BusinessCenterTime (0..1) <"Specifies the time at which an option contained within the financial product would be exercised. STUB type.">
+	replacementTradeIdentifier TradeIdentifier (0..*) <"Specifies the trade identifier to apply to the replacement trade for physical exercise.">
+
+	condition IsOptionPayout: <"Payout must be an OptionPayout.">
+		if exerciseOption exists
+		then exerciseOption switch
+			OptionPayout then item exists,
+			default False
+
+type BusinessCenterTime: <"A time in a business center. STUB: trimmed from the real cdm.base.datetime type.">
+	time time (1..1) <"The time of day.">
+
+type QuantityChangeInstruction: <"Instructions required to create a Quantity Change Primitive Event, which can be either an increase, a decrease or a replacement. TRIMMED: lotIdentifier dropped.">
+	change PriceQuantity (1..*) <"Quantity by which the trade is being increased, decreased or replaced, and the price at which such quantity change is agreed. TRIMMED doc.">
+	direction QuantityChangeDirectionEnum (1..1) <"Direction of the quantity change specified as either an increase, decrease or replacement.">
+
+type TermsChangeInstruction: <"Specifies instructions for terms change consisting of the new transaction terms, and the renegotiation fee. STUB: trimmed to one attribute.">
+	newTerms NonTransferableProduct (1..1) <"The new transaction terms after the change.">
+
+type ResetInstruction: <"Defines the information needed to execute a Reset Business Event. ">
+	reset Reset (0..*) <"Specifies the terms of the Reset.">
+
+type SplitInstruction: <"Specifies instructions for a split, consisting of a breakdown of instructions to be applied to each branch of the split. This instruction can be used to duplicate a trade, as in a clearing scenario, or to split a trade into smaller quantities (in which case each breakdown instruction needs to include a quantity change), as in an allocation.">
+	// Should cardinality be (2..*)?
+	breakdown PrimitiveInstruction (1..*) <"Each split breakdown specifies the set of primitive instructions to be applied to a single branch of that split. N split breakdowns result in N output trades, which include the original trade. TRIMMED doc.">
+
+type TransferInstruction: <"Defines the payout on which to create a Transfer along with all necessary resets.">
+	transferState TransferState (0..*) <"Specifies the terms and state of a transfers.">
+
+type PartyChangeInstruction: <"Specifies instruction to change the party on a trade. This primitive instruction is used in a number of scenarios including: clearing, allocation and novation. The instrution must include a trade identifier, because a change of party effectively results in a different trade.">
+	counterparty Counterparty (1..1) <"The new counterparty who is stepping into the trade. The stepping out counterparty is inferred based on the counterparty role that is being updated.">
+	ancillaryParty AncillaryParty (0..1) <"Specifies an ancillary party to be added onto the new transaction, e.g. the original executing party in an allocation.">
+	partyRole PartyRole (0..1) <"Specifies an additional party roles to be added on to the new transaction.">
+	tradeId TradeIdentifier (1..*) <"The identifier to be assigned to the new trade post change of party.">
+
+type PrimitiveInstruction: <"A Primitive Instruction describes the inputs required to pass into the corresponding PrimitiveEvent function. TRIMMED: indexTransition/stockSplit/observation/valuation attributes dropped — their primitive funcs are out of the fragment.">
+	contractFormation ContractFormationInstruction (0..1) <"Specifies instructions describing an contract formation primitive event.">
+	execution ExecutionInstruction (0..1) <"Specifies instructions describing an execution primitive event.">
+	exercise ExerciseInstruction (0..1) <"Specifies instructions describing an exercise primitive event.">
+	partyChange PartyChangeInstruction (0..1) <"Specifies instructions describing a party change primitive event.">
+	quantityChange QuantityChangeInstruction (0..1) <"Specifies instructions describing an quantity change primitive event.">
+	reset ResetInstruction (0..1) <"Specifies instructions describing a reset event.">
+	split SplitInstruction (0..1) <"Specifies instructions to split a trade into multiple branches.">
+	termsChange TermsChangeInstruction (0..1) <"Specifies instructions describing a terms change primitive event.">
+	transfer TransferInstruction (0..1) <"Specifies instructions describing a transfer primitive event.">
+
+type Instruction: <"Instruction to a function that will be used to perform a business event">
+	[rootType]
+	primitiveInstruction PrimitiveInstruction (0..1) <"Specifies the primitive instructions that will be used to call primitive event functions.">
+	before TradeState (0..1) <"Specifies the trade state that will be acted on by the primitive event functions.">
+		[metadata reference]
+
+	condition ExclusiveSplitPrimitive: <"A split primitive is exclusive and cannot be combined with other primitives. Instead, the primitive instructions to be applied to each branch of the split must be specified as breakdowns in the split instruction itself.">
+		if primitiveInstruction -> split exists
+		then primitiveInstruction -> split only exists
+
+	condition NewTrade: <"There must be no before trade state if the primitive instructions contain an execution, and vice versa. An instruction only handles 1 trade at a time.">
+		(if primitiveInstruction -> execution exists then before is absent else True)
+			and (if before is absent then primitiveInstruction -> execution exists else True)
+
+type EventInstruction: <"Specifies instructions to create a BusinessEvent. TRIMMED: eventTime/effectiveDate/effectiveTime/packageInformation attributes dropped.">
+
+	intent EventIntentEnum (0..1) <"The intent attribute is meant to be specified when the event qualification cannot be programmatically inferred from the event features. TRIMMED doc.">
+	corporateActionIntent CorporateActionTypeEnum (0..1)
+	eventDate date (0..1) <"Specifies the date on which the event is taking place. This date is equal to the trade date in the case of a simple execution. TRIMMED doc.">
+	instruction Instruction (0..*) <"Specifies the instructions to create the Business Event.">
+
+	condition CorporateAction:
+		if corporateActionIntent exists
+		then intent = EventIntentEnum -> CorporateActionAdjustment
+
+type BusinessEvent extends EventInstruction: <"A business event represents a life cycle event of a trade. The combination of the state changes results in a qualifiable life cycle event. An example of a Business Event is a PartialTermination which is a defined by a quantity change primitive event.">
+	[metadata key]
+	[rootType]
+
+	eventQualifier string (0..1) <"The CDM event qualifier, which corresponds to the outcome of the isEvent qualification logic which qualifies the lifecycle event as a function of its features (e.g. PartialTermination, ClearingSubmission, Novation, ...).">
+	after TradeState (0..*) <"Specifies the after trade state(s) created.">
+
+	condition EventDate:
+		eventDate exists

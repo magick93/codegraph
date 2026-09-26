@@ -24,7 +24,8 @@ deployment_topology = "{{ deployment_topology }}"
 ops_backend = {{ features.ops }}
 grpc_backend = {{ features.grpc }}
 ifml_backend = {{ features.ifml }}
-has_admin_cli = true
+{% if features.rosetta %}rosetta_backend = true
+{% endif %}has_admin_cli = true
 
 [profiles.default.api]
 generators = [

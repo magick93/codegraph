@@ -1,11 +1,13 @@
 use crate::error::GraphError;
 use crate::types::{
-    ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, CodeList, CollectionNode,
-    CompositeColumn, CompositeRange, DataBindingNode, EdgeProperties, EdgeType, EnumValue,
-    ErrorDefinitionNode, EventNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode,
-    MembershipNode, MoxDomainModel, NamespaceNode, ParameterDefinitionNode, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RelationshipNode, RepositoryNode, SchemaNode,
-    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
+    ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, AtprotoNamespaceNode,
+    CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionNode, DataBindingNode,
+    EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode, FunctionNode,
+    HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode, MoxDomainModel,
+    NamespaceImport, NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode,
+    PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner,
+    RelationshipNode, RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -68,10 +70,26 @@ pub trait GraphIngestor: Send + Sync {
 
     async fn ingest_data_binding(&self, node: &DataBindingNode) -> Result<String, GraphError>;
 
-    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError>;
+    async fn ingest_atproto_namespace(
+        &self,
+        node: &AtprotoNamespaceNode,
+    ) -> Result<String, GraphError>;
     async fn ingest_lexicon(&self, node: &LexiconNode) -> Result<String, GraphError>;
     async fn ingest_collection(&self, node: &CollectionNode) -> Result<String, GraphError>;
     async fn ingest_repository(&self, node: &RepositoryNode) -> Result<String, GraphError>;
+
+    // ── Namespace plane (issue #267) ─────────────────────────────────
+
+    /// Ingest one NamespaceNode (graph-wide namespace, issue #267). The
+    /// node's `fqn` is the unique key (returned as the id). The `parent`
+    /// field is persisted flat AND written as a `NamespaceParent` edge
+    /// (child → parent) when present. `#268` connects the producers (mox/
+    /// rosetta/`$id` sources).
+    async fn ingest_namespace(&self, node: &NamespaceNode) -> Result<String, GraphError>;
+
+    /// Ingest one NamespaceImports edge (`from_ns` imports `to_ns`), with
+    /// wildcard/alias payload. Both namespaces must already exist.
+    async fn ingest_namespace_import(&self, import: &NamespaceImport) -> Result<(), GraphError>;
 
     async fn update_entity_flag(&self, title: &str, is_entity: bool) -> Result<(), GraphError>;
 
@@ -166,4 +184,47 @@ pub trait GraphIngestor: Send + Sync {
         let _ = model;
         Ok(())
     }
+
+    // ── Constraint plane (issue #261) ─────────────────────────────────
+
+    /// Ingest one ConditionNode (named condition or bridge-derived one_of)
+    /// and link it to its owning schema via a `HasCondition` edge. Follows
+    /// the IFML node-family precedent: a required method, implemented by
+    /// every backend.
+    async fn ingest_condition(&self, node: &ConditionNode) -> Result<(), GraphError>;
+
+    // ── Regulatory reference plane (issue #265) ───────────────────────
+
+    /// Ingest one regulatory reference metadata node (report/body/corpus/
+    /// segment/rule source/rule schema/meta type). Deduplication is the
+    /// bridge's job (name + kind is the natural key).
+    async fn ingest_regulatory(&self, node: &RegulatoryNode) -> Result<(), GraphError>;
+
+    // ── Computation plane (issue #263) ─────────────────────────────────
+
+    /// Ingest one FunctionNode (rosetta func). The node carries its
+    /// resolved `extends` parent name; the `FunctionExtends` edge is
+    /// written separately via `ingest_edge` AFTER every function of the
+    /// run exists (name-ordered ingestion is not parent-first).
+    async fn ingest_function(&self, node: &FunctionNode) -> Result<(), GraphError>;
+
+    /// Ingest one RuleNode (rosetta reporting/eligibility rule, issue
+    /// #264). The `RuleAppliesTo` input edge is written separately via
+    /// `ingest_edge` AFTER the input's Schema node exists (rules ingest
+    /// before the schema bridging passes).
+    async fn ingest_rule(&self, node: &RuleNode) -> Result<(), GraphError>;
+
+    /// Link an owner element to a regulatory node. Edges are best-effort:
+    /// when the target regulatory node (name + kind) is absent the backend
+    /// is expected to succeed without writing (the rosetta bridge skips
+    /// docReference targets that no declared element backs — sigil itself
+    /// does not validate them).
+    async fn ingest_regulatory_reference(
+        &self,
+        owner: &RegulatoryOwner,
+        target: &str,
+        target_kind: RegulatoryKind,
+        edge_kind: RegulatoryEdgeKind,
+        ref_path: Option<&str>,
+    ) -> Result<(), GraphError>;
 }

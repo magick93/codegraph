@@ -58,6 +58,19 @@ impl RepositoryImplEmitter {
         let tree = self
             .query_entity_tree(db, schema_title, domain, config, parent_ref)
             .await?;
+        // Issue #268 (namespace_layout): namespaced entities reference
+        // their entity module through the namespace path —
+        // `crate::entity::cdm::base::datetime::{module}`. Flat (gate off /
+        // namespace-less) keeps `{schema}_{table}` byte-identical; every
+        // emitted `crate::entity::{}::…` site formats this one field.
+        let tree =
+            if let Some(ns) = crate::namespace_rust_prefix(tree.namespace.as_deref(), project) {
+                let mut tree = tree;
+                tree.entity_module = format!("{ns}::{}", tree.entity_module);
+                tree
+            } else {
+                tree
+            };
         let mut code = CodeWriter::new();
 
         // Cross-generator contract: the handler's hydration block calls
@@ -304,13 +317,27 @@ impl RepositoryImplEmitter {
             // Add import statements for cross-entity types referenced by include paths.
             // These types (e.g. PersonResponse) live in other entity modules and need
             // use crate::domain::{domain}::{module}::dto_response::TypeName imports.
-            let caller_base: Vec<String> = vec![
-                "crate".into(),
-                "domain".into(),
-                domain.into(),
-                tree.module_name.clone(),
-                "repository_impl".into(),
-            ];
+            // Issue #268: under namespace_layout the CALLER's own module
+            // path runs through the namespace segments (self-import
+            // detection must agree with dto.rs's registered paths).
+            let caller_ns = crate::namespace_rust_prefix(tree.namespace.as_deref(), project);
+            let caller_base: Vec<String> = match &caller_ns {
+                Some(ns) => format!("crate::domain::{ns}::{}", tree.module_name)
+                    .split("::")
+                    .map(str::to_string)
+                    .collect(),
+                None => vec![
+                    "crate".into(),
+                    "domain".into(),
+                    domain.into(),
+                    tree.module_name.clone(),
+                ],
+            };
+            let caller_base = {
+                let mut base = caller_base;
+                base.push("repository_impl".into());
+                base
+            };
 
             // Build the target entity trees so include-fetch responses hydrate
             // the target's child tables (e.g. person.name) instead of emitting
@@ -407,7 +434,21 @@ impl RepositoryImplEmitter {
                         continue;
                     }
                     let last = path.segments.last().unwrap();
-                    let base = format!("crate::domain::{}::{}::", last.domain, last.module_name);
+                    // Issue #268: namespace-derived target module path
+                    // under namespace_layout (must match dto.rs's
+                    // registered module paths for the target entity).
+                    let base = match crate::namespace_rust_prefix(
+                        include_target_trees
+                            .get(idx)
+                            .and_then(|t| t.as_ref())
+                            .and_then(|t| t.namespace.as_deref()),
+                        project,
+                    ) {
+                        Some(ns) => format!("crate::domain::{ns}::{}::", last.module_name),
+                        None => {
+                            format!("crate::domain::{}::{}::", last.domain, last.module_name)
+                        }
+                    };
                     for child in &ttree.child_tables {
                         walk_child_imports(
                             child,
@@ -493,7 +534,14 @@ impl RepositoryImplEmitter {
             }
         });
 
-        let is_auditable = if has_audit_policy {
+        // Append-only snapshot semantics (issue #284) — same inference as
+        // db/ddl.rs: explicit entity-config flag, or effective operations
+        // exclude update AND delete. Append-only tables carry no updated_at
+        // and no audit columns, so repositories must not reference them.
+        let append_only = entity_cfg.as_ref().is_some_and(|ec| ec.is_append_only())
+            || !(has_update || has_delete);
+
+        let is_auditable = (if has_audit_policy {
             audit_policy
                 .as_ref()
                 .map(|a| a.track_deleted)
@@ -504,7 +552,7 @@ impl RepositoryImplEmitter {
                 .get(domain)
                 .and_then(|d| d.auditable)
                 .unwrap_or(true)
-        };
+        }) && !append_only;
 
         let soft_delete_visibility = soft_delete_policy
             .as_ref()
@@ -744,6 +792,7 @@ impl RepositoryImplEmitter {
             schema_name,
             table_name: module_name,
             entity_module,
+            namespace: schema.namespace.clone(),
             direct_columns,
             child_tables,
             junction_tables,
@@ -751,6 +800,7 @@ impl RepositoryImplEmitter {
             has_read,
             has_update,
             has_delete,
+            append_only,
             has_workflow,
             has_fts,
             has_embeddings,

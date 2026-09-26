@@ -916,6 +916,7 @@ mod tests {
             graph_binary: Some("hr-graph".into()),
             schemas_dir: Some("schemas".into()),
             mox_files: Vec::new(),
+            rosetta_files: Vec::new(),
             classifier: Some("classifier.toml".into()),
             domain_config: Some("domains.toml".into()),
             profile: Some("default".into()),

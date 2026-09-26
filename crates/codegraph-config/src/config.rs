@@ -24,10 +24,131 @@ pub struct DomainConfig {
     #[serde(default)]
     pub defaults: DefaultsConfig,
     pub domains: HashMap<String, DomainEntry>,
+    /// Namespace declarations (issue #267). Keys are dotted FQNs. Both TOML
+    /// spellings are accepted and normalize to the same FQN:
+    /// `[namespaces."cdm.base.datetime"]` (quoted — the recommended form)
+    /// and `[namespaces.cdm.base.datetime]` (nested tables flattened to
+    /// dotted paths). The optional `domain` key assigns the namespace to a
+    /// bounded context (optional, many-to-one). Namespaces discovered from
+    /// source without an explicit entry are allowed — the declared set is
+    /// only the validation baseline.
+    #[serde(default, deserialize_with = "deserialize_namespaces")]
+    pub namespaces: HashMap<String, NamespaceEntry>,
     /// Role hierarchy for the DB-level role policies (#169). Absent → the
     /// basejump default hierarchy.
     #[serde(default)]
     pub rbac: Option<RbacConfig>,
+}
+
+/// A declared namespace entry in `domains.toml` (issue #267).
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+pub struct NamespaceEntry {
+    /// The bounded context this namespace belongs to. Optional and
+    /// many-to-one: several namespaces may share a domain, and a namespace
+    /// may have no domain at all (pure visibility scope).
+    #[serde(default)]
+    pub domain: Option<String>,
+}
+
+/// Collect `[namespaces.*]` declarations into `fqn → NamespaceEntry`.
+///
+/// TOML dotted keys create nested tables (`[namespaces.cdm.base.datetime]`
+/// becomes `cdm → base → datetime`), while quoted keys stay flat
+/// (`[namespaces."cdm.base.datetime"]`). This walk flattens both into the
+/// dotted FQN form. A table holding the `domain` key is an entry; its
+/// sub-tables are child namespaces. Unknown scalar keys are a parse error
+/// (a typo like `domian` must not silently drop the assignment).
+/// A namespace FQN must be dotted, non-empty, and free of empty segments
+/// (so `""`, `"a."`, `".a"`, `"a..b"` are parse errors).
+fn validate_fqn(fqn: &str) -> Result<(), DomainConfigError> {
+    if fqn.is_empty() || fqn.split('.').any(|seg| seg.is_empty()) {
+        return Err(DomainConfigError::Invalid(format!(
+            "[namespaces] invalid namespace FQN {fqn:?}: dot-separated non-empty segments required"
+        )));
+    }
+    Ok(())
+}
+
+/// Process one namespace declaration at `fqn`: read its optional `domain`
+/// assignment, record it (when explicitly declared), and recurse into its
+/// child namespace tables.
+fn process_namespace_entry(
+    table: &toml::Table,
+    fqn: &str,
+    out: &mut HashMap<String, NamespaceEntry>,
+) -> Result<(), DomainConfigError> {
+    let mut entry = NamespaceEntry::default();
+    let mut has_domain_key = false;
+    for (skey, svalue) in table {
+        if skey == "domain" {
+            has_domain_key = true;
+            let Some(domain) = svalue.as_str() else {
+                return Err(DomainConfigError::Invalid(format!(
+                    "[namespaces.{fqn}].domain must be a string"
+                )));
+            };
+            if domain.is_empty() {
+                return Err(DomainConfigError::Invalid(format!(
+                    "[namespaces.{fqn}].domain must not be empty"
+                )));
+            }
+            entry.domain = Some(domain.to_string());
+        } else if !svalue.is_table() {
+            return Err(DomainConfigError::Invalid(format!(
+                "[namespaces.{fqn}] has unknown key {skey:?} (expected `domain` or child namespace tables)"
+            )));
+        }
+    }
+    // Record an entry when the level is explicitly declared: either it
+    // carries a `domain` key, or it is a LEAF declaration (no child
+    // namespace tables — e.g. `[namespaces."billing.ledger"]` with no
+    // keys). Intermediate levels of the nested spelling (`cdm` in
+    // `[namespaces.cdm.base.datetime]`) are path segments only, not
+    // declarations.
+    let is_leaf = table.iter().all(|(_, v)| !v.is_table());
+    if has_domain_key || is_leaf {
+        out.insert(fqn.to_string(), entry);
+    }
+    // Recurse into child namespaces (dotted unquoted spelling).
+    for (ckey, cvalue) in table {
+        if ckey == "domain" {
+            continue;
+        }
+        if let Some(child) = cvalue.as_table() {
+            let child_fqn = format!("{fqn}.{ckey}");
+            validate_fqn(&child_fqn)?;
+            process_namespace_entry(child, &child_fqn, out)?;
+        }
+    }
+    Ok(())
+}
+
+fn deserialize_namespaces<'de, D>(d: D) -> Result<HashMap<String, NamespaceEntry>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = toml::Value::deserialize(d)?;
+    let Some(table) = value.as_table() else {
+        return Err(serde::de::Error::custom(
+            "[namespaces] must be a table of namespace declarations",
+        ));
+    };
+    let mut out = HashMap::new();
+    for (key, value) in table {
+        // `domain` is a reserved key at every level (the namespace→domain
+        // assignment); it is never a namespace name.
+        if key == "domain" {
+            continue;
+        }
+        validate_fqn(key).map_err(serde::de::Error::custom)?;
+        let Some(sub) = value.as_table() else {
+            return Err(serde::de::Error::custom(format!(
+                "[namespaces.{key}] must be a table (with an optional `domain` key)"
+            )));
+        };
+        process_namespace_entry(sub, key, &mut out).map_err(serde::de::Error::custom)?;
+    }
+    Ok(out)
 }
 
 fn default_app_name() -> String {
@@ -442,6 +563,12 @@ pub struct EntityConfig {
     pub tag: Option<String>,
     /// Entity role: "root", "child", or "value_object".
     pub role: Option<String>,
+    /// Append-only snapshot semantics (CDM TradeState pattern, issue #284):
+    /// the table only ever receives INSERTs — DDL drops the updated_at
+    /// column + audit band and the BEFORE UPDATE trigger, grants narrow to
+    /// SELECT/INSERT (child tables inherit). When set, `update`/`delete`
+    /// MUST NOT appear in the entity's effective operations (parse error).
+    pub append_only: Option<bool>,
     /// Parent entity name (for child entities or roots with optional parent nesting).
     pub parent: Option<String>,
     /// DTO configuration overrides.
@@ -519,6 +646,13 @@ pub struct EntityConfig {
     /// platform routes, for example, scope on `tenants` / `api_keys`).
     #[serde(default)]
     pub api_key_scope: Option<String>,
+}
+
+impl EntityConfig {
+    /// Whether the entity is explicitly marked append-only (issue #284).
+    pub fn is_append_only(&self) -> bool {
+        self.append_only.unwrap_or(false)
+    }
 }
 
 /// AT Protocol permission gating configuration.
@@ -693,6 +827,7 @@ pub fn parse_domain_config(path: &Path) -> Result<DomainConfig, DomainConfigErro
 pub fn parse_domain_config_str(content: &str) -> Result<DomainConfig, DomainConfigError> {
     let config: DomainConfig = toml::from_str(content)?;
     validate_rbac_config(&config)?;
+    validate_append_only_config(&config)?;
     Ok(config)
 }
 
@@ -738,6 +873,33 @@ fn validate_rbac_config(config: &DomainConfig) -> Result<(), DomainConfigError> 
                     return Err(DomainConfigError::Invalid(format!(
                         "[domains.{domain}.entity_config.{entity}.permissions.min_roles] \
                          role {role:?} is not in the [rbac] roles_hierarchy"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Append-only entities (`append_only = true`, issue #284) must not carry
+/// `update`/`delete` in their effective operations — an append-only table
+/// has no UPDATE/DELETE grants, so the API surface must agree (parse-time
+/// config error, gRPC/ops strict-feature precedent).
+fn validate_append_only_config(config: &DomainConfig) -> Result<(), DomainConfigError> {
+    for (domain, entry) in &config.domains {
+        for (entity, ec) in &entry.entity_config {
+            if !ec.is_append_only() {
+                continue;
+            }
+            let effective = ec
+                .operations
+                .clone()
+                .unwrap_or_else(|| config.defaults.operations.clone());
+            for op in ["update", "delete"] {
+                if effective.iter().any(|o| o == op) {
+                    return Err(DomainConfigError::Invalid(format!(
+                        "[domains.{domain}.entity_config.{entity}] append_only = true \
+                         forbids {op:?} in the effective operations (configured: {effective:?})"
                     )));
                 }
             }
@@ -1657,5 +1819,147 @@ depends_on = ["common"]
 
         // Observability defaults off when unset.
         assert!(!payroll.observability_or(false));
+    }
+
+    // ── Namespace declarations (issue #267) ────────────────────────────
+
+    #[test]
+    fn parse_namespaces_quoted_dotted_keys() {
+        let toml = r#"
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+
+[namespaces."cdm.base.datetime"]
+domain = "products"
+
+[namespaces."billing.ledger"]
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        assert_eq!(config.namespaces.len(), 2);
+        assert_eq!(
+            config.namespaces["cdm.base.datetime"].domain.as_deref(),
+            Some("products")
+        );
+        // No `domain` key → unassigned namespace (pure visibility scope).
+        assert_eq!(config.namespaces["billing.ledger"].domain, None);
+    }
+
+    #[test]
+    fn parse_namespaces_nested_unquoted_keys_flatten_to_dotted_fqn() {
+        let toml = r#"
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+
+[namespaces.cdm.base.datetime]
+domain = "products"
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        // The nested spelling flattens to the SAME fqn as the quoted form.
+        assert_eq!(
+            config.namespaces["cdm.base.datetime"].domain.as_deref(),
+            Some("products")
+        );
+        // Intermediate levels are NOT entries (no domain key).
+        assert!(!config.namespaces.contains_key("cdm"));
+        assert!(!config.namespaces.contains_key("cdm.base"));
+    }
+
+    #[test]
+    fn parse_namespaces_mixed_spellings_and_intermediate_assignment() {
+        let toml = r#"
+[domains.products]
+label = "Products"
+schema_dir = "products"
+postgres_schema = "products"
+
+[namespaces.cdm]
+domain = "products"
+
+[namespaces.cdm.base]
+domain = "products"
+
+[namespaces."cdm.base.money"]
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        // A level can be BOTH an entry and a parent.
+        assert_eq!(config.namespaces["cdm"].domain.as_deref(), Some("products"));
+        assert_eq!(
+            config.namespaces["cdm.base"].domain.as_deref(),
+            Some("products")
+        );
+        assert_eq!(config.namespaces["cdm.base.money"].domain, None);
+    }
+
+    #[test]
+    fn parse_namespaces_many_to_one_assignment() {
+        let toml = r#"
+[domains.products]
+label = "Products"
+schema_dir = "products"
+postgres_schema = "products"
+
+[namespaces."a.one"]
+domain = "products"
+[namespaces."a.two"]
+domain = "products"
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        assert_eq!(config.namespaces["a.one"].domain, Some("products".into()));
+        assert_eq!(config.namespaces["a.two"].domain, Some("products".into()));
+    }
+
+    #[test]
+    fn parse_namespaces_absent_is_empty_map() {
+        let toml = r#"
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+"#;
+        let config = parse_domain_config_str(toml).unwrap();
+        assert!(config.namespaces.is_empty());
+    }
+
+    #[test]
+    fn parse_namespaces_invalid_fqn_is_parse_error() {
+        for bad in ["a..b", ".a", "a."] {
+            let toml = format!("[namespaces.\"{bad}\"]\n");
+            let err = parse_domain_config_str(&toml).unwrap_err();
+            assert!(
+                err.to_string().contains("FQN"),
+                "{bad:?} should be rejected: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_namespaces_unknown_scalar_key_is_parse_error() {
+        let toml = r#"
+[namespaces."cdm.base"]
+domian = "products"
+"#;
+        let err = parse_domain_config_str(toml).unwrap_err();
+        assert!(err.to_string().contains("unknown key"), "{err}");
+    }
+
+    #[test]
+    fn parse_namespaces_non_string_domain_is_parse_error() {
+        let toml = r#"
+[namespaces."cdm.base"]
+domain = 3
+"#;
+        let err = parse_domain_config_str(toml).unwrap_err();
+        assert!(err.to_string().contains("must be a string"), "{err}");
+    }
+
+    #[test]
+    fn parse_namespaces_scalar_value_is_parse_error() {
+        let toml = "namespaces = 3\n";
+        let err = parse_domain_config_str(toml).unwrap_err();
+        assert!(err.to_string().contains("must be a table"), "{err}");
     }
 }

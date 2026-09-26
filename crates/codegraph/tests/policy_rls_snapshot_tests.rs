@@ -27,6 +27,8 @@ fn property(name: &str, pg_type: &str) -> codegraph_core::types::PropertyNode {
         is_required: true,
         is_nullable: false,
         is_array: false,
+        min_items: None,
+        max_items: None,
         pattern: None,
         min_length: None,
         max_length: None,
@@ -52,6 +54,7 @@ fn property(name: &str, pg_type: &str) -> codegraph_core::types::PropertyNode {
 fn engine_with_candidate() -> MockEngine {
     MockEngine::builder()
         .with_schema(codegraph_core::types::SchemaNode {
+            namespace: None,
             schema_id: "candidate".into(),
             title: "CandidateType".into(),
             description: Some("A job candidate".into()),
@@ -165,6 +168,7 @@ fn domain_config() -> DomainConfig {
         },
     );
     DomainConfig {
+        namespaces: HashMap::new(),
         defaults: DefaultsConfig {
             operations: vec!["create".into(), "read".into()],
             auto_discover: false,

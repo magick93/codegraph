@@ -146,6 +146,7 @@ mod tests {
     fn make_domain_config() -> codegraph_config::DomainConfig {
         let domains = std::collections::HashMap::new();
         codegraph_config::DomainConfig {
+            namespaces: std::collections::HashMap::new(),
             defaults: Default::default(),
             domains,
             rbac: None,

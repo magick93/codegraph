@@ -2,7 +2,18 @@
 
 default: generate
 
-# Regenerate code from your .mox model.
+{% if features.rosetta %}# Regenerate code from your .rosetta model.
+generate:
+    cargo run -p {{ graph_binary }} -- run{% for d in domains %} --rosetta-files model/{{ d.name }}.rosetta{% endfor %} --config domains.toml --output generated
+
+# Show entity/VO classification decisions.
+classify:
+    cargo run -p {{ graph_binary }} -- classify{% for d in domains %} --rosetta-files model/{{ d.name }}.rosetta{% endfor %} --config domains.toml
+
+# Validate project layout and configuration.
+doctor:
+    cargo run -p {{ graph_binary }} -- doctor --config domains.toml{% for d in domains %} --rosetta-files model/{{ d.name }}.rosetta{% endfor %}
+{% else %}# Regenerate code from your .mox model.
 generate:
     cargo run -p {{ graph_binary }} -- run{% for d in domains %} --mox-files model/{{ d.name }}.mox{% endfor %} --config domains.toml --output generated
 
@@ -13,7 +24,7 @@ classify:
 # Validate project layout and configuration.
 doctor:
     cargo run -p {{ graph_binary }} -- doctor --config domains.toml{% for d in domains %} --mox-files model/{{ d.name }}.mox{% endfor %}
-
+{% endif %}
 # API integration tests (preflight, migrate, hurl, curl smoke, RLS).
 api *flags="":
     cargo run -p testkit -- --config codegraph-ops.toml api {% raw %}{{flags}}{% endraw %}

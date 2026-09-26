@@ -28,6 +28,10 @@ pub struct EntityTree {
     pub table_name: String,
     /// Domain-prefixed entity module name: `{schema_name}_{table_name}`.
     pub entity_module: String,
+    /// The schema's namespace (issue #268). `None` for namespace-less
+    /// schemas and when the graph carries no namespaces; drives the
+    /// namespace-derived module references under `namespace_layout`.
+    pub namespace: Option<String>,
     pub direct_columns: Vec<TreeColumn>,
     pub child_tables: Vec<ChildTableInfo>,
     /// Junction (many-to-many) tables for array-of-entity-ref properties that
@@ -52,6 +56,11 @@ pub struct EntityTree {
     pub track_updated_user: bool,
     /// Whether the audit policy tracks the deleting user (for `deleted_by` column).
     pub track_deleted_user: bool,
+    /// Append-only snapshot semantics (issue #284): explicit entity-config
+    /// flag or inferred from effective operations excluding update AND
+    /// delete. Mirrors the DDL inference (ddl.rs) — when true the table has
+    /// no `updated_at` column, so emitted repositories must not reference it.
+    pub append_only: bool,
     pub filter_fields: Vec<FilterFieldInfo>,
     pub nested_filter_fields: Vec<NestedFilterFieldInfo>,
     /// FK column for parent-scoped lookups (child entities only).
