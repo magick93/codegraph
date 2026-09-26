@@ -8,7 +8,9 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Card from '#lib/components/ui/card/index.js';
-	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';{% if ux_actions and has_child_sections %}
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+{% endif %}
 {% if has_workflow %}
 	import WorkflowPanel from '#lib/components/ui/WorkflowPanel.svelte';
 	import { transition{{ entity_name }} } from '#lib/stores/{{ domain }}_{{ module_name }}.ts';
@@ -70,7 +72,11 @@
 {% endif %}
 {% if has_child_sections %}
 	let expandedSections = $state(new Set<string>());
+{% if ux_actions %}{% if ux_actions.confirm_delete %}
 {% for section in child_sections %}
+	let {{ section.module_name }}DeleteId = $state<string | null>(null);
+{% endfor %}
+{% endif %}{% endif %}{% for section in child_sections %}
 	let {{ section.module_name }}Items = $state<any[]>([]);
 {% endfor %}
 
@@ -128,7 +134,15 @@
 			toast.error(m.common_delete_failed({ error: (e as Error).message }));
 		}
 	}
-
+{% if ux_actions %}{% if ux_actions.confirm_delete %}
+{% for section in child_sections %}
+	function confirmDelete{{ section.entity_name }}Child() {
+		const childId = {{ section.module_name }}DeleteId;
+		{{ section.module_name }}DeleteId = null;
+		if (childId !== null) void deleteChild('{{ section.domain }}', '{{ section.path_segment }}', childId);
+	}
+{% endfor %}
+{% endif %}{% endif %}
 	onMount(() => {
 		loadChildren();
 	});

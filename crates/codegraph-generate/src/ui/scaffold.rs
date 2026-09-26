@@ -21,6 +21,10 @@ pub struct UiScaffoldContext {
     /// Gates ux-only i18n message keys so flag-off scaffold output stays
     /// byte-identical.
     pub has_ux_rules: bool,
+    /// The shadcn-svelte primitives generated pages import (issue #299).
+    /// Drives the emitted `ui/PRIMITIVES.md` install surface; the surface
+    /// itself is gated on [`Self::has_ux_rules`].
+    pub shadcn_primitives: Vec<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,11 +53,15 @@ pub struct UiNavField {
 
 /// The shadcn-svelte primitive set a generated app's UI is built on
 /// (`#lib/components/ui/<name>/index.js` imports). Existing generated pages
-/// already import the first entries; issue #297 adds `dropdown-menu` and
-/// `tooltip` for the ux-rules list page (row-actions menu, truncated-cell
-/// tooltips). #299 ships the wrapper components themselves into the
-/// scaffold; until then real projects get them via `npx shadcn-svelte add`
-/// against the emitted `components.json`.
+/// already import the first entries; the ux-rules list page (#297) and the
+/// detail-page child sections (#299) add `dropdown-menu` and `tooltip`.
+/// The generator does NOT vendor these components — exactly like the
+/// pre-existing primitives (`table`, `dialog`, `badge`, …), real projects
+/// obtain them with the shadcn-svelte CLI against the emitted
+/// `components.json`. Issue #299 makes this constant drive the emitted
+/// `ui/PRIMITIVES.md` install surface (gated on the ux plane) so the
+/// component set is documented and one command away instead of inferred
+/// from page imports.
 pub const SHADCN_PRIMITIVES: &[&str] = &[
     "alert-dialog",
     "avatar",
@@ -116,6 +124,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             has_integrations: self.has_integrations,
             has_webhooks: self.has_webhooks,
             has_ux_rules: project.ux.is_some(),
+            shadcn_primitives: SHADCN_PRIMITIVES.to_vec(),
         };
 
         let ui = self.output_dir.join("ui");
@@ -138,6 +147,13 @@ impl GlobalGenerator for UiScaffoldGenerator {
             )
             .await?,
         );
+
+        // Issue #299: the primitive install surface (see
+        // `SHADCN_PRIMITIVES`). Gated on the ux plane so flag-off scaffold
+        // output stays byte-identical.
+        if ctx.has_ux_rules {
+            files.extend(render_template_set(tera, &ctx, project, primitive_docs(&ui)).await?);
+        }
 
         // Webhook UI templates (conditional on has_webhooks)
         if self.has_webhooks {
@@ -254,6 +270,15 @@ async fn render_template_set(
         files.push(GeneratedFile { path, content });
     }
     Ok(files)
+}
+
+/// The shadcn primitive install surface (issue #299): one emitted
+/// `PRIMITIVES.md` carrying the copy-paste `npx shadcn-svelte add` command
+/// for the full [`SHADCN_PRIMITIVES`] set. Emitted only under the ux
+/// plane (see the caller) so flag-off scaffold output stays
+/// byte-identical.
+fn primitive_docs(ui: &Path) -> Vec<(&'static str, PathBuf)> {
+    vec![("ui/scaffold/primitives_md.tera", ui.join("PRIMITIVES.md"))]
 }
 
 fn core_scaffold_templates(ui: &Path, src: &Path, lib: &Path) -> Vec<(&'static str, PathBuf)> {

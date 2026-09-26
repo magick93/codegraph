@@ -162,6 +162,13 @@ pub struct UxActionsCtx {
     /// Convenience flag: `delete` is in `confirm` (drives the AlertDialog
     /// branch in the template).
     pub confirm_delete: bool,
+    /// Actions collapsed into CHILD-SECTION item menus (issue #299): the
+    /// plan's Edit/Delete pair whichever side of the row partition they
+    /// sit on, still filtered to the entity's enabled operations — child
+    /// items always tier their secondary actions behind the per-item menu
+    /// while the `Manage →` link stays the inline affordance. Empty ⇒ the
+    /// child section keeps the pre-#299 flat buttons.
+    pub child_menu: Vec<UxActionCtx>,
 }
 
 /// Locale/visual baseline for the list template (issue #297).
@@ -181,6 +188,28 @@ pub struct UxSettingsCtx {
     pub soft_delete_field: Option<String>,
     /// The workflow status field, when a workflow is configured.
     pub workflow_status_field: Option<String>,
+    /// Timeline collection layout (issue #298), resolved from
+    /// `CollectionPlan::Timeline`. `None` = the default table layout; the
+    /// key is skipped from the serialized context entirely, so table-mode
+    /// and flag-off contexts stay byte-identical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeline: Option<UxTimelineCtx>,
+}
+
+/// Timeline collection parameters for the list template (issue #298).
+///
+/// Only ever produced by an explicit `[[collection]] display = "timeline"`
+/// rule — tables never morph (the plan heuristic suggests instead).
+#[derive(Debug, Clone, Serialize)]
+pub struct UxTimelineCtx {
+    /// Datetime field the timeline sorts by (rendered newest first).
+    pub order_by: String,
+    /// Title field of each entry; the template falls back to `id` when
+    /// the plan could not resolve one.
+    pub title_field: Option<String>,
+    /// Extra fields shown on each entry, rendered through the shared
+    /// cell formatter (chips, money, ...).
+    pub preview: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -577,6 +606,15 @@ async fn resolve_ux_context(
         .map(map_action)
         .collect();
     let confirm_delete = plan.actions.confirm.iter().any(|c| c == "delete");
+    // Issue #299: child sections collapse Edit/Delete behind the per-item
+    // menu regardless of the row partition (the Manage link owns the
+    // inline slot); canonical order keeps Edit before Delete.
+    let child_menu: Vec<UxActionCtx> = primary
+        .iter()
+        .chain(menu.iter())
+        .filter(|spec| matches!(spec.action.as_str(), "edit" | "delete"))
+        .cloned()
+        .collect();
     let ux_actions = if primary.is_empty() && menu.is_empty() {
         None
     } else {
@@ -585,7 +623,21 @@ async fn resolve_ux_context(
             menu,
             confirm: plan.actions.confirm.clone(),
             confirm_delete,
+            child_menu,
         })
+    };
+
+    let timeline = match &plan.collection {
+        crate::ux::plan::CollectionPlan::Timeline {
+            order_by,
+            title_field,
+            preview,
+        } => Some(UxTimelineCtx {
+            order_by: order_by.clone(),
+            title_field: title_field.clone(),
+            preview: preview.clone(),
+        }),
+        crate::ux::plan::CollectionPlan::Table => None,
     };
 
     let ux = UxSettingsCtx {
@@ -600,6 +652,7 @@ async fn resolve_ux_context(
         .to_string(),
         soft_delete_field,
         workflow_status_field,
+        timeline,
     };
 
     Ok((ux_columns, ux_actions, Some(ux), diag_lines))
@@ -1027,5 +1080,413 @@ mod ux_list_template_tests {
             "{out}"
         );
         assert!(!out.contains("style: 'currency'"), "{out}");
+    }
+
+    /// Timeline ctx (issue #298): the dispatcher swaps the table for the
+    /// timeline layout while the shared load logic (search input, create
+    /// button, empty state, pagination) stays put.
+    #[test]
+    fn flag_on_timeline_ctx_swaps_table_for_timeline() {
+        let mut ctx = base_ctx();
+        let obj = ctx.as_object_mut().unwrap();
+        obj.insert("ux_columns".into(), json!([
+            {"key": "name", "dimension": "text", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false},
+            {"key": "total_amount", "dimension": "money", "display": "raw", "align": "right", "tone": {}, "truncate_tooltip": false},
+            {"key": "status", "dimension": "status-category", "display": "chip", "align": "left", "tone": {}, "truncate_tooltip": false},
+            {"key": "created_at", "dimension": "time-point", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false}
+        ]));
+        obj.insert("ux_actions".into(), json!({
+            "primary": [{"action": "open", "label": "Open"}],
+            "menu": [{"action": "edit", "label": "Edit"}, {"action": "delete", "label": "Delete"}],
+            "confirm": ["delete"],
+            "confirm_delete": true
+        }));
+        obj.insert(
+            "ux".into(),
+            json!({
+                "locale": "en-NZ", "currency": "NZD", "zebra": true,
+                "inactive_shading": true, "vertical_align": "center",
+                "soft_delete_field": "deleted_at", "workflow_status_field": null,
+                "timeline": {
+                    "order_by": "created_at",
+                    "title_field": "name",
+                    "preview": ["status", "total_amount"]
+                }
+            }),
+        );
+        let out = render(&ctx);
+
+        // Timeline markup with the pinned testids.
+        assert!(out.contains(r#"data-testid="task-timeline""#), "{out}");
+        assert!(out.contains(r#"data-testid="task-timeline-item""#), "{out}");
+        // Order field formatted through the shared Intl helper.
+        assert!(out.contains("function formatDate("), "{out}");
+        assert!(
+            out.contains("Intl.DateTimeFormat('en-NZ', { dateStyle: 'medium' })"),
+            "{out}"
+        );
+        assert!(out.contains("const orderKey = 'created_at';"), "{out}");
+        // DESC sort of the shared rows.
+        assert!(out.contains("[...displayRows].sort"), "{out}");
+        assert!(out.contains("? 1 : av > bv ? -1 : 0"), "{out}");
+        // Title link over the entity base path.
+        assert!(out.contains("const titleKey = 'name';"), "{out}");
+        assert!(out.contains("href={`${basePath}/${row['id']}`}"), "{out}");
+        // Preview fields render through the shared cell formatter.
+        assert!(
+            out.contains("const previewKeys = ['status', 'total_amount'];"),
+            "{out}"
+        );
+        assert!(out.contains("timeline-meta"), "{out}");
+        assert!(out.contains(r#"data-testid="task-chip""#), "{out}");
+        assert!(out.contains("formatMoney(value)"), "{out}");
+        // Row actions dropdown + confirm-guarded delete.
+        assert!(out.contains(r#"data-testid="task-actions""#), "{out}");
+        assert!(out.contains(r#"data-testid="task-actions-menu""#), "{out}");
+        assert!(
+            out.contains(r#"data-testid="task-delete-confirm""#),
+            "{out}"
+        );
+        // Table markup absent in timeline mode.
+        assert!(!out.contains(r#"data-testid="task-table""#), "{out}");
+        assert!(!out.contains("<Table.Root"), "{out}");
+        assert!(!out.contains("Table.Head"), "{out}");
+        assert!(!out.contains("task-timeline-meta-list"), "{out}");
+
+        // Shared load logic survives: search, create, empty state,
+        // pagination, FTS-free filtering.
+        assert!(out.contains(r#"data-testid="task-search""#), "{out}");
+        assert!(out.contains(r#"data-testid="task-create-btn""#), "{out}");
+        assert!(out.contains(r#"data-testid="task-empty""#), "{out}");
+        assert!(out.contains(r#"data-testid="task-pagination""#), "{out}");
+    }
+
+    /// Table mode with the flag ON (no `timeline` key in `ux`): the
+    /// timeline layout, helpers and styles never render.
+    #[test]
+    fn flag_on_table_mode_has_no_timeline_markup() {
+        let mut ctx = base_ctx();
+        let obj = ctx.as_object_mut().unwrap();
+        obj.insert("ux_columns".into(), json!([
+            {"key": "created_at", "dimension": "time-point", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false}
+        ]));
+        obj.insert(
+            "ux".into(),
+            json!({
+                "locale": "en-NZ", "currency": null, "zebra": true,
+                "inactive_shading": false, "vertical_align": "center",
+                "soft_delete_field": null, "workflow_status_field": null
+            }),
+        );
+        let out = render(&ctx);
+        for needle in [
+            "task-timeline",
+            "timeline-item",
+            "timeline-meta",
+            "timeline-rail",
+            "function formatDate(",
+            "const orderKey",
+            "titleKey",
+            "previewKeys",
+            "displayRowsSorted",
+            "workflowVariant",
+        ] {
+            assert!(
+                !out.contains(needle),
+                "table-mode output must not contain {needle:?}:\n{out}"
+            );
+        }
+        assert!(out.contains(r#"data-testid="task-table""#), "{out}");
+    }
+
+    /// Workflow on a timeline entity: the badge renders with the panel's
+    /// variant ladder against the configured status field.
+    #[test]
+    fn flag_on_timeline_workflow_badge_branch_compiles() {
+        let mut ctx = base_ctx();
+        let obj = ctx.as_object_mut().unwrap();
+        obj.insert("has_workflow".into(), json!(true));
+        obj.insert("ux_columns".into(), json!([
+            {"key": "created_at", "dimension": "time-point", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false}
+        ]));
+        obj.insert(
+            "ux".into(),
+            json!({
+                "locale": "en-NZ", "currency": null, "zebra": false,
+                "inactive_shading": true, "vertical_align": "center",
+                "soft_delete_field": "deleted_at",
+                "workflow_status_field": "status",
+                "timeline": {
+                    "order_by": "created_at",
+                    "title_field": null,
+                    "preview": []
+                }
+            }),
+        );
+        let out = render(&ctx);
+        assert!(out.contains("function workflowVariant("), "{out}");
+        assert!(
+            out.contains(r#"data-testid="task-workflow-state""#),
+            "{out}"
+        );
+        assert!(out.contains("terminalStates.includes(state)"), "{out}");
+    }
+}
+
+/// Detail-page child-section template pins (issue #299): the per-item
+/// actions menu + confirmation dialog under the parent's ux plan, and the
+/// byte-identity golden for the flag-off render.
+#[cfg(test)]
+mod ux_child_section_template_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// One child section attached to a `TaskType` detail page.
+    fn child_sections() -> serde_json::Value {
+        json!([{
+            "entity_name": "SubTaskType",
+            "module_name": "sub_task",
+            "label": "Sub Task",
+            "path_segment": "sub-task",
+            "domain": "common",
+            "has_children": true,
+            "fields": []
+        }])
+    }
+
+    /// Detail-page context with `ux` keys present only when `ux` is true.
+    fn detail_ctx(ux: bool) -> serde_json::Value {
+        let mut ctx = json!({
+            "entity_name": "TaskType",
+            "module_name": "task",
+            "domain": "common",
+            "path_segment": "task",
+            "param_name": "task_id",
+            "has_create": true,
+            "has_read": true,
+            "has_update": true,
+            "has_delete": true,
+            "has_list": true,
+            "has_workflow": false,
+            "workflow_states": [],
+            "initial_state": "",
+            "terminal_states": [],
+            "has_approval_status": false,
+            "has_fts": false,
+            "fields": [],
+            "list_fields": [],
+            "child_sections": child_sections(),
+            "has_child_sections": true,
+            "parent": null,
+            "detail_extensions": [],
+        });
+        if ux {
+            let obj = ctx.as_object_mut().unwrap();
+            obj.insert(
+                "ux_actions".into(),
+                json!({
+                    "primary": [{"action": "open", "label": "Open"}],
+                    "menu": [{"action": "edit", "label": "Edit"}, {"action": "delete", "label": "Delete"}],
+                    "confirm": ["delete"],
+                    "confirm_delete": true,
+                    "child_menu": [{"action": "edit", "label": "Edit"}, {"action": "delete", "label": "Delete"}]
+                }),
+            );
+        }
+        ctx
+    }
+
+    fn render_detail(ctx: &serde_json::Value) -> String {
+        let tera = crate::template_engine::create_tera(std::path::Path::new("."))
+            .expect("embedded templates");
+        crate::render_template_with_project(
+            &tera,
+            "ui/detail_page.tera",
+            ctx,
+            &ProjectConfig::default(),
+        )
+        .expect("detail page renders")
+    }
+
+    /// Byte-identity golden: the flag-off child-section detail render is
+    /// byte-for-byte the pre-#299 output (captured from the HEAD templates
+    /// before the child-section changes; see the testdata file header).
+    #[test]
+    fn flag_off_child_section_detail_render_is_byte_identical() {
+        let golden = include_str!("testdata/pre299_flag_off_detail_render.txt");
+        let out = render_detail(&detail_ctx(false));
+        assert_eq!(out, golden, "flag-off detail render drifted from pre-#299");
+    }
+
+    /// Flag-off: no ux markup leaks into the child section, and the flat
+    /// Edit/Delete buttons plus the inline Manage link stay.
+    #[test]
+    fn flag_off_child_section_keeps_flat_buttons() {
+        let out = render_detail(&detail_ctx(false));
+        for needle in [
+            "DropdownMenu",
+            "sub_task-actions",
+            "sub_task-action-edit",
+            "sub_task-action-delete",
+            "sub_task-delete-confirm",
+            "DeleteId",
+            "confirmDelete",
+        ] {
+            assert!(
+                !out.contains(needle),
+                "flag-off output has {needle:?}:\n{out}"
+            );
+        }
+        assert!(
+            out.contains(r#"onclick={() => editChild('common', 'sub-task', child.id)}"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"onclick={() => deleteChild('common', 'sub-task', child.id)}"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"data-testid="manage-sub_task-btn""#),
+            "{out}"
+        );
+    }
+
+    /// Flag-on: Edit/Delete tier into the per-item actions menu, Delete
+    /// sits behind the plan's AlertDialog confirmation, and the Manage →
+    /// link remains the inline affordance. The detail HEADER Edit/Delete
+    /// buttons stay primary (never moved into a menu).
+    #[test]
+    fn flag_on_child_section_tiers_actions_behind_menu() {
+        let out = render_detail(&detail_ctx(true));
+
+        // Per-item menu trigger + content testids.
+        assert!(out.contains(r#"data-testid="sub_task-actions""#), "{out}");
+        assert!(
+            out.contains(r#"data-testid="sub_task-actions-menu""#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"data-testid="sub_task-action-edit""#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"data-testid="sub_task-action-delete""#),
+            "{out}"
+        );
+        // Menu items keep the exact legacy Edit/Delete behaviors.
+        assert!(
+            out.contains(r#"onclick={() => editChild('common', 'sub-task', child.id)}"#),
+            "{out}"
+        );
+        assert!(out.contains("sub_taskDeleteId = child.id; }}"), "{out}");
+        // Delete behind the per-section AlertDialog confirm.
+        assert!(out.contains("DropdownMenu.Root"), "{out}");
+        assert!(out.contains("open={sub_taskDeleteId !== null}"), "{out}");
+        assert!(out.contains("if (!v) sub_taskDeleteId = null;"), "{out}");
+        assert!(
+            out.contains(r#"data-testid="sub_task-delete-confirm""#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"data-testid="sub_task-delete-confirm-confirm""#),
+            "{out}"
+        );
+        assert!(
+            out.contains("let sub_taskDeleteId = $state<string | null>(null);"),
+            "{out}"
+        );
+        assert!(
+            out.contains("function confirmDeleteSubTaskTypeChild() {"),
+            "{out}"
+        );
+        assert!(
+            out.contains("onclick={confirmDeleteSubTaskTypeChild}"),
+            "{out}"
+        );
+        assert!(
+            out.contains("void deleteChild('common', 'sub-task', childId);"),
+            "{out}"
+        );
+        // The flat legacy buttons are gone.
+        assert!(
+            !out.contains("onclick={() => deleteChild('common', 'sub-task', child.id)}"),
+            "{out}"
+        );
+        // The Manage → link stays inline (primary affordance).
+        assert!(
+            out.contains(r#"data-testid="manage-sub_task-btn""#),
+            "{out}"
+        );
+        assert!(out.contains("Manage →"), "{out}");
+        assert!(
+            out.contains(
+                "import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';"
+            ),
+            "{out}"
+        );
+
+        // The detail HEADER keeps its primary Edit/Delete buttons.
+        assert!(out.contains(r#"data-testid="task-edit-btn""#), "{out}");
+        assert!(out.contains(r#"data-testid="task-delete-btn""#), "{out}");
+        assert!(
+            out.contains(r#"onclick={() => deleteDialogOpen = true}"#),
+            "{out}"
+        );
+        // The header delete opens the header dialog, not the child one.
+        let header_delete = out.find(r#"task-delete-btn"#).unwrap();
+        let child_menu = out.find(r#"sub_task-actions""#).unwrap();
+        assert!(
+            header_delete < child_menu,
+            "header stays the primary surface"
+        );
+    }
+
+    /// Non-confirming plans keep the direct delete: with `confirm` empty
+    /// the menu item calls deleteChild immediately and no child dialog is
+    /// emitted.
+    #[test]
+    fn flag_on_non_confirm_delete_stays_direct() {
+        let mut ctx = detail_ctx(true);
+        ctx.as_object_mut().unwrap().insert(
+            "ux_actions".into(),
+            json!({
+                "primary": [{"action": "open", "label": "Open"}],
+                "menu": [{"action": "edit", "label": "Edit"}, {"action": "delete", "label": "Delete"}],
+                "confirm": [],
+                "confirm_delete": false,
+                "child_menu": [{"action": "edit", "label": "Edit"}, {"action": "delete", "label": "Delete"}]
+            }),
+        );
+        let out = render_detail(&ctx);
+        assert!(
+            out.contains(r#"void deleteChild('common', 'sub-task', child.id); }}"#),
+            "{out}"
+        );
+        assert!(!out.contains("sub_task-delete-confirm"), "{out}");
+        assert!(!out.contains("DeleteId = $state"), "{out}");
+    }
+
+    /// Empty `child_menu` (the parent's ops cannot serve edit/delete)
+    /// falls back to the flat legacy buttons rather than emitting a dead
+    /// empty menu.
+    #[test]
+    fn flag_on_empty_child_menu_falls_back_to_flat_buttons() {
+        let mut ctx = detail_ctx(true);
+        ctx.as_object_mut().unwrap().insert(
+            "ux_actions".into(),
+            json!({
+                "primary": [{"action": "open", "label": "Open"}],
+                "menu": [],
+                "confirm": [],
+                "confirm_delete": false,
+                "child_menu": []
+            }),
+        );
+        let out = render_detail(&ctx);
+        assert!(
+            out.contains(r#"onclick={() => editChild('common', 'sub-task', child.id)}"#),
+            "{out}"
+        );
+        assert!(!out.contains("DropdownMenu.Root"), "{out}");
     }
 }
